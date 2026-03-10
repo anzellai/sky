@@ -1,0 +1,26 @@
+{
+  "name": "sky-compiler",
+  "version": "0.1.0",
+  "description": "Sky programming language compiler",
+  "type": "module",
+  "bin": {
+    "sky": "dist/bin/sky.js",
+    "sky-lsp": "dist/bin/sky-lsp.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "tokens": "node dist/cli.js tokens",
+    "ast": "node dist/cli.js ast",
+    "compile": "node dist/cli.js build"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.0.0"
+  },
+  "dependencies": {
+    "vscode-languageserver": "^9.0.1",
+    "vscode-languageserver-textdocument": "^1.0.12"
+  }
+}

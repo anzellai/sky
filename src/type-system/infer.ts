@@ -1,0 +1,610 @@
+// src/type-system/infer.ts
+// Algorithm W with basic pattern support for Sky
+
+import * as AST from "../ast.js";
+import {
+  Type,
+  Scheme,
+  Substitution,
+  emptySubstitution,
+  freshTypeVariable,
+  functionType,
+  applySubstitution,
+  composeSubstitutions,
+  instantiate,
+  generalize,
+  formatType,
+} from "./../types.js";
+import { unify } from "./unify.js";
+import { TypeEnvironment } from "./env.js";
+import {
+  inferPattern,
+  extendEnvironmentWithPatternBindings,
+} from "./patterns.js";
+import type { AdtRegistry } from "./adt.js";
+
+export interface InferResult {
+  readonly substitution: Substitution;
+  readonly type: Type;
+}
+
+export interface InferTopLevelResult {
+  readonly name: string;
+  readonly scheme: Scheme;
+  readonly pretty: string;
+}
+
+export function inferExpression(
+  registry: AdtRegistry,
+  env: TypeEnvironment,
+  expr: AST.Expression,
+): InferResult {
+  switch (expr.kind) {
+    case "IdentifierExpression": {
+      const value = env.get(expr.name);
+      if (!value) {
+        throw new Error(`Unbound variable ${expr.name}`);
+      }
+
+      return {
+        substitution: emptySubstitution(),
+        type: instantiate(value),
+      };
+    }
+
+    case "IntegerLiteralExpression":
+      return {
+        substitution: emptySubstitution(),
+        type: { kind: "TypeConstant", name: "Int" },
+      };
+
+    case "FloatLiteralExpression":
+      return {
+        substitution: emptySubstitution(),
+        type: { kind: "TypeConstant", name: "Float" },
+      };
+
+    case "StringLiteralExpression":
+      return {
+        substitution: emptySubstitution(),
+        type: { kind: "TypeConstant", name: "String" },
+      };
+
+    case "CharLiteralExpression":
+      return {
+        substitution: emptySubstitution(),
+        type: { kind: "TypeConstant", name: "Char" },
+      };
+
+    case "BooleanLiteralExpression":
+      return {
+        substitution: emptySubstitution(),
+        type: { kind: "TypeConstant", name: "Bool" },
+      };
+
+    case "UnitExpression":
+      return {
+        substitution: emptySubstitution(),
+        type: { kind: "TypeConstant", name: "Unit" },
+      };
+
+    case "ParenthesizedExpression":
+      return inferExpression(registry, env, expr.expression);
+
+    case "TupleExpression": {
+      let currentSub = emptySubstitution();
+      const itemTypes: Type[] = [];
+
+      for (const item of expr.items) {
+        const result = inferExpression(
+          registry,
+          env.applySubstitution(currentSub),
+          item,
+        );
+        currentSub = composeSubstitutions(result.substitution, currentSub);
+        itemTypes.push(applySubstitution(result.type, currentSub));
+      }
+
+      return {
+        substitution: currentSub,
+        type: {
+          kind: "TypeTuple",
+          items: itemTypes,
+        },
+      };
+    }
+
+    case "ListExpression": {
+      const elementType = freshTypeVariable();
+      let currentSub = emptySubstitution();
+
+      for (const item of expr.items) {
+        const itemResult = inferExpression(
+          registry,
+          env.applySubstitution(currentSub),
+          item,
+        );
+
+        const s = unify(
+          applySubstitution(elementType, currentSub),
+          itemResult.type,
+        );
+
+        currentSub = composeSubstitutions(
+          s,
+          composeSubstitutions(itemResult.substitution, currentSub),
+        );
+      }
+
+      return {
+        substitution: currentSub,
+        type: {
+          kind: "TypeApplication",
+          constructor: { kind: "TypeConstant", name: "List" },
+          arguments: [applySubstitution(elementType, currentSub)],
+        },
+      };
+    }
+
+    case "RecordExpression": {
+      let currentSub = emptySubstitution();
+      const fields: Record<string, Type> = {};
+
+      for (const field of expr.fields) {
+        const result = inferExpression(
+          registry,
+          env.applySubstitution(currentSub),
+          field.value,
+        );
+        currentSub = composeSubstitutions(result.substitution, currentSub);
+        fields[field.name] = applySubstitution(result.type, currentSub);
+      }
+
+      return {
+        substitution: currentSub,
+        type: {
+          kind: "TypeRecord",
+          fields,
+        },
+      };
+    }
+
+    case "FieldAccessExpression": {
+      const target = inferExpression(registry, env, expr.target);
+      const fieldType = freshTypeVariable();
+
+      const expectedRecord: Type = {
+        kind: "TypeRecord",
+        fields: {
+          [expr.fieldName]: fieldType,
+        },
+      };
+
+      const s = unify(target.type, expectedRecord);
+
+      return {
+        substitution: composeSubstitutions(s, target.substitution),
+        type: applySubstitution(fieldType, s),
+      };
+    }
+
+    case "LambdaExpression": {
+      let currentEnv = env;
+      let currentSub = emptySubstitution();
+      const paramTypes: Type[] = [];
+
+      for (const param of expr.parameters) {
+        const paramType = freshTypeVariable();
+        paramTypes.push(paramType);
+
+        const patternResult = inferPattern(
+          registry,
+          param.pattern,
+          applySubstitution(paramType, currentSub),
+        );
+
+        currentSub = composeSubstitutions(patternResult.substitution, currentSub);
+        currentEnv = extendEnvironmentWithPatternBindings(
+          currentEnv.applySubstitution(currentSub),
+          patternResult.bindings,
+        );
+      }
+
+      const body = inferExpression(
+        registry,
+        currentEnv.applySubstitution(currentSub),
+        expr.body,
+      );
+
+      currentSub = composeSubstitutions(body.substitution, currentSub);
+
+      let resultType = body.type;
+      for (let i = paramTypes.length - 1; i >= 0; i -= 1) {
+        resultType = functionType(
+          applySubstitution(paramTypes[i], currentSub),
+          resultType,
+        );
+      }
+
+      return {
+        substitution: currentSub,
+        type: resultType,
+      };
+    }
+
+    case "CallExpression": {
+      const fn = inferExpression(registry, env, expr.callee);
+
+      let currentSub = fn.substitution;
+      let currentType = fn.type;
+
+      for (const arg of expr.arguments) {
+        const argResult = inferExpression(
+          registry,
+          env.applySubstitution(currentSub),
+          arg,
+        );
+
+        const resultType = freshTypeVariable();
+
+        const s = unify(
+          applySubstitution(currentType, argResult.substitution),
+          functionType(argResult.type, resultType),
+        );
+
+        currentSub = composeSubstitutions(
+          s,
+          composeSubstitutions(argResult.substitution, currentSub),
+        );
+
+        currentType = applySubstitution(resultType, currentSub);
+      }
+
+      return {
+        substitution: currentSub,
+        type: currentType,
+      };
+    }
+
+    case "IfExpression": {
+      const cond = inferExpression(registry, env, expr.condition);
+      const s1 = unify(cond.type, { kind: "TypeConstant", name: "Bool" });
+
+      const env1 = env.applySubstitution(
+        composeSubstitutions(s1, cond.substitution),
+      );
+
+      const thenResult = inferExpression(registry, env1, expr.thenBranch);
+      const elseResult = inferExpression(
+        registry,
+        env1.applySubstitution(thenResult.substitution),
+        expr.elseBranch,
+      );
+
+      const s2 = unify(
+        applySubstitution(thenResult.type, elseResult.substitution),
+        elseResult.type,
+      );
+
+      const sub = composeSubstitutions(
+        s2,
+        composeSubstitutions(
+          elseResult.substitution,
+          composeSubstitutions(thenResult.substitution, composeSubstitutions(s1, cond.substitution)),
+        ),
+      );
+
+      return {
+        substitution: sub,
+        type: applySubstitution(elseResult.type, sub),
+      };
+    }
+
+    case "LetExpression": {
+      let currentEnv = env;
+      let currentSub = emptySubstitution();
+
+      for (const binding of expr.bindings) {
+        const valueResult = inferExpression(
+          registry,
+          currentEnv.applySubstitution(currentSub),
+          binding.value,
+        );
+
+        currentSub = composeSubstitutions(valueResult.substitution, currentSub);
+
+        const expectedType = applySubstitution(valueResult.type, currentSub);
+        const patternResult = inferPattern(
+          registry,
+          binding.pattern,
+          expectedType,
+        );
+
+        currentSub = composeSubstitutions(patternResult.substitution, currentSub);
+
+        const generalizedBindings: Record<string, Scheme> = {};
+        for (const [name, type] of Object.entries(patternResult.bindings)) {
+          generalizedBindings[name] = generalize(
+            applySubstitution(type, currentSub),
+            currentEnv.applySubstitution(currentSub).freeTypeVariables(),
+          );
+        }
+
+        currentEnv = currentEnv
+          .applySubstitution(currentSub)
+          .extendMany(generalizedBindings);
+      }
+
+      const body = inferExpression(
+        registry,
+        currentEnv.applySubstitution(currentSub),
+        expr.body,
+      );
+
+      return {
+        substitution: composeSubstitutions(body.substitution, currentSub),
+        type: body.type,
+      };
+    }
+
+    case "CaseExpression": {
+      const subject = inferExpression(registry, env, expr.subject);
+      let currentSub = subject.substitution;
+      const resultType = freshTypeVariable();
+
+      for (const branch of expr.branches) {
+        const branchSubjectType = applySubstitution(subject.type, currentSub);
+
+        const patternResult = inferPattern(
+          registry,
+          branch.pattern,
+          branchSubjectType,
+        );
+
+        currentSub = composeSubstitutions(patternResult.substitution, currentSub);
+
+        const branchEnv = extendEnvironmentWithPatternBindings(
+          env.applySubstitution(currentSub),
+          patternResult.bindings,
+        );
+
+        const bodyResult = inferExpression(
+          registry,
+          branchEnv,
+          branch.body,
+        );
+
+        const s = unify(
+          applySubstitution(bodyResult.type, bodyResult.substitution),
+          applySubstitution(resultType, currentSub),
+        );
+
+        currentSub = composeSubstitutions(
+          s,
+          composeSubstitutions(bodyResult.substitution, currentSub),
+        );
+      }
+
+      return {
+        substitution: currentSub,
+        type: applySubstitution(resultType, currentSub),
+      };
+    }
+
+    case "BinaryExpression": {
+      const left = inferExpression(registry, env, expr.left);
+      const right = inferExpression(
+        registry,
+        env.applySubstitution(left.substitution),
+        expr.right,
+      );
+
+      const leftType = applySubstitution(left.type, right.substitution);
+      const rightType = right.type;
+
+      switch (expr.operator) {
+        case "+":
+        case "-":
+        case "*":
+        case "/":
+        case "%": {
+          const s1 = unify(leftType, { kind: "TypeConstant", name: "Int" });
+          const s2 = unify(
+            applySubstitution(rightType, s1),
+            { kind: "TypeConstant", name: "Int" },
+          );
+
+          return {
+            substitution: composeSubstitutions(
+              s2,
+              composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+            ),
+            type: { kind: "TypeConstant", name: "Int" },
+          };
+        }
+
+        case "++": {
+          const s1 = unify(leftType, { kind: "TypeConstant", name: "String" });
+          const s2 = unify(
+            applySubstitution(rightType, s1),
+            { kind: "TypeConstant", name: "String" },
+          );
+
+          return {
+            substitution: composeSubstitutions(
+              s2,
+              composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+            ),
+            type: { kind: "TypeConstant", name: "String" },
+          };
+        }
+
+        case "==":
+        case "!=":
+        case "<":
+        case "<=":
+        case ">":
+        case ">=": {
+          const s = unify(leftType, rightType);
+
+          return {
+            substitution: composeSubstitutions(
+              s,
+              composeSubstitutions(right.substitution, left.substitution),
+            ),
+            type: { kind: "TypeConstant", name: "Bool" },
+          };
+        }
+
+        case "&&":
+        case "||": {
+          const s1 = unify(leftType, { kind: "TypeConstant", name: "Bool" });
+          const s2 = unify(
+            applySubstitution(rightType, s1),
+            { kind: "TypeConstant", name: "Bool" },
+          );
+
+          return {
+            substitution: composeSubstitutions(
+              s2,
+              composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+            ),
+            type: { kind: "TypeConstant", name: "Bool" },
+          };
+        }
+
+        case "|>": {
+          const result = freshTypeVariable();
+          const s = unify(
+            rightType,
+            functionType(leftType, result),
+          );
+
+          return {
+            substitution: composeSubstitutions(
+              s,
+              composeSubstitutions(right.substitution, left.substitution),
+            ),
+            type: applySubstitution(result, s),
+          };
+        }
+
+        case "<|": {
+          const result = freshTypeVariable();
+          const s = unify(
+            leftType,
+            functionType(rightType, result),
+          );
+
+          return {
+            substitution: composeSubstitutions(
+              s,
+              composeSubstitutions(right.substitution, left.substitution),
+            ),
+            type: applySubstitution(result, s),
+          };
+        }
+
+        case ">>":
+        case "<<": {
+          const a = freshTypeVariable();
+          const b = freshTypeVariable();
+          const c = freshTypeVariable();
+
+          const leftExpected =
+            expr.operator === ">>"
+              ? functionType(a, b)
+              : functionType(b, c);
+
+          const rightExpected =
+            expr.operator === ">>"
+              ? functionType(b, c)
+              : functionType(a, b);
+
+          const s1 = unify(leftType, leftExpected);
+          const s2 = unify(
+            applySubstitution(rightType, s1),
+            applySubstitution(rightExpected, s1),
+          );
+
+          return {
+            substitution: composeSubstitutions(
+              s2,
+              composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+            ),
+            type:
+              expr.operator === ">>"
+                ? functionType(
+                  applySubstitution(a, s2),
+                  applySubstitution(c, s2),
+                )
+                : functionType(
+                  applySubstitution(a, s2),
+                  applySubstitution(c, s2),
+                ),
+          };
+        }
+
+        default:
+          throw new Error(`Unknown operator ${expr.operator}`);
+      }
+    }
+
+    default:
+      throw new Error(`Inference not implemented for ${expr.kind}`);
+  }
+}
+
+export function inferTopLevel(
+  registry: AdtRegistry,
+  env: TypeEnvironment,
+  decl: AST.FunctionDeclaration,
+): InferTopLevelResult {
+  const paramTypes = decl.parameters.map(() => freshTypeVariable());
+
+  let localEnv = env;
+  let currentSub = emptySubstitution();
+
+  for (let i = 0; i < decl.parameters.length; i += 1) {
+    const pattern = decl.parameters[i].pattern;
+    const patternResult = inferPattern(
+      registry,
+      pattern,
+      applySubstitution(paramTypes[i], currentSub),
+    );
+
+    currentSub = composeSubstitutions(patternResult.substitution, currentSub);
+    localEnv = extendEnvironmentWithPatternBindings(
+      localEnv.applySubstitution(currentSub),
+      patternResult.bindings,
+    );
+  }
+
+  const bodyResult = inferExpression(
+    registry,
+    localEnv.applySubstitution(currentSub),
+    decl.body,
+  );
+
+  currentSub = composeSubstitutions(bodyResult.substitution, currentSub);
+
+  let fnType: Type = applySubstitution(bodyResult.type, currentSub);
+  for (let i = paramTypes.length - 1; i >= 0; i -= 1) {
+    fnType = functionType(
+      applySubstitution(paramTypes[i], currentSub),
+      fnType,
+    );
+  }
+
+  const finalType = applySubstitution(fnType, currentSub);
+  const finalScheme = generalize(
+    finalType,
+    env.applySubstitution(currentSub).freeTypeVariables(),
+  );
+
+  return {
+    name: decl.name,
+    scheme: finalScheme,
+    pretty: formatType(finalScheme.type),
+  };
+}

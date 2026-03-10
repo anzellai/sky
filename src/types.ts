@@ -1,0 +1,338 @@
+// src/type-system/types.ts
+// Sky Hindley–Milner type representation
+//
+// Design goals:
+// - immutable type structures
+// - explicit schemes for generalized bindings
+// - friendly to unification / inference / diagnostics
+
+export type Type =
+  | TypeVariable
+  | TypeConstant
+  | TypeFunction
+  | TypeApplication
+  | TypeTuple
+  | TypeRecord;
+
+export interface TypeVariable {
+  readonly kind: "TypeVariable";
+  readonly id: number;
+  readonly name?: string;
+}
+
+export interface TypeConstant {
+  readonly kind: "TypeConstant";
+  readonly name: string;
+}
+
+export interface TypeFunction {
+  readonly kind: "TypeFunction";
+  readonly from: Type;
+  readonly to: Type;
+}
+
+export interface TypeApplication {
+  readonly kind: "TypeApplication";
+  readonly constructor: Type;
+  readonly arguments: readonly Type[];
+}
+
+export interface TypeTuple {
+  readonly kind: "TypeTuple";
+  readonly items: readonly Type[];
+}
+
+export interface TypeRecord {
+  readonly kind: "TypeRecord";
+  readonly fields: Readonly<Record<string, Type>>;
+}
+
+export interface Scheme {
+  readonly quantified: readonly number[];
+  readonly type: Type;
+}
+
+export interface Substitution {
+  readonly mappings: ReadonlyMap<number, Type>;
+}
+
+export const TYPE_INT: TypeConstant = { kind: "TypeConstant", name: "Int" };
+export const TYPE_FLOAT: TypeConstant = { kind: "TypeConstant", name: "Float" };
+export const TYPE_STRING: TypeConstant = { kind: "TypeConstant", name: "String" };
+export const TYPE_BOOL: TypeConstant = { kind: "TypeConstant", name: "Bool" };
+export const TYPE_CHAR: TypeConstant = { kind: "TypeConstant", name: "Char" };
+export const TYPE_UNIT: TypeConstant = { kind: "TypeConstant", name: "Unit" };
+
+let nextTypeVariableId = 0;
+
+export function freshTypeVariable(name?: string): TypeVariable {
+  nextTypeVariableId += 1;
+  return {
+    kind: "TypeVariable",
+    id: nextTypeVariableId,
+    name,
+  };
+}
+
+export function typeConstant(name: string): TypeConstant {
+  return {
+    kind: "TypeConstant",
+    name,
+  };
+}
+
+export function functionType(from: Type, to: Type): TypeFunction {
+  return {
+    kind: "TypeFunction",
+    from,
+    to,
+  };
+}
+
+export function curriedFunctionType(parts: readonly Type[]): Type {
+  if (parts.length === 0) {
+    throw new Error("curriedFunctionType requires at least one type part");
+  }
+
+  if (parts.length === 1) {
+    return parts[0];
+  }
+
+  let current = functionType(parts[parts.length - 2], parts[parts.length - 1]);
+
+  for (let i = parts.length - 3; i >= 0; i -= 1) {
+    current = functionType(parts[i], current);
+  }
+
+  return current;
+}
+
+export function typeApplication(constructor: Type, arguments_: readonly Type[]): TypeApplication {
+  return {
+    kind: "TypeApplication",
+    constructor,
+    arguments: [...arguments_],
+  };
+}
+
+export function tupleType(items: readonly Type[]): TypeTuple {
+  return {
+    kind: "TypeTuple",
+    items: [...items],
+  };
+}
+
+export function recordType(fields: Readonly<Record<string, Type>>): TypeRecord {
+  return {
+    kind: "TypeRecord",
+    fields: { ...fields },
+  };
+}
+
+export function mono(type: Type): Scheme {
+  return {
+    quantified: [],
+    type,
+  };
+}
+
+export function scheme(quantified: readonly number[], type: Type): Scheme {
+  return {
+    quantified: [...quantified],
+    type,
+  };
+}
+
+export function emptySubstitution(): Substitution {
+  return {
+    mappings: new Map(),
+  };
+}
+
+export function substitution(entries: readonly (readonly [number, Type])[]): Substitution {
+  return {
+    mappings: new Map(entries),
+  };
+}
+
+export function isTypeVariable(type: Type): type is TypeVariable {
+  return type.kind === "TypeVariable";
+}
+
+export function isFunctionType(type: Type): type is TypeFunction {
+  return type.kind === "TypeFunction";
+}
+
+export function freeTypeVariables(type: Type): ReadonlySet<number> {
+  const result = new Set<number>();
+  collectFreeTypeVariables(type, result);
+  return result;
+}
+
+export function freeTypeVariablesInScheme(value: Scheme): ReadonlySet<number> {
+  const vars = new Set(freeTypeVariables(value.type));
+  for (const quantified of value.quantified) {
+    vars.delete(quantified);
+  }
+  return vars;
+}
+
+function collectFreeTypeVariables(type: Type, out: Set<number>): void {
+  switch (type.kind) {
+    case "TypeVariable":
+      out.add(type.id);
+      return;
+
+    case "TypeConstant":
+      return;
+
+    case "TypeFunction":
+      collectFreeTypeVariables(type.from, out);
+      collectFreeTypeVariables(type.to, out);
+      return;
+
+    case "TypeApplication":
+      collectFreeTypeVariables(type.constructor, out);
+      for (const arg of type.arguments) {
+        collectFreeTypeVariables(arg, out);
+      }
+      return;
+
+    case "TypeTuple":
+      for (const item of type.items) {
+        collectFreeTypeVariables(item, out);
+      }
+      return;
+
+    case "TypeRecord":
+      for (const value of Object.values(type.fields)) {
+        collectFreeTypeVariables(value, out);
+      }
+      return;
+  }
+}
+
+export function applySubstitution(type: Type, sub: Substitution): Type {
+  switch (type.kind) {
+    case "TypeVariable": {
+      const replacement = sub.mappings.get(type.id);
+      return replacement ? applySubstitution(replacement, sub) : type;
+    }
+
+    case "TypeConstant":
+      return type;
+
+    case "TypeFunction":
+      return functionType(
+        applySubstitution(type.from, sub),
+        applySubstitution(type.to, sub),
+      );
+
+    case "TypeApplication":
+      return typeApplication(
+        applySubstitution(type.constructor, sub),
+        type.arguments.map((arg) => applySubstitution(arg, sub)),
+      );
+
+    case "TypeTuple":
+      return tupleType(type.items.map((item) => applySubstitution(item, sub)));
+
+    case "TypeRecord": {
+      const next: Record<string, Type> = {};
+      for (const [key, value] of Object.entries(type.fields)) {
+        next[key] = applySubstitution(value, sub);
+      }
+      return recordType(next);
+    }
+  }
+}
+
+export function applySubstitutionToScheme(value: Scheme, sub: Substitution): Scheme {
+  const filtered = new Map<number, Type>();
+  for (const [key, mapped] of sub.mappings.entries()) {
+    if (!value.quantified.includes(key)) {
+      filtered.set(key, mapped);
+    }
+  }
+
+  return scheme(value.quantified, applySubstitution(value.type, { mappings: filtered }));
+}
+
+export function composeSubstitutions(left: Substitution, right: Substitution): Substitution {
+  const composed = new Map<number, Type>();
+
+  for (const [key, value] of right.mappings.entries()) {
+    composed.set(key, applySubstitution(value, left));
+  }
+
+  for (const [key, value] of left.mappings.entries()) {
+    composed.set(key, value);
+  }
+
+  return {
+    mappings: composed,
+  };
+}
+
+export function instantiate(value: Scheme): Type {
+  const mapping = new Map<number, Type>();
+
+  for (const quantified of value.quantified) {
+    mapping.set(quantified, freshTypeVariable());
+  }
+
+  return applySubstitution(value.type, { mappings: mapping });
+}
+
+export function generalize(type: Type, environmentFreeVars: ReadonlySet<number>): Scheme {
+  const typeFreeVars = freeTypeVariables(type);
+  const quantified: number[] = [];
+
+  for (const typeVar of typeFreeVars) {
+    if (!environmentFreeVars.has(typeVar)) {
+      quantified.push(typeVar);
+    }
+  }
+
+  quantified.sort((a, b) => a - b);
+  return scheme(quantified, type);
+}
+
+export function formatType(type: Type): string {
+  switch (type.kind) {
+    case "TypeVariable":
+      return type.name ?? `'t${type.id}`;
+
+    case "TypeConstant":
+      return type.name;
+
+    case "TypeFunction": {
+      const left = needsParensInFunctionLeft(type.from)
+        ? `(${formatType(type.from)})`
+        : formatType(type.from);
+      return `${left} -> ${formatType(type.to)}`;
+    }
+
+    case "TypeApplication": {
+      const ctor = formatType(type.constructor);
+      const args = type.arguments.map((arg) => {
+        return needsParensInTypeApplication(arg) ? `(${formatType(arg)})` : formatType(arg);
+      }).join(" ");
+      return `${ctor} ${args}`;
+    }
+
+    case "TypeTuple":
+      return `(${type.items.map(formatType).join(", ")})`;
+
+    case "TypeRecord":
+      return `{ ${Object.entries(type.fields).map(([k, v]) => `${k} : ${formatType(v)}`).join(", ")} }`;
+  }
+}
+
+function needsParensInFunctionLeft(type: Type): boolean {
+  return type.kind === "TypeFunction";
+}
+
+function needsParensInTypeApplication(type: Type): boolean {
+  return type.kind === "TypeFunction";
+}
