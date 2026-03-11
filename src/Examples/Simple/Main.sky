@@ -1,7 +1,9 @@
 module Examples.Simple.Main exposing (main)
 
+
 add a b =
     a + b
+
 
 main =
     add 2 3

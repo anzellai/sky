@@ -1,5 +1,8 @@
 // src/codegen/js-emitter.ts
-// Sky → JavaScript emitter with Elm-style currying + pipeline operators
+// Sky → JavaScript emitter with:
+// - curried function emission
+// - Elm-style pipeline operators
+// - foreign import emission
 
 import path from "path";
 import * as AST from "../ast.js";
@@ -19,24 +22,38 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
 
   const currentParts = module.name;
 
+  // Sky module imports
   for (const imp of module.imports) {
     const alias = imp.moduleName.join("_");
     const importPath = computeRelativeImport(currentParts, imp.moduleName);
-    lines.push(`import * as ${alias} from "${importPath}"`);
+    lines.push(`import * as ${alias} from "${importPath}";`);
   }
 
-  const foreignImports = module.declarations.filter(
-    (decl): decl is AST.ForeignImportDeclaration => decl.kind === "ForeignImportDeclaration",
-  );
+  // Foreign imports
+  for (const decl of module.declarations) {
+    if (decl.kind !== "ForeignImportDeclaration") {
+      continue;
+    }
 
-  for (const decl of foreignImports) {
-    lines.push(`import { ${decl.name} } from ${JSON.stringify(decl.sourceModule)}`);
+    const names = getForeignImportNames(decl);
+
+    if (names.length === 0) {
+      continue;
+    }
+
+    lines.push(
+      `import { ${names.join(", ")} } from ${JSON.stringify(decl.sourceModule)};`,
+    );
   }
 
-  if (module.imports.length > 0 || foreignImports.length > 0) {
+  if (
+    module.imports.length > 0 ||
+    module.declarations.some((d) => d.kind === "ForeignImportDeclaration")
+  ) {
     lines.push("");
   }
 
+  // Top-level declarations
   for (const decl of module.declarations) {
     switch (decl.kind) {
       case "FunctionDeclaration":
@@ -88,9 +105,7 @@ function emitFunction(fn: AST.FunctionDeclaration): string {
     } else {
       const argName = `__arg${index}`;
       params.push(argName);
-      bindingsPerParam.push(
-        emitPatternBindingStatements(pattern, argName),
-      );
+      bindingsPerParam.push(emitPatternBindingStatements(pattern, argName));
     }
   });
 
@@ -145,25 +160,38 @@ function emitExpression(expr: AST.Expression): string {
     case "StringLiteralExpression":
       return JSON.stringify(expr.value);
 
+    case "CharLiteralExpression":
+      return JSON.stringify(expr.value);
+
     case "BooleanLiteralExpression":
       return expr.value ? "true" : "false";
+
+    case "UnitExpression":
+      return "undefined";
+
+    case "ParenthesizedExpression":
+      return `(${emitExpression(expr.expression)})`;
+
+    case "TupleExpression":
+      return `[${expr.items.map(emitExpression).join(", ")}]`;
+
+    case "ListExpression":
+      return `[${expr.items.map(emitExpression).join(", ")}]`;
+
+    case "RecordExpression":
+      return `{ ${expr.fields.map((f) => `${f.name}: ${emitExpression(f.value)}`).join(", ")} }`;
+
+    case "FieldAccessExpression":
+      return `${emitExpression(expr.target)}.${expr.fieldName}`;
 
     case "BinaryExpression":
       return emitBinaryExpression(expr);
 
-    case "CallExpression": {
-      const callee = emitExpression(expr.callee);
-
-      // Since Sky functions are emitted as curried JS functions,
-      // emit nested calls: f(a)(b)(c)
+    case "CallExpression":
       return expr.arguments.reduce(
         (acc, arg) => `${acc}(${emitExpression(arg)})`,
-        callee,
+        emitExpression(expr.callee),
       );
-    }
-
-    case "ParenthesizedExpression":
-      return `(${emitExpression(expr.expression)})`;
 
     case "LambdaExpression": {
       const params = expr.parameters.map((param, index) => {
@@ -173,22 +201,19 @@ function emitExpression(expr: AST.Expression): string {
           : `__lambdaArg${index}`;
       });
 
-      const bindings: string[] = [];
-      expr.parameters.forEach((param, index) => {
-        const pattern = param.pattern;
-        const paramName = params[index];
-        if (pattern.kind !== "VariablePattern") {
-          bindings.push(...emitPatternBindingStatements(pattern, paramName));
-        }
-      });
+      const body = emitExpression(expr.body);
 
-      let result = emitExpression(expr.body);
+      let result = body;
 
       for (let i = params.length - 1; i >= 0; i -= 1) {
-        const innerBindings =
-          i === params.length - 1 ? bindings.map((b) => `  ${b}\n`).join("") : "";
-        if (innerBindings.length > 0) {
-          result = `(${params[i]} => {\n${innerBindings}  return ${result};\n})`;
+        const pattern = expr.parameters[i].pattern;
+        const bindings =
+          pattern.kind === "VariablePattern"
+            ? []
+            : emitPatternBindingStatements(pattern, params[i]);
+
+        if (bindings.length > 0) {
+          result = `(${params[i]} => { ${bindings.join(" ")} return ${result}; })`;
         } else {
           result = `(${params[i]} => ${result})`;
         }
@@ -196,6 +221,24 @@ function emitExpression(expr: AST.Expression): string {
 
       return result;
     }
+
+    case "IfExpression":
+      return `(${emitExpression(expr.condition)} ? ${emitExpression(expr.thenBranch)} : ${emitExpression(expr.elseBranch)})`;
+
+    case "LetExpression": {
+      const bindingLines = expr.bindings.flatMap((binding, index) => {
+        const temp = `__let${index}`;
+        return [
+          `const ${temp} = ${emitExpression(binding.value)};`,
+          ...emitPatternBindingStatements(binding.pattern, temp),
+        ];
+      });
+
+      return `(() => { ${bindingLines.join(" ")} return ${emitExpression(expr.body)}; })()`;
+    }
+
+    case "CaseExpression":
+      throw new Error("CaseExpression emission is not implemented yet");
 
     default:
       throw new Error(`Unsupported expression kind ${(expr as { kind?: string }).kind}`);
@@ -232,9 +275,54 @@ function emitPatternBindingStatements(pattern: AST.Pattern, valueRef: string): s
     case "WildcardPattern":
       return [];
 
+    case "TuplePattern": {
+      const lines: string[] = [];
+      pattern.items.forEach((item, index) => {
+        lines.push(...emitPatternBindingStatements(item, `${valueRef}[${index}]`));
+      });
+      return lines;
+    }
+
+    case "ListPattern": {
+      const lines: string[] = [];
+      pattern.items.forEach((item, index) => {
+        lines.push(...emitPatternBindingStatements(item, `${valueRef}[${index}]`));
+      });
+      return lines;
+    }
+
+    case "ConstructorPattern":
+      return [];
+
+    case "LiteralPattern":
+      return [];
+
     default:
       return [];
   }
+}
+
+function getForeignImportNames(decl: AST.ForeignImportDeclaration): string[] {
+  // Supports either:
+  // - decl.exposing = string[]
+  // - decl.name for single-import AST shapes
+  // - decl.importName/name legacy shapes
+  const maybeExposing = (decl as unknown as { exposing?: readonly string[] }).exposing;
+  if (Array.isArray(maybeExposing)) {
+    return [...maybeExposing];
+  }
+
+  const maybeName = (decl as unknown as { name?: string }).name;
+  if (typeof maybeName === "string" && maybeName.length > 0) {
+    return [maybeName];
+  }
+
+  const maybeImportName = (decl as unknown as { importName?: string }).importName;
+  if (typeof maybeImportName === "string" && maybeImportName.length > 0) {
+    return [maybeImportName];
+  }
+
+  return [];
 }
 
 function computeRelativeImport(from: readonly string[], to: readonly string[]): string {

@@ -1,354 +1,320 @@
 // src/cli.ts
-// Sky CLI
+// Sky CLI with build/run/ast/format/repl/deps
 
-import fs from "fs";
-import path from "path";
-import { spawnSync } from "child_process";
+import fs from "fs"
+import path from "path"
+import process from "process"
 
-import { lex } from "./lexer.js";
-import { parse } from "./parser.js";
-import { formatModule } from "./formatter/formatter.js";
-import { startRepl } from "./repl/repl.js";
-import { compileProject } from "./compiler.js";
-import { filterLayout } from "./parser/filter-layout.js";
-import { emitModule } from "./codegen/js-emitter.js";
-import { checkModule } from "./type-system/checker.js";
+import { compileProject } from "./compiler.js"
+import { buildModuleGraph } from "./module-graph.js"
 
-function main(): void {
-  const args = process.argv.slice(2);
-  const command = args[0];
+import { lex } from "./lexer.js"
+import { parse } from "./parser.js"
+import { filterLayout } from "./parser/filter-layout.js"
 
-  if (!command) {
-    printHelp();
-    process.exit(1);
-  }
+import { formatModule } from "./formatter/formatter.js"
+
+import { loadProject } from "./project/load-project.js"
+import { resolveEntryFile } from "./project/resolve-entry.js"
+
+import { initProject } from "./project/init-project.js"
+import { addPackage } from "./project/add-package.js"
+
+async function main() {
+
+  const args = process.argv.slice(2)
+
+  const command = args[0]
 
   switch (command) {
+    case "init":
+      initProject()
+      return
+
+    case "add":
+      addPackage(args[1])
+      return
+
     case "build":
-      cmdBuild(args.slice(1));
-      return;
+      await cmdBuild(args[1])
+      return
 
     case "run":
-      cmdRun(args.slice(1));
-      return;
-
-    case "debug":
-      cmdDebug(args.slice(1));
-      return;
+      await cmdRun(args[1])
+      return
 
     case "ast":
-      cmdAst(args.slice(1));
-      return;
+      await cmdAst(args[1])
+      return
 
-    case "tokens":
-    case "token":
-      cmdTokens(args.slice(1));
-      return;
-
-    case "format":
     case "fmt":
-      cmdFormat(args.slice(1));
-      return;
+    case "format":
+      await cmdFormat(args[1])
+      return
+
+    case "deps":
+      await cmdDeps(args[1])
+      return
 
     case "repl":
-      void cmdRepl();
-      return;
-
-    case "help":
-    case "--help":
-    case "-h":
-      printHelp();
-      return;
+      await cmdRepl()
+      return
 
     default:
-      console.error(`Unknown command: ${command}\n`);
-      printHelp();
-      process.exit(1);
+      printHelp()
+      process.exit(1)
+
   }
+
 }
 
-function cmdBuild(args: string[]): void {
-  const entry = requireFileArg("sky build <entry.sky>", args);
+/* ------------------------------------------------ */
 
-  const result = compileProject(entry);
+async function cmdBuild(file?: string) {
 
-  if (result.diagnostics.length > 0) {
-    printDiagnostics("Compilation failed", result.diagnostics);
-    process.exit(1);
-  }
+  const start = performance.now()
 
-  console.log("Build succeeded");
-}
+  const project = loadProject()
 
-function cmdRun(args: string[]): void {
-  const entry = requireFileArg("sky run <entry.sky>", args);
+  const entry =
+    file ||
+    resolveEntryFile(
+      project.sourceDir,
+      project.entryModule
+    )
 
-  const result = compileProject(entry);
+  const graph = await buildModuleGraph(entry)
 
-  if (result.diagnostics.length > 0) {
-    printDiagnostics("Compilation failed", result.diagnostics);
-    process.exit(1);
-  }
+  if (graph.diagnostics.length > 0) {
 
-  const modulePath = computeOutputModule(entry);
+    console.error("Dependency errors:\n")
 
-  if (!fs.existsSync(modulePath)) {
-    console.error(`Cannot find compiled module: ${modulePath}`);
-    process.exit(1);
-  }
-
-  const node = spawnSync("node", [modulePath], {
-    stdio: "inherit",
-  });
-
-  process.exit(node.status ?? 0);
-}
-
-function cmdDebug(args: string[]): void {
-
-  const file = requireFileArg("sky debug <file.sky>", args);
-
-  const source = readFileOrExit(file);
-
-  console.log("========== SOURCE ==========");
-  console.log(source);
-
-  const lexResult = lex(source, file);
-
-  if (lexResult.diagnostics.length > 0) {
-    printLexDiagnostics("Lexing failed", lexResult.diagnostics);
-    process.exit(1);
-  }
-
-  console.log("\n========== TOKENS ==========");
-
-  for (const token of lexResult.tokens) {
-    const pos = `${token.span.start.line}:${token.span.start.column}`;
-    console.log(`${token.kind.padEnd(16)} ${JSON.stringify(token.lexeme)} @ ${pos}`);
-  }
-
-  let moduleAst;
-
-  try {
-
-    const tokens = filterLayout(lexResult.tokens);
-
-    moduleAst = parse(tokens);
-
-  } catch (err) {
-
-    console.error("\n========== PARSE ERROR ==========");
-    console.error(err instanceof Error ? err.message : String(err));
-
-    process.exit(1);
-
-  }
-
-  console.log("\n========== AST ==========");
-  console.log(JSON.stringify(moduleAst, null, 2));
-
-  const typeCheck = checkModule(moduleAst);
-
-  if (typeCheck.diagnostics.length > 0) {
-
-    console.log("\n========== TYPE ERRORS ==========");
-
-    for (const d of typeCheck.diagnostics) {
-      console.log(d.message);
+    for (const d of graph.diagnostics) {
+      console.error(d)
     }
 
-  } else {
-
-    console.log("\n========== TYPECHECK OK ==========");
+    process.exit(1)
 
   }
 
-  const emitted = emitModule(moduleAst, {
-    moduleName: moduleAst.name.join("."),
-  });
+  const result =
+    await compileProject(
+      entry,
+      project.outputDir
+    )
 
-  console.log("\n========== JS OUTPUT ==========");
-  console.log(emitted.code);
+  if (result.diagnostics.length > 0) {
 
-}
+    console.error("Compilation failed:\n")
 
-function cmdAst(args: string[]): void {
-  const file = requireFileArg("sky ast <file.sky>", args);
-  const source = readFileOrExit(file);
+    for (const d of result.diagnostics) {
+      console.error(d)
+    }
 
-  const lexResult = lex(source, file);
-  if (lexResult.diagnostics.length > 0) {
-    printLexDiagnostics("Lexing failed", lexResult.diagnostics);
-    process.exit(1);
-  }
-
-  try {
-    const tokens = filterLayout(lexResult.tokens);
-    const moduleAst = parse(tokens);
-    console.log(JSON.stringify(moduleAst, null, 2));
-  } catch (error) {
-    console.error("Parse failed:\n");
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
-  }
-}
-
-function cmdTokens(args: string[]): void {
-  const file = requireFileArg("sky tokens <file.sky>", args);
-  const source = readFileOrExit(file);
-
-  const lexResult = lex(source, file);
-
-  if (lexResult.diagnostics.length > 0) {
-    printLexDiagnostics("Lexing failed", lexResult.diagnostics);
-    process.exit(1);
-  }
-
-  for (const token of lexResult.tokens) {
-    const pos = `${token.span.start.line}:${token.span.start.column}`;
-    console.log(
-      `${token.kind.padEnd(18)} ${JSON.stringify(token.lexeme).padEnd(20)} ${pos}`,
-    );
-  }
-}
-
-function formatSource(source: string, filename: string): string {
-
-  const lexResult = lex(source, filename);
-
-  if (lexResult.diagnostics.length > 0) {
-    throw new Error("Cannot format file with lexer errors");
-  }
-
-  const tokens = filterLayout(lexResult.tokens);
-
-  const moduleAst = parse(tokens);
-
-  return formatModule(moduleAst);
-
-}
-
-async function readStdin(): Promise<string> {
-
-  return new Promise((resolve, reject) => {
-
-    let data = "";
-
-    process.stdin.setEncoding("utf8");
-
-    process.stdin.on("data", chunk => {
-      data += chunk;
-    });
-
-    process.stdin.on("end", () => {
-      resolve(data);
-    });
-
-    process.stdin.on("error", reject);
-
-  });
-
-}
-
-async function cmdFormat(args: string[]): Promise<void> {
-
-  const target = args[0];
-
-  if (!target || target === "-") {
-
-    const source = await readStdin();
-
-    const formatted = formatSource(source, "<stdin>");
-
-    process.stdout.write(formatted);
-
-    return;
+    process.exit(1)
 
   }
 
-  const source = fs.readFileSync(target, "utf8");
+  const end = performance.now()
 
-  const formatted = formatSource(source, target);
-
-  fs.writeFileSync(target, formatted, "utf8");
-
-  console.log(`Formatted ${target}`);
+  console.log(
+    `Built ${graph.modules.length} module(s) in ${(end - start).toFixed(0)} ms`
+  )
 
 }
 
-async function cmdRepl(): Promise<void> {
-  await startRepl();
+/* ------------------------------------------------ */
+
+async function cmdRun(file: string) {
+
+  const project = loadProject()
+
+  const entry =
+    file ||
+    resolveEntryFile(
+      project.sourceDir,
+      project.entryModule
+    )
+
+  const result =
+    await compileProject(
+      entry,
+      project.outputDir
+    )
+
+  if (result.diagnostics.length > 0) {
+
+    console.error("Compilation failed:\n")
+
+    for (const d of result.diagnostics) {
+      console.error(d)
+    }
+
+    process.exit(1)
+
+  }
+
+  const modulePath = computeOutputPath(file)
+
+  const mod = await import(path.resolve(modulePath))
+
+  if (typeof mod.main === "function") {
+
+    const value = mod.main()
+
+    if (value !== undefined) {
+      console.log(value)
+    }
+
+  }
+
 }
 
-function requireFileArg(usage: string, args: string[]): string {
-  const file = args[0];
+/* ------------------------------------------------ */
+
+async function cmdDeps(file: string) {
+
   if (!file) {
-    console.error(`${usage}\n`);
-    process.exit(1);
+    console.error("Missing input file")
+    process.exit(1)
   }
-  return file;
-}
 
-function readFileOrExit(file: string): string {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    console.error(`Cannot read file: ${file}`);
-    process.exit(1);
-  }
-}
+  const graph = await buildModuleGraph(file)
 
-function computeOutputModule(entry: string): string {
-  const withoutExt = entry.replace(/\.sky$/, "");
-  const parts = withoutExt.split(/[\\/]/);
+  if (graph.diagnostics.length > 0) {
 
-  const srcIndex = parts.indexOf("src");
-  const relativeParts = srcIndex >= 0 ? parts.slice(srcIndex + 1) : parts;
+    console.error("Dependency errors:\n")
 
-  return path.join("dist", ...relativeParts) + ".js";
-}
-
-function printDiagnostics(title: string, diagnostics: readonly string[]): void {
-  console.error(`${title}:\n`);
-  for (const diagnostic of diagnostics) {
-    console.error(diagnostic);
-  }
-}
-
-function printLexDiagnostics(
-  title: string,
-  diagnostics: readonly {
-    severity: string;
-    message: string;
-    span: { start: { line: number; column: number } };
-    hint?: string;
-  }[],
-): void {
-  console.error(`${title}:\n`);
-  for (const diagnostic of diagnostics) {
-    const pos = `${diagnostic.span.start.line}:${diagnostic.span.start.column}`;
-    console.error(`${diagnostic.severity}: ${diagnostic.message} at ${pos}`);
-    if (diagnostic.hint) {
-      console.error(`  hint: ${diagnostic.hint}`);
+    for (const d of graph.diagnostics) {
+      console.error(d)
     }
+
+    process.exit(1)
+
   }
+
+  console.log("Module dependency order:\n")
+
+  for (const m of graph.modules) {
+
+    const name =
+      m.moduleAst.name.join(".")
+
+    console.log(name)
+
+  }
+
 }
 
-function printHelp(): void {
-  console.log(`Sky compiler
+/* ------------------------------------------------ */
 
-Usage:
-  sky build <file.sky>      Compile a Sky program
-  sky run <file.sky>        Compile and run a Sky program
-  sky debug <file.sky>      Show tokens, AST, types, and emitted JS
-  sky ast <file.sky>        Print parsed AST as JSON
-  sky tokens <file.sky>     Print lexer tokens
-  sky token <file.sky>      Alias for tokens
-  sky format <file.sky>     Format a file in place
-  sky fmt <file.sky>        Alias for format
-  sky repl                  Start interactive REPL
-  sky help                  Show this help
-`);
+async function cmdAst(file: string) {
+
+  const source = fs.readFileSync(file, "utf8")
+
+  const lexResult = lex(source, file)
+
+  const tokens = filterLayout(lexResult.tokens)
+
+  const ast = parse(tokens)
+
+  console.log(JSON.stringify(ast, null, 2))
+
 }
 
-main();
+/* ------------------------------------------------ */
+
+async function cmdFormat(file: string) {
+
+  const source = fs.readFileSync(file, "utf8")
+
+  const lexResult = lex(source, file)
+
+  const tokens = filterLayout(lexResult.tokens)
+
+  const module = parse(tokens)
+
+  const formatted = formatModule(module)
+
+  fs.writeFileSync(file, formatted)
+
+  console.log("Formatted", file)
+
+}
+
+/* ------------------------------------------------ */
+
+async function cmdRepl() {
+
+  console.log("Sky REPL (minimal)")
+  console.log("Type :quit to exit\n")
+
+  process.stdin.setEncoding("utf8")
+
+  process.stdin.on("data", async (line: Buffer) => {
+
+    const code = line.toString().trim()
+
+    if (code === ":quit") {
+      process.exit(0)
+    }
+
+    try {
+
+      const lexResult = lex(code, "<repl>")
+
+      const tokens = filterLayout(lexResult.tokens)
+
+      const ast = parse(tokens)
+
+      console.log(JSON.stringify(ast, null, 2))
+
+    } catch (err) {
+
+      console.error(err)
+
+    }
+
+  })
+
+}
+
+/* ------------------------------------------------ */
+
+function computeOutputPath(sourceFile: string) {
+
+  const parsed = path.parse(sourceFile)
+
+  const parts = parsed.dir.split(path.sep)
+
+  return path.join(
+    "dist",
+    ...parts.slice(-2),
+    parsed.name + ".js"
+  )
+
+}
+
+/* ------------------------------------------------ */
+
+function printHelp() {
+
+  console.log(`
+Sky compiler
+
+Commands:
+  sky init
+  sky add <package>
+  sky build <file.sky>
+  sky run <file.sky>
+  sky deps <file.sky>
+  sky ast <file.sky>
+  sky fmt <file.sky>
+  sky repl
+`)
+
+}
+
+/* ------------------------------------------------ */
+
+main()

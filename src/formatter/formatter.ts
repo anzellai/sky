@@ -1,126 +1,295 @@
-// src/formatter/formatter.ts
-
-import * as AST from "../ast.js";
+import * as AST from "../ast.js"
+import { concat, Doc, group, indent, line, text } from "./doc.js"
+import { render } from "./render.js"
 
 export function formatModule(module: AST.Module): string {
-  const lines: string[] = [];
 
-  lines.push(formatModuleHeader(module));
-  lines.push("");
+  const docs: Doc[] = []
 
-  if (module.imports.length > 0) {
-    lines.push("");
-  }
+  docs.push(formatModuleHeader(module))
+  docs.push(line)
+  docs.push(line)
 
   if (module.imports.length > 0) {
 
     for (const imp of module.imports) {
-      lines.push(`import ${imp.moduleName.join(".")}`);
+      docs.push(formatImport(imp))
+      docs.push(line)
     }
 
-    lines.push("");
+    docs.push(line)
 
   }
 
-  for (const decl of module.declarations) {
-    switch (decl.kind) {
-      case "FunctionDeclaration":
-        lines.push(formatFunction(decl));
-        lines.push("");
-        break;
+  module.declarations.forEach((decl, i) => {
 
-      default:
-        break;
-    }
-  }
+    docs.push(formatDeclaration(decl))
 
-  return lines.join("\n").trimEnd() + "\n";
-}
-
-function formatModuleHeader(module: AST.Module): string {
-  const moduleName = module.name.join(".");
-
-  if (!module.exposing) {
-    return `module ${moduleName}`;
-  }
-
-  if (module.exposing.open) {
-    return `module ${moduleName} exposing (.. )`.replace(".. ", "..");
-  }
-
-  const items = module.exposing.items.map(formatExposedItem).join(", ");
-  return `module ${moduleName} exposing (${items})`;
-}
-
-function formatExposedItem(item: AST.ExposedItem): string {
-  if (item.kind === "value") {
-    return item.name;
-  }
-
-  return item.exposeConstructors
-    ? `${item.name}(..)`
-    : item.name;
-}
-
-function formatFunction(fn: AST.FunctionDeclaration): string {
-  const params = fn.parameters.map((p) => formatPattern(p.pattern)).join(" ");
-  const header = `${fn.name}${params ? " " + params : ""} =`;
-  const body = formatExpression(fn.body, 1);
-
-  return `${header}\n${body}`;
-}
-
-function formatExpression(expr: AST.Expression, indent: number): string {
-  const pad = "    ".repeat(indent);
-
-  switch (expr.kind) {
-    case "IdentifierExpression":
-      return pad + expr.name;
-
-    case "QualifiedIdentifierExpression":
-      return pad + expr.name.parts.join(".");
-
-    case "IntegerLiteralExpression":
-      return pad + expr.raw;
-
-    case "FloatLiteralExpression":
-      return pad + expr.raw;
-
-    case "StringLiteralExpression":
-      return pad + JSON.stringify(expr.value);
-
-    case "BooleanLiteralExpression":
-      return pad + (expr.value ? "true" : "false");
-
-    case "CallExpression": {
-      const callee = formatExpression(expr.callee, 0).trim();
-      const args = expr.arguments.map((arg) => formatExpression(arg, 0).trim()).join(" ");
-      return pad + `${callee} ${args}`;
+    if (i !== module.declarations.length - 1) {
+      docs.push(line)
+      docs.push(line)
     }
 
-    case "BinaryExpression": {
-      const left = formatExpression(expr.left, 0).trim();
-      const right = formatExpression(expr.right, 0).trim();
-      return pad + `${left} ${expr.operator} ${right}`;
-    }
+  })
 
-    case "ParenthesizedExpression":
-      return pad + `(${formatExpression(expr.expression, 0).trim()})`;
+  return render(concat(...docs)).trimEnd() + "\n"
+
+}
+
+function block(header: Doc, body: Doc): Doc {
+
+  return group(
+    concat(
+      header,
+      line,
+      indent(body)
+    )
+  )
+
+}
+
+function formatModuleHeader(module: AST.Module): Doc {
+
+  const exposing =
+    module.exposing?.items?.join(", ") ?? ""
+
+  return concat(
+    text("module "),
+    text(module.name.join(".")),
+    text(" exposing ("),
+    text(exposing),
+    text(")")
+  )
+
+}
+
+function formatImport(imp: AST.ImportDeclaration): Doc {
+
+  return concat(
+    text("import "),
+    text(imp.moduleName.join("."))
+  )
+
+}
+
+function formatDeclaration(decl: AST.Declaration): Doc {
+
+  switch (decl.kind) {
+
+    case "FunctionDeclaration":
+      return formatFunction(decl)
 
     default:
-      throw new Error(`Formatter missing case ${(expr as { kind?: string }).kind}`);
+      return text("-- unsupported declaration")
+
   }
+
 }
 
-function formatPattern(pattern: AST.Pattern): string {
+function joinDocs(items: Doc[], sep: Doc): Doc {
+
+  if (items.length === 0) {
+    return text("")
+  }
+
+  const parts: Doc[] = [items[0]]
+
+  for (let i = 1; i < items.length; i++) {
+    parts.push(sep)
+    parts.push(items[i])
+  }
+
+  return concat(...parts)
+
+}
+
+function formatPattern(pattern: AST.Pattern): Doc {
+
   switch (pattern.kind) {
+
     case "VariablePattern":
-      return pattern.name;
+      return text(pattern.name)
 
     case "WildcardPattern":
-      return "_";
+      return text("_")
+
+    case "TuplePattern":
+      return concat(
+        text("("),
+        joinDocs(pattern.items.map(formatPattern), text(", ")),
+        text(")")
+      )
+
+    case "ConstructorPattern":
+      return concat(
+        text(pattern.constructorName.parts.join(".")),
+        pattern.arguments.length
+          ? concat(
+            text(" "),
+            joinDocs(pattern.arguments.map(formatPattern), text(" "))
+          )
+          : text("")
+      )
+
+    case "ListPattern":
+      return concat(
+        text("["),
+        joinDocs(pattern.items.map(formatPattern), text(", ")),
+        text("]")
+      )
 
     default:
-      return "_";
+      return text("-- unsupported pattern")
   }
+
+}
+
+function formatCase(expr: AST.CaseExpression): Doc {
+
+  const header =
+    concat(
+      text("case "),
+      formatExpression(expr.subject),
+      text(" of")
+    )
+
+  const branches = concat(
+
+    ...expr.branches.flatMap((b, i) => {
+
+      const branch =
+        concat(
+          formatPattern(b.pattern),
+          text(" ->"),
+          line,
+          indent(formatExpression(b.body))
+        )
+
+      if (i === 0) return [branch]
+
+      return [
+        line,
+        line,
+        branch
+      ]
+
+    })
+
+  )
+
+  return block(header, branches)
+
+}
+
+function formatLet(expr: AST.LetExpression): Doc {
+
+  const bindings = concat(
+
+    ...expr.bindings.flatMap((b, i) => {
+
+      const bind =
+        concat(
+          formatPattern(b.pattern),
+          text(" ="),
+          line,
+          indent(formatExpression(b.value))
+        )
+
+      if (i === 0) return [bind]
+
+      return [
+        line,
+        line,
+        bind
+      ]
+
+    })
+
+  )
+
+  const letPart =
+    block(text("let"), bindings)
+
+  return concat(
+    letPart,
+    line,
+    text("in"),
+    line,
+    indent(formatExpression(expr.body))
+  )
+
+}
+
+function formatFunction(fn: AST.FunctionDeclaration): Doc {
+
+  const params = fn.parameters
+    .map(p => formatPattern(p.pattern))
+    .join(" ")
+
+  const header =
+    concat(
+      text(fn.name),
+      params ? text(" " + params) : text(""),
+      text(" =")
+    )
+
+  return block(header, formatExpression(fn.body))
+
+}
+
+function formatExpression(expr: AST.Expression): Doc {
+
+  switch (expr.kind) {
+
+    case "IdentifierExpression":
+      return text(expr.name)
+
+    case "IntegerLiteralExpression":
+      return text(expr.raw)
+
+    case "FloatLiteralExpression":
+      return text(expr.raw)
+
+    case "StringLiteralExpression":
+      return text(JSON.stringify(expr.value))
+
+    case "BooleanLiteralExpression":
+      return text(expr.value ? "True" : "False")
+
+    case "BinaryExpression":
+      return concat(
+        formatExpression(expr.left),
+        text(" "),
+        text(expr.operator),
+        text(" "),
+        formatExpression(expr.right)
+      )
+
+    case "CallExpression":
+
+      return concat(
+        formatExpression(expr.callee),
+        text(" "),
+        concat(
+          ...expr.arguments.map((a, i) =>
+            concat(
+              formatExpression(a),
+              i === expr.arguments.length - 1 ? text("") : text(" ")
+            )
+          )
+        )
+      )
+
+    case "ParenthesizedExpression":
+      return concat(
+        text("("),
+        formatExpression(expr.expression),
+        text(")")
+      )
+
+    default:
+      return text("-- unsupported expression")
+
+  }
+
 }

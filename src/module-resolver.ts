@@ -9,16 +9,19 @@
 // - detect import cycles
 // - surface consistent diagnostics
 //
-// Current assumptions:
-// - project source root defaults to <projectRoot>/src
-// - each .sky file contains exactly one module declaration
-// - import names must match declared module names
+// Important:
+// - only `module.imports` participate in Sky module resolution
+// - `ForeignImportDeclaration` is NOT a Sky module dependency and must be ignored here
 
 import fs from "fs";
 import path from "path";
+import process from "process";
+
 import { lex, type Diagnostic, type SourceSpan } from "./lexer.js";
 import { parse } from "./parser.js";
+import { filterLayout } from "./parser/filter-layout.js";
 import type { Module, ImportDeclaration } from "./ast.js";
+import { resolveNpmImport } from "./ffi/resolve-npm-import.js"
 
 export interface ModuleResolverOptions {
   readonly projectRoot: string;
@@ -47,11 +50,6 @@ export interface ModuleGraph {
   readonly topologicalOrder: readonly string[];
 }
 
-interface VisitFrame {
-  readonly moduleName: string;
-  readonly filePath: string;
-}
-
 const DEFAULT_EXTENSIONS = [".sky"] as const;
 
 export class ModuleResolver {
@@ -74,13 +72,14 @@ export class ModuleResolver {
 
   public buildGraphFromEntry(entryFile: string): ModuleGraph {
     const fullEntryPath = path.resolve(entryFile);
+
     const entryResolved = this.loadModuleByFile(fullEntryPath);
 
     if (!entryResolved) {
       return {
         entryModuleName: "<unknown>",
         nodes: new Map(),
-        diagnostics: this.diagnostics,
+        diagnostics: [...this.diagnostics],
         topologicalOrder: [],
       };
     }
@@ -90,12 +89,12 @@ export class ModuleResolver {
     return {
       entryModuleName: entryResolved.moduleName,
       nodes: this.modulesByName,
-      diagnostics: this.diagnostics,
+      diagnostics: [...this.diagnostics],
       topologicalOrder: [...this.topologicalOrder],
     };
   }
 
-  private walk(moduleName: string, filePath: string): void {
+  private async walk(moduleName: string, filePath: string): Promise<void> {
     if (this.visited.has(moduleName)) {
       return;
     }
@@ -116,6 +115,9 @@ export class ModuleResolver {
       return;
     }
 
+    // IMPORTANT:
+    // Only regular Sky imports participate in module resolution.
+    // Foreign imports are declarations, not filesystem modules.
     const dependencies = loaded.ast.imports.map((imp) => joinModuleName(imp.moduleName));
 
     const existing = this.modulesByName.get(moduleName);
@@ -130,7 +132,8 @@ export class ModuleResolver {
 
     for (const imp of loaded.ast.imports) {
       const importedName = joinModuleName(imp.moduleName);
-      const importedFile = this.resolveImportToFile(loaded.filePath, imp);
+      const importedFile = await this.resolveImportToFile(imp);
+
       if (!importedFile) {
         continue;
       }
@@ -165,6 +168,7 @@ export class ModuleResolver {
     }
 
     const source = fs.readFileSync(normalizedPath, "utf8");
+
     const lexResult = lex(source, normalizedPath);
     if (lexResult.diagnostics.length > 0) {
       this.diagnostics.push(...lexResult.diagnostics);
@@ -173,10 +177,10 @@ export class ModuleResolver {
 
     let ast: Module;
     try {
-      ast = parse(lexResult.tokens);
+      ast = parse(filterLayout(lexResult.tokens));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.reportSynthetic(message);
+      this.reportSynthetic(`${normalizedPath}: ${message}`);
       return undefined;
     }
 
@@ -221,21 +225,48 @@ export class ModuleResolver {
     };
   }
 
-  private resolveImportToFile(fromFilePath: string, imp: ImportDeclaration): string | undefined {
-    const importedModuleName = joinModuleName(imp.moduleName);
 
-    const candidateBase = path.join(this.sourceRoot, ...imp.moduleName);
-    const candidates: string[] = [];
+  private async resolveImportToFile(
+    imp: ImportDeclaration
+  ): Promise<string | undefined> {
+
+    const importedModuleName =
+      joinModuleName(imp.moduleName)
+
+    const candidateBase =
+      path.join(this.sourceRoot, ...imp.moduleName)
+
+    const candidates: string[] = []
 
     for (const extension of this.extensions) {
-      candidates.push(candidateBase + extension);
-      candidates.push(path.join(candidateBase, "index" + extension));
+
+      candidates.push(candidateBase + extension)
+
+      candidates.push(
+        path.join(candidateBase, "index" + extension)
+      )
+
     }
 
     for (const candidate of candidates) {
+
       if (fs.existsSync(candidate)) {
-        return path.resolve(candidate);
+        return path.resolve(candidate)
       }
+
+    }
+
+    // -------------------------
+    // NPM fallback resolution
+    // -------------------------
+
+    const npmResolved =
+      await resolveNpmImport(
+        imp.moduleName[imp.moduleName.length - 1]
+      )
+
+    if (npmResolved) {
+      return npmResolved
     }
 
     this.diagnostics.push({
@@ -243,10 +274,12 @@ export class ModuleResolver {
       message: `Could not resolve import ${importedModuleName}.`,
       span: imp.span,
       hint: `Expected one of: ${candidates.join(", ")}`,
-    });
+    })
 
-    return undefined;
+    return undefined
+
   }
+
 
   private deriveModuleNameFromFile(filePath: string): string {
     const relative = path.relative(this.sourceRoot, filePath);
@@ -261,23 +294,27 @@ export class ModuleResolver {
   }
 
   private reportSynthetic(message: string, hint?: string): void {
-    const span = zeroSpan();
     this.diagnostics.push({
       severity: "error",
       message,
-      span,
+      span: zeroSpan(),
       hint,
     });
   }
 }
 
-export function buildModuleGraph(entryFile: string, options?: Partial<ModuleResolverOptions>): ModuleGraph {
+export function buildModuleGraph(
+  entryFile: string,
+  options?: Partial<ModuleResolverOptions>,
+): ModuleGraph {
   const projectRoot = path.resolve(options?.projectRoot ?? process.cwd());
+
   const resolver = new ModuleResolver({
     projectRoot,
     sourceRoot: options?.sourceRoot,
     extensions: options?.extensions,
   });
+
   return resolver.buildGraphFromEntry(entryFile);
 }
 

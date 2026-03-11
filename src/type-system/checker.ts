@@ -1,53 +1,93 @@
-// src/type-system/checker.ts
-// Sky type checking pipeline with ADT registration + exhaustiveness checking
+/* src/type-system/checker.ts
+ *
+ * Sky type checking pipeline
+ *
+ * Responsibilities:
+ * - create base type environment
+ * - register ADTs
+ * - inject foreign bindings
+ * - infer top-level declarations
+ * - run exhaustiveness checks
+ */
 
-import * as AST from "../ast.js";
-import { TypeEnvironment, createPreludeEnvironment } from "./env.js";
-import { inferTopLevel } from "./infer.js";
-import { registerAdts } from "./adt.js";
-import { checkCaseExhaustiveness } from "./exhaustiveness.js";
-import type { Scheme, Type } from "./../types.js";
+import * as AST from "../ast.js"
+import { TypeEnvironment, createPreludeEnvironment } from "./env.js"
+import { inferTopLevel } from "./infer.js"
+import { registerAdts } from "./adt.js"
+import { checkCaseExhaustiveness } from "./exhaustiveness.js"
+import { npmNameToSkyModule } from "../ffi/npm-name.js"
+
+import {
+  type Type,
+  type Scheme,
+  typeConstant,
+  mono
+} from "../types.js"
 
 export interface TypeDiagnostic {
-  readonly severity: "error" | "warning";
-  readonly message: string;
-  readonly span: AST.NodeBase["span"];
-  readonly hint?: string;
+  readonly severity: "error" | "warning"
+  readonly message: string
+  readonly span: AST.NodeBase["span"]
+  readonly hint?: string
 }
 
 export interface TypedDeclarationInfo {
-  readonly name: string;
-  readonly scheme: Scheme;
-  readonly pretty: string;
+  readonly name: string
+  readonly scheme: Scheme
+  readonly pretty: string
 }
 
 export interface TypeCheckResult {
-  readonly environment: TypeEnvironment;
-  readonly declarations: readonly TypedDeclarationInfo[];
-  readonly diagnostics: readonly TypeDiagnostic[];
+  readonly environment: TypeEnvironment
+  readonly declarations: readonly TypedDeclarationInfo[]
+  readonly diagnostics: readonly TypeDiagnostic[]
 }
 
-export function checkModule(module: AST.Module): TypeCheckResult {
+/* -----------------------------------------------------------
+   Foreign bindings
+----------------------------------------------------------- */
 
-  let env = createPreludeEnvironment();
+export interface ForeignValueBinding {
+  readonly skyName: string
+  readonly skyType?: string
+}
 
-  const declarations: TypedDeclarationInfo[] = [];
-  const diagnostics: TypeDiagnostic[] = [];
+export interface ForeignBindingSet {
+  readonly values: readonly ForeignValueBinding[]
+}
 
-  // ------------------------------------------------------------
-  // 1. Register ADTs first so constructors are available
-  // ------------------------------------------------------------
+export interface CheckModuleOptions {
+  readonly foreignBindings?: readonly ForeignBindingSet[]
+}
 
-  const adtRegistration = registerAdts(env, module.declarations);
+/* -----------------------------------------------------------
+   Module checking
+----------------------------------------------------------- */
 
-  env = adtRegistration.environment;
+export function checkModule(
+  module: AST.Module,
+  options: CheckModuleOptions = {}
+): TypeCheckResult {
+
+  let env = createPreludeEnvironment()
+
+  const declarations: TypedDeclarationInfo[] = []
+  const diagnostics: TypeDiagnostic[] = []
+
+  /* --------------------------------------------
+     1. Register ADTs
+  --------------------------------------------- */
+
+  const adtRegistration = registerAdts(env, module.declarations)
+
+  env = adtRegistration.environment
 
   for (const d of adtRegistration.diagnostics) {
     diagnostics.push({
       severity: "error",
       message: d,
       span: module.span
-    });
+    })
   }
 
   if (diagnostics.length > 0) {
@@ -55,12 +95,20 @@ export function checkModule(module: AST.Module): TypeCheckResult {
       environment: env,
       declarations,
       diagnostics
-    };
+    }
   }
 
-  // ------------------------------------------------------------
-  // 2. Infer top-level functions
-  // ------------------------------------------------------------
+  /* --------------------------------------------
+     2. Inject foreign bindings
+  --------------------------------------------- */
+
+  if (options.foreignBindings) {
+    env = injectForeignBindings(env, options.foreignBindings)
+  }
+
+  /* --------------------------------------------
+     3. Infer top level declarations
+  --------------------------------------------- */
 
   for (const declaration of module.declarations) {
 
@@ -70,42 +118,47 @@ export function checkModule(module: AST.Module): TypeCheckResult {
 
         try {
 
-          const inferred = inferTopLevel(adtRegistration.registry, env, declaration);
+          const inferred =
+            inferTopLevel(
+              adtRegistration.registry,
+              env,
+              declaration
+            )
 
-          declarations.push(inferred);
+          declarations.push(inferred)
 
-          env = env.extend(inferred.name, inferred.scheme);
-
-          // -----------------------------------------------
-          // Exhaustiveness check inside the function body
-          // -----------------------------------------------
+          env = env.extend(
+            inferred.name,
+            inferred.scheme
+          )
 
           collectCaseDiagnostics(
             adtRegistration.registry,
             declaration.body,
             diagnostics
-          );
+          )
 
         } catch (error) {
 
           diagnostics.push({
             severity: "error",
-            message: error instanceof Error ? error.message : String(error),
+            message:
+              error instanceof Error
+                ? error.message
+                : String(error),
             span: declaration.span,
             hint: `Could not infer the type of ${declaration.name}.`
-          });
+          })
 
         }
 
-        break;
+        break
       }
 
       case "TypeDeclaration":
       case "TypeAliasDeclaration":
       case "ForeignImportDeclaration":
-        // already handled or ignored for now
-        break;
-
+        break
     }
 
   }
@@ -114,121 +167,269 @@ export function checkModule(module: AST.Module): TypeCheckResult {
     environment: env,
     declarations,
     diagnostics
-  };
+  }
 
 }
 
-export function formatTypeCheckResult(result: TypeCheckResult): string {
+/* -----------------------------------------------------------
+   Result formatting
+----------------------------------------------------------- */
 
-  const lines: string[] = [];
+export function formatTypeCheckResult(
+  result: TypeCheckResult
+): string {
+
+  const lines: string[] = []
 
   for (const decl of result.declarations) {
-    lines.push(`${decl.name} : ${decl.pretty}`);
+    lines.push(`${decl.name} : ${decl.pretty}`)
   }
 
   if (result.diagnostics.length > 0) {
 
     if (lines.length > 0) {
-      lines.push("");
+      lines.push("")
     }
 
     for (const diagnostic of result.diagnostics) {
-      lines.push(`${diagnostic.severity}: ${diagnostic.message}`);
+      lines.push(`${diagnostic.severity}: ${diagnostic.message}`)
     }
 
   }
 
-  return lines.join("\n");
+  return lines.join("\n")
 
 }
 
-// ------------------------------------------------------------
-// Internal helpers
-// ------------------------------------------------------------
+/* -----------------------------------------------------------
+   Foreign binding injection
+----------------------------------------------------------- */
+
+function injectForeignBindings(
+  env: TypeEnvironment,
+  bindingSets: readonly ForeignBindingSet[]
+): TypeEnvironment {
+
+  let next = env
+
+  for (const set of bindingSets) {
+
+    for (const value of set.values) {
+
+      const type =
+        value.skyType
+          ? parseForeignType(value.skyType)
+          : typeConstant("Foreign")
+
+      next =
+        next.extend(
+          value.skyName,
+          mono(type)
+        )
+
+    }
+
+  }
+
+  return next
+}
+
+/* -----------------------------------------------------------
+   Foreign type parser (simple)
+----------------------------------------------------------- */
+
+function parseForeignType(typeText: string): Type {
+
+  const parts =
+    typeText
+      .split("->")
+      .map(p => p.trim())
+      .filter(Boolean)
+
+  if (parts.length === 1) {
+    return parseAtomic(parts[0])
+  }
+
+  let current = parseAtomic(parts[parts.length - 1])
+
+  for (let i = parts.length - 2; i >= 0; i--) {
+    current = {
+      kind: "TypeFunction",
+      from: parseAtomic(parts[i]),
+      to: current
+    }
+  }
+
+  return current
+
+}
+
+function parseAtomic(text: string): Type {
+
+  if (text.startsWith("List ")) {
+
+    return {
+      kind: "TypeApplication",
+      constructor: typeConstant("List"),
+      arguments: [
+        parseAtomic(text.slice(5))
+      ]
+    }
+
+  }
+
+  if (/^[a-z]/.test(text)) {
+
+    return {
+      kind: "TypeVariable",
+      id: stableTypeVar(text),
+      name: text
+    }
+
+  }
+
+  return typeConstant(text)
+
+}
+
+function stableTypeVar(name: string): number {
+
+  let hash = 17
+
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) | 0
+  }
+
+  return Math.abs(hash) + 100000
+
+}
+
+/* -----------------------------------------------------------
+   Exhaustiveness diagnostics
+----------------------------------------------------------- */
 
 function collectCaseDiagnostics(
-  registry: any,
+  registry: unknown,
   expression: AST.Expression,
   diagnostics: TypeDiagnostic[]
 ) {
-  visitExpression(expression, (expr) => {
 
-    if (expr.kind !== "CaseExpression") return;
+  visitExpression(
+    expression,
+    expr => {
 
-    const subjectType: Type | undefined = undefined;
+      if (expr.kind !== "CaseExpression") {
+        return
+      }
 
-    const result = checkCaseExhaustiveness(
-      registry,
-      subjectType as any,
-      expr.branches
-    );
+      const subjectType: Type | undefined = undefined
 
-    if (result) {
-      diagnostics.push({
-        severity: "error",
-        message: result.message,
-        span: expr.span
-      });
+      const result =
+        checkCaseExhaustiveness(
+          registry as any,
+          subjectType as any,
+          expr.branches
+        )
+
+      if (result) {
+
+        diagnostics.push({
+          severity: "error",
+          message: result.message,
+          span: expr.span
+        })
+
+      }
+
     }
+  )
 
-  });
 }
+
+/* -----------------------------------------------------------
+   Expression visitor
+----------------------------------------------------------- */
 
 function visitExpression(
   expression: AST.Expression,
   visitor: (expr: AST.Expression) => void
 ) {
 
-  visitor(expression);
+  visitor(expression)
 
   switch (expression.kind) {
 
     case "CallExpression":
-      visitExpression(expression.callee, visitor);
-      for (const arg of expression.arguments) visitExpression(arg, visitor);
-      return;
+
+      visitExpression(expression.callee, visitor)
+
+      for (const arg of expression.arguments) {
+        visitExpression(arg, visitor)
+      }
+
+      return
 
     case "BinaryExpression":
-      visitExpression(expression.left, visitor);
-      visitExpression(expression.right, visitor);
-      return;
+
+      visitExpression(expression.left, visitor)
+      visitExpression(expression.right, visitor)
+
+      return
 
     case "LambdaExpression":
-      visitExpression(expression.body, visitor);
-      return;
+
+      visitExpression(expression.body, visitor)
+
+      return
 
     case "LetExpression":
+
       for (const binding of expression.bindings) {
-        visitExpression(binding.value, visitor);
+        visitExpression(binding.value, visitor)
       }
-      visitExpression(expression.body, visitor);
-      return;
+
+      visitExpression(expression.body, visitor)
+
+      return
 
     case "CaseExpression":
-      visitExpression(expression.subject, visitor);
+
+      visitExpression(expression.subject, visitor)
+
       for (const branch of expression.branches) {
-        visitExpression(branch.body, visitor);
+        visitExpression(branch.body, visitor)
       }
-      return;
+
+      return
 
     case "TupleExpression":
     case "ListExpression":
-      for (const item of expression.items) visitExpression(item, visitor);
-      return;
+
+      for (const item of expression.items) {
+        visitExpression(item, visitor)
+      }
+
+      return
 
     case "RecordExpression":
+
       for (const field of expression.fields) {
-        visitExpression(field.value, visitor);
+        visitExpression(field.value, visitor)
       }
-      return;
+
+      return
 
     case "FieldAccessExpression":
-      visitExpression(expression.target, visitor);
-      return;
+
+      visitExpression(expression.target, visitor)
+
+      return
 
     case "ParenthesizedExpression":
-      visitExpression(expression.expression, visitor);
-      return;
+
+      visitExpression(expression.expression, visitor)
+
+      return
 
     case "IdentifierExpression":
     case "QualifiedIdentifierExpression":
@@ -238,7 +439,8 @@ function visitExpression(
     case "CharLiteralExpression":
     case "BooleanLiteralExpression":
     case "UnitExpression":
-      return;
+
+      return
 
   }
 

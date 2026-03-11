@@ -1,5 +1,5 @@
 // src/module-graph.ts
-// Sky module graph builder
+// Build a module dependency graph for Sky source files.
 
 import fs from "fs";
 import path from "path";
@@ -9,56 +9,60 @@ import { parse } from "./parser.js";
 import { filterLayout } from "./parser/filter-layout.js";
 import * as AST from "./ast.js";
 
-export interface GraphNode {
+export interface LoadedModule {
   readonly filePath: string;
   readonly moduleAst: AST.Module;
-  readonly imports: readonly string[];
 }
 
 export interface ModuleGraphResult {
-  readonly nodes: readonly GraphNode[];
+  readonly modules: readonly LoadedModule[];
   readonly diagnostics: readonly string[];
 }
 
-export function buildModuleGraph(entryFile: string): ModuleGraphResult {
+export async function buildModuleGraph(entryFile: string): Promise<ModuleGraphResult> {
   const diagnostics: string[] = [];
-  const nodes = new Map<string, GraphNode>();
+  const loaded = new Map<string, LoadedModule>();
   const visiting = new Set<string>();
-  const visited = new Set<string>();
-  const ordered: GraphNode[] = [];
+  const ordered: LoadedModule[] = [];
 
   const entryAbs = path.resolve(entryFile);
   const srcRoot = findSourceRoot(entryAbs);
 
-  visit(entryAbs);
+  await visit(entryAbs);
 
   return {
-    nodes: ordered,
+    modules: ordered,
     diagnostics,
   };
 
-  function visit(filePath: string): void {
+  async function visit(filePath: string): Promise<void> {
     const abs = path.resolve(filePath);
 
-    if (visited.has(abs)) return;
+    if (loaded.has(abs)) {
+      return;
+    }
 
     if (visiting.has(abs)) {
-      diagnostics.push(`Import cycle detected involving: ${abs}`);
+      diagnostics.push(`Import cycle detected involving ${abs}`);
       return;
     }
 
     visiting.add(abs);
 
-    const source = readFileSafe(abs);
-    if (source === undefined) {
+    let source: string;
+    try {
+      source = fs.readFileSync(abs, "utf8");
+    } catch {
+      diagnostics.push(`Cannot read file: ${abs}`);
       visiting.delete(abs);
       return;
     }
 
     const lexResult = lex(source, abs);
+
     if (lexResult.diagnostics.length > 0) {
       for (const d of lexResult.diagnostics) {
-        diagnostics.push(`${d.message} at ${d.span.start.line}:${d.span.start.column}`);
+        diagnostics.push(formatDiagnostic(d.message, d.span?.start.line, d.span?.start.column, abs));
       }
       visiting.delete(abs);
       return;
@@ -67,49 +71,49 @@ export function buildModuleGraph(entryFile: string): ModuleGraphResult {
     let moduleAst: AST.Module;
     try {
       moduleAst = parse(filterLayout(lexResult.tokens));
-    } catch (err) {
-      diagnostics.push(err instanceof Error ? err.message : String(err));
+    } catch (error) {
+      diagnostics.push(
+        error instanceof Error
+          ? `${abs}: ${error.message}`
+          : `${abs}: ${String(error)}`,
+      );
       visiting.delete(abs);
       return;
     }
 
-    const imports = moduleAst.imports.map((imp) => imp.moduleName.join("."));
+    const imports = moduleAst.imports.map((imp) => imp.moduleName);
 
-    const node: GraphNode = {
-      filePath: abs,
-      moduleAst,
-      imports,
-    };
+    for (const importParts of imports) {
+      const importFile = resolveModuleToFile(srcRoot, importParts);
 
-    nodes.set(abs, node);
-
-    for (const importName of imports) {
-      const importFile = resolveImportToFile(srcRoot, importName);
       if (!importFile) {
-        diagnostics.push(`Cannot resolve import ${importName} from ${abs}`);
+        diagnostics.push(
+          `Cannot resolve import ${importParts.join(".")} from ${moduleAst.name.join(".")} (${abs})`,
+        );
         continue;
       }
-      visit(importFile);
+
+      await visit(importFile);
     }
 
     visiting.delete(abs);
-    visited.add(abs);
-    ordered.push(node);
-  }
 
-  function readFileSafe(filePath: string): string | undefined {
-    try {
-      return fs.readFileSync(filePath, "utf8");
-    } catch {
-      diagnostics.push(`Cannot read file: ${filePath}`);
-      return undefined;
-    }
+    const loadedModule: LoadedModule = {
+      filePath: abs,
+      moduleAst,
+    };
+
+    loaded.set(abs, loadedModule);
+    ordered.push(loadedModule);
   }
 }
 
-function resolveImportToFile(srcRoot: string, moduleName: string): string | undefined {
-  const candidate = path.join(srcRoot, ...moduleName.split(".")) + ".sky";
-  return fs.existsSync(candidate) ? candidate : undefined;
+function resolveModuleToFile(
+  srcRoot: string,
+  moduleName: readonly string[],
+): string | undefined {
+  const filePath = path.join(srcRoot, ...moduleName) + ".sky";
+  return fs.existsSync(filePath) ? filePath : undefined;
 }
 
 function findSourceRoot(entryAbs: string): string {
@@ -121,4 +125,17 @@ function findSourceRoot(entryAbs: string): string {
   }
 
   return path.dirname(entryAbs);
+}
+
+function formatDiagnostic(
+  message: string,
+  line?: number,
+  column?: number,
+  filePath?: string,
+): string {
+  if (line === undefined || column === undefined) {
+    return filePath ? `${filePath}: ${message}` : message;
+  }
+
+  return `${filePath ?? "<unknown>"}:${line}:${column}: ${message}`;
 }
