@@ -20,6 +20,9 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "esbuild": "^0.27.3",
+    "pkg": "^5.8.1",
+    "postject": "^1.0.0-alpha.6",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12"
   }

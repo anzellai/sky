@@ -85,7 +85,11 @@ export async function generateForeignBindings(
   const values: GeneratedForeignValueBinding[] = [];
   const types: GeneratedForeignTypeBinding[] = [];
 
-  for (const requestedName of requestedExports) {
+  const exportsToProcess = requestedExports.length > 0 
+    ? requestedExports 
+    : [...runtimeExportSet, ...typeMap.keys()];
+
+  for (const requestedName of exportsToProcess) {
 
     const existsAtRuntime =
       runtimeExportSet.has(requestedName);

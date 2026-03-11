@@ -9,6 +9,7 @@ import * as AST from "../ast.js";
 
 export interface EmitOptions {
   readonly moduleName: string;
+  readonly importPaths?: ReadonlyMap<string, string>;
 }
 
 export interface EmitResult {
@@ -25,8 +26,23 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
   // Sky module imports
   for (const imp of module.imports) {
     const alias = imp.moduleName.join("_");
-    const importPath = computeRelativeImport(currentParts, imp.moduleName);
+    const moduleNameStr = imp.moduleName.join(".");
+    const importPath = options.importPaths?.get(moduleNameStr) ?? computeRelativeImport(currentParts, imp.moduleName);
     lines.push(`import * as ${alias} from "${importPath}";`);
+
+    if (imp.exposing && !imp.exposing.open && imp.exposing.items.length > 0) {
+      const names = imp.exposing.items
+        .filter((item) => item.kind === "value")
+        .map((item) => item.name);
+      
+      if (names.length > 0) {
+        lines.push(`const { ${names.join(", ")} } = ${alias};`);
+      }
+    } else if (imp.exposing && imp.exposing.open) {
+      // For open imports, we can't easily destructure without knowing all exports statically.
+      // Usually Elm-like langs rely on a resolver. Here we just emit a comment or rely on qualified usage.
+      lines.push(`// open import ${alias} exposing (..) not fully supported by simple js-emitter yet`);
+    }
   }
 
   // Foreign imports
@@ -76,10 +92,17 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
     lines.push("");
     lines.push("// Auto-run main when executed directly");
     lines.push(
-      `if (import.meta.url === \`file://\${process.argv[1]}\`) {
+      `
+const isMain = typeof require !== 'undefined' 
+  ? require.main === module 
+  : (typeof import.meta !== 'undefined' && import.meta.url === \`file://\${process.argv[1]}\`);
+
+if (isMain) {
   if (typeof main === "function") {
     const result = main();
-    if (result !== undefined) {
+    if (result instanceof Promise) {
+      result.then(res => { if (res !== undefined) console.log(res); });
+    } else if (result !== undefined) {
       console.log(result);
     }
   }

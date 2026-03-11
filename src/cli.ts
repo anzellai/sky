@@ -4,6 +4,8 @@
 import fs from "fs"
 import path from "path"
 import process from "process"
+import { execSync } from "child_process"
+import * as esbuild from "esbuild"
 
 import { compileProject } from "./compiler.js"
 import { buildModuleGraph } from "./module-graph.js"
@@ -37,6 +39,10 @@ async function main() {
 
     case "build":
       await cmdBuild(args[1])
+      return
+
+    case "compile":
+      await cmdCompile(args[1])
       return
 
     case "run":
@@ -121,6 +127,61 @@ async function cmdBuild(file?: string) {
     `Built ${graph.modules.length} module(s) in ${(end - start).toFixed(0)} ms`
   )
 
+  return { entry, project }
+}
+
+/* ------------------------------------------------ */
+
+async function cmdCompile(file?: string) {
+  const built = await cmdBuild(file)
+
+  if (!built) {
+    process.exit(1)
+  }
+
+  const { entry, project } = built
+  const modulePath = computeOutputPath(entry)
+  const bundlePath = path.join(project.outputDir, "bundle.cjs")
+  const outBinary = path.join(project.outputDir, project.name || "app")
+
+  console.log("Bundling with esbuild...")
+  const startBundle = performance.now()
+  
+  await esbuild.build({
+    entryPoints: [modulePath],
+    bundle: true,
+    platform: "node",
+    format: "cjs", // pkg prefers CJS
+    outfile: bundlePath,
+    logLevel: "error"
+  })
+
+  console.log(`Bundled in ${(performance.now() - startBundle).toFixed(0)} ms`)
+
+  console.log("Compiling to native executable...")
+  const startCompile = performance.now()
+  
+  try {
+    // Determine the host platform for a single robust binary
+    let target = "node18-"
+    if (process.platform === "darwin") target += "macos"
+    else if (process.platform === "win32") target += "win"
+    else target += "linux"
+
+    if (process.arch === "arm64") target += "-arm64"
+    else target += "-x64"
+
+    // Execute pkg to generate the binary
+    execSync(`npx pkg ${bundlePath} --targets ${target} --output ${outBinary}`, {
+      stdio: "inherit"
+    })
+
+    console.log(`Successfully compiled to native binary: ${outBinary}`)
+    console.log(`Compilation finished in ${(performance.now() - startCompile).toFixed(0)} ms`)
+  } catch (error) {
+    console.error("Failed to compile native binary.")
+    process.exit(1)
+  }
 }
 
 /* ------------------------------------------------ */
@@ -154,7 +215,7 @@ async function cmdRun(file: string) {
 
   }
 
-  const modulePath = computeOutputPath(file)
+  const modulePath = computeOutputPath(entry)
 
   const mod = await import(path.resolve(modulePath))
 
@@ -284,12 +345,13 @@ async function cmdRepl() {
 function computeOutputPath(sourceFile: string) {
 
   const parsed = path.parse(sourceFile)
-
   const parts = parsed.dir.split(path.sep)
+  const srcIndex = parts.lastIndexOf("src")
+  const outParts = srcIndex >= 0 ? parts.slice(srcIndex + 1) : parts
 
   return path.join(
     "dist",
-    ...parts.slice(-2),
+    ...outParts,
     parsed.name + ".js"
   )
 

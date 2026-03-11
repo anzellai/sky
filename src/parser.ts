@@ -113,6 +113,21 @@ export class Parser {
 
     this.consume("LParen");
 
+    if (this.peek().kind === "Dot" && this.peek(1).kind === "Dot") {
+      this.consume("Dot");
+      this.consume("Dot");
+      const end = this.consume("RParen");
+      return {
+        kind: "ExposingClause",
+        items: [],
+        open: true,
+        span: {
+          start: start.span.start,
+          end: end.span.end,
+        },
+      };
+    }
+
     const items: AST.ExposedItem[] = [];
 
     while (!this.match("RParen")) {
@@ -146,14 +161,31 @@ export class Parser {
   }
 
   private parseImport(): AST.ImportDeclaration {
-
     const start = this.consume("Keyword", "import");
 
     const moduleName = this.parseModuleName();
 
+    let alias: AST.ImportAlias | undefined;
+    if (this.match("Keyword", "as")) {
+      this.consume("Keyword", "as");
+      const aliasToken = this.consume("UpperIdentifier");
+      alias = {
+        kind: "ImportAlias",
+        name: aliasToken.lexeme,
+        span: aliasToken.span,
+      };
+    }
+
+    let exposing: AST.ExposingClause | undefined;
+    if (this.match("Keyword", "exposing")) {
+      exposing = this.parseExposing();
+    }
+
     return {
       kind: "ImportDeclaration",
       moduleName,
+      alias,
+      exposing,
       span: {
         start: start.span.start,
         end: this.previous().span.end,
@@ -333,6 +365,19 @@ export class Parser {
     if (this.match("LParen")) {
 
       const start = this.consume("LParen");
+
+      if (this.match("RParen")) {
+
+        const end = this.consume("RParen");
+
+        return {
+          kind: "UnitExpression",
+          span: {
+            start: start.span.start,
+            end: end.span.end,
+          },
+        };
+      }
 
       if (this.match("Operator")) {
 

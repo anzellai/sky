@@ -50,25 +50,58 @@ function block(header: Doc, body: Doc): Doc {
 
 function formatModuleHeader(module: AST.Module): Doc {
 
-  const exposing =
-    module.exposing?.items?.join(", ") ?? ""
+  let exposingDoc: Doc = text("");
+  if (module.exposing) {
+    if (module.exposing.open) {
+      exposingDoc = text(" exposing (..)");
+    } else if (module.exposing.items && module.exposing.items.length > 0) {
+      const items = module.exposing.items.map(i => text(i.name));
+      exposingDoc = concat(
+        text(" exposing ("),
+        joinDocs(items, text(", ")),
+        text(")")
+      );
+    } else {
+      exposingDoc = text(" exposing ()");
+    }
+  }
 
   return concat(
     text("module "),
     text(module.name.join(".")),
-    text(" exposing ("),
-    text(exposing),
-    text(")")
+    exposingDoc
   )
 
 }
 
 function formatImport(imp: AST.ImportDeclaration): Doc {
 
-  return concat(
+  const parts: Doc[] = [
     text("import "),
     text(imp.moduleName.join("."))
-  )
+  ];
+
+  if (imp.alias) {
+    parts.push(text(" as "));
+    parts.push(text(imp.alias.name));
+  }
+
+  if (imp.exposing) {
+    if (imp.exposing.open) {
+      parts.push(text(" exposing (..)"));
+    } else if (imp.exposing.items && imp.exposing.items.length > 0) {
+      const items = imp.exposing.items.map(i => text(i.name));
+      parts.push(
+        text(" exposing ("),
+        joinDocs(items, text(", ")),
+        text(")")
+      );
+    } else {
+      parts.push(text(" exposing ()"));
+    }
+  }
+
+  return concat(...parts);
 
 }
 
@@ -222,14 +255,16 @@ function formatLet(expr: AST.LetExpression): Doc {
 
 function formatFunction(fn: AST.FunctionDeclaration): Doc {
 
-  const params = fn.parameters
-    .map(p => formatPattern(p.pattern))
-    .join(" ")
+  const params = fn.parameters.map(p => formatPattern(p.pattern));
+
+  const paramsDoc = params.length > 0
+    ? concat(text(" "), joinDocs(params, text(" ")))
+    : text("");
 
   const header =
     concat(
       text(fn.name),
-      params ? text(" " + params) : text(""),
+      paramsDoc,
       text(" =")
     )
 
@@ -270,15 +305,11 @@ function formatExpression(expr: AST.Expression): Doc {
       return concat(
         formatExpression(expr.callee),
         text(" "),
-        concat(
-          ...expr.arguments.map((a, i) =>
-            concat(
-              formatExpression(a),
-              i === expr.arguments.length - 1 ? text("") : text(" ")
-            )
-          )
-        )
+        joinDocs(expr.arguments.map(formatExpression), text(" "))
       )
+
+    case "UnitExpression":
+      return text("()")
 
     case "ParenthesizedExpression":
       return concat(

@@ -24,6 +24,9 @@ export class UnificationError extends Error {
 
 export function unify(a: Type, b: Type): Substitution {
 
+  if (a.kind === "TypeConstant" && a.name === "Foreign") return emptySubstitution();
+  if (b.kind === "TypeConstant" && b.name === "Foreign") return emptySubstitution();
+
   if (a.kind === "TypeVariable") {
     return unifyVar(a, b);
   }

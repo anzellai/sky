@@ -1,7 +1,6 @@
 import fs from "fs"
 import path from "path"
 import { generateForeignBindings } from "./generate-bindings.js"
-import { npmNameToSkyModule } from "./npm-name.js"
 
 export async function resolveNpmImport(
   moduleName: string
@@ -39,7 +38,12 @@ export async function resolveNpmImport(
 
     fs.writeFileSync(
       file,
-      `module ${skyModule} exposing ()`
+      `module ${skyModule} exposing (..)`
+    )
+
+    fs.writeFileSync(
+      file.replace(/\.sky$/, ".json"),
+      JSON.stringify({ packageName: npmPackage }, null, 2)
     )
 
   }

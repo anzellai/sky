@@ -58,6 +58,7 @@ export interface ForeignBindingSet {
 
 export interface CheckModuleOptions {
   readonly foreignBindings?: readonly ForeignBindingSet[]
+  readonly imports?: ReadonlyMap<string, Scheme>
 }
 
 /* -----------------------------------------------------------
@@ -70,6 +71,12 @@ export function checkModule(
 ): TypeCheckResult {
 
   let env = createPreludeEnvironment()
+
+  if (options.imports) {
+    for (const [name, scheme] of options.imports) {
+      env = env.extend(name, scheme)
+    }
+  }
 
   const declarations: TypedDeclarationInfo[] = []
   const diagnostics: TypeDiagnostic[] = []

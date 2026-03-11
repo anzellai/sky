@@ -8,6 +8,7 @@ import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
 import { filterLayout } from "./parser/filter-layout.js";
 import * as AST from "./ast.js";
+import { resolveNpmImport } from "./ffi/resolve-npm-import.js";
 
 export interface LoadedModule {
   readonly filePath: string;
@@ -84,7 +85,14 @@ export async function buildModuleGraph(entryFile: string): Promise<ModuleGraphRe
     const imports = moduleAst.imports.map((imp) => imp.moduleName);
 
     for (const importParts of imports) {
-      const importFile = resolveModuleToFile(srcRoot, importParts);
+      let importFile = resolveModuleToFile(srcRoot, importParts);
+
+      if (!importFile) {
+        const npmResolved = await resolveNpmImport(importParts[importParts.length - 1]);
+        if (npmResolved) {
+          importFile = npmResolved;
+        }
+      }
 
       if (!importFile) {
         diagnostics.push(

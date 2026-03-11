@@ -22,10 +22,11 @@ export interface ResolvePackageResult {
 
 export function resolveForeignPackage(packageName: string): ResolvePackageResult {
   const diagnostics: string[] = [];
+  const projectRequire = createRequire(path.join(process.cwd(), "index.js"));
 
   let runtimeEntryPath: string;
   try {
-    runtimeEntryPath = require.resolve(packageName);
+    runtimeEntryPath = projectRequire.resolve(packageName);
   } catch {
     diagnostics.push(`Could not resolve npm package "${packageName}".`);
     return { diagnostics };
