@@ -47,6 +47,8 @@ src/
   ffi/                 // NPM & Foreign Function interop
     resolve-npm-import.ts
     collect-foreign.ts
+    extract-exports.ts // TS compiler API extraction
+    convert-types.ts   // TS -> Sky Type translation
 
   formatter/
   lsp/
@@ -63,21 +65,22 @@ Sky syntax intentionally mirrors **Elm** where possible.
 ```elm
 module Examples.Simple.Main exposing (main)
 
-import Uuid exposing (v4)
+import Express exposing (express, application_get, application_listen, response_json)
 
-add a b =
-    a + b
+-- Prelude is implicitly imported! (identity, always, unsafeCastFromJson, etc.)
+pingHandler req res next =
+    response_json res (unsafeCastFromJson "{\"status\": \"ok\", \"ping\": 1}")
 
 main =
-    add (v4 ()) 3
+    application_listen (application_get (express ()) "/ping" pingHandler) 3042 "localhost" 0 (\err -> ())
 ```
 
 **Design goals:**
 - simple functional syntax
-- Elm-style pipeline operators
+- Elm-style pipeline operators (`|>` and `<|`)
 - Hindley–Milner type inference
-- deterministic formatting
-- zero-friction NPM integration (via `import Uuid`)
+- deterministic Elm-style formatting (multi-line records, etc.)
+- zero-friction NPM integration (via `import Express`)
 - fast native binaries
 
 ---
@@ -101,13 +104,15 @@ Formatter also supports stdin: `sky fmt -`
 
 ## NPM Interop & FFI (Foreign Function Interface)
 
-Sky features automatic invisible interop with the NPM ecosystem. 
+Sky features automatic invisible interop with the NPM ecosystem. When a user writes `import Express`:
 
-1. **Resolution**: When a user writes `import Uuid`, the compiler checks for `Uuid.sky`. If missing, `resolveNpmImport` automatically queries `@types/uuid` or `uuid`, extracts the TypeScript signature, and converts it to a Sky type (e.g. `String -> String`).
-2. **Stubbing**: It generates a `.sky` stub inside `.skycache/ffi/Sky/FFI/Uuid.sky` and a sidecar `.json` tracking the true NPM package name.
-3. **Graphing**: The compiler treats these as `Sky.FFI.Uuid` internally.
+1. **Resolution**: If missing, `resolveNpmImport` automatically queries `@types/express` or `express`, extracting the TypeScript signatures.
+2. **Auto-Currying (Thunk Generation)**: It generates a JavaScript wrapper (`__sky_ffi_express.js`) that automatically translates between Sky's purely functional curried world and Node's OOP flat world.
+   - Variadic arrays (`...args: T[]`) are flattened to single arguments.
+   - JS Class/Interface methods (like `Application.get`) are extracted, lowercased, and exposed as standalone functions (`application_get`) where the first argument is always the `instance`.
+   - JS Callbacks are automatically wrapped in asynchronous thunks so Promises can be awaited natively across the boundary.
+3. **Stubbing**: It generates a `.sky` stub inside `.skycache/ffi/Sky/FFI/Express.sky` and a sidecar `.json` tracking the true NPM package name.
 4. **Typing**: The `Foreign` type is used as a fallback for complex generic TS types. `Foreign` acts as `any` during type unification to prevent the compiler from crashing on unsupported NPM types.
-5. **Emission**: During JS Code Generation, `import * as Uuid from "uuid"` is cleanly injected into the JS output, and explicit exposes are destructured (`const { v4 } = Uuid;`).
 
 ---
 
@@ -115,9 +120,9 @@ Sky features automatic invisible interop with the NPM ecosystem.
 
 To prevent regressions, strictly adhere to the following rules:
 
-### 1. Type Environment Propagation
+### 1. Type Environment Propagation & LSP
 Do **not** revert `checkModule` to checking modules in isolation. 
-The module graph topologically sorts dependencies. In `compiler.ts`, the typed `Scheme`s of exported functions are collected into `moduleExports` and passed into `checkModule(..., { imports: importsMap })`. This is what allows `App.Main` to know the types of functions imported from `Sky.FFI.Uuid`. 
+The module graph topologically sorts dependencies. In `compiler.ts`, the typed `Scheme`s of exported functions are collected into `moduleExports` and passed into `checkModule(..., { imports: importsMap })`. This is what allows the Type Checker and the Language Server (LSP) to know the types of functions imported from other files or FFI stubs. The LSP specifically calls `typeCheckProject` so it receives the fully enriched graph.
 
 ### 2. The `Foreign` Type
 The type system strictly enforces Hindley-Milner type inference, but **`Foreign` is the exception**. In `src/type-system/unify.ts`, `Foreign` deliberately unifies with **anything** (like TypeScript's `any`). Do not remove this logic, or the compiler will reject NPM packages with complex types.
@@ -126,6 +131,7 @@ The type system strictly enforces Hindley-Milner type inference, but **`Foreign`
 If making changes to `resolveNpmImport.ts` or `collect-foreign.ts`:
 - FFI `.sky` stubs must always expose everything: `module Sky.FFI.Name exposing (..)`. If it says `exposing ()`, the `compiler.ts` logic will hide the NPM functions from importers!
 - The accompanying `.json` file (`{ "packageName": "uuid" }`) is crucial. `collectForeignImports` relies on it to dynamically generate bindings at compile-time without needing an AST `ForeignImportDeclaration`.
+- Globals like `JSON` are explicitly skipped by the FFI NPM resolver but injected natively as `Foreign` bindings.
 
 ### 4. JavaScript Emission & Execution
 Sky targets two distinct runtime environments via `js-emitter.ts`:
@@ -133,16 +139,16 @@ Sky targets two distinct runtime environments via `js-emitter.ts`:
 - **`sky compile` (CommonJS Bundle)**: `esbuild` bundles the code into `bundle.cjs`, which is packaged by `pkg`.
 - **Constraint**: Emitted code must execute properly in both. For entry-point detection, use the existing hybrid check (checking `require.main === module` for CJS, and `import.meta.url` for ESM).
 
-### 5. AST & Formatter Stability
-Modifying the parser (e.g. adding a new expression type like `UnitExpression`) requires updating:
-1. `src/ast.ts`
-2. `src/parser.ts`
-3. `src/formatter/formatter.ts` (Ensure it renders deterministically!)
-4. `src/type-system/infer.ts` (Type Inference)
-5. `src/codegen/js-emitter.ts` (JS Output)
+### 5. Layout Parser (Indentation Rules)
+Sky uses an ML/Haskell-style indentation parser (via `src/parser/filter-layout.ts`). All top-level declarations MUST start at column 1. The core parser `parseApplication` and `parseExpression` explicitly break their loops if the next token's indentation drops to `column === 1` or lower than the scoped `minColumn`. Do not change these checks to arbitrary token lookaheads.
 
-### 6. Formatting Invariants
-The formatter (`src/formatter/formatter.ts`) relies on a builder pattern (`Doc`). Do not use native `Array.join(", ")` on AST nodes. Always use `concat()`, `joinDocs()`, and `text()`. The formatter invariant must hold: `fmt(fmt(code)) == fmt(code)`.
+### 6. Standard Library Prelude
+The compiler implicitly injects `import Sky.Core.Prelude exposing (..)` into every file during `parseModule`. Do not inject it if the file already imports it (to prevent formatter duplication loops). The `module-graph.ts` resolver intercepts `Sky.Core.*` requests and reads them directly from the compiler's bundled `src/stdlib` directory.
+
+### 7. Formatter & AST Stability
+The formatter (`src/formatter/formatter.ts`) relies on a builder pattern (`Doc`). 
+- Do not use native `Array.join(", ")` on AST nodes. Always use `concat()`, `joinDocs()`, and `text()`. 
+- **`hardline` vs `line`:** Always use `hardline` for Elm-style multi-line structures (like Record Expressions `{ a = 1 \n , b = 2 }` and pipelines `|>` / `<|`). `line` dynamically flattens into a space if it fits the 80-char width, which breaks strict vertical Elm formatting.
 
 ---
 
@@ -158,14 +164,15 @@ Then test against an example project:
 
 ```bash
 # Verify it runs (ESM pipeline)
-sky run examples/Main.sky  
+cd sky-examples/ApiServer
+sky run
 
 # Verify it compiles to a standalone binary (esbuild + pkg CJS pipeline)
-sky compile examples/Main.sky  
-./dist/examples-app
+sky compile
+./dist/api-server
 
 # Verify formatting
-sky fmt examples/Main.sky  
+sky fmt src/App/Main.sky  
 ```
 
 Verify LSP still runs:
@@ -181,4 +188,5 @@ Potential improvements:
 - project-wide symbol index
 - module graph type checking across cyclic boundaries
 - tree-sitter grammar
-- standard library
+- explicit List literal parsing `[1, 2, 3]`
+- Let-expression parsing `let x = 1 in x`
