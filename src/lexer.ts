@@ -179,6 +179,13 @@ export class Lexer {
         continue;
       }
 
+      if (ch === "|") {
+        if (!OPERATOR_CHARS.has(this.peek(1))) {
+          this.pushSimple("Pipe", 1);
+          continue;
+        }
+      }
+
       if (ch === "-") {
         if (this.peek(1) === ">") {
           this.pushSimple("Arrow", 2);

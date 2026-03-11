@@ -26,20 +26,32 @@ export function convertFunctionSignature(
 
   const diagnostics: string[] = []
 
-  const arrowIndex = signatureText.lastIndexOf("=>")
+  let cleanSignatureText = signatureText.trim()
+  if (cleanSignatureText.startsWith("<")) {
+    let depth = 0;
+    let i = 0;
+    for (; i < cleanSignatureText.length; i++) {
+      if (cleanSignatureText[i] === "<") depth++;
+      else if (cleanSignatureText[i] === ">") depth--;
+      if (depth === 0) break;
+    }
+    cleanSignatureText = cleanSignatureText.slice(i + 1).trim();
+  }
+
+  const arrowIndex = cleanSignatureText.lastIndexOf("=>")
 
   if (arrowIndex === -1) {
-    diagnostics.push(`Unsupported signature format: ${signatureText}`)
+    diagnostics.push(`Unsupported signature format: ${cleanSignatureText}`)
     return { diagnostics }
   }
 
-  const paramsPart = signatureText.slice(0, arrowIndex).trim()
-  const returnPart = signatureText.slice(arrowIndex + 2).trim()
+  const paramsText = cleanSignatureText.slice(0, arrowIndex).trim()
+  const returnText = cleanSignatureText.slice(arrowIndex + 2).trim()
 
-  const params = parseParameterTypes(paramsPart)
+  const params = parseParameterTypes(paramsText)
 
   const convertedParams = params.map(convertType)
-  const convertedReturn = convertType(returnPart)
+  const convertedReturn = convertType(returnText)
 
   const skyType =
     convertedParams.length === 0
@@ -66,15 +78,49 @@ function parseParameterTypes(paramText: string): string[] {
     return []
   }
 
-  return trimmed
-    .split(",")
-    .map(p => p.trim())
+  const parts: string[] = [];
+  let current = "";
+  let depth = 0;
+
+  for (let i = 0; i < trimmed.length; i++) {
+    const char = trimmed[i];
+    if (char === "<" || char === "(" || char === "{") depth++;
+    else if (char === ">" || char === ")" || char === "}") depth--;
+
+    if (char === "," && depth === 0) {
+      parts.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  
+  if (current.trim()) {
+    parts.push(current.trim());
+  }
+
+  return parts
     .map(p => {
-      const colon = p.indexOf(":")
-      if (colon !== -1) {
-        return p.slice(colon + 1).trim()
+      let isVariadic = false;
+      if (p.startsWith("...")) {
+        isVariadic = true;
       }
-      return p
+
+      // Only split by colon if it's not inside an object literal or generic
+      let cDepth = 0;
+      for (let i = 0; i < p.length; i++) {
+        if (p[i] === "<" || p[i] === "(" || p[i] === "{") cDepth++;
+        else if (p[i] === ">" || p[i] === ")" || p[i] === "}") cDepth--;
+        if (p[i] === ":" && cDepth === 0) {
+          let typeStr = p.slice(i + 1).trim();
+          if (isVariadic && typeStr.endsWith("[]")) {
+            // Flatten variadics: `...args: T[]` becomes just `T`
+            typeStr = typeStr.slice(0, -2).trim();
+          }
+          return typeStr;
+        }
+      }
+      return p.trim();
     })
 }
 
@@ -84,7 +130,7 @@ export function convertType(tsType: string): string {
 
   // primitive mappings
   if (t === "string") return "String"
-  if (t === "number") return "Float"
+  if (t === "number") return "Int"
   if (t === "boolean") return "Bool"
   if (t === "void") return "Unit"
   if (t === "undefined") return "Unit"
@@ -117,10 +163,10 @@ export function convertType(tsType: string): string {
     const ret = convertType(right)
 
     if (args.length === 0) {
-      return ret
+      return `Unit -> ${ret}`
     }
 
-    return `${args.join(" -> ")} -> ${ret}`
+    return `(${args.join(" -> ")} -> ${ret})`
   }
 
   // union types fallback
@@ -134,9 +180,5 @@ export function convertType(tsType: string): string {
   }
 
   // generic fallback
-  if (/^[A-Z]/.test(t)) {
-    return t
-  }
-
   return "Foreign"
 }

@@ -127,7 +127,7 @@ export function unify(a: Type, b: Type): Substitution {
     return current;
   }
 
-  throw new UnificationError(`Cannot unify types`);
+  throw new UnificationError(`Cannot unify types: ${JSON.stringify(a)} and ${JSON.stringify(b)}`);
 }
 
 function unifyVar(variable: TypeVariable, type: Type): Substitution {

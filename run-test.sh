@@ -1,2 +1,2 @@
-cd /Users/anzel/works/playground/sky-examples
-sky compile
+sky ast src/stdlib/Sky/Core/Prelude.sky > ast.json
+cat ast.json | grep "\"name\"" -A 5

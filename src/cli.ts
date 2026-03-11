@@ -287,19 +287,30 @@ async function cmdAst(file: string) {
 
 async function cmdFormat(file: string) {
 
-  const source = fs.readFileSync(file, "utf8")
+  let source = "";
+
+  if (file === "-") {
+    // Read from stdin
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(Buffer.from(chunk));
+    }
+    source = Buffer.concat(chunks).toString("utf8");
+  } else {
+    source = fs.readFileSync(file, "utf8")
+  }
 
   const lexResult = lex(source, file)
-
   const tokens = filterLayout(lexResult.tokens)
+  const moduleAst = parse(tokens)
+  const formatted = formatModule(moduleAst)
 
-  const module = parse(tokens)
-
-  const formatted = formatModule(module)
-
-  fs.writeFileSync(file, formatted)
-
-  console.log("Formatted", file)
+  if (file === "-") {
+    process.stdout.write(formatted);
+  } else {
+    fs.writeFileSync(file, formatted)
+    console.log("Formatted", file)
+  }
 
 }
 

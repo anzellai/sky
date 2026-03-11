@@ -10,11 +10,20 @@ export function foreignPackageToModule(pkg: string): string {
   return `Sky.FFI.${npmNameToSkyModule(pkg)}`;
 }
 
+export interface GeneratedForeignParameter {
+  readonly name: string;
+  readonly isCallback: boolean;
+  readonly callbackArity: number;
+}
+
 export interface GeneratedForeignValueBinding {
   readonly skyName: string;
   readonly jsName: string;
   readonly sourceModule: string;
   readonly skyType?: string;
+  readonly parameters?: readonly GeneratedForeignParameter[];
+  readonly isAsync?: boolean;
+  readonly methodOf?: string;
 }
 
 export interface GeneratedForeignTypeBinding {
@@ -73,7 +82,11 @@ export async function generateForeignBindings(
   const functionMap =
     new Map(
       extractedResult.extracted.functions
-        .map(fn => [fn.name, fn] as const)
+        .filter(fn => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(fn.name))
+        .map(fn => {
+          const key = fn.methodOf ? `${fn.methodOf.toLowerCase()}_${fn.name}` : fn.name;
+          return [key, fn] as const;
+        })
     );
 
   const typeMap =
@@ -85,20 +98,24 @@ export async function generateForeignBindings(
   const values: GeneratedForeignValueBinding[] = [];
   const types: GeneratedForeignTypeBinding[] = [];
 
-  const exportsToProcess = requestedExports.length > 0 
+  const reservedWords = new Set(["break", "case", "catch", "class", "const", "continue", "debugger", "default", "delete", "do", "else", "export", "extends", "finally", "for", "function", "if", "import", "in", "instanceof", "new", "return", "super", "switch", "this", "throw", "try", "typeof", "var", "void", "while", "with", "yield", "enum", "implements", "interface", "let", "package", "private", "protected", "public", "static", "await"]);
+
+  const rawExportsToProcess = requestedExports.length > 0 
     ? requestedExports 
-    : [...runtimeExportSet, ...typeMap.keys()];
+    : Array.from(new Set([...runtimeExportSet, ...typeMap.keys(), ...functionMap.keys()]));
+
+  const exportsToProcess = rawExportsToProcess.filter(name => 
+    /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name) && !reservedWords.has(name)
+  );
 
   for (const requestedName of exportsToProcess) {
 
-    const existsAtRuntime =
-      runtimeExportSet.has(requestedName);
+    // Methods don't strictly exist "at runtime" in the same way as top-level module exports,
+    // so we treat them as existing if they are in the functionMap
+    const functionInfo = functionMap.get(requestedName);
+    const existsAtRuntime = runtimeExportSet.has(requestedName) || !!functionInfo?.methodOf;
 
-    const functionInfo =
-      functionMap.get(requestedName);
-
-    const typeInfo =
-      typeMap.get(requestedName);
+    const typeInfo = typeMap.get(requestedName);
 
     if (!existsAtRuntime && !functionInfo && !typeInfo) {
 
@@ -134,14 +151,20 @@ export async function generateForeignBindings(
       diagnostics.push(...converted.diagnostics);
 
       skyType = converted.converted?.skyType;
+      
+      if (skyType && functionInfo.methodOf) {
+        skyType = `Foreign -> ${skyType}`;
+      }
 
     }
 
     values.push({
       skyName: requestedName,
-      jsName: requestedName,
+      jsName: functionInfo ? functionInfo.name : requestedName,
       sourceModule: skyModuleName,
       skyType,
+      parameters: functionInfo?.parameters,
+      methodOf: functionInfo?.methodOf,
     });
 
   }

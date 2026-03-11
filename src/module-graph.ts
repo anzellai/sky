@@ -3,12 +3,16 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 
 import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
 import { filterLayout } from "./parser/filter-layout.js";
 import * as AST from "./ast.js";
 import { resolveNpmImport } from "./ffi/resolve-npm-import.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface LoadedModule {
   readonly filePath: string;
@@ -20,7 +24,12 @@ export interface ModuleGraphResult {
   readonly diagnostics: readonly string[];
 }
 
-export async function buildModuleGraph(entryFile: string): Promise<ModuleGraphResult> {
+export interface VirtualFile {
+  readonly path: string;
+  readonly content: string;
+}
+
+export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualFile): Promise<ModuleGraphResult> {
   const diagnostics: string[] = [];
   const loaded = new Map<string, LoadedModule>();
   const visiting = new Set<string>();
@@ -52,7 +61,11 @@ export async function buildModuleGraph(entryFile: string): Promise<ModuleGraphRe
 
     let source: string;
     try {
-      source = fs.readFileSync(abs, "utf8");
+      if (virtualFile && path.resolve(virtualFile.path) === abs) {
+        source = virtualFile.content;
+      } else {
+        source = fs.readFileSync(abs, "utf8");
+      }
     } catch {
       diagnostics.push(`Cannot read file: ${abs}`);
       visiting.delete(abs);
@@ -120,6 +133,14 @@ function resolveModuleToFile(
   srcRoot: string,
   moduleName: readonly string[],
 ): string | undefined {
+  if (moduleName[0] === "Sky" && moduleName[1] === "Core") {
+    // Read from the bundled stdlib inside the compiler
+    const stdlibPath = path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
+    if (fs.existsSync(stdlibPath)) {
+      return stdlibPath;
+    }
+  }
+
   const filePath = path.join(srcRoot, ...moduleName) + ".sky";
   return fs.existsSync(filePath) ? filePath : undefined;
 }

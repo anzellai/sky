@@ -1,5 +1,5 @@
 import * as AST from "../ast.js"
-import { concat, Doc, group, indent, line, text } from "./doc.js"
+import { concat, Doc, group, indent, line, text , hardline} from "./doc.js"
 import { render } from "./render.js"
 
 export function formatModule(module: AST.Module): string {
@@ -105,12 +105,101 @@ function formatImport(imp: AST.ImportDeclaration): Doc {
 
 }
 
+function formatTypeExpression(t: AST.TypeExpression): Doc {
+  switch (t.kind) {
+    case "TypeVariable":
+      return text(t.name);
+    case "TypeReference":
+      if (t.arguments.length === 0) return text(t.name.parts.join("."));
+      return concat(
+        text(t.name.parts.join(".")),
+        text(" "),
+        joinDocs(t.arguments.map(formatTypeExpression), text(" "))
+      );
+    case "FunctionType":
+      return concat(
+        formatTypeExpression(t.from),
+        text(" -> "),
+        formatTypeExpression(t.to)
+      );
+            case "RecordType":
+      if (t.fields.length === 0) return text("{}");
+      if (t.fields.length === 1) {
+        return concat(text("{ "), text(t.fields[0].name), text(" : "), formatTypeExpression(t.fields[0].type), text(" }"));
+      }
+      return group(concat(
+        text("{ "),
+        joinDocs(
+          t.fields.map(f => concat(text(f.name), text(" : "), formatTypeExpression(f.type))),
+          concat(hardline, text(", "))
+        ),
+        hardline,
+        text("}")
+      ))
+  }
+}
+
+function formatTypeDeclaration(decl: AST.TypeDeclaration): Doc {
+  const header = concat(
+    text("type "),
+    text(decl.name),
+    decl.typeParameters.length > 0 ? text(" " + decl.typeParameters.join(" ")) : text("")
+  );
+
+  if (decl.variants.length === 0) return header;
+
+  const variants = decl.variants.map((v, i) => {
+    const prefix = i === 0 ? text("= ") : text("| ");
+    if (v.fields.length === 0) return concat(prefix, text(v.name));
+    return concat(
+      prefix,
+      text(v.name),
+      text(" "),
+      joinDocs(v.fields.map(formatTypeExpression), text(" "))
+    );
+  });
+
+  return block(header, joinDocs(variants, line));
+}
+
+function formatTypeAliasDeclaration(decl: AST.TypeAliasDeclaration): Doc {
+  const header = concat(
+    text("type alias "),
+    text(decl.name),
+    decl.typeParameters.length > 0 ? text(" " + decl.typeParameters.join(" ")) : text(""),
+    text(" =")
+  );
+
+  return block(header, formatTypeExpression(decl.aliasedType));
+}
+
+function formatForeignImportDeclaration(decl: AST.ForeignImportDeclaration): Doc {
+  // We reconstruct the basic syntax. But wait, standard foreign import groups these by source.
+  // We just emit it as is for now:
+  return concat(
+    text("foreign import "),
+    text(JSON.stringify(decl.sourceModule)),
+    text(" exposing ("),
+    text(decl.name),
+    text(")")
+  );
+}
+
 function formatDeclaration(decl: AST.Declaration): Doc {
 
   switch (decl.kind) {
 
     case "FunctionDeclaration":
       return formatFunction(decl)
+
+    case "TypeDeclaration":
+      return formatTypeDeclaration(decl)
+
+    case "TypeAliasDeclaration":
+      return formatTypeAliasDeclaration(decl)
+
+    case "ForeignImportDeclaration":
+      return formatForeignImportDeclaration(decl)
 
     default:
       return text("-- unsupported declaration")
@@ -268,13 +357,47 @@ function formatFunction(fn: AST.FunctionDeclaration): Doc {
       text(" =")
     )
 
-  return block(header, formatExpression(fn.body))
+  return group(concat(
+    header,
+    indent(concat(hardline, formatExpression(fn.body)))
+  ))
 
 }
 
 function formatExpression(expr: AST.Expression): Doc {
 
   switch (expr.kind) {
+
+    case "QualifiedIdentifierExpression":
+      return text(expr.name.parts.join("."))
+
+            case "RecordExpression":
+      if (expr.fields.length === 0) return text("{}");
+      if (expr.fields.length === 1) {
+        return concat(text("{ "), text(expr.fields[0].name), text(" = "), formatExpression(expr.fields[0].value), text(" }"));
+      }
+      return group(concat(
+        text("{ "),
+        joinDocs(
+          expr.fields.map(f => concat(text(f.name), text(" = "), formatExpression(f.value))),
+          concat(hardline, text(", "))
+        ),
+        hardline,
+        text("}")
+      ))
+
+    case "FieldAccessExpression":
+      return concat(
+        formatExpression(expr.target),
+        text("."),
+        text(expr.fieldName)
+      )
+
+    case "CaseExpression":
+      return formatCase(expr)
+
+    case "LetExpression":
+      return formatLet(expr)
 
     case "IdentifierExpression":
       return text(expr.name)
@@ -291,7 +414,17 @@ function formatExpression(expr: AST.Expression): Doc {
     case "BooleanLiteralExpression":
       return text(expr.value ? "True" : "False")
 
-    case "BinaryExpression":
+        case "BinaryExpression": {
+      const isPipe = expr.operator === "|>" || expr.operator === "<|";
+      if (isPipe) {
+        return concat(
+          formatExpression(expr.left),
+          hardline,
+          text(expr.operator),
+          text(" "),
+          formatExpression(expr.right)
+        )
+      }
       return concat(
         formatExpression(expr.left),
         text(" "),
@@ -299,6 +432,7 @@ function formatExpression(expr: AST.Expression): Doc {
         text(" "),
         formatExpression(expr.right)
       )
+    }
 
     case "CallExpression":
 

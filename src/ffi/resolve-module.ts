@@ -46,7 +46,7 @@ export function resolveForeignPackage(packageName: string): ResolvePackageResult
 
   let declaredTypesPath: string | undefined;
   try {
-    declaredTypesPath = resolveDeclaredTypes(packageRoot, packageJsonPath);
+    declaredTypesPath = resolveDeclaredTypes(packageRoot, packageJsonPath, projectRequire);
   } catch (error) {
     diagnostics.push(
       error instanceof Error ? error.message : `Failed to inspect types for "${packageName}".`,
@@ -83,7 +83,7 @@ function findPackageRoot(startPath: string): string | undefined {
   }
 }
 
-function resolveDeclaredTypes(packageRoot: string, packageJsonPath: string): string | undefined {
+function resolveDeclaredTypes(packageRoot: string, packageJsonPath: string, projectRequire: NodeRequire): string | undefined {
   const raw = fs.readFileSync(packageJsonPath, "utf8");
   const pkg = JSON.parse(raw) as {
     types?: string;
@@ -111,7 +111,7 @@ function resolveDeclaredTypes(packageRoot: string, packageJsonPath: string): str
     return indexDts;
   }
 
-  const definitelyTyped = resolveDefinitelyTyped(pkg.name ?? path.basename(packageRoot));
+  const definitelyTyped = resolveDefinitelyTyped(pkg.name ?? path.basename(packageRoot), projectRequire);
   if (definitelyTyped) {
     return definitelyTyped;
   }
@@ -119,7 +119,7 @@ function resolveDeclaredTypes(packageRoot: string, packageJsonPath: string): str
   return undefined;
 }
 
-function resolveDefinitelyTyped(packageName: string): string | undefined {
+function resolveDefinitelyTyped(packageName: string, projectRequire: NodeRequire): string | undefined {
   const normalized =
     packageName.startsWith("@")
       ? packageName.slice(1).replace("/", "__")
@@ -128,16 +128,15 @@ function resolveDefinitelyTyped(packageName: string): string | undefined {
   const typesPackage = `@types/${normalized}`;
 
   try {
-    const typesEntry = require.resolve(typesPackage);
-    const packageRoot = findPackageRoot(typesEntry);
-    if (!packageRoot) return undefined;
+    const typesEntry = projectRequire.resolve(typesPackage + "/package.json");
+    const typesRoot = path.dirname(typesEntry);
 
-    const indexDts = path.join(packageRoot, "index.d.ts");
+    const indexDts = path.join(typesRoot, "index.d.ts");
     if (fs.existsSync(indexDts)) {
       return indexDts;
     }
 
-    return typesEntry.endsWith(".d.ts") ? typesEntry : undefined;
+    return undefined;
   } catch {
     return undefined;
   }

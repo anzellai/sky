@@ -6,10 +6,18 @@ import path from "path";
 import ts from "typescript";
 import type { ResolvedPackage } from "./resolve-module.js";
 
+export interface ExtractedForeignParameter {
+  readonly name: string;
+  readonly isCallback: boolean;
+  readonly callbackArity: number;
+}
+
 export interface ExtractedForeignFunction {
   readonly name: string;
   readonly signatureText: string;
   readonly declarationFile?: string;
+  readonly parameters: readonly ExtractedForeignParameter[];
+  readonly methodOf?: string;
 }
 
 export interface ExtractedForeignType {
@@ -128,16 +136,28 @@ function extractDeclarationExports(
     };
   }
 
-  const exportedSymbols = checker.getExportsOfModule(moduleSymbol);
+  const exportedSymbols = Array.from(checker.getExportsOfModule(moduleSymbol));
+
+  if (moduleSymbol.exports) {
+    const exportEq = moduleSymbol.exports.get(ts.escapeLeadingUnderscores("export="));
+    if (exportEq && !exportedSymbols.includes(exportEq)) {
+      exportedSymbols.push(exportEq);
+    }
+    const defaultExport = moduleSymbol.exports.get(ts.escapeLeadingUnderscores("default"));
+    if (defaultExport && !exportedSymbols.includes(defaultExport)) {
+      exportedSymbols.push(defaultExport);
+    }
+  }
 
   const functions: ExtractedForeignFunction[] = [];
   const types: ExtractedForeignType[] = [];
 
   for (const symbol of exportedSymbols) {
-    const symbolName = symbol.getName();
+    let symbolName = symbol.getName();
 
-    if (symbolName === "default") {
-      continue;
+    if (symbolName === "default" || symbolName === "export=") {
+      // Clean up package name to be a valid identifier
+      symbolName = resolved.packageName.replace(/[^a-zA-Z0-9]/g, "");
     }
 
     const declarations = symbol.getDeclarations() ?? [];
@@ -150,6 +170,56 @@ function extractDeclarationExports(
         kind: getTypeKind(declaration),
         declarationFile,
       });
+
+      // Attempt to extract methods from this interface/class
+      const type = checker.getDeclaredTypeOfSymbol(symbol);
+      if (type && type.isClassOrInterface()) {
+        const props = type.getApparentProperties();
+        for (const prop of props) {
+          const propDecl = prop.valueDeclaration || prop.getDeclarations()?.[0];
+          const propType = checker.getTypeOfSymbolAtLocation(prop, propDecl || declaration);
+          const callSigs = propType.getCallSignatures();
+          
+          if (callSigs.length > 0) {
+            const signature = callSigs.reduce((max, current) => current.parameters.length > max.parameters.length ? current : max, callSigs[0]);
+            const parameters = signature.parameters.map((p) => {
+              let isCallback = false;
+              let callbackArity = 0;
+              const pDecl = p.valueDeclaration;
+              if (pDecl) {
+                let paramType = checker.getTypeOfSymbolAtLocation(p, pDecl);
+                
+                // If it's a variadic array (e.g. ...handlers: RequestHandler[]), check its element type
+                if (checker.isArrayType(paramType)) {
+                  const typeArguments = checker.getTypeArguments(paramType as ts.TypeReference);
+                  if (typeArguments && typeArguments.length > 0) {
+                    paramType = typeArguments[0];
+                  }
+                }
+
+                const pCallSigs = paramType.getCallSignatures();
+                if (pCallSigs.length > 0) {
+                  isCallback = true;
+                  callbackArity = pCallSigs[0].parameters.length;
+                }
+              }
+              return { name: p.name, isCallback, callbackArity };
+            });
+
+            functions.push({
+              name: prop.getName(),
+              methodOf: symbolName,
+              signatureText: checker.signatureToString(
+                signature,
+                propDecl,
+                ts.TypeFormatFlags.NoTruncation | ts.TypeFormatFlags.WriteArrowStyleSignature
+              ),
+              declarationFile,
+              parameters,
+            });
+          }
+        }
+      }
       continue;
     }
 
@@ -157,7 +227,37 @@ function extractDeclarationExports(
     const signatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
 
     if (signatures.length > 0) {
-      const signature = signatures[0];
+      const signature = signatures.reduce((max, current) => current.parameters.length > max.parameters.length ? current : max, signatures[0]);
+
+      const parameters = signature.parameters.map((p) => {
+        let isCallback = false;
+        let callbackArity = 0;
+
+        const pDecl = p.valueDeclaration;
+        if (pDecl) {
+          let paramType = checker.getTypeOfSymbolAtLocation(p, pDecl);
+
+          if (checker.isArrayType(paramType)) {
+            const typeArguments = checker.getTypeArguments(paramType as ts.TypeReference);
+            if (typeArguments && typeArguments.length > 0) {
+              paramType = typeArguments[0];
+            }
+          }
+
+          const callSigs = paramType.getCallSignatures();
+          if (callSigs.length > 0) {
+            isCallback = true;
+            callbackArity = callSigs[0].parameters.length;
+          }
+        }
+
+        return {
+          name: p.name,
+          isCallback,
+          callbackArity,
+        };
+      });
+
       functions.push({
         name: symbolName,
         signatureText: checker.signatureToString(
@@ -168,6 +268,7 @@ function extractDeclarationExports(
             ts.TypeFormatFlags.UseFullyQualifiedType,
         ),
         declarationFile,
+        parameters,
       });
     }
   }

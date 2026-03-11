@@ -246,29 +246,43 @@ function injectForeignBindings(
 ----------------------------------------------------------- */
 
 function parseForeignType(typeText: string): Type {
+  let pos = 0;
+  function parsePrimary(): Type {
+    while (pos < typeText.length && typeText[pos] === " ") pos++;
+    if (pos >= typeText.length) return { kind: "TypeConstant", name: "Foreign" };
 
-  const parts =
-    typeText
-      .split("->")
-      .map(p => p.trim())
-      .filter(Boolean)
-
-  if (parts.length === 1) {
-    return parseAtomic(parts[0])
-  }
-
-  let current = parseAtomic(parts[parts.length - 1])
-
-  for (let i = parts.length - 2; i >= 0; i--) {
-    current = {
-      kind: "TypeFunction",
-      from: parseAtomic(parts[i]),
-      to: current
+    if (typeText[pos] === "(") {
+      pos++;
+      const t = parseFunctionType();
+      while (pos < typeText.length && typeText[pos] === " ") pos++;
+      if (typeText[pos] === ")") pos++;
+      return t;
     }
+
+    let end = pos;
+    while (end < typeText.length && /[a-zA-Z0-9_]/.test(typeText[end])) end++;
+    const name = typeText.slice(pos, end);
+    pos = end;
+
+    if (name === "List") {
+      return { kind: "TypeApplication", constructor: { kind: "TypeConstant", name: "List" }, arguments: [parsePrimary()] };
+    }
+    
+    if (/^[a-z]/.test(name)) return { kind: "TypeVariable", id: stableTypeVar(name), name };
+    return { kind: "TypeConstant", name: name || "Foreign" };
   }
 
-  return current
+  function parseFunctionType(): Type {
+    const t = parsePrimary();
+    while (pos < typeText.length && typeText[pos] === " ") pos++;
+    if (pos + 1 < typeText.length && typeText[pos] === "-" && typeText[pos+1] === ">") {
+      pos += 2;
+      return { kind: "TypeFunction", from: t, to: parseFunctionType() };
+    }
+    return t;
+  }
 
+  return parseFunctionType();
 }
 
 function parseAtomic(text: string): Type {

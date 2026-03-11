@@ -18,7 +18,8 @@ import { TextDocument } from "vscode-languageserver-textdocument";
 import { lex } from "../lexer.js";
 import { parse } from "../parser.js";
 import { filterLayout } from "../parser/filter-layout.js";
-import { checkModule } from "../type-system/checker.js";
+import { typeCheckProject } from "../compiler.js";
+import { URL } from "url";
 
 import { findIdentifierAtPosition } from "./find-node.js";
 import { SymbolIndex } from "./symbol-index.js";
@@ -92,34 +93,52 @@ async function validate(document: TextDocument) {
   }
 
   if (diagnostics.length === 0) {
-
     try {
+      const filePath = new URL(document.uri).pathname;
+      const result = await typeCheckProject(filePath, {
+        path: filePath,
+        content: source
+      });
 
-      const tokens = filterLayout(lexResult.tokens);
+      if (result.latestModuleAst) {
+        lastModule = result.latestModuleAst;
+        symbols.build(result.latestModuleAst);
+      }
 
-      const moduleAst = parse(tokens);
+      if (result.latestModuleAst && result.moduleResults.has(result.latestModuleAst.name.join("."))) {
+        lastTypeCheck = result.moduleResults.get(result.latestModuleAst.name.join("."));
+      }
 
-      lastModule = moduleAst;
-
-      symbols.build(moduleAst);
-
-      const typeCheck = checkModule(moduleAst);
-
-      lastTypeCheck = typeCheck;
-
-      for (const d of typeCheck.diagnostics) {
-        diagnostics.push({
-          severity: DiagnosticSeverity.Error,
-          message: d.message,
-          range: {
-            start: { line: 0, character: 0 },
-            end: { line: 0, character: 1 }
+      // Collect diagnostics matching this file
+      for (const msg of result.diagnostics) {
+        if (msg.startsWith(filePath) || msg.startsWith(document.uri)) {
+          // Attempt to parse line/col from diagnostic string like "/path:1:5: message"
+          const match = msg.match(/:(\d+):(\d+):\s*(.*)/);
+          if (match) {
+            const line = parseInt(match[1]) - 1;
+            const col = parseInt(match[2]) - 1;
+            diagnostics.push({
+              severity: DiagnosticSeverity.Error,
+              message: match[3],
+              range: {
+                start: { line, character: col },
+                end: { line, character: col + 1 }
+              }
+            });
+          } else {
+             diagnostics.push({
+              severity: DiagnosticSeverity.Error,
+              message: msg,
+              range: {
+                start: { line: 0, character: 0 },
+                end: { line: 0, character: 1 }
+              }
+            });
           }
-        });
+        }
       }
 
     } catch (err) {
-
       diagnostics.push({
         severity: DiagnosticSeverity.Error,
         message: err instanceof Error ? err.message : String(err),
@@ -128,9 +147,7 @@ async function validate(document: TextDocument) {
           end: { line: 0, character: 1 }
         }
       });
-
     }
-
   }
 
   connection.sendDiagnostics({

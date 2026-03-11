@@ -1,0 +1,18 @@
+
+module Sky.Core.Prelude exposing (..)
+
+identity x = x
+
+always a b = a
+
+composeL f g x = f (g x)
+
+composeR f g x = g (f x)
+
+flip f a b = f b a
+
+-- Built-in globals available out of the box!
+foreign import "JSON" exposing (parse, stringify)
+
+unsafeCastFromJson jsonString =
+    parse jsonString

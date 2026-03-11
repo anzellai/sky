@@ -2,6 +2,7 @@ export type Doc =
   | { kind: "text"; value: string }
   | { kind: "line" }
   | { kind: "softline" }
+  | { kind: "hardline" }
   | { kind: "concat"; parts: Doc[] }
   | { kind: "indent"; doc: Doc }
   | { kind: "group"; doc: Doc }
@@ -11,6 +12,7 @@ export function text(value: string): Doc {
 }
 
 export const line: Doc = { kind: "line" }
+export const hardline: Doc = { kind: "hardline" }
 
 export const softline: Doc = { kind: "softline" }
 

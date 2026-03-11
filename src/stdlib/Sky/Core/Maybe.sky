@@ -1,0 +1,13 @@
+
+module Sky.Core.Maybe exposing (..)
+
+type Maybe a
+    = Just a
+    | Nothing
+
+withDefault default value =
+    case value of
+        Just v ->
+            v
+        Nothing ->
+            default

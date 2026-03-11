@@ -33,79 +33,90 @@ export function render(doc: Doc): string {
 
       case "softline":
         return true
+case "hardline":
+  return false
 
-      case "concat":
-        for (const p of d.parts) {
-          if (!fits(p, remaining)) return false
-        }
-        return true
+case "concat":
+  for (const p of d.parts) {
+    if (!fits(p, remaining)) return false
+  }
+  return true
 
-      case "indent":
-        return fits(d.doc, remaining)
+case "indent":
+  return fits(d.doc, remaining)
 
-      case "group":
-        return fits(d.doc, remaining)
+case "group":
+  return fits(d.doc, remaining)
 
-    }
+}
 
+}
+
+function walk(d: Doc) {
+
+switch (d.kind) {
+
+case "text":
+  write(d.value)
+  break
+
+case "line":
+  newline()
+  break
+
+case "hardline":
+  newline()
+  break
+
+case "softline":
+  newline()
+  break
+
+case "concat":
+  for (const p of d.parts) {
+    walk(p)
+  }
+  break
+
+case "indent":
+  indentLevel += 1
+  walk(d.doc)
+  indentLevel -= 1
+  break
+
+case "group":
+
+  if (fits(d.doc, MAX_WIDTH - column)) {
+    flatten(d.doc)
+  } else {
+    walk(d.doc)
   }
 
-  function walk(d: Doc) {
+  break
 
-    switch (d.kind) {
+}
 
-      case "text":
-        write(d.value)
-        break
+}
 
-      case "line":
-        newline()
-        break
+function flatten(d: Doc) {
 
-      case "softline":
-        newline()
-        break
+switch (d.kind) {
 
-      case "concat":
-        for (const p of d.parts) walk(p)
-        break
+case "text":
+  write(d.value)
+  break
 
-      case "indent":
-        indentLevel++
-        walk(d.doc)
-        indentLevel--
-        break
+case "line":
+  write(" ")
+  break
 
-      case "group":
+case "hardline":
+  newline()
+  break
 
-        if (fits(d.doc, MAX_WIDTH - column)) {
-          flatten(d.doc)
-        } else {
-          walk(d.doc)
-        }
-
-        break
-
-    }
-
-  }
-
-  function flatten(d: Doc) {
-
-    switch (d.kind) {
-
-      case "text":
-        write(d.value)
-        break
-
-      case "line":
-        write(" ")
-        break
-
-      case "softline":
-        write(" ")
-        break
-
+case "softline":
+  write(" ")
+  break
       case "concat":
         for (const p of d.parts) flatten(p)
         break

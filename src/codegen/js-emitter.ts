@@ -10,6 +10,7 @@ import * as AST from "../ast.js";
 export interface EmitOptions {
   readonly moduleName: string;
   readonly importPaths?: ReadonlyMap<string, string>;
+  readonly importExposes?: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface EmitResult {
@@ -39,9 +40,12 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
         lines.push(`const { ${names.join(", ")} } = ${alias};`);
       }
     } else if (imp.exposing && imp.exposing.open) {
-      // For open imports, we can't easily destructure without knowing all exports statically.
-      // Usually Elm-like langs rely on a resolver. Here we just emit a comment or rely on qualified usage.
-      lines.push(`// open import ${alias} exposing (..) not fully supported by simple js-emitter yet`);
+      const exposed = options.importExposes?.get(moduleNameStr);
+      if (exposed && exposed.length > 0) {
+        lines.push(`const { ${exposed.join(", ")} } = ${alias};`);
+      } else {
+        lines.push(`// open import ${alias} exposing (..) not fully supported by simple js-emitter yet`);
+      }
     }
   }
 
@@ -57,9 +61,15 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
       continue;
     }
 
-    lines.push(
-      `import { ${names.join(", ")} } from ${JSON.stringify(decl.sourceModule)};`,
-    );
+    if (decl.sourceModule === "JSON" || decl.sourceModule === "global") {
+      for (const name of names) {
+        lines.push(`const ${name} = ${decl.sourceModule}.${name};`);
+      }
+    } else {
+      lines.push(
+        `import { ${names.join(", ")} } from ${JSON.stringify(decl.sourceModule)};`,
+      );
+    }
   }
 
   if (
