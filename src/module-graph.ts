@@ -9,8 +9,6 @@ import { lex } from "./lexer.js";
 import { parse } from "./parser.js";
 import { filterLayout } from "./parser/filter-layout.js";
 import * as AST from "./ast.js";
-import { resolveNpmImport } from "./ffi/resolve-npm-import.js";
-import { hasVirtualAsset, readVirtualAsset } from "./assets.js";
 import { getDirname, getFilename } from "./utils/path.js";
 
 const __filename = getFilename(import.meta.url);
@@ -77,11 +75,7 @@ export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualF
           relPath = abs.substring(runtimeIndex);
         }
 
-        if (relPath && hasVirtualAsset(relPath)) {
-          source = readVirtualAsset(relPath);
-        } else {
-          source = fs.readFileSync(abs, "utf8");
-        }
+        source = fs.readFileSync(abs, "utf8");
       }
     } catch {
       diagnostics.push(`Cannot read file: ${abs}`);
@@ -118,9 +112,11 @@ export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualF
       let importFile = resolveModuleToFile(srcRoot, importParts);
 
       if (!importFile) {
-        const npmResolved = await resolveNpmImport(importParts[importParts.length - 1]);
-        if (npmResolved) {
-          importFile = npmResolved;
+        // Mock Go resolution
+        const goPackage = importParts.join("/").toLowerCase();
+        const goCachePath = path.join(".skycache", "go", goPackage, "bindings.skyi");
+        if (fs.existsSync(goCachePath)) {
+          importFile = goCachePath;
         }
       }
 

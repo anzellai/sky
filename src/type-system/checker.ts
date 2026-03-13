@@ -15,7 +15,6 @@ import { TypeEnvironment, createPreludeEnvironment } from "./env.js"
 import { inferTopLevel } from "./infer.js"
 import { registerAdts } from "./adt.js"
 import { checkCaseExhaustiveness } from "./exhaustiveness.js"
-import { npmNameToSkyModule } from "../ffi/npm-name.js"
 
 import {
   type Type,

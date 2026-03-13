@@ -1,6 +1,0 @@
-name = "sky-server"
-version = "0.1.0"
-source = "src"
-output = "dist"
-entry = "Main"
-target = "node"
