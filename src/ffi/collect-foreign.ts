@@ -46,8 +46,8 @@ export async function collectForeignImports(
 
     const packageName = decl.sourceModule
 
-    // Skip TS type extraction for JS built-in globals and just inject them as Foreign types
-    if (packageName === "JSON" || packageName === "global") {
+    // Skip TS type extraction for JS built-in globals and our internal @sky/runtime
+    if (packageName === "JSON" || packageName === "global" || packageName.startsWith("@sky/runtime/")) {
       bindings.push({
         packageName: packageName,
         skyModuleName: `Sky.FFI.${packageName}`,

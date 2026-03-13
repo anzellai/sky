@@ -141,6 +141,27 @@ function resolveModuleToFile(
     }
   }
 
+  if (moduleName[0] === "Sky" && moduleName[1] === "Interop") {
+    const stdlibPath = path.join(__dirname, "../src/stdlib/Sky/Interop.sky");
+    if (fs.existsSync(stdlibPath)) {
+      return stdlibPath;
+    }
+  }
+
+  if (moduleName[0] === "Std") {
+    const stdlibPath = path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
+    if (fs.existsSync(stdlibPath)) {
+      return stdlibPath;
+    }
+  }
+
+  if (moduleName.length === 1 && moduleName[0] === "Ui") {
+    const stdlibPath = path.join(__dirname, "../src/stdlib/Ui.sky");
+    if (fs.existsSync(stdlibPath)) {
+      return stdlibPath;
+    }
+  }
+
   const filePath = path.join(srcRoot, ...moduleName) + ".sky";
   return fs.existsSync(filePath) ? filePath : undefined;
 }

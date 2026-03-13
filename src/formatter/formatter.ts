@@ -1,5 +1,5 @@
 import * as AST from "../ast.js"
-import { concat, Doc, group, indent, line, text , hardline} from "./doc.js"
+import { concat, Doc, group, indent, line, text, hardline } from "./doc.js"
 import { render } from "./render.js"
 
 export function formatModule(module: AST.Module): string {
@@ -122,7 +122,7 @@ function formatTypeExpression(t: AST.TypeExpression): Doc {
         text(" -> "),
         formatTypeExpression(t.to)
       );
-            case "RecordType":
+    case "RecordType":
       if (t.fields.length === 0) return text("{}");
       if (t.fields.length === 1) {
         return concat(text("{ "), text(t.fields[0].name), text(" : "), formatTypeExpression(t.fields[0].type), text(" }"));
@@ -130,8 +130,11 @@ function formatTypeExpression(t: AST.TypeExpression): Doc {
       return group(concat(
         text("{ "),
         joinDocs(
-          t.fields.map(f => concat(text(f.name), text(" : "), formatTypeExpression(f.type))),
-          concat(hardline, text(", "))
+          t.fields.map((f, i) => {
+            const prefix = i === 0 ? text("") : text(", ");
+            return concat(prefix, text(f.name), text(" : "), formatTypeExpression(f.type));
+          }),
+          hardline
         ),
         hardline,
         text("}")
@@ -174,14 +177,20 @@ function formatTypeAliasDeclaration(decl: AST.TypeAliasDeclaration): Doc {
 }
 
 function formatForeignImportDeclaration(decl: AST.ForeignImportDeclaration): Doc {
-  // We reconstruct the basic syntax. But wait, standard foreign import groups these by source.
-  // We just emit it as is for now:
   return concat(
     text("foreign import "),
     text(JSON.stringify(decl.sourceModule)),
     text(" exposing ("),
     text(decl.name),
     text(")")
+  );
+}
+
+function formatTypeAnnotation(decl: AST.TypeAnnotation): Doc {
+  return concat(
+    text(decl.name),
+    text(" : "),
+    formatTypeExpression(decl.type)
   );
 }
 
@@ -200,6 +209,9 @@ function formatDeclaration(decl: AST.Declaration): Doc {
 
     case "ForeignImportDeclaration":
       return formatForeignImportDeclaration(decl)
+
+    case "TypeAnnotation":
+      return formatTypeAnnotation(decl)
 
     default:
       return text("-- unsupported declaration")
@@ -260,6 +272,11 @@ function formatPattern(pattern: AST.Pattern): Doc {
         text("]")
       )
 
+    case "LiteralPattern":
+      if (typeof pattern.value === "string") return text(JSON.stringify(pattern.value));
+      if (typeof pattern.value === "boolean") return text(pattern.value ? "True" : "False");
+      return text(String(pattern.value));
+
     default:
       return text("-- unsupported pattern")
   }
@@ -283,15 +300,14 @@ function formatCase(expr: AST.CaseExpression): Doc {
         concat(
           formatPattern(b.pattern),
           text(" ->"),
-          line,
-          indent(formatExpression(b.body))
+          indent(concat(hardline, formatExpression(b.body)))
         )
 
       if (i === 0) return [branch]
 
       return [
-        line,
-        line,
+        hardline,
+        hardline,
         branch
       ]
 
@@ -305,40 +321,49 @@ function formatCase(expr: AST.CaseExpression): Doc {
 
 function formatLet(expr: AST.LetExpression): Doc {
 
-  const bindings = concat(
+  const bindings = expr.bindings.map((b) => {
 
-    ...expr.bindings.flatMap((b, i) => {
+    const patternDoc = formatPattern(b.pattern);
+    const valueDoc = formatExpression(b.value);
+    
+    let bind: Doc;
+    
+    if (b.typeAnnotation) {
+      bind = concat(
+        patternDoc,
+        text(" : "),
+        formatTypeExpression(b.typeAnnotation),
+        hardline,
+        indent(concat(hardline, text("= "), valueDoc))
+      );
+    } else {
+      bind = concat(
+        patternDoc,
+        indent(concat(hardline, text("= "), valueDoc))
+      );
+    }
 
-      const bind =
-        concat(
-          formatPattern(b.pattern),
-          text(" ="),
-          line,
-          indent(formatExpression(b.value))
-        )
+    return bind;
 
-      if (i === 0) return [bind]
+  });
 
-      return [
-        line,
-        line,
-        bind
-      ]
+  if (expr.bindings.length === 1 && !expr.bindings[0].typeAnnotation) {
+    return group(concat(
+      text("let "),
+      bindings[0],
+      hardline,
+      text("in"),
+      indent(concat(hardline, formatExpression(expr.body)))
+    ));
+  }
 
-    })
-
-  )
-
-  const letPart =
-    block(text("let"), bindings)
-
-  return concat(
-    letPart,
-    line,
+  return group(concat(
+    text("let"),
+    indent(concat(hardline, joinDocs(bindings, hardline))),
+    hardline,
     text("in"),
-    line,
-    indent(formatExpression(expr.body))
-  )
+    indent(concat(hardline, formatExpression(expr.body)))
+  ))
 
 }
 
@@ -371,16 +396,25 @@ function formatExpression(expr: AST.Expression): Doc {
     case "QualifiedIdentifierExpression":
       return text(expr.name.parts.join("."))
 
-            case "RecordExpression":
+    case "RecordExpression":
       if (expr.fields.length === 0) return text("{}");
       if (expr.fields.length === 1) {
-        return concat(text("{ "), text(expr.fields[0].name), text(" = "), formatExpression(expr.fields[0].value), text(" }"));
+        return group(concat(
+          text("{ "),
+          text(expr.fields[0].name),
+          text(" = "),
+          formatExpression(expr.fields[0].value),
+          text(" }")
+        ));
       }
       return group(concat(
         text("{ "),
         joinDocs(
-          expr.fields.map(f => concat(text(f.name), text(" = "), formatExpression(f.value))),
-          concat(hardline, text(", "))
+          expr.fields.map((f, i) => {
+            const prefix = i === 0 ? text("") : text(", ");
+            return concat(prefix, text(f.name), text(" = "), formatExpression(f.value));
+          }),
+          hardline
         ),
         hardline,
         text("}")
@@ -414,15 +448,12 @@ function formatExpression(expr: AST.Expression): Doc {
     case "BooleanLiteralExpression":
       return text(expr.value ? "True" : "False")
 
-        case "BinaryExpression": {
+    case "BinaryExpression": {
       const isPipe = expr.operator === "|>" || expr.operator === "<|";
       if (isPipe) {
         return concat(
           formatExpression(expr.left),
-          hardline,
-          text(expr.operator),
-          text(" "),
-          formatExpression(expr.right)
+          indent(concat(hardline, text(expr.operator), text(" "), formatExpression(expr.right)))
         )
       }
       return concat(
@@ -435,6 +466,21 @@ function formatExpression(expr: AST.Expression): Doc {
     }
 
     case "CallExpression":
+      // Elm style: if the last argument is a large list or record, put it on a new line
+      if (expr.arguments.length > 0) {
+        const lastArg = expr.arguments[expr.arguments.length - 1];
+        if (lastArg.kind === "ListExpression" || lastArg.kind === "RecordExpression") {
+          const otherArgs = expr.arguments.slice(0, -1);
+          const calleeAndOthers = otherArgs.length > 0
+            ? concat(formatExpression(expr.callee), text(" "), joinDocs(otherArgs.map(formatExpression), text(" ")))
+            : formatExpression(expr.callee);
+          
+          return concat(
+            calleeAndOthers,
+            indent(concat(hardline, formatExpression(lastArg)))
+          );
+        }
+      }
 
       return concat(
         formatExpression(expr.callee),
@@ -445,12 +491,59 @@ function formatExpression(expr: AST.Expression): Doc {
     case "UnitExpression":
       return text("()")
 
+    case "IfExpression":
+      return group(concat(
+        text("if "),
+        formatExpression(expr.condition),
+        text(" then"),
+        indent(concat(hardline, formatExpression(expr.thenBranch))),
+        hardline,
+        text("else"),
+        indent(concat(hardline, formatExpression(expr.elseBranch)))
+      ))
+
+    case "TupleExpression":
+      return group(concat(
+        text("("),
+        joinDocs(expr.items.map(formatExpression), text(", ")),
+        text(")")
+      ))
+
+    case "ListExpression":
+      if (expr.items.length === 0) return text("[]");
+      if (expr.items.length === 1) {
+        return group(concat(text("[ "), formatExpression(expr.items[0]), text(" ]")));
+      }
+      return group(concat(
+        text("[ "),
+        joinDocs(
+          expr.items.map((item, i) => {
+            const prefix = i === 0 ? text("") : text(", ");
+            return concat(prefix, formatExpression(item));
+          }),
+          hardline
+        ),
+        hardline,
+        text("]")
+      ))
+
     case "ParenthesizedExpression":
       return concat(
         text("("),
         formatExpression(expr.expression),
         text(")")
       )
+
+    case "LambdaExpression":
+      return concat(
+        text("\\"),
+        joinDocs(expr.parameters.map(p => formatPattern(p.pattern)), text(" ")),
+        text(" -> "),
+        formatExpression(expr.body)
+      )
+
+    case "CharLiteralExpression":
+      return text(JSON.stringify(expr.value))
 
     default:
       return text("-- unsupported expression")

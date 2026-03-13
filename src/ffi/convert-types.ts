@@ -130,7 +130,7 @@ export function convertType(tsType: string): string {
 
   // primitive mappings
   if (t === "string") return "String"
-  if (t === "number") return "Int"
+  if (t === "number") return "Float"
   if (t === "boolean") return "Bool"
   if (t === "void") return "Unit"
   if (t === "undefined") return "Unit"
@@ -139,18 +139,30 @@ export function convertType(tsType: string): string {
   // Array<T>
   const arrayMatch = /^Array<(.*)>$/.exec(t)
   if (arrayMatch) {
-    return `List ${convertType(arrayMatch[1])}`
+    return `(List ${convertType(arrayMatch[1])})`
   }
 
   // T[]
   if (t.endsWith("[]")) {
-    return `List ${convertType(t.slice(0, -2))}`
+    return `(List ${convertType(t.slice(0, -2))})`
   }
 
   // Promise<T>
   const promiseMatch = /^Promise<(.*)>$/.exec(t)
   if (promiseMatch) {
-    return `Task ${convertType(promiseMatch[1])}`
+    return `(Task JsError ${convertType(promiseMatch[1])})`
+  }
+
+  // T | undefined or T | null -> Maybe T
+  if (t.includes("|")) {
+    const parts = t.split("|").map(p => p.trim());
+    if (parts.length === 2 && (parts.includes("undefined") || parts.includes("null"))) {
+      const other = parts.find(p => p !== "undefined" && p !== "null");
+      if (other) {
+        return `(Maybe ${convertType(other)})`;
+      }
+    }
+    return "JsValue"
   }
 
   // function type
@@ -163,22 +175,22 @@ export function convertType(tsType: string): string {
     const ret = convertType(right)
 
     if (args.length === 0) {
-      return `Unit -> ${ret}`
+      return `(Unit -> ${ret})`
     }
 
     return `(${args.join(" -> ")} -> ${ret})`
   }
 
-  // union types fallback
-  if (t.includes("|")) {
-    return "Foreign"
-  }
-
   // object literal fallback
   if (t.startsWith("{") && t.endsWith("}")) {
-    return "Foreign"
+    return "JsValue"
+  }
+
+  // unknown / any fallback
+  if (t === "any" || t === "unknown") {
+    return "JsValue"
   }
 
   // generic fallback
-  return "Foreign"
+  return "JsValue"
 }

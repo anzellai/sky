@@ -1,0 +1,152 @@
+function emitExpression(expr: AST.Expression, options: EmitOptions): string {
+  switch (expr.kind) {
+    case "IdentifierExpression":
+      return expr.name;
+
+    case "QualifiedIdentifierExpression":
+      return emitQualifiedName(expr.name.parts, options);
+
+    case "IntegerLiteralExpression":
+      return expr.raw;
+
+    case "FloatLiteralExpression":
+      return expr.raw;
+
+    case "StringLiteralExpression":
+      return JSON.stringify(expr.value);
+
+    case "CharLiteralExpression":
+      return JSON.stringify(expr.value);
+
+    case "BooleanLiteralExpression":
+      return expr.value ? "true" : "false";
+
+    case "UnitExpression":
+      return "undefined";
+
+    case "ParenthesizedExpression":
+      return `(${emitExpression(expr.expression, options)})`;
+
+    case "TupleExpression":
+      return `[${expr.items.map(i => emitExpression(i, options)).join(", ")}]`;
+
+    case "ListExpression":
+      return `[${expr.items.map(i => emitExpression(i, options)).join(", ")}]`;
+
+    case "RecordExpression":
+      return `{ ${expr.fields.map((f) => `${f.name}: ${emitExpression(f.value, options)}`).join(", ")} }`;
+
+    case "FieldAccessExpression":
+      return `${emitExpression(expr.target, options)}.${expr.fieldName}`;
+
+    case "BinaryExpression":
+      return emitBinaryExpression(expr, options);
+
+    case "CallExpression":
+      return expr.arguments.reduce(
+        (acc, arg) => `${acc}(${emitExpression(arg, options)})`,
+        emitExpression(expr.callee, options),
+      );
+
+    case "LambdaExpression": {
+      const params = expr.parameters.map((param, index) => {
+        const pattern = param.pattern;
+        return pattern.kind === "VariablePattern"
+          ? pattern.name
+          : `__lambdaArg${index}`;
+      });
+
+      const body = emitExpression(expr.body, options);
+
+      let result = body;
+
+      for (let i = params.length - 1; i >= 0; i -= 1) {
+        const pattern = expr.parameters[i].pattern;
+        const bindings =
+          pattern.kind === "VariablePattern"
+            ? []
+            : emitPatternBindingStatements(pattern, params[i]);
+
+        if (bindings.length > 0) {
+          result = `(${params[i]} => { ${bindings.join(" ")} return ${result}; })`;
+        } else {
+          result = `(${params[i]} => ${result})`;
+        }
+      }
+
+      return result;
+    }
+
+    case "IfExpression":
+      return `(${emitExpression(expr.condition, options)} ? ${emitExpression(expr.thenBranch, options)} : ${emitExpression(expr.elseBranch, options)})`;
+
+    case "LetExpression": {
+      const bindingLines = expr.bindings.flatMap((binding, index) => {
+        const temp = `__let${index}`;
+        return [
+          `const ${temp} = ${emitExpression(binding.value, options)};`,
+          ...emitPatternBindingStatements(binding.pattern, temp),
+        ];
+      });
+
+      return `(() => { ${bindingLines.join(" ")} return ${emitExpression(expr.body, options)}; })()`;
+    }
+
+    case "CaseExpression": {
+      const subject = emitExpression(expr.subject, options);
+      const temp = `__case${Math.floor(Math.random() * 1000)}`;
+      
+      const branches = expr.branches.map((branch) => {
+        const condition = emitPatternCondition(branch.pattern, temp);
+        const bindings = emitPatternBindingStatements(branch.pattern, temp);
+        return `if (${condition}) { ${bindings.join(" ")} return ${emitExpression(branch.body, options)}; }`;
+      });
+
+      return `(( ${temp} ) => { ${branches.join(" else ")} throw new Error("Pattern match failed"); })(${subject})`;
+    }
+
+    default:
+      throw new Error(`Unsupported expression kind ${(expr as { kind?: string }).kind}`);
+  }
+}
+
+function emitQualifiedName(parts: readonly string[], options: EmitOptions): string {
+  if (!options.activeImports) {
+    return parts.join("_");
+  }
+
+  // Find the longest prefix that matches an imported module
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const prefix = parts.slice(0, i).join(".");
+    if (options.activeImports.has(prefix)) {
+      const alias = parts.slice(0, i).join("_");
+      const member = parts.slice(i).join(".");
+      return `${alias}.${member}`;
+    }
+  }
+
+  // Fallback to underscore join if no import matches (e.g. local qualified name or ADT constructor)
+  return parts.join("_");
+}
+
+function emitBinaryExpression(expr: AST.BinaryExpression, options: EmitOptions): string {
+  const left = emitExpression(expr.left, options);
+  const right = emitExpression(expr.right, options);
+
+  switch (expr.operator) {
+    case "|>":
+      return `${right}(${left})`;
+
+    case "<|":
+      return `${left}(${right})`;
+
+    case ">>":
+      return `(x => ${right}(${left}(x)))`;
+
+    case "<<":
+      return `(x => ${left}(${right}(x)))`;
+
+    default:
+      return `(${left} ${expr.operator} ${right})`;
+  }
+}

@@ -202,7 +202,11 @@ export class Lexer {
 
       switch (ch) {
         case "=":
-          this.pushSimple("Equals", 1);
+          if (this.peek(1) === "=") {
+            this.pushSimple("Operator", 2);
+          } else {
+            this.pushSimple("Equals", 1);
+          }
           break;
         case ":":
           this.pushSimple("Colon", 1);

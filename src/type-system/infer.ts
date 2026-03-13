@@ -52,6 +52,19 @@ export function inferExpression(
       };
     }
 
+    case "QualifiedIdentifierExpression": {
+      const fullName = expr.name.parts.join(".");
+      const value = env.get(fullName);
+      if (!value) {
+        throw new Error(`Unbound variable ${fullName}`);
+      }
+
+      return {
+        substitution: emptySubstitution(),
+        type: instantiate(value),
+      };
+    }
+
     case "IntegerLiteralExpression":
       return {
         substitution: emptySubstitution(),
@@ -313,11 +326,19 @@ export function inferExpression(
 
         currentSub = composeSubstitutions(valueResult.substitution, currentSub);
 
-        const expectedType = applySubstitution(valueResult.type, currentSub);
+        let valueType = applySubstitution(valueResult.type, currentSub);
+
+        if (binding.typeAnnotation) {
+          const annotatedType = translateTypeExpression(binding.typeAnnotation);
+          const s = unify(valueType, annotatedType);
+          currentSub = composeSubstitutions(s, currentSub);
+          valueType = applySubstitution(valueType, currentSub);
+        }
+
         const patternResult = inferPattern(
           registry,
           binding.pattern,
-          expectedType,
+          valueType,
         );
 
         currentSub = composeSubstitutions(patternResult.substitution, currentSub);
@@ -551,7 +572,30 @@ export function inferExpression(
     }
 
     default:
-      throw new Error(`Inference not implemented for ${expr.kind}`);
+      throw new Error(`Inference not implemented for ${(expr as any).kind}`);
+  }
+}
+
+function translateTypeExpression(expr: AST.TypeExpression): Type {
+  switch (expr.kind) {
+    case "TypeVariable":
+      return { kind: "TypeVariable", id: -1, name: expr.name }; // Note: name-based variables not fully supported in algorithmic infer yet, using dummy ID
+    
+    case "TypeReference":
+      return { kind: "TypeConstant", name: expr.name.parts.join(".") };
+
+    case "FunctionType":
+      return functionType(
+        translateTypeExpression(expr.from),
+        translateTypeExpression(expr.to)
+      );
+    
+    case "RecordType":
+      const fields: Record<string, Type> = {};
+      for (const f of expr.fields) {
+        fields[f.name] = translateTypeExpression(f.type);
+      }
+      return { kind: "TypeRecord", fields };
   }
 }
 

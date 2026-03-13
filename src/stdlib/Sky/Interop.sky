@@ -1,0 +1,39 @@
+module Sky.Interop exposing
+    ( JsValue
+    , JsError
+    , Decoder
+    , decodeString
+    , decodeFloat
+    , decodeBool
+    , decodeField
+    , decodeList
+    , decodeMaybe
+    , succeed
+    , fail
+    , runDecoder
+    , string
+    , float
+    , bool
+    , null_
+    , list
+    , object
+    )
+
+-- Safe boundary types
+type JsValue = JsValue Foreign
+
+type alias JsError =
+    { message : String }
+
+-- We define a local Result since it's not in Prelude yet
+type Result e a = Ok a | Err e
+
+type Decoder a = Decoder Foreign
+
+-- Basic Decoders
+foreign import "@sky/runtime/interop"
+    exposing (decodeString, decodeFloat, decodeBool, decodeField, decodeList, decodeMaybe, succeed, fail, runDecoder)
+
+-- Basic Encoders / Constructors
+foreign import "@sky/runtime/interop"
+    exposing (string, float, bool, null_, list, object)

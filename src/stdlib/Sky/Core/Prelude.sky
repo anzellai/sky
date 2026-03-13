@@ -14,5 +14,11 @@ flip f a b = f b a
 -- Built-in globals available out of the box!
 foreign import "JSON" exposing (parse, stringify)
 
+-- Define JsValue for type escapes
+foreign import "global" exposing (JsValue, console)
+
 unsafeCastFromJson jsonString =
     parse jsonString
+
+unsafeAny : a -> JsValue
+unsafeAny x = x

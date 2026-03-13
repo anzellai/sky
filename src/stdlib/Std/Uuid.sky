@@ -1,0 +1,10 @@
+module Std.Uuid exposing (v4)
+
+import Sky.FFI.Uuid as Raw
+import Sky.Interop exposing (JsValue, runDecoder, decodeString)
+
+v4 : String
+v4 =
+    case runDecoder decodeString Raw.v4 of
+        Ok s -> s
+        Err _ -> ""

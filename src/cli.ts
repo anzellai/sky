@@ -53,6 +53,10 @@ async function main() {
       await cmdAst(args[1])
       return
 
+    case "tokens":
+      await cmdTokens(args[1])
+      return
+
     case "fmt":
     case "format":
       await cmdFormat(args[1])
@@ -82,6 +86,10 @@ async function cmdBuild(file?: string) {
 
   const project = loadProject()
 
+  const args = process.argv.slice(2);
+  const targetFlag = args.find(a => a.startsWith("--target="));
+  const target = (targetFlag ? targetFlag.split("=")[1] : project.target) as "web" | "node" | "native";
+
   const entry =
     file ||
     resolveEntryFile(
@@ -106,7 +114,8 @@ async function cmdBuild(file?: string) {
   const result =
     await compileProject(
       entry,
-      project.outputDir
+      project.outputDir,
+      target
     )
 
   if (result.diagnostics.length > 0) {
@@ -190,6 +199,10 @@ async function cmdRun(file: string) {
 
   const project = loadProject()
 
+  const args = process.argv.slice(2);
+  const targetFlag = args.find(a => a.startsWith("--target="));
+  const target = (targetFlag ? targetFlag.split("=")[1] : project.target) as "web" | "node" | "native";
+
   const entry =
     file ||
     resolveEntryFile(
@@ -200,7 +213,8 @@ async function cmdRun(file: string) {
   const result =
     await compileProject(
       entry,
-      project.outputDir
+      project.outputDir,
+      target
     )
 
   if (result.diagnostics.length > 0) {
@@ -280,6 +294,23 @@ async function cmdAst(file: string) {
   const ast = parse(tokens)
 
   console.log(JSON.stringify(ast, null, 2))
+
+}
+
+/* ------------------------------------------------ */
+
+async function cmdTokens(file: string) {
+
+  const source = fs.readFileSync(file, "utf8")
+
+  const lexResult = lex(source, file)
+
+  // Use raw tokens from lexer
+  const tokens = lexResult.tokens
+
+  for (const t of tokens) {
+    console.log(`${t.kind.padEnd(15)} ${JSON.stringify(t.lexeme).padEnd(20)} ${t.span.start.line}:${t.span.start.column}`)
+  }
 
 }
 
@@ -382,6 +413,7 @@ Commands:
   sky run <file.sky>
   sky deps <file.sky>
   sky ast <file.sky>
+  sky tokens <file.sky>
   sky fmt <file.sky>
   sky repl
 `)

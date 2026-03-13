@@ -1,0 +1,8 @@
+module Std.Task exposing (Task, succeed, fail, map, andThen)
+
+-- Task error value represents a side-effect that can fail or succeed.
+
+type Task error value = Task Foreign
+
+foreign import "@sky/runtime/task"
+    exposing (succeed, fail, map, andThen)

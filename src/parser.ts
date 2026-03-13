@@ -108,8 +108,17 @@ export class Parser {
         continue;
       }
 
-      if (this.match("Identifier")) {
-        declarations.push(this.parseFunction());
+      if (this.match("Identifier") || this.match("UpperIdentifier")) {
+        if (this.peek(1).kind === "Colon") {
+          declarations.push(this.parseTypeAnnotation());
+        } else if (this.match("Identifier")) {
+          declarations.push(this.parseFunction());
+        } else {
+          const t = this.peek();
+          throw new Error(
+            `Unexpected top-level token ${t.kind}:${t.lexeme} at ${t.span.start.line}:${t.span.start.column}`
+          );
+        }
         continue;
       }
 
@@ -345,6 +354,21 @@ export class Parser {
     };
   }
 
+  private parseTypeAnnotation(): AST.TypeAnnotation {
+    const name = this.match("UpperIdentifier") ? this.consume("UpperIdentifier") : this.consume("Identifier");
+    this.consume("Colon");
+    const type = this.parseTypeExpression();
+    return {
+      kind: "TypeAnnotation",
+      name: name.lexeme,
+      type,
+      span: {
+        start: name.span.start,
+        end: type.span.end,
+      },
+    };
+  }
+
   private parseTypeExpression(): AST.TypeExpression {
     const left = this.parseTypeApplication();
 
@@ -380,6 +404,12 @@ export class Parser {
         if (this.peek().span.start.column === 1 || this.peek().kind === "Equals" || this.peek().kind === "Pipe") {
            break;
         }
+
+        // Stop if this looks like the start of an assignment (for let bindings with annotations)
+        if ((this.peek().kind === "Identifier" || this.peek().kind === "UpperIdentifier") && this.peek(1).kind === "Equals") {
+           break;
+        }
+
         args.push(this.parseTypePrimary());
       }
 
@@ -439,10 +469,33 @@ export class Parser {
 
     if (this.match("LParen")) {
       const start = this.consume("LParen");
-      const type = this.parseTypeExpression();
+      if (this.match("RParen")) {
+        this.consume("RParen");
+        return {
+          kind: "TypeReference",
+          name: { kind: "QualifiedIdentifier", parts: ["Unit"], span: start.span },
+          arguments: [],
+          span: { start: start.span.start, end: this.previous().span.end },
+        } as AST.TypeExpression;
+      }
+      const first = this.parseTypeExpression();
+      if (this.match("Comma")) {
+        const items = [first];
+        while (this.match("Comma")) {
+          this.consume("Comma");
+          items.push(this.parseTypeExpression());
+        }
+        const end = this.consume("RParen");
+        return {
+          kind: "TypeReference",
+          name: { kind: "QualifiedIdentifier", parts: ["Tuple"], span: start.span },
+          arguments: items,
+          span: { start: start.span.start, end: end.span.end },
+        } as AST.TypeExpression;
+      }
       const end = this.consume("RParen");
       return {
-        ...type,
+        ...first,
         span: {
           start: start.span.start,
           end: end.span.end,
@@ -611,7 +664,9 @@ export class Parser {
       this.match("String") ||
       this.match("LParen") ||
       this.match("LBrace") ||
-      (this.match("Keyword") && this.peek().lexeme === "case")
+      this.match("LBracket") ||
+      this.match("Backslash") ||
+      (this.match("Keyword") && (this.peek().lexeme === "case" || this.peek().lexeme === "if" || this.peek().lexeme === "let"))
     );
 
   }
@@ -620,26 +675,89 @@ export class Parser {
   private parsePattern(): AST.Pattern {
     if (this.match("UpperIdentifier")) {
       const id = this.consume("UpperIdentifier");
+      const parts = [id.lexeme];
+      while (this.match("Dot")) {
+        this.consume("Dot");
+        parts.push(this.consume("UpperIdentifier").lexeme);
+      }
       const args: AST.Pattern[] = [];
-      while (this.match("Identifier") || this.match("UpperIdentifier")) {
+      while (this.match("Identifier") || this.match("UpperIdentifier") || this.match("LParen")) {
+        // Stop if we are on a new line or at the start of a branch
+        if (this.peek().span.start.column <= 1 || this.peek().kind === "Arrow") {
+          break;
+        }
         args.push(this.parsePattern());
       }
       return {
         kind: "ConstructorPattern",
-        constructorName: { kind: "QualifiedIdentifier", parts: [id.lexeme], span: id.span },
+        constructorName: { kind: "QualifiedIdentifier", parts, span: id.span },
         arguments: args,
         span: {
           start: id.span.start,
           end: args.length > 0 ? args[args.length - 1].span.end : id.span.end,
         }
-      } as AST.Pattern; // Actually not fully typed here but we pass
+      } as AST.Pattern;
     } else if (this.match("Identifier")) {
       const id = this.consume("Identifier");
+      if (id.lexeme === "_") {
+        return {
+          kind: "WildcardPattern",
+          span: id.span,
+        } as AST.Pattern;
+      }
       return {
         kind: "VariablePattern",
         name: id.lexeme,
         span: id.span,
       } as AST.Pattern;
+    } else if (this.match("Integer")) {
+      const t = this.consume("Integer");
+      return {
+        kind: "LiteralPattern",
+        value: Number(t.lexeme),
+        span: t.span,
+      } as AST.Pattern;
+    } else if (this.match("String")) {
+      const t = this.consume("String");
+      return {
+        kind: "LiteralPattern",
+        value: t.lexeme,
+        span: t.span,
+      } as AST.Pattern;
+    } else if (this.match("Keyword", "True") || this.match("Keyword", "False")) {
+       const t = this.consume("Keyword");
+       return {
+         kind: "LiteralPattern",
+         value: t.lexeme === "True",
+         span: t.span,
+       } as AST.Pattern;
+    } else if (this.match("LParen")) {
+       const start = this.consume("LParen");
+       if (this.match("RParen")) {
+         // Should we have unit pattern? 
+         this.consume("RParen");
+         throw new Error("Unit pattern not supported yet");
+       }
+       const first = this.parsePattern();
+       if (this.match("Comma")) {
+         const items = [first];
+         while (this.match("Comma")) {
+           this.consume("Comma");
+           items.push(this.parsePattern());
+         }
+         const end = this.consume("RParen");
+         return {
+           kind: "TuplePattern",
+           items,
+           span: { start: start.span.start, end: end.span.end }
+         } as AST.Pattern;
+       } else {
+         const end = this.consume("RParen");
+         return {
+           ...first,
+           span: { start: start.span.start, end: end.span.end }
+         } as AST.Pattern;
+       }
     }
     const t = this.peek();
     throw new Error(`Unexpected token ${t.kind}:${t.lexeme} in pattern`);
@@ -683,6 +801,103 @@ private parsePrimary(): AST.Expression {
           end: branches.length > 0 ? branches[branches.length - 1].span.end : subject.span.end,
         },
       };
+    } else if (this.match("Keyword") && this.peek().lexeme === "if") {
+      const start = this.consume("Keyword", "if");
+      const condition = this.parseExpression(0);
+      this.consume("Keyword", "then");
+      const thenBranch = this.parseExpression(0);
+      this.consume("Keyword", "else");
+      const elseBranch = this.parseExpression(0);
+      expr = {
+        kind: "IfExpression",
+        condition,
+        thenBranch,
+        elseBranch,
+        span: {
+          start: start.span.start,
+          end: elseBranch.span.end,
+        },
+      };
+    } else if (this.match("Keyword") && this.peek().lexeme === "let") {
+      const start = this.consume("Keyword", "let");
+      const bindings: AST.LetBinding[] = [];
+      
+      while (!this.match("Keyword", "in")) {
+        let typeAnnotation: AST.TypeExpression | undefined;
+        let pattern: AST.Pattern;
+        
+        // Check for annotated binding: x : Type
+        if (this.peek().kind === "Identifier" && this.peek(1).kind === "Colon") {
+           const idToken = this.consume("Identifier");
+           this.consume("Colon");
+           typeAnnotation = this.parseTypeExpression();
+           
+           pattern = {
+             kind: "VariablePattern",
+             name: idToken.lexeme,
+             span: idToken.span
+           };
+
+           // Optional second name for the actual assignment line
+           if (this.match("Identifier")) {
+              const nextId = this.consume("Identifier");
+              if (nextId.lexeme !== idToken.lexeme) {
+                 throw new Error(`Type annotation name ${idToken.lexeme} must match binding name ${nextId.lexeme}`);
+              }
+           }
+        } else {
+           pattern = this.parsePattern();
+        }
+
+        this.consume("Equals");
+        const value = this.parseExpression(0, pattern.span.start.column);
+        bindings.push({
+          kind: "LetBinding",
+          pattern,
+          typeAnnotation,
+          value,
+          span: {
+            start: pattern.span.start,
+            end: value.span.end,
+          },
+        });
+      }
+      
+      this.consume("Keyword", "in");
+      const body = this.parseExpression(0, start.span.start.column);
+      expr = {
+        kind: "LetExpression",
+        bindings,
+        body,
+        span: {
+          start: start.span.start,
+          end: body.span.end,
+        },
+      };
+    } else if (this.match("Backslash")) {
+      const start = this.consume("Backslash");
+      const parameters: AST.Parameter[] = [];
+      
+      while (!this.match("Arrow")) {
+        const pattern = this.parsePattern();
+        parameters.push({
+          kind: "Parameter",
+          pattern,
+          span: pattern.span,
+        });
+      }
+      
+      this.consume("Arrow");
+      const body = this.parseExpression(0, start.span.start.column);
+      expr = {
+        kind: "LambdaExpression",
+        parameters,
+        body,
+        span: {
+          start: start.span.start,
+          end: body.span.end,
+        },
+      };
     } else if (this.match("LBrace")) {
       const start = this.consume("LBrace");
       const fields: AST.RecordField[] = [];
@@ -714,6 +929,26 @@ private parsePrimary(): AST.Expression {
           end: end.span.end,
         },
       };
+    } else if (this.match("LBracket")) {
+      const start = this.consume("LBracket");
+      const items: AST.Expression[] = [];
+
+      while (!this.match("RBracket")) {
+        items.push(this.parseExpression(0));
+        if (this.match("Comma")) {
+          this.consume("Comma");
+        }
+      }
+
+      const end = this.consume("RBracket");
+      expr = {
+        kind: "ListExpression",
+        items,
+        span: {
+          start: start.span.start,
+          end: end.span.end,
+        },
+      };
     } else if (this.match("Identifier")) {
       const t = this.consume("Identifier");
       expr = {
@@ -723,11 +958,25 @@ private parsePrimary(): AST.Expression {
       };
     } else if (this.match("UpperIdentifier")) {
       const id = this.consume("UpperIdentifier");
-      expr = {
-        kind: "IdentifierExpression",
-        name: id.lexeme,
-        span: id.span,
-      };
+      const parts = [id.lexeme];
+      while (this.match("Dot")) {
+        this.consume("Dot");
+        const next = this.match("UpperIdentifier") ? this.consume("UpperIdentifier") : this.consume("Identifier");
+        parts.push(next.lexeme);
+      }
+      if (parts.length > 1) {
+        expr = {
+          kind: "QualifiedIdentifierExpression",
+          name: { parts },
+          span: { start: id.span.start, end: this.previous().span.end },
+        };
+      } else {
+        expr = {
+          kind: "IdentifierExpression",
+          name: id.lexeme,
+          span: id.span,
+        };
+      }
     } else if (this.match("Integer")) {
       const t = this.consume("Integer");
       expr = {
@@ -763,6 +1012,18 @@ private parsePrimary(): AST.Expression {
             const op = this.consume("Operator");
             this.consume("RParen");
             expr = buildRightSection(first, op.lexeme, start.span);
+          } else if (this.match("Comma")) {
+            const items = [first];
+            while (this.match("Comma")) {
+              this.consume("Comma");
+              items.push(this.parseExpression(0));
+            }
+            const end = this.consume("RParen");
+            expr = {
+              kind: "TupleExpression",
+              items,
+              span: { start: start.span.start, end: end.span.end },
+            };
           } else {
             const end = this.consume("RParen");
             expr = {

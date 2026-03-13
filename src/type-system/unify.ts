@@ -22,10 +22,19 @@ export class UnificationError extends Error {
   }
 }
 
+function isJsValue(t: Type): boolean {
+  if (t.kind === "TypeConstant") {
+    return t.name === "JsValue" || t.name === "Foreign" || t.name === "Sky.Interop.JsValue";
+  }
+  if (t.kind === "TypeApplication") {
+    return isJsValue(t.constructor);
+  }
+  return false;
+}
+
 export function unify(a: Type, b: Type): Substitution {
 
-  if (a.kind === "TypeConstant" && a.name === "Foreign") return emptySubstitution();
-  if (b.kind === "TypeConstant" && b.name === "Foreign") return emptySubstitution();
+  if (isJsValue(a) || isJsValue(b)) return emptySubstitution();
 
   if (a.kind === "TypeVariable") {
     return unifyVar(a, b);
@@ -38,6 +47,10 @@ export function unify(a: Type, b: Type): Substitution {
   if (a.kind === "TypeConstant" && b.kind === "TypeConstant") {
 
     if (a.name !== b.name) {
+      // Allow Int and Float to unify
+      if ((a.name === "Int" && b.name === "Float") || (a.name === "Float" && b.name === "Int")) {
+        return emptySubstitution();
+      }
       throw new UnificationError(`Type mismatch: ${a.name} vs ${b.name}`);
     }
 

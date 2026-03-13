@@ -11,6 +11,8 @@ export interface EmitOptions {
   readonly moduleName: string;
   readonly importPaths?: ReadonlyMap<string, string>;
   readonly importExposes?: ReadonlyMap<string, readonly string[]>;
+  readonly target?: "web" | "node" | "native";
+  readonly activeImports?: ReadonlySet<string>;
 }
 
 export interface EmitResult {
@@ -23,6 +25,16 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
   lines.push(`// Generated from Sky module: ${options.moduleName}`);
 
   const currentParts = module.name;
+
+  const activeImports = new Set<string>();
+  for (const imp of module.imports) {
+    activeImports.add(imp.moduleName.join("."));
+  }
+
+  const enrichedOptions: EmitOptions = {
+    ...options,
+    activeImports
+  };
 
   // Sky module imports
   for (const imp of module.imports) {
@@ -61,14 +73,46 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
       continue;
     }
 
+    const exposedNames = names.filter(name => 
+      !module.exposing || 
+      module.exposing.open || 
+      module.exposing.items.some(i => i.kind === "value" && i.name === name)
+    );
+
     if (decl.sourceModule === "JSON" || decl.sourceModule === "global") {
       for (const name of names) {
-        lines.push(`const ${name} = ${decl.sourceModule}.${name};`);
+        const isExposed = exposedNames.includes(name);
+        lines.push(`${isExposed ? "export " : ""}const ${name} = ${decl.sourceModule}.${name};`);
       }
     } else {
+      let source = decl.sourceModule;
+
+      // TARGET-AWARE MAPPING
+      if (source === "@sky/runtime/program") {
+        if (options.target === "node") {
+          source = "@sky/runtime/program-node.js";
+        } else {
+          source = "@sky/runtime/program-react.js";
+        }
+      } else if (source === "@sky/runtime/interop") {
+        source = "@sky/runtime/interop.js";
+      } else if (source.startsWith("@sky/runtime/") && !source.endsWith(".js")) {
+        source += ".js";
+      }
+
+      // Convert @sky/runtime to relative path
+      if (source.startsWith("@sky/runtime/")) {
+        const runtimeModule = source.replace("@sky/runtime/", "");
+        const relPath = computeRelativeImport(currentParts, ["runtime", runtimeModule.replace(".js", "")]);
+        source = relPath;
+      }
+
       lines.push(
-        `import { ${names.join(", ")} } from ${JSON.stringify(decl.sourceModule)};`,
+        `import { ${names.join(", ")} } from ${JSON.stringify(source)};`,
       );
+      if (exposedNames.length > 0) {
+        lines.push(`export { ${exposedNames.join(", ")} };`);
+      }
     }
   }
 
@@ -83,13 +127,14 @@ export function emitModule(module: AST.Module, options: EmitOptions): EmitResult
   for (const decl of module.declarations) {
     switch (decl.kind) {
       case "FunctionDeclaration":
-        lines.push(emitFunction(decl));
+        lines.push(emitFunction(decl, enrichedOptions));
         lines.push("");
         break;
 
       case "TypeDeclaration":
       case "TypeAliasDeclaration":
       case "ForeignImportDeclaration":
+      case "TypeAnnotation":
         break;
     }
   }
@@ -113,7 +158,13 @@ if (isMain) {
     if (result instanceof Promise) {
       result.then(res => { if (res !== undefined) console.log(res); });
     } else if (result !== undefined) {
-      console.log(result);
+      if (typeof result === "function" && typeof window !== "undefined") {
+         console.log("Sky UI component returned from main. Mount it in your React root.");
+      } else if (result && typeof result.dispatch === "function") {
+         // It's a Node program, it keeps itself alive via process.stdin.resume()
+      } else {
+         console.log(result);
+      }
     }
   }
 }`,
@@ -125,7 +176,7 @@ if (isMain) {
   };
 }
 
-function emitFunction(fn: AST.FunctionDeclaration): string {
+function emitFunction(fn: AST.FunctionDeclaration, options: EmitOptions): string {
   const params: string[] = [];
   const bindingsPerParam: string[][] = [];
 
@@ -142,7 +193,7 @@ function emitFunction(fn: AST.FunctionDeclaration): string {
     }
   });
 
-  const body = emitExpression(fn.body);
+  const body = emitExpression(fn.body, options);
   const lines: string[] = [];
 
   if (params.length === 0) {
@@ -176,13 +227,13 @@ function emitFunction(fn: AST.FunctionDeclaration): string {
   return lines.join("\n");
 }
 
-function emitExpression(expr: AST.Expression): string {
+function emitExpression(expr: AST.Expression, options: EmitOptions): string {
   switch (expr.kind) {
     case "IdentifierExpression":
       return expr.name;
 
     case "QualifiedIdentifierExpression":
-      return expr.name.parts.join("_");
+      return emitQualifiedName(expr.name.parts, options);
 
     case "IntegerLiteralExpression":
       return expr.raw;
@@ -203,27 +254,27 @@ function emitExpression(expr: AST.Expression): string {
       return "undefined";
 
     case "ParenthesizedExpression":
-      return `(${emitExpression(expr.expression)})`;
+      return `(${emitExpression(expr.expression, options)})`;
 
     case "TupleExpression":
-      return `[${expr.items.map(emitExpression).join(", ")}]`;
+      return `[${expr.items.map(i => emitExpression(i, options)).join(", ")}]`;
 
     case "ListExpression":
-      return `[${expr.items.map(emitExpression).join(", ")}]`;
+      return `[${expr.items.map(i => emitExpression(i, options)).join(", ")}]`;
 
     case "RecordExpression":
-      return `{ ${expr.fields.map((f) => `${f.name}: ${emitExpression(f.value)}`).join(", ")} }`;
+      return `{ ${expr.fields.map((f) => `${f.name}: ${emitExpression(f.value, options)}`).join(", ")} }`;
 
     case "FieldAccessExpression":
-      return `${emitExpression(expr.target)}.${expr.fieldName}`;
+      return `${emitExpression(expr.target, options)}.${expr.fieldName}`;
 
     case "BinaryExpression":
-      return emitBinaryExpression(expr);
+      return emitBinaryExpression(expr, options);
 
     case "CallExpression":
       return expr.arguments.reduce(
-        (acc, arg) => `${acc}(${emitExpression(arg)})`,
-        emitExpression(expr.callee),
+        (acc, arg) => `${acc}(${emitExpression(arg, options)})`,
+        emitExpression(expr.callee, options),
       );
 
     case "LambdaExpression": {
@@ -234,7 +285,7 @@ function emitExpression(expr: AST.Expression): string {
           : `__lambdaArg${index}`;
       });
 
-      const body = emitExpression(expr.body);
+      const body = emitExpression(expr.body, options);
 
       let result = body;
 
@@ -256,31 +307,60 @@ function emitExpression(expr: AST.Expression): string {
     }
 
     case "IfExpression":
-      return `(${emitExpression(expr.condition)} ? ${emitExpression(expr.thenBranch)} : ${emitExpression(expr.elseBranch)})`;
+      return `(${emitExpression(expr.condition, options)} ? ${emitExpression(expr.thenBranch, options)} : ${emitExpression(expr.elseBranch, options)})`;
 
     case "LetExpression": {
       const bindingLines = expr.bindings.flatMap((binding, index) => {
         const temp = `__let${index}`;
         return [
-          `const ${temp} = ${emitExpression(binding.value)};`,
+          `const ${temp} = ${emitExpression(binding.value, options)};`,
           ...emitPatternBindingStatements(binding.pattern, temp),
         ];
       });
 
-      return `(() => { ${bindingLines.join(" ")} return ${emitExpression(expr.body)}; })()`;
+      return `(() => { ${bindingLines.join(" ")} return ${emitExpression(expr.body, options)}; })()`;
     }
 
-    case "CaseExpression":
-      throw new Error("CaseExpression emission is not implemented yet");
+    case "CaseExpression": {
+      const subject = emitExpression(expr.subject, options);
+      const temp = `__case${Math.floor(Math.random() * 1000)}`;
+      
+      const branches = expr.branches.map((branch) => {
+        const condition = emitPatternCondition(branch.pattern, temp);
+        const bindings = emitPatternBindingStatements(branch.pattern, temp);
+        return `if (${condition}) { ${bindings.join(" ")} return ${emitExpression(branch.body, options)}; }`;
+      });
+
+      return `(( ${temp} ) => { ${branches.join(" else ")} throw new Error("Pattern match failed"); })(${subject})`;
+    }
 
     default:
       throw new Error(`Unsupported expression kind ${(expr as { kind?: string }).kind}`);
   }
 }
 
-function emitBinaryExpression(expr: AST.BinaryExpression): string {
-  const left = emitExpression(expr.left);
-  const right = emitExpression(expr.right);
+function emitQualifiedName(parts: readonly string[], options: EmitOptions): string {
+  if (!options.activeImports) {
+    return parts.join("_");
+  }
+
+  // Find the longest prefix that matches an imported module
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const prefix = parts.slice(0, i).join(".");
+    if (options.activeImports.has(prefix)) {
+      const alias = parts.slice(0, i).join("_");
+      const member = parts.slice(i).join(".");
+      return `${alias}.${member}`;
+    }
+  }
+
+  // Fallback to underscore join if no import matches (e.g. local qualified name or ADT constructor)
+  return parts.join("_");
+}
+
+function emitBinaryExpression(expr: AST.BinaryExpression, options: EmitOptions): string {
+  const left = emitExpression(expr.left, options);
+  const right = emitExpression(expr.right, options);
 
   switch (expr.operator) {
     case "|>":
@@ -300,10 +380,54 @@ function emitBinaryExpression(expr: AST.BinaryExpression): string {
   }
 }
 
+function emitPatternCondition(pattern: AST.Pattern, valueRef: string): string {
+  switch (pattern.kind) {
+    case "WildcardPattern":
+      return "true";
+
+    case "VariablePattern":
+      return pattern.name === "_" ? "true" : "true";
+
+    case "LiteralPattern":
+      return `${valueRef} === ${JSON.stringify(pattern.value)}`;
+
+    case "ConstructorPattern": {
+      const tag = pattern.constructorName.parts[pattern.constructorName.parts.length - 1];
+      const check = `${valueRef} && ${valueRef}.$ === ${JSON.stringify(tag)}`;
+      const argsCheck = pattern.arguments
+        .map((arg, index) => emitPatternCondition(arg, `${valueRef}.values[${index}]`))
+        .filter((c) => c !== "true")
+        .join(" && ");
+      return argsCheck ? `(${check} && ${argsCheck})` : check;
+    }
+
+    case "TuplePattern": {
+      const check = `Array.isArray(${valueRef}) && ${valueRef}.length === ${pattern.items.length}`;
+      const argsCheck = pattern.items
+        .map((arg, index) => emitPatternCondition(arg, `${valueRef}[${index}]`))
+        .filter((c) => c !== "true")
+        .join(" && ");
+      return argsCheck ? `(${check} && ${argsCheck})` : check;
+    }
+
+    case "ListPattern": {
+      const check = `Array.isArray(${valueRef}) && ${valueRef}.length === ${pattern.items.length}`;
+      const argsCheck = pattern.items
+        .map((arg, index) => emitPatternCondition(arg, `${valueRef}[${index}]`))
+        .filter((c) => c !== "true")
+        .join(" && ");
+      return argsCheck ? `(${check} && ${argsCheck})` : check;
+    }
+
+    default:
+      return "true";
+  }
+}
+
 function emitPatternBindingStatements(pattern: AST.Pattern, valueRef: string): string[] {
   switch (pattern.kind) {
     case "VariablePattern":
-      return [`const ${pattern.name} = ${valueRef};`];
+      return pattern.name === "_" ? [] : [`const ${pattern.name} = ${valueRef};`];
 
     case "WildcardPattern":
       return [];
@@ -324,8 +448,13 @@ function emitPatternBindingStatements(pattern: AST.Pattern, valueRef: string): s
       return lines;
     }
 
-    case "ConstructorPattern":
-      return [];
+    case "ConstructorPattern": {
+      const lines: string[] = [];
+      pattern.arguments.forEach((arg, index) => {
+        lines.push(...emitPatternBindingStatements(arg, `${valueRef}.values[${index}]`));
+      });
+      return lines;
+    }
 
     case "LiteralPattern":
       return [];

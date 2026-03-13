@@ -1,0 +1,42 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Ui exposing (column, text, button)
+import Std.Cmd exposing (Cmd)
+import Std.Sub exposing (Sub)
+import Std.Program exposing (Program, makeProgram)
+
+type Msg = Increment | Decrement
+
+init unit =
+    (0, Std.Cmd.none)
+
+update msg model =
+    if msg == "Increment" then
+        (model + 1, Std.Cmd.none)
+    else
+        (model - 1, Std.Cmd.none)
+
+subscriptions model =
+    Std.Sub.none
+
+view model dispatch =
+    column
+        {}
+        [ text
+            {} "Count: "
+        , text
+            {} (stringify model)
+        , button
+            { onPress = dispatch Increment } "+"
+        , button
+            { onPress = dispatch Decrement } "-"
+        ]
+
+main =
+    makeProgram
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        }

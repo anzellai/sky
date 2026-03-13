@@ -3,6 +3,9 @@
 
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import { emitModule } from "./codegen/js-emitter.js";
 import { checkModule } from "./type-system/checker.js";
@@ -88,6 +91,11 @@ export async function typeCheckProject(
           }
         }
       }
+
+      // Always add qualified names: Foo.bar
+      for (const [name, scheme] of depExports.entries()) {
+        importsMap.set(`${depName}.${name}`, scheme);
+      }
     }
 
     if (diagnostics.length > 0) {
@@ -147,6 +155,7 @@ export async function typeCheckProject(
 export async function compileProject(
   entryFile: string,
   outDir = "dist",
+  target: "web" | "node" | "native" = "node"
 ): Promise<CompileResult> {
   const diagnostics: string[] = [];
 
@@ -158,7 +167,21 @@ export async function compileProject(
 
   // Ensure output directory exists and is marked as an ES module
   fs.mkdirSync(outDir, { recursive: true });
-  fs.writeFileSync(path.join(outDir, "package.json"), JSON.stringify({ type: "module" }, null, 2));
+  
+  // Copy runtime to outDir
+  const runtimeSrc = path.resolve(__dirname, "runtime");
+  const runtimeDest = path.join(outDir, "runtime");
+  fs.cpSync(runtimeSrc, runtimeDest, { recursive: true });
+
+  fs.writeFileSync(
+    path.join(outDir, "package.json"), 
+    JSON.stringify({ 
+      type: "module",
+      imports: {
+        "@sky/runtime/*": "./runtime/*.js"
+      }
+    }, null, 2)
+  );
 
   // Map of moduleName -> exported names -> type scheme
   const moduleExports = new Map<string, Map<string, Scheme>>();
@@ -223,6 +246,11 @@ export async function compileProject(
           }
         }
       }
+
+      // Always add qualified names: Foo.bar
+      for (const [name, scheme] of depExports.entries()) {
+        importsMap.set(`${depName}.${name}`, scheme);
+      }
     }
 
     if (diagnostics.length > 0) {
@@ -277,6 +305,7 @@ export async function compileProject(
       moduleName: loaded.moduleAst.name.join("."),
       importPaths,
       importExposes,
+      target,
     });
 
     const outputFile = computeOutputFile(loaded.moduleAst.name, outDir);

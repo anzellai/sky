@@ -13,22 +13,21 @@ export interface SkyProject {
   readonly outputDir: string
 
   readonly entryModule: string
-
+  readonly target: "web" | "node" | "native"
 }
 
 export function loadProject(startDir: string = process.cwd()): SkyProject {
 
-  const root = findProjectRoot(startDir)
+  const root = findProjectRoot(startDir) || startDir
 
   const configPath = path.join(root, "sky.toml")
 
-  if (!fs.existsSync(configPath)) {
-    throw new Error("sky.toml not found in project root")
+  let config: Record<string, any> = {}
+
+  if (fs.existsSync(configPath)) {
+    const raw = fs.readFileSync(configPath, "utf8")
+    config = parseToml(raw)
   }
-
-  const raw = fs.readFileSync(configPath, "utf8")
-
-  const config = parseToml(raw)
 
   const sourceDir =
     path.resolve(root, config.source ?? "src")
@@ -39,6 +38,8 @@ export function loadProject(startDir: string = process.cwd()): SkyProject {
   const entryModule =
     config.entry ?? "Main"
 
+  const target = (config.target || "node") as "web" | "node" | "native"
+
   return {
 
     root,
@@ -47,13 +48,13 @@ export function loadProject(startDir: string = process.cwd()): SkyProject {
 
     sourceDir,
     outputDir,
-    entryModule
-
+    entryModule,
+    target
   }
 
 }
 
-function findProjectRoot(dir: string): string {
+function findProjectRoot(dir: string): string | undefined {
 
   let current = dir
 
@@ -69,7 +70,7 @@ function findProjectRoot(dir: string): string {
     const parent = path.dirname(current)
 
     if (parent === current) {
-      throw new Error("Could not locate sky.toml")
+      return undefined
     }
 
     current = parent

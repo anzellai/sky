@@ -88,7 +88,8 @@ export type Declaration =
   | FunctionDeclaration
   | TypeAliasDeclaration
   | TypeDeclaration
-  | ForeignImportDeclaration;
+  | ForeignImportDeclaration
+  | TypeAnnotation;
 
 export type ModuleName = readonly string[];
 
@@ -421,6 +422,7 @@ export function getDeclarationName(node: Declaration): string {
     case "ForeignImportDeclaration":
     case "TypeAliasDeclaration":
     case "TypeDeclaration":
+    case "TypeAnnotation":
       return node.name;
   }
 }

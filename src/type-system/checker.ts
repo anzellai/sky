@@ -165,6 +165,7 @@ export function checkModule(
       case "TypeDeclaration":
       case "TypeAliasDeclaration":
       case "ForeignImportDeclaration":
+      case "TypeAnnotation":
         break
     }
 

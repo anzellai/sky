@@ -38,7 +38,11 @@ export async function resolveNpmImport(
 
     fs.writeFileSync(
       file,
-      `module ${skyModule} exposing (..)`
+      `module ${skyModule} exposing (..)\n\nimport Sky.Interop exposing (JsValue, JsError)\n\n` + 
+      generated.generated.values.map(val => {
+        const type = val.skyType || "JsValue";
+        return `foreign import "${npmPackage}" exposing (${val.skyName})\n\n${val.skyName} : ${type}\n`;
+      }).join("\n")
     )
 
     fs.writeFileSync(

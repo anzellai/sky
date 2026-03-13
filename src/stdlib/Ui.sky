@@ -1,0 +1,10 @@
+module Ui exposing (text, column, row, button, image, scrollView, spacer, makeProgram)
+
+-- Sky UI standard library
+-- These functions are implemented in the @sky/runtime package.
+
+foreign import "@sky/runtime/ui-react-dom"
+  exposing (text, column, row, button, image, scrollView, spacer)
+
+foreign import "@sky/runtime/program-react"
+  exposing (makeProgram)

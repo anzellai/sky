@@ -1,0 +1,16 @@
+module Std.Program exposing (Program, makeProgram)
+
+import Std.Cmd exposing (Cmd)
+import Std.Sub exposing (Sub)
+
+-- Program model msg view defines an Elm-style application.
+
+type alias Program model msg view =
+    { init : () -> (model, Cmd msg)
+    , update : msg -> model -> (model, Cmd msg)
+    , view : model -> view
+    , subscriptions : model -> Sub msg
+    }
+
+foreign import "@sky/runtime/program"
+    exposing (makeProgram)

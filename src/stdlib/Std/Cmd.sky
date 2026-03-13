@@ -1,0 +1,8 @@
+module Std.Cmd exposing (Cmd, none, batch, perform)
+
+-- Cmd msg represents a command to execute side effects.
+
+type Cmd msg = Cmd Foreign
+
+foreign import "@sky/runtime/cmd" 
+    exposing (none, batch, perform)

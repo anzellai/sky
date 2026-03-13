@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "bundle": "node bundle.js",
     "dev": "tsx src/cli.ts",
     "tokens": "node dist/cli.js tokens",
     "ast": "node dist/cli.js ast",
@@ -20,12 +21,18 @@
     "typescript": "^5.0.0"
   },
   "dependencies": {
+    "@types/express": "^5.0.6",
+    "@types/react": "^19.2.14",
     "esbuild": "^0.27.3",
     "express": "^5.2.1",
     "koa": "^3.1.2",
     "pkg": "^5.8.1",
     "postject": "^1.0.0-alpha.6",
+    "react": "^19.2.4",
     "vscode-languageserver": "^9.0.1",
     "vscode-languageserver-textdocument": "^1.0.12"
+  },
+  "imports": {
+    "@sky/runtime/*": "./dist/runtime/*.js"
   }
 }
