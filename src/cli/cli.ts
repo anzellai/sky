@@ -125,6 +125,7 @@ async function main() {
       await handleFmt(args[1]);
       return;
     case "lsp":
+      // Helix sometimes passes "-" to mean stdin, but LSP is already stdio based.
       await startLsp();
       return;
     default:
@@ -170,6 +171,22 @@ Commands:
 main();
 
 async function handleFmt(fileOrDir: string) {
+  if (fileOrDir === "-") {
+    // Read from stdin
+    const source = fs.readFileSync(0, "utf8");
+    try {
+      const { tokens } = lex(source, "stdin");
+      const filtered = filterLayout(tokens);
+      const ast = parse(filtered);
+      const formatted = formatModule(ast);
+      process.stdout.write(formatted);
+    } catch (e: any) {
+      console.error(`Failed to format stdin: ${e.message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
   if (!fileOrDir) {
     console.error("Usage: sky fmt <file-or-dir>");
     process.exit(1);
@@ -204,7 +221,9 @@ async function handleFmt(fileOrDir: string) {
     }
   }
 
-  walk(fileOrDir);
+  if (fileOrDir !== "-") {
+    walk(fileOrDir);
+  }
 }
 
 async function startLsp() {

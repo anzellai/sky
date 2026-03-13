@@ -1,59 +1,65 @@
-// src/module-graph.ts
-// Build a module dependency graph for Sky source files.
-
+// src/modules/resolver.ts
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
-
 import { lex } from "../lexer/lexer.js";
 import { parse } from "../parser/parser.js";
 import { filterLayout } from "../parser/filter-layout.js";
 import * as AST from "../ast/ast.js";
 import { getDirname, getFilename } from "../utils/path.js";
+import { isVirtualAsset, readVirtualAsset } from "../utils/assets.js";
 
 const __filename = getFilename(import.meta.url);
 const __dirname = getDirname(import.meta.url);
 
 export interface LoadedModule {
-  readonly filePath: string;
-  readonly moduleAst: AST.Module;
+  filePath: string;
+  moduleAst: AST.Module;
 }
 
-export interface ModuleGraphResult {
-  readonly modules: readonly LoadedModule[];
-  readonly diagnostics: readonly string[];
+export interface ModuleGraph {
+  modules: LoadedModule[];
+  diagnostics: string[];
 }
 
-export interface VirtualFile {
-  readonly path: string;
-  readonly content: string;
-}
-
-export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualFile): Promise<ModuleGraphResult> {
-  const diagnostics: string[] = [];
+export async function buildModuleGraph(
+  entryFile: string,
+  virtualFile?: { path: string; content: string },
+): Promise<ModuleGraph> {
   const loaded = new Map<string, LoadedModule>();
   const visiting = new Set<string>();
   const ordered: LoadedModule[] = [];
+  const diagnostics: string[] = [];
 
   const entryAbs = path.resolve(entryFile);
   const srcRoot = findSourceRoot(entryAbs);
 
-  await visit(entryAbs);
+  await loadModule(
+    entryAbs,
+    loaded,
+    visiting,
+    ordered,
+    diagnostics,
+    srcRoot,
+    virtualFile,
+  );
 
   return {
     modules: ordered,
     diagnostics,
   };
 
-  async function visit(filePath: string): Promise<void> {
-    const abs = path.resolve(filePath);
-
-    if (loaded.has(abs)) {
-      return;
-    }
-
+  async function loadModule(
+    abs: string,
+    loaded: Map<string, LoadedModule>,
+    visiting: Set<string>,
+    ordered: LoadedModule[],
+    diagnostics: string[],
+    srcRoot: string,
+    virtualFile?: { path: string; content: string },
+  ): Promise<void> {
+    if (loaded.has(abs)) return;
     if (visiting.has(abs)) {
-      diagnostics.push(`Import cycle detected involving ${abs}`);
+      diagnostics.push(`Circular dependency detected: ${abs}`);
       return;
     }
 
@@ -63,18 +69,10 @@ export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualF
     try {
       if (virtualFile && path.resolve(virtualFile.path) === abs) {
         source = virtualFile.content;
+      } else if (abs.startsWith("virtual:")) {
+        const virtualPath = abs.substring("virtual:".length);
+        source = readVirtualAsset(virtualPath) || "";
       } else {
-        // Try virtual assets first for internal modules
-        const stdlibIndex = abs.indexOf("stdlib/");
-        const runtimeIndex = abs.indexOf("runtime/");
-        
-        let relPath: string | undefined;
-        if (stdlibIndex !== -1) {
-          relPath = abs.substring(stdlibIndex);
-        } else if (runtimeIndex !== -1) {
-          relPath = abs.substring(runtimeIndex);
-        }
-
         source = fs.readFileSync(abs, "utf8");
       }
     } catch {
@@ -96,23 +94,19 @@ export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualF
     let moduleAst: AST.Module;
     try {
       moduleAst = parse(filterLayout(lexResult.tokens));
-    } catch (error) {
-      diagnostics.push(
-        error instanceof Error
-          ? `${abs}: ${error.message}`
-          : `${abs}: ${String(error)}`,
-      );
+    } catch (error: any) {
+      diagnostics.push(`Parse error in ${abs}: ${error.message}`);
       visiting.delete(abs);
       return;
     }
 
-    const imports = moduleAst.imports.map((imp) => imp.moduleName);
+    const imports = moduleAst.imports.map((imp: any) => imp.moduleName);
 
     for (const importParts of imports) {
       let importFile = resolveModuleToFile(srcRoot, importParts);
 
       if (!importFile) {
-        // Mock Go resolution
+        // Try Go package resolution via .skycache
         const goPackage = importParts.join("/").toLowerCase();
         const goCachePath = path.join(".skycache", "go", goPackage, "bindings.skyi");
         if (fs.existsSync(goCachePath)) {
@@ -127,7 +121,14 @@ export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualF
         continue;
       }
 
-      await visit(importFile);
+      await loadModule(
+        importFile.startsWith("virtual:") ? importFile : path.resolve(importFile),
+        loaded,
+        visiting,
+        ordered,
+        diagnostics,
+        srcRoot,
+      );
     }
 
     visiting.delete(abs);
@@ -146,6 +147,12 @@ function resolveModuleToFile(
   srcRoot: string,
   moduleName: readonly string[],
 ): string | undefined {
+  // 1. Try Virtual Assets (Embedded Stdlib)
+  const virtualPath = `stdlib/${moduleName.join("/")}.sky`;
+  if (isVirtualAsset(virtualPath)) {
+    return `virtual:${virtualPath}`;
+  }
+
   if (moduleName[0] === "Sky" && moduleName[1] === "Core") {
     // Read from the bundled stdlib inside the compiler
     return path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
@@ -178,15 +185,11 @@ function findSourceRoot(entryAbs: string): string {
   return path.dirname(entryAbs);
 }
 
-function formatDiagnostic(
-  message: string,
-  line?: number,
-  column?: number,
-  filePath?: string,
-): string {
-  if (line === undefined || column === undefined) {
-    return filePath ? `${filePath}: ${message}` : message;
-  }
-
-  return `${filePath ?? "<unknown>"}:${line}:${column}: ${message}`;
+function formatDiagnostic(message: string, line?: number, column?: number, file?: string): string {
+  let res = "";
+  if (file) res += `${file}:`;
+  if (line) res += `${line}:`;
+  if (column) res += `${column}: `;
+  res += message;
+  return res;
 }

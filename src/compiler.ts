@@ -200,7 +200,11 @@ export async function compileProject(
     else if (runtimeIndex !== -1) relPath = loaded.filePath.substring(runtimeIndex);
 
     
+      if (loaded.filePath.startsWith("virtual:")) {
+      mtime = 0; // Virtual assets are static
+    } else {
       mtime = fs.statSync(loaded.filePath).mtimeMs;
+    }
 
     const cached = moduleCache.get(loaded.filePath);
 
