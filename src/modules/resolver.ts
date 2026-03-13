@@ -108,7 +108,8 @@ export async function buildModuleGraph(
       if (!importFile) {
         // Try Go package resolution via .skycache
         const goPackage = importParts.join("/").toLowerCase();
-        const goCachePath = path.join(".skycache", "go", goPackage, "bindings.skyi");
+        const projectRoot = path.dirname(srcRoot);
+        const goCachePath = path.join(projectRoot, ".skycache", "go", goPackage, "bindings.skyi");
         if (fs.existsSync(goCachePath)) {
           importFile = goCachePath;
         }
@@ -147,14 +148,38 @@ function resolveModuleToFile(
   srcRoot: string,
   moduleName: readonly string[],
 ): string | undefined {
-  // 1. Try Virtual Assets (Embedded Stdlib)
+  const projectRoot = path.dirname(srcRoot);
+
+  // 1. Project Source
+  const filePath = path.join(srcRoot, ...moduleName) + ".sky";
+  if (fs.existsSync(filePath)) return filePath;
+
+  // 2. .skydeps
+  const skydepsPath = path.join(projectRoot, ".skydeps");
+  if (fs.existsSync(skydepsPath)) {
+    // Scan all installed packages for the module
+    const orgs = fs.readdirSync(skydepsPath);
+    for (const org of orgs) {
+      if (org.startsWith(".")) continue;
+      const orgPath = path.join(skydepsPath, org);
+      const repos = fs.readdirSync(orgPath);
+      for (const repo of repos) {
+        const pkgSrc = path.join(orgPath, repo, "src");
+        const depFilePath = path.join(pkgSrc, ...moduleName) + ".sky";
+        if (fs.existsSync(depFilePath)) {
+          return depFilePath;
+        }
+      }
+    }
+  }
+
+  // 3. Stdlib (Virtual or bundled)
   const virtualPath = `stdlib/${moduleName.join("/")}.sky`;
   if (isVirtualAsset(virtualPath)) {
     return `virtual:${virtualPath}`;
   }
 
   if (moduleName[0] === "Sky" && moduleName[1] === "Core") {
-    // Read from the bundled stdlib inside the compiler
     return path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
   }
 
@@ -170,8 +195,7 @@ function resolveModuleToFile(
     return path.join(__dirname, "../src/stdlib/Ui.sky");
   }
 
-  const filePath = path.join(srcRoot, ...moduleName) + ".sky";
-  return fs.existsSync(filePath) ? filePath : undefined;
+  return undefined;
 }
 
 function findSourceRoot(entryAbs: string): string {
