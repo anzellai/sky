@@ -1,0 +1,9 @@
+name = "sky-project"
+version = "0.1.0"
+
+[source]
+root = "src"
+
+["go.dependencies"]
+"github.com/google/uuid" = "latest"
+"net/http" = "latest"

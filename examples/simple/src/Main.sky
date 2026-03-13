@@ -1,0 +1,11 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Net.Http as Http
+
+main =
+    let resp
+        = Http.get "http://localhost:3000"
+    in
+        println "Hello from Sky!" resp

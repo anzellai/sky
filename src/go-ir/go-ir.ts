@@ -76,7 +76,7 @@ export interface GoCaseClause {
 
 export interface GoAssignStmt {
   kind: "GoAssignStmt";
-  left: GoExpr;
+  left: GoExpr[];
   right: GoExpr;
   define: boolean; // true for :=, false for =
 }

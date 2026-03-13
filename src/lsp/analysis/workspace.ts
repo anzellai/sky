@@ -6,6 +6,8 @@ import { parse } from '../../parser/parser.js';
 
 import { getHover } from '../features/hover.js';
 import { getDefinition } from '../features/definition.js';
+import { getCompletions } from '../features/completion.js';
+import { getSignatureHelp } from '../features/signature.js';
 
 export interface DocumentInfo {
   uri: string;
@@ -64,6 +66,14 @@ export class Workspace {
 
   public getDefinition(uri: string, position: Position): Location | null {
     return getDefinition(this, uri, position);
+  }
+
+  public getCompletions(uri: string, position: Position) {
+    return getCompletions(this, uri, position);
+  }
+
+  public getSignatureHelp(uri: string, position: Position) {
+    return getSignatureHelp(this, uri, position);
   }
 
   public findNodeAtPosition(ast: AST.Module, position: Position): AST.NodeBase | null {

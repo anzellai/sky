@@ -111,7 +111,7 @@ function emitGoStmt(stmt: GoIR.GoStmt, indent: number): string {
     }
     case "GoAssignStmt": {
       const op = stmt.define ? ":=" : "=";
-      return `${tabs}${emitGoExpr(stmt.left)} ${op} ${emitGoExpr(stmt.right)}`;
+      return `${tabs}${stmt.left.map(emitGoExpr).join(", ")} ${op} ${emitGoExpr(stmt.right)}`;
     }
     case "GoReturnStmt": {
       if (stmt.expr) {

@@ -14,7 +14,11 @@ import {
   Location,
   DocumentFormattingParams,
   TextEdit,
-  Position
+  Position,
+  CompletionItem,
+  CompletionParams,
+  SignatureHelp,
+  SignatureHelpParams
 } from 'vscode-languageserver/node.js';
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
@@ -36,7 +40,9 @@ export function startServer() {
         textDocumentSync: TextDocumentSyncKind.Incremental,
         hoverProvider: true,
         definitionProvider: true,
-        documentFormattingProvider: true
+        documentFormattingProvider: true,
+        completionProvider: { resolveProvider: false, triggerCharacters: ['.'] },
+        signatureHelpProvider: { triggerCharacters: [' ', '('] }
       }
     };
     return result;
@@ -61,6 +67,14 @@ export function startServer() {
 
   connection.onDefinition((params: DefinitionParams): Location | null => {
     return workspace.getDefinition(params.textDocument.uri, params.position);
+  });
+
+  connection.onCompletion((params: CompletionParams): CompletionItem[] => {
+    return workspace.getCompletions(params.textDocument.uri, params.position);
+  });
+
+  connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
+    return workspace.getSignatureHelp(params.textDocument.uri, params.position);
   });
 
   connection.onDocumentFormatting((params: DocumentFormattingParams): TextEdit[] | null => {

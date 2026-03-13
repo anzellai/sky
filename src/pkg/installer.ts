@@ -65,17 +65,69 @@ export function installGoPackage(pkgName: string, version: string): string {
 
   const moduleName = pkgName.split(/[\/\.]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
   
+  
   let skyiContent = `module ${moduleName} exposing (..)\n\n`;
   
-  // Fake some bindings based on package name for the prototype
-  if (pkgName === "net/http") {
-    skyiContent += `foreign import "net/http" exposing (listenAndServe)\n`;
-    skyiContent += `foreign import "net/http" exposing (get)\n`;
-  } else if (pkgName === "github.com/google/uuid") {
-    skyiContent += `foreign import "github.com/google/uuid" exposing (new)\n`;
-  } else {
-    skyiContent += `-- Add bindings for ${pkgName} here\n`;
+  try {
+    const out = execSync(`go doc -short ${pkgName}`).toString();
+    const lines = out.split("\n");
+
+    const types: string[] = [];
+    const funcs: { name: string, args: string, ret: string }[] = [];
+    const vars: string[] = [];
+
+    for (const line of lines) {
+      let m;
+      if ((m = line.match(/^func ([A-Z]\w*)\((.*?)\)(.*)/))) {
+        funcs.push({ name: m[1], args: m[2], ret: m[3] });
+      } else if ((m = line.match(/^type ([A-Z]\w*)/))) {
+        types.push(m[1]);
+      } else if ((m = line.match(/^(?:var|const) ([A-Z]\w*)/))) {
+        vars.push(m[1]);
+      }
+    }
+
+    const mapType = (t: string) => {
+      t = t.trim();
+      if (t.includes("string")) return "String";
+      if (t.includes("int") || t.includes("byte") || t.includes("rune")) return "Int";
+      if (t.includes("float")) return "Float";
+      if (t.includes("bool")) return "Bool";
+      return "Any";
+    };
+
+    for (const t of types) {
+      skyiContent += `type ${t} = ${t}\n\n`;
+    }
+
+    for (const v of vars) {
+      skyiContent += `${v} : Any\n`;
+      skyiContent += `foreign import "${pkgName}" exposing (${v})\n\n`;
+    }
+
+    for (const f of funcs) {
+      const argParts = f.args.split(",").filter(s => s.trim().length > 0);
+      const skyArgs = argParts.map(a => {
+        const parts = a.trim().split(/\s+/);
+        const typeStr = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+        return mapType(typeStr);
+      });
+
+      let retType = "Unit";
+      if (f.ret.trim().length > 0) {
+        retType = mapType(f.ret);
+      }
+
+      let sig = skyArgs.length === 0 ? `() -> ${retType}` : skyArgs.join(" -> ") + " -> " + retType;
+      
+      skyiContent += `${f.name} : ${sig}\n`;
+      skyiContent += `foreign import "${pkgName}" exposing (${f.name})\n\n`;
+    }
+
+  } catch (e) {
+    console.warn(`Warning: Could not introspect go package ${pkgName}`);
   }
+
 
   fs.writeFileSync(path.join(cacheDir, "bindings.skyi"), skyiContent);
   console.log(`Generated bindings for ${pkgName} at ${cacheDir}/bindings.skyi`);

@@ -95,8 +95,12 @@ export async function typeCheckProject(
       }
 
       // Always add qualified names: Foo.bar
+      // Always add qualified names: Foo.bar
       for (const [name, scheme] of depExports.entries()) {
         importsMap.set(`${depName}.${name}`, scheme);
+        if (imp.alias) {
+          importsMap.set(`${imp.alias.name}.${name}`, scheme);
+        }
       }
     }
 
@@ -280,8 +284,12 @@ export async function compileProject(
       }
 
       // Always add qualified names: Foo.bar
+      // Always add qualified names: Foo.bar
       for (const [name, scheme] of depExports.entries()) {
         importsMap.set(`${depName}.${name}`, scheme);
+        if (imp.alias) {
+          importsMap.set(`${imp.alias.name}.${name}`, scheme);
+        }
       }
     }
 
@@ -376,6 +384,8 @@ function convertExpr(expr: AST.Expression): CoreIR.Expr {
       return { kind: "Literal", value: expr.value, literalType: "String", type: { kind: "TypeConstant", name: "String" } };
     case "IdentifierExpression":
       return { kind: "Variable", name: expr.name, type: { kind: "TypeConstant", name: "Any" } }; // Simplified type
+    case "QualifiedIdentifierExpression":
+      return { kind: "Variable", name: expr.name.parts.join("."), type: { kind: "TypeConstant", name: "Any" } };
     case "CallExpression":
       // A call like f(a, b) in Sky is parsed as f(a, b) or nested applications
       // The AST has it as `callee` and `arguments`

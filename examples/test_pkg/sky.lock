@@ -1,0 +1,3 @@
+go:
+  github.com/google/uuid: latest
+  net/http: latest
