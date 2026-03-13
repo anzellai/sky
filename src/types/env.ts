@@ -8,8 +8,8 @@
 // - lookup
 // - computing free type variables across the environment
 
-import type { Scheme } from "./../types.js";
-import { applySubstitutionToScheme, freeTypeVariablesInScheme, typeConstant, mono } from "./../types.js";
+import type { Scheme } from "../types/types.js";
+import { applySubstitutionToScheme, freeTypeVariablesInScheme, typeConstant, mono } from "../types/types.js";
 
 export class TypeEnvironment {
 

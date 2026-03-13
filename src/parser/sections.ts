@@ -4,7 +4,7 @@
 // (+) 1  ->  \x -> x + 1
 // (1 +)  ->  \x -> 1 + x
 
-import * as AST from "../ast.js";
+import * as AST from "../ast/ast.js";
 
 const SECTION_ARG = "__section_arg";
 

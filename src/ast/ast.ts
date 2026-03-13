@@ -14,7 +14,7 @@
 // This file intentionally focuses on the surface AST.
 // Later phases can layer symbol IDs / type IDs on top rather than mutate it.
 
-import type { SourceSpan } from "./lexer.js";
+import type { SourceSpan } from "../lexer/lexer.js";
 export type { SourceSpan };
 
 export interface SourcePosition {

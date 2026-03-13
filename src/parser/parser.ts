@@ -8,10 +8,10 @@
 // - whitespace function application
 // - multiline pipeline chains
 
-import type { Token } from "./lexer.js";
-import * as AST from "./ast.js";
-import { getOperatorInfo } from "./parser/operator-table.js";
-import { buildLeftSection, buildRightSection } from "./parser/sections.js";
+import type { Token } from "../lexer/lexer.js";
+import * as AST from "../ast/ast.js";
+import { getOperatorInfo } from "../parser/operator-table.js";
+import { buildLeftSection, buildRightSection } from "../parser/sections.js";
 
 export class Parser {
   private pos = 0;

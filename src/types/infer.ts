@@ -1,7 +1,7 @@
 // src/type-system/infer.ts
 // Algorithm W with basic pattern support for Sky
 
-import * as AST from "../ast.js";
+import * as AST from "../ast/ast.js";
 import {
   Type,
   Scheme,
@@ -14,7 +14,7 @@ import {
   instantiate,
   generalize,
   formatType,
-} from "./../types.js";
+} from "../types/types.js";
 import { unify } from "./unify.js";
 import { TypeEnvironment } from "./env.js";
 import {

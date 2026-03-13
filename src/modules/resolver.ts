@@ -5,11 +5,11 @@ import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-import { lex } from "./lexer.js";
-import { parse } from "./parser.js";
-import { filterLayout } from "./parser/filter-layout.js";
-import * as AST from "./ast.js";
-import { getDirname, getFilename } from "./utils/path.js";
+import { lex } from "../lexer/lexer.js";
+import { parse } from "../parser/parser.js";
+import { filterLayout } from "../parser/filter-layout.js";
+import * as AST from "../ast/ast.js";
+import { getDirname, getFilename } from "../utils/path.js";
 
 const __filename = getFilename(import.meta.url);
 const __dirname = getDirname(import.meta.url);
@@ -148,19 +148,19 @@ function resolveModuleToFile(
 ): string | undefined {
   if (moduleName[0] === "Sky" && moduleName[1] === "Core") {
     // Read from the bundled stdlib inside the compiler
-    return path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
+    return path.join(__dirname, "../stdlib", ...moduleName) + ".sky";
   }
 
   if (moduleName[0] === "Sky" && moduleName[1] === "Interop") {
-    return path.join(__dirname, "../src/stdlib/Sky/Interop.sky");
+    return path.join(__dirname, "../stdlib/Sky/Interop.sky");
   }
 
   if (moduleName[0] === "Std") {
-    return path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
+    return path.join(__dirname, "../stdlib", ...moduleName) + ".sky";
   }
 
   if (moduleName.length === 1 && moduleName[0] === "Ui") {
-    return path.join(__dirname, "../src/stdlib/Ui.sky");
+    return path.join(__dirname, "../stdlib/Ui.sky");
   }
 
   const filePath = path.join(srcRoot, ...moduleName) + ".sky";

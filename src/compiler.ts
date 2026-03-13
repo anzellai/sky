@@ -13,9 +13,8 @@ import * as CoreIR from "./core-ir/core-ir.js";
 import { checkModule } from "./types/checker.js";
 import { collectForeignImports } from "./interop/go/collect-foreign.js";
 import { buildModuleGraph } from "./modules/resolver.js";
-import type { Scheme } from "./types.js";
+import type { Scheme } from "./types/types.js";
 import * as AST from "./ast/ast.js";
-import { listVirtualAssets, readVirtualAsset, hasVirtualAsset } from "./assets.js";
 
 import type { TypeEnvironment } from "./types/env.js";
 import type { TypeCheckResult } from "./types/checker.js";
@@ -126,7 +125,7 @@ export async function typeCheckProject(
     for (const decl of typeCheck.declarations) {
       const isExposed = !loaded.moduleAst.exposing || 
         loaded.moduleAst.exposing.open || 
-        loaded.moduleAst.exposing.items.some(i => i.kind === "value" && i.name === decl.name);
+        loaded.moduleAst.exposing.items.some((i: any) => i.kind === "value" && i.name === decl.name);
 
       if (isExposed) {
         myExports.set(decl.name, decl.scheme);
@@ -138,7 +137,7 @@ export async function typeCheckProject(
       for (const val of binding.values) {
         const isExposed = !loaded.moduleAst.exposing || 
           loaded.moduleAst.exposing.open || 
-          loaded.moduleAst.exposing.items.some(i => i.kind === "value" && i.name === val.skyName);
+          loaded.moduleAst.exposing.items.some((i: any) => i.kind === "value" && i.name === val.skyName);
           
         if (isExposed) {
           const scheme = typeCheck.environment.get(val.skyName);
@@ -182,33 +181,9 @@ export async function compileProject(
   fs.mkdirSync(outDir, { recursive: true });
   
   // Extract runtime from virtual assets (if bundled) or copy from src
-  const virtualRuntimeAssets = listVirtualAssets("runtime/");
-  if (virtualRuntimeAssets.length > 0) {
-    for (const assetPath of virtualRuntimeAssets) {
-      const destPath = path.join(outDir, assetPath);
-      fs.mkdirSync(path.dirname(destPath), { recursive: true });
-      fs.writeFileSync(destPath, readVirtualAsset(assetPath));
-    }
-  } else {
-    // Development mode fallback
-    const runtimeSrc = path.resolve(__dirname, "../src/runtime");
-    const runtimeDest = path.join(outDir, "runtime");
-    if (fs.existsSync(runtimeSrc)) {
-      fs.cpSync(runtimeSrc, runtimeDest, { recursive: true });
-    }
-  }
+  
 
-  const pkgJsonPath = path.join(outDir, "package.json");
-  const pkgJson = JSON.stringify({ 
-    type: "module",
-    imports: {
-      "@sky/runtime/*": "./runtime/*.js"
-    }
-  }, null, 2);
-
-  if (!fs.existsSync(pkgJsonPath) || fs.readFileSync(pkgJsonPath, "utf8") !== pkgJson) {
-    fs.writeFileSync(pkgJsonPath, pkgJson);
-  }
+  
 
   // Map of moduleName -> exported names -> type scheme
   const moduleExports = new Map<string, Map<string, Scheme>>();
@@ -224,11 +199,8 @@ export async function compileProject(
     if (stdlibIndex !== -1) relPath = loaded.filePath.substring(stdlibIndex);
     else if (runtimeIndex !== -1) relPath = loaded.filePath.substring(runtimeIndex);
 
-    if (relPath && hasVirtualAsset(relPath)) {
-      mtime = 0; // Virtual assets are static for a given compiler build
-    } else {
+    
       mtime = fs.statSync(loaded.filePath).mtimeMs;
-    }
 
     const cached = moduleCache.get(loaded.filePath);
 
@@ -332,7 +304,7 @@ export async function compileProject(
     for (const decl of typeCheck.declarations) {
       const isExposed = !loaded.moduleAst.exposing || 
         loaded.moduleAst.exposing.open || 
-        loaded.moduleAst.exposing.items.some(i => i.kind === "value" && i.name === decl.name);
+        loaded.moduleAst.exposing.items.some((i: any) => i.kind === "value" && i.name === decl.name);
 
       if (isExposed) {
         myExports.set(decl.name, decl.scheme);
@@ -344,7 +316,7 @@ export async function compileProject(
       for (const val of binding.values) {
         const isExposed = !loaded.moduleAst.exposing || 
           loaded.moduleAst.exposing.open || 
-          loaded.moduleAst.exposing.items.some(i => i.kind === "value" && i.name === val.skyName);
+          loaded.moduleAst.exposing.items.some((i: any) => i.kind === "value" && i.name === val.skyName);
           
         if (isExposed) {
           const scheme = typeCheck.environment.get(val.skyName);
@@ -381,7 +353,6 @@ export async function compileProject(
   }
 
   return { diagnostics };
-}
 
 function computeOutputFile(moduleName: readonly string[], outDir: string): string {
   if (moduleName.length === 1 && moduleName[0] === "Main") {
@@ -456,7 +427,7 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
 
       declarations.push({
         name: decl.name,
-        scheme: declInfo?.scheme || { type: { kind: "TypeConstant", name: "Any" }, bound: [] },
+        scheme: declInfo?.scheme || { type: { kind: "TypeConstant", name: "Any" }, quantified: [] },
         body: bodyExpr
       });
     } else if (decl.kind === "TypeDeclaration") {
@@ -488,3 +459,4 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
   };
 }
 
+}

@@ -13,7 +13,7 @@
 //   Just    : a -> Maybe a
 //   Nothing : Maybe a
 
-import * as AST from "../ast.js";
+import * as AST from "../ast/ast.js";
 import {
   Scheme,
   Type,
@@ -27,7 +27,7 @@ import {
   functionType,
   tupleType,
   recordType,
-} from "./../types.js";
+} from "../types/types.js";
 import { TypeEnvironment } from "./env.js";
 
 export interface RegisteredAdt {

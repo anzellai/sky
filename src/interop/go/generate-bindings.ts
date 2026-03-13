@@ -7,5 +7,19 @@ export interface GeneratedForeignBindings {
 }
 
 export async function generateForeignBindings(packageName: string, requestedNames: string[]): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[] }> {
-  return { diagnostics: [] };
+  return {
+    generated: {
+      packageName,
+      skyModuleName: `Sky.FFI.${packageName.replace(/\//g, ".")}`,
+      runtimeEntryPath: packageName,
+      values: requestedNames.map(name => ({
+        skyName: name,
+        jsName: name,
+        sourceModule: packageName,
+        skyType: "Foreign"
+      })),
+      types: []
+    },
+    diagnostics: []
+  };
 }

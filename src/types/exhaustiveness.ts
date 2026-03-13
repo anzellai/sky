@@ -17,9 +17,9 @@
 //
 // should report missing: Nothing
 
-import * as AST from "../ast.js";
+import * as AST from "../ast/ast.js";
 import type { AdtRegistry, RegisteredAdt } from "./adt.js";
-import type { Type } from "./../types.js";
+import type { Type } from "../types/types.js";
 
 export interface ExhaustivenessDiagnostic {
   readonly message: string;

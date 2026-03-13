@@ -1,0 +1,3 @@
+module Std.Log exposing (println)
+
+foreign import "fmt" exposing (println)

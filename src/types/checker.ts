@@ -10,7 +10,7 @@
  * - run exhaustiveness checks
  */
 
-import * as AST from "../ast.js"
+import * as AST from "../ast/ast.js"
 import { TypeEnvironment, createPreludeEnvironment } from "./env.js"
 import { inferTopLevel } from "./infer.js"
 import { registerAdts } from "./adt.js"
@@ -21,7 +21,7 @@ import {
   type Scheme,
   typeConstant,
   mono
-} from "../types.js"
+} from "../types/types.js"
 
 export interface TypeDiagnostic {
   readonly severity: "error" | "warning"

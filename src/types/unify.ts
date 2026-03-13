@@ -14,7 +14,7 @@ import {
   applySubstitution,
   composeSubstitutions,
   isTypeVariable
-} from "./../types.js";
+} from "../types/types.js";
 
 export class UnificationError extends Error {
   constructor(message: string) {

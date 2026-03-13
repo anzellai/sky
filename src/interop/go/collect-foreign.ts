@@ -1,7 +1,7 @@
 // src/ffi/collect-foreign.ts
 // Collect and resolve all foreign imports inside a Sky module.
 
-import * as AST from "../ast.js"
+import * as AST from "../../ast/ast.js"
 import fs from "fs"
 import {
   generateForeignBindings,

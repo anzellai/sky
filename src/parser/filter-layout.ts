@@ -1,4 +1,4 @@
-import type { Token } from "../lexer.js";
+import type { Token } from "../lexer/lexer.js";
 
 export function filterLayout(tokens: readonly Token[]): Token[] {
   const result: Token[] = [];

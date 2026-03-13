@@ -8,7 +8,7 @@
 // - provide a reusable primitive for case expressions, let patterns,
 //   lambda parameters, and future exhaustiveness checks
 
-import * as AST from "../ast.js";
+import * as AST from "../ast/ast.js";
 import { TypeEnvironment } from "./env.js";
 import { lookupConstructorScheme, type AdtRegistry } from "./adt.js";
 import {
@@ -21,7 +21,7 @@ import {
   instantiate,
   freshTypeVariable,
   functionType,
-} from "./../types.js";
+} from "../types/types.js";
 import { unify } from "./unify.js";
 
 export interface PatternCheckResult {
