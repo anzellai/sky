@@ -162,6 +162,8 @@ Commands:
   sky build <file.sky>
   sky run <file.sky>
   sky check <file.sky>
+  sky fmt <file-or-dir>
+  sky lsp
 `);
 }
 
