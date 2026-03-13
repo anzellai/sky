@@ -176,6 +176,11 @@ function extractDeclarationExports(
       if (type && type.isClassOrInterface()) {
         const props = type.getApparentProperties();
         for (const prop of props) {
+          const propName = prop.getName();
+          if (propName === "apply" || propName === "bind" || propName === "call" || propName === "toString") {
+            continue;
+          }
+
           const propDecl = prop.valueDeclaration || prop.getDeclarations()?.[0];
           const propType = checker.getTypeOfSymbolAtLocation(prop, propDecl || declaration);
           const callSigs = propType.getCallSignatures();

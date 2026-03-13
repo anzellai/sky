@@ -9,6 +9,18 @@ export async function resolveNpmImport(
   const npmPackage =
     moduleName.toLowerCase()
 
+  const skyModule = `Sky.FFI.${moduleName.replace(/[^a-zA-Z0-9]/g, "")}`;
+  const file =
+    path.join(
+      ".skycache",
+      "ffi",
+      ...skyModule.split(".")
+    ) + ".sky";
+
+  if (fs.existsSync(file)) {
+    return path.resolve(file);
+  }
+
   const generated =
     await generateForeignBindings(
       npmPackage,
@@ -18,16 +30,6 @@ export async function resolveNpmImport(
   if (!generated.generated) {
     return undefined
   }
-
-  const skyModule =
-    generated.generated.skyModuleName
-
-  const file =
-    path.join(
-      ".skycache",
-      "ffi",
-      ...skyModule.split(".")
-    ) + ".sky"
 
   if (!fs.existsSync(file)) {
 

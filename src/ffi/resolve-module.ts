@@ -3,9 +3,9 @@
 
 import fs from "fs";
 import path from "path";
-import { createRequire } from "module";
+import { getRequire } from "../utils/path.js";
 
-const require = createRequire(import.meta.url);
+const require = getRequire(import.meta.url);
 
 export interface ResolvedPackage {
   readonly packageName: string;
@@ -22,7 +22,7 @@ export interface ResolvePackageResult {
 
 export function resolveForeignPackage(packageName: string): ResolvePackageResult {
   const diagnostics: string[] = [];
-  const projectRequire = createRequire(path.join(process.cwd(), "index.js"));
+  const projectRequire = getRequire(path.join(process.cwd(), "index.js"));
 
   let runtimeEntryPath: string;
   try {

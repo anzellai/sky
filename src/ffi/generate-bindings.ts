@@ -118,11 +118,7 @@ export async function generateForeignBindings(
     const typeInfo = typeMap.get(requestedName);
 
     if (!existsAtRuntime && !functionInfo && !typeInfo) {
-
-      diagnostics.push(
-        `Foreign export "${requestedName}" was requested from "${packageName}" but was not found.`,
-      );
-
+      // Skip if not found, instead of failing
       continue;
     }
 

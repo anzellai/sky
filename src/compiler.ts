@@ -3,9 +3,9 @@
 
 import fs from "fs";
 import path from "path";
-import { fileURLToPath } from "url";
+import { getDirname } from "./utils/path.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = getDirname(import.meta.url);
 
 import { emitModule } from "./codegen/js-emitter.js";
 import { checkModule } from "./type-system/checker.js";
@@ -13,6 +13,7 @@ import { collectForeignImports } from "./ffi/collect-foreign.js";
 import { buildModuleGraph } from "./module-graph.js";
 import type { Scheme } from "./types.js";
 import * as AST from "./ast.js";
+import { listVirtualAssets, readVirtualAsset, hasVirtualAsset } from "./assets.js";
 
 import type { TypeEnvironment } from "./type-system/env.js";
 import type { TypeCheckResult } from "./type-system/checker.js";
@@ -152,6 +153,16 @@ export async function typeCheckProject(
   return { diagnostics, moduleResults, latestModuleAst };
 }
 
+// Incremental compilation cache
+interface ModuleCacheEntry {
+  readonly mtime: number;
+  readonly typeCheck: TypeCheckResult;
+  readonly exports: Map<string, Scheme>;
+  readonly code: string;
+}
+
+const moduleCache = new Map<string, ModuleCacheEntry>();
+
 export async function compileProject(
   entryFile: string,
   outDir = "dist",
@@ -168,25 +179,68 @@ export async function compileProject(
   // Ensure output directory exists and is marked as an ES module
   fs.mkdirSync(outDir, { recursive: true });
   
-  // Copy runtime to outDir
-  const runtimeSrc = path.resolve(__dirname, "runtime");
-  const runtimeDest = path.join(outDir, "runtime");
-  fs.cpSync(runtimeSrc, runtimeDest, { recursive: true });
+  // Extract runtime from virtual assets (if bundled) or copy from src
+  const virtualRuntimeAssets = listVirtualAssets("runtime/");
+  if (virtualRuntimeAssets.length > 0) {
+    for (const assetPath of virtualRuntimeAssets) {
+      const destPath = path.join(outDir, assetPath);
+      fs.mkdirSync(path.dirname(destPath), { recursive: true });
+      fs.writeFileSync(destPath, readVirtualAsset(assetPath));
+    }
+  } else {
+    // Development mode fallback
+    const runtimeSrc = path.resolve(__dirname, "../src/runtime");
+    const runtimeDest = path.join(outDir, "runtime");
+    if (fs.existsSync(runtimeSrc)) {
+      fs.cpSync(runtimeSrc, runtimeDest, { recursive: true });
+    }
+  }
 
-  fs.writeFileSync(
-    path.join(outDir, "package.json"), 
-    JSON.stringify({ 
-      type: "module",
-      imports: {
-        "@sky/runtime/*": "./runtime/*.js"
-      }
-    }, null, 2)
-  );
+  const pkgJsonPath = path.join(outDir, "package.json");
+  const pkgJson = JSON.stringify({ 
+    type: "module",
+    imports: {
+      "@sky/runtime/*": "./runtime/*.js"
+    }
+  }, null, 2);
+
+  if (!fs.existsSync(pkgJsonPath) || fs.readFileSync(pkgJsonPath, "utf8") !== pkgJson) {
+    fs.writeFileSync(pkgJsonPath, pkgJson);
+  }
 
   // Map of moduleName -> exported names -> type scheme
   const moduleExports = new Map<string, Map<string, Scheme>>();
 
   for (const loaded of graph.modules) {
+    const moduleNameStr = loaded.moduleAst.name.join(".");
+    
+    // Determine mtime, handling virtual assets
+    let mtime: number;
+    const stdlibIndex = loaded.filePath.indexOf("stdlib/");
+    const runtimeIndex = loaded.filePath.indexOf("runtime/");
+    let relPath: string | undefined;
+    if (stdlibIndex !== -1) relPath = loaded.filePath.substring(stdlibIndex);
+    else if (runtimeIndex !== -1) relPath = loaded.filePath.substring(runtimeIndex);
+
+    if (relPath && hasVirtualAsset(relPath)) {
+      mtime = 0; // Virtual assets are static for a given compiler build
+    } else {
+      mtime = fs.statSync(loaded.filePath).mtimeMs;
+    }
+
+    const cached = moduleCache.get(loaded.filePath);
+
+    if (cached && cached.mtime === mtime) {
+      moduleExports.set(moduleNameStr, cached.exports);
+      
+      const outputFile = computeOutputFile(loaded.moduleAst.name, outDir);
+      if (!fs.existsSync(outputFile)) {
+        fs.mkdirSync(path.dirname(outputFile), { recursive: true });
+        fs.writeFileSync(outputFile, cached.code, "utf8");
+      }
+      continue;
+    }
+
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
     diagnostics.push(...foreignResult.diagnostics);
 
@@ -299,13 +353,21 @@ export async function compileProject(
       }
     }
 
-    moduleExports.set(loaded.moduleAst.name.join("."), myExports);
+    moduleExports.set(moduleNameStr, myExports);
 
     const emitted = emitModule(loaded.moduleAst, {
-      moduleName: loaded.moduleAst.name.join("."),
+      moduleName: moduleNameStr,
       importPaths,
       importExposes,
       target,
+    });
+
+    // Update cache
+    moduleCache.set(loaded.filePath, {
+      mtime,
+      typeCheck,
+      exports: myExports,
+      code: emitted.code
     });
 
     const outputFile = computeOutputFile(loaded.moduleAst.name, outDir);

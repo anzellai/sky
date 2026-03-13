@@ -231,18 +231,63 @@ async function cmdRun(file: string) {
 
   const modulePath = computeOutputPath(entry)
 
-  const mod = await import(path.resolve(modulePath))
-
-  if (typeof mod.main === "function") {
-
-    const value = mod.main()
-
-    if (value !== undefined) {
-      console.log(value)
-    }
-
+  if (target === "node") {
+    console.log(`Running ${modulePath} with node...`);
+    execSync(`node ${modulePath}`, { stdio: "inherit" });
+  } else if (target === "web") {
+    await runWeb(project, entry);
+  } else if (target === "native") {
+    console.log("Native target selected. Please use React Native tooling to run the generated JS.");
+    console.log(`Entry point: ${modulePath}`);
   }
 
+}
+
+async function runWeb(project: any, entryFile: string) {
+  const outDir = project.outputDir;
+  const entryJs = computeOutputPath(entryFile);
+  const relEntry = path.relative(outDir, entryJs);
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Sky Web App</title>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="module">
+        import { main } from "./${relEntry}";
+        if (typeof main === 'function') {
+            const result = main();
+            if (result && typeof result === 'function') {
+                // If it's a React component (from makeProgram), we might need to mount it.
+                // For now just log it.
+                console.log("Sky component initialized", result);
+            }
+        }
+    </script>
+</body>
+</html>`;
+
+  fs.writeFileSync(path.join(outDir, "index.html"), html);
+
+  console.log(`Starting web server at http://localhost:3000...`);
+  const ctx = await esbuild.context({
+    entryPoints: [entryJs],
+    bundle: true,
+    outdir: outDir,
+    platform: 'browser',
+    format: 'esm',
+  });
+
+  await ctx.watch();
+  const { port } = await ctx.serve({
+    servedir: outDir,
+    port: 3000,
+  });
+
+  console.log(`Web app served at http://localhost:${port}`);
 }
 
 /* ------------------------------------------------ */

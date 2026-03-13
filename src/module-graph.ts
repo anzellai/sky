@@ -10,9 +10,11 @@ import { parse } from "./parser.js";
 import { filterLayout } from "./parser/filter-layout.js";
 import * as AST from "./ast.js";
 import { resolveNpmImport } from "./ffi/resolve-npm-import.js";
+import { hasVirtualAsset, readVirtualAsset } from "./assets.js";
+import { getDirname, getFilename } from "./utils/path.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __filename = getFilename(import.meta.url);
+const __dirname = getDirname(import.meta.url);
 
 export interface LoadedModule {
   readonly filePath: string;
@@ -64,7 +66,22 @@ export async function buildModuleGraph(entryFile: string, virtualFile?: VirtualF
       if (virtualFile && path.resolve(virtualFile.path) === abs) {
         source = virtualFile.content;
       } else {
-        source = fs.readFileSync(abs, "utf8");
+        // Try virtual assets first for internal modules
+        const stdlibIndex = abs.indexOf("stdlib/");
+        const runtimeIndex = abs.indexOf("runtime/");
+        
+        let relPath: string | undefined;
+        if (stdlibIndex !== -1) {
+          relPath = abs.substring(stdlibIndex);
+        } else if (runtimeIndex !== -1) {
+          relPath = abs.substring(runtimeIndex);
+        }
+
+        if (relPath && hasVirtualAsset(relPath)) {
+          source = readVirtualAsset(relPath);
+        } else {
+          source = fs.readFileSync(abs, "utf8");
+        }
       }
     } catch {
       diagnostics.push(`Cannot read file: ${abs}`);
@@ -135,31 +152,19 @@ function resolveModuleToFile(
 ): string | undefined {
   if (moduleName[0] === "Sky" && moduleName[1] === "Core") {
     // Read from the bundled stdlib inside the compiler
-    const stdlibPath = path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
-    if (fs.existsSync(stdlibPath)) {
-      return stdlibPath;
-    }
+    return path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
   }
 
   if (moduleName[0] === "Sky" && moduleName[1] === "Interop") {
-    const stdlibPath = path.join(__dirname, "../src/stdlib/Sky/Interop.sky");
-    if (fs.existsSync(stdlibPath)) {
-      return stdlibPath;
-    }
+    return path.join(__dirname, "../src/stdlib/Sky/Interop.sky");
   }
 
   if (moduleName[0] === "Std") {
-    const stdlibPath = path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
-    if (fs.existsSync(stdlibPath)) {
-      return stdlibPath;
-    }
+    return path.join(__dirname, "../src/stdlib", ...moduleName) + ".sky";
   }
 
   if (moduleName.length === 1 && moduleName[0] === "Ui") {
-    const stdlibPath = path.join(__dirname, "../src/stdlib/Ui.sky");
-    if (fs.existsSync(stdlibPath)) {
-      return stdlibPath;
-    }
+    return path.join(__dirname, "../src/stdlib/Ui.sky");
   }
 
   const filePath = path.join(srcRoot, ...moduleName) + ".sky";

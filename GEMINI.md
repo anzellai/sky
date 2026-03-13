@@ -88,7 +88,7 @@ main =
 
 ```bash
 sky build file.sky     # Builds to dist/ as ES Modules
-sky run file.sky       # Builds and immediately executes the entrypoint
+sky run file.sky       # Builds and immediately executes the entrypoint (Target-Aware)
 sky bundle             # Builds and bundles sky/sky-lsp into standalone binaries
 sky fmt file.sky       # Formats code (Elm-style)
 sky ast file.sky       # Dumps AST
@@ -97,7 +97,23 @@ sky tokens file.sky    # Dumps Lexer tokens
 sky repl               # Interactive REPL
 ```
 
-Formatter also supports stdin: `sky fmt -`
+### Target-Aware `sky run`
+- **`node`**: Runs the output directly using `node`.
+- **`web`**: Starts a local dev server at `http://localhost:3000` using `esbuild`.
+- **`native`**: Provides guidance for React Native execution.
+
+---
+
+## Performance & Optimization
+
+### 1. Incremental Compilation
+`compiler.ts` implements a module-level cache. It tracks file modification times (`mtime`) and skips parsing, type-checking, and code generation for unchanged modules.
+
+### 2. FFI Caching
+`resolve-npm-import.ts` caches generated `.sky` stubs and sidecar `.json` metadata. It avoids expensive re-runs of the TypeScript Compiler API unless the underlying NPM package changes.
+
+### 3. Asset Management
+The compiler intelligently copies the `runtime/` and `stdlib/` assets to the output directory only when they have been updated.
 
 ---
 
