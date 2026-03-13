@@ -2,6 +2,12 @@ import process from "process";
 import fs from "fs";
 import { execSync } from "child_process";
 import { compileProject } from "../compiler.js";
+import { formatModule } from "../lsp/formatter/formatter.js";
+import { lex } from "../lexer/lexer.js";
+import { filterLayout } from "../parser/filter-layout.js";
+import { parse } from "../parser/parser.js";
+import { startServer } from "../lsp/server.js";
+
 
 export function handleAdd(pkgName: string) {
   if (!pkgName) {
@@ -115,6 +121,12 @@ async function main() {
     case "check":
       console.log("Check not fully implemented yet.");
       return;
+    case "fmt":
+      await handleFmt(args[1]);
+      return;
+    case "lsp":
+      await startLsp();
+      return;
     default:
       printHelp();
       process.exit(1);
@@ -154,3 +166,45 @@ Commands:
 }
 
 main();
+
+async function handleFmt(fileOrDir: string) {
+  if (!fileOrDir) {
+    console.error("Usage: sky fmt <file-or-dir>");
+    process.exit(1);
+  }
+
+  function formatFile(filePath: string) {
+    if (!filePath.endsWith(".sky") && !filePath.endsWith(".skyi")) return;
+    try {
+      const source = fs.readFileSync(filePath, "utf8");
+      const { tokens } = lex(source, filePath);
+      const filtered = filterLayout(tokens);
+      const ast = parse(filtered);
+      const formatted = formatModule(ast);
+      
+      if (source !== formatted) {
+        fs.writeFileSync(filePath, formatted, "utf8");
+        console.log(`Formatted ${filePath}`);
+      }
+    } catch (e: any) {
+      console.error(`Failed to format ${filePath}: ${e.message}`);
+    }
+  }
+
+  function walk(dir: string) {
+    const stat = fs.statSync(dir);
+    if (stat.isFile()) {
+      formatFile(dir);
+    } else if (stat.isDirectory()) {
+      for (const item of fs.readdirSync(dir)) {
+        walk(dir + "/" + item);
+      }
+    }
+  }
+
+  walk(fileOrDir);
+}
+
+async function startLsp() {
+  startServer();
+}
