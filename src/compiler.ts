@@ -447,11 +447,11 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
     } else if (decl.kind === "TypeDeclaration") {
       typeDeclarations.push({
         name: decl.name,
-        typeParams: Array.from(decl.typeParameters),
-        constructors: (decl as any).constructors.map((c: any) => ({
+        typeParams: Array.from((decl as any).typeParameters || []),
+        constructors: (decl as any).variants ? (decl as any).variants.map((c: any) => ({
           name: c.name,
-          types: c.arguments.map(() => ({ kind: "TypeConstant", name: "Any" }))
-        }))
+          types: c.fields ? c.fields.map(() => ({ kind: "TypeConstant", name: "Any" })) : []
+        })) : []
       });
     }
   }

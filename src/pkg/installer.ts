@@ -66,6 +66,7 @@ export function installGoPackage(pkgName: string, version: string): string {
   const moduleName = pkgName.split(/[\/\.]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
   
   
+  
   let skyiContent = `module ${moduleName} exposing (..)\n\n`;
   
   try {
@@ -77,8 +78,9 @@ export function installGoPackage(pkgName: string, version: string): string {
     const vars: string[] = [];
 
     for (const line of lines) {
+      let safeLine = line.replace(/func\(.*?\)/g, "Any");
       let m;
-      if ((m = line.match(/^func ([A-Z]\w*)\((.*?)\)(.*)/))) {
+      if ((m = safeLine.match(/^func ([A-Z]\w*)\((.*?)\)(.*)/))) {
         funcs.push({ name: m[1], args: m[2], ret: m[3] });
       } else if ((m = line.match(/^type ([A-Z]\w*)/))) {
         types.push(m[1]);
@@ -88,13 +90,48 @@ export function installGoPackage(pkgName: string, version: string): string {
     }
 
     const mapType = (t: string) => {
-      t = t.trim();
-      if (t.includes("string")) return "String";
-      if (t.includes("int") || t.includes("byte") || t.includes("rune")) return "Int";
-      if (t.includes("float")) return "Float";
-      if (t.includes("bool")) return "Bool";
-      return "Any";
+      if (t.includes("(") || t.includes(")") || t.includes(",")) return "Any";
+      t = t.trim().replace(/^\*/, ""); // remove pointer
+      if (t === "string") return "String";
+      if (t === "int" || t === "byte" || t === "rune" || t.startsWith("int") || t.startsWith("uint")) return "Int";
+      if (t === "float32" || t === "float64") return "Float";
+      if (t === "bool") return "Bool";
+      if (t === "error") return "Error";
+      if (t === "any" || t === "interface{}") return "Any";
+      if (t.startsWith("[]")) {
+          const inner = mapType(t.substring(2));
+          return inner.includes(" ") ? `(List (${inner}))` : `List ${inner}`;
+      }
+      if (t.startsWith("map[")) {
+        const match = t.match(/map\[(.*?)\](.*)/);
+        if (match) {
+           const k = mapType(match[1]);
+           const v = mapType(match[2]);
+           return `Map ${k.includes(" ") ? `(${k})` : k} ${v.includes(" ") ? `(${v})` : v}`;
+        }
+      }
+      const parts = t.split(".");
+      return parts[parts.length - 1]; // e.g. Response
     };
+
+    const parseRet = (ret: string) => {
+        ret = ret.trim();
+        if (!ret) return "Unit";
+        if (ret.startsWith("(") && ret.endsWith(")")) {
+            const inner = ret.substring(1, ret.length - 1);
+            const parts = inner.split(",");
+            const types = parts.map(p => {
+                const tokens = p.trim().split(/\s+/);
+                return mapType(tokens[tokens.length - 1]);
+            });
+            if (types.length === 1) return types[0];
+            return `Tuple${types.length} ${types.join(" ")}`; // Map to Tuple2, Tuple3, etc. for cleaner interop than raw parentheses
+        }
+        return mapType(ret);
+    };
+
+    // Add Error and Any just in case
+    skyiContent += `type Error = Error\n\ntype Any = Any\n\ntype List a = List\n\ntype Map k v = Map\n\ntype Tuple2 a b = Tuple2\n\ntype Tuple3 a b c = Tuple3\n\n`;
 
     for (const t of types) {
       skyiContent += `type ${t} = ${t}\n\n`;
@@ -106,19 +143,31 @@ export function installGoPackage(pkgName: string, version: string): string {
     }
 
     for (const f of funcs) {
+      let sig = "() -> Unit";
       const argParts = f.args.split(",").filter(s => s.trim().length > 0);
-      const skyArgs = argParts.map(a => {
-        const parts = a.trim().split(/\s+/);
-        const typeStr = parts.length > 1 ? parts[parts.length - 1] : parts[0];
-        return mapType(typeStr);
-      });
-
-      let retType = "Unit";
-      if (f.ret.trim().length > 0) {
-        retType = mapType(f.ret);
+      let skyArgs = [];
+      
+      // Safety catch for weird function nesting inside arguments
+      if (f.args.includes("func(") || f.args.includes("func (")) {
+         skyArgs.push("Any");
+      } else {
+        for (let part of argParts) {
+           part = part.trim();
+           const tokens = part.split(/\s+/);
+           const typeStr = tokens[tokens.length - 1];
+           let mapped = mapType(typeStr.replace("...", "[]"));
+           if (mapped.includes(" ")) mapped = `(${mapped})`;
+           skyArgs.push(mapped);
+        }
       }
 
-      let sig = skyArgs.length === 0 ? `() -> ${retType}` : skyArgs.join(" -> ") + " -> " + retType;
+      let retType = parseRet(f.ret);
+
+      if (skyArgs.length === 0) {
+        sig = `() -> ${retType}`;
+      } else {
+        sig = skyArgs.join(" -> ") + " -> " + retType;
+      }
       
       skyiContent += `${f.name} : ${sig}\n`;
       skyiContent += `foreign import "${pkgName}" exposing (${f.name})\n\n`;
@@ -127,6 +176,7 @@ export function installGoPackage(pkgName: string, version: string): string {
   } catch (e) {
     console.warn(`Warning: Could not introspect go package ${pkgName}`);
   }
+
 
 
   fs.writeFileSync(path.join(cacheDir, "bindings.skyi"), skyiContent);

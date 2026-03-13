@@ -11,7 +11,7 @@ export function lowerModule(module: CoreIR.Module): GoIR.GoPackage {
   };
 
   // Add net/http import if listenAndServe is present (hack for demo)
-  if (module.declarations.some(d => JSON.stringify(d).includes("Http.get"))) {
+  if (module.declarations.some(d => JSON.stringify(d).includes("Http.Get") || JSON.stringify(d).includes("Http.get"))) {
     pkg.imports.push({ path: "net/http" });
   }
   if (module.declarations.some(d => JSON.stringify(d).includes("println"))) {
@@ -172,7 +172,7 @@ function lowerExpr(expr: CoreIR.Expr): GoIR.GoExpr {
         if (args.length > 1 && args[1].kind === "GoBasicLit" && args[1].value === '"nil"') {
           args[1] = { kind: "GoIdent", name: "nil" };
         }
-      } else if (fnExpr.kind === "GoIdent" && fnExpr.name === "Http.get") {
+      } else if (fnExpr.kind === "GoIdent" && (fnExpr.name === "Http.get" || fnExpr.name === "Http.Get")) {
         fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "http" }, sel: "Get" };
       } else if (fnExpr.kind === "GoIdent" && fnExpr.name === "println") {
         fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "fmt" }, sel: "Println" };
