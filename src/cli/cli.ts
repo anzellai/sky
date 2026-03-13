@@ -43,7 +43,7 @@ export async function handleBuild(entryFile: string) {
 
   console.log(`Compiling ${entryFile}...`);
   
-  const outDir = "dist_go";
+  const outDir = "dist";
   
   const result = await compileProject(entryFile, outDir, "node");
   
@@ -63,7 +63,7 @@ export async function handleBuild(entryFile: string) {
     }
     execSync(`cd ${outDir} && go mod tidy`, { stdio: "inherit" });
     execSync(`cd ${outDir} && go build -o app`, { stdio: "inherit" });
-    console.log("Build complete: dist_go/app");
+    console.log("Build complete: dist/app");
   } catch (e) {
     console.error("go build failed", e);
     process.exit(1);
@@ -131,7 +131,7 @@ async function cmdRun(file: string) {
   
   console.log("Running application...");
   try {
-    const outDir = "dist_go";
+    const outDir = "dist";
     const appBinary = process.platform === "win32" ? "app.exe" : "./app";
     execSync(`cd ${outDir} && ${appBinary}`, { stdio: "inherit" });
   } catch (e) {
