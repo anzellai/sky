@@ -1,6 +1,0 @@
-{
-  "type": "module",
-  "imports": {
-    "@sky/runtime/*": "./runtime/*.js"
-  }
-}
