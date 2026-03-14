@@ -212,6 +212,7 @@ export function inferExpression(
 
         const patternResult = inferPattern(
           registry,
+          env,
           param.pattern,
           applySubstitution(paramType, currentSub),
         );
@@ -337,6 +338,7 @@ export function inferExpression(
 
         const patternResult = inferPattern(
           registry,
+          env,
           binding.pattern,
           valueType,
         );
@@ -378,6 +380,7 @@ export function inferExpression(
 
         const patternResult = inferPattern(
           registry,
+          env,
           branch.pattern,
           branchSubjectType,
         );
@@ -582,7 +585,15 @@ function translateTypeExpression(expr: AST.TypeExpression): Type {
       return { kind: "TypeVariable", id: -1, name: expr.name }; // Note: name-based variables not fully supported in algorithmic infer yet, using dummy ID
     
     case "TypeReference":
-      return { kind: "TypeConstant", name: expr.name.parts.join(".") };
+      const baseType: Type = { kind: "TypeConstant", name: expr.name.parts.join(".") };
+      if (expr.arguments && expr.arguments.length > 0) {
+          return {
+              kind: "TypeApplication",
+              constructor: baseType,
+              arguments: expr.arguments.map(translateTypeExpression)
+          };
+      }
+      return baseType;
 
     case "FunctionType":
       return functionType(
@@ -603,7 +614,26 @@ export function inferTopLevel(
   registry: AdtRegistry,
   env: TypeEnvironment,
   decl: AST.FunctionDeclaration,
+  typeAnnotation?: AST.TypeAnnotation
 ): InferTopLevelResult {
+  const effectiveAnnotation = decl.typeAnnotation || typeAnnotation;
+
+  if (effectiveAnnotation) {
+    const annotatedType = translateTypeExpression(effectiveAnnotation.type);
+    
+    // Check if the body actually conforms to the annotated type (optional but good)
+    const bodyResult = inferExpression(registry, env, decl.body);
+    
+    // For now, we assume the annotation is truth and map its scheme
+    const scheme = generalize(annotatedType, env.freeTypeVariables());
+    
+    return {
+      name: decl.name,
+      scheme,
+      pretty: formatType(scheme.type),
+    };
+  }
+
   const paramTypes = decl.parameters.map(() => freshTypeVariable());
 
   let localEnv = env;
@@ -613,6 +643,7 @@ export function inferTopLevel(
     const pattern = decl.parameters[i].pattern;
     const patternResult = inferPattern(
       registry,
+      localEnv,
       pattern,
       applySubstitution(paramTypes[i], currentSub),
     );

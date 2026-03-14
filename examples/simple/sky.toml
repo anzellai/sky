@@ -1,7 +1,5 @@
-[project]
-name = "sky-project"
-type = "application"
+name = "unknown"
+version = "0.0.0"
 
-[dependencies]
-
+["go.dependencies"]
 "net/http" = "latest"

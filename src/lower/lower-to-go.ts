@@ -10,28 +10,14 @@ export function lowerModule(module: CoreIR.Module): GoIR.GoPackage {
     declarations: []
   };
 
-  // Add net/http import if listenAndServe is present (hack for demo)
-  if (module.declarations.some(d => JSON.stringify(d).includes("Http.Get") || JSON.stringify(d).includes("Http.get"))) {
-    pkg.imports.push({ path: "net/http" });
-  }
-  if (module.declarations.some(d => JSON.stringify(d).includes("println"))) {
-    pkg.imports.push({ path: "fmt" });
-  }
-
   // Convert types
   for (const tDecl of module.typeDeclarations) {
-    // Basic conversion of ADTs to struct with Tag
-    // type Maybe a = Nothing | Just a
-    // type Maybe[T any] struct { Tag int; JustValue T }
-    
     const fields: { name: string; type: GoIR.GoType }[] = [
       { name: "Tag", type: { kind: "GoIdentType", name: "int" } }
     ];
 
     for (const ctor of tDecl.constructors) {
       if (ctor.types.length > 0) {
-        // Simplified: Just take the first type for now as the value
-        // In reality, we'd need to handle multiple constructor arguments
         fields.push({
           name: `${ctor.name}Value`,
           type: lowerType(ctor.types[0])
@@ -70,7 +56,7 @@ export function lowerModule(module: CoreIR.Module): GoIR.GoPackage {
           stmts.push({
             kind: "GoAssignStmt",
             define: true,
-            left: [{ kind: "GoIdent", name: expr.name }, { kind: "GoIdent", name: "_" }], // Add _ to ignore error for the demo
+            left: [{ kind: "GoIdent", name: expr.name }],
             right: lowerExpr(expr.value)
           });
           flattenLet(expr.body);
@@ -109,10 +95,39 @@ export function lowerModule(module: CoreIR.Module): GoIR.GoPackage {
     }
   }
 
+  const foreignModules = new Set<string>();
+  const scanGoNode = (node: any) => {
+      if (!node) return;
+      if (typeof node !== "object") return;
+      if (node.kind === "GoSelectorExpr" && node.expr && node.expr.kind === "GoIdent") {
+         foreignModules.add(node.expr.name);
+      }
+      for (const k of Object.keys(node)) {
+          scanGoNode(node[k]);
+      }
+  };
+
+  for (const decl of pkg.declarations) {
+      scanGoNode(decl);
+  }
+
+  if (foreignModules.has("sky_wrappers")) {
+      pkg.imports.push({ path: "sky-out/sky_wrappers", alias: "sky_wrappers" });
+  }
+  if (foreignModules.has("http")) {
+      pkg.imports.push({ path: "net/http" });
+  }
+  if (foreignModules.has("fmt")) {
+      pkg.imports.push({ path: "fmt" });
+  }
+
   return pkg;
 }
 
 function lowerType(t: Type): GoIR.GoType {
+  if (!t || !t.kind) {
+      return { kind: "GoIdentType", name: "any" };
+  }
   // Simplified type lowering
   if (t.kind === "TypeConstant") {
     if (t.name === "Int") return { kind: "GoIdentType", name: "int" };
@@ -120,12 +135,22 @@ function lowerType(t: Type): GoIR.GoType {
     if (t.name === "Bool") return { kind: "GoIdentType", name: "bool" };
     if (t.name === "String") return { kind: "GoIdentType", name: "string" };
     if (t.name === "Unit") return { kind: "GoStructType", fields: [] };
+    if (t.name === "Any") return { kind: "GoIdentType", name: "any" };
     
     return {
       kind: "GoIdentType",
-      name: t.name,
-      typeArgs: (t as any).args?.map(lowerType)
+      name: t.name
     };
+  }
+  if (t.kind === "TypeApplication") {
+    const base = lowerType(t.constructor);
+    if (base.kind === "GoIdentType") {
+       return {
+         ...base,
+         typeArgs: t.arguments?.map(lowerType)
+       };
+    }
+    return base;
   }
   if (t.kind === "TypeVariable") {
     return { kind: "GoIdentType", name: "any" }; // type var
@@ -133,8 +158,8 @@ function lowerType(t: Type): GoIR.GoType {
   if (t.kind === "TypeFunction") {
     return {
       kind: "GoFuncType",
-      params: [lowerType((t as any).domain)],
-      results: [lowerType((t as any).codomain)]
+      params: [lowerType(t.from)],
+      results: [lowerType(t.to)]
     };
   }
   return { kind: "GoIdentType", name: "any" };
@@ -149,6 +174,10 @@ function lowerExpr(expr: CoreIR.Expr): GoIR.GoExpr {
       return { kind: "GoBasicLit", value: String(expr.value) };
     }
     case "Variable": {
+      if (expr.name.startsWith("Http.")) {
+         const selName = "Sky_net_http_" + expr.name.substring(5);
+         return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: selName };
+      }
       return { kind: "GoIdent", name: expr.name };
     }
     case "Application": {
@@ -172,8 +201,9 @@ function lowerExpr(expr: CoreIR.Expr): GoIR.GoExpr {
         if (args.length > 1 && args[1].kind === "GoBasicLit" && args[1].value === '"nil"') {
           args[1] = { kind: "GoIdent", name: "nil" };
         }
-      } else if (fnExpr.kind === "GoIdent" && (fnExpr.name === "Http.get" || fnExpr.name === "Http.Get")) {
-        fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "http" }, sel: "Get" };
+      } else if (fnExpr.kind === "GoIdent" && fnExpr.name.startsWith("Http.")) {
+        const selName = "Sky_net_http_" + fnExpr.name.substring(5);
+        fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: selName };
       } else if (fnExpr.kind === "GoIdent" && fnExpr.name === "println") {
         fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "fmt" }, sel: "Println" };
       }
@@ -185,16 +215,96 @@ function lowerExpr(expr: CoreIR.Expr): GoIR.GoExpr {
       };
     }
     case "LetBinding": {
-      // In Go, this is an assignment statement if we are inside a function block
-      // But GoExpr can only be expressions. We don't have block expressions in GoIR yet.
-      // For now, we will cheat and represent it as an Immediately Invoked Function Expression (IIFE)
+      // Create an IIFE for local let bindings inside expressions
+      const stmts: GoIR.GoStmt[] = [];
+      const flattenLet = (e: CoreIR.Expr) => {
+        if (e.kind === "LetBinding") {
+          stmts.push({
+            kind: "GoAssignStmt",
+            define: true,
+            left: [{ kind: "GoIdent", name: e.name }],
+            right: lowerExpr(e.value)
+          });
+          flattenLet(e.body);
+        } else {
+          stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(e) });
+        }
+      };
+      flattenLet(expr);
+
       return {
         kind: "GoCallExpr",
         fn: {
-          kind: "GoFuncType",
-          params: [],
-          results: [{ kind: "GoIdentType", name: "any" }]
-        } as any, // Not valid GoIR for an IIFE yet, let's fix below
+          kind: "GoFuncLit",
+          type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
+          body: stmts
+        },
+        args: []
+      };
+    }
+    case "Match": {
+      const cases: GoIR.GoCaseClause[] = expr.cases.map((c, i) => {
+        const stmts: GoIR.GoStmt[] = [];
+        
+        // Very basic matching mapped to constructor tags
+        // Assuming ADTs are structs with Tag int, and ConstructorValue fields
+        if (c.pattern.kind === "ConstructorPattern") {
+           // We extract the variables from the struct
+           for (let j = 0; j < c.pattern.args.length; j++) {
+              const argPat = c.pattern.args[j];
+              if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
+                  stmts.push({
+                      kind: "GoAssignStmt",
+                      define: true,
+                      left: [{ kind: "GoIdent", name: argPat.name }],
+                      right: { kind: "GoSelectorExpr", expr: lowerExpr(expr.expr), sel: `${c.pattern.name}Value` }
+                  });
+              }
+           }
+           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body) });
+           
+           return {
+               kind: "GoCaseClause",
+               exprs: [{ kind: "GoBasicLit", value: String(i) }], // Naive: assuming index is tag
+               body: stmts
+           };
+        }
+        
+        // Fallback catch-all
+        if (c.pattern.kind === "WildcardPattern" || c.pattern.kind === "VariablePattern") {
+           if (c.pattern.kind === "VariablePattern" && c.pattern.name !== "_") {
+               stmts.push({
+                   kind: "GoAssignStmt",
+                   define: true,
+                   left: [{ kind: "GoIdent", name: c.pattern.name }],
+                   right: lowerExpr(expr.expr)
+               });
+           }
+           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body) });
+           return { kind: "GoCaseClause", exprs: [], body: stmts };
+        }
+
+        return { kind: "GoCaseClause", exprs: [], body: [{ kind: "GoReturnStmt", expr: lowerExpr(c.body) }] };
+      });
+
+      return {
+        kind: "GoCallExpr",
+        fn: {
+          kind: "GoFuncLit",
+          type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
+          body: [
+            {
+              kind: "GoSwitchStmt",
+              expr: { kind: "GoSelectorExpr", expr: lowerExpr(expr.expr), sel: "Tag" },
+              cases: cases
+            },
+            {
+               // Unreachable panic for exhaustiveness fallback
+               kind: "GoExprStmt",
+               expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: `"unmatched case"` }] }
+            }
+          ]
+        },
         args: []
       };
     }

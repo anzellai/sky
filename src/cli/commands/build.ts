@@ -25,6 +25,12 @@ export async function handleBuild(entryFile: string) {
 
   console.log("Running go build...");
   try {
+    const wrappersDir = ".skycache/go/wrappers";
+    if (fs.existsSync(wrappersDir)) {
+      fs.cpSync(wrappersDir, `${outDir}/sky_wrappers`, { recursive: true });
+    }
+  } catch (e) {}
+  try {
     if (!fs.existsSync(`${outDir}/go.mod`)) {
       execSync(`cd ${outDir} && go mod init sky-out`, { stdio: "inherit" });
     }

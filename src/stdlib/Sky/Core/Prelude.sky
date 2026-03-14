@@ -1,3 +1,7 @@
 module Sky.Core.Prelude exposing (..)
 
+type Result err ok
+    = Ok ok
+    | Err err
+
 identity x = x

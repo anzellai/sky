@@ -107,7 +107,14 @@ export type GoExpr =
   | GoMapLit
   | GoCompositeLit
   | GoUnaryExpr
-  | GoBinaryExpr;
+  | GoBinaryExpr
+  | GoFuncLit;
+
+export interface GoFuncLit {
+  kind: "GoFuncLit";
+  type: GoFuncType;
+  body: GoStmt[];
+}
 
 export interface GoIdent {
   kind: "GoIdent";

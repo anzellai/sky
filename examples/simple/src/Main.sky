@@ -1,11 +1,19 @@
 module Main exposing (main)
 
+import Net.Http as Http
 import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
-import Net.Http as Http
 
 main =
-    let resp
-        = Http.get "http://localhost:3000"
+    let
+        resp = Http.get "http://localhost:3000"
     in
-        println "Hello from Sky!" resp
+        case resp of
+            Ok r ->
+                let
+                    status = Http.responseStatus r
+                in
+                    println "OK" status
+            
+            Err err ->
+                println "Error" err

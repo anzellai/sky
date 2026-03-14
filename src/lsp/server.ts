@@ -52,12 +52,12 @@ export function startServer() {
     connection.console.log("Sky LSP Server initialized");
   });
 
-  documents.onDidChangeContent(change => {
-    validateTextDocument(change.document);
+  documents.onDidChangeContent(async change => {
+    await validateTextDocument(change.document);
   });
 
   async function validateTextDocument(textDocument: TextDocument): Promise<void> {
-    const diagnostics: Diagnostic[] = workspace.updateDocument(textDocument.uri, textDocument.getText());
+    const diagnostics: Diagnostic[] = await workspace.updateDocument(textDocument.uri, textDocument.getText());
     connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
   }
 

@@ -116,6 +116,14 @@ export function checkModule(
      3. Infer top level declarations
   --------------------------------------------- */
 
+  const typeAnnotations = new Map<string, AST.TypeAnnotation>();
+
+  for (const declaration of module.declarations) {
+      if (declaration.kind === "TypeAnnotation") {
+          typeAnnotations.set(declaration.name, declaration);
+      }
+  }
+
   for (const declaration of module.declarations) {
 
     switch (declaration.kind) {
@@ -128,7 +136,8 @@ export function checkModule(
             inferTopLevel(
               adtRegistration.registry,
               env,
-              declaration
+              declaration,
+              typeAnnotations.get(declaration.name)
             )
 
           declarations.push(inferred)

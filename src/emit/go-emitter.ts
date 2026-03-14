@@ -110,11 +110,15 @@ function emitGoStmt(stmt: GoIR.GoStmt, indent: number): string {
       return out;
     }
     case "GoAssignStmt": {
-      const op = stmt.define ? ":=" : "=";
+      const allBlank = stmt.left.every(l => l.kind === "GoIdent" && l.name === "_");
+      const op = (stmt.define && !allBlank) ? ":=" : "=";
       return `${tabs}${stmt.left.map(emitGoExpr).join(", ")} ${op} ${emitGoExpr(stmt.right)}`;
     }
     case "GoReturnStmt": {
       if (stmt.expr) {
+        if (stmt.expr.kind === "GoCallExpr" && stmt.expr.fn.kind === "GoSelectorExpr" && stmt.expr.fn.sel === "Println") {
+            return `${tabs}${emitGoExpr(stmt.expr)}\n${tabs}return struct{}{}`;
+        }
         return `${tabs}return ${emitGoExpr(stmt.expr)}`;
       }
       return `${tabs}return`;
@@ -153,6 +157,22 @@ function emitGoExpr(expr: GoIR.GoExpr): string {
       return `${expr.op}${emitGoExpr(expr.expr)}`;
     case "GoBinaryExpr":
       return `${emitGoExpr(expr.left)} ${expr.op} ${emitGoExpr(expr.right)}`;
+    case "GoFuncLit": {
+      let out = `func(${expr.type.params.map((p, i) => `arg${i} ${emitGoType(p)}`).join(", ")})`;
+      if (expr.type.results.length > 0) {
+        if (expr.type.results.length === 1) {
+          out += ` ${emitGoType(expr.type.results[0])}`;
+        } else {
+          out += ` (${expr.type.results.map(emitGoType).join(", ")})`;
+        }
+      }
+      out += ` {\n`;
+      for (const stmt of expr.body) {
+        out += emitGoStmt(stmt, 1) + "\n";
+      }
+      out += `}`;
+      return out;
+    }
   }
 }
 

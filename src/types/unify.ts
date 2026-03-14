@@ -13,7 +13,8 @@ import {
   substitution,
   applySubstitution,
   composeSubstitutions,
-  isTypeVariable
+  isTypeVariable,
+  formatType
 } from "../types/types.js";
 
 export class UnificationError extends Error {
@@ -140,7 +141,7 @@ export function unify(a: Type, b: Type): Substitution {
     return current;
   }
 
-  throw new UnificationError(`Cannot unify types: ${JSON.stringify(a)} and ${JSON.stringify(b)}`);
+  throw new UnificationError(`Cannot unify types: ${formatType(a)} and ${formatType(b)}`);
 }
 
 function unifyVar(variable: TypeVariable, type: Type): Substitution {

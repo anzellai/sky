@@ -41,8 +41,9 @@ function block(header: Doc, body: Doc): Doc {
   return group(
     concat(
       header,
-      line,
-      indent(body)
+      indent(
+        concat(line, body)
+      )
     )
   )
 
@@ -329,33 +330,31 @@ function formatLet(expr: AST.LetExpression): Doc {
     let bind: Doc;
     
     if (b.typeAnnotation) {
+      // Repeat pattern name for the assignment if it's a simple variable
+      const assignmentPattern = b.pattern.kind === "VariablePattern" ? text(b.pattern.name) : patternDoc;
+
       bind = concat(
         patternDoc,
         text(" : "),
         formatTypeExpression(b.typeAnnotation),
         hardline,
-        indent(concat(hardline, text("= "), valueDoc))
+        group(concat(
+          assignmentPattern,
+          text(" ="),
+          indent(concat(line, valueDoc))
+        ))
       );
     } else {
-      bind = concat(
+      bind = group(concat(
         patternDoc,
-        indent(concat(hardline, text("= "), valueDoc))
-      );
+        text(" ="),
+        indent(concat(line, valueDoc))
+      ));
     }
 
     return bind;
 
   });
-
-  if (expr.bindings.length === 1 && !expr.bindings[0].typeAnnotation) {
-    return group(concat(
-      text("let "),
-      bindings[0],
-      hardline,
-      text("in"),
-      indent(concat(hardline, formatExpression(expr.body)))
-    ));
-  }
 
   return group(concat(
     text("let"),

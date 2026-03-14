@@ -3,6 +3,8 @@ import * as AST from '../../ast/ast.js';
 import { lex } from '../../lexer/lexer.js';
 import { filterLayout } from '../../parser/filter-layout.js';
 import { parse } from '../../parser/parser.js';
+import { typeCheckProject } from '../../compiler.js';
+import { TypeEnvironment } from '../../types/env.js';
 
 import { getHover } from '../features/hover.js';
 import { getDefinition } from '../features/definition.js';
@@ -14,6 +16,22 @@ export interface DocumentInfo {
   source: string;
   ast: AST.Module | null;
   diagnostics: Diagnostic[];
+  env: TypeEnvironment | null;
+  modules?: readonly { filePath: string; moduleAst: AST.Module }[];
+}
+
+function uriToPath(uri: string): string {
+  if (uri.startsWith('file://')) {
+    let p = uri.substring(7);
+    if (process.platform === 'win32') {
+      if (p.startsWith('/')) {
+        p = p.substring(1);
+      }
+      p = p.replace(/\//g, '\\');
+    }
+    return decodeURIComponent(p);
+  }
+  return uri;
 }
 
 export class Workspace {
@@ -23,9 +41,10 @@ export class Workspace {
     return this.documents.get(uri);
   }
 
-  public updateDocument(uri: string, source: string): Diagnostic[] {
+  public async updateDocument(uri: string, source: string): Promise<Diagnostic[]> {
     const diagnostics: Diagnostic[] = [];
     let ast: AST.Module | null = null;
+    let env: TypeEnvironment | null = null;
 
     try {
       const { tokens, lexErrors } = lex(source, uri) as any;
@@ -56,7 +75,51 @@ export class Workspace {
       });
     }
 
-    this.documents.set(uri, { uri, source, ast, diagnostics });
+    let modules;
+    try {
+        const filePath = uriToPath(uri);
+        const result = await typeCheckProject(filePath, { path: filePath, content: source });
+        
+        if (result.latestModuleAst) {
+            ast = result.latestModuleAst;
+        }
+        
+        modules = result.modules;
+
+        const moduleName = ast?.name.join(".") || "";
+        const typeCheckResult = result.moduleResults.get(moduleName);
+        if (typeCheckResult) {
+            env = typeCheckResult.environment;
+        }
+        
+        // Map diagnostics
+        for (const diagStr of result.diagnostics) {
+            // "path:line:col: message"
+            const match = diagStr.match(/^(.*?):(\d+):(\d+):\s*(.*)$/);
+            if (match) {
+                const line = parseInt(match[2]) - 1;
+                const col = parseInt(match[3]) - 1;
+                diagnostics.push({
+                    severity: DiagnosticSeverity.Error,
+                    range: {
+                        start: { line: Math.max(0, line), character: Math.max(0, col) },
+                        end: { line: Math.max(0, line), character: Math.max(0, col + 5) }
+                    },
+                    message: match[4]
+                });
+            } else {
+                 diagnostics.push({
+                    severity: DiagnosticSeverity.Error,
+                    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                    message: diagStr
+                });
+            }
+        }
+    } catch (e) {
+        // Fallback if compiler fails entirely
+    }
+
+    this.documents.set(uri, { uri, source, ast, diagnostics, env, modules });
     return diagnostics;
   }
 
@@ -77,8 +140,6 @@ export class Workspace {
   }
 
   public findNodeAtPosition(ast: AST.Module, position: Position): AST.NodeBase | null {
-    // Real implementation would traverse the AST looking for the narrowest node containing the position
-    // Since AST uses 1-based lines, we adjust:
     const targetLine = position.line + 1;
     const targetCol = position.character + 1;
 
@@ -96,7 +157,6 @@ export class Workspace {
           (targetLine < end.line || targetCol <= end.column)
         ) {
           found = node;
-          // Continue searching children for a narrower match
           for (const key in node) {
             if (key !== "span") {
               if (Array.isArray(node[key])) {

@@ -2,6 +2,7 @@
 
 import { inspectPackage, Param } from "./inspect-package.js";
 import { mapGoTypeToSky, lowerCamelCase } from "./type-mapper.js";
+import { generateWrappers } from "./generate-wrappers.js";
 
 export interface GeneratedForeignBindings {
   packageName: string;
@@ -13,17 +14,39 @@ export interface GeneratedForeignBindings {
 
 export async function generateForeignBindings(packageName: string, requestedNames: string[]): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[], skyiContent?: string }> {
   try {
-    const pkg = inspectPackage(packageName);
+    const pkg = inspectPackage(packageName); console.log("HELLO FROM NEW GENERATOR");
 
     const moduleName = packageName.split(/[\/\.]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
     
     // We will emit the skyi Content here as well.
     let skyiContent = `module ${moduleName} exposing (..)\n\n`;
+    const safePkg = packageName.replace(/[\/\.-]/g, "_");
+    generateWrappers(packageName, pkg);
 
     // Always emit base utility types
     skyiContent += `type Error = Error\n\ntype Any = Any\n\ntype List a = List\n\ntype Map k v = Map\n\ntype Bytes = Bytes\n\n`;
 
     const values: GeneratedForeignBindings['values'] = [];
+
+    // 2. Constants
+    for (const c of pkg.consts || []) {
+        const skyName = lowerCamelCase(c.name);
+        const t = mapGoTypeToSky(c.type);
+        skyiContent += `foreign import "${packageName}" exposing (${c.name})\n\n`;
+        skyiContent += `${skyName} : ${t}\n`;
+        skyiContent += `${skyName} = ${c.name}\n\n`;
+        values.push({ skyName, jsName: c.name, sourceModule: packageName, skyType: "Foreign" });
+    }
+
+    // 3. Variables
+    for (const v of pkg.vars || []) {
+        const skyName = lowerCamelCase(v.name);
+        const t = mapGoTypeToSky(v.type);
+        skyiContent += `foreign import "${packageName}" exposing (${v.name})\n\n`;
+        skyiContent += `${skyName} : ${t}\n`;
+        skyiContent += `${skyName} = ${v.name}\n\n`;
+        values.push({ skyName, jsName: v.name, sourceModule: packageName, skyType: "Foreign" });
+    }
 
     // Helper to process functions
     const processFunc = (skyName: string, goName: string, params: Param[], results: Param[]) => {
@@ -52,8 +75,10 @@ export async function generateForeignBindings(packageName: string, requestedName
 
         let sig = skyArgs.length === 0 ? `() -> ${retType}` : skyArgs.join(" -> ") + " -> " + retType;
         
+        const wrapperName = `Sky_${safePkg}_${skyName}`;
+        skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
         skyiContent += `${skyName} : ${sig}\n`;
-        skyiContent += `foreign import "${packageName}" exposing (${goName})\n\n`;
+        skyiContent += `${skyName} = ${wrapperName}\n\n`;
         
         values.push({
             skyName,
@@ -62,30 +87,6 @@ export async function generateForeignBindings(packageName: string, requestedName
             skyType: "Foreign"
         });
     };
-
-    // 1. Types
-    for (const t of pkg.types || []) {
-        if (!t.name) continue;
-        skyiContent += `type ${t.name} = ${t.name}\n\n`;
-    }
-
-    // 2. Constants
-    for (const c of pkg.consts || []) {
-        const skyName = lowerCamelCase(c.name);
-        const t = mapGoTypeToSky(c.type);
-        skyiContent += `${skyName} : ${t}\n`;
-        skyiContent += `foreign import "${packageName}" exposing (${c.name})\n\n`;
-        values.push({ skyName, jsName: c.name, sourceModule: packageName, skyType: "Foreign" });
-    }
-
-    // 3. Variables
-    for (const v of pkg.vars || []) {
-        const skyName = lowerCamelCase(v.name);
-        const t = mapGoTypeToSky(v.type);
-        skyiContent += `${skyName} : ${t}\n`;
-        skyiContent += `foreign import "${packageName}" exposing (${v.name})\n\n`;
-        values.push({ skyName, jsName: v.name, sourceModule: packageName, skyType: "Foreign" });
-    }
 
     // 4. Functions
     for (const f of pkg.funcs || []) {
@@ -111,10 +112,12 @@ export async function generateForeignBindings(packageName: string, requestedName
             for (const f of t.fields) {
                 const skyName = lowerCamelCase(t.name + f.name);
                 const retType = mapGoTypeToSky(f.type);
+                const wrapperName = `Sky_${safePkg}_${skyName}`;
                 
+                skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
                 skyiContent += `${skyName} : ${t.name} -> ${retType}\n`;
-                // Generate a special foreign import telling the emitter this is a field access
-                skyiContent += `foreign import "${packageName}" exposing (${skyName})\n\n`;
+                skyiContent += `${skyName} = ${wrapperName}\n\n`;
+
                 values.push({ skyName, jsName: skyName, sourceModule: packageName, skyType: "Foreign" });
             }
         }

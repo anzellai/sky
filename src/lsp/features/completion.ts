@@ -1,8 +1,7 @@
 import { CompletionItem, CompletionItemKind, Position } from 'vscode-languageserver/node.js';
 import * as AST from '../../ast/ast.js';
 import { Workspace } from '../analysis/workspace.js';
-import fs from 'fs';
-import path from 'path';
+import { formatType } from '../../types/types.js';
 
 export function getCompletions(workspace: Workspace, uri: string, position: Position): CompletionItem[] {
   const items: CompletionItem[] = [];
@@ -14,63 +13,43 @@ export function getCompletions(workspace: Workspace, uri: string, position: Posi
     items.push({ label: kw, kind: CompletionItemKind.Keyword });
   }
 
-  if (!doc || !doc.ast) return items;
+  if (!doc) return items;
 
-  // Add local declarations
-  for (const decl of doc.ast.declarations) {
-    if (decl.kind === "FunctionDeclaration") {
-      items.push({ label: decl.name, kind: CompletionItemKind.Function });
-    } else if (decl.kind === "TypeDeclaration" || decl.kind === "TypeAliasDeclaration") {
-      items.push({ label: decl.name, kind: CompletionItemKind.Class });
-    } else if (decl.kind === "ForeignImportDeclaration") {
-      items.push({ label: decl.name, kind: CompletionItemKind.Function });
-    }
+  if (doc.env) {
+      for (const [name, scheme] of doc.env.entries()) {
+          // Hide underlying FFI wrappers
+          if (name.includes("Sky_") || name.includes("sky_")) continue;
+
+          // Determine kind based on type
+          let kind: CompletionItemKind = CompletionItemKind.Variable;
+          if (scheme.type.kind === "TypeFunction") {
+              kind = CompletionItemKind.Function;
+          }
+          
+          let schemeType = formatType(scheme.type);
+          if (scheme.quantified.length > 0) {
+             const vars = scheme.quantified.map(id => `'t${id}`).join(" ");
+             schemeType = `forall ${vars}. ${schemeType}`;
+          }
+
+          items.push({
+              label: name,
+              kind,
+              detail: schemeType,
+          });
+      }
+  } else if (doc.ast) {
+      // Fallback if type checker hasn't run or failed
+      for (const decl of doc.ast.declarations) {
+        if (decl.kind === "FunctionDeclaration") {
+          items.push({ label: decl.name, kind: CompletionItemKind.Function });
+        } else if (decl.kind === "TypeDeclaration" || decl.kind === "TypeAliasDeclaration") {
+          items.push({ label: decl.name, kind: CompletionItemKind.Class });
+        } else if (decl.kind === "ForeignImportDeclaration") {
+          items.push({ label: decl.name, kind: CompletionItemKind.Function });
+        }
+      }
   }
-
-  // Scan imported go packages from .skycache for autocompletion
-  // Real implementation would properly resolve the module graph, this is a fast heuristic for the LSP
-  try {
-    for (const imp of doc.ast.imports) {
-       const pkgName = imp.moduleName.join("/").toLowerCase();
-       let projectRoot = process.cwd();
-       if (uri.startsWith('file://')) {
-          const fsPath = uri.replace('file://', '');
-          projectRoot = path.dirname(fsPath);
-          while (projectRoot !== '/' && !fs.existsSync(path.join(projectRoot, 'sky.toml'))) {
-            projectRoot = path.dirname(projectRoot);
-          }
-          if (projectRoot === '/') projectRoot = process.cwd();
-       }
-
-       const skyiPath = path.join(projectRoot, ".skycache", "go", pkgName, "bindings.skyi");
-       if (fs.existsSync(skyiPath)) {
-          const content = fs.readFileSync(skyiPath, "utf8");
-          // Match `Name : Signature` followed by foreign import
-          const typeRegex = /([A-Za-z0-9_]+) : (.*?)\nforeign import/g;
-          let match;
-          while ((match = typeRegex.exec(content)) !== null) {
-            const name = match[1];
-            const sig = match[2].trim();
-            const modulePrefix = imp.alias ? imp.alias.name : imp.moduleName.join(".");
-            items.push({
-              label: `${modulePrefix}.${name}`,
-              kind: CompletionItemKind.Function,
-              detail: sig,
-              documentation: `Exported from ${pkgName}`
-            });
-            // Also add unqualified if exposed directly
-            if (imp.exposing && imp.exposing.open) {
-               items.push({
-                 label: name,
-                 kind: CompletionItemKind.Function,
-                 detail: sig,
-                 documentation: `Exported from ${pkgName}`
-               });
-            }
-          }
-       }
-    }
-  } catch(e) {}
 
   return items;
 }

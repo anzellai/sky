@@ -31,6 +31,7 @@ export interface PatternCheckResult {
 
 export function inferPattern(
   registry: AdtRegistry,
+  env: TypeEnvironment,
   pattern: AST.Pattern,
   expectedType: Type,
 ): PatternCheckResult {
@@ -53,13 +54,13 @@ export function inferPattern(
       return inferLiteralPattern(pattern, expectedType);
 
     case "TuplePattern":
-      return inferTuplePattern(registry, pattern, expectedType);
+      return inferTuplePattern(registry, env, pattern, expectedType);
 
     case "ListPattern":
-      return inferListPattern(registry, pattern, expectedType);
+      return inferListPattern(registry, env, pattern, expectedType);
 
     case "ConstructorPattern":
-      return inferConstructorPattern(registry, pattern, expectedType);
+      return inferConstructorPattern(registry, env, pattern, expectedType);
   }
 }
 
@@ -94,6 +95,7 @@ function inferLiteralPattern(
 
 function inferTuplePattern(
   registry: AdtRegistry,
+  env: TypeEnvironment,
   pattern: AST.TuplePattern,
   expectedType: Type,
 ): PatternCheckResult {
@@ -111,7 +113,7 @@ function inferTuplePattern(
     const itemPattern = pattern.items[i];
     const itemExpected = applySubstitution(itemTypes[i], currentSub);
 
-    const result = inferPattern(registry, itemPattern, itemExpected);
+    const result = inferPattern(registry, env, itemPattern, itemExpected);
 
     currentSub = composeSubstitutions(result.substitution, currentSub);
     bindings = mergeBindings(bindings, applyBindingsSubstitution(result.bindings, currentSub));
@@ -125,6 +127,7 @@ function inferTuplePattern(
 
 function inferListPattern(
   registry: AdtRegistry,
+  env: TypeEnvironment,
   pattern: AST.ListPattern,
   expectedType: Type,
 ): PatternCheckResult {
@@ -142,6 +145,7 @@ function inferListPattern(
   for (const itemPattern of pattern.items) {
     const result = inferPattern(
       registry,
+      env,
       itemPattern,
       applySubstitution(elementType, currentSub),
     );
@@ -158,11 +162,17 @@ function inferListPattern(
 
 function inferConstructorPattern(
   registry: AdtRegistry,
+  env: TypeEnvironment,
   pattern: AST.ConstructorPattern,
   expectedType: Type,
 ): PatternCheckResult {
   const constructorName = pattern.constructorName.parts[pattern.constructorName.parts.length - 1];
-  const constructorScheme = lookupConstructorScheme(registry, constructorName);
+  let constructorScheme = lookupConstructorScheme(registry, constructorName);
+
+  if (!constructorScheme) {
+    // Fallback to environment
+    constructorScheme = env.get(constructorName) || env.get(pattern.constructorName.parts.join("."));
+  }
 
   if (!constructorScheme) {
     throw new Error(`Unknown constructor ${constructorName}`);
@@ -190,7 +200,7 @@ function inferConstructorPattern(
     const argPattern = pattern.arguments[i];
     const argExpected = applySubstitution(argTypes[i], currentSub);
 
-    const result = inferPattern(registry, argPattern, argExpected);
+    const result = inferPattern(registry, env, argPattern, argExpected);
     currentSub = composeSubstitutions(result.substitution, currentSub);
     bindings = mergeBindings(bindings, applyBindingsSubstitution(result.bindings, currentSub));
   }

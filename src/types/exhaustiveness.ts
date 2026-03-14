@@ -147,7 +147,8 @@ function findRegisteredAdtForType(
   return registry.types.get(typeName);
 }
 
-function getHeadTypeName(type: Type): string | undefined {
+function getHeadTypeName(type: Type | undefined): string | undefined {
+  if (!type) return undefined;
   switch (type.kind) {
     case "TypeConstant":
       return type.name;
@@ -158,7 +159,8 @@ function getHeadTypeName(type: Type): string | undefined {
   }
 }
 
-function isBoolType(type: Type): boolean {
+function isBoolType(type: Type | undefined): boolean {
+  if (!type) return false;
   return type.kind === "TypeConstant" && type.name === "Bool";
 }
 

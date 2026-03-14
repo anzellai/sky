@@ -621,6 +621,7 @@ export class Parser {
   // Handles whitespace application like Elm
   private parseApplication(minColumn: number = 0): AST.Expression {
     let expr = this.parsePrimary();
+    const effectiveMinColumn = Math.max(minColumn, expr.span.start.column);
 
     while (true) {
 
@@ -631,8 +632,12 @@ export class Parser {
         break;
       }
 
+      const next = this.peek();
+      const prev = this.previous();
+      const isNewLine = next.span.start.line > prev.span.end.line;
+
       // Stop if this would start a new declaration
-      if (this.peek(1)?.kind === "Equals" || this.peek().span.start.column <= Math.max(1, minColumn)) {
+      if (this.peek(1)?.kind === "Equals" || (isNewLine && next.span.start.column <= Math.max(1, effectiveMinColumn))) {
         break;
       }
 

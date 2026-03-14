@@ -47,7 +47,7 @@ export async function collectForeignImports(
     const packageName = decl.sourceModule
 
     // Skip TS type extraction for JS built-in globals and our internal @sky/runtime
-    if (packageName === "JSON" || packageName === "global" || packageName.startsWith("@sky/runtime/")) {
+    if (packageName === "JSON" || packageName === "global" || packageName.startsWith("@sky/runtime/") || packageName === "sky_wrappers" || packageName === "sky_std_channel") {
       bindings.push({
         packageName: packageName,
         skyModuleName: `Sky.FFI.${packageName}`,
@@ -72,10 +72,18 @@ export async function collectForeignImports(
       continue
     }
 
-    const result = await generateForeignBindings(
-      packageName,
-      requested
-    )
+    const result = { diagnostics: [], generated: {
+      packageName: packageName,
+      skyModuleName: `Sky.FFI.${packageName}`,
+      runtimeEntryPath: "",
+      values: [{
+        skyName: decl.name,
+        jsName: decl.name,
+        sourceModule: packageName,
+        skyType: "Foreign"
+      }],
+      types: []
+    }};
 
     diagnostics.push(...result.diagnostics)
 

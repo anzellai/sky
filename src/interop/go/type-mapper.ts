@@ -33,8 +33,17 @@ export function mapGoTypeToSky(goType: string): string {
         }
     }
 
-    if (t.startsWith("func(") || t.startsWith("chan") || t.startsWith("<-chan") || t.startsWith("chan<-")) {
-        return "Any"; // Keep functions simple for now
+    if (t.startsWith("chan ") || t.startsWith("<-chan ") || t.startsWith("chan<- ")) {
+        let inner = t.replace(/^(?:<-)?chan(?:<-)?\s+/, "");
+        const mappedInner = mapGoTypeToSky(inner);
+        return mappedInner.includes(" ") ? `(Channel (${mappedInner}))` : `Channel ${mappedInner}`;
+    }
+
+    if (t.startsWith("func(")) {
+        // Advanced: map func(A, B) C to A -> B -> C
+        // Keep it simple for now, maybe map to Any
+        // Or we can try to extract it if simple
+        return "Any";
     }
 
     // Strip package prefix
