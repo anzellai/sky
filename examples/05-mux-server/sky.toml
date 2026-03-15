@@ -1,0 +1,9 @@
+name = "05-mux-server"
+version = "0.1.0"
+
+["go.dependencies"]
+"github.com/gorilla/mux" = "latest"
+"github.com/joho/godotenv" = "latest"
+"net/http" = "latest"
+"os" = "latest"
+"io" = "latest"

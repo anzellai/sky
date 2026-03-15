@@ -1,0 +1,6 @@
+go:
+  github.com/gorilla/mux: latest
+  github.com/joho/godotenv: latest
+  io: latest
+  net/http: latest
+  os: latest

@@ -554,12 +554,12 @@ function formatExpression(expr: AST.Expression): Doc {
       )
 
     case "LambdaExpression":
-      return concat(
+      return group(concat(
         text("\\"),
         joinDocs(expr.parameters.map(p => formatPattern(p.pattern)), text(" ")),
-        text(" -> "),
-        formatExpression(expr.body)
-      )
+        text(" ->"),
+        indent(concat(line, formatExpression(expr.body)))
+      ))
 
     case "CharLiteralExpression":
       return text(JSON.stringify(expr.value))

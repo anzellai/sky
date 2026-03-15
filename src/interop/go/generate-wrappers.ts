@@ -73,7 +73,7 @@ func UpdateRecord(base any, update map[string]any) any {
             if (p.includes("/")) {
                 imports.add(p);
             } else if (p !== pkg.name) {
-                if (["io", "fmt", "time", "os", "context", "net", "http", "bufio", "log", "hash", "crypto"].includes(p)) {
+                if (["io", "fmt", "time", "os", "context", "net", "http", "bufio", "log", "hash", "crypto", "syscall"].includes(p)) {
                     imports.add(p);
                 }
             }
@@ -112,14 +112,23 @@ func UpdateRecord(base any, update map[string]any) any {
         imports.add(pkgName);
 
         let goParams = params.map((p, i) => {
-            const variadicArg = (variadic && i === params.length - 1) ? "..." : "";
-            return `arg${i} ${variadicArg}any`;
+            return `arg${i} any`;
         }).join(", ");
         
         let casts = params.map((p, i) => {
-            const t = cleanType(p.type);
+            let t = cleanType(p.type);
+            // Replace net/http with just http if imported that way
+            if (t.includes("net/http.ResponseWriter")) {
+                t = t.replace(/net\/http\./g, "http.");
+            }
             if (variadic && i === params.length - 1) {
-                return `\tvar _arg${i} []${t.substring(2)}\n\tfor _, v := range arg${i} {\n\t\t_arg${i} = append(_arg${i}, v.(${t.substring(2)}))\n\t}`;
+                return `\tvar _arg${i} []${t.substring(2)}\n\tfor _, v := range arg${i}.([]any) {\n\t\t_arg${i} = append(_arg${i}, v.(${t.substring(2)}))\n\t}`;
+            }
+            if (t === "func(http.ResponseWriter, *http.Request)") {
+                return `\t_arg${i} := func(w http.ResponseWriter, r *http.Request) {\n\t\t_f0 := arg${i}.(func(any) any)\n\t\t_f1 := _f0(w).(func(any) any)\n\t\t_f1(r)\n\t}`;
+            }
+            if (t === "func(net/http.ResponseWriter, *net/http.Request)") {
+                return `\t_arg${i} := func(w http.ResponseWriter, r *http.Request) {\n\t\t_f0 := arg${i}.(func(any) any)\n\t\t_f1 := _f0(w).(func(any) any)\n\t\t_f1(r)\n\t}`;
             }
             return `\t_arg${i} := arg${i}.(${t})`;
         }).join("\n");

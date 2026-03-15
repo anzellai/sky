@@ -369,8 +369,47 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
       return { kind: "GoIdent", name: goName };
     }
-    case "Lambda":
-      return { kind: "GoBasicLit", value: "/* lambda unimplemented */" };
+    case "Lambda": {
+      const newLocalEnv = new Map(localEnv || []);
+      for (const p of expr.params) {
+        newLocalEnv.set(p, { kind: "Unknown" } as any); // just truthy for localEnv
+      }
+      return {
+        kind: "GoFuncLit",
+        type: {
+          kind: "GoFuncType",
+          params: expr.params.map(() => ({ kind: "GoIdentType", name: "any" } as GoIR.GoType)),
+          results: [{ kind: "GoIdentType", name: "any" }]
+        },
+        body: [
+          ...expr.params.map((p, i): GoIR.GoStmt => ({
+            kind: "GoAssignStmt",
+            left: [{ kind: "GoIdent", name: p }],
+            right: { kind: "GoIdent", name: `arg${i}` },
+            define: true
+          })),
+          { kind: "GoReturnStmt", expr: lowerExpr(expr.body, moduleExports, newLocalEnv, foreignModules) }
+        ]
+      };
+    }
+    case "IfExpr": {
+      return {
+        kind: "GoCallExpr",
+        fn: {
+          kind: "GoFuncLit",
+          type: { kind: "GoFuncType", params: [], results: [{ kind: "GoIdentType", name: "any" }] },
+          body: [
+            {
+              kind: "GoIfStmt",
+              condition: lowerExpr(expr.condition, moduleExports, localEnv, foreignModules),
+              thenBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.thenBranch, moduleExports, localEnv, foreignModules) }],
+              elseBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.elseBranch, moduleExports, localEnv, foreignModules) }]
+            }
+          ]
+        },
+        args: []
+      };
+    }
     case "Application": {
       // Uncurry the application if it's a chain of calls
       const flattenApp = (app: CoreIR.Application): { fn: CoreIR.Expr, args: CoreIR.Expr[] } => {
@@ -511,7 +550,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             },
             args: args as GoIR.GoExpr[]
         } as any;
-      } else if (fnExpr.kind === "GoIdent" && (fnExpr.name === "+" || fnExpr.name === "-" || fnExpr.name === "*" || fnExpr.name === "/" || fnExpr.name === "++")) {
+      } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
           // Binary operator uncurried
           const op = fnExpr.name === "++" ? "+" : fnExpr.name;
           
@@ -530,7 +569,20 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               
               if (!needsAssert) return a;
               
-              const targetType = (fnExpr as any).name === "++" ? "string" : "int"; // Naive heuristic
+              let targetType = "int";
+              const fnName = (fnExpr as any).name;
+              if (fnName === "++" || (fnName === "+" && (flat.args[0].kind === "Literal" && typeof (flat.args[0] as any).value === "string" || flat.args[1].kind === "Literal" && typeof (flat.args[1] as any).value === "string"))) {
+                  targetType = "string";
+              } else if (["==", "!=", "<", ">", "<=", ">="].includes(fnName)) {
+                  if (flat.args[0].kind === "Literal" && typeof (flat.args[0] as any).value === "string" || flat.args[1].kind === "Literal" && typeof (flat.args[1] as any).value === "string") {
+                      targetType = "string";
+                  } else if (fnName === "==" || fnName === "!=") {
+                      targetType = "any";
+                  }
+              }
+
+              if (targetType === "any") return a;
+
               return {
                   kind: "GoTypeAssertExpr",
                   expr: a,
