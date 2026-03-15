@@ -52,7 +52,7 @@ export function unify(a: Type, b: Type): Substitution {
       if ((a.name === "Int" && b.name === "Float") || (a.name === "Float" && b.name === "Int")) {
         return emptySubstitution();
       }
-      throw new UnificationError(`Type mismatch: ${a.name} vs ${b.name}`);
+      throw new UnificationError(`Type mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);
     }
 
     return emptySubstitution();
@@ -93,7 +93,7 @@ export function unify(a: Type, b: Type): Substitution {
   if (a.kind === "TypeTuple" && b.kind === "TypeTuple") {
 
     if (a.items.length !== b.items.length) {
-      throw new UnificationError("Tuple arity mismatch");
+      throw new UnificationError(`Tuple arity mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);
     }
 
     let current = emptySubstitution();
@@ -118,7 +118,7 @@ export function unify(a: Type, b: Type): Substitution {
     const bKeys = Object.keys(b.fields);
 
     if (aKeys.length !== bKeys.length) {
-      throw new UnificationError("Record field mismatch");
+      throw new UnificationError(`Record field mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);
     }
 
     let current = emptySubstitution();
@@ -126,7 +126,7 @@ export function unify(a: Type, b: Type): Substitution {
     for (const key of aKeys) {
 
       if (!(key in b.fields)) {
-        throw new UnificationError(`Missing field ${key}`);
+        throw new UnificationError(`Missing field ${key} in ${formatType(b)}`);
       }
 
       const s = unify(
@@ -141,7 +141,7 @@ export function unify(a: Type, b: Type): Substitution {
     return current;
   }
 
-  throw new UnificationError(`Cannot unify types: ${formatType(a)} and ${formatType(b)}`);
+  throw new UnificationError(`Cannot unify types: expected ${formatType(a)}, but found ${formatType(b)}`);
 }
 
 function unifyVar(variable: TypeVariable, type: Type): Substitution {
@@ -151,7 +151,7 @@ function unifyVar(variable: TypeVariable, type: Type): Substitution {
   }
 
   if (occurs(variable, type)) {
-    throw new UnificationError("Occurs check failed");
+    throw new UnificationError(`Occurs check failed: cannot unify variable ${formatType(variable)} with ${formatType(type)}`);
   }
 
   return substitution([[variable.id, type]]);

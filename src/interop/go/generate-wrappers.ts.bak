@@ -13,7 +13,7 @@ export function generateWrappers(pkgName: string, pkg: InspectResult, usedSymbol
     const wrapperDir = path.join(".skycache", "go", "wrappers");
     fs.mkdirSync(wrapperDir, { recursive: true });
     const helperPath = path.join(wrapperDir, "00_sky_helpers.go");
-    
+    if (!fs.existsSync(helperPath)) {
       let helperCode = `package sky_wrappers
 
 type SkyResult struct {
@@ -61,7 +61,7 @@ func UpdateRecord(base any, update map[string]any) any {
 }
 `;
       fs.writeFileSync(helperPath, helperCode);
-
+    }
 
     const imports = new Set<string>();
 
@@ -100,8 +100,13 @@ func UpdateRecord(base any, update map[string]any) any {
     let goCode = "";
 
     const generateFuncWrapper = (skyName: string, goName: string, params: Param[], results: Param[], isMethod = false, isField = false, recvType = "", variadic = false) => {
-        const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
-        let wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+        const goNamePascal = goName.charAt(0).toUpperCase() + goName.slice(1);
+        let wrapperName = `Sky_${safePkg}_${goNamePascal}`;
+        
+        if (isMethod || isField) {
+            const cleanRecv = cleanType(recvType).replace(/\*/g, "").replace(/\./g, "_");
+            wrapperName = `Sky_${safePkg}_${cleanRecv}_${goNamePascal}`;
+        }
         
         /* Disable tree-shaking for now
         if (usedSymbols && !usedSymbols.has(wrapperName)) {
@@ -112,22 +117,13 @@ func UpdateRecord(base any, update map[string]any) any {
         imports.add(pkgName);
 
         let goParams = params.map((p, i) => {
-            const variadicArg = (variadic && i === params.length - 1) ? "..." : "";
-            return `arg${i} ${variadicArg}any`;
-        }).join(", ");
-        
-        let casts = params.map((p, i) => {
             const t = cleanType(p.type);
-            if (variadic && i === params.length - 1) {
-                return `\tvar _arg${i} []${t.substring(2)}\n\tfor _, v := range arg${i} {\n\t\t_arg${i} = append(_arg${i}, v.(${t.substring(2)}))\n\t}`;
-            }
-            return `\t_arg${i} := arg${i}.(${t})`;
-        }).join("\n");
-        
+            const typeName = (variadic && i === params.length - 1) ? "..." + t.substring(2) : t;
+            return `arg${i} ${typeName}`;
+        }).join(", ");
         if (recvType && (isMethod || isField)) {
-            const recvArg = `this any`;
+            const recvArg = `this ${cleanType(recvType)}`;
             goParams = goParams ? `${recvArg}, ${goParams}` : recvArg;
-            casts = `\t_this := this.(${cleanType(recvType)})\n` + casts;
         }
 
         let goReturns = " ";
@@ -151,25 +147,22 @@ func UpdateRecord(base any, update map[string]any) any {
         }
 
         goCode += `func ${wrapperName}(${goParams})${goReturns}{\n`;
-        if (casts.trim()) {
-            goCode += `${casts}\n`;
-        }
         
         const callArgs = params.map((p, i) => {
-            if (p.variadic || (variadic && i === params.length - 1)) return `_arg${i}...`;
-            return `_arg${i}`;
+            if (p.variadic) return `arg${i}...`;
+            return `arg${i}`;
         }).join(", ");
         
         if (isField) {
             if (recvType) {
-                goCode += `\treturn _this.${goName}\n`;
+                goCode += `\treturn this.${goName}\n`;
             } else {
                 goCode += `\treturn ${pkgBase}.${goName}\n`;
             }
         } else {
             let callExpr = `${pkgBase}.${goName}(${callArgs})`;
             if (recvType) {
-                callExpr = `_this.${goName}(${callArgs})`;
+                callExpr = `this.${goName}(${callArgs})`;
             }
 
             if (retTypes.length === 0) {

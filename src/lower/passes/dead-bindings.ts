@@ -8,8 +8,8 @@ export function eliminateDeadBindings(module: CoreIR.Module, usage: UsageGraph):
     const optimizeExpr = (expr: CoreIR.Expr): CoreIR.Expr => {
         switch (expr.kind) {
             case "LetBinding":
-                if (expr.name === "_" || !usage.usedVariables.has(expr.name)) {
-                    // Completely eliminate unused let bindings as requested
+                if (expr.name !== "_" && !usage.usedVariables.has(expr.name)) {
+                    // Eliminate unused let bindings that are NOT side-effects
                     return optimizeExpr(expr.body);
                 }
 

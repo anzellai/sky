@@ -157,6 +157,19 @@ function emitGoExpr(expr: GoIR.GoExpr): string {
       return `${expr.op}${emitGoExpr(expr.expr)}`;
     case "GoBinaryExpr":
       return `${emitGoExpr(expr.left)} ${expr.op} ${emitGoExpr(expr.right)}`;
+    case "GoTypeAssertExpr":
+      return `${emitGoExpr(expr.expr)}.(${emitGoType(expr.type)})`;
+    case "GoSliceExpr": {
+      let s = `${emitGoExpr(expr.expr)}[`;
+      if (expr.low) s += emitGoExpr(expr.low);
+      s += ":";
+      if (expr.high) s += emitGoExpr(expr.high);
+      if (expr.max) s += ":" + emitGoExpr(expr.max);
+      s += "]";
+      return s;
+    }
+    case "GoIndexExpr":
+      return `${emitGoExpr(expr.expr)}[${emitGoExpr(expr.index)}]`;
     case "GoFuncLit": {
       let out = `func(${expr.type.params.map((p, i) => `arg${i} ${emitGoType(p)}`).join(", ")})`;
       if (expr.type.results.length > 0) {

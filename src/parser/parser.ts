@@ -702,6 +702,33 @@ export class Parser {
           end: args.length > 0 ? args[args.length - 1].span.end : id.span.end,
         }
       } as AST.Pattern;
+    } else if (this.match("LParen")) {
+      const start = this.consume("LParen");
+      if (this.match("RParen")) {
+          const end = this.consume("RParen");
+          return {
+              kind: "LiteralPattern",
+              value: "()",
+              span: { start: start.span.start, end: end.span.end }
+          } as any;
+      }
+      const first = this.parsePattern();
+      if (this.match("Comma")) {
+          const items = [first];
+          while (this.match("Comma")) {
+              this.consume("Comma");
+              items.push(this.parsePattern());
+          }
+          const end = this.consume("RParen");
+          return {
+              kind: "TuplePattern",
+              items,
+              span: { start: start.span.start, end: end.span.end }
+          } as any;
+      } else {
+          this.consume("RParen");
+          return first;
+      }
     } else if (this.match("Identifier")) {
       const id = this.consume("Identifier");
       if (id.lexeme === "_") {
@@ -769,10 +796,9 @@ export class Parser {
   }
 
 private parsePrimary(): AST.Expression {
-    let expr: AST.Expression | undefined;
+  let expr: AST.Expression;
 
-    if (this.match("Keyword") && this.peek().lexeme === "case") {
-      const start = this.consume("Keyword", "case");
+  if (this.match("Keyword") && this.peek().lexeme === "case") {      const start = this.consume("Keyword", "case");
       const subject = this.parseExpression(0);
       this.consume("Keyword", "of");
       
@@ -826,8 +852,18 @@ private parsePrimary(): AST.Expression {
     } else if (this.match("Keyword") && this.peek().lexeme === "let") {
       const start = this.consume("Keyword", "let");
       const bindings: AST.LetBinding[] = [];
+      const minColumn = start.span.start.column;
       
       while (!this.match("Keyword", "in")) {
+        const next = this.peek();
+        const prev = this.previous();
+        const isNewLine = next.span.start.line > prev.span.end.line;
+        
+        // If it's a new line and indentation is not greater than 'let', it's likely a missing 'in' or error
+        if (isNewLine && next.span.start.column <= minColumn) {
+            break;
+        }
+
         let typeAnnotation: AST.TypeExpression | undefined;
         let pattern: AST.Pattern;
         
@@ -905,35 +941,67 @@ private parsePrimary(): AST.Expression {
       };
     } else if (this.match("LBrace")) {
       const start = this.consume("LBrace");
-      const fields: AST.RecordField[] = [];
-
-      while (!this.match("RBrace")) {
-        const name = this.consume("Identifier").lexeme;
-        this.consume("Equals");
-        const value = this.parseExpression(0);
-        fields.push({
-          kind: "RecordField",
-          name,
-          value,
-          span: {
-            start: value.span.start,
-            end: value.span.end,
-          },
-        });
-        if (this.match("Comma")) {
-          this.consume("Comma");
-        }
-      }
       
-      const end = this.consume("RBrace");
-      expr = {
-        kind: "RecordExpression",
-        fields,
-        span: {
-          start: start.span.start,
-          end: end.span.end,
-        },
-      };
+      // Check for record update: { model | ... }
+      if (this.peek().kind === "Identifier" && this.peek(1).kind === "Pipe") {
+          const base = this.consume("Identifier");
+          const baseExpr: AST.Expression = {
+              kind: "IdentifierExpression",
+              name: base.lexeme,
+              span: base.span
+          };
+          this.consume("Pipe");
+          const fields: AST.RecordField[] = [];
+          while (!this.match("RBrace")) {
+              const name = this.consume("Identifier").lexeme;
+              this.consume("Equals");
+              const value = this.parseExpression(0);
+              fields.push({
+                  kind: "RecordField",
+                  name,
+                  value,
+                  span: { start: value.span.start, end: value.span.end }
+              });
+              if (this.match("Comma")) this.consume("Comma");
+          }
+          const end = this.consume("RBrace");
+          expr = {
+              kind: "RecordUpdateExpression",
+              base: baseExpr,
+              fields,
+              span: { start: start.span.start, end: end.span.end }
+          } as any; // Cast until AST is updated
+      } else {
+          const fields: AST.RecordField[] = [];
+
+          while (!this.match("RBrace")) {
+            const name = this.consume("Identifier").lexeme;
+            this.consume("Equals");
+            const value = this.parseExpression(0);
+            fields.push({
+              kind: "RecordField",
+              name,
+              value,
+              span: {
+                start: value.span.start,
+                end: value.span.end,
+              },
+            });
+            if (this.match("Comma")) {
+              this.consume("Comma");
+            }
+          }
+          
+          const end = this.consume("RBrace");
+          expr = {
+            kind: "RecordExpression",
+            fields,
+            span: {
+              start: start.span.start,
+              end: end.span.end,
+            },
+          };
+      }
     } else if (this.match("LBracket")) {
       const start = this.consume("LBracket");
       const items: AST.Expression[] = [];
@@ -995,6 +1063,20 @@ private parsePrimary(): AST.Expression {
       expr = {
         kind: "StringLiteralExpression",
         value: t.lexeme,
+        span: t.span,
+      };
+      } else if (this.match("UpperIdentifier") && (this.peek().lexeme === "True" || this.peek().lexeme === "False")) {
+      const t = this.consume("UpperIdentifier");
+      expr = {
+        kind: "BooleanLiteralExpression",
+        value: t.lexeme === "True",
+        span: t.span,
+      };
+    } else if (this.match("Identifier")) {
+      const t = this.consume("Identifier");
+      expr = {
+        kind: "IdentifierExpression",
+        name: t.lexeme,
         span: t.span,
       };
     } else if (this.match("LParen")) {

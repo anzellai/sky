@@ -1,0 +1,6 @@
+name = "03-tea-external"
+version = "0.1.0"
+
+["go.dependencies"]
+"github.com/google/uuid" = "latest"
+"github.com/joho/godotenv" = "latest"

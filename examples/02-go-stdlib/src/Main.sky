@@ -1,0 +1,25 @@
+module Main exposing (main)
+
+import Std.Log exposing (println)
+import Sky.Core.String as String
+import Net.Http as Http
+import Time
+import Crypto.Sha256 as Sha256
+import Encoding.Hex as Hex
+
+main =
+    let
+        now = Time.now ()
+        data = "Hello, Sky!"
+        hash = Sha256.sum256 (String.toBytes data)
+        hashStr = Hex.encodeToString hash
+    in
+        let _ = println "Current time:" now in
+        let _ = println "SHA256 of 'Hello, Sky!':" hashStr in
+        let _ = println "Sending HTTP request..." in
+        let resp = Http.get "https://google.com" in
+        case resp of
+            Ok r ->
+                println "Status Code:" (Http.responseStatusCode r)
+            Err e ->
+                println "Error:" e

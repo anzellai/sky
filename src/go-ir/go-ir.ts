@@ -108,7 +108,30 @@ export type GoExpr =
   | GoCompositeLit
   | GoUnaryExpr
   | GoBinaryExpr
+  | GoTypeAssertExpr
+  | GoSliceExpr
+  | GoIndexExpr
   | GoFuncLit;
+
+export interface GoIndexExpr {
+  kind: "GoIndexExpr";
+  expr: GoExpr;
+  index: GoExpr;
+}
+
+export interface GoSliceExpr {
+  kind: "GoSliceExpr";
+  expr: GoExpr;
+  low?: GoExpr;
+  high?: GoExpr;
+  max?: GoExpr;
+}
+
+export interface GoTypeAssertExpr {
+  kind: "GoTypeAssertExpr";
+  expr: GoExpr;
+  type: GoType;
+}
 
 export interface GoFuncLit {
   kind: "GoFuncLit";

@@ -65,6 +65,7 @@ export type SyntaxKind =
   | "ListExpression"
   | "RecordExpression"
   | "RecordField"
+  | "RecordUpdateExpression"
   | "FieldAccessExpression"
   | "CallExpression"
   | "LambdaExpression"
@@ -263,6 +264,7 @@ export type Expression =
   | TupleExpression
   | ListExpression
   | RecordExpression
+  | RecordUpdateExpression
   | FieldAccessExpression
   | CallExpression
   | LambdaExpression
@@ -329,6 +331,12 @@ export interface ListExpression extends NodeBase {
 
 export interface RecordExpression extends NodeBase {
   readonly kind: "RecordExpression";
+  readonly fields: readonly RecordField[];
+}
+
+export interface RecordUpdateExpression extends NodeBase {
+  readonly kind: "RecordUpdateExpression";
+  readonly base: Expression;
   readonly fields: readonly RecordField[];
 }
 

@@ -20,7 +20,6 @@ export async function generateForeignBindings(packageName: string, requestedName
     
     // We will emit the skyi Content here as well.
     let skyiContent = `module ${moduleName} exposing (..)\n\n`;
-    const safePkg = packageName.replace(/[\/\.-]/g, "_");
     generateWrappers(packageName, pkg);
 
     // Always emit base utility types
@@ -31,7 +30,7 @@ export async function generateForeignBindings(packageName: string, requestedName
     // 2. Constants
     for (const c of pkg.consts || []) {
         const skyName = lowerCamelCase(c.name);
-        const t = mapGoTypeToSky(c.type);
+        const t = mapGoTypeToSky(c.type, packageName);
         skyiContent += `foreign import "${packageName}" exposing (${c.name})\n\n`;
         skyiContent += `${skyName} : ${t}\n`;
         skyiContent += `${skyName} = ${c.name}\n\n`;
@@ -41,17 +40,29 @@ export async function generateForeignBindings(packageName: string, requestedName
     // 3. Variables
     for (const v of pkg.vars || []) {
         const skyName = lowerCamelCase(v.name);
-        const t = mapGoTypeToSky(v.type);
+        const t = mapGoTypeToSky(v.type, packageName);
         skyiContent += `foreign import "${packageName}" exposing (${v.name})\n\n`;
         skyiContent += `${skyName} : ${t}\n`;
         skyiContent += `${skyName} = ${v.name}\n\n`;
         values.push({ skyName, jsName: v.name, sourceModule: packageName, skyType: "Foreign" });
     }
 
-    // Helper to process functions
-    const processFunc = (skyName: string, goName: string, params: Param[], results: Param[]) => {
+    const safePkg = packageName.replace(/\//g, "_").replace(/\./g, "_");
+
+    const cleanType = (t: string) => {
+        const res = t.replace(/([a-zA-Z0-9_\/\.-]+)\.([a-zA-Z0-9_]+)/g, (match, p1, p2) => {
+            const parts = p1.split("/");
+            const pkgBase = parts[parts.length - 1];
+            if (p2 === "interface{}") return "any";
+            return pkgBase + "." + p2;
+        });
+        if (res.includes("interface{}")) return res.replace(/interface\{\}/g, "any");
+        return res;
+    };
+
+    const processFunc = (skyName: string, goName: string, params: Param[], results: Param[], isMethod = false, recvType = "") => {
         let skyArgs = params.map(p => {
-            let t = mapGoTypeToSky(p.type);
+            let t = mapGoTypeToSky(p.type, packageName);
             if (t.includes(" ")) t = `(${t})`;
             return t;
         });
@@ -59,27 +70,35 @@ export async function generateForeignBindings(packageName: string, requestedName
         let retType = "Unit";
         if (results && results.length > 0) {
             if (results.length === 1) {
-                if (results[0].type === "error") {
+                if (results[0].type.endsWith("error")) {
                     retType = "Result Error Unit";
                 } else {
-                    retType = mapGoTypeToSky(results[0].type);
+                    retType = mapGoTypeToSky(results[0].type, packageName);
                 }
-            } else if (results.length === 2 && results[1].type === "error") {
-                const t = mapGoTypeToSky(results[0].type);
+            } else if (results.length === 2 && results[1].type.endsWith("error")) {
+                const t = mapGoTypeToSky(results[0].type, packageName);
                 retType = `Result Error ${t.includes(" ") ? `(${t})` : t}`;
             } else {
-                const mapped = results.map(r => mapGoTypeToSky(r.type));
+                const mapped = results.map(r => mapGoTypeToSky(r.type, packageName));
                 retType = `Tuple${mapped.length} ${mapped.join(" ")}`;
             }
         }
 
         let sig = skyArgs.length === 0 ? `() -> ${retType}` : skyArgs.join(" -> ") + " -> " + retType;
-        
-        const wrapperName = `Sky_${safePkg}_${skyName}`;
+
+        const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+        let wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+
         skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
         skyiContent += `${skyName} : ${sig}\n`;
-        skyiContent += `${skyName} = ${wrapperName}\n\n`;
-        
+
+        const argNames = params.map((_, i) => `arg${i}`).join(" ");
+        if (argNames) {
+            skyiContent += `${skyName} ${argNames} = ${wrapperName} ${argNames}\n\n`;
+        } else {
+            skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
+        }
+
         values.push({
             skyName,
             jsName: goName,
@@ -103,7 +122,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             for (const m of t.methods) {
                 const skyName = lowerCamelCase(t.name + m.name);
                 const params = [{ name: "this", type: t.name }, ...(m.params || [])];
-                processFunc(skyName, m.name, params, m.results || []);
+                processFunc(skyName, m.name, params, m.results || [], true, t.name);
             }
         }
 
@@ -111,12 +130,14 @@ export async function generateForeignBindings(packageName: string, requestedName
         if (t.fields) {
             for (const f of t.fields) {
                 const skyName = lowerCamelCase(t.name + f.name);
-                const retType = mapGoTypeToSky(f.type);
-                const wrapperName = `Sky_${safePkg}_${skyName}`;
+                const retType = mapGoTypeToSky(f.type, packageName);
+                
+                const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+                const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
                 
                 skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
                 skyiContent += `${skyName} : ${t.name} -> ${retType}\n`;
-                skyiContent += `${skyName} = ${wrapperName}\n\n`;
+                skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
 
                 values.push({ skyName, jsName: skyName, sourceModule: packageName, skyType: "Foreign" });
             }

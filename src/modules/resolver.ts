@@ -107,11 +107,23 @@ export async function buildModuleGraph(
 
       if (!importFile) {
         // Try Go package resolution via .skycache
-        const goPackage = importParts.join("/").toLowerCase();
+        // PascalCase parts like ["Github", "Com", "Google", "Uuid"]
+        // need to be mapped back to potentially "github.com/google/uuid"
+        
         const projectRoot = path.dirname(srcRoot);
-        const goCachePath = path.join(projectRoot, ".skycache", "go", goPackage, "bindings.skyi");
-        if (fs.existsSync(goCachePath)) {
-          importFile = goCachePath;
+        
+        const possiblePackages = [
+            importParts.join("/").toLowerCase(),
+            // Common pattern: First two parts are often domain.tld (github.com)
+            importParts.length >= 2 ? (importParts[0] + "." + importParts[1] + "/" + importParts.slice(2).join("/")).toLowerCase() : null
+        ].filter(Boolean) as string[];
+
+        for (const goPackage of possiblePackages) {
+            const goCachePath = path.join(projectRoot, ".skycache", "go", goPackage, "bindings.skyi");
+            if (fs.existsSync(goCachePath)) {
+                importFile = goCachePath;
+                break;
+            }
         }
       }
 

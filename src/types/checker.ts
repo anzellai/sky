@@ -449,6 +449,15 @@ function visitExpression(
 
       return
 
+    case "RecordUpdateExpression":
+
+      visitExpression(expression.base, visitor)
+      for (const field of expression.fields) {
+        visitExpression(field.value, visitor)
+      }
+
+      return
+
     case "FieldAccessExpression":
 
       visitExpression(expression.target, visitor)

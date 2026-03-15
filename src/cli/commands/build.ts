@@ -12,7 +12,7 @@ export async function handleBuild(entryFile: string) {
   
   const outDir = "dist";
   
-  const result = await compileProject(entryFile, outDir, "node");
+  const result = await compileProject(entryFile, outDir);
   
   if (result.diagnostics && result.diagnostics.length > 0) {
     for (const diag of result.diagnostics) {

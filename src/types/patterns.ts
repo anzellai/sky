@@ -101,12 +101,12 @@ function inferTuplePattern(
 ): PatternCheckResult {
   const itemTypes = pattern.items.map(() => freshTypeVariable());
 
-  const tupleLikeType: Type = {
+  const tupleType: Type = {
     kind: "TypeTuple",
     items: itemTypes,
   };
 
-  let currentSub = unify(expectedType, tupleLikeType);
+  let currentSub = unify(expectedType, tupleType);
   let bindings: Record<string, Type> = {};
 
   for (let i = 0; i < pattern.items.length; i += 1) {
@@ -212,6 +212,9 @@ function inferConstructorPattern(
 }
 
 function inferLiteralType(value: AST.LiteralValue): Type {
+  if (value === "()") {
+      return { kind: "TypeConstant", name: "Unit" };
+  }
   switch (typeof value) {
     case "number":
       return { kind: "TypeConstant", name: "Int" };

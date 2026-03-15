@@ -124,6 +124,15 @@ The type system treats `JsValue`, `Foreign`, and their variants as universal uni
 ### 5. Standard Library Prelude
 `Sky.Core.Prelude` is implicitly imported into every file. It includes essential types like `Maybe` and `Result`.
 
+### 6. Go FFI and Interop Generation
+- **Parameter Types:** Generated FFI wrappers in `sky_wrappers` must accept `any` for their parameters and perform Go type assertions internally. The Sky lowering engine treats most variables as untyped `any` at the boundary.
+- **Cache Invalidation:** Always overwrite FFI helper files (like `00_sky_helpers.go`) unconditionally during generation to prevent stale generic signatures or missing types in `.skycache`.
+- **Package Naming:** To prevent collisions with Go standard libraries, all emitted Go packages mapped from Sky modules must be prefixed with `sky_` (e.g., `Net.Http` becomes `sky_http`), except for the `Main` package which must remain `main`.
+
+### 7. AST Lowering (Constructors vs. Foreign Imports)
+- **Uppercase Identifiers:** By default, uppercase identifiers are treated as Constructors. However, if an uppercase identifier is declared as a `foreign import` (e.g., `Sprintf`), it MUST be lowered as a `Variable` instead of a `Constructor`.
+- **Type Assertions:** Avoid unnecessarily injecting `GoTypeAssertExpr` on the return values of FFI calls in `lower-to-go.ts`. FFI wrappers are strictly typed on their returns and attempting to type assert them to `any` will cause Go compile errors.
+
 ---
 
 ## Testing Changes

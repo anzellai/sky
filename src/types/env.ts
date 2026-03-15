@@ -135,8 +135,9 @@ export function createPreludeEnvironment(): TypeEnvironment {
 
   // boolean values
 
-  env.set("true", mono(typeConstant("Bool")));
-  env.set("false", mono(typeConstant("Bool")));
+  env.set("True", mono(typeConstant("Bool")));
+  env.set("False", mono(typeConstant("Bool")));
+  env.set("()", mono(typeConstant("Unit")));
 
   return env;
 

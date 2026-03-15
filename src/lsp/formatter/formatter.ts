@@ -21,16 +21,20 @@ export function formatModule(module: AST.Module): string {
 
   }
 
-  module.declarations.forEach((decl, i) => {
+  for (let i = 0; i < module.declarations.length; i++) {
+    const decl = module.declarations[i];
+    docs.push(formatDeclaration(decl));
 
-    docs.push(formatDeclaration(decl))
-
-    if (i !== module.declarations.length - 1) {
-      docs.push(line)
-      docs.push(line)
+    if (i < module.declarations.length - 1) {
+      const nextDecl = module.declarations[i + 1];
+      if (decl.kind === "TypeAnnotation" && nextDecl.kind === "FunctionDeclaration" && decl.name === nextDecl.name) {
+        docs.push(hardline);
+      } else {
+        docs.push(hardline);
+        docs.push(hardline);
+      }
     }
-
-  })
+  }
 
   return render(concat(...docs)).trimEnd() + "\n"
 
@@ -408,6 +412,22 @@ function formatExpression(expr: AST.Expression): Doc {
       }
       return group(concat(
         text("{ "),
+        joinDocs(
+          expr.fields.map((f, i) => {
+            const prefix = i === 0 ? text("") : text(", ");
+            return concat(prefix, text(f.name), text(" = "), formatExpression(f.value));
+          }),
+          hardline
+        ),
+        hardline,
+        text("}")
+      ))
+
+    case "RecordUpdateExpression":
+      return group(concat(
+        text("{ "),
+        formatExpression(expr.base),
+        text(" | "),
         joinDocs(
           expr.fields.map((f, i) => {
             const prefix = i === 0 ? text("") : text(", ");

@@ -111,7 +111,7 @@ func main() {
 						if f.Exported() {
 							decl.Fields = append(decl.Fields, FieldDecl{
 								Name: f.Name(),
-								Type: f.Type().String(),
+								Type: typeToString(f.Type()),
 							})
 						}
 					}
@@ -154,14 +154,49 @@ func main() {
 			}
 
 		case *types.Var:
-			out.Vars = append(out.Vars, VarDecl{Name: name, Type: obj.Type().String()})
+			out.Vars = append(out.Vars, VarDecl{Name: name, Type: typeToString(obj.Type())})
 
 		case *types.Const:
-			out.Consts = append(out.Consts, ConstDecl{Name: name, Type: obj.Type().String(), Value: obj.Val().String()})
+			out.Consts = append(out.Consts, ConstDecl{Name: name, Type: typeToString(obj.Type()), Value: obj.Val().String()})
 		}
 	}
 
 	json.NewEncoder(os.Stdout).Encode(out)
+}
+
+func typeToString(t types.Type) string {
+    fmt.Fprintf(os.Stderr, "DEBUG typeToString: %T %s\n", t, t.String())
+	switch u := t.(type) {
+	case *types.Pointer:
+		inner := typeToString(u.Elem())
+		if inner == "interface{}" {
+			return "interface{}"
+		}
+		return "*" + inner
+	case *types.Slice:
+		inner := typeToString(u.Elem())
+		if inner == "interface{}" {
+			return "interface{}"
+		}
+		return "[]" + inner
+	case *types.Array:
+		inner := typeToString(u.Elem())
+		if inner == "interface{}" {
+			return "interface{}"
+		}
+		return fmt.Sprintf("[%d]%s", u.Len(), inner)
+	case *types.Named:
+		if u.Obj().Pkg() == nil {
+			return u.Obj().Name()
+		}
+		if !u.Obj().Exported() {
+			return "interface{}"
+		}
+	case *types.Basic:
+		return u.String()
+	}
+
+	return t.String()
 }
 
 func extractParams(tuple *types.Tuple) []Param {
@@ -171,7 +206,7 @@ func extractParams(tuple *types.Tuple) []Param {
 	var res []Param
 	for i := 0; i < tuple.Len(); i++ {
 		v := tuple.At(i)
-		res = append(res, Param{Name: v.Name(), Type: v.Type().String()})
+		res = append(res, Param{Name: v.Name(), Type: typeToString(v.Type())})
 	}
 	return res
 }

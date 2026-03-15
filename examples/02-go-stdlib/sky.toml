@@ -1,0 +1,8 @@
+name = "02-go-stdlib"
+version = "0.1.0"
+
+["go.dependencies"]
+"net/http" = "latest"
+"time" = "latest"
+"crypto/sha256" = "latest"
+"encoding/hex" = "latest"

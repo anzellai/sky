@@ -1,0 +1,5 @@
+go:
+  crypto/sha256: latest
+  encoding/hex: latest
+  net/http: latest
+  time: latest

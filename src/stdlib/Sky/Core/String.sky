@@ -1,0 +1,16 @@
+module Sky.Core.String exposing (fromInt, toBytes)
+
+-- Built-in string conversion
+foreign import "fmt" exposing (Sprintf)
+
+fromInt : Int -> String
+fromInt n =
+    Sprintf "%d" n
+
+-- String to Bytes conversion
+-- In Go, this is just []byte(s)
+foreign import "sky_builtin" exposing (stringToBytes)
+
+toBytes : String -> Bytes
+toBytes s =
+    stringToBytes s

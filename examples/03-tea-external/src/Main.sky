@@ -1,0 +1,59 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+import Std.Cmd as Cmd exposing (Cmd)
+import Github.Com.Google.Uuid as Uuid
+import Github.Com.Joho.Godotenv as Dotenv
+
+type alias Model =
+    { uuid : String
+    , envLoaded : Bool
+    }
+
+type Msg
+    = GenerateUuid
+    | LoadEnv
+    | NoOp
+
+init : () -> (Model, Cmd Msg)
+init _ =
+    ( { uuid = "not-generated-yet", envLoaded = False }
+    , Cmd.none
+    )
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+        GenerateUuid ->
+            let
+                newUuid =
+                    Uuid.newString ()
+            in
+                ( { model | uuid = newUuid }, Cmd.none )
+
+        LoadEnv ->
+            let
+                _ =
+                    Dotenv.load []
+            in
+                ( { model | envLoaded = True }, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+view : Model -> String
+view model =
+    "UUID: " ++ model.uuid
+
+main =
+    let
+        (initialModel, initialCmd) =
+            init ()
+        
+        (model2, cmd2) =
+            update GenerateUuid initialModel
+        
+        _ = println "Initial UUID:" initialModel.uuid
+    in
+        println "Model after GenerateUuid UUID:" model2.uuid

@@ -25,12 +25,14 @@ export interface MethodDecl {
     name: string;
     params: Param[];
     results: Param[];
+    variadic?: boolean;
 }
 
 export interface FuncDecl {
     name: string;
     params: Param[];
     results: Param[];
+    variadic?: boolean;
 }
 
 export interface FieldDecl {
@@ -52,6 +54,7 @@ export interface ConstDecl {
 export interface Param {
     name: string;
     type: string;
+    variadic?: boolean;
 }
 
 export function inspectPackage(pkgName: string): InspectResult {
@@ -63,8 +66,7 @@ export function inspectPackage(pkgName: string): InspectResult {
     const inspectorDir = path.join(projectDir, ".skycache", "inspector");
     fs.mkdirSync(inspectorDir, { recursive: true });
 
-    if (!fs.existsSync(path.join(inspectorDir, "main.go"))) {
-        fs.writeFileSync(path.join(inspectorDir, "main.go"), `package main
+    const inspectorGoCode = `package main
 
 import (
 	"encoding/json"
@@ -97,15 +99,17 @@ type FieldDecl struct {
 }
 
 type MethodDecl struct {
-	Name    string  \`json:"name"\`
-	Params  []Param \`json:"params"\`
-	Results []Param \`json:"results"\`
+	Name     string  \`json:"name"\`
+	Params   []Param \`json:"params"\`
+	Results  []Param \`json:"results"\`
+	Variadic bool    \`json:"variadic"\`
 }
 
 type FuncDecl struct {
-	Name    string  \`json:"name"\`
-	Params  []Param \`json:"params"\`
-	Results []Param \`json:"results"\`
+	Name     string  \`json:"name"\`
+	Params   []Param \`json:"params"\`
+	Results  []Param \`json:"results"\`
+	Variadic bool    \`json:"variadic"\`
 }
 
 type VarDecl struct {
@@ -120,8 +124,9 @@ type ConstDecl struct {
 }
 
 type Param struct {
-	Name string \`json:"name"\`
-	Type string \`json:"type"\`
+	Name     string \`json:"name"\`
+	Type     string \`json:"type"\`
+	Variadic bool   \`json:"variadic"\`
 }
 
 func main() {
@@ -130,9 +135,11 @@ func main() {
 		os.Exit(1)
 	}
 	pkgPath := os.Args[1]
+	os.Setenv("GO111MODULE", "on")
 
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps | packages.NeedTypesInfo,
+		Dir: os.Getenv("SKY_PROJECT_DIR"),
 	}
 	pkgs, err := packages.Load(cfg, pkgPath)
 	if err != nil {
@@ -177,7 +184,7 @@ func main() {
 						if f.Exported() {
 							decl.Fields = append(decl.Fields, FieldDecl{
 								Name: f.Name(),
-								Type: f.Type().String(),
+								Type: typeToString(f.Type()),
 							})
 						}
 					}
@@ -187,9 +194,9 @@ func main() {
 						m := u.ExplicitMethod(i)
 						if m.Exported() {
 							sig := m.Type().(*types.Signature)
-							meth := MethodDecl{Name: m.Name()}
-							meth.Params = extractParams(sig.Params())
-							meth.Results = extractParams(sig.Results())
+							meth := MethodDecl{Name: m.Name(), Variadic: sig.Variadic()}
+							meth.Params = extractParams(sig.Params(), sig.Variadic())
+							meth.Results = extractParams(sig.Results(), false)
 							decl.Methods = append(decl.Methods, meth)
 						}
 					}
@@ -201,9 +208,9 @@ func main() {
 					m := named.Method(i)
 					if m.Exported() {
 						sig := m.Type().(*types.Signature)
-						meth := MethodDecl{Name: m.Name()}
-						meth.Params = extractParams(sig.Params())
-						meth.Results = extractParams(sig.Results())
+						meth := MethodDecl{Name: m.Name(), Variadic: sig.Variadic()}
+						meth.Params = extractParams(sig.Params(), sig.Variadic())
+						meth.Results = extractParams(sig.Results(), false)
 						decl.Methods = append(decl.Methods, meth)
 					}
 				}
@@ -213,36 +220,73 @@ func main() {
 		case *types.Func:
 			sig := obj.Type().(*types.Signature)
 			if sig.Recv() == nil {
-				f := FuncDecl{Name: name}
-				f.Params = extractParams(sig.Params())
-				f.Results = extractParams(sig.Results())
+				f := FuncDecl{Name: name, Variadic: sig.Variadic()}
+				f.Params = extractParams(sig.Params(), sig.Variadic())
+				f.Results = extractParams(sig.Results(), false)
 				out.Funcs = append(out.Funcs, f)
 			}
 
 		case *types.Var:
-			out.Vars = append(out.Vars, VarDecl{Name: name, Type: obj.Type().String()})
+			out.Vars = append(out.Vars, VarDecl{Name: name, Type: typeToString(obj.Type())})
 
 		case *types.Const:
-			out.Consts = append(out.Consts, ConstDecl{Name: name, Type: obj.Type().String(), Value: obj.Val().String()})
+			out.Consts = append(out.Consts, ConstDecl{Name: name, Type: typeToString(obj.Type()), Value: obj.Val().String()})
 		}
 	}
 
 	json.NewEncoder(os.Stdout).Encode(out)
 }
 
-func extractParams(tuple *types.Tuple) []Param {
+func typeToString(t types.Type) string {
+	switch u := t.(type) {
+	case *types.Pointer:
+		inner := typeToString(u.Elem())
+		if inner == "interface{}" {
+			return "interface{}"
+		}
+		return "*" + inner
+	case *types.Slice:
+		inner := typeToString(u.Elem())
+		if inner == "interface{}" {
+			return "interface{}"
+		}
+		return "[]" + inner
+	case *types.Array:
+		inner := typeToString(u.Elem())
+		if inner == "interface{}" {
+			return "interface{}"
+		}
+		return fmt.Sprintf("[%d]%s", u.Len(), inner)
+	case *types.Named:
+		if u.Obj().Pkg() == nil {
+			return u.Obj().Name()
+		}
+		if !u.Obj().Exported() {
+			return "interface{}"
+		}
+	case *types.Basic:
+		return u.String()
+	}
+
+	return t.String()
+}
+
+func extractParams(tuple *types.Tuple, variadic bool) []Param {
 	if tuple == nil {
 		return nil
 	}
 	var res []Param
 	for i := 0; i < tuple.Len(); i++ {
 		v := tuple.At(i)
-		res = append(res, Param{Name: v.Name(), Type: v.Type().String()})
+		isVariadic := variadic && i == tuple.Len()-1
+		res = append(res, Param{Name: v.Name(), Type: typeToString(v.Type()), Variadic: isVariadic})
 	}
 	return res
 }
-`);
-    }
+`;
+
+    // Always overwrite main.go to ensure latest version
+    fs.writeFileSync(path.join(inspectorDir, "main.go"), inspectorGoCode);
 
     if (!fs.existsSync(path.join(inspectorDir, "go.mod"))) {
         execSync("go mod init sky-inspector", { cwd: inspectorDir, stdio: "ignore" });
@@ -254,11 +298,13 @@ func extractParams(tuple *types.Tuple) []Param {
     const inspectorBin = process.platform === "win32" ? "sky-inspector.exe" : "sky-inspector";
     const binPath = path.join(inspectorDir, inspectorBin);
 
-    if (!fs.existsSync(binPath)) {
-        console.log("Building Go package inspector tool...");
-        execSync(`go build -o ${inspectorBin} main.go`, { cwd: inspectorDir, stdio: "inherit" });
-    }
+    // Build the inspector
+    execSync(`go build -o ${inspectorBin} main.go`, { cwd: inspectorDir, stdio: "inherit" });
 
-    const out = execSync(`"${binPath}" ${pkgName}`, { cwd: inspectorDir, maxBuffer: 1024 * 1024 * 10 }).toString();
+    const out = execSync(`"${binPath}" ${pkgName}`, { 
+        cwd: inspectorDir, 
+        maxBuffer: 1024 * 1024 * 10,
+        env: { ...process.env, SKY_PROJECT_DIR: projectDir }
+    }).toString();
     return JSON.parse(out);
 }
