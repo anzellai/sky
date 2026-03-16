@@ -209,7 +209,11 @@ export class Lexer {
           }
           break;
         case ":":
-          this.pushSimple("Colon", 1);
+          if (this.peek(1) === ":") {
+            this.pushSimple("Operator", 2);
+          } else {
+            this.pushSimple("Colon", 1);
+          }
           break;
         case ",":
           this.pushSimple("Comma", 1);

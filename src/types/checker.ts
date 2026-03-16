@@ -40,6 +40,7 @@ export interface TypeCheckResult {
   readonly environment: TypeEnvironment
   readonly declarations: readonly TypedDeclarationInfo[]
   readonly diagnostics: readonly TypeDiagnostic[]
+  readonly nodeTypes: Map<string, import("../types/types.js").Type>
 }
 
 /* -----------------------------------------------------------
@@ -79,6 +80,7 @@ export function checkModule(
 
   const declarations: TypedDeclarationInfo[] = []
   const diagnostics: TypeDiagnostic[] = []
+  const nodeTypes = new Map<string, import("../types/types.js").Type>()
 
   /* --------------------------------------------
      1. Register ADTs
@@ -100,7 +102,8 @@ export function checkModule(
     return {
       environment: env,
       declarations,
-      diagnostics
+      diagnostics,
+      nodeTypes
     }
   }
 
@@ -137,7 +140,8 @@ export function checkModule(
               adtRegistration.registry,
               env,
               declaration,
-              typeAnnotations.get(declaration.name)
+              typeAnnotations.get(declaration.name),
+              nodeTypes
             )
 
           declarations.push(inferred)
@@ -182,7 +186,8 @@ export function checkModule(
   return {
     environment: env,
     declarations,
-    diagnostics
+    diagnostics,
+    nodeTypes
   }
 
 }

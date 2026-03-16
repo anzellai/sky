@@ -5,9 +5,23 @@ type Maybe a
     = Just a
     | Nothing
 
-withDefault default value =
+withDefault fallback value =
     case value of
         Just v ->
             v
         Nothing ->
-            default
+            fallback
+
+map fn maybe =
+    case maybe of
+        Just value ->
+            Just (fn value)
+        Nothing ->
+            Nothing
+
+andThen fn maybe =
+    case maybe of
+        Just value ->
+            fn value
+        Nothing ->
+            Nothing

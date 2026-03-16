@@ -8,40 +8,55 @@ import Github.Com.Joho.Godotenv as Dotenv
 import Os
 import Io
 
+writeResponse w text =
+    let
+        _ =
+            Io.writeString w text
+    in
+        ()
+
+indexHandler w _ =
+    writeResponse w "Welcome to Sky Mux Server!"
+
+echoHandler w req =
+    let
+        reqBody =
+            Http.requestBody req
+        body =
+            Io.readAll reqBody
+    in
+        case body of
+            Ok _ ->
+                writeResponse w "ok"
+            
+            Err e ->
+                writeResponse w e
+
+pingHandler w _ =
+    writeResponse w "pong"
+
 main =
     let
         _ =
-            Dotenv.load
-                []
-        envPort = Os.getenv "PORT"
+            Dotenv.load []
+        envPort =
+            Os.getenv "PORT"
         serverPort =
             if envPort == "" then
                 "4000"
             else
                 envPort
-        r = Mux.newRouter ()
-        indexHandler =
-            \w _ ->
-                let
-                    _ = Io.writeString w "Welcome to Sky Mux Server!"
-                in
-                    ()
-        echoHandler =
-            \w _ ->
-                let
-                    _ = Io.writeString w "Echo!"
-                in
-                    ()
-        pingHandler =
-            \w _ ->
-                let
-                    _ = Io.writeString w "pong"
-                in
-                    ()
-        _ = Mux.routerHandleFunc r "/" indexHandler
-        _ = Mux.routerHandleFunc r "/echo" echoHandler
-        _ = Mux.routerHandleFunc r "/ping" pingHandler
-        _ = println "Starting server on port" serverPort
-        err = Http.listenAndServe (":" ++ serverPort) r
+        r =
+            Mux.newRouter ()
+        _ =
+            Mux.routerHandleFunc r "/" indexHandler
+        _ =
+            Mux.routerHandleFunc r "/echo" echoHandler
+        _ =
+            Mux.routerHandleFunc r "/ping" pingHandler
+        _ =
+            println "Starting server on port" serverPort
+        err =
+            Http.listenAndServe (":" ++ serverPort) r
     in
         println "Server stopped:" err

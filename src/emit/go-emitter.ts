@@ -138,6 +138,7 @@ function emitGoStmt(stmt: GoIR.GoStmt, indent: number): string {
 }
 
 function emitGoExpr(expr: GoIR.GoExpr): string {
+  if ((expr as any).kind === "GoRawExpr") return (expr as any).code;
   switch (expr.kind) {
     case "GoIdent":
       return expr.name;

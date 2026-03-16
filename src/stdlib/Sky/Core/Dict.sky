@@ -1,0 +1,34 @@
+module Sky.Core.Dict exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_dict_Empty, Sky_dict_Singleton, Sky_dict_Insert, Sky_dict_Get, Sky_dict_Remove, Sky_dict_Keys, Sky_dict_Values, Sky_dict_Map, Sky_dict_Foldl, Sky_dict_FromList, Sky_dict_ToList, Sky_dict_IsEmpty, Sky_dict_Size, Sky_dict_Member, Sky_dict_Update)
+
+empty =
+    Sky_dict_Empty ()
+singleton key val =
+    Sky_dict_Singleton key val
+insert key val d =
+    Sky_dict_Insert key val d
+get key d =
+    Sky_dict_Get key d
+remove key d =
+    Sky_dict_Remove key d
+keys d =
+    Sky_dict_Keys d
+values d =
+    Sky_dict_Values d
+map fn d =
+    Sky_dict_Map fn d
+foldl fn acc d =
+    Sky_dict_Foldl fn acc d
+fromList l =
+    Sky_dict_FromList l
+toList d =
+    Sky_dict_ToList d
+isEmpty d =
+    Sky_dict_IsEmpty d
+size d =
+    Sky_dict_Size d
+member key d =
+    Sky_dict_Member key d
+update key fn d =
+    Sky_dict_Update key fn d

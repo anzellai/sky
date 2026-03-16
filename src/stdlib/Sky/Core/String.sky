@@ -1,16 +1,62 @@
-module Sky.Core.String exposing (fromInt, toBytes)
+module Sky.Core.String exposing (..)
 
--- Built-in string conversion
 foreign import "fmt" exposing (Sprintf)
 
-fromInt : Int -> String
 fromInt n =
     Sprintf "%d" n
 
--- String to Bytes conversion
--- In Go, this is just []byte(s)
 foreign import "sky_builtin" exposing (stringToBytes)
 
-toBytes : String -> Bytes
 toBytes s =
     stringToBytes s
+
+foreign import "sky_wrappers" exposing (Sky_string_Split, Sky_string_Join, Sky_string_Contains, Sky_string_Replace, Sky_string_Trim, Sky_string_Length, Sky_string_ToLower, Sky_string_ToUpper, Sky_string_StartsWith, Sky_string_EndsWith, Sky_string_Slice, Sky_string_IsEmpty, Sky_string_FromFloat, Sky_string_ToInt, Sky_string_ToFloat, Sky_string_Lines, Sky_string_Words, Sky_string_Repeat, Sky_string_PadLeft, Sky_string_PadRight, Sky_string_Left, Sky_string_Right, Sky_string_Reverse, Sky_string_Indexes)
+
+split sep s =
+    Sky_string_Split sep s
+join sep list =
+    Sky_string_Join sep list
+contains sub s =
+    Sky_string_Contains sub s
+replace old new s =
+    Sky_string_Replace old new s
+trim s =
+    Sky_string_Trim s
+length s =
+    Sky_string_Length s
+toLower s =
+    Sky_string_ToLower s
+toUpper s =
+    Sky_string_ToUpper s
+startsWith prefix s =
+    Sky_string_StartsWith prefix s
+endsWith suffix s =
+    Sky_string_EndsWith suffix s
+slice start end s =
+    Sky_string_Slice start end s
+isEmpty s =
+    Sky_string_IsEmpty s
+fromFloat f =
+    Sky_string_FromFloat f
+toInt s =
+    Sky_string_ToInt s
+toFloat s =
+    Sky_string_ToFloat s
+lines s =
+    Sky_string_Lines s
+words s =
+    Sky_string_Words s
+repeat n s =
+    Sky_string_Repeat n s
+padLeft n ch s =
+    Sky_string_PadLeft n ch s
+padRight n ch s =
+    Sky_string_PadRight n ch s
+left n s =
+    Sky_string_Left n s
+right n s =
+    Sky_string_Right n s
+reverse s =
+    Sky_string_Reverse s
+indexes sub s =
+    Sky_string_Indexes sub s

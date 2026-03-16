@@ -61,6 +61,41 @@ export function inferPattern(
 
     case "ConstructorPattern":
       return inferConstructorPattern(registry, env, pattern, expectedType);
+
+    case "ConsPattern": {
+      const elementType = freshTypeVariable();
+      const listType: Type = {
+        kind: "TypeApplication",
+        constructor: { kind: "TypeConstant", name: "List" },
+        arguments: [elementType],
+      };
+      const s1 = unify(expectedType, listType);
+      const headResult = inferPattern(
+        registry, env, pattern.head,
+        applySubstitution(elementType, s1),
+      );
+      const s2 = composeSubstitutions(headResult.substitution, s1);
+      const tailResult = inferPattern(
+        registry, env, pattern.tail,
+        applySubstitution(listType, s2),
+      );
+      const s3 = composeSubstitutions(tailResult.substitution, s2);
+      return {
+        substitution: s3,
+        bindings: { ...headResult.bindings, ...tailResult.bindings },
+      };
+    }
+
+    case "AsPattern": {
+      const innerResult = inferPattern(registry, env, pattern.pattern, expectedType);
+      return {
+        substitution: innerResult.substitution,
+        bindings: {
+          ...innerResult.bindings,
+          [pattern.name]: applySubstitution(expectedType, innerResult.substitution),
+        },
+      };
+    }
   }
 }
 

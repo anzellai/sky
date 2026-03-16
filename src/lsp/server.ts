@@ -69,8 +69,11 @@ export function startServer() {
     return workspace.getDefinition(params.textDocument.uri, params.position);
   });
 
-  connection.onCompletion((params: CompletionParams): CompletionItem[] => {
-    return workspace.getCompletions(params.textDocument.uri, params.position);
+  connection.onCompletion((params: CompletionParams) => {
+    const items = workspace.getCompletions(params.textDocument.uri, params.position);
+    // Return as CompletionList with isIncomplete=true so the editor
+    // always re-queries on each keystroke (important for qualified access like Os.)
+    return { isIncomplete: true, items };
   });
 
   connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
@@ -81,21 +84,25 @@ export function startServer() {
     const doc = documents.get(params.textDocument.uri);
     if (!doc) return null;
 
-    const text = doc.getText();
+    const originalText = doc.getText();
     try {
-      const { tokens } = lex(text, params.textDocument.uri);
+      const { tokens } = lex(originalText, params.textDocument.uri);
       const filtered = filterLayout(tokens);
       const ast = parse(filtered);
-      const formatted = formatModule(ast);
-      
-      if (formatted === text) return [];
+      const formatted = formatModule(ast, originalText);
+
+      if (formatted === originalText) return [];
+
+      // Roundtrip safety
+      try {
+        parse(filterLayout(lex(formatted, params.textDocument.uri).tokens));
+      } catch {
+        return null;
+      }
 
       return [
         TextEdit.replace(
-          {
-            start: doc.positionAt(0),
-            end: doc.positionAt(text.length)
-          },
+          { start: doc.positionAt(0), end: doc.positionAt(originalText.length) },
           formatted
         )
       ];

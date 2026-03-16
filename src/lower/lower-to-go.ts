@@ -27,12 +27,46 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
 
   const localEnvOuter = new Map<string, Type>();
 
-  // Convert types
+  // Build param count map for currying detection
+  const declParamCounts = new Map<string, number>();
+  for (const decl of module.declarations) {
+    let count = 0;
+    let body = decl.body;
+    while (body.kind === "Lambda") {
+      count += body.params.length;
+      body = body.body;
+    }
+    if (count >= 2) declParamCounts.set(decl.name, count);
+  }
+  _declParamCounts = declParamCounts;
+
+  // Build constructor → ADT mapping (e.g. "GenerateUuid" → { adtName: "Msg", tagIndex: 0, arity: 0 })
+  const constructorMap = new Map<string, { adtName: string; tagIndex: number; arity: number }>();
+  // Track which type declarations are record aliases (should not emit as Go structs)
+  const recordAliasTypes = new Set<string>();
+  _recordAliasTypes = recordAliasTypes; // Set module-level ref for lowerType
+
   for (const tDecl of module.typeDeclarations) {
+    // Detect record aliases: single constructor with same name as type
+    if (tDecl.constructors.length === 1 && tDecl.constructors[0].name === tDecl.name) {
+      recordAliasTypes.add(tDecl.name);
+      continue; // Don't emit Go struct for record type aliases (records are maps)
+    }
+
+    for (let i = 0; i < tDecl.constructors.length; i++) {
+      const c = tDecl.constructors[i];
+      constructorMap.set(c.name, { adtName: tDecl.name, tagIndex: i, arity: c.types.length });
+    }
+  }
+
+  // Convert types (skip record aliases)
+  for (const tDecl of module.typeDeclarations) {
+    if (recordAliasTypes.has(tDecl.name)) continue;
+
     const fields: { name: string; type: GoIR.GoType }[] = [
       { name: "Tag", type: { kind: "GoIdentType", name: "int" } }
     ];
-    
+
     // Naive variant field mapping
     for (const c of tDecl.constructors) {
         if (c.types.length > 0) {
@@ -61,20 +95,18 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     const stmts: GoIR.GoStmt[] = [];
     let params: {name: string, type: GoIR.GoType}[] = [];
     const localEnv = new Map<string, Type>(localEnvOuter);
-    
+
     // Flatten nested lambdas to Go parameters
     let currentType = decl.scheme.type;
     const flattenLambda = (e: CoreIR.Expr) => {
         if (e.kind === "Lambda") {
             for (const p of e.params) {
-                let pType: GoIR.GoType = { kind: "GoIdentType", name: "any" };
                 let skyType: Type = { kind: "TypeConstant", name: "Any" };
                 if (currentType.kind === "TypeFunction") {
                     skyType = currentType.from;
-                    pType = lowerType(skyType);
                     currentType = currentType.to;
                 }
-                params.push({ name: p, type: pType });
+                params.push({ name: p, type: { kind: "GoIdentType", name: "any" } });
                 localEnv.set(p, skyType);
             }
             flattenLambda(e.body);
@@ -85,26 +117,28 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
                     if (inner.name === "_") {
                         stmts.push({
                             kind: "GoExprStmt",
-                            expr: lowerExpr(inner.value, moduleExports, localEnv, foreignModules)
+                            expr: lowerExpr(inner.value, moduleExports, localEnv, foreignModules, constructorMap)
                         });
                     } else {
                         stmts.push({
                             kind: "GoAssignStmt",
                             define: true,
                             left: [{ kind: "GoIdent", name: inner.name }],
-                            right: lowerExpr(inner.value, moduleExports, localEnv, foreignModules)
+                            right: lowerExpr(inner.value, moduleExports, localEnv, foreignModules, constructorMap)
                         });
                         localEnv.set(inner.name, inner.value.type);
                     }
                     flattenLet(inner.body);
                 } else if (inner.kind === "Match") {
-                    // Match in let body
-                    stmts.push({
-                        kind: "GoExprStmt",
-                        expr: lowerExpr(inner, moduleExports, localEnv, foreignModules)
-                    });
+                    // Match in let body — return result for non-main functions
+                    const loweredMatch = lowerExpr(inner, moduleExports, localEnv, foreignModules, constructorMap);
+                    if (decl.name === "main") {
+                        stmts.push({ kind: "GoExprStmt", expr: loweredMatch });
+                    } else {
+                        stmts.push({ kind: "GoReturnStmt", expr: loweredMatch });
+                    }
                 } else {
-                    const lowered = lowerExpr(inner, moduleExports, localEnv, foreignModules);
+                    const lowered = lowerExpr(inner, moduleExports, localEnv, foreignModules, constructorMap);
                     if (decl.name === "main") {
                         stmts.push({ kind: "GoExprStmt", expr: lowered });
                     } else {
@@ -120,7 +154,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
 
     let retType: GoIR.GoType | undefined = undefined;
     if (decl.name !== "main") {
-      retType = lowerType(currentType);
+      retType = { kind: "GoIdentType", name: "any" };
     }
 
     const goName = decl.name === "main" ? decl.name : decl.name.charAt(0).toUpperCase() + decl.name.slice(1);
@@ -133,6 +167,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
       returnType: retType,
       body: stmts
     });
+
   }
 
   const foreignModulesDetected = new Set<string>();
@@ -203,6 +238,10 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
   return pkg;
 }
 
+// Module-level set of record alias type names, populated by lowerModule
+let _recordAliasTypes: Set<string> = new Set();
+let _declParamCounts: Map<string, number> = new Map();
+
 function lowerType(t: Type): GoIR.GoType {
   if (!t || !t.kind) {
       return { kind: "GoIdentType", name: "any" };
@@ -216,6 +255,8 @@ function lowerType(t: Type): GoIR.GoType {
     if (t.name === "Unit") return { kind: "GoStructType", fields: [] };
     if (t.name === "Any") return { kind: "GoIdentType", name: "any" };
     if (t.name === "Bytes") return { kind: "GoSliceType", elem: { kind: "GoIdentType", name: "byte" } };
+    // Record aliases (like Model) are maps, not Go structs
+    if (_recordAliasTypes.has(t.name)) return { kind: "GoIdentType", name: "any" };
     
     if (t.name.startsWith("Untyped ")) {
         const inner = t.name.substring(8);
@@ -230,10 +271,12 @@ function lowerType(t: Type): GoIR.GoType {
         const name = parts[parts.length - 1];
         return { kind: "GoSelectorType", pkg, name };
     }
-    
+
+    // Known Go FFI types that should map to any (interfaces, structs from Go packages)
+    // These are types from .skyi binding files like Writer, Reader, Request, Response, etc.
     return {
       kind: "GoIdentType",
-      name: t.name
+      name: "any"
     };
   }
   if (t.kind === "TypeVariable") {
@@ -276,11 +319,13 @@ function lowerType(t: Type): GoIR.GoType {
   return { kind: "GoIdentType", name: "any" };
 }
 
-function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Scheme>>, localEnv?: Map<string, Type>, foreignModules?: Set<string>): GoIR.GoExpr {
+function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Scheme>>, localEnv?: Map<string, Type>, foreignModules?: Set<string>, constructorMap?: Map<string, { adtName: string; tagIndex: number; arity: number }>, _isCallTarget?: boolean): GoIR.GoExpr {
   switch (expr.kind) {
     case "Literal": {
       if (expr.literalType === "String") {
-        return { kind: "GoBasicLit", value: '"' + expr.value + '"' };
+        // Escape backslashes and double quotes for Go string literal
+        const escaped = String(expr.value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n').replace(/\r/g, '\\r').replace(/\t/g, '\\t');
+        return { kind: "GoBasicLit", value: '"' + escaped + '"' };
       }
       if (expr.literalType === "Unit") {
           return { kind: "GoCompositeLit", type: { kind: "GoStructType", fields: [] }, elements: [] };
@@ -291,6 +336,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       return { kind: "GoBasicLit", value: String(expr.value) };
     }
     case "Variable": {
+      // Field accessor functions like ".uuid" — keep as-is for Application handler
+      if (expr.name.startsWith(".")) {
+          return { kind: "GoIdent", name: expr.name };
+      }
       if (expr.name.includes(".")) {
           const parts = expr.name.split(".");
           const moduleParts = parts.slice(0, -1);
@@ -309,6 +358,11 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           }
           if (pkgName === "updateRecord") {
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "UpdateRecord" };
+          }
+
+          // sky_wrappers functions already have their final names — use as-is
+          if (pkgName === "sky_wrappers") {
+              return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: name };
           }
 
           // Heuristic for Go FFI wrappers
@@ -361,10 +415,31 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       }
       
       const goName = (expr.name[0] >= 'a' && expr.name[0] <= 'z') ? expr.name.charAt(0).toUpperCase() + expr.name.slice(1) : expr.name;
-      
+
       // If it's a local variable, don't capitalize
       if (localEnv && localEnv.has(expr.name)) {
           return { kind: "GoIdent", name: expr.name };
+      }
+
+      // If the variable is a multi-param top-level function used as a value,
+      // generate a currying wrapper so it can be passed to FFI functions expecting func(any) any
+      // Check if this is a known top-level function by looking at the module's declarations
+      const declArity = _declParamCounts?.get(expr.name);
+      if (declArity && declArity >= 2 && !_isCallTarget) {
+              // Generate curried wrapper using raw Go string
+              // e.g., func(__c0 any) any { return func(__c1 any) any { return GoName(__c0, __c1) } }
+              const cid = Math.floor(Math.random() * 10000);
+              const paramNames = Array.from({length: declArity}, (_, i) => `__c${cid}_${i}`);
+              const callArgs = paramNames.join(", ");
+              let code = "";
+              for (let i = 0; i < declArity; i++) {
+                  code += `func(${paramNames[i]} any) any { return `;
+              }
+              code += `${goName}(${callArgs})`;
+              for (let i = 0; i < declArity; i++) {
+                  code += ` }`;
+              }
+              return { kind: "GoRawExpr", code } as any;
       }
 
       return { kind: "GoIdent", name: goName };
@@ -388,7 +463,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             right: { kind: "GoIdent", name: `arg${i}` },
             define: true
           })),
-          { kind: "GoReturnStmt", expr: lowerExpr(expr.body, moduleExports, newLocalEnv, foreignModules) }
+          { kind: "GoReturnStmt", expr: lowerExpr(expr.body, moduleExports, newLocalEnv, foreignModules, constructorMap) }
         ]
       };
     }
@@ -401,9 +476,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           body: [
             {
               kind: "GoIfStmt",
-              condition: lowerExpr(expr.condition, moduleExports, localEnv, foreignModules),
-              thenBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.thenBranch, moduleExports, localEnv, foreignModules) }],
-              elseBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.elseBranch, moduleExports, localEnv, foreignModules) }]
+              condition: lowerExpr(expr.condition, moduleExports, localEnv, foreignModules, constructorMap),
+              thenBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.thenBranch, moduleExports, localEnv, foreignModules, constructorMap) }],
+              elseBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.elseBranch, moduleExports, localEnv, foreignModules, constructorMap) }]
             }
           ]
         },
@@ -423,9 +498,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       const flat = flattenApp(expr);
       
       // Map listenAndServe to http.ListenAndServe and println to fmt.Println
-      let fnExpr = lowerExpr(flat.fn, moduleExports, localEnv, foreignModules);
+      let fnExpr = lowerExpr(flat.fn, moduleExports, localEnv, foreignModules, constructorMap, true);
       let args = flat.args.map((a, i) => {
-          let lowered = lowerExpr(a, moduleExports, localEnv, foreignModules);
+          let lowered = lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap);
 
           // Heuristic: if it's a Go FFI call and the arg is known to be Bytes (which might be an array in Go)
           const coreArg = flat.args[i];
@@ -457,13 +532,19 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           return lowered;
       });
 
-      // Field access like .uuid model -> model["uuid"]
+      // Field access like .uuid model -> model.(map[string]any)["uuid"]
       if (fnExpr.kind === "GoIdent" && fnExpr.name.startsWith(".")) {
           const fieldName = fnExpr.name.substring(1);
           const container = args[0];
+          // Type-assert container to map[string]any for record field access
+          const assertedContainer: GoIR.GoExpr = {
+              kind: "GoTypeAssertExpr",
+              expr: container,
+              type: { kind: "GoMapType", key: { kind: "GoIdentType", name: "string" }, value: { kind: "GoIdentType", name: "any" } }
+          } as any;
           return {
               kind: "GoIndexExpr",
-              expr: container,
+              expr: assertedContainer,
               index: { kind: "GoBasicLit", value: '"' + fieldName + '"' }
           } as any;
       }
@@ -554,34 +635,33 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           // Binary operator uncurried
           const op = fnExpr.name === "++" ? "+" : fnExpr.name;
           
-          // Add type assertions if needed for any types
+          // Add type assertions for binary operators on any-typed values
+          const fnName0 = (fnExpr as any).name;
           const finalArgs = args.map((a, i) => {
               const coreArg = flat.args[i];
-              let needsAssert = true;
-              if (coreArg.type && coreArg.type.kind === "TypeConstant" && (coreArg.type.name === "Int" || coreArg.type.name === "String" || coreArg.type.name === "Float")) {
-                  needsAssert = false;
-              } else if (coreArg.kind === "Variable" && localEnv) {
-                  const t = localEnv.get(coreArg.name);
-                  if (t && t.kind === "TypeConstant" && (t.name === "Int" || t.name === "String" || t.name === "Float")) {
-                      needsAssert = false;
-                  }
-              }
-              
-              if (!needsAssert) return a;
-              
-              let targetType = "int";
-              const fnName = (fnExpr as any).name;
-              if (fnName === "++" || (fnName === "+" && (flat.args[0].kind === "Literal" && typeof (flat.args[0] as any).value === "string" || flat.args[1].kind === "Literal" && typeof (flat.args[1] as any).value === "string"))) {
+              // Check if the Go expression is already a concrete type (literal, type-asserted, etc.)
+              const isAlreadyConcrete = (a as any).kind === "GoBasicLit" ||
+                  (a as any).kind === "GoTypeAssertExpr" ||
+                  (a as any).kind === "GoBinaryExpr";
+              if (isAlreadyConcrete) return a;
+
+              // Determine the target assertion type from the operator
+              let targetType: string | null = null;
+              if (fnName0 === "++" || fnName0 === "++") {
                   targetType = "string";
-              } else if (["==", "!=", "<", ">", "<=", ">="].includes(fnName)) {
-                  if (flat.args[0].kind === "Literal" && typeof (flat.args[0] as any).value === "string" || flat.args[1].kind === "Literal" && typeof (flat.args[1] as any).value === "string") {
-                      targetType = "string";
-                  } else if (fnName === "==" || fnName === "!=") {
-                      targetType = "any";
-                  }
+              } else if (["+", "-", "*", "/", "%"].includes(fnName0)) {
+                  targetType = "int";
+              } else if (["<", ">", "<=", ">="].includes(fnName0)) {
+                  // Comparison — check if any arg is a string literal
+                  const hasStringLit = flat.args.some(a2 => a2.kind === "Literal" && typeof (a2 as any).value === "string");
+                  targetType = hasStringLit ? "string" : "int";
+              } else if (fnName0 === "==" || fnName0 === "!=") {
+                  targetType = null; // equality works on any
+              } else if (fnName0 === "&&" || fnName0 === "||") {
+                  targetType = "bool";
               }
 
-              if (targetType === "any") return a;
+              if (!targetType) return a;
 
               return {
                   kind: "GoTypeAssertExpr",
@@ -598,15 +678,25 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           };
       }
       
+      // If calling a local variable (not a known Go function), add type assertion
+      // so Go knows it's callable: fn.(func(any) any)(args...)
+      let callFn = fnExpr;
+      if (fnExpr.kind === "GoIdent" && !["fmt", "len", "panic", "append", "make", "[]byte"].includes(fnExpr.name) && !fnExpr.name.startsWith(".")) {
+          // Check if it's a local variable (lambda parameter or let binding) — needs type assertion
+          if (localEnv && localEnv.has(fnExpr.name)) {
+              callFn = {
+                  kind: "GoTypeAssertExpr",
+                  expr: fnExpr,
+                  type: { kind: "GoFuncType", params: [{ kind: "GoIdentType", name: "any" }], results: [{ kind: "GoIdentType", name: "any" }] }
+              } as any;
+          }
+      }
+
       const result: GoIR.GoExpr = {
         kind: "GoCallExpr",
-        fn: fnExpr,
+        fn: callFn,
         args: args as GoIR.GoExpr[]
       };
-
-      if (expr.type && (expr.type.kind === "TypeTuple" || expr.type.kind === "TypeApplication" || expr.type.kind === "TypeConstant")) {
-          // Type assertion removed because FFI wrappers return concrete types
-      }
 
       return result;
     }
@@ -622,16 +712,16 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             kind: "GoAssignStmt",
             define: true,
             left: [{ kind: "GoIdent", name: e.name }],
-            right: lowerExpr(e.value, moduleExports, newLocalEnv, foreignModules)
+            right: lowerExpr(e.value, moduleExports, newLocalEnv, foreignModules, constructorMap)
           });
           flattenLet(e.body);
         } else if (e.kind === "Match") {
             stmts.push({
                 kind: "GoExprStmt",
-                expr: lowerExpr(e, moduleExports, newLocalEnv, foreignModules)
+                expr: lowerExpr(e, moduleExports, newLocalEnv, foreignModules, constructorMap)
             });
         } else {
-          stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(e, moduleExports, newLocalEnv, foreignModules) });
+          stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(e, moduleExports, newLocalEnv, foreignModules, constructorMap) });
         }
       };
       flattenLet(expr);
@@ -647,20 +737,226 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       };
     }
     case "Match": {
+      // Check if this is a tuple destructuring pattern (e.g. let (a, b) = expr)
+      const isTupleMatch = expr.cases.length === 1 &&
+          expr.cases[0].pattern.kind === "ConstructorPattern" &&
+          expr.cases[0].pattern.name.startsWith("Tuple");
+
+      if (isTupleMatch) {
+          // Tuple destructuring: extract .V0, .V1, etc. directly
+          const c = expr.cases[0];
+          const pat = c.pattern as CoreIR.ConstructorPattern;
+          const stmts: GoIR.GoStmt[] = [];
+          const newLocalEnv = new Map(localEnv || []);
+          const subjExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+
+          // Type-assert the subject to the tuple type
+          const tupleArity = pat.args.length;
+          const assertedSubj: GoIR.GoExpr = {
+              kind: "GoTypeAssertExpr",
+              expr: subjExpr,
+              type: { kind: "GoSelectorType", pkg: "sky_wrappers", name: "Tuple" + tupleArity }
+          } as any;
+
+          // Assign to a temp variable to avoid repeated evaluation
+          const tmpName = "__tuple" + Math.floor(Math.random() * 10000);
+          stmts.push({
+              kind: "GoAssignStmt",
+              define: true,
+              left: [{ kind: "GoIdent", name: tmpName }],
+              right: assertedSubj
+          });
+
+          for (let j = 0; j < pat.args.length; j++) {
+              const argPat = pat.args[j];
+              if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
+                  newLocalEnv.set(argPat.name, { kind: "TypeConstant", name: "Any" });
+                  stmts.push({
+                      kind: "GoAssignStmt",
+                      define: true,
+                      left: [{ kind: "GoIdent", name: argPat.name }],
+                      right: { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: tmpName }, sel: "V" + j }
+                  });
+              }
+          }
+          stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
+
+          return {
+              kind: "GoCallExpr",
+              fn: {
+                  kind: "GoFuncLit",
+                  type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
+                  body: stmts
+              },
+              args: []
+          };
+      }
+
+      // ConsPattern match: case list of x :: xs -> ...
+      const hasConsPattern = expr.cases.some(c => c.pattern.kind === "ConsPattern");
+      if (hasConsPattern) {
+          const stmts: GoIR.GoStmt[] = [];
+          const newLocalEnv = new Map(localEnv || []);
+          const subjExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+
+          // Type-assert subject to []any
+          const tmpName = "__list" + Math.floor(Math.random() * 10000);
+          stmts.push({
+              kind: "GoAssignStmt",
+              define: true,
+              left: [{ kind: "GoIdent", name: tmpName }],
+              right: {
+                  kind: "GoTypeAssertExpr",
+                  expr: subjExpr,
+                  type: { kind: "GoSliceType", elem: { kind: "GoIdentType", name: "any" } }
+              } as any
+          });
+
+          // Build if-else chain for cons vs other patterns
+          const buildConsChain = (caseIdx: number): GoIR.GoStmt[] => {
+              if (caseIdx >= expr.cases.length) {
+                  return [{ kind: "GoExprStmt", expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] } }];
+              }
+              const c = expr.cases[caseIdx];
+              if (c.pattern.kind === "ConsPattern") {
+                  const branchEnv = new Map(newLocalEnv);
+                  const branchStmts: GoIR.GoStmt[] = [];
+
+                  if (c.pattern.head.kind === "VariablePattern" && c.pattern.head.name !== "_") {
+                      branchEnv.set(c.pattern.head.name, { kind: "TypeConstant", name: "Any" });
+                      branchStmts.push({
+                          kind: "GoAssignStmt",
+                          define: true,
+                          left: [{ kind: "GoIdent", name: c.pattern.head.name }],
+                          right: { kind: "GoIndexExpr", expr: { kind: "GoIdent", name: tmpName }, index: { kind: "GoBasicLit", value: "0" } } as any
+                      });
+                  }
+                  if (c.pattern.tail.kind === "VariablePattern" && c.pattern.tail.name !== "_") {
+                      branchEnv.set(c.pattern.tail.name, { kind: "TypeConstant", name: "Any" });
+                      branchStmts.push({
+                          kind: "GoAssignStmt",
+                          define: true,
+                          left: [{ kind: "GoIdent", name: c.pattern.tail.name }],
+                          right: { kind: "GoSliceExpr", expr: { kind: "GoIdent", name: tmpName }, low: { kind: "GoBasicLit", value: "1" } } as any
+                      });
+                  }
+                  branchStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, branchEnv, foreignModules, constructorMap) });
+
+                  return [{
+                      kind: "GoIfStmt",
+                      condition: {
+                          kind: "GoBinaryExpr",
+                          left: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "len" }, args: [{ kind: "GoIdent", name: tmpName }] },
+                          op: ">",
+                          right: { kind: "GoBasicLit", value: "0" }
+                      } as any,
+                      thenBranch: branchStmts,
+                      elseBranch: buildConsChain(caseIdx + 1)
+                  }];
+              } else if (c.pattern.kind === "LiteralPattern" && (c.pattern as any).value === "__empty_list__") {
+                  // Empty list pattern: check len == 0
+                  const branchStmts: GoIR.GoStmt[] = [];
+                  branchStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, new Map(newLocalEnv), foreignModules, constructorMap) });
+                  return [{
+                      kind: "GoIfStmt",
+                      condition: {
+                          kind: "GoBinaryExpr",
+                          left: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "len" }, args: [{ kind: "GoIdent", name: tmpName }] },
+                          op: "==",
+                          right: { kind: "GoBasicLit", value: "0" }
+                      } as any,
+                      thenBranch: branchStmts,
+                      elseBranch: buildConsChain(caseIdx + 1)
+                  }];
+              } else {
+                  // Wildcard or variable fallback
+                  const branchEnv = new Map(newLocalEnv);
+                  const branchStmts: GoIR.GoStmt[] = [];
+                  if (c.pattern.kind === "VariablePattern" && c.pattern.name !== "_") {
+                      branchEnv.set(c.pattern.name, expr.expr.type);
+                      branchStmts.push({
+                          kind: "GoAssignStmt",
+                          define: true,
+                          left: [{ kind: "GoIdent", name: c.pattern.name }],
+                          right: { kind: "GoIdent", name: tmpName }
+                      });
+                  }
+                  branchStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, branchEnv, foreignModules, constructorMap) });
+                  return branchStmts;
+              }
+          };
+
+          stmts.push(...buildConsChain(0));
+
+          return {
+              kind: "GoCallExpr",
+              fn: {
+                  kind: "GoFuncLit",
+                  type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
+                  body: stmts
+              },
+              args: []
+          };
+      }
+
+      // AsPattern match: handle as-patterns inside case branches
+      const hasAsPattern = expr.cases.some(c => c.pattern.kind === "AsPattern");
+      if (hasAsPattern) {
+          // Rewrite AsPattern cases: bind name = subject, then delegate to inner pattern
+          const rewrittenCases = expr.cases.map(c => {
+              if (c.pattern.kind === "AsPattern") {
+                  // Wrap body in a let binding for the as-name
+                  const wrappedBody: CoreIR.Expr = {
+                      kind: "LetBinding",
+                      name: c.pattern.name,
+                      value: expr.expr,
+                      body: c.body,
+                      type: c.body.type
+                  };
+                  return { pattern: c.pattern.pattern, body: wrappedBody };
+              }
+              return c;
+          });
+          const rewrittenMatch: CoreIR.Match = {
+              kind: "Match",
+              expr: expr.expr,
+              cases: rewrittenCases,
+              type: expr.type
+          };
+          return lowerExpr(rewrittenMatch, moduleExports, localEnv, foreignModules, constructorMap);
+      }
+
+      // ADT pattern matching
+      // Determine the ADT type name from the first constructor pattern
+      let adtTypeName: string | undefined;
+      for (const c of expr.cases) {
+          if (c.pattern.kind === "ConstructorPattern") {
+              const info = constructorMap?.get(c.pattern.name);
+              if (info) {
+                  adtTypeName = info.adtName;
+                  break;
+              }
+          }
+      }
+
       const cases: GoIR.GoCaseClause[] = expr.cases.map((c, i) => {
         const stmts: GoIR.GoStmt[] = [];
         const newLocalEnv = new Map(localEnv || []);
-        
-        // Very basic matching mapped to constructor tags
-        // Assuming ADTs are structs with Tag int, and ConstructorValue fields
+
         if (c.pattern.kind === "ConstructorPattern") {
-           // We extract the variables from the struct
+           const ctorInfo = constructorMap?.get(c.pattern.name);
+           const tagIndex = ctorInfo ? ctorInfo.tagIndex : i;
+
+           // Extract variables from the ADT struct fields
            for (let j = 0; j < c.pattern.args.length; j++) {
               const argPat = c.pattern.args[j];
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
                   newLocalEnv.set(argPat.name, { kind: "TypeConstant", name: "Any" });
-                  // Cast the subject to access its fields
-                  let subj = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules);
+                  let subj = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+                  // Type-assert subject to ADT type for field access
+                  if (adtTypeName) {
+                      subj = { kind: "GoTypeAssertExpr", expr: subj, type: { kind: "GoIdentType", name: adtTypeName } } as any;
+                  }
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
@@ -669,15 +965,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   });
               }
            }
-           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules) });
-           
+           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
+
            return {
                kind: "GoCaseClause",
-               exprs: [{ kind: "GoBasicLit", value: String(i) }], // Naive: assuming index is tag
+               exprs: [{ kind: "GoBasicLit", value: String(tagIndex) }],
                body: stmts
            };
         }
-        
+
         // Fallback catch-all
         if (c.pattern.kind === "WildcardPattern" || c.pattern.kind === "VariablePattern") {
            if (c.pattern.kind === "VariablePattern" && c.pattern.name !== "_") {
@@ -686,15 +982,25 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                    kind: "GoAssignStmt",
                    define: true,
                    left: [{ kind: "GoIdent", name: c.pattern.name }],
-                   right: lowerExpr(expr.expr, moduleExports, newLocalEnv, foreignModules)
+                   right: lowerExpr(expr.expr, moduleExports, newLocalEnv, foreignModules, constructorMap)
                });
            }
-           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules) });
+           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
            return { kind: "GoCaseClause", exprs: [], body: stmts };
         }
 
-        return { kind: "GoCaseClause", exprs: [], body: [{ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules) }] };
+        return { kind: "GoCaseClause", exprs: [], body: [{ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) }] };
       });
+
+      // Build the switch subject — type-assert if needed
+      let switchSubj: GoIR.GoExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+      if (adtTypeName) {
+          switchSubj = {
+              kind: "GoTypeAssertExpr",
+              expr: switchSubj,
+              type: { kind: "GoIdentType", name: adtTypeName }
+          } as any;
+      }
 
       return {
         kind: "GoCallExpr",
@@ -704,11 +1010,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           body: [
             {
               kind: "GoSwitchStmt",
-              expr: { kind: "GoSelectorExpr", expr: lowerExpr(expr.expr, moduleExports, localEnv, foreignModules), sel: "Tag" },
+              expr: { kind: "GoSelectorExpr", expr: switchSubj, sel: "Tag" },
               cases: cases
             },
             {
-               // Unreachable panic for exhaustiveness fallback
                kind: "GoExprStmt",
                expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] }
             }
@@ -718,12 +1023,34 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       };
     }
     case "Constructor": {
-        // Local constructor
+        const ctorInfo = constructorMap?.get(expr.name);
+        if (ctorInfo) {
+            // Known ADT constructor: emit ParentType{Tag: tagIndex, CtorValueN: arg}
+            const elements: GoIR.GoExpr[] = [];
+            // Use key-value syntax for clarity
+            const kvPairs: string[] = [`Tag: ${ctorInfo.tagIndex}`];
+            for (let j = 0; j < expr.args.length; j++) {
+                const fieldName = expr.name + "Value" + (j > 0 ? j : "");
+                kvPairs.push(`${fieldName}: ` + "$$ARG" + j);
+            }
+            // Build as a composite lit with named fields
+            // We'll construct this as a raw expression for simplicity
+            const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+            return {
+                kind: "GoCompositeLit",
+                type: { kind: "GoIdentType", name: ctorInfo.adtName },
+                elements: [
+                    { kind: "GoBasicLit", value: String(ctorInfo.tagIndex) },
+                    ...argExprs
+                ]
+            } as any;
+        }
+        // Fallback: unknown constructor
         const goName = expr.name.charAt(0).toUpperCase() + expr.name.slice(1);
         return {
             kind: "GoCompositeLit",
             type: { kind: "GoIdentType", name: goName },
-            elements: [{ kind: "GoBasicLit", value: "0" }, ...expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules))]
+            elements: [{ kind: "GoBasicLit", value: "0" }, ...expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap))]
         } as any;
     }
     case "RecordExpr": {
@@ -734,7 +1061,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           type: { kind: "GoMapType", key: { kind: "GoIdentType", name: "string" }, value: { kind: "GoIdentType", name: "any" } },
           entries: keys.map(k => ({
               key: { kind: "GoBasicLit", value: '"' + k + '"' },
-              value: lowerExpr(expr.fields[k], moduleExports, localEnv, foreignModules)
+              value: lowerExpr(expr.fields[k], moduleExports, localEnv, foreignModules, constructorMap)
           }))
       } as any;
     }
@@ -746,7 +1073,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         return {
             kind: "GoSliceLit",
             type: { kind: "GoSliceType", elem: elemType },
-            elements: expr.items.map(i => lowerExpr(i, moduleExports, localEnv, foreignModules))
+            elements: expr.items.map(i => lowerExpr(i, moduleExports, localEnv, foreignModules, constructorMap))
         };
     }
     default:

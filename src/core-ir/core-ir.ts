@@ -73,11 +73,13 @@ export interface MatchCase {
   body: Expr;
 }
 
-export type Pattern = 
+export type Pattern =
   | ConstructorPattern
   | VariablePattern
   | LiteralPattern
-  | WildcardPattern;
+  | WildcardPattern
+  | ConsPattern
+  | AsPattern;
 
 export interface ConstructorPattern {
   kind: "ConstructorPattern";
@@ -97,6 +99,18 @@ export interface LiteralPattern {
 
 export interface WildcardPattern {
   kind: "WildcardPattern";
+}
+
+export interface ConsPattern {
+  readonly kind: "ConsPattern";
+  readonly head: Pattern;
+  readonly tail: Pattern;
+}
+
+export interface AsPattern {
+  readonly kind: "AsPattern";
+  readonly pattern: Pattern;
+  readonly name: string;
 }
 
 export interface RecordExpr extends BaseExpr {

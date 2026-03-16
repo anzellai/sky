@@ -1,0 +1,99 @@
+module Sky.Core.Json.Decode exposing (..)
+
+-- Sky.Core.Json.Decode — 1:1 with Elm's Json.Decode module.
+
+import Sky.Core.Prelude exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_json_decoder_String, Sky_json_decoder_Int, Sky_json_decoder_Float, Sky_json_decoder_Bool, Sky_json_decoder_Null, Sky_json_decoder_Nullable, Sky_json_decoder_Value, Sky_json_decoder_Succeed, Sky_json_decoder_Fail, Sky_json_decoder_Field, Sky_json_decoder_At, Sky_json_decoder_Index, Sky_json_decoder_List, Sky_json_decoder_Dict, Sky_json_decoder_KeyValuePairs, Sky_json_decoder_Map, Sky_json_decoder_Map2, Sky_json_decoder_Map3, Sky_json_decoder_Map4, Sky_json_decoder_Map5, Sky_json_decoder_Map6, Sky_json_decoder_Map7, Sky_json_decoder_Map8, Sky_json_decoder_AndThen, Sky_json_decoder_OneOf, Sky_json_decoder_Maybe, Sky_json_decoder_Lazy, Sky_json_decoder_DecodeString, Sky_json_decoder_DecodeValue)
+
+-- Running Decoders
+decodeString decoder s =
+    Sky_json_decoder_DecodeString decoder s
+
+decodeValue decoder val =
+    Sky_json_decoder_DecodeValue decoder val
+
+-- Primitive Decoders
+string =
+    Sky_json_decoder_String ()
+
+int =
+    Sky_json_decoder_Int ()
+
+float =
+    Sky_json_decoder_Float ()
+
+bool =
+    Sky_json_decoder_Bool ()
+
+null defaultVal =
+    Sky_json_decoder_Null defaultVal
+
+nullable decoder =
+    Sky_json_decoder_Nullable decoder
+
+value =
+    Sky_json_decoder_Value ()
+
+-- Data Structure Decoders
+list decoder =
+    Sky_json_decoder_List decoder
+
+dict decoder =
+    Sky_json_decoder_Dict decoder
+
+keyValuePairs decoder =
+    Sky_json_decoder_KeyValuePairs decoder
+
+index i decoder =
+    Sky_json_decoder_Index i decoder
+
+-- Object Field Decoders
+field name decoder =
+    Sky_json_decoder_Field name decoder
+
+at path decoder =
+    Sky_json_decoder_At path decoder
+
+-- Mapping / Combining
+map fn decoder =
+    Sky_json_decoder_Map fn decoder
+
+map2 fn d1 d2 =
+    Sky_json_decoder_Map2 fn d1 d2
+
+map3 fn d1 d2 d3 =
+    Sky_json_decoder_Map3 fn d1 d2 d3
+
+map4 fn d1 d2 d3 d4 =
+    Sky_json_decoder_Map4 fn d1 d2 d3 d4
+
+map5 fn d1 d2 d3 d4 d5 =
+    Sky_json_decoder_Map5 fn d1 d2 d3 d4 d5
+
+map6 fn d1 d2 d3 d4 d5 d6 =
+    Sky_json_decoder_Map6 fn d1 d2 d3 d4 d5 d6
+
+map7 fn d1 d2 d3 d4 d5 d6 d7 =
+    Sky_json_decoder_Map7 fn d1 d2 d3 d4 d5 d6 d7
+
+map8 fn d1 d2 d3 d4 d5 d6 d7 d8 =
+    Sky_json_decoder_Map8 fn d1 d2 d3 d4 d5 d6 d7 d8
+
+succeed val =
+    Sky_json_decoder_Succeed val
+
+fail msg =
+    Sky_json_decoder_Fail msg
+
+andThen fn decoder =
+    Sky_json_decoder_AndThen fn decoder
+
+oneOf decoders =
+    Sky_json_decoder_OneOf decoders
+
+maybe decoder =
+    Sky_json_decoder_Maybe decoder
+
+lazy thunk =
+    Sky_json_decoder_Lazy thunk

@@ -1,0 +1,18 @@
+module Sky.Core.Result exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_result_WithDefault, Sky_result_Map, Sky_result_AndThen, Sky_result_MapError, Sky_result_ToMaybe)
+
+withDefault fallback result =
+    Sky_result_WithDefault fallback result
+
+map fn result =
+    Sky_result_Map fn result
+
+andThen fn result =
+    Sky_result_AndThen fn result
+
+mapError fn result =
+    Sky_result_MapError fn result
+
+toMaybe result =
+    Sky_result_ToMaybe result

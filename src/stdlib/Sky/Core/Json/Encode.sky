@@ -1,0 +1,29 @@
+module Sky.Core.Json.Encode exposing (..)
+
+-- Sky.Core.Json.Encode — 1:1 with Elm's Json.Encode module.
+
+foreign import "sky_wrappers" exposing (Sky_json_Encode, Sky_json_EncodeString, Sky_json_EncodeInt, Sky_json_EncodeFloat, Sky_json_EncodeBool, Sky_json_EncodeNull, Sky_json_EncodeList, Sky_json_EncodeObject)
+
+encode indent val =
+    Sky_json_Encode indent val
+
+string s =
+    Sky_json_EncodeString s
+
+int n =
+    Sky_json_EncodeInt n
+
+float f =
+    Sky_json_EncodeFloat f
+
+bool b =
+    Sky_json_EncodeBool b
+
+null =
+    Sky_json_EncodeNull ()
+
+list fn items =
+    Sky_json_EncodeList fn items
+
+object pairs =
+    Sky_json_EncodeObject pairs

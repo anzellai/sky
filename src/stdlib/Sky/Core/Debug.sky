@@ -1,0 +1,13 @@
+
+module Sky.Core.Debug exposing (log, toString)
+
+foreign import "fmt" exposing (Sprintf, println)
+
+log tag value =
+    let
+        _ = println tag value
+    in
+        value
+
+toString value =
+    Sprintf "%v" value

@@ -82,6 +82,18 @@ export function eliminateDeadBindings(module: CoreIR.Module, usage: UsageGraph):
                 ...pat,
                 args: pat.args.map(optimizePattern)
             };
+        } else if (pat.kind === "ConsPattern") {
+            return {
+                ...pat,
+                head: optimizePattern(pat.head),
+                tail: optimizePattern(pat.tail)
+            };
+        } else if (pat.kind === "AsPattern") {
+            return {
+                ...pat,
+                pattern: optimizePattern(pat.pattern),
+                name: usage.usedVariables.has(pat.name) ? pat.name : "_"
+            };
         }
         return pat;
     };

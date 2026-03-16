@@ -1,0 +1,24 @@
+module Sky.Core.Json.Pipeline exposing (..)
+
+-- DEPRECATED: Use Sky.Core.Json.Decode.Pipeline instead.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Decode as Decode
+
+required fieldName valDecoder fnDecoder =
+    Decode.map2 (\fn val -> fn val) fnDecoder (Decode.field fieldName valDecoder)
+
+requiredAt path valDecoder fnDecoder =
+    Decode.map2 (\fn val -> fn val) fnDecoder (Decode.at path valDecoder)
+
+optional fieldName valDecoder fallback fnDecoder =
+    Decode.map2 (\fn val -> fn val) fnDecoder (Decode.oneOf [ Decode.field fieldName valDecoder, Decode.succeed fallback ])
+
+optionalAt path valDecoder fallback fnDecoder =
+    Decode.map2 (\fn val -> fn val) fnDecoder (Decode.oneOf [ Decode.at path valDecoder, Decode.succeed fallback ])
+
+hardcoded val fnDecoder =
+    Decode.map (\fn -> fn val) fnDecoder
+
+custom valDecoder fnDecoder =
+    Decode.map2 (\fn val -> fn val) fnDecoder valDecoder

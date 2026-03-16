@@ -28,6 +28,13 @@ export function analyzeUsage(module: CoreIR.Module): UsageGraph {
             case "VariablePattern":
                 // VariablePattern introduces a variable, it doesn't use it.
                 break;
+            case "ConsPattern":
+                scanExpr(expr.head);
+                scanExpr(expr.tail);
+                break;
+            case "AsPattern":
+                scanExpr(expr.pattern);
+                break;
             case "Application":
                 scanExpr(expr.fn);
                 for (const arg of expr.args) scanExpr(arg);

@@ -336,3 +336,78 @@ function needsParensInFunctionLeft(type: Type): boolean {
 function needsParensInTypeApplication(type: Type): boolean {
   return type.kind === "TypeFunction";
 }
+
+/**
+ * Format a type with normalized variable names (a, b, c, ...) instead of 't123.
+ */
+export function formatTypeNormalized(type: Type): string {
+  const varIds = new Set<number>();
+  collectTypeVarIds(type, varIds);
+
+  if (varIds.size === 0) return formatType(type);
+
+  const sorted = [...varIds].sort((a, b) => a - b);
+  const nameMap = new Map<number, string>();
+  let idx = 0;
+  for (const id of sorted) {
+    nameMap.set(id, varName(idx++));
+  }
+
+  return formatTypeWithNames(type, nameMap);
+}
+
+function varName(index: number): string {
+  if (index < 26) return String.fromCharCode(97 + index); // a-z
+  return `t${index - 25}`;
+}
+
+function collectTypeVarIds(type: Type, out: Set<number>): void {
+  switch (type.kind) {
+    case "TypeVariable":
+      if (!type.name) out.add(type.id);
+      return;
+    case "TypeConstant":
+      return;
+    case "TypeFunction":
+      collectTypeVarIds(type.from, out);
+      collectTypeVarIds(type.to, out);
+      return;
+    case "TypeApplication":
+      collectTypeVarIds(type.constructor, out);
+      for (const arg of type.arguments) collectTypeVarIds(arg, out);
+      return;
+    case "TypeTuple":
+      for (const item of type.items) collectTypeVarIds(item, out);
+      return;
+    case "TypeRecord":
+      for (const value of Object.values(type.fields)) collectTypeVarIds(value, out);
+      return;
+  }
+}
+
+function formatTypeWithNames(type: Type, names: Map<number, string>): string {
+  switch (type.kind) {
+    case "TypeVariable":
+      if (type.name) return type.name;
+      return names.get(type.id) ?? `'t${type.id}`;
+    case "TypeConstant":
+      return type.name;
+    case "TypeFunction": {
+      const left = type.from.kind === "TypeFunction"
+        ? `(${formatTypeWithNames(type.from, names)})`
+        : formatTypeWithNames(type.from, names);
+      return `${left} -> ${formatTypeWithNames(type.to, names)}`;
+    }
+    case "TypeApplication": {
+      const ctor = formatTypeWithNames(type.constructor, names);
+      const args = type.arguments.map(arg =>
+        arg.kind === "TypeFunction" ? `(${formatTypeWithNames(arg, names)})` : formatTypeWithNames(arg, names)
+      ).join(" ");
+      return `${ctor} ${args}`;
+    }
+    case "TypeTuple":
+      return `(${type.items.map(i => formatTypeWithNames(i, names)).join(", ")})`;
+    case "TypeRecord":
+      return `{ ${Object.entries(type.fields).map(([k, v]) => `${k} : ${formatTypeWithNames(v, names)}`).join(", ")} }`;
+  }
+}

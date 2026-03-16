@@ -678,6 +678,42 @@ export class Parser {
 
   
   private parsePattern(): AST.Pattern {
+    const primary = this.parsePrimaryPattern();
+
+    // Check for cons operator ::
+    if (this.match("Operator") && this.peek().lexeme === "::") {
+      this.consume("Operator", "::");
+      const tail = this.parsePattern();
+      return {
+        kind: "ConsPattern",
+        head: primary,
+        tail,
+        span: {
+          start: primary.span.start,
+          end: tail.span.end,
+        },
+      } as AST.Pattern;
+    }
+
+    // Check for as keyword
+    if (this.match("Keyword", "as")) {
+      this.consume("Keyword", "as");
+      const nameToken = this.consume("Identifier");
+      return {
+        kind: "AsPattern",
+        pattern: primary,
+        name: nameToken.lexeme,
+        span: {
+          start: primary.span.start,
+          end: nameToken.span.end,
+        },
+      } as AST.Pattern;
+    }
+
+    return primary;
+  }
+
+  private parsePrimaryPattern(): AST.Pattern {
     if (this.match("UpperIdentifier")) {
       const id = this.consume("UpperIdentifier");
       const parts = [id.lexeme];
@@ -766,9 +802,12 @@ export class Parser {
     } else if (this.match("LParen")) {
        const start = this.consume("LParen");
        if (this.match("RParen")) {
-         // Should we have unit pattern? 
-         this.consume("RParen");
-         throw new Error("Unit pattern not supported yet");
+         const end = this.consume("RParen");
+         return {
+           kind: "LiteralPattern",
+           value: "()",
+           span: { start: start.span.start, end: end.span.end }
+         } as AST.Pattern;
        }
        const first = this.parsePattern();
        if (this.match("Comma")) {
@@ -790,6 +829,27 @@ export class Parser {
            span: { start: start.span.start, end: end.span.end }
          } as AST.Pattern;
        }
+    } else if (this.match("LBracket")) {
+       const start = this.consume("LBracket");
+       if (this.match("RBracket")) {
+         const end = this.consume("RBracket");
+         return {
+           kind: "ListPattern",
+           items: [],
+           span: { start: start.span.start, end: end.span.end }
+         } as AST.Pattern;
+       }
+       const items: AST.Pattern[] = [this.parsePattern()];
+       while (this.match("Comma")) {
+         this.consume("Comma");
+         items.push(this.parsePattern());
+       }
+       const end = this.consume("RBracket");
+       return {
+         kind: "ListPattern",
+         items,
+         span: { start: start.span.start, end: end.span.end }
+       } as AST.Pattern;
     }
     const t = this.peek();
     throw new Error(`Unexpected token ${t.kind}:${t.lexeme} in pattern`);

@@ -1,0 +1,42 @@
+module Sky.Core.List exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_list_Map, Sky_list_Filter, Sky_list_Foldl, Sky_list_Foldr, Sky_list_Head, Sky_list_Tail, Sky_list_Length, Sky_list_Append, Sky_list_Reverse, Sky_list_Member, Sky_list_Range, Sky_list_IsEmpty, Sky_list_Take, Sky_list_Drop, Sky_list_Sort, Sky_list_Intersperse, Sky_list_Concat, Sky_list_ConcatMap, Sky_list_IndexedMap)
+
+map fn list =
+    Sky_list_Map fn list
+filter fn list =
+    Sky_list_Filter fn list
+foldl fn acc list =
+    Sky_list_Foldl fn acc list
+foldr fn acc list =
+    Sky_list_Foldr fn acc list
+head list =
+    Sky_list_Head list
+tail list =
+    Sky_list_Tail list
+length list =
+    Sky_list_Length list
+append a b =
+    Sky_list_Append a b
+reverse list =
+    Sky_list_Reverse list
+member item list =
+    Sky_list_Member item list
+range start end =
+    Sky_list_Range start end
+isEmpty list =
+    Sky_list_IsEmpty list
+take n list =
+    Sky_list_Take n list
+drop n list =
+    Sky_list_Drop n list
+sort list =
+    Sky_list_Sort list
+intersperse sep list =
+    Sky_list_Intersperse sep list
+concat lists =
+    Sky_list_Concat lists
+concatMap fn list =
+    Sky_list_ConcatMap fn list
+indexedMap fn list =
+    Sky_list_IndexedMap fn list

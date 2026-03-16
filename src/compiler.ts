@@ -67,14 +67,34 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     allDiagnostics.push(...typeCheck.diagnostics);
 
     const myExports = new Map<string, Scheme>();
+    const isFullyExposed = loaded.moduleAst.exposing?.kind === "ExposingClause" && loaded.moduleAst.exposing.open;
+
     for (const decl of loaded.moduleAst.declarations) {
-      const isExposed = loaded.moduleAst.exposing?.kind === "ExposingClause" && 
+      const isExposed = loaded.moduleAst.exposing?.kind === "ExposingClause" &&
         (loaded.moduleAst.exposing.open || loaded.moduleAst.exposing.items.some((it: any) => it.name === decl.name));
 
-      if (decl.kind === "FunctionDeclaration") {
+      if (decl.kind === "FunctionDeclaration" && isExposed) {
         const info = typeCheck.declarations.find(d => d.name === decl.name);
-        if (info && isExposed) {
+        if (info) {
           myExports.set(decl.name, info.scheme);
+        } else {
+          // Fallback: use the environment entry (handles cases where type checker
+          // returned early but the function's type was registered via annotation/foreign binding)
+          const envScheme = typeCheck.environment.get(decl.name);
+          if (envScheme) {
+            myExports.set(decl.name, envScheme);
+          }
+        }
+      }
+    }
+
+    // For binding modules (exposing (..)), also export any environment entries
+    // that came from foreign bindings but aren't in AST declarations
+    // (e.g., foreign imported constants/values)
+    if (isFullyExposed) {
+      for (const [name, scheme] of typeCheck.environment.entries()) {
+        if (!myExports.has(name) && !name.includes(".") && name !== "+" && name !== "-" && name !== "*" && name !== "/" && name !== "True" && name !== "False" && name !== "()" && !name.includes("Sky_") && !name.includes("sky_")) {
+          myExports.set(name, scheme);
         }
       }
     }
@@ -82,8 +102,8 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     moduleExports.set(moduleNameStr, myExports);
   }
 
-  return { 
-      diagnostics: allDiagnostics, 
+  return {
+      diagnostics: allDiagnostics,
       exports: moduleExports, 
       modules: graph.modules, 
       moduleResults,
@@ -140,14 +160,29 @@ export async function compileProject(entryFile: string, outDir: string) {
     });
     
     const myExports = new Map<string, Scheme>();
+    const isFullyExposed2 = loaded.moduleAst.exposing?.kind === "ExposingClause" && loaded.moduleAst.exposing.open;
+
     for (const decl of loaded.moduleAst.declarations) {
-      const isExposed = loaded.moduleAst.exposing?.kind === "ExposingClause" && 
+      const isExposed = loaded.moduleAst.exposing?.kind === "ExposingClause" &&
         (loaded.moduleAst.exposing.open || loaded.moduleAst.exposing.items.some((it: any) => it.name === decl.name));
 
-      if (decl.kind === "FunctionDeclaration") {
+      if (decl.kind === "FunctionDeclaration" && isExposed) {
         const info = typeCheck.declarations.find(d => d.name === decl.name);
-        if (info && isExposed) {
+        if (info) {
           myExports.set(decl.name, info.scheme);
+        } else {
+          const envScheme = typeCheck.environment.get(decl.name);
+          if (envScheme) {
+            myExports.set(decl.name, envScheme);
+          }
+        }
+      }
+    }
+
+    if (isFullyExposed2) {
+      for (const [name, scheme] of typeCheck.environment.entries()) {
+        if (!myExports.has(name) && !name.includes(".") && name !== "+" && name !== "-" && name !== "*" && name !== "/" && name !== "True" && name !== "False" && name !== "()" && !name.includes("Sky_") && !name.includes("sky_")) {
+          myExports.set(name, scheme);
         }
       }
     }
@@ -228,6 +263,49 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
       if (decl.kind === "ForeignImportDeclaration") {
           foreignImports.set(decl.name, decl.sourceModule);
       }
+  }
+
+  function convertPattern(pattern: AST.Pattern): CoreIR.Pattern {
+    switch (pattern.kind) {
+      case "VariablePattern":
+        return { kind: "VariablePattern", name: pattern.name };
+      case "WildcardPattern":
+        return { kind: "WildcardPattern" };
+      case "ConstructorPattern":
+        return {
+          kind: "ConstructorPattern",
+          name: pattern.constructorName.parts.join("."),
+          args: pattern.arguments.map(a => convertPattern(a)),
+        };
+      case "LiteralPattern":
+        return { kind: "LiteralPattern", value: pattern.value };
+      case "ConsPattern":
+        return {
+          kind: "ConsPattern",
+          head: convertPattern(pattern.head),
+          tail: convertPattern(pattern.tail),
+        };
+      case "AsPattern":
+        return {
+          kind: "AsPattern",
+          pattern: convertPattern(pattern.pattern),
+          name: pattern.name,
+        };
+      case "TuplePattern":
+        return {
+          kind: "ConstructorPattern",
+          name: "Tuple" + pattern.items.length,
+          args: pattern.items.map(p => convertPattern(p)),
+        };
+      case "ListPattern":
+        if (pattern.items.length === 0) {
+          // Empty list pattern: match when list is empty
+          return { kind: "LiteralPattern", value: "__empty_list__" };
+        }
+        return { kind: "WildcardPattern" };
+      default:
+        return { kind: "WildcardPattern" };
+    }
   }
 
   function convertExpr(expr: AST.Expression): CoreIR.Expr {
@@ -425,21 +503,8 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
           kind: "Match",
           expr: convertExpr(expr.subject),
           cases: expr.branches.map(b => {
-            let pat: CoreIR.Pattern = { kind: "WildcardPattern" };
-            if (b.pattern.kind === "VariablePattern") {
-                pat = { kind: "VariablePattern", name: b.pattern.name };
-            } else if (b.pattern.kind === "ConstructorPattern") {
-                pat = {
-                    kind: "ConstructorPattern",
-                    name: b.pattern.constructorName.parts.join("."),
-                    args: b.pattern.arguments.map(a => {
-                        if (a.kind === "VariablePattern") return { kind: "VariablePattern", name: a.name };
-                        return { kind: "WildcardPattern" };
-                    })
-                };
-            }
             return {
-              pattern: pat,
+              pattern: convertPattern(b.pattern),
               body: convertExpr(b.body)
             };
           }),

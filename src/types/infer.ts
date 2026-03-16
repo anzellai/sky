@@ -38,6 +38,7 @@ export function inferExpression(
   registry: AdtRegistry,
   env: TypeEnvironment,
   expr: AST.Expression,
+  nodeTypes?: Map<string, Type>,
 ): InferResult {
   switch (expr.kind) {
     case "IdentifierExpression": {
@@ -46,9 +47,13 @@ export function inferExpression(
         throw new Error(`Unbound variable ${expr.name}`);
       }
 
+      const resolved = instantiate(value);
+      if (nodeTypes && expr.span) {
+        nodeTypes.set(`${expr.span.start.line}:${expr.span.start.column}`, resolved);
+      }
       return {
         substitution: emptySubstitution(),
-        type: instantiate(value),
+        type: resolved,
       };
     }
 
@@ -59,9 +64,13 @@ export function inferExpression(
         throw new Error(`Unbound variable ${fullName}`);
       }
 
+      const resolved = instantiate(value);
+      if (nodeTypes && expr.span) {
+        nodeTypes.set(`${expr.span.start.line}:${expr.span.start.column}`, resolved);
+      }
       return {
         substitution: emptySubstitution(),
-        type: instantiate(value),
+        type: resolved,
       };
     }
 
@@ -102,7 +111,7 @@ export function inferExpression(
       };
 
     case "ParenthesizedExpression":
-      return inferExpression(registry, env, expr.expression);
+      return inferExpression(registry, env, expr.expression, nodeTypes);
 
     case "TupleExpression": {
       let currentSub = emptySubstitution();
@@ -113,6 +122,7 @@ export function inferExpression(
           registry,
           env.applySubstitution(currentSub),
           item,
+          nodeTypes,
         );
         currentSub = composeSubstitutions(result.substitution, currentSub);
         itemTypes.push(applySubstitution(result.type, currentSub));
@@ -136,6 +146,7 @@ export function inferExpression(
           registry,
           env.applySubstitution(currentSub),
           item,
+          nodeTypes,
         );
 
         const s = unify(
@@ -168,6 +179,7 @@ export function inferExpression(
           registry,
           env.applySubstitution(currentSub),
           field.value,
+          nodeTypes,
         );
         currentSub = composeSubstitutions(result.substitution, currentSub);
         fields[field.name] = result.type;
@@ -183,7 +195,7 @@ export function inferExpression(
     }
 
     case "RecordUpdateExpression": {
-      const baseResult = inferExpression(registry, env, expr.base);
+      const baseResult = inferExpression(registry, env, expr.base, nodeTypes);
       let currentSub = baseResult.substitution;
       const updatedFields: Record<string, Type> = {};
 
@@ -192,6 +204,7 @@ export function inferExpression(
           registry,
           env.applySubstitution(currentSub),
           field.value,
+          nodeTypes,
         );
         currentSub = composeSubstitutions(result.substitution, currentSub);
         updatedFields[field.name] = result.type;
@@ -213,7 +226,7 @@ export function inferExpression(
     }
 
     case "FieldAccessExpression": {
-      const target = inferExpression(registry, env, expr.target);
+      const target = inferExpression(registry, env, expr.target, nodeTypes);
       const fieldType = freshTypeVariable();
 
       const expectedRecord: Type = {
@@ -258,6 +271,7 @@ export function inferExpression(
         registry,
         currentEnv.applySubstitution(currentSub),
         expr.body,
+        nodeTypes,
       );
 
       currentSub = composeSubstitutions(body.substitution, currentSub);
@@ -277,7 +291,7 @@ export function inferExpression(
     }
 
     case "CallExpression": {
-      const fn = inferExpression(registry, env, expr.callee);
+      const fn = inferExpression(registry, env, expr.callee, nodeTypes);
 
       let currentSub = fn.substitution;
       let currentType = fn.type;
@@ -287,6 +301,7 @@ export function inferExpression(
           registry,
           env.applySubstitution(currentSub),
           arg,
+          nodeTypes,
         );
 
         const resultType = freshTypeVariable();
@@ -311,18 +326,19 @@ export function inferExpression(
     }
 
     case "IfExpression": {
-      const cond = inferExpression(registry, env, expr.condition);
+      const cond = inferExpression(registry, env, expr.condition, nodeTypes);
       const s1 = unify(cond.type, { kind: "TypeConstant", name: "Bool" });
 
       const env1 = env.applySubstitution(
         composeSubstitutions(s1, cond.substitution),
       );
 
-      const thenResult = inferExpression(registry, env1, expr.thenBranch);
+      const thenResult = inferExpression(registry, env1, expr.thenBranch, nodeTypes);
       const elseResult = inferExpression(
         registry,
         env1.applySubstitution(thenResult.substitution),
         expr.elseBranch,
+        nodeTypes,
       );
 
       const s2 = unify(
@@ -353,6 +369,7 @@ export function inferExpression(
           registry,
           currentEnv.applySubstitution(currentSub),
           binding.value,
+          nodeTypes,
         );
 
         currentSub = composeSubstitutions(valueResult.substitution, currentSub);
@@ -377,10 +394,15 @@ export function inferExpression(
 
         const generalizedBindings: Record<string, Scheme> = {};
         for (const [name, type] of Object.entries(patternResult.bindings)) {
+          const resolvedType = applySubstitution(type, currentSub);
           generalizedBindings[name] = generalize(
-            applySubstitution(type, currentSub),
+            resolvedType,
             currentEnv.applySubstitution(currentSub).freeTypeVariables(),
           );
+          // Record let-binding variable types at their pattern span
+          if (nodeTypes && binding.pattern.span) {
+            nodeTypes.set(`${binding.pattern.span.start.line}:${binding.pattern.span.start.column}`, resolvedType);
+          }
         }
 
         currentEnv = currentEnv
@@ -392,6 +414,7 @@ export function inferExpression(
         registry,
         currentEnv.applySubstitution(currentSub),
         expr.body,
+        nodeTypes,
       );
 
       return {
@@ -401,7 +424,7 @@ export function inferExpression(
     }
 
     case "CaseExpression": {
-      const subject = inferExpression(registry, env, expr.subject);
+      const subject = inferExpression(registry, env, expr.subject, nodeTypes);
       let currentSub = subject.substitution;
       const resultType = freshTypeVariable();
 
@@ -417,6 +440,15 @@ export function inferExpression(
 
         currentSub = composeSubstitutions(patternResult.substitution, currentSub);
 
+        // Record case branch pattern binding types
+        if (nodeTypes) {
+          for (const [, type] of Object.entries(patternResult.bindings)) {
+            if (branch.pattern.span) {
+              nodeTypes.set(`${branch.pattern.span.start.line}:${branch.pattern.span.start.column}`, type);
+            }
+          }
+        }
+
         const branchEnv = extendEnvironmentWithPatternBindings(
           env.applySubstitution(currentSub),
           patternResult.bindings,
@@ -426,6 +458,7 @@ export function inferExpression(
           registry,
           branchEnv,
           branch.body,
+          nodeTypes,
         );
 
         const s = unify(
@@ -446,11 +479,12 @@ export function inferExpression(
     }
 
     case "BinaryExpression": {
-      const left = inferExpression(registry, env, expr.left);
+      const left = inferExpression(registry, env, expr.left, nodeTypes);
       const right = inferExpression(
         registry,
         env.applySubstitution(left.substitution),
         expr.right,
+        nodeTypes,
       );
 
       const leftType = applySubstitution(left.type, right.substitution);
@@ -644,7 +678,8 @@ export function inferTopLevel(
   registry: AdtRegistry,
   env: TypeEnvironment,
   decl: AST.FunctionDeclaration,
-  typeAnnotation?: AST.TypeAnnotation
+  typeAnnotation?: AST.TypeAnnotation,
+  nodeTypes?: Map<string, Type>,
 ): InferTopLevelResult {
   const effectiveAnnotation = decl.typeAnnotation || typeAnnotation;
 
@@ -667,12 +702,21 @@ export function inferTopLevel(
       localEnv.applySubstitution(currentSub),
       patternResult.bindings,
     );
+
+    // Record parameter types at their pattern span
+    if (nodeTypes && pattern.span) {
+      nodeTypes.set(
+        `${pattern.span.start.line}:${pattern.span.start.column}`,
+        applySubstitution(paramTypes[i], currentSub),
+      );
+    }
   }
 
   const bodyResult = inferExpression(
     registry,
     localEnv.applySubstitution(currentSub),
     decl.body,
+    nodeTypes,
   );
 
   currentSub = composeSubstitutions(bodyResult.substitution, currentSub);

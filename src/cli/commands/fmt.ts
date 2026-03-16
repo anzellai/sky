@@ -7,13 +7,12 @@ import { parse } from "../../parser/parser.js";
 
 export async function handleFmt(fileOrDir: string) {
   if (fileOrDir === "-") {
-    // Read from stdin
     const source = fs.readFileSync(0, "utf8");
     try {
       const { tokens } = lex(source, "stdin");
       const filtered = filterLayout(tokens);
       const ast = parse(filtered);
-      const formatted = formatModule(ast);
+      const formatted = formatModule(ast, source);
       process.stdout.write(formatted);
     } catch (e: any) {
       console.error(`Failed to format stdin: ${e.message}`);
@@ -34,9 +33,18 @@ export async function handleFmt(fileOrDir: string) {
       const { tokens } = lex(source, filePath);
       const filtered = filterLayout(tokens);
       const ast = parse(filtered);
-      const formatted = formatModule(ast);
-      
+      const formatted = formatModule(ast, source);
+
       if (source !== formatted) {
+        // Roundtrip safety: verify formatted output re-parses
+        try {
+          const { tokens: t2 } = lex(formatted, filePath);
+          const f2 = filterLayout(t2);
+          parse(f2);
+        } catch (e2: any) {
+          console.error(`Skipping ${filePath}: formatted output would not re-parse (${e2.message})`);
+          return;
+        }
         fs.writeFileSync(filePath, formatted, "utf8");
         console.log(`Formatted ${filePath}`);
       }

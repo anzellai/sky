@@ -5,6 +5,7 @@ import { filterLayout } from '../../parser/filter-layout.js';
 import { parse } from '../../parser/parser.js';
 import { typeCheckProject } from '../../compiler.js';
 import { TypeEnvironment } from '../../types/env.js';
+import type { Type, Scheme } from '../../types/types.js';
 
 import { getHover } from '../features/hover.js';
 import { getDefinition } from '../features/definition.js';
@@ -18,6 +19,8 @@ export interface DocumentInfo {
   diagnostics: Diagnostic[];
   env: TypeEnvironment | null;
   modules?: readonly { filePath: string; moduleAst: AST.Module }[];
+  nodeTypes?: Map<string, Type>;
+  moduleExports?: Map<string, Map<string, Scheme>>;
 }
 
 function uriToPath(uri: string): string {
@@ -45,6 +48,8 @@ export class Workspace {
     const diagnostics: Diagnostic[] = [];
     let ast: AST.Module | null = null;
     let env: TypeEnvironment | null = null;
+    let nodeTypes: Map<string, Type> | undefined;
+    let moduleExports: Map<string, Map<string, Scheme>> | undefined;
 
     try {
       const { tokens, lexErrors } = lex(source, uri) as any;
@@ -86,10 +91,13 @@ export class Workspace {
         
         modules = result.modules;
 
+        moduleExports = result.exports;
+
         const moduleName = ast?.name.join(".") || "";
         const typeCheckResult = result.moduleResults.get(moduleName);
         if (typeCheckResult) {
             env = typeCheckResult.environment;
+            nodeTypes = typeCheckResult.nodeTypes;
         }
         
         // Map diagnostics
@@ -119,7 +127,7 @@ export class Workspace {
         // Fallback if compiler fails entirely
     }
 
-    this.documents.set(uri, { uri, source, ast, diagnostics, env, modules });
+    this.documents.set(uri, { uri, source, ast, diagnostics, env, modules, nodeTypes, moduleExports });
     return diagnostics;
   }
 
