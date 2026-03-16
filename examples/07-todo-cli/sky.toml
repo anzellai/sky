@@ -1,0 +1,12 @@
+name = "07-todo-cli"
+version = "0.1.0"
+
+[source]
+root = "src"
+
+["go.dependencies"]
+"os" = "latest"
+"fmt" = "latest"
+"database/sql" = "latest"
+"modernc.org/sqlite" = "latest"
+"strconv" = "latest"

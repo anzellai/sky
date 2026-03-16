@@ -29,6 +29,11 @@ export async function handleBuild(entryFile: string) {
     if (fs.existsSync(wrappersDir)) {
       fs.cpSync(wrappersDir, `${outDir}/sky_wrappers`, { recursive: true });
     }
+    // Copy project-level Go helpers (e.g., go_helpers/*.go)
+    const goHelpersDir = "go_helpers";
+    if (fs.existsSync(goHelpersDir)) {
+      fs.cpSync(goHelpersDir, `${outDir}/sky_wrappers`, { recursive: true });
+    }
   } catch (e) {}
   try {
     if (!fs.existsSync(`${outDir}/go.mod`)) {

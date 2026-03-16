@@ -1,0 +1,38 @@
+module Lib.Db exposing (..)
+
+-- Lib.Db — Database operations.
+--
+-- Uses auto-generated database/sql bindings for:
+--   open  (Database.Sql.open)
+--   close (Database.Sql.dBClose)
+-- Uses thin custom helpers for:
+--   exec      (Go's db.Exec needs SkyResult wrapping)
+--   queryRows (Go's rows.Scan needs pointer args)
+import Sky.Core.Prelude exposing (..)
+import Database.Sql as Sql
+
+foreign import "sky_wrappers" exposing (Sky_sqlite_Exec)
+
+foreign import "sky_wrappers" exposing (Sky_sqlite_QueryRows)
+
+foreign import "sky_wrappers" exposing (Sky_sqlite_GetField)
+
+foreign import "sky_wrappers" exposing (Sky_sqlite_ParseInt)
+
+open path =
+    Sql.open "sqlite" path
+
+close db =
+    Sql.dBClose db
+
+exec db query args =
+    Sky_sqlite_Exec db query args
+
+queryRows db query args =
+    Sky_sqlite_QueryRows db query args
+
+getField field row =
+    Sky_sqlite_GetField field row
+
+parseInt s =
+    Sky_sqlite_ParseInt s

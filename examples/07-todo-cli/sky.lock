@@ -1,0 +1,6 @@
+go:
+  database/sql: latest
+  fmt: latest
+  modernc.org/sqlite: latest
+  os: latest
+  strconv: latest

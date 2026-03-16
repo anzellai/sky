@@ -468,6 +468,13 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       };
     }
     case "IfExpr": {
+      // Ensure condition is bool — add .(bool) assertion if needed
+      let condExpr = lowerExpr(expr.condition, moduleExports, localEnv, foreignModules, constructorMap);
+      // If the condition is already a binary comparison (GoBinaryExpr), it's bool.
+      // Otherwise, add a type assertion.
+      if ((condExpr as any).kind !== "GoBinaryExpr") {
+          condExpr = { kind: "GoTypeAssertExpr", expr: condExpr, type: { kind: "GoIdentType", name: "bool" } } as any;
+      }
       return {
         kind: "GoCallExpr",
         fn: {
@@ -476,7 +483,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           body: [
             {
               kind: "GoIfStmt",
-              condition: lowerExpr(expr.condition, moduleExports, localEnv, foreignModules, constructorMap),
+              condition: condExpr,
               thenBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.thenBranch, moduleExports, localEnv, foreignModules, constructorMap) }],
               elseBranch: [{ kind: "GoReturnStmt", expr: lowerExpr(expr.elseBranch, moduleExports, localEnv, foreignModules, constructorMap) }]
             }

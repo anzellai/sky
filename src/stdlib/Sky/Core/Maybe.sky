@@ -5,23 +5,13 @@ type Maybe a
     = Just a
     | Nothing
 
+foreign import "sky_wrappers" exposing (Sky_maybe_WithDefault, Sky_maybe_Map, Sky_maybe_AndThen)
+
 withDefault fallback value =
-    case value of
-        Just v ->
-            v
-        Nothing ->
-            fallback
+    Sky_maybe_WithDefault fallback value
 
 map fn maybe =
-    case maybe of
-        Just value ->
-            Just (fn value)
-        Nothing ->
-            Nothing
+    Sky_maybe_Map fn maybe
 
 andThen fn maybe =
-    case maybe of
-        Just value ->
-            fn value
-        Nothing ->
-            Nothing
+    Sky_maybe_AndThen fn maybe

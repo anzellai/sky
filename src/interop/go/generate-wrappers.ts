@@ -19,6 +19,7 @@ export function generateWrappers(pkgName: string, pkg: InspectResult, usedSymbol
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -1058,6 +1059,54 @@ func Sky_json_decoder_DecodeString(decoder any, s any) any {
 
 // ============= Result Operations =============
 
+// ============= OS Helpers =============
+
+func Sky_os_GetArgs() any {
+	result := make([]any, len(os.Args))
+	for i, s := range os.Args {
+		result[i] = s
+	}
+	return result
+}
+
+// ============= Maybe Operations =============
+
+func Sky_maybe_WithDefault(defaultVal any, maybe any) any {
+	r := reflect.ValueOf(maybe)
+	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
+		if r.FieldByName("Tag").Interface().(int) == 0 {
+			return r.FieldByName("JustValue").Interface()
+		}
+	}
+	return defaultVal
+}
+
+func Sky_maybe_Map(fn any, maybe any) any {
+	r := reflect.ValueOf(maybe)
+	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
+		if r.FieldByName("Tag").Interface().(int) == 1 {
+			return maybe
+		}
+		inner := r.FieldByName("JustValue").Interface()
+		return struct{ Tag int; JustValue any }{Tag: 0, JustValue: fn.(func(any) any)(inner)}
+	}
+	return maybe
+}
+
+func Sky_maybe_AndThen(fn any, maybe any) any {
+	r := reflect.ValueOf(maybe)
+	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
+		if r.FieldByName("Tag").Interface().(int) == 1 {
+			return maybe
+		}
+		inner := r.FieldByName("JustValue").Interface()
+		return fn.(func(any) any)(inner)
+	}
+	return maybe
+}
+
+// ============= Result Operations =============
+
 func Sky_result_WithDefault(defaultVal any, result any) any {
 	r := reflect.ValueOf(result)
 	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
@@ -1127,7 +1176,7 @@ func Sky_result_ToMaybe(result any) any {
             if (p.includes("/")) {
                 imports.add(p);
             } else if (p !== pkg.name) {
-                if (["io", "fmt", "time", "os", "context", "net", "http", "bufio", "log", "hash", "crypto", "syscall"].includes(p)) {
+                if (["io", "fmt", "time", "os", "context", "net", "http", "bufio", "log", "hash", "crypto", "syscall", "reflect", "strconv", "strings", "sort", "sync", "math", "errors"].includes(p)) {
                     imports.add(p);
                 }
             }
@@ -1261,6 +1310,8 @@ func Sky_result_ToMaybe(result any) any {
     }
 
     for (const t of pkg.types || []) {
+        // Skip generic types (e.g., sql.Null[T]) — can't instantiate without type params
+        if ((t as any).typeParams && (t as any).typeParams.length > 0) continue;
         if (t.methods) {
             for (const m of t.methods) {
                 // If it's an interface, the receiver shouldn't be a pointer!
@@ -1287,7 +1338,21 @@ func Sky_result_ToMaybe(result any) any {
         return; // No wrappers needed
     }
 
+    // Remove reflect from imports if the generated code doesn't use it
+    if (!goCode.includes("reflect.")) {
+        imports.delete("reflect");
+    }
+    // Clean goCode: remove functions that reference uninstantiated generic types
+    let cleanedGoCode = "";
+    const funcBlocks = goCode.split(/(?=^func )/m);
+    for (const block of funcBlocks) {
+        // Skip functions that use sql.Null without type params (Go generics)
+        if (block.includes("sql.Null)") || block.includes("sql.Null[")) {
+            continue;
+        }
+        cleanedGoCode += block;
+    }
     const importsStr = Array.from(imports).map(i => `\t"${i}"`).join("\n");
-    const finalCode = `package sky_wrappers\n\nimport (\n${importsStr}\n)\n\n` + goCode;
+    const finalCode = `package sky_wrappers\n\nimport (\n${importsStr}\n)\n\n` + cleanedGoCode;
     fs.writeFileSync(wrapperPath, finalCode);
 }
