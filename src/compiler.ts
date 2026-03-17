@@ -42,6 +42,8 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     // Build environment from dependencies
     const importsMap = new Map<string, Scheme>();
     for (const imp of loaded.moduleAst.imports) {
+      // Skip blank imports (import X as _) — side-effect only
+      if (imp.alias && imp.alias.name === "_") continue;
       const depName = imp.moduleName.join(".");
       const depExports = moduleExports.get(depName);
       if (depExports) {
@@ -186,6 +188,8 @@ export async function compileProject(entryFile: string, outDir: string) {
     // Build environment from dependencies
     const importsMap = new Map<string, Scheme>();
     for (const imp of loaded.moduleAst.imports) {
+      // Skip blank imports (import X as _) — side-effect only
+      if (imp.alias && imp.alias.name === "_") continue;
       const depName = imp.moduleName.join(".");
       const depExports = moduleExports.get(depName);
       if (depExports) {
@@ -266,14 +270,45 @@ export async function compileProject(entryFile: string, outDir: string) {
         allForeignPackages.add(b.packageName);
     }
 
+    // Collect blank imports (import X as _) → Go blank import _ "pkg"
+    const blankImports: string[] = [];
+    for (const imp of loaded.moduleAst.imports) {
+        if (imp.alias && imp.alias.name === "_") {
+            // Resolve the Go package path from the module name.
+            // Use the same logic as the module resolver to find the correct path.
+            const modParts = imp.moduleName as readonly string[];
+            const possiblePaths = [
+                modParts.join("/").toLowerCase(),
+                modParts.length >= 2 ? (modParts[0] + "." + modParts[1] + "/" + modParts.slice(2).join("/")).toLowerCase() : null,
+            ].filter(Boolean) as string[];
+            const projectRoot = path.dirname(loaded.filePath.replace(/[/\\]src[/\\].*$/, ""));
+            for (const p of possiblePaths) {
+                const cachePath = path.join(projectRoot, ".skycache", "go", p, "bindings.skyi");
+                if (fs.existsSync(cachePath)) {
+                    blankImports.push(p);
+                    break;
+                }
+            }
+            // Fallback: if no cache found, use the domain.tld/path form
+            if (blankImports.length === 0 && possiblePaths.length > 1) {
+                blankImports.push(possiblePaths[possiblePaths.length - 1]);
+            }
+        }
+    }
+
     // Basic AST to CoreIR conversion
     let coreModule: CoreIR.Module = astToCore(loaded.moduleAst, typeCheck, foreignResult, importsMap);
     const usage = analyzeUsage(coreModule);
     coreModule = eliminateDeadBindings(coreModule, usage);
-    
+
     // Lower to GoIR
     const goPkg = lowerModule(coreModule, moduleExports, allForeignModules);
-    
+
+    // Inject blank imports into the Go package
+    for (const blankPkg of blankImports) {
+        goPkg.imports.push({ path: blankPkg, alias: "_" });
+    }
+
     // Emit Go code
     const goCode = emitGoPackage(goPkg);
 

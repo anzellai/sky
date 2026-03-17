@@ -7,7 +7,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
 import Database.Sql as Sql
-import Modernc.Org.Sqlite as SqliteDriver
+import Modernc.Org.Sqlite as _
 
 open path =
     Sql.open "sqlite" path

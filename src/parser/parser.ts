@@ -217,7 +217,13 @@ export class Parser {
     let alias: AST.ImportAlias | undefined;
     if (this.match("Keyword", "as")) {
       this.consume("Keyword", "as");
-      const aliasToken = this.consume("UpperIdentifier");
+      // Accept UpperIdentifier for normal aliases, or _ for blank/side-effect imports
+      let aliasToken;
+      if (this.match("Identifier") && this.peek().lexeme === "_") {
+        aliasToken = this.consume("Identifier");
+      } else {
+        aliasToken = this.consume("UpperIdentifier");
+      }
       alias = {
         kind: "ImportAlias",
         name: aliasToken.lexeme,
