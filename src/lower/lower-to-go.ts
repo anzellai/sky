@@ -456,7 +456,19 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           if (moduleExports && moduleExports.has(pkgName) && !ffiWrappers.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
               // It's a non-foreign Sky module! Lower to direct Go package call.
               const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
-              return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+              const selectorExpr: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+
+              // Auto-call zero-arg cross-module bindings (they compile to Go functions).
+              // Check if the export's type scheme is a non-function type → arity 0.
+              if (!_isCallTarget) {
+                  const exports = moduleExports.get(pkgName);
+                  const scheme = exports?.get(name);
+                  if (scheme && scheme.type && scheme.type.kind !== "TypeFunction") {
+                      return { kind: "GoCallExpr", fn: selectorExpr, args: [] } as any;
+                  }
+              }
+
+              return selectorExpr;
           }
 
           // FFI wrapper modules (Std.Log, Std.Cmd etc.) — route through sky_wrappers
@@ -527,7 +539,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               if (exports.has(expr.name) && !ffiWrapperModules.has(modName) && (!foreignModules || !foreignModules.has(modName))) {
                   const modParts = modName.split(".");
                   const goPkg = makeSafeGoPkgName(modParts[modParts.length - 1]);
-                  return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+                  const selectorExpr2: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+                  // Auto-call zero-arg cross-module bindings
+                  if (!_isCallTarget) {
+                      const scheme = exports.get(expr.name);
+                      if (scheme && scheme.type && scheme.type.kind !== "TypeFunction") {
+                          return { kind: "GoCallExpr", fn: selectorExpr2, args: [] } as any;
+                      }
+                  }
+                  return selectorExpr2;
               }
           }
       }
