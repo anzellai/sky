@@ -43,6 +43,20 @@ export async function buildModuleGraph(
     virtualFile,
   );
 
+  // Ensure implicit stdlib modules are always in the graph.
+  // This is needed for the LSP which may open a single file (not Main.sky)
+  // that uses qualified calls like Result.withDefault, Maybe.map, etc.
+  const implicitModules = ["Sky.Core.Result", "Sky.Core.Maybe", "Sky.Core.List", "Sky.Core.String", "Sky.Core.Dict"];
+  for (const modName of implicitModules) {
+    const modFile = resolveModuleToFile(srcRoot, modName.split("."));
+    if (modFile) {
+      const modAbs = modFile.startsWith("virtual:") ? modFile : path.resolve(modFile);
+      if (!loaded.has(modAbs)) {
+        await loadModule(modAbs, loaded, visiting, ordered, diagnostics, srcRoot, virtualFile);
+      }
+    }
+  }
+
   return {
     modules: ordered,
     diagnostics,
