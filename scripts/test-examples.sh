@@ -2,25 +2,22 @@
 # Test that all examples compile successfully.
 # Run from the project root: ./scripts/test-examples.sh
 
-set -e
-
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-cd "$ROOT"
 
 # Build the compiler first
-npm run build --silent 2>/dev/null
+cd "$ROOT" && npm run build --silent 2>/dev/null
 
 PASS=0
 FAIL=0
 FAILURES=""
 
-for dir in examples/*/; do
+for dir in "$ROOT"/examples/*/; do
     # Skip directories without a src/Main.sky
     [ -f "$dir/src/Main.sky" ] || continue
 
     name=$(basename "$dir")
-    cd "$ROOT/$dir"
+    cd "$dir"
     result=$(node "$ROOT/dist/bin/sky.js" build src/Main.sky 2>&1 | tail -1)
 
     if echo "$result" | grep -q "Build complete"; then

@@ -61,8 +61,8 @@ Commands:
   sky remove <package>
   sky install
   sky update
-  sky build <file.sky>
-  sky run <file.sky>
+  sky build [file.sky]      (uses entry from sky.toml if omitted)
+  sky run [file.sky]        (uses entry from sky.toml if omitted)
   sky check <file.sky>
   sky fmt <file-or-dir>
   sky lsp
