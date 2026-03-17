@@ -33,13 +33,20 @@ function emitGoExprForLower(expr: any): string {
             const entries = (expr.entries || []).map((e: any) => `${emitGoExprForLower(e.key)}: ${emitGoExprForLower(e.value)}`).join(", ");
             return `map[string]any{${entries}}`;
         }
+        case "GoIndexExpr":
+            return `${emitGoExprForLower(expr.expr)}[${emitGoExprForLower(expr.index)}]`;
         case "GoBinaryExpr":
             return `${emitGoExprForLower(expr.left)} ${expr.op} ${emitGoExprForLower(expr.right)}`;
         case "GoUnaryExpr":
             return `${expr.op}${emitGoExprForLower(expr.expr)}`;
         case "GoTypeAssertExpr": {
-            const typeName2 = expr.type ? (expr.type.name || "any") : "any";
-            return `${emitGoExprForLower(expr.expr)}.(${typeName2})`;
+            let typeStr = "any";
+            if (expr.type) {
+                if (expr.type.kind === "GoMapType") typeStr = "map[string]any";
+                else if (expr.type.kind === "GoSliceType") typeStr = "[]any";
+                else if (expr.type.kind === "GoIdentType" || expr.type.name) typeStr = expr.type.name || "any";
+            }
+            return `${emitGoExprForLower(expr.expr)}.(${typeStr})`;
         }
         default: return `(any)(nil) /* unsupported ${expr.kind} */`;
     }
@@ -444,7 +451,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
           // Check if this is a Sky module (not a Go FFI module) — must run before
           // the Std.* FFI shortcut so that real Sky modules like Std.Html take priority.
-          if (moduleExports && moduleExports.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
+          // Exclude thin FFI wrapper modules that only re-export foreign imports.
+          const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Sub", "Std.Task", "Std.Program", "Cmd", "Sub", "Log"]);
+          if (moduleExports && moduleExports.has(pkgName) && !ffiWrappers.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
               // It's a non-foreign Sky module! Lower to direct Go package call.
               const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
