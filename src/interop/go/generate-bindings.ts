@@ -14,7 +14,7 @@ export interface GeneratedForeignBindings {
 
 export async function generateForeignBindings(packageName: string, requestedNames: string[]): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[], skyiContent?: string }> {
   try {
-    const pkg = inspectPackage(packageName); console.log("HELLO FROM NEW GENERATOR");
+    const pkg = inspectPackage(packageName);
 
     const moduleName = packageName.split(/[\/\.]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
     
@@ -37,17 +37,19 @@ export async function generateForeignBindings(packageName: string, requestedName
         values.push({ skyName, jsName: c.name, sourceModule: packageName, skyType: "Foreign" });
     }
 
-    // 3. Variables
+    const safePkg = packageName.replace(/\//g, "_").replace(/\./g, "_");
+
+    // 3. Variables — expose as zero-arg functions via wrappers for Sky-compatible types
     for (const v of pkg.vars || []) {
         const skyName = lowerCamelCase(v.name);
         const t = mapGoTypeToSky(v.type, packageName);
-        skyiContent += `foreign import "${packageName}" exposing (${v.name})\n\n`;
-        skyiContent += `${skyName} : ${t}\n`;
-        skyiContent += `${skyName} = ${v.name}\n\n`;
+        const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+        const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+        skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
+        skyiContent += `${skyName} : () -> ${t}\n`;
+        skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
         values.push({ skyName, jsName: v.name, sourceModule: packageName, skyType: "Foreign" });
     }
-
-    const safePkg = packageName.replace(/\//g, "_").replace(/\./g, "_");
 
     const cleanType = (t: string) => {
         const res = t.replace(/([a-zA-Z0-9_\/\.-]+)\.([a-zA-Z0-9_]+)/g, (match, p1, p2) => {
@@ -141,6 +143,55 @@ export async function generateForeignBindings(packageName: string, requestedName
 
                 values.push({ skyName, jsName: skyName, sourceModule: packageName, skyType: "Foreign" });
             }
+        }
+    }
+
+    // 6. Pattern-based convenience wrappers
+    for (const t of pkg.types || []) {
+        if (!t.name || !t.methods) continue;
+
+        const methodNames = new Set(t.methods.map(m => m.name));
+
+        // Pattern: Iterator with Scan (e.g., sql.Rows)
+        if (methodNames.has("Next") && methodNames.has("Scan") && methodNames.has("Columns") && methodNames.has("Close")) {
+            const skyName = lowerCamelCase(t.name + "ToMaps");
+            const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+            const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+
+            skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
+            skyiContent += `${skyName} : ${t.name} -> Result Error (List (Dict String String))\n`;
+            skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
+
+            values.push({ skyName, jsName: skyName, sourceModule: packageName, skyType: "Foreign" });
+        }
+
+        // Pattern: DB-like type with Exec(string, ...any) + Query(string, ...any) methods
+        const execMethod = t.methods!.find(m => m.name === "Exec");
+        const queryMethod = t.methods!.find(m => m.name === "Query");
+        const execTakesQuery = execMethod && execMethod.params && execMethod.params.length >= 1 && execMethod.params[0].type === "string";
+        const queryTakesQuery = queryMethod && queryMethod.params && queryMethod.params.length >= 1 && queryMethod.params[0].type === "string";
+        if (execTakesQuery && queryTakesQuery) {
+            // ExecResult: db -> query -> args -> Result Error Int
+            const skyNameE = lowerCamelCase(t.name + "ExecResult");
+            const skyNameEPascal = skyNameE.charAt(0).toUpperCase() + skyNameE.slice(1);
+            const wrapperNameE = `Sky_${safePkg}_${skyNameEPascal}`;
+
+            skyiContent += `foreign import "sky_wrappers" exposing (${wrapperNameE})\n\n`;
+            skyiContent += `${skyNameE} : ${t.name} -> String -> (List Any) -> Result Error Int\n`;
+            skyiContent += `${skyNameE} arg0 arg1 arg2 = ${wrapperNameE} arg0 arg1 arg2\n\n`;
+
+            values.push({ skyName: skyNameE, jsName: skyNameE, sourceModule: packageName, skyType: "Foreign" });
+
+            // QueryToMaps: db -> query -> args -> Result Error (List (Dict String String))
+            const skyNameQ = lowerCamelCase(t.name + "QueryToMaps");
+            const skyNameQPascal = skyNameQ.charAt(0).toUpperCase() + skyNameQ.slice(1);
+            const wrapperNameQ = `Sky_${safePkg}_${skyNameQPascal}`;
+
+            skyiContent += `foreign import "sky_wrappers" exposing (${wrapperNameQ})\n\n`;
+            skyiContent += `${skyNameQ} : ${t.name} -> String -> (List Any) -> Result Error (List (Dict String String))\n`;
+            skyiContent += `${skyNameQ} arg0 arg1 arg2 = ${wrapperNameQ} arg0 arg1 arg2\n\n`;
+
+            values.push({ skyName: skyNameQ, jsName: skyNameQ, sourceModule: packageName, skyType: "Foreign" });
         }
     }
 

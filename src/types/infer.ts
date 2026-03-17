@@ -364,6 +364,9 @@ export function inferExpression(
       let currentEnv = env;
       let currentSub = emptySubstitution();
 
+      // Track binding spans for post-inference nodeType refinement
+      const bindingSpans: { span: { start: { line: number; column: number } }; type: Type }[] = [];
+
       for (const binding of expr.bindings) {
         const valueResult = inferExpression(
           registry,
@@ -393,15 +396,27 @@ export function inferExpression(
         currentSub = composeSubstitutions(patternResult.substitution, currentSub);
 
         const generalizedBindings: Record<string, Scheme> = {};
-        for (const [name, type] of Object.entries(patternResult.bindings)) {
-          const resolvedType = applySubstitution(type, currentSub);
-          generalizedBindings[name] = generalize(
-            resolvedType,
-            currentEnv.applySubstitution(currentSub).freeTypeVariables(),
-          );
-          // Record let-binding variable types at their pattern span
-          if (nodeTypes && binding.pattern.span) {
-            nodeTypes.set(`${binding.pattern.span.start.line}:${binding.pattern.span.start.column}`, resolvedType);
+        if (Object.keys(patternResult.bindings).length > 0) {
+          for (const [name, type] of Object.entries(patternResult.bindings)) {
+            const resolvedType = applySubstitution(type, currentSub);
+            generalizedBindings[name] = generalize(
+              resolvedType,
+              currentEnv.applySubstitution(currentSub).freeTypeVariables(),
+            );
+            // Track binding span + type for later refinement
+            if (binding.pattern.span) {
+              bindingSpans.push({ span: binding.pattern.span, type: resolvedType });
+            }
+          }
+        } else {
+          // Wildcard patterns — record the value type at the pattern span
+          // so diagnostics can detect discarded function values
+          if (binding.pattern.span && nodeTypes) {
+            nodeTypes.set(
+              `${binding.pattern.span.start.line}:${binding.pattern.span.start.column}`,
+              valueType
+            );
+            bindingSpans.push({ span: binding.pattern.span, type: valueType });
           }
         }
 
@@ -417,8 +432,20 @@ export function inferExpression(
         nodeTypes,
       );
 
+      const finalSub = composeSubstitutions(body.substitution, currentSub);
+
+      // Apply the final substitution to all let-binding nodeTypes so they reflect
+      // any type refinements from later bindings or the body expression
+      if (nodeTypes) {
+        for (const { span, type } of bindingSpans) {
+          const key = `${span.start.line}:${span.start.column}`;
+          const refined = applySubstitution(type, finalSub);
+          nodeTypes.set(key, refined);
+        }
+      }
+
       return {
-        substitution: composeSubstitutions(body.substitution, currentSub),
+        substitution: finalSub,
         type: body.type,
       };
     }
@@ -644,34 +671,47 @@ export function inferExpression(
 }
 
 function translateTypeExpression(expr: AST.TypeExpression): Type {
-  switch (expr.kind) {
-    case "TypeVariable":
-      return { kind: "TypeVariable", id: -1, name: expr.name }; // Note: name-based variables not fully supported in algorithmic infer yet, using dummy ID
-    
-    case "TypeReference":
-      const baseType: Type = { kind: "TypeConstant", name: expr.name.parts.join(".") };
-      if (expr.arguments && expr.arguments.length > 0) {
-          return {
-              kind: "TypeApplication",
-              constructor: baseType,
-              arguments: expr.arguments.map(translateTypeExpression)
-          };
-      }
-      return baseType;
+  // Track name-to-id mapping so same-named type variables share IDs
+  const nameToId = new Map<string, number>();
+  let nextAnnotId = -1000; // use negative range to avoid clashing with freshTypeVariable IDs
 
-    case "FunctionType":
-      return functionType(
-        translateTypeExpression(expr.from),
-        translateTypeExpression(expr.to)
-      );
-    
-    case "RecordType":
-      const fields: Record<string, Type> = {};
-      for (const f of expr.fields) {
-        fields[f.name] = translateTypeExpression(f.type);
+  function translate(e: AST.TypeExpression): Type {
+    switch (e.kind) {
+      case "TypeVariable": {
+        let id = nameToId.get(e.name);
+        if (id === undefined) {
+          id = nextAnnotId--;
+          nameToId.set(e.name, id);
+        }
+        return { kind: "TypeVariable", id, name: e.name };
       }
-      return { kind: "TypeRecord", fields };
+
+      case "TypeReference": {
+        const baseType: Type = { kind: "TypeConstant", name: e.name.parts.join(".") };
+        if (e.arguments && e.arguments.length > 0) {
+            return {
+                kind: "TypeApplication",
+                constructor: baseType,
+                arguments: e.arguments.map(translate)
+            };
+        }
+        return baseType;
+      }
+
+      case "FunctionType":
+        return functionType(translate(e.from), translate(e.to));
+
+      case "RecordType": {
+        const fields: Record<string, Type> = {};
+        for (const f of e.fields) {
+          fields[f.name] = translate(f.type);
+        }
+        return { kind: "TypeRecord", fields };
+      }
+    }
   }
+
+  return translate(expr);
 }
 
 export function inferTopLevel(
@@ -730,6 +770,16 @@ export function inferTopLevel(
   }
 
   const finalType = applySubstitution(fnType, currentSub);
+
+  // Refine all nodeTypes with the final substitution so hover types are fully resolved
+  if (nodeTypes) {
+    for (const [key, type] of nodeTypes) {
+      const refined = applySubstitution(type, currentSub);
+      if (refined !== type) {
+        nodeTypes.set(key, refined);
+      }
+    }
+  }
 
   if (effectiveAnnotation) {
     const annotatedType = translateTypeExpression(effectiveAnnotation.type);

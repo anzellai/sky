@@ -57,27 +57,15 @@ decodeSimpleExample =
 
 -- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
 userDecoder =
-    Pipeline.required "verified" Decode.bool
+    Decode.succeed
         (
-        Pipeline.required "age" Decode.int
-            (
-            Pipeline.required "email" Decode.string
-                (
-                Pipeline.required "name" Decode.string
-                    (
-                    Decode.succeed
-                        (
-                        \name email age verified ->
-                            { name = name
-                            , email = email
-                            , age = age
-                            , verified = verified
-                            }
-                        )
-                    )
-                )
-            )
+        \name email age verified ->
+            { name = name , email = email , age = age , verified = verified }
         )
+        |> Pipeline.required "name" Decode.string
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "age" Decode.int
+        |> Pipeline.required "verified" Decode.bool
 
 pipelineExample =
     let
@@ -90,23 +78,14 @@ pipelineExample =
 
 -- 5. Pipeline with optional fields
 profileDecoder =
-    Pipeline.optional "followers" Decode.int 0
+    Decode.succeed
         (
-        Pipeline.optional "bio" Decode.string "No bio provided"
-            (
-            Pipeline.required "username" Decode.string
-                (
-                Decode.succeed
-                    (
-                    \username bio followers ->
-                        { username = username
-                        , bio = bio
-                        , followers = followers
-                        }
-                    )
-                )
-            )
+        \username bio followers ->
+            { username = username , bio = bio , followers = followers }
         )
+        |> Pipeline.required "username" Decode.string
+        |> Pipeline.optional "bio" Decode.string "No bio provided"
+        |> Pipeline.optional "followers" Decode.int 0
 
 optionalExample =
     let
@@ -142,19 +121,10 @@ nestedExample =
 
 -- 7. Decoding a list of objects
 todoDecoder =
-    Pipeline.required "done" Decode.bool
-        (
-        Pipeline.required "title" Decode.string
-            (
-            Pipeline.required "id" Decode.int
-                (
-                Decode.succeed
-                    (
-                    \id title done -> { id = id , title = title , done = done }
-                    )
-                )
-            )
-        )
+    Decode.succeed (\id title done -> { id = id , title = title , done = done })
+        |> Pipeline.required "id" Decode.int
+        |> Pipeline.required "title" Decode.string
+        |> Pipeline.required "done" Decode.bool
 
 todoListDecoder =
     Decode.list todoDecoder

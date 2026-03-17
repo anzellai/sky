@@ -12,9 +12,10 @@ export function handleAdd(pkgName: string) {
   const manifest = readManifest() || { name: "sky-project", version: "0.1.0" };
   const lockfile = readLockfile() || {};
 
-  // Simple heuristic: if it looks like a go package (e.g. net/http, github.com/...), treat it as Go.
-  // Real implementation might probe the registry or URL.
-  const isGoPackage = pkgName.startsWith("github.com/") || pkgName.startsWith("net/") || pkgName.startsWith("golang.org/");
+  // Detect Go packages: domain-prefixed paths, stdlib paths with slashes, or known stdlib names.
+  const goStdlibRoots = ["archive", "bufio", "bytes", "compress", "container", "context", "crypto", "database", "debug", "embed", "encoding", "errors", "expvar", "flag", "fmt", "go", "hash", "html", "image", "index", "io", "log", "maps", "math", "mime", "net", "os", "path", "plugin", "reflect", "regexp", "runtime", "slices", "sort", "strconv", "strings", "sync", "syscall", "testing", "text", "time", "unicode", "unsafe"];
+  const firstPart = pkgName.split("/")[0];
+  const isGoPackage = pkgName.includes("/") || pkgName.includes(".") || goStdlibRoots.includes(firstPart);
 
   if (isGoPackage) {
     try {

@@ -10,6 +10,26 @@ export function getHover(workspace: Workspace, uri: string, position: Position):
   const node = workspace.findNodeAtPosition(doc.ast, position);
   if (!node) return null;
 
+  // Function declaration name hover — show the full type signature
+  if (node.kind === "FunctionDeclaration") {
+    const decl = node as AST.FunctionDeclaration;
+    if (doc.env) {
+      const scheme = doc.env.get(decl.name);
+      if (scheme) {
+        return {
+          contents: {
+            kind: 'markdown',
+            value: [
+              '```elm',
+              `${decl.name} : ${formatScheme(scheme)}`,
+              '```'
+            ].join('\n')
+          }
+        };
+      }
+    }
+  }
+
   if (node.kind === "IdentifierExpression" || node.kind === "QualifiedIdentifierExpression" || node.kind === "VariablePattern") {
     let name = "";
     if (node.kind === "IdentifierExpression") {

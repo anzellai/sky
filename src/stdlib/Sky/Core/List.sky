@@ -2,41 +2,78 @@ module Sky.Core.List exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_list_Map, Sky_list_Filter, Sky_list_Foldl, Sky_list_Foldr, Sky_list_Head, Sky_list_Tail, Sky_list_Length, Sky_list_Append, Sky_list_Reverse, Sky_list_Member, Sky_list_Range, Sky_list_IsEmpty, Sky_list_Take, Sky_list_Drop, Sky_list_Sort, Sky_list_Intersperse, Sky_list_Concat, Sky_list_ConcatMap, Sky_list_IndexedMap)
 
+map : (a -> b) -> List a -> List b
 map fn list =
     Sky_list_Map fn list
+
+filter : (a -> Bool) -> List a -> List a
 filter fn list =
     Sky_list_Filter fn list
+
+foldl : (a -> b -> b) -> b -> List a -> b
 foldl fn acc list =
     Sky_list_Foldl fn acc list
+
+foldr : (a -> b -> b) -> b -> List a -> b
 foldr fn acc list =
     Sky_list_Foldr fn acc list
+
+head : List a -> Maybe a
 head list =
     Sky_list_Head list
+
+tail : List a -> Maybe (List a)
 tail list =
     Sky_list_Tail list
+
+length : List a -> Int
 length list =
     Sky_list_Length list
+
+append : List a -> List a -> List a
 append a b =
     Sky_list_Append a b
+
+reverse : List a -> List a
 reverse list =
     Sky_list_Reverse list
+
+member : a -> List a -> Bool
 member item list =
     Sky_list_Member item list
+
+range : Int -> Int -> List Int
 range start end =
     Sky_list_Range start end
+
+isEmpty : List a -> Bool
 isEmpty list =
     Sky_list_IsEmpty list
+
+take : Int -> List a -> List a
 take n list =
     Sky_list_Take n list
+
+drop : Int -> List a -> List a
 drop n list =
     Sky_list_Drop n list
+
+sort : List comparable -> List comparable
 sort list =
     Sky_list_Sort list
+
+intersperse : a -> List a -> List a
 intersperse sep list =
     Sky_list_Intersperse sep list
+
+concat : List (List a) -> List a
 concat lists =
     Sky_list_Concat lists
+
+concatMap : (a -> List b) -> List a -> List b
 concatMap fn list =
     Sky_list_ConcatMap fn list
+
+indexedMap : (Int -> a -> b) -> List a -> List b
 indexedMap fn list =
     Sky_list_IndexedMap fn list

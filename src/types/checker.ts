@@ -157,6 +157,9 @@ export function checkModule(
             diagnostics
           )
 
+          // Warn about discarded function values (likely partial application bugs)
+          collectDiscardedFunctionDiagnostics(declaration.body, nodeTypes, diagnostics)
+
         } catch (error) {
 
           diagnostics.push({
@@ -168,6 +171,15 @@ export function checkModule(
             span: declaration.span,
             hint: `Could not infer the type of ${declaration.name}.`
           })
+
+          // Add a fallback type so later declarations can still reference this function
+          // (prevents cascading "Unbound variable" errors)
+          const arity = declaration.parameters.length;
+          let fallbackType: import("../types/types.js").Type = typeConstant("Any");
+          for (let i = 0; i < arity; i++) {
+            fallbackType = { kind: "TypeFunction", from: typeConstant("Any"), to: fallbackType };
+          }
+          env = env.extend(declaration.name, mono(fallbackType));
 
         }
 
@@ -232,21 +244,23 @@ function injectForeignBindings(
 ): TypeEnvironment {
 
   let next = env
+  let foreignVarId = -2000; // unique IDs for untyped foreign bindings
 
   for (const set of bindingSets) {
 
     for (const value of set.values) {
 
-      const type =
-        value.skyType
-          ? parseForeignType(value.skyType)
-          : typeConstant("Foreign")
-
-      next =
-        next.extend(
-          value.skyName,
-          mono(type)
-        )
+      if (value.skyType) {
+        const type = parseForeignType(value.skyType);
+        next = next.extend(value.skyName, mono(type));
+      } else {
+        // Untyped foreign bindings get a universally quantified a -> b type
+        // so they can be applied to any args (like fmt.Println)
+        const a: Type = { kind: "TypeVariable", id: foreignVarId--, name: undefined };
+        const b: Type = { kind: "TypeVariable", id: foreignVarId--, name: undefined };
+        const fnType = { kind: "TypeFunction" as const, from: a, to: b };
+        next = next.extend(value.skyName, { quantified: [a.id, b.id], type: fnType });
+      }
 
     }
 
@@ -488,4 +502,41 @@ function visitExpression(
 
   }
 
+}
+
+/* -----------------------------------------------------------
+   Discarded function value diagnostics
+----------------------------------------------------------- */
+
+function collectDiscardedFunctionDiagnostics(
+  expression: AST.Expression,
+  nodeTypes: Map<string, import("../types/types.js").Type>,
+  diagnostics: TypeDiagnostic[]
+) {
+  visitExpression(expression, expr => {
+    if (expr.kind !== "LetExpression") return;
+
+    for (const binding of expr.bindings) {
+      // Check for _ = <expr> where the binding's resolved type is a function
+      // This catches `_ = Slog.info "msg"` (missing second arg — type is List Any -> Unit)
+      // but not `_ = Db.exec db query args` (fully applied — type is Result Error Int)
+      if (binding.pattern.kind === "WildcardPattern" ||
+          (binding.pattern.kind === "VariablePattern" && binding.pattern.name === "_")) {
+
+        // Use the pattern span to find the binding's resolved type
+        const patSpan = binding.pattern.span;
+        if (patSpan) {
+          const key = `${patSpan.start.line}:${patSpan.start.column}`;
+          const bindingType = nodeTypes.get(key);
+          if (bindingType && bindingType.kind === "TypeFunction") {
+            diagnostics.push({
+              severity: "warning",
+              message: `Discarded function value — this expression returns a function, which suggests a missing argument.`,
+              span: binding.value.span || patSpan
+            });
+          }
+        }
+      }
+    }
+  });
 }

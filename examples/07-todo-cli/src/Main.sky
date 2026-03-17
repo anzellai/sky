@@ -9,7 +9,6 @@ module Main exposing (main)
 --   ./app undone 1                Mark todo #1 as not done
 --   ./app remove 1                Delete todo #1
 --   ./app clear                   Remove all completed todos
-
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -17,140 +16,173 @@ import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
 import Lib.Db as Db
 import Lib.Todo as Todo
+import Os
+import Log.Slog as Slog
 import Std.Log exposing (println)
-
-foreign import "sky_wrappers" exposing (Sky_os_GetArgs)
-
 
 -- ============================================================
 -- Database setup
 -- ============================================================
-
 initDb db =
-    Db.exec db "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)" []
-
+    Db.exec db
+        "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
+        []
 
 -- ============================================================
 -- Commands
 -- ============================================================
-
 addTodo db title =
     let
-        _ = Db.exec db "INSERT INTO todos (title) VALUES (?)" [ title ]
+        _ =
+            Db.exec db "INSERT INTO todos (title) VALUES (?)" [ title ]
     in
-        println "Added:" title
+        Slog.info "Action" [ "Added:" , title ]
 
 listTodos db =
     let
-        rows = Result.withDefault [] (Db.queryRows db "SELECT id, title, done FROM todos ORDER BY id" [])
+        rows =
+            Result.withDefault []
+                (
+                Db.queryRows db "SELECT id, title, done FROM todos ORDER BY id"
+                    []
+                )
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""
         else
             let
-                _ = println "Your TODOs:"
-                _ = List.map (\row -> println (Todo.formatTodo row)) rows
+                _ =
+                    println "Your TODOs:"
+                _ =
+                    List.map (\row -> println (Todo.formatTodo row)) rows
             in
                 println ""
 
 markDone db idStr =
     let
-        id = Db.parseInt idStr
-        _ = Db.exec db "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
+        id =
+            Db.parseInt idStr
+        _ =
+            Db.exec db "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
     in
         println "Marked as done:" idStr
 
 markUndone db idStr =
     let
-        id = Db.parseInt idStr
-        _ = Db.exec db "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
+        id =
+            Db.parseInt idStr
+        _ =
+            Db.exec db "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
     in
         println "Marked as not done:" idStr
 
 removeTodo db idStr =
     let
-        id = Db.parseInt idStr
-        _ = Db.exec db "DELETE FROM todos WHERE id = ?" [ id ]
+        id =
+            Db.parseInt idStr
+        _ =
+            Db.exec db "DELETE FROM todos WHERE id = ?" [ id ]
     in
         println "Removed todo:" idStr
 
 clearDone db =
     let
-        _ = Db.exec db "DELETE FROM todos WHERE done = 1" []
+        _ =
+            Db.exec db "DELETE FROM todos WHERE done = 1" []
     in
         println "Cleared completed todos"
 
 showUsage =
     let
-        _ = println "Sky TODO - A simple todo manager"
-        _ = println ""
-        _ = println "Usage:"
-        _ = println "  ./app add <title>     Add a new todo"
-        _ = println "  ./app list            List all todos"
-        _ = println "  ./app done <id>       Mark a todo as done"
-        _ = println "  ./app undone <id>     Mark a todo as not done"
-        _ = println "  ./app remove <id>     Delete a todo"
-        _ = println "  ./app clear           Remove all completed todos"
+        _ =
+            Slog.info "Sky TODO - A simple todo manager" []
+        _ =
+            println ""
+        _ =
+            println "Usage:"
+        _ =
+            println "  ./app add <title>     Add a new todo"
+        _ =
+            println "  ./app list            List all todos"
+        _ =
+            println "  ./app done <id>       Mark a todo as done"
+        _ =
+            println "  ./app undone <id>     Mark a todo as not done"
+        _ =
+            println "  ./app remove <id>     Delete a todo"
+        _ =
+            println "  ./app clear           Remove all completed todos"
     in
         println ""
-
 
 -- ============================================================
 -- CLI dispatch
 -- ============================================================
-
 getArg args =
     Maybe.withDefault "" (List.head args)
 
 runCommand db cmd arg =
-    if cmd == "add" then
-        if arg == "" then
-            println "Usage: ./app add <title>"
-        else
-            addTodo db arg
-    else if cmd == "list" then
-        listTodos db
-    else if cmd == "done" then
-        if arg == "" then
-            println "Usage: ./app done <id>"
-        else
-            markDone db arg
-    else if cmd == "undone" then
-        if arg == "" then
-            println "Usage: ./app undone <id>"
-        else
-            markUndone db arg
-    else if cmd == "remove" then
-        if arg == "" then
-            println "Usage: ./app remove <id>"
-        else
-            removeTodo db arg
-    else if cmd == "clear" then
-        clearDone db
-    else
-        showUsage
-
+    case cmd of
+        "add" ->
+            if arg == "" then
+                println "Usage: ./app add <title>"
+            else
+                addTodo db arg
+        
+        "list" ->
+            listTodos db
+        
+        "done" ->
+            if arg == "" then
+                println "Usage: ./app done <id>"
+            else
+                markDone db arg
+        
+        "undone" ->
+            if arg == "" then
+                println "Usage: ./app undone <id>"
+            else
+                markUndone db arg
+        
+        "remove" ->
+            if arg == "" then
+                println "Usage: ./app remove <id>"
+            else
+                removeTodo db arg
+        
+        "clear" ->
+            clearDone db
+        
+        "help" ->
+            showUsage
+        
+        _ ->
+            showUsage
 
 -- ============================================================
 -- Main — open db, dispatch command, close db
 -- ============================================================
-
 runApp db =
     let
-        _ = initDb db
-        userArgs = List.drop 1 (Sky_os_GetArgs ())
-        cmd = getArg userArgs
-        arg = getArg (List.drop 1 userArgs)
-        _ = runCommand db cmd arg
-        _ = Db.close db
+        _ =
+            initDb db
+        userArgs =
+            List.drop 1 (Os.args ())
+        cmd =
+            getArg userArgs
+        arg =
+            getArg (List.drop 1 userArgs)
+        _ =
+            runCommand db cmd arg
+        _ =
+            Db.close db
     in
         println ""
 
 main =
-    let
-        db = Result.withDefault "" (Db.open "todos.db")
-    in
-        if db == "" then
-            println "Failed to open database"
-        else
+    case Db.open "todos.db" of
+        Ok db ->
             runApp db
+        
+        Err _ ->
+            println "Failed to open database"

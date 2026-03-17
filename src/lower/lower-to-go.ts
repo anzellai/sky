@@ -36,7 +36,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
       count += body.params.length;
       body = body.body;
     }
-    if (count >= 2) declParamCounts.set(decl.name, count);
+    declParamCounts.set(decl.name, count);
   }
   _declParamCounts = declParamCounts;
 
@@ -393,13 +393,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName };
           }
 
-          // Check if this is a Sky module
+          // Check if this is a Sky module (not a Go FFI module)
           if (moduleExports && moduleExports.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
               // It's a non-foreign Sky module! Lower to direct Go package call.
               const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
           }
 
+          // For foreign Go FFI modules, reference the wrapper directly
           const wrapperName2 = "Sky_" + safePkg + "_" + goName;
           return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName2 };
       }
@@ -425,6 +426,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // generate a currying wrapper so it can be passed to FFI functions expecting func(any) any
       // Check if this is a known top-level function by looking at the module's declarations
       const declArity = _declParamCounts?.get(expr.name);
+      // Zero-param top-level bindings are emitted as Go functions; call them when referenced as values
+      if (declArity === 0 && !_isCallTarget && _declParamCounts?.has(expr.name)) {
+          return { kind: "GoCallExpr", fn: { kind: "GoIdent", name: goName }, args: [] } as any;
+      }
       if (declArity && declArity >= 2 && !_isCallTarget) {
               // Generate curried wrapper using raw Go string
               // e.g., func(__c0 any) any { return func(__c1 any) any { return GoName(__c0, __c1) } }
@@ -503,7 +508,17 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       };
 
       const flat = flattenApp(expr);
-      
+
+      // Desugar pipe operators: `a |> f` → `f(a)`, `f <| a` → `f(a)`
+      if (flat.fn.kind === "Variable" && flat.fn.name === "|>" && flat.args.length === 2) {
+          const [value, fn] = flat.args;
+          return lowerExpr({ kind: "Application", fn, args: [value], type: expr.type }, moduleExports, localEnv, foreignModules, constructorMap);
+      }
+      if (flat.fn.kind === "Variable" && flat.fn.name === "<|" && flat.args.length === 2) {
+          const [fn, value] = flat.args;
+          return lowerExpr({ kind: "Application", fn, args: [value], type: expr.type }, moduleExports, localEnv, foreignModules, constructorMap);
+      }
+
       // Map listenAndServe to http.ListenAndServe and println to fmt.Println
       let fnExpr = lowerExpr(flat.fn, moduleExports, localEnv, foreignModules, constructorMap, true);
       let args = flat.args.map((a, i) => {
@@ -933,6 +948,55 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           return lowerExpr(rewrittenMatch, moduleExports, localEnv, foreignModules, constructorMap);
       }
 
+      // Check if this is a literal-value case (string/int/float patterns) vs ADT constructor case
+      const hasLiteralPatterns = expr.cases.some(c => c.pattern.kind === "LiteralPattern");
+
+      if (hasLiteralPatterns) {
+          // Literal value switch: case x of "add" -> ... "list" -> ... _ -> ...
+          const switchSubj = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+          const litCases: GoIR.GoCaseClause[] = expr.cases.map(c => {
+              const stmts: GoIR.GoStmt[] = [];
+              const newLocalEnv = new Map(localEnv || []);
+
+              if (c.pattern.kind === "LiteralPattern") {
+                  let caseValue: string;
+                  if (typeof c.pattern.value === "string") {
+                      caseValue = JSON.stringify(c.pattern.value);
+                  } else {
+                      caseValue = String(c.pattern.value);
+                  }
+                  stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
+                  return { kind: "GoCaseClause" as const, exprs: [{ kind: "GoBasicLit" as const, value: caseValue }], body: stmts };
+              }
+
+              // Wildcard or variable fallback → default case
+              if (c.pattern.kind === "VariablePattern" && c.pattern.name !== "_") {
+                  newLocalEnv.set(c.pattern.name, expr.expr.type);
+                  stmts.push({
+                      kind: "GoAssignStmt",
+                      define: true,
+                      left: [{ kind: "GoIdent", name: c.pattern.name }],
+                      right: lowerExpr(expr.expr, moduleExports, newLocalEnv, foreignModules, constructorMap)
+                  });
+              }
+              stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
+              return { kind: "GoCaseClause" as const, exprs: [] as GoIR.GoExpr[], body: stmts };
+          });
+
+          return {
+              kind: "GoCallExpr",
+              fn: {
+                  kind: "GoFuncLit",
+                  type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
+                  body: [
+                      { kind: "GoSwitchStmt", expr: switchSubj, cases: litCases },
+                      { kind: "GoExprStmt", expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] } }
+                  ]
+              },
+              args: []
+          };
+      }
+
       // ADT pattern matching
       // Determine the ADT type name from the first constructor pattern
       let adtTypeName: string | undefined;
@@ -946,29 +1010,56 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           }
       }
 
+      // Fallback: detect well-known constructors not in the local constructorMap
+      // (e.g., Ok/Err from Prelude's Result, Just/Nothing from Maybe)
+      if (!adtTypeName) {
+          const ctorNames = expr.cases
+              .filter(c => c.pattern.kind === "ConstructorPattern")
+              .map(c => (c.pattern as any).name);
+          if (ctorNames.includes("Ok") || ctorNames.includes("Err")) {
+              adtTypeName = "sky_wrappers.SkyResult";
+          }
+      }
+
+      // Use well-known tag indices for Prelude types
+      const wellKnownTags: Record<string, Record<string, number>> = {
+          "Ok": { tag: 0 }, "Err": { tag: 1 },
+          "Just": { tag: 0 }, "Nothing": { tag: 1 },
+      };
+      // Well-known field names for Prelude types
+      const wellKnownFields: Record<string, string> = {
+          "Ok": "OkValue", "Err": "ErrValue",
+          "Just": "JustValue",
+      };
+
+      // Bind subject to a temp variable to avoid re-evaluation
+      const subjTempName = `__match_${Math.floor(Math.random() * 100000)}`;
+      const subjExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+      const subjRef: GoIR.GoExpr = { kind: "GoIdent", name: subjTempName };
+
       const cases: GoIR.GoCaseClause[] = expr.cases.map((c, i) => {
         const stmts: GoIR.GoStmt[] = [];
         const newLocalEnv = new Map(localEnv || []);
 
         if (c.pattern.kind === "ConstructorPattern") {
            const ctorInfo = constructorMap?.get(c.pattern.name);
-           const tagIndex = ctorInfo ? ctorInfo.tagIndex : i;
+           const tagIndex = ctorInfo ? ctorInfo.tagIndex : (wellKnownTags[c.pattern.name]?.tag ?? i);
 
            // Extract variables from the ADT struct fields
            for (let j = 0; j < c.pattern.args.length; j++) {
               const argPat = c.pattern.args[j];
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
                   newLocalEnv.set(argPat.name, { kind: "TypeConstant", name: "Any" });
-                  let subj = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
-                  // Type-assert subject to ADT type for field access
+                  let subj: GoIR.GoExpr = subjRef;
                   if (adtTypeName) {
                       subj = { kind: "GoTypeAssertExpr", expr: subj, type: { kind: "GoIdentType", name: adtTypeName } } as any;
                   }
+                  const fieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value" + (j > 0 ? j : ""));
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
                       left: [{ kind: "GoIdent", name: argPat.name }],
-                      right: { kind: "GoSelectorExpr", expr: subj, sel: c.pattern.name + "Value" + (j > 0 ? j : "") }
+                      right: { kind: "GoSelectorExpr", expr: subj, sel: fieldName }
                   });
               }
            }
@@ -989,7 +1080,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                    kind: "GoAssignStmt",
                    define: true,
                    left: [{ kind: "GoIdent", name: c.pattern.name }],
-                   right: lowerExpr(expr.expr, moduleExports, newLocalEnv, foreignModules, constructorMap)
+                   right: subjRef
                });
            }
            stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
@@ -999,32 +1090,60 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         return { kind: "GoCaseClause", exprs: [], body: [{ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) }] };
       });
 
-      // Build the switch subject — type-assert if needed
-      let switchSubj: GoIR.GoExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
+      // Build the switch — bind subject to a temp var, then switch on .Tag
+      const bodyStmts: GoIR.GoStmt[] = [];
+
       if (adtTypeName) {
-          switchSubj = {
+          // For well-known types (SkyResult), use: var __match any = <expr>
+          // Then assert to the concrete type for .Tag/.OkValue access.
+          // "var x any = expr" ensures x is interface-typed so assertion always works.
+          bodyStmts.push({
+              kind: "GoExprStmt",
+              expr: { kind: "GoRawExpr", code: `var ${subjTempName} any` } as any
+          });
+          bodyStmts.push({
+              kind: "GoAssignStmt",
+              define: false,
+              left: [{ kind: "GoIdent", name: subjTempName }],
+              right: subjExpr
+          } as any);
+
+          const assertedSubj: GoIR.GoExpr = {
               kind: "GoTypeAssertExpr",
-              expr: switchSubj,
+              expr: subjRef,
               type: { kind: "GoIdentType", name: adtTypeName }
           } as any;
+
+          bodyStmts.push({
+              kind: "GoSwitchStmt",
+              expr: { kind: "GoSelectorExpr", expr: assertedSubj, sel: "Tag" },
+              cases: cases
+          });
+      } else {
+          bodyStmts.push({
+              kind: "GoAssignStmt",
+              define: true,
+              left: [{ kind: "GoIdent", name: subjTempName }],
+              right: subjExpr
+          } as any);
+          bodyStmts.push({
+              kind: "GoSwitchStmt",
+              expr: { kind: "GoSelectorExpr", expr: subjRef, sel: "Tag" },
+              cases: cases
+          });
       }
+
+      bodyStmts.push({
+          kind: "GoExprStmt",
+          expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] }
+      });
 
       return {
         kind: "GoCallExpr",
         fn: {
           kind: "GoFuncLit",
           type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
-          body: [
-            {
-              kind: "GoSwitchStmt",
-              expr: { kind: "GoSelectorExpr", expr: switchSubj, sel: "Tag" },
-              cases: cases
-            },
-            {
-               kind: "GoExprStmt",
-               expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] }
-            }
-          ]
+          body: bodyStmts
         },
         args: []
       };
@@ -1073,13 +1192,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       } as any;
     }
     case "ListExpr": {
-        let elemType: GoIR.GoType = { kind: "GoIdentType", name: "any" };
-        if (expr.items.length > 0 && expr.items[0].type && expr.items[0].type.kind === "TypeConstant") {
-            if (expr.items[0].type.name === "String") elemType = { kind: "GoIdentType", name: "string" };
-        }
+        // Always use []any for Sky lists — all runtime functions expect []any
         return {
             kind: "GoSliceLit",
-            type: { kind: "GoSliceType", elem: elemType },
+            type: { kind: "GoSliceType", elem: { kind: "GoIdentType", name: "any" } },
             elements: expr.items.map(i => lowerExpr(i, moduleExports, localEnv, foreignModules, constructorMap))
         };
     }

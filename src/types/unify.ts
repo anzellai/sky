@@ -25,7 +25,7 @@ export class UnificationError extends Error {
 
 function isJsValue(t: Type): boolean {
   if (t.kind === "TypeConstant") {
-    return t.name === "JsValue" || t.name === "Foreign" || t.name === "Sky.Interop.JsValue";
+    return t.name === "JsValue" || t.name === "Foreign" || t.name === "Any" || t.name === "Sky.Interop.JsValue";
   }
   if (t.kind === "TypeApplication") {
     return isJsValue(t.constructor);

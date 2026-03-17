@@ -45,8 +45,17 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
       const depName = imp.moduleName.join(".");
       const depExports = moduleExports.get(depName);
       if (depExports) {
+        // Collect specifically exposed names for selective import
+        const exposedNames = new Set<string>();
+        if (imp.exposing?.kind === "ExposingClause" && !imp.exposing.open) {
+          for (const item of imp.exposing.items) {
+            exposedNames.add((item as any).name);
+          }
+        }
+
         for (const [name, scheme] of depExports) {
-          if (imp.exposing?.kind === "ExposingClause" && imp.exposing.open) {
+          // Import unqualified if exposing (..) or exposing (name)
+          if (imp.exposing?.kind === "ExposingClause" && (imp.exposing.open || exposedNames.has(name))) {
             importsMap.set(name, scheme);
           }
           if (imp.alias) {
@@ -57,12 +66,28 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
       }
     }
 
+    // Auto-import standard library modules as qualified names (like Elm's implicit imports)
+    // This makes Result.withDefault, Maybe.withDefault, List.map, etc. available everywhere
+    const implicitModules = ["Sky.Core.Result", "Sky.Core.Maybe", "Sky.Core.List", "Sky.Core.String", "Sky.Core.Dict"];
+    for (const modName of implicitModules) {
+      const modExports = moduleExports.get(modName);
+      if (modExports) {
+        const shortName = modName.split(".").pop()!;
+        for (const [name, scheme] of modExports) {
+          const qualKey = `${shortName}.${name}`;
+          if (!importsMap.has(qualKey)) {
+            importsMap.set(qualKey, scheme);
+          }
+        }
+      }
+    }
+
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
-    const typeCheck = checkModule(loaded.moduleAst, { 
-        imports: importsMap, 
-        foreignBindings: foreignResult.bindings 
+    const typeCheck = checkModule(loaded.moduleAst, {
+        imports: importsMap,
+        foreignBindings: foreignResult.bindings
     });
-    
+
     moduleResults.set(moduleNameStr, typeCheck);
     allDiagnostics.push(...typeCheck.diagnostics);
 
@@ -78,23 +103,40 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
         if (info) {
           myExports.set(decl.name, info.scheme);
         } else {
-          // Fallback: use the environment entry (handles cases where type checker
-          // returned early but the function's type was registered via annotation/foreign binding)
           const envScheme = typeCheck.environment.get(decl.name);
           if (envScheme) {
             myExports.set(decl.name, envScheme);
           }
         }
       }
+      // Also export foreign-imported names when they're in the exposing list
+      if (decl.kind === "ForeignImportDeclaration" && isExposed) {
+        const envScheme = typeCheck.environment.get(decl.name);
+        if (envScheme) {
+          myExports.set(decl.name, envScheme);
+        }
+      }
     }
 
-    // For binding modules (exposing (..)), also export any environment entries
-    // that came from foreign bindings but aren't in AST declarations
-    // (e.g., foreign imported constants/values)
+    // For fully exposed modules (exposing (..)), export all environment entries
     if (isFullyExposed) {
       for (const [name, scheme] of typeCheck.environment.entries()) {
         if (!myExports.has(name) && !name.includes(".") && name !== "+" && name !== "-" && name !== "*" && name !== "/" && name !== "True" && name !== "False" && name !== "()" && !name.includes("Sky_") && !name.includes("sky_")) {
           myExports.set(name, scheme);
+        }
+      }
+    }
+
+    // Also handle explicit exposing lists for names not covered above
+    // (e.g., functions defined as wrappers over foreign imports in non-open modules)
+    if (loaded.moduleAst.exposing?.kind === "ExposingClause" && !loaded.moduleAst.exposing.open) {
+      for (const item of loaded.moduleAst.exposing.items) {
+        const itemName = (item as any).name;
+        if (itemName && !myExports.has(itemName)) {
+          const envScheme = typeCheck.environment.get(itemName);
+          if (envScheme) {
+            myExports.set(itemName, envScheme);
+          }
         }
       }
     }
@@ -133,6 +175,12 @@ export async function compileProject(entryFile: string, outDir: string) {
     
     if (loaded.filePath.includes(".skycache/go/")) {
         allForeignModules.add(moduleNameStr);
+        // Extract the Go package path from the .skycache file path
+        // e.g., ".skycache/go/modernc.org/sqlite/bindings.skyi" → "modernc.org/sqlite"
+        const cacheMatch = loaded.filePath.match(/\.skycache\/go\/(.+?)\/bindings\.skyi$/);
+        if (cacheMatch) {
+            allForeignPackages.add(cacheMatch[1]);
+        }
     }
 
     // Build environment from dependencies
@@ -141,8 +189,15 @@ export async function compileProject(entryFile: string, outDir: string) {
       const depName = imp.moduleName.join(".");
       const depExports = moduleExports.get(depName);
       if (depExports) {
+        const exposedNames = new Set<string>();
+        if (imp.exposing?.kind === "ExposingClause" && !imp.exposing.open) {
+          for (const item of imp.exposing.items) {
+            exposedNames.add((item as any).name);
+          }
+        }
+
         for (const [name, scheme] of depExports) {
-          if (imp.exposing?.kind === "ExposingClause" && imp.exposing.open) {
+          if (imp.exposing?.kind === "ExposingClause" && (imp.exposing.open || exposedNames.has(name))) {
             importsMap.set(name, scheme);
           }
           if (imp.alias) {
@@ -177,12 +232,30 @@ export async function compileProject(entryFile: string, outDir: string) {
           }
         }
       }
+      if (decl.kind === "ForeignImportDeclaration" && isExposed) {
+        const envScheme = typeCheck.environment.get(decl.name);
+        if (envScheme) {
+          myExports.set(decl.name, envScheme);
+        }
+      }
     }
 
     if (isFullyExposed2) {
       for (const [name, scheme] of typeCheck.environment.entries()) {
         if (!myExports.has(name) && !name.includes(".") && name !== "+" && name !== "-" && name !== "*" && name !== "/" && name !== "True" && name !== "False" && name !== "()" && !name.includes("Sky_") && !name.includes("sky_")) {
           myExports.set(name, scheme);
+        }
+      }
+    }
+
+    if (loaded.moduleAst.exposing?.kind === "ExposingClause" && !loaded.moduleAst.exposing.open) {
+      for (const item of loaded.moduleAst.exposing.items) {
+        const itemName = (item as any).name;
+        if (itemName && !myExports.has(itemName)) {
+          const envScheme = typeCheck.environment.get(itemName);
+          if (envScheme) {
+            myExports.set(itemName, envScheme);
+          }
         }
       }
     }

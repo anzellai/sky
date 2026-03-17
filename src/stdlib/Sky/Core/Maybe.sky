@@ -7,11 +7,14 @@ type Maybe a
 
 foreign import "sky_wrappers" exposing (Sky_maybe_WithDefault, Sky_maybe_Map, Sky_maybe_AndThen)
 
+withDefault : a -> Maybe a -> a
 withDefault fallback value =
     Sky_maybe_WithDefault fallback value
 
+map : (a -> b) -> Maybe a -> Maybe b
 map fn maybe =
     Sky_maybe_Map fn maybe
 
+andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 andThen fn maybe =
     Sky_maybe_AndThen fn maybe

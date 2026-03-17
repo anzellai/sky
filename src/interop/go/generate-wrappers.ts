@@ -1245,9 +1245,9 @@ func Sky_result_ToMaybe(result any) any {
         let goReturns = " ";
         let retTypes = results.map(r => cleanType(r.type));
         
-        // ONLY wrap in SkyResult if it's a FUNCTION call that returns an error
+        // Wrap in SkyResult if a function OR method returns an error
         // Variables and fields should be returned as-is
-        const shouldWrap = !isField && !isMethod && (
+        const shouldWrap = !isField && (
             (retTypes.length === 1 && retTypes[0] === "error") ||
             (retTypes.length === 2 && retTypes[1] === "error")
         );
@@ -1256,10 +1256,15 @@ func Sky_result_ToMaybe(result any) any {
             goReturns = ` SkyResult `;
         } else if (retTypes.length > 0) {
             if (retTypes.length === 1) {
-                goReturns = ` ${retTypes[0]} `;
+                // Fields/variables returning typed slices will be converted to []any
+                const needsSliceConv = isField && retTypes[0].startsWith("[]") && retTypes[0] !== "[]any";
+                goReturns = needsSliceConv ? ` any ` : ` ${retTypes[0]} `;
             } else {
                 goReturns = ` (${retTypes.join(", ")}) `;
             }
+        } else if (!isField) {
+            // Void Go functions still need to return any for Sky (all expressions are values)
+            goReturns = ` any `;
         }
 
         goCode += `func ${wrapperName}(${goParams})${goReturns}{\n`;
@@ -1273,10 +1278,16 @@ func Sky_result_ToMaybe(result any) any {
         }).join(", ");
         
         if (isField) {
-            if (recvType) {
-                goCode += `\treturn _this.${goName}\n`;
+            const fieldExpr = recvType ? `_this.${goName}` : `${pkgBase}.${goName}`;
+            // Convert typed slices (e.g., []string) to []any for Sky compatibility
+            const fieldRetType = retTypes.length === 1 ? retTypes[0] : "";
+            if (fieldRetType.startsWith("[]") && fieldRetType !== "[]any") {
+                goCode += `\t_val := ${fieldExpr}\n`;
+                goCode += `\t_result := make([]any, len(_val))\n`;
+                goCode += `\tfor _i, _v := range _val { _result[_i] = _v }\n`;
+                goCode += `\treturn _result\n`;
             } else {
-                goCode += `\treturn ${pkgBase}.${goName}\n`;
+                goCode += `\treturn ${fieldExpr}\n`;
             }
         } else {
             let callExpr = `${pkgBase}.${goName}(${callArgs})`;
@@ -1285,7 +1296,7 @@ func Sky_result_ToMaybe(result any) any {
             }
 
             if (retTypes.length === 0) {
-                goCode += `\t${callExpr}\n`;
+                goCode += `\t${callExpr}\n\treturn struct{}{}\n`;
             } else if (shouldWrap) {
                 if (retTypes.length === 1) {
                     goCode += `\terr := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(struct{}{})\n`;
@@ -1305,8 +1316,25 @@ func Sky_result_ToMaybe(result any) any {
     }
 
     for (const v of pkg.vars || []) {
-        // Variables might be functions or simple values
-        generateFuncWrapper(lowerCamelCase(v.name), v.name, [], [{name: "", type: v.type}], false, true);
+        // Generate variable wrappers as zero-arg Go functions for proper call semantics
+        const skyName = lowerCamelCase(v.name);
+        const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+        const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+        const rawType = cleanType(v.type);
+        const isSlice = rawType.startsWith("[]") && rawType !== "[]any";
+
+        if (isSlice) {
+            goCode += `func ${wrapperName}() any {\n`;
+            goCode += `\t_val := ${pkgBase}.${v.name}\n`;
+            goCode += `\t_result := make([]any, len(_val))\n`;
+            goCode += `\tfor _i, _v := range _val { _result[_i] = _v }\n`;
+            goCode += `\treturn _result\n`;
+            goCode += `}\n\n`;
+        } else {
+            goCode += `func ${wrapperName}() any {\n`;
+            goCode += `\treturn ${pkgBase}.${v.name}\n`;
+            goCode += `}\n\n`;
+        }
     }
 
     for (const t of pkg.types || []) {
@@ -1326,6 +1354,170 @@ func Sky_result_ToMaybe(result any) any {
                 const recv = isInterface ? `${pkg.name}.${t.name}` : `*${pkg.name}.${t.name}`;
                 generateFuncWrapper(lowerCamelCase(t.name + f.name), f.name, [], [{name: "", type: f.type}], false, true, recv);
             }
+        }
+    }
+
+    // ============= Pattern-based convenience wrappers =============
+    // Detect types with iterator+scan patterns (e.g., sql.Rows) and generate
+    // high-level helpers that handle pointer allocation and iteration in Go,
+    // returning Sky-friendly data structures.
+    for (const t of pkg.types || []) {
+        if ((t as any).typeParams && (t as any).typeParams.length > 0) continue;
+        if (!t.methods) continue;
+
+        const methodNames = new Set(t.methods.map(m => m.name));
+
+        // Pattern: Iterator with Scan (e.g., sql.Rows)
+        // Requires: Next() bool, Scan(...any) error, Columns() ([]string, error), Close() error
+        const hasNext = methodNames.has("Next");
+        const hasScan = methodNames.has("Scan");
+        const hasColumns = methodNames.has("Columns");
+        const hasClose = methodNames.has("Close");
+
+        if (hasNext && hasScan && hasColumns && hasClose) {
+            const recv = `*${pkg.name}.${t.name}`;
+            const cleanRecv = cleanType(recv);
+            const skyName = lowerCamelCase(t.name + "ToMaps");
+            const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+            const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+
+            imports.add("fmt");
+
+            goCode += `// Auto-generated convenience wrapper: iterates ${t.name}, scans all rows into list of dicts
+func ${wrapperName}(rows any) any {
+	r := rows.(${cleanRecv})
+	defer r.Close()
+	cols, err := r.Columns()
+	if err != nil {
+		return SkyErr(err.Error())
+	}
+	var results []any
+	for r.Next() {
+		values := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := r.Scan(ptrs...); err != nil {
+			return SkyErr(err.Error())
+		}
+		row := make(map[any]any)
+		for i, col := range cols {
+			switch v := values[i].(type) {
+			case int64:
+				row[col] = fmt.Sprintf("%d", v)
+			case float64:
+				row[col] = fmt.Sprintf("%g", v)
+			case []byte:
+				row[col] = string(v)
+			case string:
+				row[col] = v
+			case nil:
+				row[col] = ""
+			default:
+				row[col] = fmt.Sprintf("%v", v)
+			}
+		}
+		results = append(results, row)
+	}
+	if results == nil {
+		results = []any{}
+	}
+	return SkyOk(results)
+}\n\n`;
+        }
+
+        // Pattern: DB-like type with Exec(string, ...any) + Query(string, ...any) methods
+        // Only match when Exec takes a string first param (DB, Tx, Conn — not Stmt which takes just ...any)
+        const execMethod = t.methods.find(m => m.name === "Exec");
+        const queryMethod = t.methods.find(m => m.name === "Query");
+        const execTakesQuery = execMethod && execMethod.params && execMethod.params.length >= 1 && execMethod.params[0].type === "string";
+        const queryTakesQuery = queryMethod && queryMethod.params && queryMethod.params.length >= 1 && queryMethod.params[0].type === "string";
+        if (execTakesQuery && queryTakesQuery) {
+            const recv = `*${pkg.name}.${t.name}`;
+            const cleanRecv = cleanType(recv);
+            const skyName = lowerCamelCase(t.name + "ExecResult");
+            const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+            const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+
+            goCode += `// Auto-generated convenience wrapper: exec on ${t.name} returning rows affected
+func ${wrapperName}(db any, query any, args any) any {
+	_db := db.(${cleanRecv})
+	_query := query.(string)
+	var _args []any
+	if args != nil {
+		if lst, ok := args.([]any); ok {
+			_args = lst
+		}
+	}
+	result, err := _db.Exec(_query, _args...)
+	if err != nil {
+		return SkyErr(err.Error())
+	}
+	affected, _ := result.RowsAffected()
+	return SkyOk(affected)
+}\n\n`;
+
+            // Also generate a QueryToMaps convenience wrapper on DB/Tx types
+            const skyNameQ = lowerCamelCase(t.name + "QueryToMaps");
+            const skyNameQPascal = skyNameQ.charAt(0).toUpperCase() + skyNameQ.slice(1);
+            const wrapperNameQ = `Sky_${safePkg}_${skyNameQPascal}`;
+
+            imports.add("fmt");
+
+            goCode += `// Auto-generated convenience wrapper: query on ${t.name} returning list of dicts
+func ${wrapperNameQ}(db any, query any, args any) any {
+	_db := db.(${cleanRecv})
+	_query := query.(string)
+	var _args []any
+	if args != nil {
+		if lst, ok := args.([]any); ok {
+			_args = lst
+		}
+	}
+	rows, err := _db.Query(_query, _args...)
+	if err != nil {
+		return SkyErr(err.Error())
+	}
+	defer rows.Close()
+	cols, err := rows.Columns()
+	if err != nil {
+		return SkyErr(err.Error())
+	}
+	var results []any
+	for rows.Next() {
+		values := make([]any, len(cols))
+		ptrs := make([]any, len(cols))
+		for i := range values {
+			ptrs[i] = &values[i]
+		}
+		if err := rows.Scan(ptrs...); err != nil {
+			return SkyErr(err.Error())
+		}
+		row := make(map[any]any)
+		for i, col := range cols {
+			switch v := values[i].(type) {
+			case int64:
+				row[col] = fmt.Sprintf("%d", v)
+			case float64:
+				row[col] = fmt.Sprintf("%g", v)
+			case []byte:
+				row[col] = string(v)
+			case string:
+				row[col] = v
+			case nil:
+				row[col] = ""
+			default:
+				row[col] = fmt.Sprintf("%v", v)
+			}
+		}
+		results = append(results, row)
+	}
+	if results == nil {
+		results = []any{}
+	}
+	return SkyOk(results)
+}\n\n`;
         }
     }
 

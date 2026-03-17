@@ -99,32 +99,64 @@ export class Workspace {
             env = typeCheckResult.environment;
             nodeTypes = typeCheckResult.nodeTypes;
         }
-        
-        // Map diagnostics
-        for (const diagStr of result.diagnostics) {
-            // "path:line:col: message"
-            const match = diagStr.match(/^(.*?):(\d+):(\d+):\s*(.*)$/);
-            if (match) {
-                const line = parseInt(match[2]) - 1;
-                const col = parseInt(match[3]) - 1;
+
+        // Collect diagnostics: module-specific type errors + graph-level resolution errors
+        const allDiags: any[] = [];
+        // Add type check diagnostics from the current module only
+        if (typeCheckResult && typeCheckResult.diagnostics) {
+            allDiags.push(...typeCheckResult.diagnostics);
+        }
+        // Add graph-level diagnostics (resolution errors like "Cannot resolve import")
+        for (const d of result.diagnostics) {
+            if (typeof d === 'string') allDiags.push(d);
+        }
+
+        for (const diag of allDiags) {
+            if (typeof diag === 'string') {
+                // String diagnostic (e.g., from module resolution)
+                const match = diag.match(/^(.*?):(\d+):(\d+):\s*(.*)$/);
+                if (match) {
+                    const line = parseInt(match[2]) - 1;
+                    const col = parseInt(match[3]) - 1;
+                    diagnostics.push({
+                        severity: DiagnosticSeverity.Error,
+                        range: {
+                            start: { line: Math.max(0, line), character: Math.max(0, col) },
+                            end: { line: Math.max(0, line), character: Math.max(0, col + 5) }
+                        },
+                        message: match[4]
+                    });
+                } else {
+                    diagnostics.push({
+                        severity: DiagnosticSeverity.Error,
+                        range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+                        message: diag
+                    });
+                }
+            } else if (diag && typeof diag === 'object' && diag.message) {
+                // TypeDiagnostic object with { severity, message, span, hint? }
+                const span = diag.span;
+                const startLine = span?.start?.line ? span.start.line - 1 : 0;
+                const startCol = span?.start?.column ? span.start.column - 1 : 0;
+                const endLine = span?.end?.line ? span.end.line - 1 : startLine;
+                const endCol = span?.end?.column ? span.end.column - 1 : startCol + 10;
                 diagnostics.push({
-                    severity: DiagnosticSeverity.Error,
+                    severity: diag.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
                     range: {
-                        start: { line: Math.max(0, line), character: Math.max(0, col) },
-                        end: { line: Math.max(0, line), character: Math.max(0, col + 5) }
+                        start: { line: Math.max(0, startLine), character: Math.max(0, startCol) },
+                        end: { line: Math.max(0, endLine), character: Math.max(0, endCol) }
                     },
-                    message: match[4]
-                });
-            } else {
-                 diagnostics.push({
-                    severity: DiagnosticSeverity.Error,
-                    range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
-                    message: diagStr
+                    message: diag.hint ? `${diag.message}\n${diag.hint}` : diag.message
                 });
             }
         }
-    } catch (e) {
-        // Fallback if compiler fails entirely
+    } catch (e: any) {
+        // If the compiler crashes, report it as a diagnostic so the user sees something
+        diagnostics.push({
+            severity: DiagnosticSeverity.Error,
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+            message: `Sky analysis error: ${e?.message || String(e)}`
+        });
     }
 
     this.documents.set(uri, { uri, source, ast, diagnostics, env, modules, nodeTypes, moduleExports });

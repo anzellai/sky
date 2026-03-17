@@ -1,23 +1,13 @@
 module Lib.Db exposing (..)
 
--- Lib.Db — Database operations.
---
--- Uses auto-generated database/sql bindings for:
---   open  (Database.Sql.open)
---   close (Database.Sql.dBClose)
--- Uses thin custom helpers for:
---   exec      (Go's db.Exec needs SkyResult wrapping)
---   queryRows (Go's rows.Scan needs pointer args)
+-- Lib.Db — Database operations using auto-generated bindings only.
+
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.String as String
 import Database.Sql as Sql
-
-foreign import "sky_wrappers" exposing (Sky_sqlite_Exec)
-
-foreign import "sky_wrappers" exposing (Sky_sqlite_QueryRows)
-
-foreign import "sky_wrappers" exposing (Sky_sqlite_GetField)
-
-foreign import "sky_wrappers" exposing (Sky_sqlite_ParseInt)
+import Modernc.Org.Sqlite as SqliteDriver
 
 open path =
     Sql.open "sqlite" path
@@ -26,13 +16,13 @@ close db =
     Sql.dBClose db
 
 exec db query args =
-    Sky_sqlite_Exec db query args
+    Sql.dBExecResult db query args
 
 queryRows db query args =
-    Sky_sqlite_QueryRows db query args
+    Sql.dBQueryToMaps db query args
 
 getField field row =
-    Sky_sqlite_GetField field row
+    Maybe.withDefault "" (Dict.get field row)
 
 parseInt s =
-    Sky_sqlite_ParseInt s
+    Result.withDefault 0 (String.toInt s)

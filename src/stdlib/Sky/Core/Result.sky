@@ -2,17 +2,22 @@ module Sky.Core.Result exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_result_WithDefault, Sky_result_Map, Sky_result_AndThen, Sky_result_MapError, Sky_result_ToMaybe)
 
+withDefault : a -> Result err a -> a
 withDefault fallback result =
     Sky_result_WithDefault fallback result
 
+map : (a -> b) -> Result err a -> Result err b
 map fn result =
     Sky_result_Map fn result
 
+andThen : (a -> Result err b) -> Result err a -> Result err b
 andThen fn result =
     Sky_result_AndThen fn result
 
+mapError : (a -> b) -> Result a ok -> Result b ok
 mapError fn result =
     Sky_result_MapError fn result
 
+toMaybe : Result err a -> Maybe a
 toMaybe result =
     Sky_result_ToMaybe result
