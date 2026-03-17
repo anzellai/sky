@@ -1530,10 +1530,6 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         return; // No wrappers needed
     }
 
-    // Remove reflect from imports if the generated code doesn't use it
-    if (!goCode.includes("reflect.")) {
-        imports.delete("reflect");
-    }
     // Clean goCode: remove functions that reference uninstantiated generic types
     let cleanedGoCode = "";
     const funcBlocks = goCode.split(/(?=^func )/m);
@@ -1543,6 +1539,14 @@ func ${wrapperNameQ}(db any, query any, args any) any {
             continue;
         }
         cleanedGoCode += block;
+    }
+    // Remove any imports whose package base name isn't actually used in the generated code
+    for (const imp of imports) {
+        if (imp === pkgName) continue; // Always keep the main package import
+        const base = imp.split("/").pop()!;
+        if (!cleanedGoCode.includes(base + ".")) {
+            imports.delete(imp);
+        }
     }
     const importsStr = Array.from(imports).map(i => `\t"${i}"`).join("\n");
     const finalCode = `package sky_wrappers\n\nimport (\n${importsStr}\n)\n\n` + cleanedGoCode;
