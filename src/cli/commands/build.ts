@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { execSync } from "child_process";
 import { compileProject } from "../../compiler.js";
 import { readManifest } from "../../pkg/manifest.js";
@@ -77,8 +78,17 @@ export async function handleBuild(entryFile?: string) {
       execSync(`cd ${outDir} && go mod init sky-out`, { stdio: "inherit" });
     }
     execSync(`cd ${outDir} && go mod tidy`, { stdio: "inherit" });
-    execSync(`cd ${outDir} && go build -o app`, { stdio: "inherit" });
-    console.log("Build complete: dist/app");
+
+    // Resolve output binary path from sky.toml bin field or default
+    const manifest = readManifest();
+    const binPath = manifest?.bin || "dist/app";
+    // bin is relative to project root; go build runs in dist/
+    const binAbs = path.resolve(binPath);
+    const binRel = path.relative(path.resolve(outDir), binAbs);
+    // Ensure output directory exists
+    fs.mkdirSync(path.dirname(binAbs), { recursive: true });
+    execSync(`cd ${outDir} && go build -o "${binRel}"`, { stdio: "inherit" });
+    console.log(`Build complete: ${binPath}`);
   } catch (e) {
     console.error("go build failed", e);
     process.exit(1);

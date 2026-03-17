@@ -5,6 +5,7 @@ export interface SkyManifest {
   name: string;
   version: string;
   entry?: string;
+  bin?: string;
   source?: {
     root?: string;
   };
@@ -24,6 +25,7 @@ export function readManifest(path = "sky.toml"): SkyManifest | null {
       name: parsed.name || "unknown",
       version: parsed.version || "0.0.0",
       entry: parsed.entry || undefined,
+      bin: parsed.bin || undefined,
       source: parsed.source,
       dependencies: parsed.dependencies || {},
       go: parsed.go || { dependencies: parsed["go.dependencies"] || {} },
@@ -40,6 +42,7 @@ export function writeManifest(manifest: SkyManifest, path = "sky.toml") {
     version: manifest.version,
   };
   if (manifest.entry) out.entry = manifest.entry;
+  if (manifest.bin) out.bin = manifest.bin;
   if (manifest.source) out.source = manifest.source;
   if (manifest.dependencies && Object.keys(manifest.dependencies).length > 0) {
     out.dependencies = manifest.dependencies;
