@@ -1,5 +1,6 @@
 name = "05-mux-server"
 version = "0.1.0"
+entry = "src/Main.sky"
 
 ["go.dependencies"]
 "github.com/gorilla/mux" = "latest"

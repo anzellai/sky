@@ -304,7 +304,7 @@ func extractParams(tuple *types.Tuple, variadic bool) []Param {
     const out = execSync(`"${binPath}" ${pkgName}`, { 
         cwd: inspectorDir, 
         maxBuffer: 1024 * 1024 * 10,
-        env: { ...process.env, SKY_PROJECT_DIR: path.join(projectDir, ".skycache", "gomod") }
+        env: { ...process.env, SKY_PROJECT_DIR: fs.existsSync(path.join(projectDir, ".skycache", "gomod", "go.mod")) ? path.join(projectDir, ".skycache", "gomod") : projectDir }
     }).toString();
     return JSON.parse(out);
 }

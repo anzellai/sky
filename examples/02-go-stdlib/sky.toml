@@ -1,5 +1,6 @@
 name = "02-go-stdlib"
 version = "0.1.0"
+entry = "src/Main.sky"
 
 ["go.dependencies"]
 "net/http" = "latest"

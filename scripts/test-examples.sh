@@ -18,6 +18,16 @@ for dir in "$ROOT"/examples/*/; do
 
     name=$(basename "$dir")
     cd "$dir"
+
+    # If the example has go.dependencies in sky.toml, run install first
+    if [ -f sky.toml ] && grep -q "go.dependencies" sky.toml 2>/dev/null; then
+        if [ ! -d .skycache/go ]; then
+            node "$ROOT/dist/bin/sky.js" install > /dev/null 2>&1
+            # Wait for async binding generation
+            sleep 2
+        fi
+    fi
+
     result=$(node "$ROOT/dist/bin/sky.js" build src/Main.sky 2>&1 | tail -1)
 
     if echo "$result" | grep -q "Build complete"; then
