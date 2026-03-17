@@ -1,0 +1,130 @@
+module Std.Html.Events exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+
+
+-- ============================================================
+-- Std.Html.Events — JavaScript event handler attributes
+--
+-- For server-side rendered HTML, events are inline JavaScript
+-- strings injected as HTML attributes (onclick, onsubmit, etc).
+--
+-- Usage:
+--     import Std.Html.Events exposing (..)
+--
+--     button [ onClick "alert('Hello!')" ] [ text "Click me" ]
+--     form [ onSubmit "return confirm('Are you sure?')" ] [ ... ]
+-- ============================================================
+
+
+-- Escape attribute values (single-quote delimited)
+escapeAttr content =
+    content
+        |> String.replace "&" "&amp;"
+        |> String.replace "'" "&#39;"
+
+
+-- Generic event attribute
+on event handler =
+    "on" ++ event ++ "='" ++ escapeAttr handler ++ "'"
+
+
+-- ============================================================
+-- Mouse events
+-- ============================================================
+
+onClick handler =
+    on "click" handler
+
+
+onDblClick handler =
+    on "dblclick" handler
+
+
+onMouseDown handler =
+    on "mousedown" handler
+
+
+onMouseUp handler =
+    on "mouseup" handler
+
+
+onMouseOver handler =
+    on "mouseover" handler
+
+
+onMouseOut handler =
+    on "mouseout" handler
+
+
+onContextMenu handler =
+    on "contextmenu" handler
+
+
+-- ============================================================
+-- Form events
+-- ============================================================
+
+onSubmit handler =
+    on "submit" handler
+
+
+onChange handler =
+    on "change" handler
+
+
+onInput handler =
+    on "input" handler
+
+
+onFocus handler =
+    on "focus" handler
+
+
+onBlur handler =
+    on "blur" handler
+
+
+onReset handler =
+    on "reset" handler
+
+
+onSelect handler =
+    on "select" handler
+
+
+-- ============================================================
+-- Keyboard events
+-- ============================================================
+
+onKeyDown handler =
+    on "keydown" handler
+
+
+onKeyUp handler =
+    on "keyup" handler
+
+
+onKeyPress handler =
+    on "keypress" handler
+
+
+-- ============================================================
+-- Document / window events
+-- ============================================================
+
+onLoad handler =
+    on "load" handler
+
+
+onError handler =
+    on "error" handler
+
+
+onScroll handler =
+    on "scroll" handler
+
+
+onResize handler =
+    on "resize" handler

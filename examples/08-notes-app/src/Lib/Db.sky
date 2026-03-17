@@ -1,0 +1,27 @@
+module Lib.Db exposing (open, close, exec, queryRows, getField)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Database.Sql as Sql
+import Modernc.Org.Sqlite as SqliteDriver
+
+
+open path =
+    Sql.open "sqlite" path
+
+
+close db =
+    Sql.dBClose db
+
+
+exec db query args =
+    Sql.dBExecResult db query args
+
+
+queryRows db query args =
+    Sql.dBQueryToMaps db query args
+
+
+getField field row =
+    Maybe.withDefault "" (Dict.get field row)

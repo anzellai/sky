@@ -33,6 +33,24 @@ function isJsValue(t: Type): boolean {
   return false;
 }
 
+// Sky-native types that must match exactly during unification.
+// Any PascalCase TypeConstant NOT in this set is assumed to originate
+// from Go FFI and is treated permissively (Go interface satisfaction
+// cannot be verified statically by the Sky type checker).
+const SKY_NATIVE_TYPES = new Set([
+  "Int", "Float", "String", "Bool", "Unit",
+  "Result", "Maybe", "List", "Dict", "Map",
+  "Cmd", "Sub", "Task", "Program",
+  "Bytes", "Channel", "Tuple", "Error",
+]);
+
+function isForeignGoType(t: Type): boolean {
+  if (t.kind !== "TypeConstant") return false;
+  if (isJsValue(t)) return true;
+  // If it's not a known Sky type, it's likely from Go FFI
+  return !SKY_NATIVE_TYPES.has(t.name);
+}
+
 export function unify(a: Type, b: Type): Substitution {
 
   if (isJsValue(a) || isJsValue(b)) return emptySubstitution();
@@ -50,6 +68,11 @@ export function unify(a: Type, b: Type): Substitution {
     if (a.name !== b.name) {
       // Allow Int and Float to unify
       if ((a.name === "Int" && b.name === "Float") || (a.name === "Float" && b.name === "Int")) {
+        return emptySubstitution();
+      }
+      // Allow Go FFI types to unify with each other (Go interface satisfaction).
+      // E.g., ResponseWriter unifies with Writer, Router with Handler.
+      if (isForeignGoType(a) && isForeignGoType(b)) {
         return emptySubstitution();
       }
       throw new UnificationError(`Type mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);

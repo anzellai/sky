@@ -1,0 +1,284 @@
+module Std.Html.Attributes exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+
+
+-- ============================================================
+-- Std.Html.Attributes — HTML attribute constructors
+--
+-- Each function returns a String that represents an HTML attribute.
+-- Attribute values are automatically escaped.
+--
+-- Usage:
+--     import Std.Html.Attributes exposing (..)
+--
+--     div [ class "card", id "main" ] [ ... ]
+--     input [ type_ "email", name "user", required ]
+-- ============================================================
+
+
+-- Escape attribute values (single-quote delimited)
+escapeAttr content =
+    content
+        |> String.replace "&" "&amp;"
+        |> String.replace "'" "&#39;"
+
+
+-- ============================================================
+-- Generic attribute constructors
+-- ============================================================
+
+-- Build any key='value' attribute
+attribute key value =
+    key ++ "='" ++ escapeAttr value ++ "'"
+
+
+-- Build a boolean attribute (no value, e.g., required, disabled)
+boolAttribute key =
+    key
+
+
+-- ============================================================
+-- Global attributes
+-- ============================================================
+
+class value =
+    attribute "class" value
+
+
+id value =
+    attribute "id" value
+
+
+style value =
+    attribute "style" value
+
+
+title value =
+    attribute "title" value
+
+
+hidden _ =
+    boolAttribute "hidden"
+
+
+tabindex n =
+    attribute "tabindex" (String.fromInt n)
+
+
+lang value =
+    attribute "lang" value
+
+
+dir value =
+    attribute "dir" value
+
+
+role value =
+    attribute "role" value
+
+
+-- ============================================================
+-- Links & navigation
+-- ============================================================
+
+href value =
+    attribute "href" value
+
+
+target value =
+    attribute "target" value
+
+
+rel value =
+    attribute "rel" value
+
+
+download value =
+    attribute "download" value
+
+
+-- ============================================================
+-- Form attributes
+-- ============================================================
+
+type_ value =
+    attribute "type" value
+
+
+name value =
+    attribute "name" value
+
+
+value value =
+    attribute "value" value
+
+
+placeholder value =
+    attribute "placeholder" value
+
+
+action value =
+    attribute "action" value
+
+
+method value =
+    attribute "method" value
+
+
+for value =
+    attribute "for" value
+
+
+enctype value =
+    attribute "enctype" value
+
+
+required _ =
+    boolAttribute "required"
+
+
+disabled _ =
+    boolAttribute "disabled"
+
+
+checked _ =
+    boolAttribute "checked"
+
+
+readonly _ =
+    boolAttribute "readonly"
+
+
+autofocus _ =
+    boolAttribute "autofocus"
+
+
+multiple _ =
+    boolAttribute "multiple"
+
+
+selected _ =
+    boolAttribute "selected"
+
+
+novalidate _ =
+    boolAttribute "novalidate"
+
+
+autocomplete value =
+    attribute "autocomplete" value
+
+
+minlength n =
+    attribute "minlength" (String.fromInt n)
+
+
+maxlength n =
+    attribute "maxlength" (String.fromInt n)
+
+
+min value =
+    attribute "min" value
+
+
+max value =
+    attribute "max" value
+
+
+step value =
+    attribute "step" value
+
+
+pattern value =
+    attribute "pattern" value
+
+
+rows n =
+    attribute "rows" (String.fromInt n)
+
+
+cols n =
+    attribute "cols" (String.fromInt n)
+
+
+-- ============================================================
+-- Media attributes
+-- ============================================================
+
+src value =
+    attribute "src" value
+
+
+alt value =
+    attribute "alt" value
+
+
+width value =
+    attribute "width" value
+
+
+height value =
+    attribute "height" value
+
+
+-- ============================================================
+-- Meta / head attributes
+-- ============================================================
+
+charset value =
+    attribute "charset" value
+
+
+content value =
+    attribute "content" value
+
+
+httpEquiv value =
+    attribute "http-equiv" value
+
+
+-- ============================================================
+-- Table attributes
+-- ============================================================
+
+colspan n =
+    attribute "colspan" (String.fromInt n)
+
+
+rowspan n =
+    attribute "rowspan" (String.fromInt n)
+
+
+scope value =
+    attribute "scope" value
+
+
+-- ============================================================
+-- ARIA accessibility
+-- ============================================================
+
+ariaLabel value =
+    attribute "aria-label" value
+
+
+ariaHidden value =
+    attribute "aria-hidden" value
+
+
+ariaDescribedby value =
+    attribute "aria-describedby" value
+
+
+ariaExpanded value =
+    attribute "aria-expanded" value
+
+
+-- ============================================================
+-- Data attributes
+-- ============================================================
+
+dataAttribute key value =
+    attribute ("data-" ++ key) value

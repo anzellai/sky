@@ -1,0 +1,696 @@
+module Std.Css exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+
+
+-- ============================================================
+-- Std.Css — Type-safe CSS construction
+--
+-- CSS properties and values are strings, composed with functions
+-- that enforce structure and enable computation.
+--
+-- Usage (inline styles):
+--     import Std.Css exposing (..)
+--     import Std.Html.Attributes as Attr
+--
+--     div [ Attr.style (styles [ padding (px 20), color (hex "333") ]) ]
+--
+-- Usage (stylesheet):
+--     styleNode []
+--         (stylesheet
+--             [ rule ".card" [ padding (px 32), borderRadius (px 12) ]
+--             , rule ".btn:hover" [ backgroundColor (hex "1d4ed8") ]
+--             , media "(max-width:768px)" [ rule ".card" [ padding (px 16) ] ]
+--             ])
+-- ============================================================
+
+
+-- ============================================================
+-- Composition
+-- ============================================================
+
+-- Join CSS properties for inline style attributes
+styles props =
+    String.join ";" props
+
+
+-- Build a CSS rule: selector { properties }
+rule selector props =
+    selector ++ "{" ++ String.join ";" props ++ "}"
+
+
+-- Build a @media query wrapping rules
+media query rules =
+    "@media " ++ query ++ "{" ++ String.join "" rules ++ "}"
+
+
+-- Build a @keyframes block
+keyframes animName frames =
+    "@keyframes " ++ animName ++ "{" ++ String.join "" frames ++ "}"
+
+
+-- Build a keyframe step: "50% { transform: scale(1.1) }"
+frame pct_ props =
+    pct_ ++ "{" ++ String.join ";" props ++ "}"
+
+
+-- Join rules into a complete stylesheet string
+stylesheet rules =
+    String.join "\n" rules
+
+
+-- ============================================================
+-- Units
+-- ============================================================
+
+-- Pixel units: px 20 → "20px"
+px n =
+    String.fromInt n ++ "px"
+
+
+-- Rem units (relative to root font size): rem 1.5 → "1.5rem"
+rem n =
+    String.fromFloat n ++ "rem"
+
+
+-- Em units (relative to parent font size): em 1.2 → "1.2em"
+em n =
+    String.fromFloat n ++ "em"
+
+
+-- Percentage: pct 50 → "50%"
+pct n =
+    String.fromInt n ++ "%"
+
+
+-- Viewport height: vh 100 → "100vh"
+vh n =
+    String.fromInt n ++ "vh"
+
+
+-- Viewport width: vw 50 → "50vw"
+vw n =
+    String.fromInt n ++ "vw"
+
+
+-- Character width: ch 40 → "40ch"
+ch n =
+    String.fromInt n ++ "ch"
+
+
+-- Fractional (grid): fr 1 → "1fr"
+fr n =
+    String.fromInt n ++ "fr"
+
+
+-- Seconds: sec 0.3 → "0.3s"
+sec n =
+    String.fromFloat n ++ "s"
+
+
+-- Milliseconds: ms 300 → "300ms"
+ms n =
+    String.fromInt n ++ "ms"
+
+
+-- Degrees: deg 45 → "45deg"
+deg n =
+    String.fromInt n ++ "deg"
+
+
+-- Zero (unitless)
+zero _ =
+    "0"
+
+
+-- Auto keyword
+auto _ =
+    "auto"
+
+
+-- None keyword
+none _ =
+    "none"
+
+
+-- Inherit keyword
+inherit _ =
+    "inherit"
+
+
+-- ============================================================
+-- Colors
+-- ============================================================
+
+-- Hex color: hex "2563eb" → "#2563eb"
+hex code =
+    "#" ++ code
+
+
+-- RGB color: rgb 37 99 235 → "rgb(37,99,235)"
+rgb r g b =
+    "rgb(" ++ String.fromInt r ++ "," ++ String.fromInt g ++ "," ++ String.fromInt b ++ ")"
+
+
+-- RGBA color: rgba 0 0 0 0.1 → "rgba(0,0,0,0.1)"
+rgba r g b a =
+    "rgba(" ++ String.fromInt r ++ "," ++ String.fromInt g ++ "," ++ String.fromInt b ++ "," ++ String.fromFloat a ++ ")"
+
+
+-- HSL color: hsl 220 90 50 → "hsl(220,90%,50%)"
+hsl h s l =
+    "hsl(" ++ String.fromInt h ++ "," ++ String.fromInt s ++ "%," ++ String.fromInt l ++ "%)"
+
+
+-- HSLA color
+hsla h s l a =
+    "hsla(" ++ String.fromInt h ++ "," ++ String.fromInt s ++ "%," ++ String.fromInt l ++ "%," ++ String.fromFloat a ++ ")"
+
+
+-- Transparent
+transparent _ =
+    "transparent"
+
+
+-- CSS variable: cssVar "primary" → "var(--primary)"
+cssVar name =
+    "var(--" ++ name ++ ")"
+
+
+-- CSS variable with fallback: cssVarOr "primary" "#2563eb" → "var(--primary,#2563eb)"
+cssVarOr name fallback =
+    "var(--" ++ name ++ "," ++ fallback ++ ")"
+
+
+-- ============================================================
+-- Layout
+-- ============================================================
+
+display val =
+    "display:" ++ val
+
+
+position val =
+    "position:" ++ val
+
+
+top val =
+    "top:" ++ val
+
+
+right_ val =
+    "right:" ++ val
+
+
+bottom val =
+    "bottom:" ++ val
+
+
+left val =
+    "left:" ++ val
+
+
+zIndex n =
+    "z-index:" ++ String.fromInt n
+
+
+overflow val =
+    "overflow:" ++ val
+
+
+overflowX val =
+    "overflow-x:" ++ val
+
+
+overflowY val =
+    "overflow-y:" ++ val
+
+
+float val =
+    "float:" ++ val
+
+
+clear val =
+    "clear:" ++ val
+
+
+visibility val =
+    "visibility:" ++ val
+
+
+-- ============================================================
+-- Flexbox
+-- ============================================================
+
+flexDirection val =
+    "flex-direction:" ++ val
+
+
+flexWrap val =
+    "flex-wrap:" ++ val
+
+
+justifyContent val =
+    "justify-content:" ++ val
+
+
+alignItems val =
+    "align-items:" ++ val
+
+
+alignContent val =
+    "align-content:" ++ val
+
+
+alignSelf val =
+    "align-self:" ++ val
+
+
+flex val =
+    "flex:" ++ val
+
+
+flexGrow n =
+    "flex-grow:" ++ String.fromInt n
+
+
+flexShrink n =
+    "flex-shrink:" ++ String.fromInt n
+
+
+flexBasis val =
+    "flex-basis:" ++ val
+
+
+order n =
+    "order:" ++ String.fromInt n
+
+
+gap val =
+    "gap:" ++ val
+
+
+rowGap val =
+    "row-gap:" ++ val
+
+
+columnGap val =
+    "column-gap:" ++ val
+
+
+-- ============================================================
+-- Grid
+-- ============================================================
+
+gridTemplateColumns val =
+    "grid-template-columns:" ++ val
+
+
+gridTemplateRows val =
+    "grid-template-rows:" ++ val
+
+
+gridColumn val =
+    "grid-column:" ++ val
+
+
+gridRow val =
+    "grid-row:" ++ val
+
+
+gridArea val =
+    "grid-area:" ++ val
+
+
+-- Repeat helper: repeat 3 (fr 1) → "repeat(3,1fr)"
+repeat n val =
+    "repeat(" ++ String.fromInt n ++ "," ++ val ++ ")"
+
+
+-- Minmax helper: minmax (px 200) (fr 1) → "minmax(200px,1fr)"
+minmax minVal maxVal =
+    "minmax(" ++ minVal ++ "," ++ maxVal ++ ")"
+
+
+-- ============================================================
+-- Spacing
+-- ============================================================
+
+-- Margin with single value
+margin val =
+    "margin:" ++ val
+
+
+-- Margin with vertical and horizontal
+margin2 v h =
+    "margin:" ++ v ++ " " ++ h
+
+
+-- Margin with all four sides
+margin4 t r b l =
+    "margin:" ++ t ++ " " ++ r ++ " " ++ b ++ " " ++ l
+
+
+marginTop val =
+    "margin-top:" ++ val
+
+
+marginRight val =
+    "margin-right:" ++ val
+
+
+marginBottom val =
+    "margin-bottom:" ++ val
+
+
+marginLeft val =
+    "margin-left:" ++ val
+
+
+-- Padding with single value
+padding val =
+    "padding:" ++ val
+
+
+-- Padding with vertical and horizontal
+padding2 v h =
+    "padding:" ++ v ++ " " ++ h
+
+
+-- Padding with all four sides
+padding4 t r b l =
+    "padding:" ++ t ++ " " ++ r ++ " " ++ b ++ " " ++ l
+
+
+paddingTop val =
+    "padding-top:" ++ val
+
+
+paddingRight val =
+    "padding-right:" ++ val
+
+
+paddingBottom val =
+    "padding-bottom:" ++ val
+
+
+paddingLeft val =
+    "padding-left:" ++ val
+
+
+-- ============================================================
+-- Sizing
+-- ============================================================
+
+width val =
+    "width:" ++ val
+
+
+height val =
+    "height:" ++ val
+
+
+minWidth val =
+    "min-width:" ++ val
+
+
+maxWidth val =
+    "max-width:" ++ val
+
+
+minHeight val =
+    "min-height:" ++ val
+
+
+maxHeight val =
+    "max-height:" ++ val
+
+
+-- ============================================================
+-- Typography
+-- ============================================================
+
+fontFamily val =
+    "font-family:" ++ val
+
+
+fontSize val =
+    "font-size:" ++ val
+
+
+fontWeight val =
+    "font-weight:" ++ val
+
+
+fontStyle val =
+    "font-style:" ++ val
+
+
+lineHeight val =
+    "line-height:" ++ val
+
+
+letterSpacing val =
+    "letter-spacing:" ++ val
+
+
+textAlign val =
+    "text-align:" ++ val
+
+
+textDecoration val =
+    "text-decoration:" ++ val
+
+
+textTransform val =
+    "text-transform:" ++ val
+
+
+textOverflow val =
+    "text-overflow:" ++ val
+
+
+whiteSpace val =
+    "white-space:" ++ val
+
+
+wordBreak val =
+    "word-break:" ++ val
+
+
+-- ============================================================
+-- Colors & Backgrounds
+-- ============================================================
+
+color val =
+    "color:" ++ val
+
+
+backgroundColor val =
+    "background-color:" ++ val
+
+
+background val =
+    "background:" ++ val
+
+
+backgroundImage val =
+    "background-image:" ++ val
+
+
+backgroundSize val =
+    "background-size:" ++ val
+
+
+backgroundPosition val =
+    "background-position:" ++ val
+
+
+backgroundRepeat val =
+    "background-repeat:" ++ val
+
+
+opacity n =
+    "opacity:" ++ String.fromFloat n
+
+
+-- Linear gradient: linearGradient "135deg" ["#1e40af", "#7c3aed"]
+linearGradient direction stops =
+    "linear-gradient(" ++ direction ++ "," ++ String.join "," stops ++ ")"
+
+
+-- ============================================================
+-- Borders
+-- ============================================================
+
+border val =
+    "border:" ++ val
+
+
+borderTop val =
+    "border-top:" ++ val
+
+
+borderRight val =
+    "border-right:" ++ val
+
+
+borderBottom val =
+    "border-bottom:" ++ val
+
+
+borderLeft val =
+    "border-left:" ++ val
+
+
+borderColor val =
+    "border-color:" ++ val
+
+
+borderWidth val =
+    "border-width:" ++ val
+
+
+borderStyle val =
+    "border-style:" ++ val
+
+
+borderRadius val =
+    "border-radius:" ++ val
+
+
+borderRadius4 tl tr br bl =
+    "border-radius:" ++ tl ++ " " ++ tr ++ " " ++ br ++ " " ++ bl
+
+
+borderCollapse val =
+    "border-collapse:" ++ val
+
+
+outline val =
+    "outline:" ++ val
+
+
+outlineOffset val =
+    "outline-offset:" ++ val
+
+
+-- ============================================================
+-- Effects & Transitions
+-- ============================================================
+
+boxShadow val =
+    "box-shadow:" ++ val
+
+
+-- Shadow helper: shadow 0 2 4 (rgba 0 0 0 0.1) → "0 2px 4px rgba(0,0,0,0.1)"
+shadow x y blur colorVal =
+    "box-shadow:" ++ String.fromInt x ++ "px " ++ String.fromInt y ++ "px " ++ String.fromInt blur ++ "px " ++ colorVal
+
+
+-- Multiple shadows
+shadows vals =
+    "box-shadow:" ++ String.join "," vals
+
+
+textShadow val =
+    "text-shadow:" ++ val
+
+
+transform val =
+    "transform:" ++ val
+
+
+-- Transform functions
+translateX val =
+    "translateX(" ++ val ++ ")"
+
+
+translateY val =
+    "translateY(" ++ val ++ ")"
+
+
+scale n =
+    "scale(" ++ String.fromFloat n ++ ")"
+
+
+rotate val =
+    "rotate(" ++ val ++ ")"
+
+
+transition val =
+    "transition:" ++ val
+
+
+-- Transition helper: transitionProp "background" 0.2 "ease" → "transition:background 0.2s ease"
+transitionProp prop duration easing =
+    "transition:" ++ prop ++ " " ++ String.fromFloat duration ++ "s " ++ easing
+
+
+animation val =
+    "animation:" ++ val
+
+
+cursor val =
+    "cursor:" ++ val
+
+
+pointerEvents val =
+    "pointer-events:" ++ val
+
+
+userSelect val =
+    "user-select:" ++ val
+
+
+filter val =
+    "filter:" ++ val
+
+
+backdropFilter val =
+    "backdrop-filter:" ++ val
+
+
+-- ============================================================
+-- Helpers
+-- ============================================================
+
+-- CSS calc(): calc (px 100) "-" (px 20) → "calc(100px - 20px)"
+calc a op b =
+    "calc(" ++ a ++ " " ++ op ++ " " ++ b ++ ")"
+
+
+-- Add !important to a property
+important prop =
+    prop ++ " !important"
+
+
+-- Define a CSS custom property: defineVar "primary" "#2563eb" → "--primary:#2563eb"
+defineVar name val =
+    "--" ++ name ++ ":" ++ val
+
+
+-- Raw CSS property (escape hatch)
+property key val =
+    key ++ ":" ++ val
+
+
+-- ============================================================
+-- Common value constants
+-- ============================================================
+
+-- System font stack
+systemFont _ =
+    "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif"
+
+
+-- Monospace font stack
+monoFont _ =
+    "'SF Mono',Monaco,'Cascadia Code',monospace"
+
+
+-- Common box-sizing reset
+boxSizingBorderBox _ =
+    "box-sizing:border-box"

@@ -3,6 +3,48 @@ import * as CoreIR from "../core-ir/core-ir.js";
 import * as GoIR from "../go-ir/go-ir.js";
 import type { Scheme, Type } from "../types/types.js";
 
+// Minimal Go expression serializer used by the lowerer for GoRawExpr construction.
+// Handles the subset of GoIR nodes that appear inside well-known constructor args.
+function emitGoExprForLower(expr: any): string {
+    if (!expr) return "nil";
+    switch (expr.kind) {
+        case "GoIdent": return expr.name;
+        case "GoBasicLit": return expr.value;
+        case "GoCallExpr": {
+            const fn = emitGoExprForLower(expr.fn);
+            const args = (expr.args || []).map((a: any) => emitGoExprForLower(a)).join(", ");
+            return `${fn}(${args})`;
+        }
+        case "GoSelectorExpr": return `${emitGoExprForLower(expr.expr)}.${expr.sel}`;
+        case "GoRawExpr": return expr.code;
+        case "GoSliceLit": {
+            const elems = (expr.elements || []).map((e: any) => emitGoExprForLower(e)).join(", ");
+            return `[]any{${elems}}`;
+        }
+        case "GoCompositeLit": {
+            const typeName = expr.type ? (expr.type.name || "struct {  }") : "struct {  }";
+            if (expr.elements && expr.elements.length > 0) {
+                const elems = expr.elements.map((e: any) => emitGoExprForLower(e)).join(", ");
+                return `${typeName}{${elems}}`;
+            }
+            return `${typeName}{}`;
+        }
+        case "GoMapLit": {
+            const entries = (expr.entries || []).map((e: any) => `${emitGoExprForLower(e.key)}: ${emitGoExprForLower(e.value)}`).join(", ");
+            return `map[string]any{${entries}}`;
+        }
+        case "GoBinaryExpr":
+            return `${emitGoExprForLower(expr.left)} ${expr.op} ${emitGoExprForLower(expr.right)}`;
+        case "GoUnaryExpr":
+            return `${expr.op}${emitGoExprForLower(expr.expr)}`;
+        case "GoTypeAssertExpr": {
+            const typeName2 = expr.type ? (expr.type.name || "any") : "any";
+            return `${emitGoExprForLower(expr.expr)}.(${typeName2})`;
+        }
+        default: return `(any)(nil) /* unsupported ${expr.kind} */`;
+    }
+}
+
 function makeSafeGoPkgName(name: string): string {
     if (name === "Main") return "main";
     return "sky_" + name.toLowerCase();
@@ -199,6 +241,23 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
               localModulesDetected.add(name);
           }
       }
+      // Detect module references inside GoRawExpr code strings
+      if (node.kind === "GoRawExpr" && typeof node.code === "string") {
+          const rawMatches = node.code.match(/\bsky_\w+\./g);
+          if (rawMatches) {
+              for (const m of rawMatches) {
+                  const name = m.slice(0, -1); // remove trailing dot
+                  if (name === "sky_wrappers" || stdlibPaths[name]) {
+                      foreignModulesDetected.add(name);
+                  } else {
+                      localModulesDetected.add(name);
+                  }
+              }
+          }
+          if (node.code.includes("sky_wrappers.")) {
+              foreignModulesDetected.add("sky_wrappers");
+          }
+      }
       for (const k of Object.keys(node)) {
           scanGoNode(node[k]);
       }
@@ -383,7 +442,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
           const goName = name.charAt(0).toUpperCase() + name.slice(1);
 
-          // Force sky_wrappers for stdlib even if it's technically a Sky module
+          // Check if this is a Sky module (not a Go FFI module) — must run before
+          // the Std.* FFI shortcut so that real Sky modules like Std.Html take priority.
+          if (moduleExports && moduleExports.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
+              // It's a non-foreign Sky module! Lower to direct Go package call.
+              const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
+              return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+          }
+
+          // FFI wrapper modules (Std.Log, Std.Cmd etc.) — route through sky_wrappers
           if (pkgName.startsWith("Std.") || pkgName === "Net.Http" || pkgName === "Crypto.Sha256" || pkgName === "Encoding.Hex" || pkgName === "Cmd" || pkgName === "Sub" || pkgName === "Uuid" || pkgName === "Dotenv") {
               if (name === "none") {
                   const sel = pkgName.endsWith("Cmd") ? "CmdNone" : "SubNone";
@@ -391,13 +458,6 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               }
               const wrapperName = "Sky_" + safePkg + "_" + goName;
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName };
-          }
-
-          // Check if this is a Sky module (not a Go FFI module)
-          if (moduleExports && moduleExports.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
-              // It's a non-foreign Sky module! Lower to direct Go package call.
-              const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
-              return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
           }
 
           // For foreign Go FFI modules, reference the wrapper directly
@@ -445,6 +505,22 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   code += ` }`;
               }
               return { kind: "GoRawExpr", code } as any;
+      }
+
+      // If the unqualified name isn't local, check if it comes from an imported module.
+      // This handles `exposing (..)` imports where names are unqualified in Sky
+      // but must be qualified with the Go package name in the output.
+      // Excludes Prelude types (Ok, Err, identity) and thin FFI wrapper modules
+      // (Std.Log, Std.Cmd, etc.) which have special lowering paths.
+      if (moduleExports && !_declParamCounts?.has(expr.name)) {
+          const ffiWrapperModules = new Set(["Std.Log", "Std.Cmd", "Std.Sub", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+          for (const [modName, exports] of moduleExports) {
+              if (exports.has(expr.name) && !ffiWrapperModules.has(modName) && (!foreignModules || !foreignModules.has(modName))) {
+                  const modParts = modName.split(".");
+                  const goPkg = makeSafeGoPkgName(modParts[modParts.length - 1]);
+                  return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+              }
+          }
       }
 
       return { kind: "GoIdent", name: goName };
@@ -509,6 +585,32 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
       const flat = flattenApp(expr);
 
+      // Well-known Prelude constructors applied as functions: Ok value, Err value, Just value
+      if (flat.fn.kind === "Constructor") {
+          const wellKnownAppCtors: Record<string, { wrapper: string; tag: number; field: string }> = {
+              "Ok":   { wrapper: "sky_wrappers.SkyOk",  tag: 0, field: "OkValue" },
+              "Err":  { wrapper: "sky_wrappers.SkyErr",  tag: 1, field: "ErrValue" },
+              "Just": { wrapper: "",                     tag: 0, field: "JustValue" },
+          };
+          const wk = wellKnownAppCtors[flat.fn.name];
+          if (wk) {
+              const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+              if (wk.wrapper) {
+                  // Result Ok/Err
+                  return {
+                      kind: "GoCallExpr",
+                      fn: { kind: "GoIdent", name: wk.wrapper },
+                      args: argExprs
+                  } as any;
+              }
+              // Maybe Just
+              return {
+                  kind: "GoRawExpr",
+                  code: `struct{ Tag int; ${wk.field} any }{Tag: ${wk.tag}, ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
+              } as any;
+          }
+      }
+
       // Desugar pipe operators: `a |> f` → `f(a)`, `f <| a` → `f(a)`
       if (flat.fn.kind === "Variable" && flat.fn.name === "|>" && flat.args.length === 2) {
           const [value, fn] = flat.args;
@@ -517,6 +619,31 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       if (flat.fn.kind === "Variable" && flat.fn.name === "<|" && flat.args.length === 2) {
           const [fn, value] = flat.args;
           return lowerExpr({ kind: "Application", fn, args: [value], type: expr.type }, moduleExports, localEnv, foreignModules, constructorMap);
+      }
+
+      // Partial application: if applying fewer args than the function's arity,
+      // generate a curried closure that captures the applied args.
+      // e.g., `handleLanding db` (arity 3, 1 arg) →
+      //   func(__p0 any) any { return func(__p1 any) any { return HandleLanding(db, __p0, __p1) } }
+      if (flat.fn.kind === "Variable" && !flat.fn.name.startsWith(".")) {
+          const fnArity = _declParamCounts?.get(flat.fn.name);
+          if (fnArity && flat.args.length < fnArity) {
+              const remaining = fnArity - flat.args.length;
+              const appliedArgs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+              const goFnName = flat.fn.name.charAt(0).toUpperCase() + flat.fn.name.slice(1);
+              const pid = Math.floor(Math.random() * 10000);
+              const remainingNames = Array.from({length: remaining}, (_, i) => `__p${pid}_${i}`);
+              const allCallArgs = [...appliedArgs.map(a => emitGoExprForLower(a)), ...remainingNames].join(", ");
+              let code = "";
+              for (let i = 0; i < remaining; i++) {
+                  code += `func(${remainingNames[i]} any) any { return `;
+              }
+              code += `${goFnName}(${allCallArgs})`;
+              for (let i = 0; i < remaining; i++) {
+                  code += ` }`;
+              }
+              return { kind: "GoRawExpr", code } as any;
+          }
       }
 
       // Map listenAndServe to http.ListenAndServe and println to fmt.Println
@@ -685,10 +812,13 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
               if (!targetType) return a;
 
+              // Wrap in (any)(...) to ensure the value is interface-typed
+              // before applying the type assertion.  This is necessary because
+              // Go FFI wrappers may return concrete types (e.g. string) and
+              // Go does not allow type assertions on non-interface values.
               return {
-                  kind: "GoTypeAssertExpr",
-                  expr: a,
-                  type: { kind: "GoIdentType", name: targetType }
+                  kind: "GoRawExpr",
+                  code: `(any)(${emitGoExprForLower(a)}).(${targetType})`
               } as any;
           });
 
@@ -1018,6 +1148,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               .map(c => (c.pattern as any).name);
           if (ctorNames.includes("Ok") || ctorNames.includes("Err")) {
               adtTypeName = "sky_wrappers.SkyResult";
+          } else if (ctorNames.includes("Just") || ctorNames.includes("Nothing")) {
+              // Maybe type: both Just and Nothing use struct{ Tag int; JustValue any }
+              // so the type assertion is consistent for the switch statement.
+              adtTypeName = "struct{ Tag int; JustValue any }";
           }
       }
 
@@ -1051,10 +1185,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
                   newLocalEnv.set(argPat.name, { kind: "TypeConstant", name: "Any" });
                   let subj: GoIR.GoExpr = subjRef;
-                  if (adtTypeName) {
-                      subj = { kind: "GoTypeAssertExpr", expr: subj, type: { kind: "GoIdentType", name: adtTypeName } } as any;
-                  }
                   const fieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value" + (j > 0 ? j : ""));
+                  // For Maybe's Just branch, use the full struct type that includes JustValue
+                  const fieldAssertType = (adtTypeName === "struct{ Tag int }" && fieldName === "JustValue")
+                      ? "struct{ Tag int; JustValue any }"
+                      : adtTypeName;
+                  if (fieldAssertType) {
+                      subj = { kind: "GoTypeAssertExpr", expr: subj, type: { kind: "GoIdentType", name: fieldAssertType } } as any;
+                  }
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
@@ -1169,6 +1307,47 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                     { kind: "GoBasicLit", value: String(ctorInfo.tagIndex) },
                     ...argExprs
                 ]
+            } as any;
+        }
+        // Well-known Prelude constructors: Ok, Err, Just, Nothing
+        // These are defined in Sky.Core.Prelude/Maybe and may not be in the
+        // current module's constructorMap.  Emit proper Go runtime values.
+        const wellKnownCtors: Record<string, { tag: number; wrapper: string; field: string }> = {
+            "Ok":      { tag: 0, wrapper: "sky_wrappers.SkyOk",  field: "OkValue" },
+            "Err":     { tag: 1, wrapper: "sky_wrappers.SkyErr",  field: "ErrValue" },
+            "Just":    { tag: 0, wrapper: "",                     field: "JustValue" },
+            "Nothing": { tag: 1, wrapper: "",                     field: "" },
+        };
+        const wk = wellKnownCtors[expr.name];
+        if (wk) {
+            const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+            if (wk.wrapper) {
+                // Result Ok/Err — use helper functions SkyOk / SkyErr
+                return {
+                    kind: "GoCallExpr",
+                    fn: { kind: "GoIdent", name: wk.wrapper },
+                    args: argExprs.length > 0 ? argExprs : [{ kind: "GoIdent", name: "nil" }]
+                } as any;
+            }
+            // Maybe Just/Nothing — use anonymous struct
+            if (argExprs.length > 0) {
+                // Just value
+                return {
+                    kind: "GoRawExpr",
+                    code: `struct{ Tag int; ${wk.field} any }{Tag: ${wk.tag}, ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
+                } as any;
+            }
+            // Nothing (no args) — include JustValue: nil so the struct type
+            // matches Just's struct{ Tag int; JustValue any } for consistent matching.
+            if (expr.name === "Nothing") {
+                return {
+                    kind: "GoRawExpr",
+                    code: `struct{ Tag int; JustValue any }{Tag: ${wk.tag}, JustValue: nil}`
+                } as any;
+            }
+            return {
+                kind: "GoRawExpr",
+                code: `struct{ Tag int }{Tag: ${wk.tag}}`
             } as any;
         }
         // Fallback: unknown constructor

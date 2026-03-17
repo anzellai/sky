@@ -116,7 +116,7 @@ func Sky_list_Foldr(fn any, acc any, list any) any {
 func Sky_list_Head(list any) any {
 	lst, ok := list.([]any)
 	if !ok || len(lst) == 0 {
-		return struct{ Tag int }{Tag: 1} // Nothing
+		return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil} // Nothing
 	}
 	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: lst[0]}
 }
@@ -124,7 +124,7 @@ func Sky_list_Head(list any) any {
 func Sky_list_Tail(list any) any {
 	lst, ok := list.([]any)
 	if !ok || len(lst) == 0 {
-		return struct{ Tag int }{Tag: 1} // Nothing
+		return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil} // Nothing
 	}
 	tail := make([]any, len(lst)-1)
 	copy(tail, lst[1:])
@@ -431,7 +431,7 @@ func Sky_dict_Insert(key any, val any, dict any) any {
 func Sky_dict_Get(key any, dict any) any {
 	m := dict.(map[any]any)
 	val, ok := m[key]
-	if !ok { return struct{ Tag int }{Tag: 1} } // Nothing
+	if !ok { return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil} } // Nothing
 	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: val}
 }
 
@@ -522,7 +522,7 @@ func Sky_dict_Update(key any, fn any, dict any) any {
 	if ok {
 		maybeVal = struct{ Tag int; JustValue any }{Tag: 0, JustValue: val}
 	} else {
-		maybeVal = struct{ Tag int }{Tag: 1}
+		maybeVal = struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}
 	}
 	newMaybe := fn.(func(any) any)(maybeVal)
 	newVal := reflect.ValueOf(newMaybe)
@@ -629,7 +629,7 @@ func Sky_json_AsList(val any) any {
 }
 
 func Sky_json_AsNullable(val any) any {
-	if val == nil { return SkyOk(struct{ Tag int }{Tag: 1}) } // Ok Nothing
+	if val == nil { return SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}) } // Ok Nothing
 	return SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: val})
 }
 
@@ -779,7 +779,7 @@ func Sky_json_decoder_Fail(msg any) any {
 func Sky_json_decoder_Nullable(decoder any) any {
 	return func(val any) any {
 		if val == nil {
-			return SkyOk(struct{ Tag int }{Tag: 1})
+			return SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil})
 		}
 		result := decoder.(func(any) any)(val)
 		r := reflect.ValueOf(result)
@@ -1032,7 +1032,7 @@ func Sky_json_decoder_Maybe(decoder any) any {
 		result := decoder.(func(any) any)(val)
 		r := reflect.ValueOf(result)
 		if r.Kind() == reflect.Struct && r.FieldByName("Tag").Interface().(int) == 1 {
-			return SkyOk(struct{ Tag int }{Tag: 1})
+			return SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil})
 		}
 		inner := r.FieldByName("OkValue").Interface()
 		return SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: inner})
@@ -1160,7 +1160,7 @@ func Sky_result_ToMaybe(result any) any {
 			return struct{ Tag int; JustValue any }{Tag: 0, JustValue: r.FieldByName("OkValue").Interface()}
 		}
 	}
-	return struct{ Tag int }{Tag: 1}
+	return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}
 }
 `;
       fs.writeFileSync(helperPath, helperCode);
@@ -1342,9 +1342,9 @@ func Sky_result_ToMaybe(result any) any {
         if ((t as any).typeParams && (t as any).typeParams.length > 0) continue;
         if (t.methods) {
             for (const m of t.methods) {
-                // If it's an interface, the receiver shouldn't be a pointer!
-                const isInterface = t.kind === "interface";
-                const recv = isInterface ? `${pkg.name}.${t.name}` : `*${pkg.name}.${t.name}`;
+                // Interfaces and map-based types (kind "other") use value receivers, not pointers
+                const isValueRecv = t.kind === "interface" || t.kind === "other";
+                const recv = isValueRecv ? `${pkg.name}.${t.name}` : `*${pkg.name}.${t.name}`;
                 generateFuncWrapper(lowerCamelCase(t.name + m.name), m.name, m.params || [], m.results || [], true, false, recv, m.variadic);
             }
         }

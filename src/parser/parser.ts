@@ -1118,6 +1118,14 @@ private parsePrimary(): AST.Expression {
         raw: t.lexeme,
         span: t.span,
       };
+    } else if (this.match("Float")) {
+      const t = this.consume("Float");
+      expr = {
+        kind: "FloatLiteralExpression",
+        value: Number(t.lexeme),
+        raw: t.lexeme,
+        span: t.span,
+      };
     } else if (this.match("String")) {
       const t = this.consume("String");
       expr = {

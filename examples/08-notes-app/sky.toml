@@ -1,0 +1,16 @@
+name = "notes-app"
+version = "0.1.0"
+
+[source]
+root = "src"
+
+["go.dependencies"]
+"net/http" = "latest"
+"github.com/gorilla/mux" = "latest"
+"database/sql" = "latest"
+"modernc.org/sqlite" = "latest"
+"crypto/sha256" = "latest"
+"encoding/hex" = "latest"
+"github.com/google/uuid" = "latest"
+"io" = "latest"
+"os" = "latest"

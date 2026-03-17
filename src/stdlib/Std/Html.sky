@@ -1,0 +1,343 @@
+module Std.Html exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+
+
+-- ============================================================
+-- Std.Html — Elm-style HTML construction for server-side rendering
+--
+-- Html and Attribute are both String under the hood.
+-- Elements are smart constructors that produce safe, escaped HTML.
+--
+-- Usage:
+--     import Std.Html exposing (..)
+--     import Std.Html.Attributes exposing (..)
+--
+--     view =
+--         div [ class "card" ]
+--             [ h1 [] [ text "Hello" ]
+--             , p [] [ text "Welcome to Sky" ]
+--             ]
+--
+--     output = render view
+-- ============================================================
+
+
+-- Escape HTML content to prevent XSS
+escapeHtml content =
+    content
+        |> String.replace "&" "&amp;"
+        |> String.replace "<" "&lt;"
+        |> String.replace ">" "&gt;"
+        |> String.replace "'" "&#39;"
+
+
+-- Escape attribute values (single-quote delimited)
+escapeAttr content =
+    content
+        |> String.replace "&" "&amp;"
+        |> String.replace "'" "&#39;"
+
+
+-- ============================================================
+-- Core
+-- ============================================================
+
+-- Convert Html to a String for sending in HTTP responses.
+-- Since Html is String internally, this is the identity function.
+render html =
+    html
+
+
+-- Escaped text content. Always use this for user-provided strings.
+text content =
+    escapeHtml content
+
+
+-- Raw HTML string, injected without escaping.
+-- Use for trusted content only (e.g., pre-rendered markdown).
+raw content =
+    content
+
+
+-- Build an element: <tag attrs>children</tag>
+node tag attrs children =
+    let
+        attrStr =
+            if List.isEmpty attrs then
+                ""
+            else
+                " " ++ String.join " " attrs
+        childStr =
+            String.join "" children
+    in
+    "<" ++ tag ++ attrStr ++ ">" ++ childStr ++ "</" ++ tag ++ ">"
+
+
+-- Build a void element: <tag attrs> (no closing tag)
+voidNode tag attrs =
+    let
+        attrStr =
+            if List.isEmpty attrs then
+                ""
+            else
+                " " ++ String.join " " attrs
+    in
+    "<" ++ tag ++ attrStr ++ ">"
+
+
+-- ============================================================
+-- Document structure
+-- ============================================================
+
+doctype _ =
+    "<!DOCTYPE html>"
+
+
+htmlNode attrs children =
+    node "html" attrs children
+
+
+headNode attrs children =
+    node "head" attrs children
+
+
+body attrs children =
+    node "body" attrs children
+
+
+-- ============================================================
+-- Sectioning
+-- ============================================================
+
+div attrs children =
+    node "div" attrs children
+
+
+section attrs children =
+    node "section" attrs children
+
+
+article attrs children =
+    node "article" attrs children
+
+
+aside attrs children =
+    node "aside" attrs children
+
+
+headerNode attrs children =
+    node "header" attrs children
+
+
+footerNode attrs children =
+    node "footer" attrs children
+
+
+nav attrs children =
+    node "nav" attrs children
+
+
+mainNode attrs children =
+    node "main" attrs children
+
+
+-- ============================================================
+-- Headings
+-- ============================================================
+
+h1 attrs children =
+    node "h1" attrs children
+
+
+h2 attrs children =
+    node "h2" attrs children
+
+
+h3 attrs children =
+    node "h3" attrs children
+
+
+h4 attrs children =
+    node "h4" attrs children
+
+
+h5 attrs children =
+    node "h5" attrs children
+
+
+h6 attrs children =
+    node "h6" attrs children
+
+
+-- ============================================================
+-- Text content
+-- ============================================================
+
+p attrs children =
+    node "p" attrs children
+
+
+span attrs children =
+    node "span" attrs children
+
+
+strong attrs children =
+    node "strong" attrs children
+
+
+em attrs children =
+    node "em" attrs children
+
+
+small attrs children =
+    node "small" attrs children
+
+
+pre attrs children =
+    node "pre" attrs children
+
+
+codeNode attrs children =
+    node "code" attrs children
+
+
+blockquote attrs children =
+    node "blockquote" attrs children
+
+
+a attrs children =
+    node "a" attrs children
+
+
+-- ============================================================
+-- Lists
+-- ============================================================
+
+ul attrs children =
+    node "ul" attrs children
+
+
+ol attrs children =
+    node "ol" attrs children
+
+
+li attrs children =
+    node "li" attrs children
+
+
+-- ============================================================
+-- Forms
+-- ============================================================
+
+form attrs children =
+    node "form" attrs children
+
+
+label attrs children =
+    node "label" attrs children
+
+
+button attrs children =
+    node "button" attrs children
+
+
+textarea attrs children =
+    node "textarea" attrs children
+
+
+select attrs children =
+    node "select" attrs children
+
+
+option attrs children =
+    node "option" attrs children
+
+
+fieldset attrs children =
+    node "fieldset" attrs children
+
+
+legend attrs children =
+    node "legend" attrs children
+
+
+-- ============================================================
+-- Tables
+-- ============================================================
+
+table attrs children =
+    node "table" attrs children
+
+
+thead attrs children =
+    node "thead" attrs children
+
+
+tbody attrs children =
+    node "tbody" attrs children
+
+
+tfoot attrs children =
+    node "tfoot" attrs children
+
+
+tr attrs children =
+    node "tr" attrs children
+
+
+th attrs children =
+    node "th" attrs children
+
+
+td attrs children =
+    node "td" attrs children
+
+
+-- ============================================================
+-- Void elements (self-closing, no children)
+-- ============================================================
+
+input attrs =
+    voidNode "input" attrs
+
+
+br attrs =
+    voidNode "br" attrs
+
+
+hr attrs =
+    voidNode "hr" attrs
+
+
+img attrs =
+    voidNode "img" attrs
+
+
+meta attrs =
+    voidNode "meta" attrs
+
+
+linkNode attrs =
+    voidNode "link" attrs
+
+
+-- ============================================================
+-- Special elements
+-- ============================================================
+
+-- <script> with raw JS content (not escaped)
+script attrs content =
+    node "script" attrs [ raw content ]
+
+
+-- <style> with raw CSS content (not escaped)
+styleNode attrs content =
+    node "style" attrs [ raw content ]
+
+
+-- <title> with escaped text
+titleNode content =
+    node "title" [] [ text content ]
