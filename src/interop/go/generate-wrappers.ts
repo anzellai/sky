@@ -1176,7 +1176,7 @@ func Sky_result_ToMaybe(result any) any {
             if (p.includes("/")) {
                 imports.add(p);
             } else if (p !== pkg.name) {
-                if (["io", "fmt", "time", "os", "context", "net", "http", "bufio", "log", "hash", "crypto", "syscall", "reflect", "strconv", "strings", "sort", "sync", "math", "errors"].includes(p)) {
+                if (["io", "fmt", "time", "os", "context", "net", "http", "bufio", "log", "hash", "crypto", "syscall", "reflect", "strconv", "strings", "sort", "sync", "math", "errors", "image", "unicode", "bytes"].includes(p)) {
                     imports.add(p);
                 }
             }
@@ -1186,14 +1186,26 @@ func Sky_result_ToMaybe(result any) any {
     // Always import the package we are wrapping
     imports.add(pkgName);
 
+    // Resolve a Go import path to the package identifier used in code.
+    // For the main package we have the actual name from the inspector.
+    // For other packages, Go uses the last path segment, except for
+    // major version suffixes (v2, v3, ...) which are skipped.
+    const resolveGoPackageId = (importPath: string): string => {
+        if (importPath === pkgName) return pkg.name;
+        const parts = importPath.split("/");
+        const last = parts[parts.length - 1];
+        if (/^v\d+$/.test(last) && parts.length >= 2) {
+            return parts[parts.length - 2];
+        }
+        return last;
+    };
+
     const cleanType = (t: string) => {
         extractImports(t);
-        const res = t.replace(/([a-zA-Z0-9_\/\.-]+)\.([a-zA-Z0-9_]+)/g, (match, p1, p2) => {
-            const parts = p1.split("/");
-            const pkgBase = parts[parts.length - 1];
+        const res = t.replace(/([a-zA-Z0-9_\/\.-]+)\.([a-zA-Z0-9_]+)/g, (_match, p1, p2) => {
             // If it's interface{}, it might be a sanitized unexported type
             if (p2 === "interface{}") return "any";
-            return pkgBase + "." + p2;
+            return resolveGoPackageId(p1) + "." + p2;
         });
         if (res.includes("interface{}")) return res.replace(/interface\{\}/g, "any");
         return res;
@@ -1201,8 +1213,74 @@ func Sky_result_ToMaybe(result any) any {
 
     const pkgBase = pkg.name;
     let goCode = "";
+    const emittedWrappers = new Set<string>();
 
-    const generateFuncWrapper = (skyName: string, goName: string, params: Param[], results: Param[], isMethod = false, isField = false, recvType = "", variadic = false) => {
+    // Strip Go parameter names from a type string, keeping only the type.
+    // e.g. "shortcut fyne.Shortcut" -> "fyne.Shortcut"
+    //      "*widget.Label" -> "*widget.Label"
+    //      "int" -> "int"
+    const stripParamName = (s: string): string => {
+        const t = s.trim();
+        // If it contains a space and the part after the last space looks like a type
+        // (starts with *, [, or uppercase letter, or is a known primitive), strip the prefix.
+        const spaceIdx = t.lastIndexOf(" ");
+        if (spaceIdx > 0) {
+            const afterSpace = t.substring(spaceIdx + 1);
+            // Type indicators: pointer, slice, map, interface, func, or package-qualified
+            if (/^[*\[\(]/.test(afterSpace) || afterSpace.includes(".") || /^(int|float|string|bool|byte|rune|error|any|uint|uintptr)/.test(afterSpace)) {
+                return afterSpace;
+            }
+        }
+        return t;
+    };
+
+    // Generate a Go adapter that bridges a Sky callback (func(any) any) to a
+    // concrete Go function signature. Returns the cast code string, or null if
+    // the type is not a function type or is too complex to bridge.
+    const generateFuncBridge = (goType: string, argIdx: number): string | null => {
+        // Match func(...) with optional return
+        const funcMatch = goType.match(/^func\((.*?)\)\s*(.*)$/);
+        if (!funcMatch) return null;
+
+        const paramStr = funcMatch[1].trim();
+        let retStr = funcMatch[2].trim();
+
+        // Skip multi-return functions like (int, int) — too complex to bridge
+        if (retStr.startsWith("(")) return null;
+
+        // Parse parameter types, stripping any Go parameter names
+        const paramTypes = paramStr
+            ? paramStr.split(",").map(s => stripParamName(s))
+            : [];
+
+        // Build the adapter function
+        const goParams = paramTypes.map((t, j) => `p${j} ${t}`).join(", ");
+
+        // Sky functions are curried: func(any) any
+        // For N params: f(p0).(func(any) any)(p1).(func(any) any)(p2)...
+        // For 0 params: f(nil)
+        let callChain: string;
+        if (paramTypes.length === 0) {
+            callChain = `_skyFn${argIdx}(nil)`;
+        } else {
+            callChain = `_skyFn${argIdx}(p0)`;
+            for (let j = 1; j < paramTypes.length; j++) {
+                callChain = `${callChain}.(func(any) any)(p${j})`;
+            }
+        }
+
+        // If the Go callback has a return type, cast the result
+        let body: string;
+        if (retStr) {
+            body = `return ${callChain}.(${retStr})`;
+        } else {
+            body = callChain;
+        }
+
+        return `\t_skyFn${argIdx} := arg${argIdx}.(func(any) any)\n\t_arg${argIdx} := func(${goParams})${retStr ? " " + retStr : ""} {\n\t\t${body}\n\t}`;
+    };
+
+    const generateFuncWrapper =(skyName: string, goName: string, params: Param[], results: Param[], isMethod = false, isField = false, recvType = "", variadic = false) => {
         const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
         let wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
         
@@ -1227,12 +1305,11 @@ func Sky_result_ToMaybe(result any) any {
             if (variadic && i === params.length - 1) {
                 return `\tvar _arg${i} []${t.substring(2)}\n\tfor _, v := range arg${i}.([]any) {\n\t\t_arg${i} = append(_arg${i}, v.(${t.substring(2)}))\n\t}`;
             }
-            if (t === "func(http.ResponseWriter, *http.Request)") {
-                return `\t_arg${i} := func(w http.ResponseWriter, r *http.Request) {\n\t\t_f0 := arg${i}.(func(any) any)\n\t\t_f1 := _f0(w).(func(any) any)\n\t\t_f1(r)\n\t}`;
-            }
-            if (t === "func(net/http.ResponseWriter, *net/http.Request)") {
-                return `\t_arg${i} := func(w http.ResponseWriter, r *http.Request) {\n\t\t_f0 := arg${i}.(func(any) any)\n\t\t_f1 := _f0(w).(func(any) any)\n\t\t_f1(r)\n\t}`;
-            }
+            // Bridge Sky callbacks (func(any) any) to Go callback signatures.
+            // Sky lambdas always compile to func(any) any (curried).
+            // We generate adapter functions that unwrap the curried calls.
+            const funcBridge = generateFuncBridge(t, i);
+            if (funcBridge) return funcBridge;
             return `\t_arg${i} := arg${i}.(${t})`;
         }).join("\n");
         
@@ -1266,6 +1343,10 @@ func Sky_result_ToMaybe(result any) any {
             // Void Go functions still need to return any for Sky (all expressions are values)
             goReturns = ` any `;
         }
+
+        // Skip duplicate wrapper names (e.g. const and method field with same name)
+        if (emittedWrappers.has(wrapperName)) return;
+        emittedWrappers.add(wrapperName);
 
         goCode += `func ${wrapperName}(${goParams})${goReturns}{\n`;
         if (casts.trim()) {
@@ -1322,6 +1403,9 @@ func Sky_result_ToMaybe(result any) any {
         const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
         const rawType = cleanType(v.type);
         const isSlice = rawType.startsWith("[]") && rawType !== "[]any";
+
+        if (emittedWrappers.has(wrapperName)) continue;
+        emittedWrappers.add(wrapperName);
 
         if (isSlice) {
             goCode += `func ${wrapperName}() any {\n`;
@@ -1540,10 +1624,10 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         }
         cleanedGoCode += block;
     }
-    // Remove any imports whose package base name isn't actually used in the generated code
+    // Remove any imports whose package identifier isn't actually used in the generated code
     for (const imp of imports) {
         if (imp === pkgName) continue; // Always keep the main package import
-        const base = imp.split("/").pop()!;
+        const base = resolveGoPackageId(imp);
         if (!cleanedGoCode.includes(base + ".")) {
             imports.delete(imp);
         }

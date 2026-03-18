@@ -1,0 +1,45 @@
+module Main exposing (main)
+
+-- 11-fyne-stopwatch: A desktop stopwatch app using fyne.io/fyne.
+--
+-- Fyne is imported via Sky's auto-generated Go bindings.
+-- The stopwatch widget group is built in Go because:
+--   1. Timer logic needs goroutines/mutexes
+--   2. The start button's callback references itself (circular)
+-- Everything else (app, window, layout) uses auto-generated bindings.
+--
+-- Requirements: Go, C compiler (Xcode CLI tools on macOS, gcc on Linux)
+--
+-- Usage:
+--   sky install && sky build
+--   ./dist/app
+
+import Sky.Core.Prelude exposing (..)
+import Fyne.Io.Fyne.V2 as Fyne
+import Fyne.Io.Fyne.V2.App as FyneApp
+import Fyne.Io.Fyne.V2.Container as FContainer
+
+foreign import "sky_wrappers" exposing
+    ( StopwatchDisplay, StopwatchToggleBtn, StopwatchResetBtn
+    , SkyNewSize
+    )
+
+
+main =
+    let
+        myApp = FyneApp.new ()
+        window = Fyne.appNewWindow myApp "Sky Stopwatch"
+
+        -- Stopwatch widget group (built in Go for self-referencing callbacks)
+        display = StopwatchDisplay ()
+        toggleBtn = StopwatchToggleBtn ()
+        resetBtn = StopwatchResetBtn ()
+
+        -- Layout uses auto-generated fyne bindings
+        buttons = FContainer.newHBox [toggleBtn, resetBtn]
+        content = FContainer.newVBox [display, buttons]
+
+        _ = Fyne.windowSetContent window content
+        _ = Fyne.windowResize window (SkyNewSize 300 150)
+    in
+    Fyne.windowShowAndRun window

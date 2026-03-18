@@ -8,6 +8,8 @@ import * as AST from "../ast/ast.js";
 import { getDirname, getFilename } from "../utils/path.js";
 import { isVirtualAsset, readVirtualAsset } from "../utils/assets.js";
 import { readManifest, SkyManifest } from "../pkg/manifest.js";
+import { generateForeignBindings } from "../interop/go/generate-bindings.js";
+import { execSync } from "child_process";
 
 const __filename = getFilename(import.meta.url);
 const __dirname = getDirname(import.meta.url);
@@ -124,9 +126,9 @@ export async function buildModuleGraph(
         // Try Go package resolution via .skycache
         // PascalCase parts like ["Github", "Com", "Google", "Uuid"]
         // need to be mapped back to potentially "github.com/google/uuid"
-        
+
         const projectRoot = path.dirname(srcRoot);
-        
+
         const possiblePackages = [
             importParts.join("/").toLowerCase(),
             // Common pattern: First two parts are often domain.tld (github.com)
@@ -138,6 +140,40 @@ export async function buildModuleGraph(
             if (fs.existsSync(goCachePath)) {
                 importFile = goCachePath;
                 break;
+            }
+
+            // Lazy subpackage resolution: if bindings don't exist but a parent
+            // module is installed (has a go.mod entry), auto-generate bindings.
+            // e.g. "fyne.io/fyne/v2/widget" when "fyne.io/fyne/v2" was added.
+            const goModPath = path.join(projectRoot, ".skycache", "gomod", "go.mod");
+            if (fs.existsSync(goModPath)) {
+                const goMod = fs.readFileSync(goModPath, "utf8");
+                // Check if any parent path is a known module
+                const parts = goPackage.split("/");
+                let parentFound = false;
+                for (let len = parts.length - 1; len >= 2; len--) {
+                    const parentPkg = parts.slice(0, len).join("/");
+                    if (goMod.includes(parentPkg)) {
+                        parentFound = true;
+                        break;
+                    }
+                }
+                if (parentFound) {
+                    try {
+                        // Resolve transitive deps for this subpackage before inspection
+                        const goModDir = path.join(projectRoot, ".skycache", "gomod");
+                        execSync(`go get ${goPackage}`, { cwd: goModDir, stdio: "ignore" });
+
+                        const result = await generateForeignBindings(goPackage, []);
+                        if (result.skyiContent) {
+                            const cacheDir = path.join(projectRoot, ".skycache", "go", goPackage);
+                            fs.mkdirSync(cacheDir, { recursive: true });
+                            fs.writeFileSync(path.join(cacheDir, "bindings.skyi"), result.skyiContent);
+                            importFile = path.join(cacheDir, "bindings.skyi");
+                        }
+                    } catch {}
+                }
+                if (importFile) break;
             }
         }
       }
