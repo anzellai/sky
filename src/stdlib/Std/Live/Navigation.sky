@@ -1,0 +1,30 @@
+module Std.Live.Navigation exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (node, text)
+import Std.Html.Attributes exposing (href, attribute)
+
+
+-- ============================================================
+-- Std.Live.Navigation — Client-side navigation for Sky.Live
+--
+-- Usage:
+--     import Std.Live.Navigation exposing (link)
+--
+--     link "/" [ text "Home" ]
+--     link "/todos" [ text "Todos" ]
+--
+-- Links render <a> tags with a sky-nav attribute. The JS client
+-- intercepts clicks and performs client-side navigation via
+-- pushState. The href ensures crawlers/no-JS/right-click work.
+-- ============================================================
+
+
+-- Create a navigation link.
+-- Renders an <a> with sky-nav for client-side navigation.
+--     link "/todos" [ class "nav-link" ] [ text "Todos" ]
+-- Produces: <a href="/todos" sky-nav>Todos</a>
+
+link : String -> List String -> List String -> String
+link url attrs children =
+    node "a" ([ href url, attribute "sky-nav" "" ] ++ attrs) children

@@ -22,6 +22,11 @@ import { Scheme, Type } from "./types/types.js";
 import { analyzeUsage } from "./lower/passes/usage-analysis.js";
 import { eliminateDeadBindings } from "./lower/passes/dead-bindings.js";
 import { execSync } from "child_process";
+import { detectLiveApp } from "./live/detect.js";
+import { generateLiveMain, extractRoutes, findPageType, extractNotFound } from "./live/emit-live-runtime.js";
+import { writeRuntimeFiles } from "./live/runtime-files.js";
+import { detectComponents } from "./live/detect-components.js";
+import { buildComponentInfos, ComponentModuleInfo } from "./live/emit-component-wiring.js";
 
 export async function typeCheckProject(entryFile: string, virtualFile?: { path: string; content: string }) {
   const graph = await buildModuleGraph(entryFile, virtualFile);
@@ -317,6 +322,70 @@ export async function compileProject(entryFile: string, outDir: string) {
     fs.writeFileSync(outPath, goCode);
   }
 
+  // Sky.Live: Detect if this is a Live app and generate server code
+  let isLiveApp = false;
+  const mainModuleLoaded = graph.modules.find(m => m.moduleAst.name.length === 1 && m.moduleAst.name[0] === "Main");
+  if (mainModuleLoaded) {
+    const liveDetection = detectLiveApp(mainModuleLoaded.moduleAst);
+    if (liveDetection.isLive) {
+      isLiveApp = true;
+      console.log("Detected Sky.Live application");
+
+      // Extract route definitions from the main module
+      const routes = extractRoutes(mainModuleLoaded.moduleAst);
+      const pageTypeDecl = findPageType(mainModuleLoaded.moduleAst);
+
+      // Read port from sky.toml if available
+      const { readManifest } = await import("./pkg/manifest.js");
+      const manifest = readManifest();
+      const port = (manifest as any)?.live?.port || 4000;
+
+      // Read session store config from sky.toml
+      const storeType = (manifest as any)?.live?.session?.store || "memory";
+      const storePath = (manifest as any)?.live?.session?.path || "";
+
+      // Extract notFound page constructor
+      const notFoundPage = extractNotFound(mainModuleLoaded.moduleAst) || "";
+
+      // Detect component bindings
+      const componentBindings = detectComponents(mainModuleLoaded.moduleAst, moduleExports);
+      let componentInfos: ComponentModuleInfo[] = [];
+      if (componentBindings.length > 0) {
+        componentInfos = buildComponentInfos(componentBindings, graph.modules, outDir);
+        for (const info of componentInfos) {
+          console.log(`  Component: ${info.binding.fieldName} : ${info.binding.typeName} → ${info.binding.msgWrapperName} (auto-wired)`);
+        }
+      }
+
+      // Generate the Live main.go (replaces normal main.go)
+      const liveMainCode = generateLiveMain(
+        mainModuleLoaded.moduleAst,
+        liveDetection.msgType,
+        pageTypeDecl,
+        routes,
+        port,
+        storeType,
+        storePath,
+        notFoundPage,
+        componentInfos
+      );
+
+      // Read the existing main.go to preserve the compiled functions
+      const existingMainPath = path.join(outDir, "main.go");
+      let existingMain = "";
+      if (fs.existsSync(existingMainPath)) {
+        existingMain = fs.readFileSync(existingMainPath, "utf8");
+      }
+
+      // Merge: keep existing functions, replace main() and add Live imports/functions
+      const mergedMain = mergeLiveMain(existingMain, liveMainCode);
+      fs.writeFileSync(existingMainPath, mergedMain);
+
+      // Write the skylive_rt Go runtime package into dist/
+      writeRuntimeFiles(outDir);
+    }
+  }
+
   // Go FFI: Generate wrappers for all unique Go packages used
   if (allForeignPackages.size > 0) {
       const { inspectPackage } = await import("./interop/go/inspect-package.js");
@@ -350,7 +419,142 @@ export async function compileProject(entryFile: string, outDir: string) {
       }
   }
 
-  return { diagnostics: [] };
+  return { diagnostics: [], isLiveApp };
+}
+
+/**
+ * Merge the existing compiled main.go with the Live-generated main.go.
+ * Keeps existing function declarations (Init, Update, View, etc.)
+ * but replaces the main() function and adds Live imports.
+ */
+function mergeLiveMain(existingMain: string, liveMain: string): string {
+  if (!existingMain) return liveMain;
+
+  // Extract the existing functions (everything except package, imports, and main func)
+  const lines = existingMain.split("\n");
+  const existingFuncs: string[] = [];
+  let inMain = false;
+  let braceDepth = 0;
+  let skipImports = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Skip package declaration
+    if (trimmed.startsWith("package ")) continue;
+
+    // Skip import block
+    if (trimmed === "import (") {
+      skipImports = true;
+      continue;
+    }
+    if (skipImports) {
+      if (trimmed === ")") {
+        skipImports = false;
+      }
+      continue;
+    }
+    if (trimmed.startsWith("import ")) continue;
+
+    // Skip the existing main() function
+    if (trimmed.startsWith("func main()") || trimmed === "func main() {") {
+      inMain = true;
+      braceDepth = 0;
+    }
+    if (inMain) {
+      for (const ch of line) {
+        if (ch === "{") braceDepth++;
+        if (ch === "}") braceDepth--;
+      }
+      if (braceDepth <= 0 && line.includes("}")) {
+        inMain = false;
+      }
+      continue;
+    }
+
+    existingFuncs.push(line);
+  }
+
+  // Extract Live imports and main function from the generated code
+  const liveLines = liveMain.split("\n");
+  const liveImports: string[] = [];
+  const liveFuncs: string[] = [];
+  let inLiveImport = false;
+
+  for (const line of liveLines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("package ")) continue;
+    if (trimmed === "import (") {
+      inLiveImport = true;
+      continue;
+    }
+    if (inLiveImport) {
+      if (trimmed === ")") {
+        inLiveImport = false;
+        continue;
+      }
+      liveImports.push(trimmed);
+      continue;
+    }
+    liveFuncs.push(line);
+  }
+
+  // Collect all unique imports from both files
+  const existingImportSet = new Set<string>();
+  const importBlock = existingMain.match(/import \(([\s\S]*?)\)/);
+  if (importBlock) {
+    for (const line of importBlock[1].split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed) existingImportSet.add(trimmed);
+    }
+  }
+  for (const imp of liveImports) {
+    existingImportSet.add(imp);
+  }
+
+  // Build the function body to check which imports are actually used
+  const funcBody = existingFuncs.join("\n") + "\n" + liveFuncs.join("\n");
+
+  // Filter out unused imports
+  const usedImports = new Set<string>();
+  for (const imp of existingImportSet) {
+    // Extract the local alias or package name
+    const aliasMatch = imp.match(/^(\w+)\s+".*"/);
+    const plainMatch = imp.match(/".*\/(\w+)"/);
+    const alias = aliasMatch ? aliasMatch[1] : (plainMatch ? plainMatch[1] : null);
+
+    if (alias && funcBody.includes(alias + ".")) {
+      usedImports.add(imp);
+    } else if (alias && funcBody.includes(alias + "{")) {
+      usedImports.add(imp);
+    } else if (!alias) {
+      // Keep imports we can't analyze
+      usedImports.add(imp);
+    }
+    // Also keep standard library imports that might be used without prefix
+    if (imp.includes('"encoding/json"') || imp.includes('"fmt"') ||
+        imp.includes('"time"') || imp.includes('"log"') ||
+        imp.includes('"net/http"') || imp.includes('"strings"')) {
+      if (funcBody.includes("json.") || funcBody.includes("fmt.") ||
+          funcBody.includes("time.") || funcBody.includes("log.") ||
+          funcBody.includes("http.") || funcBody.includes("strings.")) {
+        usedImports.add(imp);
+      }
+    }
+  }
+
+  // Build merged output
+  let merged = "package main\n\nimport (\n";
+  for (const imp of usedImports) {
+    merged += `\t${imp}\n`;
+  }
+  merged += ")\n\n";
+  merged += existingFuncs.join("\n");
+  merged += "\n\n";
+  merged += liveFuncs.join("\n");
+
+  return merged;
 }
 
 function computeOutputFile(moduleName: readonly string[], outDir: string): string {

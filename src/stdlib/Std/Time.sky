@@ -1,0 +1,27 @@
+module Std.Time exposing (..)
+
+import Std.Sub exposing (Sub)
+
+
+-- ============================================================
+-- Std.Time — Time-based subscriptions for Sky.Live
+--
+-- Usage:
+--     import Std.Time exposing (every)
+--
+--     subscriptions model =
+--         every 1000 Tick
+--
+-- The compiler detects `every` calls in subscriptions and
+-- generates timer-based server push via SSE.
+-- ============================================================
+
+
+-- Create a timer subscription that fires the given Msg
+-- every N milliseconds.
+--     every 1000 Tick
+--     every 5000 RefreshData
+
+every : Int -> msg -> Sub msg
+every interval msg =
+    Sub Foreign

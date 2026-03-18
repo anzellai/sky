@@ -1,0 +1,111 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick)
+import Std.Cmd as Cmd
+import Counter exposing (Counter)
+
+-- ══════════════════════════════════════════════════════
+-- MODEL — unified with component state
+-- ══════════════════════════════════════════════════════
+type Page
+    = MainPage
+
+-- ══════════════════════════════════════════════════════
+-- MSG — CounterMsg wraps Counter.Msg (auto-wired!)
+-- ══════════════════════════════════════════════════════
+type alias Model =
+    { page : Page , title : String , myCounter : Counter }
+
+type Msg
+    = Navigate Page
+    | UpdateTitle String
+    | CounterMsg Counter.Msg
+
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+init : a -> Tuple Model Cmd Msg
+init _req =
+    ( { page = MainPage
+    , title = "My App"
+    , myCounter = Counter.initWith "Clicks"
+    }
+    , Cmd.none
+    )
+
+-- ══════════════════════════════════════════════════════
+-- UPDATE — no CounterMsg case needed! Auto-wired by compiler.
+-- ══════════════════════════════════════════════════════
+update : Msg -> Model -> Tuple Model Cmd Msg
+update msg model =
+    case msg of
+        Navigate page ->
+            ( { model | page = page } , Cmd.none )
+        
+        UpdateTitle t ->
+            ( { model | title = t } , Cmd.none )
+        
+        _ ->
+            ( model , Cmd.none )
+
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
+view : Model -> String
+view model =
+    div []
+        [ styleNode [] pageStyles
+        , div [ class "app" ]
+            [ h1 [] [ text model.title ]
+            , p []
+                [ text
+                    "The counter below is a separate component. Its messages are auto-wired by the compiler."
+                ]
+            , Counter.view (\msgName -> "CounterMsg " ++ msgName)
+                model.myCounter
+            , p [ class "total" ]
+                [ text
+                    (
+                    "Total: " ++
+                    String.fromInt (Counter.getCount model.myCounter)
+                    )
+                ]
+            ]
+        ]
+
+pageStyles : String
+pageStyles =
+    "* { box-sizing: border-box; margin: 0; padding: 0; } " ++
+    "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; } " ++
+    ".app { max-width: 500px; margin: 2rem auto; padding: 2rem; } " ++
+    ".app h1 { margin-bottom: 0.5rem; } " ++
+    ".app p { margin-bottom: 1.5rem; color: #666; } " ++
+    ".counter-component { background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin: 1rem 0; } " ++
+    ".counter-component h3 { margin-bottom: 1rem; color: #333; } " ++
+    ".counter-display { text-align: center; margin: 1rem 0; } " ++
+    ".count { font-size: 3rem; font-weight: bold; color: #2563eb; } " ++
+    ".counter-buttons { display: flex; gap: 0.5rem; justify-content: center; } " ++
+    ".btn { padding: 0.5rem 1.5rem; border: none; background: #2563eb; color: white; border-radius: 6px; font-size: 1rem; cursor: pointer; } " ++
+    ".btn:hover { background: #1d4ed8; } " ++
+    ".btn:active { transform: scale(0.95); } " ++
+    ".btn-sm { background: #6b7280; font-size: 0.85rem; } " ++
+    ".btn-sm:hover { background: #4b5563; } " ++
+    ".total { font-weight: bold; color: #333; margin-top: 1rem; }"
+
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> ()
+        , routes = [ route "/" MainPage ]
+        , notFound = MainPage
+        }

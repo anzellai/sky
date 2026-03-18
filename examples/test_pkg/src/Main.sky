@@ -4,10 +4,8 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 main =
-    let list
-        = [ 1
-        , 2
-        , 3
-        ]
+    let
+        list =
+            [ 1 , 2 , 3 ]
     in
         println "List" list

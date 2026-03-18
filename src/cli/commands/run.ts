@@ -11,7 +11,16 @@ export async function handleRun(file?: string) {
   const ext = process.platform === "win32" ? ".exe" : "";
   const binary = binPath + ext;
 
-  console.log("Running application...");
+  // Detect Live app by checking for [live] section in manifest
+  const isLive = !!(manifest as any)?.live;
+  if (isLive) {
+    const port = (manifest as any).live?.port || 4000;
+    console.log(`Starting Sky.Live server on http://localhost:${port}`);
+    console.log("Press Ctrl+C to stop\n");
+  } else {
+    console.log("Running application...");
+  }
+
   try {
     execSync(`./${binary}`, { stdio: "inherit" });
   } catch (e: any) {

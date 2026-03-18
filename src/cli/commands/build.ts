@@ -59,7 +59,12 @@ export async function handleBuild(entryFile?: string) {
     process.exit(1);
   }
 
-  console.log(`Successfully compiled Sky to Go in ${outDir}/`);
+  const isLiveApp = (result as any).isLiveApp || false;
+  if (isLiveApp) {
+    console.log(`Successfully compiled Sky.Live app to Go in ${outDir}/`);
+  } else {
+    console.log(`Successfully compiled Sky to Go in ${outDir}/`);
+  }
 
   console.log("Running go build...");
   try {

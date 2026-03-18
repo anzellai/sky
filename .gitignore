@@ -5,3 +5,6 @@ node_modules/
 .skycache/
 .env
 .claude/
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,10 @@
+name = "live-counter"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[live]
+port = 4001
+
+[live.session]
+store = "sqlite"
+path = "./data/sessions.db"

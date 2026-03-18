@@ -1,0 +1,42 @@
+module Std.Live exposing (..)
+
+import Std.Cmd exposing (Cmd)
+import Std.Sub exposing (Sub)
+
+
+-- ============================================================
+-- Std.Live — Sky.Live HTTP-first server-driven UI
+--
+-- The functions in this module are markers for the compiler.
+-- When the compiler detects `app` in the main declaration,
+-- it generates a Go HTTP server with session management,
+-- event handling, and DOM diffing.
+--
+-- Usage:
+--     import Std.Live exposing (app, route)
+--
+--     main =
+--         app
+--             { init = init
+--             , update = update
+--             , view = view
+--             , subscriptions = \_ -> Sub.none
+--             , routes = [ route "/" HomePage ]
+--             , notFound = NotFoundPage
+--             }
+-- ============================================================
+
+
+-- Create a route mapping from a URL pattern to a Page value.
+-- The pattern supports :param placeholders (e.g., "/users/:id").
+
+route : String -> page -> ( String, page )
+route pattern page =
+    ( pattern, page )
+
+
+-- Create a Sky.Live application.
+-- The compiler detects this call and generates the HTTP server.
+
+app config =
+    config
