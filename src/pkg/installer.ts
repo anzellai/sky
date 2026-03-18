@@ -28,6 +28,21 @@ function ensureGoModDir(): string {
   return goModDir;
 }
 
+/**
+ * Detect whether a remote package is a Sky package (has sky.toml) or a Go package.
+ * Tries GitHub raw content first, falls back to assuming Go.
+ */
+export async function detectPackageType(pkgName: string): Promise<"sky" | "go"> {
+  // Try GitHub raw URL for sky.toml
+  const rawUrl = `https://raw.githubusercontent.com/${pkgName}/HEAD/sky.toml`;
+  try {
+    const resp = await fetch(rawUrl);
+    if (resp.ok) return "sky";
+  } catch {}
+
+  return "go";
+}
+
 export function installSkyPackage(pkgName: string, version: string): string {
   const depPath = path.join(".skydeps", pkgName);
 
@@ -60,6 +75,46 @@ export function installSkyPackage(pkgName: string, version: string): string {
   }
 
   return version === "latest" ? "1.0.0" : version;
+}
+
+/**
+ * After installing a Sky package, recursively install its transitive dependencies:
+ * - Its [go.dependencies] get installed via go get
+ * - Its [dependencies] (other Sky packages) get cloned, then their deps installed too
+ */
+export async function installTransitiveDependencies(pkgName: string, visited = new Set<string>()): Promise<void> {
+  if (visited.has(pkgName)) return;
+  visited.add(pkgName);
+
+  const depManifestPath = path.join(".skydeps", pkgName, "sky.toml");
+  const depManifest = readManifest(depManifestPath);
+  if (!depManifest) return;
+
+  // Install Go dependencies from the Sky dependency
+  if (depManifest.go?.dependencies) {
+    for (const [goPkg, version] of Object.entries(depManifest.go.dependencies)) {
+      const isStdlib = !goPkg.includes(".");
+      if (!isStdlib) {
+        try {
+          installGoPackage(goPkg, version);
+        } catch (e) {
+          console.warn(`Warning: Failed to install transitive Go dep ${goPkg} from ${pkgName}`);
+        }
+      }
+    }
+  }
+
+  // Recursively install Sky dependencies of this dependency
+  if (depManifest.dependencies) {
+    for (const [skyPkg, version] of Object.entries(depManifest.dependencies)) {
+      try {
+        installSkyPackage(skyPkg, version);
+        await installTransitiveDependencies(skyPkg, visited);
+      } catch (e) {
+        console.warn(`Warning: Failed to install transitive Sky dep ${skyPkg} from ${pkgName}`);
+      }
+    }
+  }
 }
 
 export function installGoPackage(pkgName: string, version: string): string {

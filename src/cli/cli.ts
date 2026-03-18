@@ -6,6 +6,7 @@ import { handleInstall } from "./commands/install.js";
 import { handleUpdate } from "./commands/update.js";
 import { handleBuild } from "./commands/build.js";
 import { handleRun } from "./commands/run.js";
+import { handleDev } from "./commands/dev.js";
 import { handleFmt } from "./commands/fmt.js";
 import { startServer } from "../lsp/server.js";
 
@@ -18,7 +19,7 @@ async function main() {
       initProject();
       return;
     case "add":
-      handleAdd(args[1]);
+      await handleAdd(args[1]);
       return;
     case "remove":
       handleRemove(args[1]);
@@ -34,6 +35,9 @@ async function main() {
       return;
     case "run":
       await handleRun(args[1]);
+      return;
+    case "dev":
+      await handleDev(args[1]);
       return;
     case "check":
       console.log("Check not fully implemented yet.");
@@ -63,6 +67,7 @@ Commands:
   sky update
   sky build [file.sky]      (uses entry from sky.toml if omitted)
   sky run [file.sky]        (uses entry from sky.toml if omitted)
+  sky dev [file.sky]        (watch mode: auto-rebuild + restart on changes)
   sky check <file.sky>
   sky fmt <file-or-dir>
   sky lsp

@@ -7,6 +7,7 @@ import { filterLayout } from "../parser/filter-layout.js";
 import * as AST from "../ast/ast.js";
 import { getDirname, getFilename } from "../utils/path.js";
 import { isVirtualAsset, readVirtualAsset } from "../utils/assets.js";
+import { readManifest, SkyManifest } from "../pkg/manifest.js";
 
 const __filename = getFilename(import.meta.url);
 const __dirname = getDirname(import.meta.url);
@@ -180,19 +181,33 @@ function resolveModuleToFile(
   const filePath = path.join(srcRoot, ...moduleName) + ".sky";
   if (fs.existsSync(filePath)) return filePath;
 
-  // 2. .skydeps
+  // 2. .skydeps — scan installed Sky packages, respect source.root and [lib].exposing
   const skydepsPath = path.join(projectRoot, ".skydeps");
   if (fs.existsSync(skydepsPath)) {
-    // Scan all installed packages for the module
     const orgs = fs.readdirSync(skydepsPath);
     for (const org of orgs) {
       if (org.startsWith(".")) continue;
       const orgPath = path.join(skydepsPath, org);
+      if (!fs.statSync(orgPath).isDirectory()) continue;
       const repos = fs.readdirSync(orgPath);
       for (const repo of repos) {
-        const pkgSrc = path.join(orgPath, repo, "src");
+        const pkgDir = path.join(orgPath, repo);
+        const depManifest = readDepManifest(pkgDir);
+        const depSrcRoot = depManifest?.source?.root || "src";
+        const pkgSrc = path.join(pkgDir, depSrcRoot);
         const depFilePath = path.join(pkgSrc, ...moduleName) + ".sky";
         if (fs.existsSync(depFilePath)) {
+          // Enforce [lib].exposing — if the package declares exposed modules,
+          // only those are importable. No [lib] = all modules are internal.
+          if (depManifest?.lib?.exposing) {
+            const moduleNameStr = moduleName.join(".");
+            if (!depManifest.lib.exposing.includes(moduleNameStr)) {
+              return undefined; // Module exists but is not publicly exposed
+            }
+          } else {
+            // No [lib] section — package doesn't expose any modules
+            return undefined;
+          }
           return depFilePath;
         }
       }
@@ -242,4 +257,15 @@ function formatDiagnostic(message: string, line?: number, column?: number, file?
   if (column) res += `${column}: `;
   res += message;
   return res;
+}
+
+// Cache dep manifests to avoid re-reading sky.toml for every import resolution
+const depManifestCache = new Map<string, SkyManifest | null>();
+
+function readDepManifest(pkgDir: string): SkyManifest | null {
+  if (depManifestCache.has(pkgDir)) return depManifestCache.get(pkgDir)!;
+  const manifestPath = path.join(pkgDir, "sky.toml");
+  const result = fs.existsSync(manifestPath) ? readManifest(manifestPath) : null;
+  depManifestCache.set(pkgDir, result);
+  return result;
 }
