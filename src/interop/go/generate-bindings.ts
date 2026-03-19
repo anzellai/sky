@@ -16,7 +16,11 @@ export async function generateForeignBindings(packageName: string, requestedName
   try {
     const pkg = inspectPackage(packageName);
 
-    const moduleName = packageName.split(/[\/\.]/).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
+    // Convert Go package path to Sky module name.
+    // Handles dashes: "kanda-co" -> "KandaCo", "ks-schema" -> "KsSchema"
+    const moduleName = packageName.split(/[\/\.]/).map(p =>
+      p.split("-").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("")
+    ).join(".");
     
     // We will emit the skyi Content here as well.
     let skyiContent = `module ${moduleName} exposing (..)\n\n`;
