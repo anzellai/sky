@@ -41,7 +41,7 @@ export async function generateForeignBindings(packageName: string, requestedName
         values.push({ skyName, jsName: c.name, sourceModule: packageName, skyType: "Foreign" });
     }
 
-    const safePkg = packageName.replace(/\//g, "_").replace(/\./g, "_");
+    const safePkg = packageName.replace(/[\/\.-]/g, "_");
 
     // 3. Variables — expose as zero-arg functions via wrappers for Sky-compatible types
     for (const v of pkg.vars || []) {
