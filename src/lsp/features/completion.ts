@@ -253,13 +253,15 @@ function scanSkycacheModules(baseDir: string, currentDir: string, modules: Set<s
  */
 function goPathToSkyModule(goPath: string): string | null {
     const parts = goPath.split(path.sep);
+    // PascalCase each segment, converting dashes to camelCase boundaries.
+    // e.g. "kanda-co" → "KandaCo", "ks-schema" → "KsSchema"
+    const pascalCase = (s: string) =>
+        s.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
     const skyParts = parts.map(part => {
-        // PascalCase each segment
         if (part.includes(".")) {
-            // Domain-like: "github.com" → ["Github", "Com"]
-            return part.split(".").map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
+            return part.split(".").map(pascalCase).join(".");
         }
-        return part.charAt(0).toUpperCase() + part.slice(1);
+        return pascalCase(part);
     });
     return skyParts.join(".");
 }
