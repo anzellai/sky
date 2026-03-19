@@ -1,3 +1,5 @@
-module Std.Log exposing (println)
+module Std.Log exposing (println, printf)
 
 foreign import "fmt" exposing (println)
+
+foreign import "fmt" exposing (printf)

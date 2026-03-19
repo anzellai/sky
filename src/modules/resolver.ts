@@ -14,6 +14,10 @@ import { execSync } from "child_process";
 const __filename = getFilename(import.meta.url);
 const __dirname = getDirname(import.meta.url);
 
+// Cache parsed ASTs for non-virtual files (especially large .skyi bindings)
+// Key: absolute path, Value: { mtime, ast }
+const _parseCache = new Map<string, { mtime: number; ast: AST.Module }>();
+
 export interface LoadedModule {
   filePath: string;
   moduleAst: AST.Module;
@@ -82,11 +86,38 @@ export async function buildModuleGraph(
 
     visiting.add(abs);
 
+    const isVirtual = abs.startsWith("virtual:");
+    const isEdited = virtualFile && path.resolve(virtualFile.path) === abs;
+
+    // Check parse cache for non-virtual, non-edited files (e.g. .skyi bindings)
+    if (!isVirtual && !isEdited) {
+      try {
+        const stat = fs.statSync(abs);
+        const cached = _parseCache.get(abs);
+        if (cached && cached.mtime === stat.mtimeMs) {
+          const mod: LoadedModule = { filePath: abs, moduleAst: cached.ast };
+          loaded.set(abs, mod);
+          // Still need to recurse into imports
+          const imports = cached.ast.imports.map((imp: any) => imp.moduleName);
+          for (const imp of imports) {
+            const resolved = resolveModuleToFile(srcRoot, imp);
+            if (resolved) {
+              const depAbs = resolved.startsWith("virtual:") ? resolved : path.resolve(resolved);
+              await loadModule(depAbs, loaded, visiting, ordered, diagnostics, srcRoot, virtualFile);
+            }
+          }
+          ordered.push(mod);
+          visiting.delete(abs);
+          return;
+        }
+      } catch {}
+    }
+
     let source: string;
     try {
-      if (virtualFile && path.resolve(virtualFile.path) === abs) {
-        source = virtualFile.content;
-      } else if (abs.startsWith("virtual:")) {
+      if (isEdited) {
+        source = virtualFile!.content;
+      } else if (isVirtual) {
         const virtualPath = abs.substring("virtual:".length);
         source = readVirtualAsset(virtualPath) || "";
       } else {
@@ -115,6 +146,14 @@ export async function buildModuleGraph(
       diagnostics.push(`Parse error in ${abs}: ${error.message}`);
       visiting.delete(abs);
       return;
+    }
+
+    // Cache the parsed AST for non-virtual files
+    if (!isVirtual && !isEdited) {
+      try {
+        const stat = fs.statSync(abs);
+        _parseCache.set(abs, { mtime: stat.mtimeMs, ast: moduleAst });
+      } catch {}
     }
 
     const imports = moduleAst.imports.map((imp: any) => imp.moduleName);

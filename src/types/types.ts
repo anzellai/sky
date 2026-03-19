@@ -45,6 +45,7 @@ export interface TypeTuple {
 export interface TypeRecord {
   readonly kind: "TypeRecord";
   readonly fields: Readonly<Record<string, Type>>;
+  readonly rest?: TypeVariable;  // Row polymorphism: open record with extra fields
 }
 
 export interface Scheme {
@@ -122,10 +123,11 @@ export function tupleType(items: readonly Type[]): TypeTuple {
   };
 }
 
-export function recordType(fields: Readonly<Record<string, Type>>): TypeRecord {
+export function recordType(fields: Readonly<Record<string, Type>>, rest?: TypeVariable): TypeRecord {
   return {
     kind: "TypeRecord",
     fields: { ...fields },
+    ...(rest ? { rest } : {}),
   };
 }
 
@@ -208,6 +210,9 @@ function collectFreeTypeVariables(type: Type, out: Set<number>): void {
       for (const value of Object.values(type.fields)) {
         collectFreeTypeVariables(value, out);
       }
+      if (type.rest) {
+        out.add(type.rest.id);
+      }
       return;
   }
 }
@@ -242,7 +247,25 @@ export function applySubstitution(type: Type, sub: Substitution): Type {
       for (const [key, value] of Object.entries(type.fields)) {
         next[key] = applySubstitution(value, sub);
       }
-      return recordType(next);
+      let newRest = type.rest;
+      if (type.rest) {
+        const replacement = sub.mappings.get(type.rest.id);
+        if (replacement) {
+          if (replacement.kind === "TypeRecord") {
+            // Merge fields from the resolved record directly (no recursive apply
+            // on the whole record to avoid cycles — fields are applied individually)
+            for (const [k, v] of Object.entries(replacement.fields)) {
+              if (!(k in next)) next[k] = applySubstitution(v, sub);
+            }
+            newRest = replacement.rest;
+          } else if (replacement.kind === "TypeVariable") {
+            newRest = replacement;
+          } else {
+            newRest = undefined;
+          }
+        }
+      }
+      return recordType(next, newRest);
     }
   }
 }
@@ -324,8 +347,11 @@ export function formatType(type: Type): string {
     case "TypeTuple":
       return `(${type.items.map(formatType).join(", ")})`;
 
-    case "TypeRecord":
-      return `{ ${Object.entries(type.fields).map(([k, v]) => `${k} : ${formatType(v)}`).join(", ")} }`;
+    case "TypeRecord": {
+      const fieldStrs = Object.entries(type.fields).map(([k, v]) => `${k} : ${formatType(v)}`).join(", ");
+      if (type.rest) return `{ ${fieldStrs}, ...${formatType(type.rest)} }`;
+      return `{ ${fieldStrs} }`;
+    }
   }
 }
 
@@ -381,6 +407,7 @@ function collectTypeVarIds(type: Type, out: Set<number>): void {
       return;
     case "TypeRecord":
       for (const value of Object.values(type.fields)) collectTypeVarIds(value, out);
+      if (type.rest && !type.rest.name) out.add(type.rest.id);
       return;
   }
 }
@@ -407,7 +434,13 @@ function formatTypeWithNames(type: Type, names: Map<number, string>): string {
     }
     case "TypeTuple":
       return `(${type.items.map(i => formatTypeWithNames(i, names)).join(", ")})`;
-    case "TypeRecord":
-      return `{ ${Object.entries(type.fields).map(([k, v]) => `${k} : ${formatTypeWithNames(v, names)}`).join(", ")} }`;
+    case "TypeRecord": {
+      const fieldStrs = Object.entries(type.fields).map(([k, v]) => `${k} : ${formatTypeWithNames(v, names)}`).join(", ");
+      if (type.rest) {
+        const restName = type.rest.name || names.get(type.rest.id) || `'t${type.rest.id}`;
+        return `{ ${fieldStrs}, ...${restName} }`;
+      }
+      return `{ ${fieldStrs} }`;
+    }
   }
 }

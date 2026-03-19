@@ -234,8 +234,26 @@ function formatTypeExpression(t: AST.TypeExpression): Doc {
     case "TypeVariable":
       return text(t.name);
     case "TypeReference":
+      // Preserve tuple syntax: Tuple a b → ( a, b )
+      if (t.name.parts.join(".") === "Tuple" && t.arguments.length >= 2) {
+        return concat(
+          text("( "),
+          joinDocs(t.arguments.map(formatTypeExpression), text(", ")),
+          text(" )")
+        );
+      }
       if (t.arguments.length === 0) return text(t.name.parts.join("."));
-      return concat(text(t.name.parts.join(".")), text(" "), joinDocs(t.arguments.map(formatTypeExpression), text(" ")));
+      return concat(text(t.name.parts.join(".")), text(" "), joinDocs(t.arguments.map(arg => {
+        // Wrap compound type arguments in parens to preserve semantics
+        // e.g., Maybe (Dict String String) not Maybe Dict String String
+        if (arg.kind === "TypeReference" && arg.arguments.length > 0) {
+          return concat(text("("), formatTypeExpression(arg), text(")"));
+        }
+        if (arg.kind === "FunctionType") {
+          return concat(text("("), formatTypeExpression(arg), text(")"));
+        }
+        return formatTypeExpression(arg);
+      }), text(" ")));
     case "FunctionType":
       return concat(formatTypeExpression(t.from), text(" -> "), formatTypeExpression(t.to));
     case "RecordType":

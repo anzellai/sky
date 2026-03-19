@@ -1,0 +1,16 @@
+name = "skyvote"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port = 4000
+
+["go.dependencies"]
+"database/sql" = "latest"
+"modernc.org/sqlite" = "latest"
+"crypto/sha256" = "latest"
+"encoding/hex" = "latest"
+"github.com/google/uuid" = "latest"

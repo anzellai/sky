@@ -47,9 +47,13 @@ export class Workspace {
   public async updateDocument(uri: string, source: string): Promise<Diagnostic[]> {
     const diagnostics: Diagnostic[] = [];
     let ast: AST.Module | null = null;
-    let env: TypeEnvironment | null = null;
-    let nodeTypes: Map<string, Type> | undefined;
-    let moduleExports: Map<string, Map<string, Scheme>> | undefined;
+
+    // Preserve previous successful analysis for completions/hover during typing
+    const prev = this.documents.get(uri);
+    let env: TypeEnvironment | null = prev?.env || null;
+    let nodeTypes: Map<string, Type> | undefined = prev?.nodeTypes;
+    let moduleExports: Map<string, Map<string, Scheme>> | undefined = prev?.moduleExports;
+    let modules = prev?.modules;
 
     try {
       const { tokens, lexErrors } = lex(source, uri) as any;
@@ -80,7 +84,6 @@ export class Workspace {
       });
     }
 
-    let modules;
     try {
         const filePath = uriToPath(uri);
         const result = await typeCheckProject(filePath, { path: filePath, content: source });

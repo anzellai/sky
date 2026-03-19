@@ -68,7 +68,7 @@ const stdlibPaths: Record<string, string> = {
     "hex": "encoding/hex"
 };
 
-export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, Map<string, Scheme>>, foreignModules?: Set<string>): GoIR.GoPackage {
+export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, Map<string, Scheme>>, foreignModules?: Set<string>, importedModules?: Set<string>): GoIR.GoPackage {
   const pkg: GoIR.GoPackage = {
     name: makeSafeGoPkgName(module.name[module.name.length - 1]),
     imports: [],
@@ -89,6 +89,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     declParamCounts.set(decl.name, count);
   }
   _declParamCounts = declParamCounts;
+  _importedModules = importedModules || new Set();
 
   // Build constructor → ADT mapping (e.g. "GenerateUuid" → { adtName: "Msg", tagIndex: 0, arity: 0 })
   const constructorMap = new Map<string, { adtName: string; tagIndex: number; arity: number }>();
@@ -97,10 +98,15 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
   _recordAliasTypes = recordAliasTypes; // Set module-level ref for lowerType
 
   for (const tDecl of module.typeDeclarations) {
-    // Detect record aliases: single constructor with same name as type
+    // Detect record aliases: single constructor with same name as type,
+    // AND the constructor wraps a record type (not a simple wrapper like Sub Foreign)
     if (tDecl.constructors.length === 1 && tDecl.constructors[0].name === tDecl.name) {
-      recordAliasTypes.add(tDecl.name);
-      continue; // Don't emit Go struct for record type aliases (records are maps)
+      const ctorTypes = tDecl.constructors[0].types;
+      const isRecordAlias = ctorTypes.length >= 1 && ctorTypes[0]?.kind === "TypeRecord";
+      if (isRecordAlias) {
+        recordAliasTypes.add(tDecl.name);
+        continue; // Don't emit Go struct for record type aliases (records are maps)
+      }
     }
 
     for (let i = 0; i < tDecl.constructors.length; i++) {
@@ -308,6 +314,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
 // Module-level set of record alias type names, populated by lowerModule
 let _recordAliasTypes: Set<string> = new Set();
 let _declParamCounts: Map<string, number> = new Map();
+let _importedModules: Set<string> = new Set();
 
 function lowerType(t: Type): GoIR.GoType {
   if (!t || !t.kind) {
@@ -445,9 +452,21 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           else if (pkgName === "Sub" || pkgName === "Std.Sub") safePkg = "std_sub";
           else if (pkgName === "Log" || pkgName === "Std.Log") safePkg = "fmt"; // special case
           else {
+              // Resolve short module names to full names for wrapper lookup.
+              // E.g., "Schema" → "Github.Com.KandaCo.KsSchema.Pkg.Schema"
+              let fullPkgName = pkgName;
+              if (moduleExports) {
+                  for (const full of moduleExports.keys()) {
+                      const lastPart = full.split(".").pop();
+                      if (lastPart === pkgName || full === pkgName) {
+                          fullPkgName = full;
+                          break;
+                      }
+                  }
+              }
               // Convert PascalCase parts to kebab-case first (FyneIo -> fyne-io),
               // then replace all separators with underscores to match makeSafeGoName
-              safePkg = pkgName.split(".").map(p => pascalToKebab(p)).join("_").replace(/[\/\.-]/g, "_");
+              safePkg = fullPkgName.split(".").map(p => pascalToKebab(p)).join("_").replace(/[\/\.-]/g, "_");
           }
 
           const goName = name.charAt(0).toUpperCase() + name.slice(1);
@@ -538,20 +557,31 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // (Std.Log, Std.Cmd, etc.) which have special lowering paths.
       if (moduleExports && !_declParamCounts?.has(expr.name)) {
           const ffiWrapperModules = new Set(["Std.Log", "Std.Cmd", "Std.Sub", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+          // When multiple modules export the same name, prefer the one actually imported
+          let candidates: [string, Map<string, Scheme>][] = [];
           for (const [modName, exports] of moduleExports) {
               if (exports.has(expr.name) && !ffiWrapperModules.has(modName) && (!foreignModules || !foreignModules.has(modName))) {
-                  const modParts = modName.split(".");
-                  const goPkg = makeSafeGoPkgName(modParts[modParts.length - 1]);
-                  const selectorExpr2: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
-                  // Auto-call zero-arg cross-module bindings
-                  if (!_isCallTarget) {
-                      const scheme = exports.get(expr.name);
-                      if (scheme && scheme.type && scheme.type.kind !== "TypeFunction") {
-                          return { kind: "GoCallExpr", fn: selectorExpr2, args: [] } as any;
-                      }
-                  }
-                  return selectorExpr2;
+                  candidates.push([modName, exports]);
               }
+          }
+          // Prefer modules explicitly imported by the current file
+          if (candidates.length > 1 && _importedModules.size > 0) {
+              const imported = candidates.filter(([m]) => _importedModules.has(m));
+              if (imported.length > 0) candidates = imported;
+          }
+          if (candidates.length > 0) {
+              const [modName, exports] = candidates[0];
+              const modParts = modName.split(".");
+              const goPkg = makeSafeGoPkgName(modParts[modParts.length - 1]);
+              const selectorExpr2: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
+              // Auto-call zero-arg cross-module bindings
+              if (!_isCallTarget) {
+                  const scheme = exports.get(expr.name);
+                  if (scheme && scheme.type && scheme.type.kind !== "TypeFunction") {
+                      return { kind: "GoCallExpr", fn: selectorExpr2, args: [] } as any;
+                  }
+              }
+              return selectorExpr2;
           }
       }
 
@@ -640,6 +670,38 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   kind: "GoRawExpr",
                   code: `struct{ Tag int; ${wk.field} any }{Tag: ${wk.tag}, ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
               } as any;
+          }
+          // Check local constructorMap for ADT constructor applications
+          const localCtorInfo = constructorMap?.get(flat.fn.name);
+          if (localCtorInfo) {
+              const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+              return {
+                  kind: "GoCompositeLit",
+                  type: { kind: "GoIdentType", name: localCtorInfo.adtName },
+                  elements: [
+                      { kind: "GoBasicLit", value: String(localCtorInfo.tagIndex) },
+                      ...argExprs
+                  ]
+              } as any;
+          }
+          // Check imported modules for constructor applications
+          if (moduleExports) {
+              for (const [modName, exports] of moduleExports) {
+                  if (exports.has(flat.fn.name)) {
+                      const parts = modName.split(".");
+                      const pkgName = makeSafeGoPkgName(parts[parts.length - 1]);
+                      const goCtorName = flat.fn.name.charAt(0).toUpperCase() + flat.fn.name.slice(1);
+                      const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+                      return {
+                          kind: "GoCompositeLit",
+                          type: { kind: "GoIdentType", name: `${pkgName}.${goCtorName}` },
+                          elements: [
+                              { kind: "GoBasicLit", value: "0" },
+                              ...argExprs
+                          ]
+                      } as any;
+                  }
+              }
           }
       }
 
@@ -790,10 +852,28 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               fn: { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "UpdateRecord" },
               args: [base, update]
           };
-      } else if (fnExpr.kind === "GoIdent" && fnExpr.name === "Println") {
-        fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "fmt" }, sel: "Println" };
-        
-        // Special case: if this is used as an expression, we need to wrap it to discard (int, error)
+      } else if (fnExpr.kind === "GoIdent" && (fnExpr.name === "Println" || fnExpr.name === "Printf" || fnExpr.name === "Sprintf")) {
+        const fmtFn = fnExpr.name;
+        fnExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "fmt" }, sel: fmtFn };
+
+        // Printf/Sprintf need first arg as string, rest as any
+        const callArgs: GoIR.GoExpr[] = args.map((_, i) => {
+            if (i === 0 && (fmtFn === "Printf" || fmtFn === "Sprintf")) {
+                return { kind: "GoTypeAssertExpr", expr: { kind: "GoIdent", name: "arg" + i }, type: { kind: "GoIdentType", name: "string" } } as any;
+            }
+            return { kind: "GoIdent", name: "arg" + i } as any;
+        });
+
+        // Sprintf returns a value directly, no wrapping needed
+        if (fmtFn === "Sprintf") {
+            return {
+                kind: "GoCallExpr",
+                fn: fnExpr,
+                args: callArgs
+            } as any;
+        }
+
+        // Println/Printf: wrap to discard (int, error) and return Unit
         return {
             kind: "GoCallExpr",
             fn: {
@@ -802,7 +882,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                 body: [
                     {
                         kind: "GoExprStmt",
-                        expr: { kind: "GoCallExpr", fn: fnExpr, args: args.map((_, i) => ({ kind: "GoIdent", name: "arg" + i } as any)) }
+                        expr: { kind: "GoCallExpr", fn: fnExpr, args: callArgs }
                     },
                     {
                         kind: "GoReturnStmt",
@@ -1322,23 +1402,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         const ctorInfo = constructorMap?.get(expr.name);
         if (ctorInfo) {
             // Known ADT constructor: emit ParentType{Tag: tagIndex, CtorValueN: arg}
-            const elements: GoIR.GoExpr[] = [];
-            // Use key-value syntax for clarity
+            const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
             const kvPairs: string[] = [`Tag: ${ctorInfo.tagIndex}`];
             for (let j = 0; j < expr.args.length; j++) {
                 const fieldName = expr.name + "Value" + (j > 0 ? j : "");
-                kvPairs.push(`${fieldName}: ` + "$$ARG" + j);
+                kvPairs.push(`${fieldName}: ${emitGoExprForLower(argExprs[j])}`);
             }
-            // Build as a composite lit with named fields
-            // We'll construct this as a raw expression for simplicity
-            const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
             return {
-                kind: "GoCompositeLit",
-                type: { kind: "GoIdentType", name: ctorInfo.adtName },
-                elements: [
-                    { kind: "GoBasicLit", value: String(ctorInfo.tagIndex) },
-                    ...argExprs
-                ]
+                kind: "GoRawExpr",
+                code: `${ctorInfo.adtName}{${kvPairs.join(", ")}}`
             } as any;
         }
         // Well-known Prelude constructors: Ok, Err, Just, Nothing
@@ -1382,12 +1454,33 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                 code: `struct{ Tag int }{Tag: ${wk.tag}}`
             } as any;
         }
-        // Fallback: unknown constructor
+        // Special interop types: Foreign, JsValue map to nil in Go
+        if (expr.name === "Foreign" || expr.name === "JsValue") {
+            return { kind: "GoIdent", name: "nil" } as any;
+        }
+        // Fallback: unknown constructor — may be from an imported module
         const goName = expr.name.charAt(0).toUpperCase() + expr.name.slice(1);
+        // Check if this constructor comes from an imported module
+        let qualifiedGoName = goName;
+        if (moduleExports) {
+            for (const [modName, exports] of moduleExports) {
+                if (exports.has(expr.name)) {
+                    const parts = modName.split(".");
+                    const pkgName = makeSafeGoPkgName(parts[parts.length - 1]);
+                    qualifiedGoName = `${pkgName}.${goName}`;
+                    break;
+                }
+            }
+        }
+        const argExprs2 = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+        const kvPairs2: string[] = ["Tag: 0"];
+        for (let j = 0; j < argExprs2.length; j++) {
+            const fieldName = expr.name + "Value" + (j > 0 ? j : "");
+            kvPairs2.push(`${fieldName}: ${emitGoExprForLower(argExprs2[j])}`);
+        }
         return {
-            kind: "GoCompositeLit",
-            type: { kind: "GoIdentType", name: goName },
-            elements: [{ kind: "GoBasicLit", value: "0" }, ...expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap))]
+            kind: "GoRawExpr",
+            code: `${qualifiedGoName}{${kvPairs2.join(", ")}}`
         } as any;
     }
     case "RecordExpr": {

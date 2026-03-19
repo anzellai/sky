@@ -5,6 +5,9 @@ import { formatType, Scheme } from '../../types/types.js';
 import fs from 'fs';
 import path from 'path';
 
+// Cache for .skycache/go module scanning (refreshed every 10s)
+const _skycacheModuleCache = new Map<string, { timestamp: number; modules: Set<string> }>();
+
 export function getCompletions(workspace: Workspace, uri: string, position: Position): CompletionItem[] {
   const items: CompletionItem[] = [];
   const doc = workspace.getDocument(uri);
@@ -96,6 +99,8 @@ function getQualifiedCompletions(
                 const exports = doc.moduleExports.get(moduleName);
                 if (exports && exports.size > 0) {
                     for (const [name, scheme] of exports) {
+                        // Filter raw Go wrapper names
+                        if (name.includes("Sky_") || name.includes("sky_")) continue;
                         if (!prefix || name.toLowerCase().startsWith(prefix)) {
                             seen.add(name);
                             items.push(makeCompletionItem(name, scheme, qualifier));
@@ -186,12 +191,18 @@ function getImportCompletions(
         knownModules.add(m);
     }
 
-    // Scan .skycache/go/ for available Go binding modules
+    // Scan .skycache/go/ for available Go binding modules (cached)
     const projectRoot = findProjectRoot(uri);
     if (projectRoot) {
         const skycacheGoDir = path.join(projectRoot, ".skycache", "go");
         if (fs.existsSync(skycacheGoDir)) {
-            scanSkycacheModules(skycacheGoDir, skycacheGoDir, knownModules);
+            const cached = _skycacheModuleCache.get(skycacheGoDir);
+            if (cached && Date.now() - cached.timestamp < 10000) {
+                for (const m of cached.modules) knownModules.add(m);
+            } else {
+                scanSkycacheModules(skycacheGoDir, skycacheGoDir, knownModules);
+                _skycacheModuleCache.set(skycacheGoDir, { timestamp: Date.now(), modules: new Set(knownModules) });
+            }
         }
     }
 

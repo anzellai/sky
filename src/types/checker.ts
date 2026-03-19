@@ -12,7 +12,7 @@
 
 import * as AST from "../ast/ast.js"
 import { TypeEnvironment, createPreludeEnvironment } from "./env.js"
-import { inferTopLevel } from "./infer.js"
+import { inferTopLevel, setTypeAliases } from "./infer.js"
 import { registerAdts } from "./adt.js"
 import { checkCaseExhaustiveness } from "./exhaustiveness.js"
 
@@ -20,6 +20,7 @@ import {
   type Type,
   type Scheme,
   typeConstant,
+  freshTypeVariable,
   mono
 } from "../types/types.js"
 
@@ -120,10 +121,25 @@ export function checkModule(
   --------------------------------------------- */
 
   const typeAnnotations = new Map<string, AST.TypeAnnotation>();
+  const typeAliases = new Map<string, AST.TypeExpression>();
 
   for (const declaration of module.declarations) {
       if (declaration.kind === "TypeAnnotation") {
           typeAnnotations.set(declaration.name, declaration);
+      }
+      if (declaration.kind === "TypeAliasDeclaration") {
+          typeAliases.set(declaration.name, declaration.aliasedType);
+      }
+  }
+
+  // Set type aliases for expansion in type annotations
+  setTypeAliases(typeAliases);
+
+  // Pre-register all function declarations with fresh type variables
+  // to support forward references (e.g., update calling handleSetSort defined later)
+  for (const declaration of module.declarations) {
+      if (declaration.kind === "FunctionDeclaration" && !env.get(declaration.name)) {
+          env = env.extend(declaration.name, { quantified: [], type: freshTypeVariable() });
       }
   }
 

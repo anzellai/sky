@@ -23,6 +23,13 @@ import {
 } from "./patterns.js";
 import type { AdtRegistry } from "./adt.js";
 
+// Module-level type alias map for expanding aliases in type annotations
+let _typeAliases: Map<string, AST.TypeExpression> = new Map();
+
+export function setTypeAliases(aliases: Map<string, AST.TypeExpression>): void {
+  _typeAliases = aliases;
+}
+
 export interface InferResult {
   readonly substitution: Substitution;
   readonly type: Type;
@@ -210,10 +217,12 @@ export function inferExpression(
         updatedFields[field.name] = result.type;
       }
 
-      // Base must be a record containing at least these fields
+      // Base must be a record containing at least these fields (open record)
+      const restVar = freshTypeVariable();
       const expectedBase: Type = {
         kind: "TypeRecord",
         fields: updatedFields,
+        rest: restVar,
       };
 
       const s = unify(applySubstitution(baseResult.type, currentSub), expectedBase);
@@ -228,12 +237,14 @@ export function inferExpression(
     case "FieldAccessExpression": {
       const target = inferExpression(registry, env, expr.target, nodeTypes);
       const fieldType = freshTypeVariable();
+      const restVar = freshTypeVariable();
 
       const expectedRecord: Type = {
         kind: "TypeRecord",
         fields: {
           [expr.fieldName]: fieldType,
         },
+        rest: restVar,
       };
 
       const s = unify(target.type, expectedRecord);
@@ -687,7 +698,13 @@ function translateTypeExpression(expr: AST.TypeExpression): Type {
       }
 
       case "TypeReference": {
-        const baseType: Type = { kind: "TypeConstant", name: e.name.parts.join(".") };
+        const fullName = e.name.parts.join(".");
+        // Expand type aliases (e.g., Model → { page : Page, ... })
+        const aliasedType = _typeAliases.get(fullName);
+        if (aliasedType && (!e.arguments || e.arguments.length === 0)) {
+          return translate(aliasedType);
+        }
+        const baseType: Type = { kind: "TypeConstant", name: fullName };
         if (e.arguments && e.arguments.length > 0) {
             return {
                 kind: "TypeApplication",

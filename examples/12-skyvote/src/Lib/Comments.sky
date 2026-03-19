@@ -1,0 +1,28 @@
+module Lib.Comments exposing (createComment, getComments)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
+import Std.Log exposing (println)
+import Github.Com.Google.Uuid as Uuid
+import Lib.Db as Db
+
+createComment ideaId authorId content =
+    let
+        id =
+            Uuid.newString ()
+        result =
+            Db.exec
+                "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"
+                [ id , ideaId , authorId , content ]
+        _ =
+            println ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
+    in
+        result
+
+getComments ideaId =
+    Result.withDefault []
+        (
+        Db.queryRows
+            "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
+            [ ideaId ]
+        )

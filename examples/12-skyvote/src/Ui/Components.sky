@@ -1,0 +1,107 @@
+module Ui.Components exposing (badge, statusBadge, ideaCard, statCard, emptyState)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick)
+import Lib.Db as Db
+
+-- ══════════════════════════════════════════════════════
+-- BADGES
+-- ══════════════════════════════════════════════════════
+badge label badgeClass =
+    span [ class ("badge " ++ badgeClass) ] [ text label ]
+
+statusBadge status =
+    if status == "open" then
+        badge "Open" "badge-open"
+    else
+        if status == "planned" then
+            badge "Planned" "badge-planned"
+        else
+            if status == "in-progress" then
+                badge "In Progress" "badge-in-progress"
+            else
+                if status == "done" then
+                    badge "Done" "badge-done"
+                else
+                    if status == "declined" then
+                        badge "Declined" "badge-declined"
+                    else
+                        badge status "badge-open"
+
+categoryBadge category =
+    if category == "bug" then
+        badge "Bug" "badge-bug"
+    else
+        if category == "improvement" then
+            badge "Improvement" "badge-improvement"
+        else
+            badge "Feature" "badge-feature"
+
+-- ══════════════════════════════════════════════════════
+-- IDEA CARD
+-- ══════════════════════════════════════════════════════
+ideaCard idea userId =
+    let
+        ideaId =
+            Db.getField "id" idea
+        voteCount =
+            Db.getField "vote_count" idea
+        commentCount =
+            Db.getField "comment_count" idea
+        category =
+            Db.getField "category" idea
+        status =
+            Db.getField "status" idea
+        authorName =
+            Db.getField "author_name" idea
+        isVoted =
+            if userId == "" then
+                ""
+            else
+                ""
+    in
+        div [ class "idea-card" ]
+            [ div []
+                [ button
+                    [ onClick ("ToggleVote " ++ ideaId) , class "vote-btn" ]
+                    [ span [ class "vote-count" ] [ text voteCount ]
+                    , span [ class "vote-label" ] [ text "votes" ]
+                    ]
+                ]
+            , div [ class "idea-content" ]
+                [ div []
+                    [ button
+                        [ onClick ("ViewIdea " ++ ideaId)
+                        , class "idea-title"
+                        , style
+                            "background: none; border: none; cursor: pointer; text-align: left; font-size: 16px; font-weight: 600; color: #1e293b; padding: 0;"
+                        ]
+                        [ text (Db.getField "title" idea) ]
+                    ]
+                , p [ class "idea-desc" ]
+                    [ text (Db.getField "description" idea) ]
+                , div [ class "idea-meta" ]
+                    [ categoryBadge category
+                    , statusBadge status
+                    , span [] [ text ("by " ++ authorName) ]
+                    , span [] [ text (commentCount ++ " comments") ]
+                    ]
+                ]
+            ]
+
+-- ══════════════════════════════════════════════════════
+-- STAT CARD
+-- ══════════════════════════════════════════════════════
+statCard label value =
+    div [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text value ]
+        , div [ class "stat-label" ] [ text label ]
+        ]
+
+-- ══════════════════════════════════════════════════════
+-- EMPTY STATE
+-- ══════════════════════════════════════════════════════
+emptyState message =
+    div [ class "empty-state" ] [ p [] [ text message ] ]

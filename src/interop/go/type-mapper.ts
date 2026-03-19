@@ -83,6 +83,12 @@ export function mapGoTypeToSky(goType: string, currentPackage?: string): string 
         t = t.substring(0, bracketIdx);
     }
 
+    // Single uppercase letter = Go generic type parameter (T, K, V, E, etc.)
+    // Map to Foreign since we can't resolve the concrete type
+    if (/^[A-Z]$/.test(t)) {
+        return "Foreign";
+    }
+
     // Ensure uppercase so it's a TypeReference, not a TypeVariable!
     return t.charAt(0).toUpperCase() + t.slice(1);
 }

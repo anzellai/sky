@@ -1,0 +1,30 @@
+module Lib.Db exposing (exec, queryRows, getField)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Database.Sql as Sql
+import Modernc.Org.Sqlite as _
+
+-- Module-level database connection (opened once at Go package init)
+db =
+    Sql.open "sqlite" "skyvote.db"
+
+exec query args =
+    case db of
+        Ok conn ->
+            Sql.dBExecResult conn query args
+        
+        Err e ->
+            Err e
+
+queryRows query args =
+    case db of
+        Ok conn ->
+            Sql.dBQueryToMaps conn query args
+        
+        Err e ->
+            Err e
+
+getField field row =
+    Maybe.withDefault "" (Dict.get field row)

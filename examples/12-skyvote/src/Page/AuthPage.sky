@@ -1,0 +1,120 @@
+module Page.AuthPage exposing (viewSignIn, viewSignUp)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import Ui.Layout as Layout
+
+-- ══════════════════════════════════════════════════════
+-- SIGN IN
+-- ══════════════════════════════════════════════════════
+viewSignIn model =
+    Layout.page model
+        (
+        div [ class "auth-container" ]
+            [ div [ class "auth-card" ]
+                [ h1 [ class "auth-title" ] [ text "Welcome back" ]
+                , viewAuthError model.authError
+                , form [ onSubmit "DoSignIn" ]
+                    [ div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Email" ]
+                        , input
+                            [ type_ "email"
+                            , class "form-input"
+                            , placeholder "you@example.com"
+                            , value model.authEmail
+                            , onInput "UpdateEmail"
+                            ]
+                        ]
+                    , div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Password" ]
+                        , input
+                            [ type_ "password"
+                            , class "form-input"
+                            , placeholder "Your password"
+                            , value model.authPassword
+                            , onInput "UpdatePassword"
+                            ]
+                        ]
+                    , button
+                        [ type_ "submit"
+                        , class "btn btn-primary"
+                        , style "width: 100%; justify-content: center;"
+                        ]
+                        [ text "Sign in" ]
+                    ]
+                , div [ class "auth-footer" ]
+                    [ text "Don't have an account? "
+                    , a [ href "/auth/signup" , attribute "sky-nav" "" ]
+                        [ text "Sign up" ]
+                    ]
+                ]
+            ]
+        )
+
+-- ══════════════════════════════════════════════════════
+-- SIGN UP
+-- ══════════════════════════════════════════════════════
+viewSignUp model =
+    Layout.page model
+        (
+        div [ class "auth-container" ]
+            [ div [ class "auth-card" ]
+                [ h1 [ class "auth-title" ] [ text "Create an account" ]
+                , viewAuthError model.authError
+                , form [ onSubmit "DoSignUp" ]
+                    [ div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Username" ]
+                        , input
+                            [ type_ "text"
+                            , class "form-input"
+                            , placeholder "Choose a username"
+                            , value model.authUsername
+                            , onInput "UpdateUsername"
+                            ]
+                        ]
+                    , div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Email" ]
+                        , input
+                            [ type_ "email"
+                            , class "form-input"
+                            , placeholder "you@example.com"
+                            , value model.authEmail
+                            , onInput "UpdateEmail"
+                            ]
+                        ]
+                    , div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Password" ]
+                        , input
+                            [ type_ "password"
+                            , class "form-input"
+                            , placeholder "At least 8 characters"
+                            , value model.authPassword
+                            , onInput "UpdatePassword"
+                            ]
+                        ]
+                    , button
+                        [ type_ "submit"
+                        , class "btn btn-primary"
+                        , style "width: 100%; justify-content: center;"
+                        ]
+                        [ text "Create account" ]
+                    ]
+                , div [ class "auth-footer" ]
+                    [ text "Already have an account? "
+                    , a [ href "/auth/signin" , attribute "sky-nav" "" ]
+                        [ text "Sign in" ]
+                    ]
+                ]
+            ]
+        )
+
+-- ══════════════════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════════════════
+viewAuthError error =
+    if error == "" then
+        text ""
+    else
+        div [ class "notification notification-error" ] [ text error ]

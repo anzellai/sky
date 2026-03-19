@@ -1,0 +1,72 @@
+module Page.Submit exposing (viewSubmit)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput, onSubmit, onChange)
+import Ui.Layout as Layout
+
+viewSubmit model =
+    Layout.pageWithAuth model
+        (
+        div [ style "max-width: 640px; margin: 32px auto;" ]
+            [ h1 [ class "page-title" ] [ text "Submit an Idea" ]
+            , p [ class "page-subtitle" ]
+                [ text
+                    "Have a feature request, bug report, or improvement? Share it with the community."
+                ]
+            , div [ class "card" ]
+                [ form [ onSubmit "SubmitIdea" ]
+                    [ div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Title" ]
+                        , input
+                            [ type_ "text"
+                            , class "form-input"
+                            , placeholder "A short, descriptive title"
+                            , value model.submitTitle
+                            , onInput "UpdateTitle"
+                            ]
+                        ]
+                    , div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Description" ]
+                        , textarea
+                            [ class "form-input"
+                            , placeholder
+                                "Describe your idea in detail. What problem does it solve? How should it work?"
+                            , value model.submitDescription
+                            , onInput "UpdateDescription"
+                            , rows 6
+                            ]
+                            []
+                        ]
+                    , div [ class "form-group" ]
+                        [ label [ class "form-label" ] [ text "Category" ]
+                        , select
+                            [ class "form-input"
+                            , value model.submitCategory
+                            , onChange "UpdateCategory"
+                            ]
+                            [ option [ value "feature" ]
+                                [ text "Feature Request" ]
+                            , option [ value "bug" ] [ text "Bug Report" ]
+                            , option [ value "improvement" ]
+                                [ text "Improvement" ]
+                            ]
+                        ]
+                    , div
+                        [ style
+                            "display: flex; gap: 12px; justify-content: flex-end;"
+                        ]
+                        [ button
+                            [ onClick "BackToBoard"
+                            , type_ "button"
+                            , class "btn btn-secondary"
+                            ]
+                            [ text "Cancel" ]
+                        , button [ type_ "submit" , class "btn btn-primary" ]
+                            [ text "Submit Idea" ]
+                        ]
+                    ]
+                ]
+            ]
+        )

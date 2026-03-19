@@ -14,7 +14,9 @@ import {
   applySubstitution,
   composeSubstitutions,
   isTypeVariable,
-  formatType
+  formatType,
+  freshTypeVariable,
+  recordType
 } from "../types/types.js";
 
 export class UnificationError extends Error {
@@ -51,9 +53,21 @@ function isForeignGoType(t: Type): boolean {
   return !SKY_NATIVE_TYPES.has(t.name);
 }
 
+// Normalize TypeApplication("Tuple", [a, b]) to TypeTuple([a, b])
+function normalizeTuple(t: Type): Type {
+  if (t.kind === "TypeApplication" && t.constructor.kind === "TypeConstant" && t.constructor.name === "Tuple") {
+    return { kind: "TypeTuple", items: t.arguments };
+  }
+  return t;
+}
+
 export function unify(a: Type, b: Type): Substitution {
 
   if (isJsValue(a) || isJsValue(b)) return emptySubstitution();
+
+  // Normalize Tuple type applications to TypeTuple
+  a = normalizeTuple(a);
+  b = normalizeTuple(b);
 
   if (a.kind === "TypeVariable") {
     return unifyVar(a, b);
@@ -136,29 +150,83 @@ export function unify(a: Type, b: Type): Substitution {
   }
 
   if (a.kind === "TypeRecord" && b.kind === "TypeRecord") {
-
-    const aKeys = Object.keys(a.fields);
-    const bKeys = Object.keys(b.fields);
-
-    if (aKeys.length !== bKeys.length) {
-      throw new UnificationError(`Record field mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);
-    }
+    // Row-polymorphic record unification:
+    // Both records may have a "rest" type variable representing extra fields.
+    // Common fields are unified. Extra fields on each side are collected
+    // and assigned to the other side's rest variable.
+    const aKeys = new Set(Object.keys(a.fields));
+    const bKeys = new Set(Object.keys(b.fields));
+    const commonKeys = [...aKeys].filter(k => bKeys.has(k));
+    const aOnly = [...aKeys].filter(k => !bKeys.has(k));
+    const bOnly = [...bKeys].filter(k => !aKeys.has(k));
 
     let current = emptySubstitution();
 
-    for (const key of aKeys) {
-
-      if (!(key in b.fields)) {
-        throw new UnificationError(`Missing field ${key} in ${formatType(b)}`);
-      }
-
+    // Unify common fields
+    for (const key of commonKeys) {
       const s = unify(
         applySubstitution(a.fields[key], current),
         applySubstitution(b.fields[key], current)
       );
-
       current = composeSubstitutions(s, current);
+    }
 
+    // Handle extra fields via rest variables
+    if (aOnly.length > 0 && !b.rest) {
+      throw new UnificationError(`Missing field ${aOnly[0]} in ${formatType(b)}`);
+    }
+    if (bOnly.length > 0 && !a.rest) {
+      throw new UnificationError(`Missing field ${bOnly[0]} in ${formatType(a)}`);
+    }
+
+    if (aOnly.length > 0 || bOnly.length > 0) {
+      // Both sides have extra fields — use a shared fresh rest variable
+      // to avoid circular bindings (rest1 -> {f, ...rest2} -> {g, ...rest1})
+      const sharedRest = (a.rest && b.rest) ? freshTypeVariable() : undefined;
+
+      if (aOnly.length > 0 && b.rest) {
+        const extraFields: Record<string, Type> = {};
+        for (const k of aOnly) extraFields[k] = applySubstitution(a.fields[k], current);
+        const extraRecord = recordType(extraFields, sharedRest || a.rest);
+        const s = unifyVar(b.rest, extraRecord);
+        current = composeSubstitutions(s, current);
+      }
+
+      if (bOnly.length > 0 && a.rest) {
+        const extraFields: Record<string, Type> = {};
+        for (const k of bOnly) extraFields[k] = applySubstitution(b.fields[k], current);
+        const extraRecord = recordType(extraFields, sharedRest || b.rest);
+        const aRestResolved = applySubstitution(a.rest, current);
+        if (aRestResolved.kind === "TypeVariable") {
+          const s = unifyVar(aRestResolved, extraRecord);
+          current = composeSubstitutions(s, current);
+        }
+      }
+    } else {
+      // No extra fields on either side
+      if (a.rest && b.rest) {
+        // Both open — unify rest variables
+        const aRestResolved = applySubstitution(a.rest, current);
+        const bRestResolved = applySubstitution(b.rest, current);
+        if (aRestResolved.kind === "TypeVariable" && bRestResolved.kind === "TypeVariable" && aRestResolved.id !== bRestResolved.id) {
+          const s = unifyVar(aRestResolved, bRestResolved);
+          current = composeSubstitutions(s, current);
+        }
+      } else if (a.rest && !b.rest) {
+        // a is open, b is closed — close a's rest
+        const aRestResolved = applySubstitution(a.rest, current);
+        if (aRestResolved.kind === "TypeVariable") {
+          const s = unifyVar(aRestResolved, recordType({}));
+          current = composeSubstitutions(s, current);
+        }
+      } else if (b.rest && !a.rest) {
+        // b is open, a is closed — close b's rest
+        const bRestResolved = applySubstitution(b.rest, current);
+        if (bRestResolved.kind === "TypeVariable") {
+          const s = unifyVar(bRestResolved, recordType({}));
+          current = composeSubstitutions(s, current);
+        }
+      }
     }
 
     return current;
@@ -203,7 +271,9 @@ function occurs(variable: TypeVariable, type: Type): boolean {
       return type.items.some(item => occurs(variable, item));
 
     case "TypeRecord":
-      return Object.values(type.fields).some(field => occurs(variable, field));
+      if (Object.values(type.fields).some(field => occurs(variable, field))) return true;
+      if (type.rest && type.rest.id === variable.id) return true;
+      return false;
 
   }
 }

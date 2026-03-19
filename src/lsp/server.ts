@@ -60,9 +60,18 @@ export function startServer() {
     connection.console.log("Sky LSP Server initialized");
   });
 
-  documents.onDidChangeContent(async change => {
-    try { await validateTextDocument(change.document); }
-    catch {}
+  // Debounce validation to avoid recompiling on every keystroke
+  const pendingValidations = new Map<string, ReturnType<typeof setTimeout>>();
+
+  documents.onDidChangeContent(change => {
+    const uri = change.document.uri;
+    const existing = pendingValidations.get(uri);
+    if (existing) clearTimeout(existing);
+    pendingValidations.set(uri, setTimeout(async () => {
+      pendingValidations.delete(uri);
+      try { await validateTextDocument(change.document); }
+      catch {}
+    }, 300));
   });
 
   async function validateTextDocument(textDocument: TextDocument): Promise<void> {

@@ -28,6 +28,9 @@ import { writeRuntimeFiles } from "./live/runtime-files.js";
 import { detectComponents } from "./live/detect-components.js";
 import { buildComponentInfos, ComponentModuleInfo } from "./live/emit-component-wiring.js";
 
+// Cache type-check results for unchanged modules (e.g., stdlib, bindings)
+const _typeCheckCache = new Map<string, { filePath: string; exports: Map<string, Scheme>; result: TypeCheckResult }>();
+
 export async function typeCheckProject(entryFile: string, virtualFile?: { path: string; content: string }) {
   const graph = await buildModuleGraph(entryFile, virtualFile);
   const moduleExports = new Map<string, Map<string, Scheme>>();
@@ -38,12 +41,35 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
       return { diagnostics: graph.diagnostics, exports: moduleExports, modules: graph.modules, moduleResults };
   }
 
+  // Find the entry module's AST (not the last module — implicit modules come after entry)
   let latestModuleAst: AST.Module | undefined;
+  if (virtualFile) {
+    const entryAbs = path.resolve(virtualFile.path);
+    for (const m of graph.modules) {
+      if (path.resolve(m.filePath) === entryAbs) {
+        latestModuleAst = m.moduleAst;
+        break;
+      }
+    }
+  }
+  if (!latestModuleAst && graph.modules.length > 0) {
+    latestModuleAst = graph.modules[graph.modules.length - 1].moduleAst;
+  }
 
   for (const loaded of graph.modules) {
     const moduleNameStr = loaded.moduleAst.name.join(".");
-    latestModuleAst = loaded.moduleAst;
-    
+
+    // Skip type-checking for cached unchanged modules (not the edited file)
+    const isEdited = virtualFile && path.resolve(virtualFile.path) === path.resolve(loaded.filePath);
+    if (!isEdited) {
+      const cached = _typeCheckCache.get(moduleNameStr);
+      if (cached && cached.filePath === loaded.filePath) {
+        moduleExports.set(moduleNameStr, cached.exports);
+        moduleResults.set(moduleNameStr, cached.result);
+        continue;
+      }
+    }
+
     // Build environment from dependencies
     const importsMap = new Map<string, Scheme>();
     for (const imp of loaded.moduleAst.imports) {
@@ -117,7 +143,8 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
         }
       }
       // Also export foreign-imported names when they're in the exposing list
-      if (decl.kind === "ForeignImportDeclaration" && isExposed) {
+      // (but skip raw Go wrapper names like Sky_github_com_...)
+      if (decl.kind === "ForeignImportDeclaration" && isExposed && !decl.name.includes("Sky_") && !decl.name.includes("sky_")) {
         const envScheme = typeCheck.environment.get(decl.name);
         if (envScheme) {
           myExports.set(decl.name, envScheme);
@@ -149,12 +176,17 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     }
 
     moduleExports.set(moduleNameStr, myExports);
+
+    // Cache type-check results for non-edited modules
+    if (!isEdited) {
+      _typeCheckCache.set(moduleNameStr, { filePath: loaded.filePath, exports: myExports, result: typeCheck });
+    }
   }
 
   return {
       diagnostics: allDiagnostics,
-      exports: moduleExports, 
-      modules: graph.modules, 
+      exports: moduleExports,
+      modules: graph.modules,
       moduleResults,
       latestModuleAst
   };
@@ -306,8 +338,14 @@ export async function compileProject(entryFile: string, outDir: string) {
     const usage = analyzeUsage(coreModule);
     coreModule = eliminateDeadBindings(coreModule, usage);
 
+    // Collect the set of modules this file actually imports (for resolving ambiguous names)
+    const importedModules = new Set<string>();
+    for (const imp of loaded.moduleAst.imports) {
+        importedModules.add(imp.moduleName.join("."));
+    }
+
     // Lower to GoIR
-    const goPkg = lowerModule(coreModule, moduleExports, allForeignModules);
+    const goPkg = lowerModule(coreModule, moduleExports, allForeignModules, importedModules);
 
     // Inject blank imports into the Go package
     for (const blankPkg of blankImports) {

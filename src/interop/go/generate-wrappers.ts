@@ -1421,6 +1421,20 @@ func Sky_result_ToMaybe(result any) any {
         }
     }
 
+    // Generate constant wrappers (same pattern as vars — zero-arg functions)
+    for (const c of pkg.consts || []) {
+        const skyName = lowerCamelCase(c.name);
+        const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+        const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+
+        if (emittedWrappers.has(wrapperName)) continue;
+        emittedWrappers.add(wrapperName);
+
+        goCode += `func ${wrapperName}() any {\n`;
+        goCode += `\treturn ${pkgBase}.${c.name}\n`;
+        goCode += `}\n\n`;
+    }
+
     for (const t of pkg.types || []) {
         // Skip generic types (e.g., sql.Null[T]) — can't instantiate without type params
         if ((t as any).typeParams && (t as any).typeParams.length > 0) continue;
@@ -1614,12 +1628,19 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         return; // No wrappers needed
     }
 
-    // Clean goCode: remove functions that reference uninstantiated generic types
+    // Clean goCode: remove functions that reference uninstantiated generic type parameters
     let cleanedGoCode = "";
     const funcBlocks = goCode.split(/(?=^func )/m);
     for (const block of funcBlocks) {
         // Skip functions that use sql.Null without type params (Go generics)
         if (block.includes("sql.Null)") || block.includes("sql.Null[")) {
+            continue;
+        }
+        // Skip functions that reference unresolved Go generic type parameters
+        // These appear as bare T, K, V, E etc. in type assertions or return types
+        if (/\barg\d+\.\((?:\[\])?\*?[A-Z]\)/.test(block) ||       // .(T), .([]T), .(*T)
+            /\) (?:\[\])?\*?[A-Z]\s*\{/.test(block) ||              // ) T {, ) *T {, ) []T {
+            /\) \(\*?[A-Z],/.test(block)) {                          // ) (T, bool) {
             continue;
         }
         cleanedGoCode += block;
