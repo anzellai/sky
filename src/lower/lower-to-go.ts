@@ -2,6 +2,7 @@
 import * as CoreIR from "../core-ir/core-ir.js";
 import * as GoIR from "../go-ir/go-ir.js";
 import type { Scheme, Type } from "../types/types.js";
+import { pascalToKebab } from "../utils/path.js";
 
 // Minimal Go expression serializer used by the lowerer for GoRawExpr construction.
 // Handles the subset of GoIR nodes that appear inside well-known constructor args.
@@ -444,7 +445,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           else if (pkgName === "Sub" || pkgName === "Std.Sub") safePkg = "std_sub";
           else if (pkgName === "Log" || pkgName === "Std.Log") safePkg = "fmt"; // special case
           else {
-              safePkg = pkgName.split(".").map(p => p.toLowerCase()).join("_");
+              // Convert PascalCase parts to kebab-case first (FyneIo -> fyne-io),
+              // then replace all separators with underscores to match makeSafeGoName
+              safePkg = pkgName.split(".").map(p => pascalToKebab(p)).join("_").replace(/[\/\.-]/g, "_");
           }
 
           const goName = name.charAt(0).toUpperCase() + name.slice(1);

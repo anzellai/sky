@@ -5,7 +5,7 @@ import { lex } from "../lexer/lexer.js";
 import { parse } from "../parser/parser.js";
 import { filterLayout } from "../parser/filter-layout.js";
 import * as AST from "../ast/ast.js";
-import { getDirname, getFilename } from "../utils/path.js";
+import { getDirname, getFilename, skyImportToGoPaths } from "../utils/path.js";
 import { isVirtualAsset, readVirtualAsset } from "../utils/assets.js";
 import { readManifest, SkyManifest } from "../pkg/manifest.js";
 import { generateForeignBindings } from "../interop/go/generate-bindings.js";
@@ -129,11 +129,7 @@ export async function buildModuleGraph(
 
         const projectRoot = path.dirname(srcRoot);
 
-        const possiblePackages = [
-            importParts.join("/").toLowerCase(),
-            // Common pattern: First two parts are often domain.tld (github.com)
-            importParts.length >= 2 ? (importParts[0] + "." + importParts[1] + "/" + importParts.slice(2).join("/")).toLowerCase() : null
-        ].filter(Boolean) as string[];
+        const possiblePackages = skyImportToGoPaths(importParts);
 
         for (const goPackage of possiblePackages) {
             const goCachePath = path.join(projectRoot, ".skycache", "go", goPackage, "bindings.skyi");
