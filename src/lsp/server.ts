@@ -29,6 +29,14 @@ import { filterLayout } from '../parser/filter-layout.js';
 import { parse } from '../parser/parser.js';
 
 export function startServer() {
+  // Prevent the LSP from crashing on unhandled errors
+  process.on('uncaughtException', (err) => {
+    // Silently swallow — the LSP must stay alive
+  });
+  process.on('unhandledRejection', (err) => {
+    // Silently swallow — the LSP must stay alive
+  });
+
   const connection = createConnection(ProposedFeatures.all);
   const documents: TextDocuments<TextDocument> = new TextDocuments(TextDocument);
 
@@ -53,7 +61,8 @@ export function startServer() {
   });
 
   documents.onDidChangeContent(async change => {
-    await validateTextDocument(change.document);
+    try { await validateTextDocument(change.document); }
+    catch {}
   });
 
   async function validateTextDocument(textDocument: TextDocument): Promise<void> {
@@ -62,22 +71,25 @@ export function startServer() {
   }
 
   connection.onHover((params: HoverParams): Hover | null => {
-    return workspace.getHover(params.textDocument.uri, params.position);
+    try { return workspace.getHover(params.textDocument.uri, params.position); }
+    catch { return null; }
   });
 
   connection.onDefinition((params: DefinitionParams): Location | null => {
-    return workspace.getDefinition(params.textDocument.uri, params.position);
+    try { return workspace.getDefinition(params.textDocument.uri, params.position); }
+    catch { return null; }
   });
 
   connection.onCompletion((params: CompletionParams) => {
-    const items = workspace.getCompletions(params.textDocument.uri, params.position);
-    // Return as CompletionList with isIncomplete=true so the editor
-    // always re-queries on each keystroke (important for qualified access like Os.)
-    return { isIncomplete: true, items };
+    try {
+      const items = workspace.getCompletions(params.textDocument.uri, params.position);
+      return { isIncomplete: true, items };
+    } catch { return { isIncomplete: true, items: [] }; }
   });
 
   connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
-    return workspace.getSignatureHelp(params.textDocument.uri, params.position);
+    try { return workspace.getSignatureHelp(params.textDocument.uri, params.position); }
+    catch { return null; }
   });
 
   connection.onDocumentFormatting((params: DocumentFormattingParams): TextEdit[] | null => {
