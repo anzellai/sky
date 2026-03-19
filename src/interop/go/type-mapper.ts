@@ -51,10 +51,13 @@ export function mapGoTypeToSky(goType: string, currentPackage?: string): string 
     }
 
     if (t.startsWith("func(")) {
-        // Advanced: map func(A, B) C to A -> B -> C
-        // Keep it simple for now, maybe map to Any
-        // Or we can try to extract it if simple
         return "Any";
+    }
+
+    // Inline Go struct types (struct{Field Type "tag"; ...}) can't be
+    // represented in Sky — map to opaque Foreign type.
+    if (t.startsWith("struct{") || t.startsWith("struct {")) {
+        return "Foreign";
     }
 
     // Map package prefix to PascalCase
@@ -67,7 +70,9 @@ export function mapGoTypeToSky(goType: string, currentPackage?: string): string 
             t = name;
         } else {
             const parts = pkg.split(/[\/\.]/);
-            const skyPkg = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(".");
+            const skyPkg = parts.map(p =>
+                p.split("-").map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("")
+            ).join(".");
             return skyPkg + "." + name.charAt(0).toUpperCase() + name.slice(1);
         }
     }
