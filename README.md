@@ -140,17 +140,17 @@ identity x = x
 
 #### Built-in Types
 
-| Type | Description | Examples |
-|------|-------------|---------|
-| `Int` | Integer | `42`, `-7` |
-| `Float` | Floating point | `3.14`, `-0.5` |
-| `String` | Text | `"hello"`, `"line\n"` |
-| `Bool` | Boolean | `True`, `False` |
-| `Char` | Character | `'a'`, `'Z'` |
-| `Unit` | Empty tuple | `()` |
-| `List a` | Ordered collection | `[1, 2, 3]` |
-| `Maybe a` | Optional value | `Just 42`, `Nothing` |
-| `Result err ok` | Success/failure | `Ok 42`, `Err "fail"` |
+| Type            | Description        | Examples              |
+| --------------- | ------------------ | --------------------- |
+| `Int`           | Integer            | `42`, `-7`            |
+| `Float`         | Floating point     | `3.14`, `-0.5`        |
+| `String`        | Text               | `"hello"`, `"line\n"` |
+| `Bool`          | Boolean            | `True`, `False`       |
+| `Char`          | Character          | `'a'`, `'Z'`          |
+| `Unit`          | Empty tuple        | `()`                  |
+| `List a`        | Ordered collection | `[1, 2, 3]`           |
+| `Maybe a`       | Optional value     | `Just 42`, `Nothing`  |
+| `Result err ok` | Success/failure    | `Ok 42`, `Err "fail"` |
 
 #### Type Aliases
 
@@ -334,17 +334,17 @@ Dict.keys users                  -- ["alice", "bob"]
 
 ### Operators
 
-| Operator | Description | Precedence |
-|----------|-------------|------------|
-| `\|>` | Pipeline (left) | 0 |
-| `<\|` | Application (right) | 0 |
-| `\|\|` | Logical OR | 2 |
-| `&&` | Logical AND | 3 |
-| `==`, `!=`, `<`, `>`, `<=`, `>=` | Comparison | 4 |
-| `++` | String/list concat | 5 |
-| `+`, `-` | Arithmetic | 6 |
-| `*`, `/`, `%` | Arithmetic | 7 |
-| `>>`, `<<` | Function composition | 9 |
+| Operator                         | Description          | Precedence |
+| -------------------------------- | -------------------- | ---------- |
+| `\|>`                            | Pipeline (left)      | 0          |
+| `<\|`                            | Application (right)  | 0          |
+| `\|\|`                           | Logical OR           | 2          |
+| `&&`                             | Logical AND          | 3          |
+| `==`, `!=`, `<`, `>`, `<=`, `>=` | Comparison           | 4          |
+| `++`                             | String/list concat   | 5          |
+| `+`, `-`                         | Arithmetic           | 6          |
+| `*`, `/`, `%`                    | Arithmetic           | 7          |
+| `>>`, `<<`                       | Function composition | 9          |
 
 #### Pipeline Operators
 
@@ -359,7 +359,7 @@ result =
         |> List.head
 ```
 
-Equivalent to `List.head (String.split " " (String.toLower (String.trim "  Hello, World!  ")))`.
+Equivalent to `List.head (String.split " " (String.toLower (String.trim " Hello, World! ")))`.
 
 ### Control Flow
 
@@ -389,12 +389,12 @@ Sky can import and use any Go package -- both standard library and third-party.
 
 Go packages are mapped to PascalCase module names:
 
-| Go Package | Sky Import |
-|------------|-----------|
-| `net/http` | `Net.Http` |
-| `crypto/sha256` | `Crypto.Sha256` |
-| `time` | `Time` |
-| `os` | `Os` |
+| Go Package               | Sky Import               |
+| ------------------------ | ------------------------ |
+| `net/http`               | `Net.Http`               |
+| `crypto/sha256`          | `Crypto.Sha256`          |
+| `time`                   | `Time`                   |
+| `os`                     | `Os`                     |
 | `github.com/google/uuid` | `Github.Com.Google.Uuid` |
 | `github.com/gorilla/mux` | `Github.Com.Gorilla.Mux` |
 
@@ -476,16 +476,16 @@ Key modules: `Std.Cmd`, `Std.Sub`, `Std.Task`, `Std.Program`.
 
 ### Sky.Core (auto-imported via Prelude)
 
-| Module | Key Functions |
-|--------|--------------|
-| `Sky.Core.Prelude` | `Result`, `Maybe`, `identity` (auto-imported) |
-| `Sky.Core.Maybe` | `withDefault`, `map`, `andThen` |
-| `Sky.Core.Result` | `withDefault`, `map`, `andThen`, `mapError`, `toMaybe` |
-| `Sky.Core.List` | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty` |
-| `Sky.Core.String` | `split`, `join`, `contains`, `replace`, `trim`, `length`, `toLower`, `toUpper`, `startsWith`, `endsWith`, `slice`, `fromInt`, `toInt`, `fromFloat`, `toFloat`, `lines`, `words`, `repeat`, `padLeft`, `padRight`, `reverse`, `indexes` |
-| `Sky.Core.Dict` | `empty`, `singleton`, `insert`, `get`, `remove`, `keys`, `values`, `map`, `foldl`, `fromList`, `toList`, `isEmpty`, `size`, `member`, `update` |
-| `Sky.Core.Debug` | `log`, `toString` |
-| `Sky.Core.Platform` | `getArgs` |
+| Module              | Key Functions                                                                                                                                                                                                                          |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Sky.Core.Prelude`  | `Result`, `Maybe`, `identity` (auto-imported)                                                                                                                                                                                          |
+| `Sky.Core.Maybe`    | `withDefault`, `map`, `andThen`                                                                                                                                                                                                        |
+| `Sky.Core.Result`   | `withDefault`, `map`, `andThen`, `mapError`, `toMaybe`                                                                                                                                                                                 |
+| `Sky.Core.List`     | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty`                                             |
+| `Sky.Core.String`   | `split`, `join`, `contains`, `replace`, `trim`, `length`, `toLower`, `toUpper`, `startsWith`, `endsWith`, `slice`, `fromInt`, `toInt`, `fromFloat`, `toFloat`, `lines`, `words`, `repeat`, `padLeft`, `padRight`, `reverse`, `indexes` |
+| `Sky.Core.Dict`     | `empty`, `singleton`, `insert`, `get`, `remove`, `keys`, `values`, `map`, `foldl`, `fromList`, `toList`, `isEmpty`, `size`, `member`, `update`                                                                                         |
+| `Sky.Core.Debug`    | `log`, `toString`                                                                                                                                                                                                                      |
+| `Sky.Core.Platform` | `getArgs`                                                                                                                                                                                                                              |
 
 ### Sky.Core.Json
 
@@ -518,15 +518,15 @@ result = Decode.decodeString userDecoder jsonString
 
 ### Std (Application Framework)
 
-| Module | Purpose |
-|--------|---------|
-| `Std.Log` | `println` for output |
-| `Std.Cmd` | `none`, `batch`, `perform` |
-| `Std.Sub` | `none`, `batch` |
-| `Std.Task` | `succeed`, `fail`, `map`, `andThen` |
+| Module        | Purpose                             |
+| ------------- | ----------------------------------- |
+| `Std.Log`     | `println` for output                |
+| `Std.Cmd`     | `none`, `batch`, `perform`          |
+| `Std.Sub`     | `none`, `batch`                     |
+| `Std.Task`    | `succeed`, `fail`, `map`, `andThen` |
 | `Std.Program` | `Program` type alias, `makeProgram` |
-| `Std.Time` | `every` (subscription timer) |
-| `Std.Uuid` | `v4` (UUID generation) |
+| `Std.Time`    | `every` (subscription timer)        |
+| `Std.Uuid`    | `v4` (UUID generation)              |
 
 ### Std.Html (Server-Side Rendering)
 
@@ -656,6 +656,7 @@ dir = "static"
 ```
 
 See the [design docs](docs/design/) for the full architecture:
+
 - [sky-live.md](docs/design/sky-live.md) -- HTTP-first server-driven UI design
 - [sky-live-unified.md](docs/design/sky-live-unified.md) -- unified Model/Msg design
 - [sky-live-components.md](docs/design/sky-live-components.md) -- component protocol & ecosystem
@@ -721,12 +722,12 @@ dir = "static"                     # static file directory, served at /static/*
 
 A project's role is determined by which fields are present:
 
-| Configuration | Role | Description |
-|---------------|------|-------------|
-| Has `entry`, no `[lib]` | **Application** | A runnable app. `sky build` and `sky run` work. |
-| Has `[lib]`, no `entry` | **Library** | Exposes modules for others to import. |
-| Has both `entry` and `[lib]` | **Both** | An app that also exposes reusable modules. |
-| Neither `entry` nor `[lib]` | **Private app** | Internal project, no public API. |
+| Configuration                | Role            | Description                                     |
+| ---------------------------- | --------------- | ----------------------------------------------- |
+| Has `entry`, no `[lib]`      | **Application** | A runnable app. `sky build` and `sky run` work. |
+| Has `[lib]`, no `entry`      | **Library**     | Exposes modules for others to import.           |
+| Has both `entry` and `[lib]` | **Both**        | An app that also exposes reusable modules.      |
+| Neither `entry` nor `[lib]`  | **Private app** | Internal project, no public API.                |
 
 ### Dependencies
 
@@ -747,6 +748,7 @@ sky remove github.com/google/uuid
 ```
 
 **Auto-detection**: When you run `sky add github.com/...`, Sky checks the remote repository:
+
 - If it has a `sky.toml` -> installs as a Sky package (cloned to `.skydeps/`)
 - If it has a `go.mod` -> installs as a Go package (via `go get`)
 
@@ -818,12 +820,12 @@ A library can also have Go dependencies. When someone installs your Sky package,
 
 ### Dependency Storage
 
-| Type | Location | Mechanism |
-|------|----------|-----------|
-| Sky packages | `.skydeps/{org}/{repo}/` | `git clone --depth 1` |
-| Go packages | `.skycache/gomod/` | `go get` (shared `go.mod`) |
-| Go bindings | `.skycache/go/{package}/` | Auto-generated `.skyi` files |
-| Lock file | `sky.lock` | YAML, tracks resolved versions |
+| Type         | Location                  | Mechanism                      |
+| ------------ | ------------------------- | ------------------------------ |
+| Sky packages | `.skydeps/{org}/{repo}/`  | `git clone --depth 1`          |
+| Go packages  | `.skycache/gomod/`        | `go get` (shared `go.mod`)     |
+| Go bindings  | `.skycache/go/{package}/` | Auto-generated `.skyi` files   |
+| Lock file    | `sky.lock`                | YAML, tracks resolved versions |
 
 ---
 
@@ -856,6 +858,7 @@ If `file.sky` is omitted, the CLI reads `entry` from `sky.toml`.
 ### Formatter
 
 `sky fmt` formats Sky code in Elm style:
+
 - 4-space indentation
 - Leading commas in lists and records
 - `let`/`in` always multiline
@@ -892,26 +895,32 @@ Sky includes Helix editor integration. Configure in your Helix `languages.toml`:
 name = "sky"
 scope = "source.sky"
 file-types = ["sky"]
-language-server = { command = "sky", args = ["lsp"] }
-indent = { tab-width = 4, unit = "    " }
+auto-format = true
+formatter = { command = "sky", args = ["fmt", "-"] }
+language-servers = ["sky-lsp"]
+indent = { tab-width = 4, unit = " " }
+
+[language-server.sky-lsp]
+command = "sky-lsp"
+args = ["--stdio"]
 ```
 
 ---
 
 ## Examples
 
-| Example | Description | Key Features |
-|---------|-------------|-------------|
-| `01-hello-world` | Basic hello world | `println`, modules |
-| `02-go-stdlib` | Go standard library | `net/http`, `crypto/sha256`, `time`, `encoding/hex` |
-| `03-tea-external` | TEA with external packages | `Model`/`Msg`/`update`, `uuid`, `godotenv` |
-| `04-local-pkg` | Multi-module project | Local package imports (`Lib.Utils`) |
-| `05-mux-server` | HTTP server | `gorilla/mux`, `godotenv`, request handling |
-| `06-json` | JSON encode/decode | Elm-compatible `Json.Encode`, `Json.Decode`, pipeline decoding |
-| `07-todo-cli` | CLI with SQLite | Command-line args, `database/sql`, `modernc.org/sqlite` |
-| `08-notes-app` | Full CRUD web app | HTTP server, database, auth, HTML templates |
-| `09-live-counter` | Sky.Live counter | Server-driven UI, routing, events |
-| `10-live-component` | Sky.Live components | Component protocol, auto-wiring |
+| Example             | Description                | Key Features                                                   |
+| ------------------- | -------------------------- | -------------------------------------------------------------- |
+| `01-hello-world`    | Basic hello world          | `println`, modules                                             |
+| `02-go-stdlib`      | Go standard library        | `net/http`, `crypto/sha256`, `time`, `encoding/hex`            |
+| `03-tea-external`   | TEA with external packages | `Model`/`Msg`/`update`, `uuid`, `godotenv`                     |
+| `04-local-pkg`      | Multi-module project       | Local package imports (`Lib.Utils`)                            |
+| `05-mux-server`     | HTTP server                | `gorilla/mux`, `godotenv`, request handling                    |
+| `06-json`           | JSON encode/decode         | Elm-compatible `Json.Encode`, `Json.Decode`, pipeline decoding |
+| `07-todo-cli`       | CLI with SQLite            | Command-line args, `database/sql`, `modernc.org/sqlite`        |
+| `08-notes-app`      | Full CRUD web app          | HTTP server, database, auth, HTML templates                    |
+| `09-live-counter`   | Sky.Live counter           | Server-driven UI, routing, events                              |
+| `10-live-component` | Sky.Live components        | Component protocol, auto-wiring                                |
 
 Run any example:
 
