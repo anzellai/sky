@@ -29,7 +29,7 @@ type Msg
 -- ══════════════════════════════════════════════════════
 -- INIT
 -- ══════════════════════════════════════════════════════
-init : a -> Tuple Model Cmd Msg
+init : a -> ( Model, Cmd, Msg )
 init _req =
     ( { page = MainPage
     , title = "My App"
@@ -41,7 +41,7 @@ init _req =
 -- ══════════════════════════════════════════════════════
 -- UPDATE — no CounterMsg case needed! Auto-wired by compiler.
 -- ══════════════════════════════════════════════════════
-update : Msg -> Model -> Tuple Model Cmd Msg
+update : Msg -> Model -> ( Model, Cmd, Msg )
 update msg model =
     case msg of
         Navigate page ->

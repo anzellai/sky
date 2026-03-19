@@ -8,24 +8,18 @@ import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 
-
 -- ══════════════════════════════════════════════════════
 -- MODEL
 -- ══════════════════════════════════════════════════════
-
 type Page
     = CounterPage
     | AboutPage
 
-type alias Model =
-    { page : Page
-    , count : Int
-    }
-
-
 -- ══════════════════════════════════════════════════════
 -- MSG
 -- ══════════════════════════════════════════════════════
+type alias Model =
+    { page : Page , count : Int }
 
 type Msg
     = Navigate Page
@@ -33,53 +27,46 @@ type Msg
     | Decrement
     | Reset
 
-
 -- ══════════════════════════════════════════════════════
 -- INIT
 -- ══════════════════════════════════════════════════════
-
 init : a -> ( Model, Cmd Msg )
 init _req =
-    ( { page = CounterPage, count = 0 }
-    , Cmd.none
-    )
-
+    ( { page = CounterPage , count = 0 } , Cmd.none )
 
 -- ══════════════════════════════════════════════════════
 -- UPDATE
 -- ══════════════════════════════════════════════════════
-
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         Navigate page ->
-            ( { model | page = page }, Cmd.none )
-
+            ( { model | page = page } , Cmd.none )
+        
         Increment ->
-            ( { model | count = model.count + 1 }, Cmd.none )
-
+            ( { model | count = model.count + 1 } , Cmd.none )
+        
         Decrement ->
-            ( { model | count = model.count - 1 }, Cmd.none )
-
+            ( { model | count = model.count - 1 } , Cmd.none )
+        
         Reset ->
-            ( { model | count = 0 }, Cmd.none )
-
+            ( { model | count = 0 } , Cmd.none )
 
 -- ══════════════════════════════════════════════════════
 -- VIEW
 -- ══════════════════════════════════════════════════════
-
 view : Model -> String
 view model =
     div []
         [ styleNode [] pageStyles
         , div [ class "app" ]
             [ nav [ class "navbar" ]
-                [ button [ onClick "Navigate CounterPage", class "nav-btn" ] [ text "Counter" ]
-                , button [ onClick "Navigate AboutPage", class "nav-btn" ] [ text "About" ]
+                [ button [ onClick "Navigate CounterPage" , class "nav-btn" ]
+                    [ text "Counter" ]
+                , button [ onClick "Navigate AboutPage" , class "nav-btn" ]
+                    [ text "About" ]
                 ]
-            , div [ class "content" ]
-                [ viewPage model ]
+            , div [ class "content" ] [ viewPage model ]
             ]
         ]
 
@@ -88,7 +75,7 @@ viewPage model =
     case model.page of
         CounterPage ->
             viewCounter model
-
+        
         AboutPage ->
             viewAbout
 
@@ -97,21 +84,32 @@ viewCounter model =
     div [ class "counter" ]
         [ h1 [] [ text "Sky.Live Counter" ]
         , div [ class "count" ]
-            [ span [ class "count-value" ] [ text (String.fromInt model.count) ] ]
-        , div [ class "buttons" ]
-            [ button [ onClick "Decrement", class "btn" ] [ text "-" ]
-            , button [ onClick "Reset", class "btn btn-secondary" ] [ text "Reset" ]
-            , button [ onClick "Increment", class "btn" ] [ text "+" ]
+            [ span [ class "count-value" ] [ text (String.fromInt model.count) ]
             ]
-        , p [ class "hint" ] [ text "Each click is a server round-trip. No client-side JS framework." ]
+        , div [ class "buttons" ]
+            [ button [ onClick "Decrement" , class "btn" ] [ text "-" ]
+            , button [ onClick "Reset" , class "btn btn-secondary" ]
+                [ text "Reset" ]
+            , button [ onClick "Increment" , class "btn" ] [ text "+" ]
+            ]
+        , p [ class "hint" ]
+            [ text
+                "Each click is a server round-trip. No client-side JS framework."
+            ]
         ]
 
 viewAbout : String
 viewAbout =
     div [ class "about" ]
         [ h1 [] [ text "About Sky.Live" ]
-        , p [] [ text "This is a Sky.Live application — an HTTP-first, server-driven UI." ]
-        , p [] [ text "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches." ]
+        , p []
+            [ text
+                "This is a Sky.Live application — an HTTP-first, server-driven UI."
+            ]
+        , p []
+            [ text
+                "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches."
+            ]
         , p [] [ text "Navigate back to Counter — your count is preserved!" ]
         ]
 
@@ -135,23 +133,17 @@ pageStyles =
     ".btn-secondary:hover { background: #4b5563; } " ++
     ".hint { color: #888; font-size: 0.85rem; margin-top: 2rem; } " ++
     ".about { line-height: 1.8; } " ++
-    ".about h1 { margin-bottom: 1rem; } " ++
-    ".about p { margin-bottom: 1rem; }"
-
+    ".about h1 { margin-bottom: 1rem; } " ++ ".about p { margin-bottom: 1rem; }"
 
 -- ══════════════════════════════════════════════════════
 -- APP
 -- ══════════════════════════════════════════════════════
-
 main =
     app
         { init = init
         , update = update
         , view = view
         , subscriptions = \_ -> ()
-        , routes =
-            [ route "/" CounterPage
-            , route "/about" AboutPage
-            ]
+        , routes = [ route "/" CounterPage , route "/about" AboutPage ]
         , notFound = CounterPage
         }

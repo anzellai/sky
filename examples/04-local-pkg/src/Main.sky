@@ -6,9 +6,13 @@ import Lib.Utils as Utils
 
 main =
     let
-        a = 10
-        b = 20
-        sum = Utils.add a b
-        message = Utils.formatMessage "Current" sum
+        a =
+            10
+        b =
+            20
+        sum =
+            Utils.add a b
+        message =
+            Utils.formatMessage "Current" sum
     in
         println "Calculation result:" message

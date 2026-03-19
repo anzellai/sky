@@ -894,7 +894,7 @@ Sky includes Helix editor integration. Configure in your Helix `languages.toml`:
 [[language]]
 name = "sky"
 scope = "source.sky"
-file-types = ["sky"]
+file-types = ["sky", "skyi"]
 auto-format = true
 formatter = { command = "sky", args = ["fmt", "-"] }
 language-servers = ["sky-lsp"]

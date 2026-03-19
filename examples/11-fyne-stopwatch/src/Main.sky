@@ -13,33 +13,42 @@ module Main exposing (main)
 -- Usage:
 --   sky install && sky build
 --   ./dist/app
-
 import Sky.Core.Prelude exposing (..)
 import Fyne.Io.Fyne.V2 as Fyne
 import Fyne.Io.Fyne.V2.App as FyneApp
 import Fyne.Io.Fyne.V2.Container as FContainer
 
-foreign import "sky_wrappers" exposing
-    ( StopwatchDisplay, StopwatchToggleBtn, StopwatchResetBtn
-    , SkyNewSize
-    )
+foreign import "sky_wrappers" exposing (StopwatchDisplay)
 
+foreign import "sky_wrappers" exposing (StopwatchToggleBtn)
+
+foreign import "sky_wrappers" exposing (StopwatchResetBtn)
+
+foreign import "sky_wrappers" exposing (SkyNewSize)
 
 main =
     let
-        myApp = FyneApp.new ()
-        window = Fyne.appNewWindow myApp "Sky Stopwatch"
+        myApp =
+            FyneApp.new ()
+        window =
+            Fyne.appNewWindow myApp "Sky Stopwatch"
 
         -- Stopwatch widget group (built in Go for self-referencing callbacks)
-        display = StopwatchDisplay ()
-        toggleBtn = StopwatchToggleBtn ()
-        resetBtn = StopwatchResetBtn ()
+        display =
+            StopwatchDisplay ()
+        toggleBtn =
+            StopwatchToggleBtn ()
+        resetBtn =
+            StopwatchResetBtn ()
 
         -- Layout uses auto-generated fyne bindings
-        buttons = FContainer.newHBox [toggleBtn, resetBtn]
-        content = FContainer.newVBox [display, buttons]
-
-        _ = Fyne.windowSetContent window content
-        _ = Fyne.windowResize window (SkyNewSize 300 150)
+        buttons =
+            FContainer.newHBox [ toggleBtn , resetBtn ]
+        content =
+            FContainer.newVBox [ display , buttons ]
+        _ =
+            Fyne.windowSetContent window content
+        _ =
+            Fyne.windowResize window (SkyNewSize 300 150)
     in
-    Fyne.windowShowAndRun window
+        Fyne.windowShowAndRun window
