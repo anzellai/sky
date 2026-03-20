@@ -48,7 +48,7 @@ node dist/bin/sky.js run examples/01-hello-world/src/Main.sky
 
 1. **TypeScript only** -- Never commit `.js` files in `src/` (except `src/bin/build-binary.js`).
 2. **Indentation parser** -- The parser uses the column of the first token as the minimum indentation reference. Do not tighten rules that break slightly unaligned input.
-3. **Formatter (Elm-style)** -- 4-space indent, leading commas, `let`/`in` always multiline, 80-char line width.
+3. **Formatter (Elm-style)** -- 4-space indent, leading commas, `let`/`in` always multiline, 80-char line width. **Always run `sky fmt` on `.sky` and `.skyi` files after any changes** (`sky fmt <file>.sky` or `sky fmt <file>.skyi`).
 4. **Universal unifiers** -- `JsValue`, `Foreign`, and variants are universal unifiers for interop. Do not remove.
 5. **Prelude** -- `Sky.Core.Prelude` is implicitly imported everywhere. Provides `Result`, `Maybe`, `identity`, `errorToString`.
 6. **Go FFI** -- Wrappers accept `any` params with internal type assertions. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`). Auto-generated bindings: struct methods become `{Type}{Method}` (e.g., `db.Query` → `dbQuery`), fields become `{Type}{Field}`, constants/vars become zero-arg functions.

@@ -485,14 +485,127 @@ store = "memory"                # memory | sqlite | redis | postgresql
 
 ## Coding Conventions
 
-- **4-space indentation**, leading commas in lists/records
 - **Module names** are PascalCase, match file paths: `Lib.Utils` → `src/Lib/Utils.sky`
-- **`let`/`in`** always multiline when formatted
 - **No semicolons**, no curly braces — indentation-sensitive like Elm/Haskell
 - Use **`Std.Css`** for styling (not inline style strings)
 - Use **`errorToString`** to convert Go errors to strings
 - Pattern match on **`Result`** (`Ok val` / `Err e`) for Go functions returning errors
 - Pattern match on **`Maybe`** (`Just val` / `Nothing`) for Go `*primitive` pointer returns
+
+## Code Formatting
+
+**Always run `sky fmt <file>.sky` (or `sky fmt <file>.skyi`) after any changes to `.sky` or `.skyi` files.** The formatter is opinionated and canonical — all Sky code must be formatted before committing.
+
+### Rules
+
+- **Line width**: 80 characters max
+- **Indentation**: 4 spaces (no tabs)
+- **Leading commas**: multi-line lists, records, tuples, and type variants use leading comma/pipe style
+
+### Declarations
+
+```elm
+-- Type annotation on its own line, function body indented 4 spaces
+greet : String -> String
+greet name =
+    "Hello, " ++ name
+
+
+-- Two blank lines between top-level declarations
+add : Int -> Int -> Int
+add a b =
+    a + b
+```
+
+### Let-In (always multiline)
+
+```elm
+main =
+    let
+        a = 10
+        b = 20
+    in
+    println (a + b)
+```
+
+`let` and `in` are aligned; bindings indented 4 spaces under `let`; body indented 4 spaces under `in`.
+
+### Case Expressions
+
+```elm
+case msg of
+    Navigate page ->
+        ( { model | page = page }, Cmd.none )
+
+    Increment ->
+        ( { model | count = model.count + 1 }, Cmd.none )
+```
+
+Branches indented 4 spaces under `case`; branch body indented 4 spaces under the arrow. Blank line between branches.
+
+### If-Then-Else
+
+```elm
+if condition then
+    trueValue
+else
+    falseValue
+```
+
+### ADT Variants (leading pipe)
+
+```elm
+type Shape
+    = Circle Float
+    | Rectangle Float Float
+```
+
+First variant prefixed with `= `, subsequent with `| `, all indented 4 spaces.
+
+### Records & Lists (leading comma when multi-line)
+
+```elm
+-- Short form stays on one line
+{ name = "Alice", age = 30 }
+[ 1, 2, 3 ]
+
+-- Multi-line uses leading commas
+{ name = "Alice"
+, age = 30
+, email = "alice@example.com"
+}
+
+[ firstItem
+, secondItem
+, thirdItem
+]
+```
+
+### Record Updates
+
+```elm
+{ model | count = model.count + 1 }
+```
+
+### Pipeline Operators (always break to new lines)
+
+```elm
+items
+    |> List.map (\x -> x * 2)
+    |> List.filter (\x -> x > 3)
+```
+
+### Module Header & Imports
+
+```elm
+module Main exposing (main)
+
+
+import Std.Log exposing (println)
+import Sky.Core.String as String
+```
+
+Two blank lines between module declaration and imports. One blank line after imports before declarations.
 
 ## Common Patterns
 
