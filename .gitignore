@@ -1,10 +1,32 @@
+# OS
 .DS_Store
+
+# Build artifacts
 bin/
 dist/
+
+# Dependencies
 node_modules/
+
+# Sky compiler cache and deps
 .skycache/
+.skydeps/
+
+# Environment and secrets
 .env
+.env.*
+
+# AI agent config
 .claude/
+
+# Databases
 *.db
 *.db-shm
 *.db-wal
+
+# Session data
+data/
+
+# Test files
+test-*.js
+test-*.ts
