@@ -49,6 +49,11 @@ async function main() {
       // Helix sometimes passes "-" to mean stdin, but LSP is already stdio based.
       startServer();
       return;
+    case "--help":
+    case "-h":
+    case undefined:
+      printHelp();
+      return;
     default:
       printHelp();
       process.exit(1);

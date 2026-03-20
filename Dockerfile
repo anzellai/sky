@@ -34,10 +34,8 @@ COPY src/ src/
 COPY tsconfig.json ./
 
 # Build TypeScript
-RUN npm run build
-
-# Bundle into single-file CJS binaries with embedded stdlib
-RUN node src/bin/build-binary.js
+RUN npm install
+RUN npm run bundle
 
 # ── Stage 2: Runtime image ──────────────────────────────────
 # Node.js for running the Sky compiler + Go for compiling output
@@ -53,20 +51,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/root/go"
-ENV PATH="${GOPATH}/bin:${PATH}"
+ENV PATH="${GOPATH}/bin:${PATH}:/usr/local/bin"
 
 # Copy the bundled Sky compiler
-COPY --from=builder /sky/dist/sky.cjs /usr/local/lib/sky/sky.cjs
-COPY --from=builder /sky/dist/sky-lsp.cjs /usr/local/lib/sky/sky-lsp.cjs
-
-# Create wrapper scripts
-RUN printf '#!/bin/sh\nnode /usr/local/lib/sky/sky.cjs "$@"\n' > /usr/local/bin/sky && \
-    chmod +x /usr/local/bin/sky && \
-    printf '#!/bin/sh\nnode /usr/local/lib/sky/sky-lsp.cjs "$@"\n' > /usr/local/bin/sky-lsp && \
-    chmod +x /usr/local/bin/sky-lsp
+COPY --from=builder /sky/bin/sky /usr/local/bin/sky
+COPY --from=builder /sky/bin/sky-lsp /usr/local/bin/sky-lsp
 
 # Verify installation
-RUN sky --help && go version
+RUN sky --help
+RUN go version
 
 # Default working directory for user projects
 WORKDIR /app
