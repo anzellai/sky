@@ -854,17 +854,44 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
       }
       case "BinaryExpression": {
         let retType: Type = { kind: "TypeConstant", name: "Any" };
-        // Look up the inferred type from the type checker if available
-        const nodeKey = expr.span ? `${expr.span.start.line}:${expr.span.start.column}` : null;
-        const nodeType = nodeKey ? typeCheck.nodeTypes?.get(nodeKey) : undefined;
-        if (nodeType) {
-          retType = nodeType;
-        } else if (expr.operator === "++") {
-          retType = { kind: "TypeConstant", name: "String" };
-        } else if (["+", "-", "*", "/"].includes(expr.operator)) {
+        if (expr.operator === "++") {
+          // Check if operands are lists to determine String vs List concatenation
+          const leftConverted = convertExpr(expr.left);
+          const rightConverted = convertExpr(expr.right);
+          // Detect list concatenation from: list literals, or operand types from type checker
+          const isListExpr = (e: CoreIR.Expr) => e.kind === "ListExpr";
+          const isListType = (t: Type | undefined) =>
+            t?.kind === "TypeApplication" &&
+            t.constructor.kind === "TypeConstant" &&
+            t.constructor.name === "List";
+          const getNodeType = (astExpr: AST.Expression) => {
+            if (astExpr.span) {
+              return typeCheck.nodeTypes?.get(`${astExpr.span.start.line}:${astExpr.span.start.column}`);
+            }
+            return undefined;
+          };
+          const leftNodeType = getNodeType(expr.left);
+          const rightNodeType = getNodeType(expr.right);
+          const isListConcat = isListExpr(leftConverted) || isListExpr(rightConverted) ||
+            isListType(leftConverted.type) || isListType(rightConverted.type) ||
+            isListType(leftNodeType) || isListType(rightNodeType);
+          if (isListConcat) {
+            const elemType: Type = { kind: "TypeConstant", name: "Any" };
+            retType = { kind: "TypeApplication", constructor: { kind: "TypeConstant", name: "List" }, arguments: [elemType] };
+          } else {
+            retType = { kind: "TypeConstant", name: "String" };
+          }
+          return {
+            kind: "Application",
+            fn: { kind: "Variable", name: expr.operator, type: { kind: "TypeConstant", name: "Any" } },
+            args: [leftConverted, rightConverted],
+            type: retType
+          };
+        }
+        if (["+", "-", "*", "/"].includes(expr.operator)) {
           retType = { kind: "TypeConstant", name: "Int" };
         }
-        
+
         return {
           kind: "Application",
           fn: { kind: "Variable", name: expr.operator, type: { kind: "TypeConstant", name: "Any" } },
