@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"reflect"
 	"sync"
 	"time"
 )
@@ -233,20 +234,14 @@ func extractSubTag(v any) int {
 			}
 		}
 	}
-	// Try struct via fmt
-	s := fmt.Sprintf("%v", v)
-	if len(s) > 2 && s[0] == '{' {
-		for i := 1; i < len(s); i++ {
-			if s[i] >= '0' && s[i] <= '9' {
-				n := 0
-				for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-					n = n*10 + int(s[i]-'0')
-					i++
-				}
-				return n
-			}
-			if s[i] != ' ' {
-				break
+	// Try struct via reflection
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("Tag")
+		if f.IsValid() {
+			switch f.Kind() {
+			case reflect.Int, reflect.Int64, reflect.Int32:
+				return int(f.Int())
 			}
 		}
 	}
@@ -257,8 +252,14 @@ func extractField(v any, fieldName string) any {
 	if m, ok := v.(map[string]any); ok {
 		return m[fieldName]
 	}
-	// For compiled Go structs, use fmt to get string representation
-	// This is a fallback — compiled structs should have named fields
+	// For compiled Go structs, use reflection to access named fields
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName(fieldName)
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
 	return nil
 }
 
@@ -284,7 +285,7 @@ func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.Ra
 
 	msg, err := m.app.DecodeMsg(msgName, msgArgs)
 	if err != nil {
-		log.Printf("SSE sub decode error for %s: %v", msgName, err)
+		log.Printf("[SSE] decode error for %s: %v", msgName, err)
 		return
 	}
 
