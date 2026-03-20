@@ -6,7 +6,7 @@ const INDENT_WIDTH = 4
 export function render(doc: Doc): string {
 
   let output = ""
-  let indentLevel = 0
+  let currentIndent = 0
   let column = 0
 
   function write(str: string) {
@@ -16,8 +16,8 @@ export function render(doc: Doc): string {
 
   function newline() {
     output += "\n"
-    output += " ".repeat(indentLevel * INDENT_WIDTH)
-    column = indentLevel * INDENT_WIDTH
+    output += " ".repeat(currentIndent)
+    column = currentIndent
   }
 
   // Estimate the flattened width of a doc (line → space, hardline → infinity)
@@ -40,6 +40,8 @@ export function render(doc: Doc): string {
         return w
       }
       case "indent":
+        return flatWidth(d.doc)
+      case "align":
         return flatWidth(d.doc)
       case "group":
         return flatWidth(d.doc)
@@ -72,6 +74,8 @@ export function render(doc: Doc): string {
         // When flattened, indent doesn't add visible width
         // But when broken, it adds INDENT_WIDTH — accounted in walk()
         return fits(d.doc, remaining)
+      case "align":
+        return fits(d.doc, remaining)
       case "group":
         return fits(d.doc, remaining)
     }
@@ -102,10 +106,18 @@ export function render(doc: Doc): string {
         break
 
       case "indent":
-        indentLevel += 1
+        currentIndent += INDENT_WIDTH
         walk(d.doc)
-        indentLevel -= 1
+        currentIndent -= INDENT_WIDTH
         break
+
+      case "align": {
+        const savedIndent = currentIndent
+        currentIndent = column
+        walk(d.doc)
+        currentIndent = savedIndent
+        break
+      }
 
       case "group":
         // Try to fit the entire group on one line
@@ -143,6 +155,10 @@ export function render(doc: Doc): string {
 
       case "indent":
         // When flattened, indent has no effect (everything is on one line)
+        flatten(d.doc)
+        break
+
+      case "align":
         flatten(d.doc)
         break
 

@@ -1,5 +1,5 @@
 import * as AST from "../../ast/ast.js"
-import { concat, Doc, group, indent, line, text, hardline, softline } from "./layout.js"
+import { align, concat, Doc, group, indent, line, text, hardline, softline } from "./layout.js"
 import { render } from "./printer.js"
 
 export function formatModule(module: AST.Module, originalSource?: string): string {
@@ -405,7 +405,7 @@ function formatExpression(expr: AST.Expression): Doc {
     //   }
     case "RecordExpression":
       if (expr.fields.length === 0) return text("{}");
-      return group(concat(
+      return group(align(concat(
         text("{ "),
         formatRecordField(expr.fields[0]),
         ...expr.fields.slice(1).map(f =>
@@ -413,10 +413,10 @@ function formatExpression(expr: AST.Expression): Doc {
         ),
         line,
         text("}")
-      ))
+      )))
 
     case "RecordUpdateExpression":
-      return group(concat(
+      return group(align(concat(
         text("{ "),
         formatExpression(expr.base),
         line,
@@ -427,7 +427,7 @@ function formatExpression(expr: AST.Expression): Doc {
         ),
         line,
         text("}")
-      ))
+      )))
 
     case "FieldAccessExpression":
       return concat(formatExpression(expr.target), text("."), text(expr.fieldName))
@@ -495,7 +495,7 @@ function formatExpression(expr: AST.Expression): Doc {
 }
 
 function formatRecordField(f: { name: string; value: AST.Expression }): Doc {
-  return group(concat(text(f.name), text(" = "), formatExpression(f.value)));
+  return group(concat(text(f.name), text(" ="), indent(concat(line, formatExpression(f.value)))));
 }
 
 // ============================================================

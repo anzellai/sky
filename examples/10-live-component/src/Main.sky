@@ -32,9 +32,9 @@ type Msg
 init : a -> ( Model, Cmd, Msg )
 init _req =
     ( { page = MainPage
-    , title = "My App"
-    , myCounter = Counter.initWith "Clicks"
-    }
+      , title = "My App"
+      , myCounter = Counter.initWith "Clicks"
+      }
     , Cmd.none
     )
 

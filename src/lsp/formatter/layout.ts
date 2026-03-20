@@ -6,6 +6,7 @@ export type Doc =
   | { kind: "concat"; parts: Doc[] }
   | { kind: "indent"; doc: Doc }
   | { kind: "group"; doc: Doc }
+  | { kind: "align"; doc: Doc }
 
 export function text(value: string): Doc {
   return { kind: "text", value }
@@ -26,4 +27,8 @@ export function indent(doc: Doc): Doc {
 
 export function group(doc: Doc): Doc {
   return { kind: "group", doc }
+}
+
+export function align(doc: Doc): Doc {
+  return { kind: "align", doc }
 }

@@ -93,24 +93,24 @@ init _req =
             Ideas.getIdeas "newest" "all" ""
     in
         ( { page = BoardPage
-        , currentUser = Nothing
-        , ideas = ideas
-        , sortBy = "newest"
-        , filterCategory = "all"
-        , searchQuery = ""
-        , selectedIdeaId = ""
-        , selectedIdea = Nothing
-        , ideaComments = []
-        , newComment = ""
-        , submitTitle = ""
-        , submitDescription = ""
-        , submitCategory = "feature"
-        , authEmail = ""
-        , authUsername = ""
-        , authPassword = ""
-        , authError = ""
-        , notification = ""
-        }
+          , currentUser = Nothing
+          , ideas = ideas
+          , sortBy = "newest"
+          , filterCategory = "all"
+          , searchQuery = ""
+          , selectedIdeaId = ""
+          , selectedIdea = Nothing
+          , ideaComments = []
+          , newComment = ""
+          , submitTitle = ""
+          , submitDescription = ""
+          , submitCategory = "feature"
+          , authEmail = ""
+          , authUsername = ""
+          , authPassword = ""
+          , authError = ""
+          , notification = ""
+          }
         , Cmd.none
         )
 
@@ -194,9 +194,9 @@ handleToggleVote ideaId model =
         
         Nothing ->
             ( { model
-            | page = SignInPage
-            , authError = "Please sign in to vote."
-            }
+              | page = SignInPage
+              , authError = "Please sign in to vote."
+              }
             , Cmd.none
             )
 
@@ -209,13 +209,13 @@ handleViewIdea ideaId model =
             Comments.getComments ideaId
     in
         ( { model
-        | page = DetailPage
-        , selectedIdeaId = ideaId
-        , selectedIdea = idea
-        , ideaComments = comments
-        , newComment = ""
-        , notification = ""
-        }
+          | page = DetailPage
+          , selectedIdeaId = ideaId
+          , selectedIdea = idea
+          , ideaComments = comments
+          , newComment = ""
+          , notification = ""
+          }
         , Cmd.none
         )
 
@@ -237,10 +237,10 @@ doSubmitComment user model =
             Ideas.getIdea model.selectedIdeaId
     in
         ( { model
-        | ideaComments = comments
-        , selectedIdea = idea
-        , newComment = ""
-        }
+          | ideaComments = comments
+          , selectedIdea = idea
+          , newComment = ""
+          }
         , Cmd.none
         )
 
@@ -263,12 +263,12 @@ handleBackToBoard model =
             Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
         ( { model
-        | page = BoardPage
-        , ideas = ideas
-        , selectedIdea = Nothing
-        , selectedIdeaId = ""
-        , notification = ""
-        }
+          | page = BoardPage
+          , ideas = ideas
+          , selectedIdea = Nothing
+          , selectedIdeaId = ""
+          , notification = ""
+          }
         , Cmd.none
         )
 
@@ -290,13 +290,13 @@ doCreateIdea user model =
             Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
         ( { model
-        | page = BoardPage
-        , ideas = ideas
-        , submitTitle = ""
-        , submitDescription = ""
-        , submitCategory = "feature"
-        , notification = "Your idea has been submitted!"
-        }
+          | page = BoardPage
+          , ideas = ideas
+          , submitTitle = ""
+          , submitDescription = ""
+          , submitCategory = "feature"
+          , notification = "Your idea has been submitted!"
+          }
         , Cmd.none
         )
 
@@ -324,14 +324,14 @@ handleSignInSuccess user model =
             logActivity "signin" "" (Db.getField "id" user)
     in
         ( { model
-        | currentUser = Just user
-        , page = BoardPage
-        , ideas = ideas
-        , authEmail = ""
-        , authPassword = ""
-        , authError = ""
-        , notification = "Welcome back!"
-        }
+          | currentUser = Just user
+          , page = BoardPage
+          , ideas = ideas
+          , authEmail = ""
+          , authPassword = ""
+          , authError = ""
+          , notification = "Welcome back!"
+          }
         , Cmd.none
         )
 
@@ -353,14 +353,14 @@ handleSignUpSuccess userId model =
                     logActivity "signup" "" userId
             in
                 ( { model
-                | currentUser = Just user
-                , page = BoardPage
-                , authEmail = ""
-                , authUsername = ""
-                , authPassword = ""
-                , authError = ""
-                , notification = "Account created! Welcome to SkyVote."
-                }
+                  | currentUser = Just user
+                  , page = BoardPage
+                  , authEmail = ""
+                  , authUsername = ""
+                  , authPassword = ""
+                  , authError = ""
+                  , notification = "Account created! Welcome to SkyVote."
+                  }
                 , Cmd.none
                 )
         
@@ -397,11 +397,11 @@ handleSignOut model =
             println "[AUTH] User signed out"
     in
         ( { model
-        | currentUser = Nothing
-        , page = BoardPage
-        , notification = ""
-        , authError = ""
-        }
+          | currentUser = Nothing
+          , page = BoardPage
+          , notification = ""
+          , authError = ""
+          }
         , Cmd.none
         )
 
@@ -526,12 +526,13 @@ main =
         , update = update
         , view = view
         , subscriptions = subscriptions
-        , routes = [ route "/" BoardPage
-        , route "/submit" SubmitPage
-        , route "/auth/signin" SignInPage
-        , route "/auth/signup" SignUpPage
-        , route "/about" AboutPage
-        , route "/roadmap" RoadmapPage
-        ]
+        , routes =
+            [ route "/" BoardPage
+            , route "/submit" SubmitPage
+            , route "/auth/signin" SignInPage
+            , route "/auth/signup" SignUpPage
+            , route "/about" AboutPage
+            , route "/roadmap" RoadmapPage
+            ]
         , notFound = NotFoundPage
         }
