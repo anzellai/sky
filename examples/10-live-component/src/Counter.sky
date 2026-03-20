@@ -52,7 +52,7 @@ update msg counter =
 
 -- View with toMsg config
 -- The toMsg function wraps internal Msgs for the parent's event system.
-view : (String -> String) -> Counter -> String
+view : String -> String -> Counter -> String
 view toMsg counter =
     div [ class "counter-component" ]
         [ h3 [] [ text counter.label ]

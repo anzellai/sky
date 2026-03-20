@@ -380,7 +380,9 @@ export async function compileProject(entryFile: string, outDir: string) {
 
       // Read session store config from sky.toml
       const storeType = (manifest as any)?.live?.session?.store || "memory";
-      const storePath = (manifest as any)?.live?.session?.path || "";
+      const storePath = (manifest as any)?.live?.session?.path || (manifest as any)?.live?.session?.url || "";
+      const inputMode = (manifest as any)?.live?.input || "debounce";
+      const pollInterval = (manifest as any)?.live?.poll_interval || 0;
 
       // Extract notFound page constructor
       const notFoundPage = extractNotFound(mainModuleLoaded.moduleAst) || "";
@@ -405,7 +407,9 @@ export async function compileProject(entryFile: string, outDir: string) {
         storeType,
         storePath,
         notFoundPage,
-        componentInfos
+        componentInfos,
+        inputMode,
+        pollInterval
       );
 
       // Read the existing main.go to preserve the compiled functions

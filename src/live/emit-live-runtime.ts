@@ -254,7 +254,9 @@ export function generateLiveMain(
   storeType: string = "memory",
   storePath: string = "",
   notFoundPage: string = "",
-  componentInfos: ComponentModuleInfo[] = []
+  componentInfos: ComponentModuleInfo[] = [],
+  inputMode: string = "debounce",
+  pollInterval: number = 0
 ): string {
   const msgVariants = msgTypeDecl ? extractVariants(msgTypeDecl) : [];
   const pageVariants = pageTypeDecl ? extractVariants(pageTypeDecl) : [];
@@ -316,10 +318,12 @@ import (
   // and Init returns sky_wrappers.Tuple2{V0: model, V1: cmd}
   code += `func main() {
 \tconfig := skylive_rt.LiveConfig{
-\t\tPort:      ${port},
-\t\tTTL:       30 * time.Minute,
-\t\tStoreType: "${storeType}",
-\t\tStorePath: "${storePath}",
+\t\tPort:         ${port},
+\t\tTTL:          30 * time.Minute,
+\t\tStoreType:    "${storeType}",
+\t\tStorePath:    "${storePath}",
+\t\tInputMode:    "${inputMode}",
+\t\tPollInterval: ${pollInterval},
 \t}
 
 \tapp := skylive_rt.LiveApp{

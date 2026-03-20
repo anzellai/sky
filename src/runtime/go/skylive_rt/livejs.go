@@ -2,12 +2,20 @@ package skylive_rt
 
 // LiveJS is the client-side JavaScript for Sky.Live, served at /_sky/live.js.
 // It handles event binding, dispatching events to the server via POST,
-// applying DOM patches, and client-side navigation.
+// applying DOM patches, client-side navigation, SSE, and polling fallback.
 const LiveJS = `(function() {
   'use strict';
   var root = document.querySelector('[sky-root]');
   if (!root) return;
   var sid = root.getAttribute('sky-root');
+  var cfg = { inputMode: 'debounce', pollInterval: 0 };
+
+  // Load server config (input mode, poll interval)
+  fetch('/_sky/config').then(function(r) { return r.json(); }).then(function(c) {
+    cfg = c;
+    if (cfg.inputMode === 'blur') rebindInputs();
+    if (cfg.pollInterval > 0) startPolling();
+  }).catch(function() {});
 
   // ── Event Binding ────────────────────────────────────
   function bind() {
@@ -27,17 +35,30 @@ const LiveJS = `(function() {
         send(el.getAttribute('sky-dblclick'), jsonArgs(el));
       });
     });
-    // Input (debounced 150ms)
+    // Input — mode depends on config
     root.querySelectorAll('[sky-input]').forEach(function(el) {
       if (el._skyBound) return;
       el._skyBound = true;
-      var timer;
-      el.addEventListener('input', function(e) {
-        clearTimeout(timer);
-        timer = setTimeout(function() {
+      if (cfg.inputMode === 'blur') {
+        // Blur mode: only send on blur/enter, keep input client-side
+        el.addEventListener('blur', function(e) {
           send(el.getAttribute('sky-input'), [e.target.value]);
-        }, 150);
-      });
+        });
+        el.addEventListener('keydown', function(e) {
+          if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') {
+            send(el.getAttribute('sky-input'), [e.target.value]);
+          }
+        });
+      } else {
+        // Debounce mode: send after 150ms pause in typing
+        var timer;
+        el.addEventListener('input', function(e) {
+          clearTimeout(timer);
+          timer = setTimeout(function() {
+            send(el.getAttribute('sky-input'), [e.target.value]);
+          }, 150);
+        });
+      }
     });
     // Change
     root.querySelectorAll('[sky-change]').forEach(function(el) {
@@ -66,7 +87,7 @@ const LiveJS = `(function() {
         send(el.getAttribute('sky-focus'), []);
       });
     });
-    // Blur
+    // Blur (explicit sky-blur, separate from input blur mode)
     root.querySelectorAll('[sky-blur]').forEach(function(el) {
       if (el._skyBound) return;
       el._skyBound = true;
@@ -74,6 +95,14 @@ const LiveJS = `(function() {
         send(el.getAttribute('sky-blur'), []);
       });
     });
+  }
+
+  function rebindInputs() {
+    // Force re-bind inputs after config loads with blur mode
+    root.querySelectorAll('[sky-input]').forEach(function(el) {
+      el._skyBound = false;
+    });
+    bind();
   }
 
   function jsonArgs(el) {
@@ -167,9 +196,11 @@ const LiveJS = `(function() {
   });
 
   // ── SSE (Server Push) ────────────────────────────────
+  var sseActive = false;
   function connectSSE() {
     if (!window.EventSource) return;
     var es = new EventSource('/_sky/stream?sid=' + sid);
+    es.onopen = function() { sseActive = true; };
     es.onmessage = function(e) {
       try {
         var data = JSON.parse(e.data);
@@ -179,9 +210,33 @@ const LiveJS = `(function() {
       } catch(err) {}
     };
     es.onerror = function() {
+      sseActive = false;
       es.close();
+      // If polling is configured, don't reconnect SSE — polling takes over
+      if (cfg.pollInterval > 0) return;
       setTimeout(connectSSE, 3000);
     };
+  }
+
+  // ── Polling Fallback ─────────────────────────────────
+  function startPolling() {
+    setInterval(function() {
+      if (sseActive) return; // SSE is working, skip polling
+      fetch('/_sky/poll?sid=' + sid)
+      .then(function(res) {
+        if (res.status === 410) { location.reload(); return null; }
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then(function(data) {
+        if (data) {
+          applyPatches(data.patches || []);
+          if (data.url) history.pushState({}, '', data.url);
+          if (data.title) document.title = data.title;
+        }
+      })
+      .catch(function() {});
+    }, cfg.pollInterval || 5000);
   }
 
   // ── Init ─────────────────────────────────────────────

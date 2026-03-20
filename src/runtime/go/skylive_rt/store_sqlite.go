@@ -1,9 +1,7 @@
 package skylive_rt
 
 import (
-	"crypto/rand"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"log"
 	"time"
@@ -144,11 +142,9 @@ func (s *SQLiteStore) Delete(sid string) {
 	s.db.Exec("DELETE FROM sessions WHERE sid = ?", sid)
 }
 
-// NewID generates a cryptographically random session identifier.
+// NewID generates a cryptographically random 256-bit session identifier.
 func (s *SQLiteStore) NewID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return "s_" + hex.EncodeToString(b)
+	return generateSessionID()
 }
 
 // cleanup periodically deletes expired sessions from the database.

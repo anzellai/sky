@@ -83,6 +83,11 @@ exposing = ["MyLib.Foo", "MyLib.Bar"]
 
 [live]                             # Sky.Live config
 port = 4000
+input = "debounce"                 # "debounce" | "blur"
+poll_interval = 0                  # ms (0 = SSE only)
+
+[live.session]
+store = "memory"                   # memory | sqlite | redis | postgresql
 ```
 
 ### Package Types

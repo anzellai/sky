@@ -2,7 +2,7 @@ package skylive_rt
 
 import (
 	"crypto/rand"
-	"encoding/hex"
+	"encoding/base64"
 	"sync"
 	"time"
 )
@@ -68,9 +68,15 @@ func (s *MemoryStore) Delete(sid string) {
 }
 
 func (s *MemoryStore) NewID() string {
-	b := make([]byte, 16)
+	return generateSessionID()
+}
+
+// generateSessionID creates a cryptographically random 256-bit session ID
+// using URL-safe base64 encoding (43 chars, no padding).
+func generateSessionID() string {
+	b := make([]byte, 32) // 256 bits
 	rand.Read(b)
-	return "s_" + hex.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 func (s *MemoryStore) cleanup() {

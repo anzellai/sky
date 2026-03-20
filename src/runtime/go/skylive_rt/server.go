@@ -11,10 +11,12 @@ import (
 
 // LiveConfig holds the server configuration from sky.toml [live] section.
 type LiveConfig struct {
-	Port      int           // Server port (default: 4000)
-	TTL       time.Duration // Session TTL (default: 30m)
-	StoreType string        // Session store backend: "memory" (default) or "sqlite"
-	StorePath string        // Path for persistent stores (e.g., "sessions.db" for sqlite)
+	Port         int           // Server port (default: 4000)
+	TTL          time.Duration // Session TTL (default: 30m)
+	StoreType    string        // Session store backend: "memory" | "sqlite" | "redis" | "postgresql"
+	StorePath    string        // Connection string/path for stores
+	InputMode    string        // "debounce" (default) or "blur" — when onInput sends to server
+	PollInterval int           // Polling fallback interval in ms (0 = SSE only, default: 0)
 }
 
 // PageDef defines a route mapping: URL pattern → Page constructor value.
@@ -98,6 +100,28 @@ func StartServer(config LiveConfig, app LiveApp) {
 			log.Fatalf("Failed to open SQLite session store at %s: %v", dbPath, err)
 		}
 		log.Printf("Using SQLite session store: %s", dbPath)
+	case "redis":
+		url := config.StorePath
+		if url == "" {
+			url = "localhost:6379"
+		}
+		var err error
+		store, err = NewRedisStore(url, config.TTL)
+		if err != nil {
+			log.Fatalf("Failed to connect to Redis at %s: %v", url, err)
+		}
+		log.Printf("Using Redis session store: %s", url)
+	case "postgresql", "postgres":
+		url := config.StorePath
+		if url == "" {
+			url = "postgres://localhost:5432/sky_sessions?sslmode=disable"
+		}
+		var err error
+		store, err = NewPostgresStore(url, config.TTL)
+		if err != nil {
+			log.Fatalf("Failed to connect to PostgreSQL at %s: %v", url, err)
+		}
+		log.Printf("Using PostgreSQL session store")
 	default:
 		store = NewMemoryStore(config.TTL)
 	}
@@ -123,6 +147,22 @@ func StartServer(config LiveConfig, app LiveApp) {
 	// URL resolver — maps a URL path back to a Navigate Msg (for browser back/forward)
 	mux.HandleFunc("GET /_sky/resolve", func(w http.ResponseWriter, r *http.Request) {
 		handleResolve(w, r, &app)
+	})
+
+	// Polling endpoint — fallback for serverless (Lambda, etc.) where SSE isn't available
+	mux.HandleFunc("GET /_sky/poll", func(w http.ResponseWriter, r *http.Request) {
+		handlePoll(w, r, store, &app)
+	})
+
+	// Client config endpoint — passes LiveConfig to JS client
+	mux.HandleFunc("GET /_sky/config", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		inputMode := app.config.InputMode
+		if inputMode == "" {
+			inputMode = "debounce"
+		}
+		pollInterval := app.config.PollInterval
+		fmt.Fprintf(w, `{"inputMode":%q,"pollInterval":%d}`, inputMode, pollInterval)
 	})
 
 	// SSE subscriptions
@@ -422,4 +462,41 @@ func extractTag(v any) int {
 		}
 	}
 	return -1
+}
+
+// handlePoll is a polling fallback for environments where SSE isn't available
+// (e.g., Lambda). The client periodically calls GET /_sky/poll?sid=X and the
+// server re-renders the view, diffs against PrevView, and returns patches.
+func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp) {
+	sid := r.URL.Query().Get("sid")
+	if sid == "" {
+		if cookie, err := r.Cookie("sky_sid"); err == nil {
+			sid = cookie.Value
+		}
+	}
+	if sid == "" {
+		http.Error(w, "missing sid", 400)
+		return
+	}
+
+	sess, ok := store.Get(sid)
+	if !ok {
+		http.Error(w, "session expired", 410)
+		return
+	}
+
+	// Re-render view with current model
+	newView := app.View(sess.Model)
+	AssignSkyIDs(newView)
+	patches := Diff(sess.PrevView, newView)
+
+	// Update stored view
+	if len(patches) > 0 {
+		sess.PrevView = newView
+		store.Set(sid, sess)
+	}
+
+	resp := EventResponse{Patches: patches}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

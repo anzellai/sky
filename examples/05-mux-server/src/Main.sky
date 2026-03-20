@@ -28,7 +28,7 @@ echoHandler w req =
         case body of
             Ok _ ->
                 writeResponse w "ok"
-
+            
             Err e ->
                 writeResponse w (errorToString e)
 
@@ -62,6 +62,6 @@ main =
         case result of
             Ok _ ->
                 println "Server stopped gracefully"
-
+            
             Err e ->
                 println "Server error:" (errorToString e)

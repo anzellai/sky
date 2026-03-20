@@ -16,6 +16,8 @@ const RUNTIME_FILES = [
   "session.go",
   "server.go",
   "store_sqlite.go",
+  "store_redis.go",
+  "store_postgres.go",
   "eventsource.go",
   "sse.go",
   "livejs.go",

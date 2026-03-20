@@ -85,7 +85,7 @@ viewAuthNav model =
                 , button [ onClick "DoSignOut" , class "btn btn-ghost btn-sm" ]
                     [ text "Sign out" ]
                 ]
-
+        
         Nothing ->
             span
                 [ style

@@ -694,13 +694,15 @@ subscriptions model =
 
 ### Key Features
 
-- **No WebSocket required** -- pure HTTP with SSE for subscriptions
+- **No WebSocket required** -- pure HTTP with SSE for subscriptions, polling fallback for serverless
+- **Serverless-ready** -- polling fallback (`poll_interval`) works on Lambda, Cloud Run, any stateless environment
+- **Configurable input** -- `input = "debounce"` sends on pause (default), `input = "blur"` sends only on blur/enter (fewer requests)
 - **Unified Model/Msg** -- one TEA loop for the whole app, navigation is just a `Msg`
-- **Direct VNode emission** -- Html functions produce VNode records, not HTML strings. No parsing overhead on every render
+- **Direct VNode emission** -- Html functions produce VNode records, not HTML strings. No parsing overhead
 - **Automatic component wiring** -- components following the protocol get auto-wired
-- **Session stores** -- memory (default), sqlite
+- **Session stores** -- memory (default), sqlite, redis, postgresql
 - **Subscriptions** -- runtime-carrying `Sub` values drive SSE server-push
-- **DOM diffing** -- server diffs the VNode tree and sends minimal patches
+- **256-bit session IDs** -- cryptographically random, base64url-encoded
 
 ### Component Protocol
 
@@ -782,10 +784,14 @@ exposing = ["Utils.String", "Utils.Math"]
 # ---- Sky.Live Configuration ----
 [live]
 port = 4000                        # HTTP server port
-ttl = "30m"                        # session time-to-live
+input = "debounce"                 # "debounce" (send on pause) | "blur" (send on blur/enter)
+poll_interval = 0                  # polling fallback interval in ms (0 = SSE only)
 
 [live.session]
-store = "memory"                   # memory | sqlite
+store = "memory"                   # memory | sqlite | redis | postgresql
+path = "./data/sessions.db"        # for sqlite
+url = "redis://localhost:6379"     # for redis
+# url = "postgres://user:pass@host/db" # for postgresql
 
 [live.static]
 dir = "static"                     # static file directory, served at /static/*
