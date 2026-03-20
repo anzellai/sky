@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
+import Std.Css exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
@@ -134,27 +135,65 @@ viewAbout =
             ]
         ]
 
-pageStyles : String
 pageStyles =
-    "* { box-sizing: border-box; margin: 0; padding: 0; } " ++
-    "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; } " ++
-    ".app { max-width: 600px; margin: 0 auto; padding: 2rem; } " ++
-    ".navbar { display: flex; gap: 0.5rem; margin-bottom: 2rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd; } " ++
-    ".nav-btn { padding: 0.5rem 1rem; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; font-size: 0.9rem; } " ++
-    ".nav-btn:hover { background: #f0f0f0; } " ++
-    ".counter { text-align: center; } " ++
-    ".counter h1 { margin-bottom: 2rem; font-size: 1.5rem; } " ++
-    ".count { margin: 2rem 0; } " ++
-    ".count-value { font-size: 4rem; font-weight: bold; color: #2563eb; } " ++
-    ".buttons { display: flex; gap: 1rem; justify-content: center; margin: 2rem 0; } " ++
-    ".btn { padding: 0.75rem 2rem; border: none; background: #2563eb; color: white; border-radius: 8px; font-size: 1.2rem; cursor: pointer; min-width: 60px; } " ++
-    ".btn:hover { background: #1d4ed8; } " ++
-    ".btn:active { transform: scale(0.95); } " ++
-    ".btn-secondary { background: #6b7280; } " ++
-    ".btn-secondary:hover { background: #4b5563; } " ++
-    ".hint { color: #888; font-size: 0.85rem; margin-top: 2rem; } " ++
-    ".about { line-height: 1.8; } " ++
-    ".about h1 { margin-bottom: 1rem; } " ++ ".about p { margin-bottom: 1rem; }"
+    stylesheet
+        [ rule "*, *::before, *::after"
+            [ property "box-sizing" "border-box" , margin "0" , padding "0" ]
+        , rule "body"
+            [ fontFamily "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            , property "background" "#f5f5f5"
+            , color (hex "333")
+            ]
+        , rule ".app"
+            [ maxWidth (px 600) , margin2 "0" "auto" , padding (rem 2.0) ]
+        , rule ".navbar"
+            [ display "flex"
+            , gap (rem 0.5)
+            , property "margin-bottom" "2rem"
+            , property "padding-bottom" "1rem"
+            , borderBottom "1px solid #ddd"
+            ]
+        , rule ".nav-btn"
+            [ padding2 (rem 0.5) (rem 1.0)
+            , border "1px solid #ddd"
+            , property "background" "white"
+            , borderRadius (px 6)
+            , cursor "pointer"
+            , fontSize (rem 0.9)
+            ]
+        , rule ".nav-btn:hover" [ property "background" "#f0f0f0" ]
+        , rule ".counter" [ textAlign "center" ]
+        , rule ".counter h1"
+            [ property "margin-bottom" "2rem" , fontSize (rem 1.5) ]
+        , rule ".count" [ margin2 (rem 2.0) "0" ]
+        , rule ".count-value"
+            [ fontSize (rem 4.0) , fontWeight "bold" , color (hex "2563eb") ]
+        , rule ".buttons"
+            [ display "flex"
+            , gap (rem 1.0)
+            , justifyContent "center"
+            , margin2 (rem 2.0) "0"
+            ]
+        , rule ".btn"
+            [ padding2 (rem 0.75) (rem 2.0)
+            , border "none"
+            , property "background" "#2563eb"
+            , color (hex "ffffff")
+            , borderRadius (px 8)
+            , fontSize (rem 1.2)
+            , cursor "pointer"
+            , property "min-width" "60px"
+            ]
+        , rule ".btn:hover" [ property "background" "#1d4ed8" ]
+        , rule ".btn:active" [ transform "scale(0.95)" ]
+        , rule ".btn-secondary" [ property "background" "#6b7280" ]
+        , rule ".btn-secondary:hover" [ property "background" "#4b5563" ]
+        , rule ".hint"
+            [ color (hex "888") , fontSize (rem 0.85) , property "margin-top" "2rem" ]
+        , rule ".about" [ lineHeight "1.8" ]
+        , rule ".about h1" [ property "margin-bottom" "1rem" ]
+        , rule ".about p" [ property "margin-bottom" "1rem" ]
+        ]
 
 -- ══════════════════════════════════════════════════════
 -- APP

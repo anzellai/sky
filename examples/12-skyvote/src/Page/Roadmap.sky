@@ -24,7 +24,7 @@ viewRoadmap model =
     in
         Layout.page model
             (
-            div [ style "margin-top: 32px;" ]
+            div [ class "mt-32" ]
                 [ h1 [ class "page-title" ] [ text "Roadmap" ]
                 , p [ class "page-subtitle" ]
                     [ text
@@ -44,23 +44,14 @@ roadmapColumn title subtitle items =
     div [ class "roadmap-column" ]
         [ div [ class "roadmap-column-title" ]
             [ text title
-            , span
-                [ style
-                    "font-size: 13px; font-weight: 400; color: #94a3b8; margin-left: 8px;"
-                ]
+            , span [ class "roadmap-count" ]
                 [ text ("(" ++ String.fromInt (List.length items) ++ ")") ]
             ]
-        , p [ style "font-size: 13px; color: #94a3b8; margin-bottom: 16px;" ]
-            [ text subtitle ]
+        , p [ class "roadmap-subtitle" ] [ text subtitle ]
         , div []
             (
             if List.isEmpty items then
-                [ p
-                    [ style
-                        "font-size: 13px; color: #cbd5e1; text-align: center; padding: 12px;"
-                    ]
-                    [ text "Nothing here yet" ]
-                ]
+                [ p [ class "roadmap-empty" ] [ text "Nothing here yet" ] ]
             else
                 List.map roadmapItem items
             )
@@ -76,8 +67,7 @@ roadmapItem idea =
         div [ class "roadmap-item" ]
             [ button
                 [ onClick ("ViewIdea " ++ ideaId)
-                , style
-                    "background: none; border: none; cursor: pointer; text-align: left; font-size: 14px; font-weight: 600; color: #1e293b; padding: 0; margin-bottom: 4px;"
+                , class "roadmap-item-title"
                 ]
                 [ text (Db.getField "title" idea) ]
             , div [ class "roadmap-item-votes" ]

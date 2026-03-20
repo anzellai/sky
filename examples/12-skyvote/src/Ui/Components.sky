@@ -74,9 +74,7 @@ ideaCard idea userId =
                 [ div []
                     [ button
                         [ onClick ("ViewIdea " ++ ideaId)
-                        , class "idea-title"
-                        , style
-                            "background: none; border: none; cursor: pointer; text-align: left; font-size: 16px; font-weight: 600; color: #1e293b; padding: 0;"
+                        , class "idea-title-btn"
                         ]
                         [ text (Db.getField "title" idea) ]
                     ]

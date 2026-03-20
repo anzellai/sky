@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
+import Std.Css exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
@@ -78,24 +79,55 @@ view model =
             ]
         ]
 
-pageStyles : String
 pageStyles =
-    "* { box-sizing: border-box; margin: 0; padding: 0; } " ++
-    "body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f5; color: #333; } " ++
-    ".app { max-width: 500px; margin: 2rem auto; padding: 2rem; } " ++
-    ".app h1 { margin-bottom: 0.5rem; } " ++
-    ".app p { margin-bottom: 1.5rem; color: #666; } " ++
-    ".counter-component { background: white; border-radius: 12px; padding: 1.5rem; box-shadow: 0 2px 8px rgba(0,0,0,0.1); margin: 1rem 0; } " ++
-    ".counter-component h3 { margin-bottom: 1rem; color: #333; } " ++
-    ".counter-display { text-align: center; margin: 1rem 0; } " ++
-    ".count { font-size: 3rem; font-weight: bold; color: #2563eb; } " ++
-    ".counter-buttons { display: flex; gap: 0.5rem; justify-content: center; } " ++
-    ".btn { padding: 0.5rem 1.5rem; border: none; background: #2563eb; color: white; border-radius: 6px; font-size: 1rem; cursor: pointer; } " ++
-    ".btn:hover { background: #1d4ed8; } " ++
-    ".btn:active { transform: scale(0.95); } " ++
-    ".btn-sm { background: #6b7280; font-size: 0.85rem; } " ++
-    ".btn-sm:hover { background: #4b5563; } " ++
-    ".total { font-weight: bold; color: #333; margin-top: 1rem; }"
+    stylesheet
+        [ rule "*, *::before, *::after"
+            [ property "box-sizing" "border-box" , margin "0" , padding "0" ]
+        , rule "body"
+            [ fontFamily "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            , property "background" "#f5f5f5"
+            , color (hex "333")
+            ]
+        , rule ".app"
+            [ maxWidth (px 500) , margin2 (rem 2.0) "auto" , padding (rem 2.0) ]
+        , rule ".app h1" [ property "margin-bottom" "0.5rem" ]
+        , rule ".app p"
+            [ property "margin-bottom" "1.5rem" , color (hex "666") ]
+        , rule ".counter-component"
+            [ property "background" "white"
+            , borderRadius (px 12)
+            , padding (rem 1.5)
+            , property "box-shadow" "0 2px 8px rgba(0,0,0,0.1)"
+            , margin2 (rem 1.0) "0"
+            ]
+        , rule ".counter-component h3"
+            [ property "margin-bottom" "1rem" , color (hex "333") ]
+        , rule ".counter-display"
+            [ textAlign "center" , margin2 (rem 1.0) "0" ]
+        , rule ".count"
+            [ fontSize (rem 3.0) , fontWeight "bold" , color (hex "2563eb") ]
+        , rule ".counter-buttons"
+            [ display "flex" , gap (rem 0.5) , justifyContent "center" ]
+        , rule ".btn"
+            [ padding2 (rem 0.5) (rem 1.5)
+            , border "none"
+            , property "background" "#2563eb"
+            , color (hex "ffffff")
+            , borderRadius (px 6)
+            , fontSize (rem 1.0)
+            , cursor "pointer"
+            ]
+        , rule ".btn:hover" [ property "background" "#1d4ed8" ]
+        , rule ".btn:active" [ transform "scale(0.95)" ]
+        , rule ".btn-sm"
+            [ property "background" "#6b7280" , fontSize (rem 0.85) ]
+        , rule ".btn-sm:hover" [ property "background" "#4b5563" ]
+        , rule ".total"
+            [ fontWeight "bold"
+            , color (hex "333")
+            , property "margin-top" "1rem"
+            ]
+        ]
 
 -- ══════════════════════════════════════════════════════
 -- APP

@@ -15,14 +15,14 @@ viewDetail model =
     case model.selectedIdea of
         Just idea ->
             Layout.page model (viewIdeaDetail model idea)
-        
+
         Nothing ->
             Layout.page model (viewNotFound model)
 
 viewNotFound model =
-    div [ style "margin-top: 32px;" ]
+    div [ class "mt-32" ]
         [ emptyState "Idea not found."
-        , div [ style "text-align: center;" ]
+        , div [ class "text-center" ]
             [ button [ onClick "BackToBoard" , class "btn btn-secondary" ]
                 [ text "Back to Board" ]
             ]
@@ -41,18 +41,15 @@ viewIdeaDetail model idea =
         category =
             Db.getField "category" idea
     in
-        div [ style "margin-top: 32px;" ]
+        div [ class "mt-32" ]
             [ button
                 [ onClick "BackToBoard"
-                , class "btn btn-ghost btn-sm"
-                , style "margin-bottom: 16px;"
+                , class "btn btn-ghost btn-sm mb-16"
                 ]
                 [ text "< Back to Board" ]
             , div [ class "card" ]
                 [ div [ class "detail-header" ]
-                    [ div
-                        [ style "display: flex; gap: 8px; margin-bottom: 12px;"
-                        ]
+                    [ div [ class "flex-row-gap-8" ]
                         [ viewCategoryBadge category , statusBadge status ]
                     , h1 [ class "detail-title" ]
                         [ text (Db.getField "title" idea) ]
@@ -103,7 +100,7 @@ viewCommentList model =
     div []
         (
         if List.isEmpty model.ideaComments then
-            [ p [ style "color: #94a3b8; font-size: 14px;" ]
+            [ p [ class "text-muted-sm" ]
                 [ text "No comments yet. Be the first to share your thoughts!" ]
             ]
         else
@@ -125,17 +122,13 @@ viewCommentForm model =
     case model.currentUser of
         Just _ ->
             viewCommentFormAuth model
-        
+
         Nothing ->
-            p [ style "color: #64748b; font-size: 14px; margin-bottom: 20px;" ]
+            p [ class "text-secondary-sm" ]
                 [ text "Sign in to leave a comment." ]
 
 viewCommentFormAuth model =
-    form
-        [ onSubmit "SubmitComment"
-        , class "comment-form"
-        , style "margin-bottom: 20px;"
-        ]
+    form [ onSubmit "SubmitComment" , class "comment-form mb-20" ]
         [ div [ class "form-group" ]
             [ textarea
                 [ class "form-input"

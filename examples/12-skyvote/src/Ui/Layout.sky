@@ -13,7 +13,7 @@ import Lib.Db as Db
 -- PAGE LAYOUT
 -- ══════════════════════════════════════════════════════
 page model content =
-    div [ style "display: block;" ]
+    div []
         [ styleNode [] globalStyles
         , viewHeader model
         , div [ class "container" ] [ viewNotification model , content ]
@@ -29,7 +29,7 @@ pageWithAuth model content =
                 (
                 div [ class "auth-container" ]
                     [ div [ class "card" ]
-                        [ p [ style "text-align: center; padding: 20px;" ]
+                        [ p [ class "auth-prompt" ]
                             [ text "Please "
                             , a [ href "/auth/signin" , attribute "sky-nav" "" ]
                                 [ text "sign in" ]
@@ -70,10 +70,7 @@ viewHeader model =
 viewAuthNav model =
     case model.currentUser of
         Just user ->
-            span
-                [ style
-                    "display: flex; gap: 8px; align-items: center; margin-left: 12px; padding-left: 12px; border-left: 1px solid #e2e8f0;"
-                ]
+            span [ class "auth-nav" ]
                 [ a
                     [ href "/submit"
                     , attribute "sky-nav" ""
@@ -87,10 +84,7 @@ viewAuthNav model =
                 ]
         
         Nothing ->
-            span
-                [ style
-                    "display: flex; gap: 8px; align-items: center; margin-left: 12px;"
-                ]
+            span [ class "auth-nav-anon" ]
                 [ a
                     [ href "/auth/signin"
                     , attribute "sky-nav" ""

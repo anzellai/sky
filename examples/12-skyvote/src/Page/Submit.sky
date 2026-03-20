@@ -9,7 +9,7 @@ import Ui.Layout as Layout
 viewSubmit model =
     Layout.pageWithAuth model
         (
-        div [ style "max-width: 640px; margin: 32px auto;" ]
+        div [ class "submit-container" ]
             [ h1 [ class "page-title" ] [ text "Submit an Idea" ]
             , p [ class "page-subtitle" ]
                 [ text
@@ -53,10 +53,7 @@ viewSubmit model =
                                 [ text "Improvement" ]
                             ]
                         ]
-                    , div
-                        [ style
-                            "display: flex; gap: 12px; justify-content: flex-end;"
-                        ]
+                    , div [ class "form-actions" ]
                         [ button
                             [ onClick "BackToBoard"
                             , type_ "button"

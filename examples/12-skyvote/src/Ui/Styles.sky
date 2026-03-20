@@ -223,6 +223,8 @@ globalStyles =
         , rule "select.form-input" [ cursor "pointer" ]
         , rule ".form-error"
             [ color danger , fontSize (px 13) , property "margin-top" "6px" ]
+        , rule ".form-actions"
+            [ display "flex" , gap (px 12) , justifyContent "flex-end" ]
         , rule ".badge"
             [ display "inline-flex"
             , alignItems "center"
@@ -296,6 +298,16 @@ globalStyles =
             , fontWeight "600"
             , color textPrimary
             , property "margin-bottom" "4px"
+            ]
+        , rule ".idea-title-btn"
+            [ property "background" "none"
+            , border "none"
+            , cursor "pointer"
+            , textAlign "left"
+            , fontSize (px 16)
+            , fontWeight "600"
+            , color textPrimary
+            , padding "0"
             ]
         , rule ".idea-desc"
             [ fontSize (px 14)
@@ -485,9 +497,29 @@ globalStyles =
             , property "margin-bottom" "8px"
             ]
         , rule ".roadmap-item-title"
-            [ fontSize (px 14)
+            [ property "background" "none"
+            , border "none"
+            , cursor "pointer"
+            , textAlign "left"
+            , fontSize (px 14)
             , fontWeight "600"
+            , color textPrimary
+            , padding "0"
             , property "margin-bottom" "4px"
+            ]
+        , rule ".roadmap-count"
+            [ fontSize (px 13)
+            , fontWeight "400"
+            , color textMuted
+            , property "margin-left" "8px"
+            ]
+        , rule ".roadmap-subtitle"
+            [ fontSize (px 13) , color textMuted , property "margin-bottom" "16px" ]
+        , rule ".roadmap-empty"
+            [ fontSize (px 13)
+            , color borderMedium
+            , textAlign "center"
+            , padding (px 12)
             ]
         , rule ".roadmap-item-votes" [ fontSize (px 12) , color textMuted ]
         , rule ".stats-grid"
@@ -522,6 +554,44 @@ globalStyles =
             ]
         , rule ".notification-error"
             [ backgroundColor dangerLight , color danger ]
+        , rule ".mt-32" [ property "margin-top" "32px" ]
+        , rule ".mb-16" [ property "margin-bottom" "16px" ]
+        , rule ".mb-20" [ property "margin-bottom" "20px" ]
+        , rule ".text-center" [ textAlign "center" ]
+        , rule ".text-muted-sm"
+            [ color textMuted , fontSize (px 14) ]
+        , rule ".text-secondary-sm"
+            [ color textSecondary , fontSize (px 14) , property "margin-bottom" "20px" ]
+        , rule ".flex-row-gap-8"
+            [ display "flex" , gap (px 8) , property "margin-bottom" "12px" ]
+        , rule ".board-header"
+            [ display "flex"
+            , justifyContent "space-between"
+            , alignItems "flex-start"
+            , gap (px 24)
+            , flexWrap "wrap"
+            , property "margin-top" "32px"
+            ]
+        , rule ".submit-container"
+            [ maxWidth (px 640) , margin2 (px 32) "auto" ]
+        , rule ".auth-btn-full"
+            [ width (pct 100) , justifyContent "center" ]
+        , rule ".auth-prompt"
+            [ textAlign "center" , padding (px 20) ]
+        , rule ".auth-nav"
+            [ display "flex"
+            , gap (px 8)
+            , alignItems "center"
+            , property "margin-left" "12px"
+            , property "padding-left" "12px"
+            , borderLeft ("1px solid " ++ borderLight)
+            ]
+        , rule ".auth-nav-anon"
+            [ display "flex"
+            , gap (px 8)
+            , alignItems "center"
+            , property "margin-left" "12px"
+            ]
         , media "(max-width: 640px)"
             [ rule ".toolbar" [ flexDirection "column" ]
             , rule ".filter-group" [ flexWrap "wrap" ]

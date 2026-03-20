@@ -40,7 +40,7 @@ viewSignIn model =
                     , button
                         [ type_ "submit"
                         , class "btn btn-primary"
-                        , style "width: 100%; justify-content: center;"
+                        , class "auth-btn-full"
                         ]
                         [ text "Sign in" ]
                     ]
@@ -97,7 +97,7 @@ viewSignUp model =
                     , button
                         [ type_ "submit"
                         , class "btn btn-primary"
-                        , style "width: 100%; justify-content: center;"
+                        , class "auth-btn-full"
                         ]
                         [ text "Create account" ]
                     ]
