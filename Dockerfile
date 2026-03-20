@@ -29,11 +29,12 @@ WORKDIR /sky
 COPY package.json package-lock.json* ./
 RUN npm ci --ignore-scripts
 
-# Copy source
+# Copy source and templates
 COPY src/ src/
+COPY templates/ templates/
 COPY tsconfig.json ./
 
-# Build TypeScript
+# Build TypeScript and bundle (embeds stdlib + templates into binary)
 RUN npm install
 RUN npm run bundle
 
