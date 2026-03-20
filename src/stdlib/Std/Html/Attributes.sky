@@ -8,8 +8,8 @@ import Sky.Core.List as List
 -- ============================================================
 -- Std.Html.Attributes — HTML attribute constructors
 --
--- Each function returns a String that represents an HTML attribute.
--- Attribute values are automatically escaped.
+-- Each function returns a (String, String) tuple representing
+-- a key-value attribute pair.
 --
 -- Usage:
 --     import Std.Html.Attributes exposing (..)
@@ -19,25 +19,18 @@ import Sky.Core.List as List
 -- ============================================================
 
 
--- Escape attribute values (single-quote delimited)
-escapeAttr content =
-    content
-        |> String.replace "&" "&amp;"
-        |> String.replace "'" "&#39;"
-
-
 -- ============================================================
 -- Generic attribute constructors
 -- ============================================================
 
--- Build any key='value' attribute
+-- Build a (key, value) attribute tuple
 attribute key value =
-    key ++ "='" ++ escapeAttr value ++ "'"
+    ( key, value )
 
 
--- Build a boolean attribute (no value, e.g., required, disabled)
+-- Build a boolean attribute (value is empty string)
 boolAttribute key =
-    key
+    ( key, "" )
 
 
 -- ============================================================

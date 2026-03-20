@@ -13,7 +13,7 @@ import Lib.Db as Db
 -- PAGE LAYOUT
 -- ══════════════════════════════════════════════════════
 page model content =
-    div []
+    div [ style "display: block;" ]
         [ styleNode [] globalStyles
         , viewHeader model
         , div [ class "container" ] [ viewNotification model , content ]
@@ -70,7 +70,10 @@ viewHeader model =
 viewAuthNav model =
     case model.currentUser of
         Just user ->
-            span [ class "nav" ]
+            span
+                [ style
+                    "display: flex; gap: 8px; align-items: center; margin-left: 12px; padding-left: 12px; border-left: 1px solid #e2e8f0;"
+                ]
                 [ a
                     [ href "/submit"
                     , attribute "sky-nav" ""
@@ -82,9 +85,12 @@ viewAuthNav model =
                 , button [ onClick "DoSignOut" , class "btn btn-ghost btn-sm" ]
                     [ text "Sign out" ]
                 ]
-        
+
         Nothing ->
-            span [ class "nav" ]
+            span
+                [ style
+                    "display: flex; gap: 8px; align-items: center; margin-left: 12px;"
+                ]
                 [ a
                     [ href "/auth/signin"
                     , attribute "sky-nav" ""

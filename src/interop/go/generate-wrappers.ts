@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { InspectResult, Param } from "./inspect-package.js";
-import { lowerCamelCase } from "./type-mapper.js";
+import { lowerCamelCase, isGoPointerToPrimitive } from "./type-mapper.js";
 
 function makeSafeGoName(pkgName: string) {
     return pkgName.replace(/[\/\.-]/g, "_");
@@ -1162,6 +1162,18 @@ func Sky_result_ToMaybe(result any) any {
 	}
 	return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}
 }
+
+// ============= Error Operations =============
+
+func Sky_errorToString(e any) any {
+	if e == nil {
+		return ""
+	}
+	if err, ok := e.(error); ok {
+		return err.Error()
+	}
+	return fmt.Sprintf("%v", e)
+}
 `;
       fs.writeFileSync(helperPath, helperCode);
 
@@ -1302,6 +1314,22 @@ func Sky_result_ToMaybe(result any) any {
             if (t.includes("net/http.ResponseWriter")) {
                 t = t.replace(/net\/http\./g, "http.");
             }
+            // Pointer-to-primitive: Sky passes Maybe, unwrap to Go pointer
+            if (isGoPointerToPrimitive(p.type)) {
+                const baseGoType = cleanType(p.type.replace(/^\*+/, ""));
+                imports.add("reflect");
+                return [
+                    `\tvar _arg${i} ${t}`,
+                    `\t_mv${i} := reflect.ValueOf(arg${i})`,
+                    `\tif _mv${i}.Kind() == reflect.Struct {`,
+                    `\t\t_tag${i} := _mv${i}.FieldByName("Tag")`,
+                    `\t\tif _tag${i}.IsValid() && _tag${i}.Interface().(int) == 0 {`,
+                    `\t\t\t_v${i} := _mv${i}.FieldByName("JustValue").Interface().(${baseGoType})`,
+                    `\t\t\t_arg${i} = &_v${i}`,
+                    `\t\t}`,
+                    `\t}`,
+                ].join("\n");
+            }
             if (variadic && i === params.length - 1) {
                 return `\tvar _arg${i} []${t.substring(2)}\n\tfor _, v := range arg${i}.([]any) {\n\t\t_arg${i} = append(_arg${i}, v.(${t.substring(2)}))\n\t}`;
             }
@@ -1329,13 +1357,21 @@ func Sky_result_ToMaybe(result any) any {
             (retTypes.length === 2 && retTypes[1] === "error")
         );
 
+        // Check if the first result is a pointer-to-primitive (returns Maybe in Sky)
+        const firstResultPtrPrimitive = results.length > 0 && isGoPointerToPrimitive(results[0].type);
+
         if (shouldWrap) {
             goReturns = ` SkyResult `;
         } else if (retTypes.length > 0) {
             if (retTypes.length === 1) {
-                // Fields/variables returning typed slices will be converted to []any
-                const needsSliceConv = isField && retTypes[0].startsWith("[]") && retTypes[0] !== "[]any";
-                goReturns = needsSliceConv ? ` any ` : ` ${retTypes[0]} `;
+                if (firstResultPtrPrimitive) {
+                    // Returns Maybe struct, not the raw Go pointer
+                    goReturns = ` any `;
+                } else {
+                    // Fields/variables returning typed slices will be converted to []any
+                    const needsSliceConv = isField && retTypes[0].startsWith("[]") && retTypes[0] !== "[]any";
+                    goReturns = needsSliceConv ? ` any ` : ` ${retTypes[0]} `;
+                }
             } else {
                 goReturns = ` (${retTypes.join(", ")}) `;
             }
@@ -1362,7 +1398,12 @@ func Sky_result_ToMaybe(result any) any {
             const fieldExpr = recvType ? `_this.${goName}` : `${pkgBase}.${goName}`;
             // Convert typed slices (e.g., []string) to []any for Sky compatibility
             const fieldRetType = retTypes.length === 1 ? retTypes[0] : "";
-            if (fieldRetType.startsWith("[]") && fieldRetType !== "[]any") {
+            if (firstResultPtrPrimitive) {
+                // Pointer-to-primitive field: wrap in Maybe (Just/Nothing)
+                goCode += `\t_fv := ${fieldExpr}\n`;
+                goCode += `\tif _fv == nil {\n\t\treturn struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}\n\t}\n`;
+                goCode += `\treturn struct{ Tag int; JustValue any }{Tag: 0, JustValue: *_fv}\n`;
+            } else if (fieldRetType.startsWith("[]") && fieldRetType !== "[]any") {
                 goCode += `\t_val := ${fieldExpr}\n`;
                 goCode += `\t_result := make([]any, len(_val))\n`;
                 goCode += `\tfor _i, _v := range _val { _result[_i] = _v }\n`;
@@ -1381,9 +1422,20 @@ func Sky_result_ToMaybe(result any) any {
             } else if (shouldWrap) {
                 if (retTypes.length === 1) {
                     goCode += `\terr := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(struct{}{})\n`;
+                } else if (firstResultPtrPrimitive) {
+                    // (*primitive, error) → Result Error (Maybe T)
+                    goCode += `\t_res, err := ${callExpr}\n`;
+                    goCode += `\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n`;
+                    goCode += `\tif _res == nil {\n\t\treturn SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil})\n\t}\n`;
+                    goCode += `\treturn SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: *_res})\n`;
                 } else {
                     goCode += `\tres, err := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(res)\n`;
                 }
+            } else if (firstResultPtrPrimitive) {
+                // Single *primitive return → Maybe T
+                goCode += `\t_res := ${callExpr}\n`;
+                goCode += `\tif _res == nil {\n\t\treturn struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}\n\t}\n`;
+                goCode += `\treturn struct{ Tag int; JustValue any }{Tag: 0, JustValue: *_res}\n`;
             } else {
                 goCode += `\treturn ${callExpr}\n`;
             }

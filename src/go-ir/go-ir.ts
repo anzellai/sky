@@ -11,11 +11,12 @@ export interface GoImport {
   alias?: string;
 }
 
-export type GoDeclaration = 
+export type GoDeclaration =
   | GoStructDecl
   | GoTypeDecl
   | GoFuncDecl
-  | GoVarDecl;
+  | GoVarDecl
+  | GoRawDecl;
 
 export interface GoStructDecl {
   kind: "GoStructDecl";
@@ -45,6 +46,11 @@ export interface GoVarDecl {
   name: string;
   type: GoType;
   value?: GoExpr;
+}
+
+export interface GoRawDecl {
+  kind: "GoRawDecl";
+  code: string;
 }
 
 export type GoStmt =

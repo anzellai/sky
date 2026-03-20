@@ -14,11 +14,11 @@ type Msg
     | LoadEnv
     | NoOp
 
-init : Unit -> ( Model, Cmd, Msg )
+init : Unit -> ( Model, Cmd Msg )
 init _ =
     ( { uuid = "not-generated-yet" , envLoaded = False } , Cmd.none )
 
-update : Msg -> Model -> ( Model, Cmd, Msg )
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         GenerateUuid ->

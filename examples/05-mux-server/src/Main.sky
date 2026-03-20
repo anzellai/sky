@@ -28,9 +28,9 @@ echoHandler w req =
         case body of
             Ok _ ->
                 writeResponse w "ok"
-            
+
             Err e ->
-                writeResponse w e
+                writeResponse w (errorToString e)
 
 pingHandler w _ =
     writeResponse w "pong"
@@ -56,7 +56,12 @@ main =
             Mux.routerHandleFunc r "/ping" pingHandler
         _ =
             println "Starting server on port" serverPort
-        err =
+        result =
             Http.listenAndServe (":" ++ serverPort) r
     in
-        println "Server stopped:" err
+        case result of
+            Ok _ ->
+                println "Server stopped gracefully"
+
+            Err e ->
+                println "Server error:" (errorToString e)

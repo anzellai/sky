@@ -1,8 +1,8 @@
 # Sky
 
-Sky is an experimental programming language inspired by [Elm](https://elm-lang.org/), compiling to [Go](https://go.dev/). It combines Elm's syntax, type safety, and architecture with Go's performance and ecosystem.
+> **Experimental** -- Sky is under active development. APIs and internals will change.
 
-The compiler, CLI, formatter, LSP, and editor integrations are all written in TypeScript.
+Sky is an experimental programming language that combines **Go's pragmatism** with **Elm's elegance** to create a simple, fullstack language where you write FP code and ship a single portable binary.
 
 ```elm
 module Main exposing (main)
@@ -12,6 +12,30 @@ import Std.Log exposing (println)
 main =
     println "Hello from Sky!"
 ```
+
+**What Sky brings together:**
+
+- **Go** -- fast compilation, single static binary, battle-tested ecosystem covering databases, HTTP servers, cloud SDKs, and everything in between
+- **Elm** -- Hindley-Milner type inference, algebraic data types, exhaustive pattern matching, pure functions, The Elm Architecture
+- **Phoenix LiveView** -- server-driven UI with DOM diffing, session management, and SSE subscriptions. No client-side framework. No WebSocket required
+
+Sky compiles to Go. You get a single binary that runs your fullstack app -- API server, database access, and server-rendered interactive UI -- all from one codebase, one language, one deployment artifact.
+
+The compiler, CLI, formatter, LSP, and tree-sitter grammar are all written in TypeScript.
+
+### Why Sky exists
+
+I've worked professionally with Go, Elm, TypeScript, Python, Dart, Java, and others for years. Each has strengths, but none gave me everything I wanted: **simplicity, strong guarantees, functional programming, fullstack capability, and portability** -- all in one language.
+
+The pain point that kept coming back: startups and scale-ups building React/TypeScript frontends talking to a separate backend, creating friction at every boundary -- different type systems, duplicated models, complex build pipelines, and the constant uncertainty of "does this actually work?" that comes with the JS ecosystem. Maintenance becomes the real cost, not the initial build.
+
+I always wanted to combine Go's tooling (fast builds, single binary, real concurrency, massive ecosystem) with Elm's developer experience (if it compiles, it works; refactoring is fearless; the architecture scales). Then, inspired by Phoenix LiveView, I saw how a server-driven UI could eliminate the frontend/backend split entirely -- one language, one model, one deployment.
+
+The first attempt compiled Sky to JavaScript with the React ecosystem as the runtime. It worked, but Sky would have inherited all the problems I was trying to escape -- npm dependency chaos, bundle configuration, and the fundamental uncertainty of a dynamically-typed runtime. So I started over with Go as the compilation target: Elm's syntax and type system on the frontend, Go's ecosystem and binary output on the backend, with auto-generated FFI bindings that let you `import` any Go package and use it with full type safety.
+
+Building a programming language is typically a years-long effort. What made Sky possible in weeks was AI-assisted development -- first with Gemini CLI, then settling on Claude Code, which fits my workflow and let me iterate on the compiler architecture rapidly. I designed the language semantics, the pipeline, the FFI strategy, and the Live architecture; AI tooling helped me execute at a pace that would have been impossible alone.
+
+Sky is named for having no limits. It's experimental, opinionated, and built for one developer's ideal workflow -- but if it resonates with yours, I'd love to hear about it.
 
 ## Table of Contents
 
@@ -122,7 +146,7 @@ import Database.Sql as Sql                     -- Go stdlib
 import Drivers.Sqlite as _ exposing (..)       -- side-effect import (Go driver)
 ```
 
-`Sky.Core.Prelude` is implicitly imported into every module (provides `Result`, `Maybe`, etc.).
+`Sky.Core.Prelude` is implicitly imported into every module (provides `Result`, `Maybe`, `errorToString`, etc.).
 
 ### Types
 
@@ -383,7 +407,7 @@ See [Pattern Matching](#pattern-matching).
 
 ### Go Interop (FFI)
 
-Sky can import and use any Go package -- both standard library and third-party.
+Sky can import and use any Go package -- both standard library and third-party. The FFI layer automatically generates type-safe wrappers.
 
 #### Importing Go Packages
 
@@ -411,7 +435,33 @@ main =
     in
     case resp of
         Ok r -> println "Status:" (Http.responseStatusCode r)
-        Err e -> println "Error:" e
+        Err e -> println "Error:" (errorToString e)
+```
+
+#### Pointer Safety
+
+Go pointer types are handled pragmatically at the FFI boundary:
+
+- **Primitive pointers** (`*string`, `*int`, `*bool`, `*float64`) map to `Maybe T` -- `Just value` when non-nil, `Nothing` when nil
+- **Opaque struct pointers** (`*sql.DB`, `*http.Request`) stay as their Sky type (`Db`, `Request`) -- these are reference handles, the pointer is an implementation detail
+
+This means Go APIs with optional primitive values are naturally expressed in Sky:
+
+```elm
+-- A Go function returning *string becomes Maybe String in Sky
+case getName user of
+    Just name -> println name
+    Nothing -> println "anonymous"
+```
+
+#### Error Handling
+
+Go's `error` type maps to `Error` in Sky. Use `errorToString` (from Prelude) to convert:
+
+```elm
+case Http.listenAndServe ":8080" handler of
+    Ok _ -> println "Server started"
+    Err e -> println "Failed:" (errorToString e)
 ```
 
 #### Foreign Import Declarations
@@ -421,7 +471,6 @@ For low-level control, use `foreign import`:
 ```elm
 foreign import "fmt" exposing (Sprintf, println)
 foreign import "sky_wrappers" exposing (Sky_list_Map, Sky_list_Filter)
-foreign import "@sky/runtime/cmd" exposing (none, batch, perform)
 ```
 
 #### Side-Effect Imports
@@ -478,7 +527,7 @@ Key modules: `Std.Cmd`, `Std.Sub`, `Std.Task`, `Std.Program`.
 
 | Module              | Key Functions                                                                                                                                                                                                                          |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Sky.Core.Prelude`  | `Result`, `Maybe`, `identity` (auto-imported)                                                                                                                                                                                          |
+| `Sky.Core.Prelude`  | `Result`, `Maybe`, `identity`, `errorToString` (auto-imported)                                                                                                                                                                         |
 | `Sky.Core.Maybe`    | `withDefault`, `map`, `andThen`                                                                                                                                                                                                        |
 | `Sky.Core.Result`   | `withDefault`, `map`, `andThen`, `mapError`, `toMaybe`                                                                                                                                                                                 |
 | `Sky.Core.List`     | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty`                                             |
@@ -518,15 +567,15 @@ result = Decode.decodeString userDecoder jsonString
 
 ### Std (Application Framework)
 
-| Module        | Purpose                             |
-| ------------- | ----------------------------------- |
-| `Std.Log`     | `println` for output                |
-| `Std.Cmd`     | `none`, `batch`, `perform`          |
-| `Std.Sub`     | `none`, `batch`                     |
-| `Std.Task`    | `succeed`, `fail`, `map`, `andThen` |
-| `Std.Program` | `Program` type alias, `makeProgram` |
-| `Std.Time`    | `every` (subscription timer)        |
-| `Std.Uuid`    | `v4` (UUID generation)              |
+| Module        | Purpose                                     |
+| ------------- | ------------------------------------------- |
+| `Std.Log`     | `println` for output                        |
+| `Std.Cmd`     | `none`, `batch`, `perform`                  |
+| `Std.Sub`     | `none`, `batch` -- subscription types       |
+| `Std.Time`    | `every` -- timer subscriptions for Sky.Live |
+| `Std.Task`    | `succeed`, `fail`, `map`, `andThen`         |
+| `Std.Program` | `Program` type alias, `makeProgram`         |
+| `Std.Uuid`    | `v4` (UUID generation)                      |
 
 ### Std.Html (Server-Side Rendering)
 
@@ -554,9 +603,9 @@ Elements: `div`, `section`, `article`, `aside`, `header`, `footer`, `nav`, `main
 
 ## Sky.Live
 
-Sky.Live is an HTTP-first, server-driven UI framework. Write standard TEA code; the compiler generates a Go HTTP server with DOM diffing, session management, and a tiny (~3KB) JS client.
+Sky.Live is a server-driven UI framework inspired by [Phoenix LiveView](https://hexdocs.pm/phoenix_live_view). Write standard TEA code; the compiler generates a Go HTTP server with DOM diffing, session management, SSE subscriptions, and a tiny (~3KB) JS client.
 
-No WebSocket required. Works on Lambda, Cloud Run, any HTTP host.
+No WebSocket required. No client-side framework. Works on Lambda, Cloud Run, any HTTP host.
 
 ```elm
 module Main exposing (main)
@@ -566,12 +615,14 @@ import Std.Html.Attributes exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Time as Time
 
 type Page = CounterPage | AboutPage
 
 type alias Model = { page : Page, count : Int }
 
-type Msg = Navigate Page | Increment | Decrement
+type Msg = Navigate Page | Increment | Decrement | Tick
 
 init _ = ({ page = CounterPage, count = 0 }, Cmd.none)
 
@@ -580,22 +631,19 @@ update msg model =
         Navigate page -> ({ model | page = page }, Cmd.none)
         Increment -> ({ model | count = model.count + 1 }, Cmd.none)
         Decrement -> ({ model | count = model.count - 1 }, Cmd.none)
+        Tick -> ({ model | count = model.count + 1 }, Cmd.none)
+
+-- Subscriptions: auto-increment every second on CounterPage
+subscriptions model =
+    case model.page of
+        CounterPage -> Time.every 1000 Tick
+        _ -> Sub.none
 
 view model =
     div []
-        [ nav []
-            [ button [ onClick (Navigate CounterPage) ] [ text "Counter" ]
-            , button [ onClick (Navigate AboutPage) ] [ text "About" ]
-            ]
-        , case model.page of
-            CounterPage ->
-                div []
-                    [ h1 [] [ text (String.fromInt model.count) ]
-                    , button [ onClick Increment ] [ text "+" ]
-                    , button [ onClick Decrement ] [ text "-" ]
-                    ]
-            AboutPage ->
-                div [] [ text "Built with Sky.Live" ]
+        [ h1 [] [ text (String.fromInt model.count) ]
+        , button [ onClick "Increment" ] [ text "+" ]
+        , button [ onClick "Decrement" ] [ text "-" ]
         ]
 
 main =
@@ -603,7 +651,7 @@ main =
         { init = init
         , update = update
         , view = view
-        , subscriptions = \_ -> Sub.none
+        , subscriptions = subscriptions
         , routes = [ route "/" CounterPage, route "/about" AboutPage ]
         , notFound = CounterPage
         }
@@ -616,15 +664,43 @@ main =
 3. User interactions (`onClick`, `onInput`, etc.) send events to `POST /_sky/event`
 4. The server runs `update`, diffs the old and new views, and returns minimal DOM patches
 5. A tiny JS client applies the patches -- no full page reload
+6. Subscriptions (e.g., `Time.every`) create SSE streams that push server updates to the browser
+
+### Subscriptions
+
+Subscriptions let the server push updates to the browser without user interaction. The `Sub` type is a proper ADT:
+
+```elm
+type Sub msg
+    = SubNone                        -- no subscription
+    | SubTimer Int msg               -- fire msg every N milliseconds
+    | SubBatch (List (Sub msg))      -- combine multiple subscriptions
+```
+
+`Time.every 1000 Tick` constructs a `SubTimer 1000 Tick` value. At runtime, the Go server inspects this value, starts a timer goroutine, and pushes DOM patches via Server-Sent Events.
+
+```elm
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.page of
+        DashboardPage ->
+            Sub.batch
+                [ Time.every 5000 RefreshData
+                , Time.every 60000 CheckNotifications
+                ]
+        _ ->
+            Sub.none
+```
 
 ### Key Features
 
-- **No WebSocket required** -- pure HTTP with optional SSE for subscriptions
+- **No WebSocket required** -- pure HTTP with SSE for subscriptions
 - **Unified Model/Msg** -- one TEA loop for the whole app, navigation is just a `Msg`
+- **Direct VNode emission** -- Html functions produce VNode records, not HTML strings. No parsing overhead on every render
 - **Automatic component wiring** -- components following the protocol get auto-wired
-- **Session stores** -- memory (default), sqlite, postgresql, redis, dynamodb
-- **Subscriptions** -- `Std.Time.every 1000 Tick` auto-creates SSE streams
-- **Static analysis diffing** -- compiler traces field dependencies, only patches what changed
+- **Session stores** -- memory (default), sqlite
+- **Subscriptions** -- runtime-carrying `Sub` values drive SSE server-push
+- **DOM diffing** -- server diffs the VNode tree and sends minimal patches
 
 ### Component Protocol
 
@@ -709,10 +785,7 @@ port = 4000                        # HTTP server port
 ttl = "30m"                        # session time-to-live
 
 [live.session]
-store = "memory"                   # memory | sqlite | postgresql | redis | dynamodb
-path = "./data/sessions.db"        # for sqlite
-url = "$DATABASE_URL"              # for postgresql/redis
-snapshot_interval = 50             # snapshot model every N messages
+store = "memory"                   # memory | sqlite
 
 [live.static]
 dir = "static"                     # static file directory, served at /static/*
@@ -883,7 +956,7 @@ Start the LSP:
 ```bash
 node dist/bin/sky-lsp.js
 # or if built as binary:
-sky lsp
+sky-lsp
 ```
 
 ### Helix
@@ -903,6 +976,10 @@ indent = { tab-width = 4, unit = " " }
 [language-server.sky-lsp]
 command = "sky-lsp"
 args = ["--stdio"]
+
+[[grammar]]
+name = "sky"
+source = { git = "https://github.com/anzellai/tree-sitter-sky", rev = "main" }
 ```
 
 ---
@@ -915,12 +992,14 @@ args = ["--stdio"]
 | `02-go-stdlib`      | Go standard library        | `net/http`, `crypto/sha256`, `time`, `encoding/hex`            |
 | `03-tea-external`   | TEA with external packages | `Model`/`Msg`/`update`, `uuid`, `godotenv`                     |
 | `04-local-pkg`      | Multi-module project       | Local package imports (`Lib.Utils`)                            |
-| `05-mux-server`     | HTTP server                | `gorilla/mux`, `godotenv`, request handling                    |
+| `05-mux-server`     | HTTP server                | `gorilla/mux`, `godotenv`, request handling, `errorToString`   |
 | `06-json`           | JSON encode/decode         | Elm-compatible `Json.Encode`, `Json.Decode`, pipeline decoding |
 | `07-todo-cli`       | CLI with SQLite            | Command-line args, `database/sql`, `modernc.org/sqlite`        |
 | `08-notes-app`      | Full CRUD web app          | HTTP server, database, auth, HTML templates                    |
-| `09-live-counter`   | Sky.Live counter           | Server-driven UI, routing, events                              |
+| `09-live-counter`   | Sky.Live counter           | Server-driven UI, routing, SSE subscriptions (`Time.every`)    |
 | `10-live-component` | Sky.Live components        | Component protocol, auto-wiring                                |
+| `11-fyne-stopwatch` | Desktop GUI                | Fyne toolkit, timers, data binding                             |
+| `12-skyvote`        | Full Sky.Live app          | SQLite, auth, voting, SSE auto-refresh                         |
 
 Run any example:
 
@@ -968,6 +1047,10 @@ src/
 - **Indentation-sensitive parsing** -- like Elm/Haskell, whitespace determines block structure
 - **Hindley-Milner type inference** -- full inference with unification, explicit annotations optional
 - **Go as backend** -- compiles to readable Go code, leverages Go's toolchain and ecosystem
+- **Auto-generated FFI** -- Go packages are introspected at build time; type-safe wrappers are generated automatically
+- **Pointer safety** -- Go `*primitive` types map to `Maybe T`, opaque struct pointers are transparent handles
+- **Direct VNode emission** -- Html functions produce VNode records directly, avoiding HTML string parsing on every render
+- **Runtime-carrying Sub** -- subscription values carry their configuration data for the Go runtime to inspect
 - **Universal unifiers** -- `JsValue`, `Foreign` types bridge Sky and Go type systems
 - **Prelude auto-import** -- `Sky.Core.Prelude` available everywhere without explicit import
 - **Virtual assets** -- stdlib files are bundled into the binary via `build-binary.js`

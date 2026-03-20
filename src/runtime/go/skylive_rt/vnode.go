@@ -41,24 +41,32 @@ var voidElements = map[string]bool{
 	"param": true, "source": true, "track": true, "wbr": true,
 }
 
-// AssignSkyIDs assigns sequential sky-id attributes to all element nodes.
-// For V1, every element gets a sky-id. Static analysis optimization comes later.
+// AssignSkyIDs assigns path-based sky-id attributes to all element nodes.
+// IDs are based on tree position (e.g., "s0", "s0-1", "s0-1-2") so they
+// remain stable when siblings change. This prevents ID collisions during
+// DOM patching when the tree structure changes (e.g., auth state change).
 func AssignSkyIDs(node *VNode) {
-	counter := 0
-	assignIDs(node, &counter)
+	assignIDs(node, "s0")
 }
 
-func assignIDs(node *VNode, counter *int) {
+func assignIDs(node *VNode, path string) {
 	if node.Tag != "" && node.Tag != "__raw__" {
-		node.SkyID = fmt.Sprintf("s%d", *counter)
+		node.SkyID = path
 		if node.Attrs == nil {
 			node.Attrs = make(map[string]string)
 		}
 		node.Attrs["sky-id"] = node.SkyID
-		*counter++
 	}
+	childIdx := 0
 	for _, child := range node.Children {
-		assignIDs(child, counter)
+		if child.Tag != "" && child.Tag != "__raw__" {
+			assignIDs(child, fmt.Sprintf("%s-%d", path, childIdx))
+			childIdx++
+		} else {
+			// Text nodes and raw nodes don't get IDs but still count for positioning
+			assignIDs(child, fmt.Sprintf("%s-%d", path, childIdx))
+			childIdx++
+		}
 	}
 }
 
@@ -135,6 +143,76 @@ func RenderFullPage(bodyContent *VNode, title string, sid string) string {
 	sb.WriteString(RenderToString(bodyContent))
 	sb.WriteString("\n</div>\n</body>\n</html>")
 	return sb.String()
+}
+
+// MapToVNode converts a Sky VNode record (map[string]any) into a *VNode.
+// Sky's Html functions produce records like {tag, attrs, children, text}.
+// Attrs are lists of Tuple2{V0: key, V1: value}.
+// Falls back to ParseHTML for legacy string values.
+func MapToVNode(v any) *VNode {
+	if v == nil {
+		return TextNode("")
+	}
+	// Legacy fallback: if view returns a string, parse it
+	if s, ok := v.(string); ok {
+		return ParseHTML(s)
+	}
+	rec, ok := v.(map[string]any)
+	if !ok {
+		return TextNode(fmt.Sprintf("%v", v))
+	}
+
+	tag, _ := rec["tag"].(string)
+	text, _ := rec["text"].(string)
+
+	// Text node
+	if tag == "" {
+		return TextNode(text)
+	}
+	// Raw HTML node
+	if tag == "__raw__" {
+		return RawNode(text)
+	}
+
+	// Parse attributes from []any of tuples
+	attrs := make(map[string]string)
+	if attrList, ok := rec["attrs"].([]any); ok {
+		for _, a := range attrList {
+			// Sky tuples compile to structs with V0, V1 fields
+			// Try map[string]any first (from JSON), then reflect for structs
+			if m, ok := a.(map[string]any); ok {
+				key, _ := m["V0"].(string)
+				val, _ := m["V1"].(string)
+				if key != "" {
+					attrs[key] = val
+				}
+			} else {
+				// Compiled Go struct: use fmt to extract
+				s := fmt.Sprintf("%v", a)
+				// Tuple2{V0: key, V1: val} prints as {key val}
+				if len(s) > 2 && s[0] == '{' {
+					s = s[1 : len(s)-1]
+					parts := strings.SplitN(s, " ", 2)
+					if len(parts) == 2 {
+						attrs[parts[0]] = parts[1]
+					} else if len(parts) == 1 && parts[0] != "" {
+						attrs[parts[0]] = ""
+					}
+				}
+			}
+		}
+	}
+
+	// Parse children recursively
+	var children []*VNode
+	if childList, ok := rec["children"].([]any); ok {
+		children = make([]*VNode, 0, len(childList))
+		for _, c := range childList {
+			children = append(children, MapToVNode(c))
+		}
+	}
+
+	return &VNode{Tag: tag, Attrs: attrs, Children: children}
 }
 
 func escapeHTML(s string) string {

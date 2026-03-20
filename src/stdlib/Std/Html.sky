@@ -6,10 +6,10 @@ import Sky.Core.List as List
 
 
 -- ============================================================
--- Std.Html — Elm-style HTML construction for server-side rendering
+-- Std.Html — Elm-style HTML construction via VNode records
 --
--- Html and Attribute are both String under the hood.
--- Elements are smart constructors that produce safe, escaped HTML.
+-- Html values are records: { tag, attrs, children, text }
+-- Attributes are tuples: (key, value)
 --
 -- Usage:
 --     import Std.Html exposing (..)
@@ -34,7 +34,7 @@ escapeHtml content =
         |> String.replace "'" "&#39;"
 
 
--- Escape attribute values (single-quote delimited)
+-- Escape attribute values
 escapeAttr content =
     content
         |> String.replace "&" "&amp;"
@@ -45,47 +45,61 @@ escapeAttr content =
 -- Core
 -- ============================================================
 
--- Convert Html to a String for sending in HTTP responses.
--- Since Html is String internally, this is the identity function.
-render html =
-    html
+-- Convert a VNode record to an HTML string for HTTP responses.
+render vnode =
+    toString vnode
+
+
+-- Convert a VNode record to an HTML string.
+toString vnode =
+    if vnode.tag == "" then
+        escapeHtml vnode.text
+    else if vnode.tag == "__raw__" then
+        vnode.text
+    else
+        let
+            attrStr =
+                if List.isEmpty vnode.attrs then
+                    ""
+                else
+                    " " ++ String.join " " (List.map attrToString vnode.attrs)
+            childStr =
+                String.join "" (List.map toString vnode.children)
+        in
+        "<" ++ vnode.tag ++ attrStr ++ ">" ++ childStr ++ "</" ++ vnode.tag ++ ">"
+
+
+-- Convert an attribute tuple to a string: ("class", "foo") -> "class='foo'"
+attrToString attr =
+    let
+        ( key, val ) =
+            attr
+    in
+    if val == "" then
+        key
+    else
+        key ++ "='" ++ escapeAttr val ++ "'"
 
 
 -- Escaped text content. Always use this for user-provided strings.
 text content =
-    escapeHtml content
+    { tag = "" , attrs = [] , children = [] , text = content }
 
 
 -- Raw HTML string, injected without escaping.
--- Use for trusted content only (e.g., pre-rendered markdown).
+-- Use for trusted content only (e.g., pre-rendered markdown, CSS).
 raw content =
-    content
+    { tag = "__raw__" , attrs = [] , children = [] , text = content }
 
 
--- Build an element: <tag attrs>children</tag>
+-- Build an element VNode: <tag attrs>children</tag>
 node tag attrs children =
-    let
-        attrStr =
-            if List.isEmpty attrs then
-                ""
-            else
-                " " ++ String.join " " attrs
-        childStr =
-            String.join "" children
-    in
-    "<" ++ tag ++ attrStr ++ ">" ++ childStr ++ "</" ++ tag ++ ">"
+    { tag = tag , attrs = attrs , children = children , text = "" }
 
 
--- Build a void element: <tag attrs> (no closing tag)
+-- Build a void element VNode: <tag attrs> (no closing tag)
 voidNode tag attrs =
-    let
-        attrStr =
-            if List.isEmpty attrs then
-                ""
-            else
-                " " ++ String.join " " attrs
-    in
-    "<" ++ tag ++ attrStr ++ ">"
+    { tag = tag , attrs = attrs , children = [] , text = "" }
 
 
 -- ============================================================

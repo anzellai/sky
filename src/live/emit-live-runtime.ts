@@ -298,6 +298,19 @@ import (
     code += "\n";
   }
 
+  // Msg tag-to-name mapping for subscription runtime
+  code += `func msgTagToName(tag int) string {\n`;
+  code += `\tswitch tag {\n`;
+  for (let i = 0; i < msgVariants.length; i++) {
+    code += `\tcase ${i}:\n\t\treturn "${msgVariants[i].name}"\n`;
+  }
+  code += `\t}\n\treturn ""\n}\n\n`;
+
+  // Check if module has a top-level subscriptions function
+  const hasSubscriptions = mainModule.declarations.some(
+    (d) => d.kind === "FunctionDeclaration" && d.name === "subscriptions"
+  );
+
   // Main function — starts the Live server
   // Note: Sky compiles Update as Update(msg, model) (flattened from curried form)
   // and Init returns sky_wrappers.Tuple2{V0: model, V1: cmd}
@@ -334,12 +347,8 @@ ${componentInfos.length > 0 ? generateComponentUpdateCases(componentInfos) : ""}
 \t\t},
 \t\tView: func(model any) *skylive_rt.VNode {
 \t\t\tmodel = fixModel(model)
-\t\t\thtml := View(model)
-\t\t\t// View returns HTML as a string in current Sky
-\t\t\tif s, ok := html.(string); ok {
-\t\t\t\treturn skylive_rt.ParseHTML(s)
-\t\t\t}
-\t\t\treturn skylive_rt.TextNode(fmt.Sprintf("%v", html))
+\t\t\tresult := View(model)
+\t\t\treturn skylive_rt.MapToVNode(result)
 \t\t},
 \t\tDecodeMsg: decodeMsg,
 \t\tURLForPage: urlForPage,
@@ -349,6 +358,11 @@ ${componentInfos.length > 0 ? generateComponentUpdateCases(componentInfos) : ""}
 \t\tBuildNavigateMsg: func(page any) any {
 \t\t\treturn Msg{Tag: ${navTagIdx}, NavigateValue: page}
 \t\t},
+\t\tMsgTagToName: msgTagToName,${hasSubscriptions ? `
+\t\tSubscriptions: func(model any) any {
+\t\t\tmodel = fixModel(model)
+\t\t\treturn Subscriptions(model)
+\t\t},` : ""}
 \t}
 
 \tskylive_rt.StartServer(config, app)

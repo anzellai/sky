@@ -171,6 +171,111 @@ func (m *SSEManager) runTimerSub(sub SubDef) {
 	}
 }
 
+// WalkSubValue converts a Sub ADT value into a flat list of SubDefs.
+// Sub is compiled as a Go struct with Tag field:
+//
+//	Tag 0 = SubNone
+//	Tag 1 = SubTimer (SubTimerValue=interval, SubTimerValue1=msg)
+//	Tag 2 = SubBatch (SubBatchValue=list of Sub values)
+func WalkSubValue(sub any, msgTagToName func(int) string) []SubDef {
+	if sub == nil {
+		return nil
+	}
+	tag := extractSubTag(sub)
+	switch tag {
+	case 0: // SubNone
+		return nil
+	case 1: // SubTimer
+		interval := extractIntField(sub, "SubTimerValue")
+		msgVal := extractField(sub, "SubTimerValue1")
+		msgName := ""
+		if msgVal != nil {
+			msgTag := extractSubTag(msgVal)
+			if msgTag >= 0 && msgTagToName != nil {
+				msgName = msgTagToName(msgTag)
+			}
+		}
+		if interval > 0 && msgName != "" {
+			return []SubDef{{
+				Kind:     "timer",
+				Interval: time.Duration(interval) * time.Millisecond,
+				MsgName:  msgName,
+			}}
+		}
+		return nil
+	case 2: // SubBatch
+		listVal := extractField(sub, "SubBatchValue")
+		if listVal == nil {
+			return nil
+		}
+		lst, ok := listVal.([]any)
+		if !ok {
+			return nil
+		}
+		var result []SubDef
+		for _, item := range lst {
+			result = append(result, WalkSubValue(item, msgTagToName)...)
+		}
+		return result
+	}
+	return nil
+}
+
+func extractSubTag(v any) int {
+	switch val := v.(type) {
+	case map[string]any:
+		if t, ok := val["Tag"]; ok {
+			switch n := t.(type) {
+			case int:
+				return n
+			case float64:
+				return int(n)
+			}
+		}
+	}
+	// Try struct via fmt
+	s := fmt.Sprintf("%v", v)
+	if len(s) > 2 && s[0] == '{' {
+		for i := 1; i < len(s); i++ {
+			if s[i] >= '0' && s[i] <= '9' {
+				n := 0
+				for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+					n = n*10 + int(s[i]-'0')
+					i++
+				}
+				return n
+			}
+			if s[i] != ' ' {
+				break
+			}
+		}
+	}
+	return -1
+}
+
+func extractField(v any, fieldName string) any {
+	if m, ok := v.(map[string]any); ok {
+		return m[fieldName]
+	}
+	// For compiled Go structs, use fmt to get string representation
+	// This is a fallback — compiled structs should have named fields
+	return nil
+}
+
+func extractIntField(v any, fieldName string) int {
+	val := extractField(v, fieldName)
+	if val == nil {
+		return 0
+	}
+	switch n := val.(type) {
+	case int:
+		return n
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
 func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.RawMessage) {
 	sess, ok := m.store.Get(sid)
 	if !ok {
@@ -191,9 +296,10 @@ func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.Ra
 	AssignSkyIDs(newView)
 	patches := Diff(sess.PrevView, newView)
 
-	// Update session
+	// Update session atomically via store.Set
 	sess.Model = newModel
 	sess.PrevView = newView
+	m.store.Set(sid, sess)
 
 	// Send patches via SSE if there are any changes
 	if len(patches) > 0 {

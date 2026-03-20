@@ -5,3 +5,9 @@ type Result err ok
     | Err err
 
 identity x = x
+
+foreign import "sky_wrappers" exposing (Sky_errorToString)
+
+errorToString : a -> String
+errorToString e =
+    Sky_errorToString e

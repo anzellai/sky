@@ -146,6 +146,30 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     });
   }
 
+  // Generate constructor functions for ADT variants (for cross-module use)
+  // Skip record aliases and single-constructor types where ctor name = type name
+  for (const tDecl of module.typeDeclarations) {
+    if (recordAliasTypes.has(tDecl.name)) continue;
+    if (tDecl.constructors.length === 1 && tDecl.constructors[0].name === tDecl.name) continue;
+    for (let i = 0; i < tDecl.constructors.length; i++) {
+      const c = tDecl.constructors[i];
+      const kvPairs: string[] = [`Tag: ${i}`];
+      const goParams: string[] = [];
+      for (let j = 0; j < c.types.length; j++) {
+        const fieldName = c.name + "Value" + (j > 0 ? j : "");
+        const paramName = `arg${j}`;
+        goParams.push(`${paramName} any`);
+        kvPairs.push(`${fieldName}: ${paramName}`);
+      }
+      const goFnName = c.name.charAt(0).toUpperCase() + c.name.slice(1);
+      const body = `${tDecl.name}{${kvPairs.join(", ")}}`;
+      pkg.declarations.push({
+        kind: "GoRawDecl",
+        code: `func ${goFnName}(${goParams.join(", ")}) any {\n\treturn ${body}\n}`
+      } as any);
+    }
+  }
+
   // Convert functions
   for (const decl of module.declarations) {
     const stmts: GoIR.GoStmt[] = [];
@@ -474,7 +498,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           // Check if this is a Sky module (not a Go FFI module) — must run before
           // the Std.* FFI shortcut so that real Sky modules like Std.Html take priority.
           // Exclude thin FFI wrapper modules that only re-export foreign imports.
-          const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Sub", "Std.Task", "Std.Program", "Cmd", "Sub", "Log"]);
+          const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Cmd", "Log"]);
           if (moduleExports && moduleExports.has(pkgName) && !ffiWrappers.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
               // It's a non-foreign Sky module! Lower to direct Go package call.
               const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
@@ -494,10 +518,12 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           }
 
           // FFI wrapper modules (Std.Log, Std.Cmd etc.) — route through sky_wrappers
-          if (pkgName.startsWith("Std.") || pkgName === "Net.Http" || pkgName === "Crypto.Sha256" || pkgName === "Encoding.Hex" || pkgName === "Cmd" || pkgName === "Sub" || pkgName === "Uuid" || pkgName === "Dotenv") {
+          // Std.Sub and Std.Time are normal ADT modules — skip FFI routing
+          if (pkgName === "Std.Sub" || pkgName === "Sub" || pkgName === "Std.Time") {
+              // fall through to normal module resolution below
+          } else if (pkgName.startsWith("Std.") || pkgName === "Net.Http" || pkgName === "Crypto.Sha256" || pkgName === "Encoding.Hex" || pkgName === "Cmd" || pkgName === "Uuid" || pkgName === "Dotenv") {
               if (name === "none") {
-                  const sel = pkgName.endsWith("Cmd") ? "CmdNone" : "SubNone";
-                  return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel };
+                  return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "CmdNone" };
               }
               const wrapperName = "Sky_" + safePkg + "_" + goName;
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName };
@@ -516,6 +542,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       }
       if (expr.name === "updateRecord") {
           return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "UpdateRecord" };
+      }
+      // Prelude: errorToString → sky_wrappers.Sky_errorToString
+      if (expr.name === "errorToString" || expr.name === "Sky_errorToString") {
+          return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "Sky_errorToString" };
       }
       
       const goName = (expr.name[0] >= 'a' && expr.name[0] <= 'z') ? expr.name.charAt(0).toUpperCase() + expr.name.slice(1) : expr.name;
@@ -556,7 +586,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // Excludes Prelude types (Ok, Err, identity) and thin FFI wrapper modules
       // (Std.Log, Std.Cmd, etc.) which have special lowering paths.
       if (moduleExports && !_declParamCounts?.has(expr.name)) {
-          const ffiWrapperModules = new Set(["Std.Log", "Std.Cmd", "Std.Sub", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+          const ffiWrapperModules = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
           // When multiple modules export the same name, prefer the one actually imported
           let candidates: [string, Map<string, Scheme>][] = [];
           for (const [modName, exports] of moduleExports) {
@@ -675,30 +705,33 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           const localCtorInfo = constructorMap?.get(flat.fn.name);
           if (localCtorInfo) {
               const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+              // Use named field init so constructors with shared structs work correctly
+              const kvPairs: string[] = [`Tag: ${localCtorInfo.tagIndex}`];
+              for (let j = 0; j < flat.args.length; j++) {
+                  const fieldName = flat.fn.name + "Value" + (j > 0 ? j : "");
+                  kvPairs.push(`${fieldName}: ${emitGoExprForLower(argExprs[j])}`);
+              }
               return {
-                  kind: "GoCompositeLit",
-                  type: { kind: "GoIdentType", name: localCtorInfo.adtName },
-                  elements: [
-                      { kind: "GoBasicLit", value: String(localCtorInfo.tagIndex) },
-                      ...argExprs
-                  ]
+                  kind: "GoRawExpr",
+                  code: `${localCtorInfo.adtName}{${kvPairs.join(", ")}}`
               } as any;
           }
           // Check imported modules for constructor applications
+          // Emit as function call to the generated constructor function in the target package
           if (moduleExports) {
               for (const [modName, exports] of moduleExports) {
                   if (exports.has(flat.fn.name)) {
+                      const ffiWrapperModulesCheck = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+                      if (ffiWrapperModulesCheck.has(modName)) break; // Skip FFI wrapper modules
                       const parts = modName.split(".");
                       const pkgName = makeSafeGoPkgName(parts[parts.length - 1]);
                       const goCtorName = flat.fn.name.charAt(0).toUpperCase() + flat.fn.name.slice(1);
                       const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+                      // Call the generated constructor function: pkg.CtorName(args...)
                       return {
-                          kind: "GoCompositeLit",
-                          type: { kind: "GoIdentType", name: `${pkgName}.${goCtorName}` },
-                          elements: [
-                              { kind: "GoBasicLit", value: "0" },
-                              ...argExprs
-                          ]
+                          kind: "GoCallExpr",
+                          fn: { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: pkgName }, sel: goCtorName },
+                          args: argExprs,
                       } as any;
                   }
               }

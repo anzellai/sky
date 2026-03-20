@@ -7,6 +7,8 @@ import Std.Html.Attributes exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Time as Time
 
 -- ══════════════════════════════════════════════════════
 -- MODEL
@@ -26,6 +28,7 @@ type Msg
     | Increment
     | Decrement
     | Reset
+    | Tick
 
 -- ══════════════════════════════════════════════════════
 -- INIT
@@ -42,15 +45,30 @@ update msg model =
     case msg of
         Navigate page ->
             ( { model | page = page } , Cmd.none )
-        
+
         Increment ->
             ( { model | count = model.count + 1 } , Cmd.none )
-        
+
         Decrement ->
             ( { model | count = model.count - 1 } , Cmd.none )
-        
+
         Reset ->
             ( { model | count = 0 } , Cmd.none )
+
+        Tick ->
+            ( { model | count = model.count + 1 } , Cmd.none )
+
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS — auto-increment every second on CounterPage
+-- ══════════════════════════════════════════════════════
+subscriptions : Model -> Sub Msg
+subscriptions model =
+    case model.page of
+        CounterPage ->
+            Time.every 1000 Tick
+
+        _ ->
+            Sub.none
 
 -- ══════════════════════════════════════════════════════
 -- VIEW
@@ -75,7 +93,7 @@ viewPage model =
     case model.page of
         CounterPage ->
             viewCounter model
-        
+
         AboutPage ->
             viewAbout
 
@@ -94,7 +112,7 @@ viewCounter model =
             ]
         , p [ class "hint" ]
             [ text
-                "Each click is a server round-trip. No client-side JS framework."
+                "Counter auto-increments every second via server-push (SSE subscription)."
             ]
         ]
 
@@ -110,7 +128,10 @@ viewAbout =
             [ text
                 "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches."
             ]
-        , p [] [ text "Navigate back to Counter — your count is preserved!" ]
+        , p []
+            [ text
+                "The counter auto-increments via SSE subscriptions — navigate to About to stop it!"
+            ]
         ]
 
 pageStyles : String
@@ -143,7 +164,7 @@ main =
         { init = init
         , update = update
         , view = view
-        , subscriptions = \_ -> ()
+        , subscriptions = subscriptions
         , routes = [ route "/" CounterPage , route "/about" AboutPage ]
         , notFound = CounterPage
         }

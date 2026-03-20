@@ -50,10 +50,14 @@ node dist/bin/sky.js run examples/01-hello-world/src/Main.sky
 2. **Indentation parser** -- The parser uses the column of the first token as the minimum indentation reference. Do not tighten rules that break slightly unaligned input.
 3. **Formatter (Elm-style)** -- 4-space indent, leading commas, `let`/`in` always multiline, 80-char line width.
 4. **Universal unifiers** -- `JsValue`, `Foreign`, and variants are universal unifiers for interop. Do not remove.
-5. **Prelude** -- `Sky.Core.Prelude` is implicitly imported everywhere.
+5. **Prelude** -- `Sky.Core.Prelude` is implicitly imported everywhere. Provides `Result`, `Maybe`, `identity`, `errorToString`.
 6. **Go FFI** -- Wrappers accept `any` params with internal type assertions. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`).
-7. **AST lowering** -- Uppercase identifiers = Constructors unless declared as `foreign import` (then lower as Variable). Don't inject `GoTypeAssertExpr` on FFI return values.
-8. **Pipeline operators** -- `|>` and `<|` (Elm-style).
+7. **Pointer safety** -- Go `*primitive` types (`*string`, `*int`, etc.) map to `Maybe T` in Sky. Opaque struct pointers (`*sql.DB`) stay as their type name (`Db`).
+8. **AST lowering** -- Uppercase identifiers = Constructors unless declared as `foreign import` (then lower as Variable). Don't inject `GoTypeAssertExpr` on FFI return values. ADT constructors generate Go constructor functions for cross-module use.
+9. **Pipeline operators** -- `|>` and `<|` (Elm-style).
+10. **Sub type** -- `Std.Sub` is a normal ADT module (not an FFI wrapper). `Sub` has constructors `SubNone`, `SubTimer Int msg`, `SubBatch (List (Sub msg))`. The Go runtime walks these values to set up SSE subscriptions.
+11. **Embedded assets** -- `src/utils/assets.ts` contains embedded stdlib. Must be updated whenever stdlib `.sky` files change.
+12. **VNode emission** -- `Std.Html` functions return VNode records (`{ tag, attrs, children, text }`), not HTML strings. Attributes are `(key, value)` tuples. The Go runtime converts these via `MapToVNode` -- no HTML parsing needed. Non-Live apps use `render`/`toString` to convert VNode records to HTML strings.
 
 ## Package Management
 
@@ -112,8 +116,10 @@ Located in `examples/` with numbered directories:
 - `06-json` -- JSON encoding and decoding (Elm-compatible)
 - `07-todo-cli` -- Todo app with SQLite and CLI args
 - `08-notes-app` -- Full CRUD web app with database and auth
-- `09-live-counter` -- Sky.Live counter with routing
+- `09-live-counter` -- Sky.Live counter with routing and SSE subscriptions (Time.every)
 - `10-live-component` -- Sky.Live component protocol with auto-wiring
+- `11-fyne-stopwatch` -- Desktop GUI with Fyne toolkit
+- `12-skyvote` -- Full Sky.Live app with SQLite, auth, voting, SSE auto-refresh
 
 ## Language Syntax (Elm-like)
 

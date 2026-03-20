@@ -1,14 +1,13 @@
 module Std.Live.Events exposing (..)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.String as String
 
 
 -- ============================================================
 -- Std.Live.Events — Server-driven event attributes for Sky.Live
 --
--- These produce sky-* data attributes that the JS client
--- intercepts and POSTs to the server as Msg names.
+-- These produce (key, value) tuples for sky-* data attributes
+-- that the JS client intercepts and POSTs to the server.
 --
 -- Usage:
 --     import Std.Live.Events exposing (onClick, onInput, onSubmit)
@@ -19,50 +18,36 @@ import Sky.Core.String as String
 -- ============================================================
 
 
--- Escape attribute values
-escapeAttr content =
-    content
-        |> String.replace "&" "&amp;"
-        |> String.replace "'" "&#39;"
-
-
 -- Click event: sends the named Msg to the server when clicked.
-onClick : String -> String
 onClick msgName =
-    "sky-click='" ++ escapeAttr msgName ++ "'"
+    ( "sky-click", msgName )
 
 
 -- Input event: sends the named Msg with the input value.
-onInput : String -> String
 onInput msgName =
-    "sky-input='" ++ escapeAttr msgName ++ "'"
+    ( "sky-input", msgName )
 
 
 -- Submit event: sends the named Msg with form data.
-onSubmit : String -> String
 onSubmit msgName =
-    "sky-submit='" ++ escapeAttr msgName ++ "'"
+    ( "sky-submit", msgName )
 
 
 -- Double-click event.
-onDblClick : String -> String
 onDblClick msgName =
-    "sky-dblclick='" ++ escapeAttr msgName ++ "'"
+    ( "sky-dblclick", msgName )
 
 
 -- Change event (for select, checkbox, etc.)
-onChange : String -> String
 onChange msgName =
-    "sky-change='" ++ escapeAttr msgName ++ "'"
+    ( "sky-change", msgName )
 
 
 -- Focus event.
-onFocus : String -> String
 onFocus msgName =
-    "sky-focus='" ++ escapeAttr msgName ++ "'"
+    ( "sky-focus", msgName )
 
 
 -- Blur event.
-onBlur : String -> String
 onBlur msgName =
-    "sky-blur='" ++ escapeAttr msgName ++ "'"
+    ( "sky-blur", msgName )

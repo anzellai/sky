@@ -74,6 +74,9 @@ function emitGoDeclaration(decl: GoIR.GoDeclaration): string {
       }
       return out;
     }
+    case "GoRawDecl": {
+      return (decl as any).code;
+    }
   }
 }
 

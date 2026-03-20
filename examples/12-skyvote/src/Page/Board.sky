@@ -47,7 +47,7 @@ viewBoard model =
             div []
                 [ div
                     [ style
-                        "display: flex; justify-content: space-between; align-items: flex-start; margin-top: 32px;"
+                        "display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; margin-top: 32px;"
                     ]
                     [ div []
                         [ h1 [ class "page-title" ] [ text "Feature Board" ]

@@ -1,7 +1,32 @@
 // src/interop/go/type-mapper.ts
 
+const GO_PRIMITIVE_TYPES = new Set([
+    "string", "bool", "byte", "rune",
+    "int", "int8", "int16", "int32", "int64",
+    "uint", "uint8", "uint16", "uint32", "uint64", "uintptr",
+    "float32", "float64",
+]);
+
+/** True when the Go type is a pointer to a scalar primitive (e.g. *string, *int). */
+export function isGoPointerToPrimitive(goType: string): boolean {
+    if (!goType.startsWith("*")) return false;
+    const inner = goType.replace(/^\*+/, "").trim();
+    return GO_PRIMITIVE_TYPES.has(inner);
+}
+
 export function mapGoTypeToSky(goType: string, currentPackage?: string): string {
-    let t = goType.replace(/^\*+/, "").trim(); // Remove pointers
+    // Pointer-to-primitive → Maybe T  (e.g. *string → Maybe String)
+    if (isGoPointerToPrimitive(goType)) {
+        const inner = goType.replace(/^\*+/, "").trim();
+        const mapped = mapGoTypeToSkyInner(inner, currentPackage);
+        return mapped.includes(" ") ? `Maybe (${mapped})` : `Maybe ${mapped}`;
+    }
+
+    return mapGoTypeToSkyInner(goType, currentPackage);
+}
+
+function mapGoTypeToSkyInner(goType: string, currentPackage?: string): string {
+    let t = goType.replace(/^\*+/, "").trim(); // Remove pointers (opaque struct pointers)
 
     // Handle variadic
     if (t.startsWith("...")) {
@@ -10,11 +35,11 @@ export function mapGoTypeToSky(goType: string, currentPackage?: string): string 
 
     if (t === "string") return "String";
     if (t === "bool") return "Bool";
-    if (t === "int" || t === "int8" || t === "int16" || t === "int32" || t === "int64" || 
-        t === "uint" || t === "uint8" || t === "uint16" || t === "uint32" || t === "uint64" || 
+    if (t === "int" || t === "int8" || t === "int16" || t === "int32" || t === "int64" ||
+        t === "uint" || t === "uint8" || t === "uint16" || t === "uint32" || t === "uint64" ||
         t === "uintptr" || t === "rune") return "Int";
     if (t === "float32" || t === "float64") return "Float";
-    
+
     if (t === "[]byte") return "Bytes";
     if (t === "error") return "Error";
     if (t === "any" || t === "interface{}") return "Any";
@@ -65,7 +90,7 @@ export function mapGoTypeToSky(goType: string, currentPackage?: string): string 
     if (dotIdx !== -1) {
         const pkg = t.substring(0, dotIdx);
         const name = t.substring(dotIdx + 1);
-        
+
         if (currentPackage && (pkg === currentPackage || pkg === currentPackage.split("/").pop())) {
             t = name;
         } else {

@@ -1,6 +1,6 @@
 module Std.Time exposing (..)
 
-import Std.Sub exposing (Sub)
+import Std.Sub exposing (Sub, SubTimer)
 
 
 -- ============================================================
@@ -12,8 +12,8 @@ import Std.Sub exposing (Sub)
 --     subscriptions model =
 --         every 1000 Tick
 --
--- The compiler detects `every` calls in subscriptions and
--- generates timer-based server push via SSE.
+-- The runtime inspects the SubTimer value to set up
+-- server-push via SSE.
 -- ============================================================
 
 
@@ -24,4 +24,4 @@ import Std.Sub exposing (Sub)
 
 every : Int -> msg -> Sub msg
 every interval msg =
-    Sub Foreign
+    SubTimer interval msg

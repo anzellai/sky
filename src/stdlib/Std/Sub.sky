@@ -1,8 +1,16 @@
-module Std.Sub exposing (Sub, none, batch)
+module Std.Sub exposing (Sub, SubNone, SubTimer, SubBatch, none, batch)
 
 -- Sub msg represents a subscription to external events.
 
-type Sub msg = Sub Foreign
+type Sub msg
+    = SubNone
+    | SubTimer Int msg
+    | SubBatch (List (Sub msg))
 
-foreign import "@sky/runtime/sub"
-    exposing (none, batch)
+none : Sub msg
+none =
+    SubNone
+
+batch : List (Sub msg) -> Sub msg
+batch subs =
+    SubBatch subs

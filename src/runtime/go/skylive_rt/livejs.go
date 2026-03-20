@@ -166,6 +166,25 @@ const LiveJS = `(function() {
     navigateTo(location.pathname);
   });
 
+  // ── SSE (Server Push) ────────────────────────────────
+  function connectSSE() {
+    if (!window.EventSource) return;
+    var es = new EventSource('/_sky/stream?sid=' + sid);
+    es.onmessage = function(e) {
+      try {
+        var data = JSON.parse(e.data);
+        applyPatches(data.patches || []);
+        if (data.url) history.pushState({}, '', data.url);
+        if (data.title) document.title = data.title;
+      } catch(err) {}
+    };
+    es.onerror = function() {
+      es.close();
+      setTimeout(connectSSE, 3000);
+    };
+  }
+
   // ── Init ─────────────────────────────────────────────
   bind();
+  connectSSE();
 })();`
