@@ -371,6 +371,13 @@ handleDeleteNote db w req =
                 Http.redirect w req "/notes" 302
         )
 
+addRouteHandler p h r =
+    let
+        _ =
+            Mux.routerHandleFunc r p h
+    in
+        r
+
 -- ============================================================
 -- Server entry point
 -- ============================================================
@@ -389,29 +396,18 @@ main =
                         envPort
                 r =
                     Mux.newRouter ()
-                _ =
-                    Mux.routerHandleFunc r "/" (handleLanding db)
-                _ =
-                    Mux.routerHandleFunc r "/auth/sign-in" (handleSignIn db)
-                _ =
-                    Mux.routerHandleFunc r "/auth/sign-up" (handleSignUp db)
-                _ =
-                    Mux.routerHandleFunc r "/auth/forgot-password"
-                        (handleForgotPassword db)
-                _ =
-                    Mux.routerHandleFunc r "/auth/verify" (handleVerify db)
-                _ =
-                    Mux.routerHandleFunc r "/auth/sign-out" (handleSignOut db)
-                _ =
-                    Mux.routerHandleFunc r "/notes" (handleNotesList db)
-                _ =
-                    Mux.routerHandleFunc r "/notes/new" (handleNewNote db)
-                _ =
-                    Mux.routerHandleFunc r "/notes/view" (handleViewNote db)
-                _ =
-                    Mux.routerHandleFunc r "/notes/edit" (handleEditNote db)
-                _ =
-                    Mux.routerHandleFunc r "/notes/delete" (handleDeleteNote db)
+                        |> addRouteHandler "/" (handleLanding db)
+                        |> addRouteHandler "/auth/sign-in" (handleSignIn db)
+                        |> addRouteHandler "/auth/sign-up" (handleSignUp db)
+                        |> addRouteHandler "/auth/forgot-password"
+                            (handleForgotPassword db)
+                        |> addRouteHandler "/auth/verify" (handleVerify db)
+                        |> addRouteHandler "/auth/sign-out" (handleSignOut db)
+                        |> addRouteHandler "/notes" (handleNotesList db)
+                        |> addRouteHandler "/notes/new" (handleNewNote db)
+                        |> addRouteHandler "/notes/view" (handleViewNote db)
+                        |> addRouteHandler "/notes/edit" (handleEditNote db)
+                        |> addRouteHandler "/notes/delete" (handleDeleteNote db)
                 _ =
                     println ""
                 _ =

@@ -769,25 +769,34 @@ noteCard note =
             else
                 content
     in
-        div [ Attr.class "card note-card" ]
-            [ a [ Attr.href ("/notes/view?id=" ++ noteId) ]
-                [ h3 [ Attr.style (Css.styles [ Css.marginBottom (Css.px 4) ]) ]
-                    [ text noteTitle ]
-                , p [ Attr.class "note-meta" ] [ text ("Created " ++ date) ]
-                , p [ Attr.class "note-preview" ] [ text preview ]
+        render
+            (
+            div [ Attr.class "card note-card" ]
+                [ a [ Attr.href ("/notes/view?id=" ++ noteId) ]
+                    [ h3
+                        [ Attr.style
+                            (Css.styles [ Css.marginBottom (Css.px 4) ])
+                        ]
+                        [ text noteTitle ]
+                    , p [ Attr.class "note-meta" ] [ text ("Created " ++ date) ]
+                    , p [ Attr.class "note-preview" ] [ text preview ]
+                    ]
                 ]
-            ]
+            )
 
 notesListPage email notes =
     let
         noteCards =
             String.join "" (List.map noteCard notes)
         headerRow =
-            div [ Attr.class "header-row" ]
-                [ h1 [] [ text "My Notes" ]
-                , a [ Attr.href "/notes/new" , Attr.class "btn" ]
-                    [ text "+ New Note" ]
-                ]
+            render
+                (
+                div [ Attr.class "header-row" ]
+                    [ h1 [] [ text "My Notes" ]
+                    , a [ Attr.href "/notes/new" , Attr.class "btn" ]
+                        [ text "+ New Note" ]
+                    ]
+                )
         content =
             if List.isEmpty notes then
                 headerRow ++

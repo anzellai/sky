@@ -514,7 +514,10 @@ globalStyles =
             , property "margin-left" "8px"
             ]
         , rule ".roadmap-subtitle"
-            [ fontSize (px 13) , color textMuted , property "margin-bottom" "16px" ]
+            [ fontSize (px 13)
+            , color textMuted
+            , property "margin-bottom" "16px"
+            ]
         , rule ".roadmap-empty"
             [ fontSize (px 13)
             , color borderMedium
@@ -558,10 +561,12 @@ globalStyles =
         , rule ".mb-16" [ property "margin-bottom" "16px" ]
         , rule ".mb-20" [ property "margin-bottom" "20px" ]
         , rule ".text-center" [ textAlign "center" ]
-        , rule ".text-muted-sm"
-            [ color textMuted , fontSize (px 14) ]
+        , rule ".text-muted-sm" [ color textMuted , fontSize (px 14) ]
         , rule ".text-secondary-sm"
-            [ color textSecondary , fontSize (px 14) , property "margin-bottom" "20px" ]
+            [ color textSecondary
+            , fontSize (px 14)
+            , property "margin-bottom" "20px"
+            ]
         , rule ".flex-row-gap-8"
             [ display "flex" , gap (px 8) , property "margin-bottom" "12px" ]
         , rule ".board-header"
@@ -574,10 +579,8 @@ globalStyles =
             ]
         , rule ".submit-container"
             [ maxWidth (px 640) , margin2 (px 32) "auto" ]
-        , rule ".auth-btn-full"
-            [ width (pct 100) , justifyContent "center" ]
-        , rule ".auth-prompt"
-            [ textAlign "center" , padding (px 20) ]
+        , rule ".auth-btn-full" [ width (pct 100) , justifyContent "center" ]
+        , rule ".auth-prompt" [ textAlign "center" , padding (px 20) ]
         , rule ".auth-nav"
             [ display "flex"
             , gap (px 8)

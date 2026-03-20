@@ -66,9 +66,7 @@ roadmapItem idea =
     in
         div [ class "roadmap-item" ]
             [ button
-                [ onClick ("ViewIdea " ++ ideaId)
-                , class "roadmap-item-title"
-                ]
+                [ onClick ("ViewIdea " ++ ideaId) , class "roadmap-item-title" ]
                 [ text (Db.getField "title" idea) ]
             , div [ class "roadmap-item-votes" ]
                 [ text (voteCount ++ " votes") ]

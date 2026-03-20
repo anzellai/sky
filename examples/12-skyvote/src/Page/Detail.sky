@@ -15,7 +15,7 @@ viewDetail model =
     case model.selectedIdea of
         Just idea ->
             Layout.page model (viewIdeaDetail model idea)
-
+        
         Nothing ->
             Layout.page model (viewNotFound model)
 
@@ -43,9 +43,7 @@ viewIdeaDetail model idea =
     in
         div [ class "mt-32" ]
             [ button
-                [ onClick "BackToBoard"
-                , class "btn btn-ghost btn-sm mb-16"
-                ]
+                [ onClick "BackToBoard" , class "btn btn-ghost btn-sm mb-16" ]
                 [ text "< Back to Board" ]
             , div [ class "card" ]
                 [ div [ class "detail-header" ]
@@ -122,7 +120,7 @@ viewCommentForm model =
     case model.currentUser of
         Just _ ->
             viewCommentFormAuth model
-
+        
         Nothing ->
             p [ class "text-secondary-sm" ]
                 [ text "Sign in to leave a comment." ]
