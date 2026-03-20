@@ -23,7 +23,15 @@ if (fs.existsSync(stdlibDir)) {
   });
 }
 
-// 1b. Collect Go runtime files for Sky.Live
+// 1b. Collect templates
+const templatesDir = "templates";
+if (fs.existsSync(templatesDir)) {
+  walkDir(templatesDir, (filePath) => {
+    stdlibFiles[filePath] = fs.readFileSync(filePath, "utf8");
+  });
+}
+
+// 1c. Collect Go runtime files for Sky.Live
 const runtimeDir = "src/runtime/go/skylive_rt";
 if (fs.existsSync(runtimeDir)) {
   walkDir(runtimeDir, (filePath) => {

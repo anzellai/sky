@@ -1,8 +1,9 @@
 import fs from "fs";
 import path from "path";
+import { fileURLToPath } from "url";
 import { writeManifest } from "../../pkg/manifest.js";
 
-export function initProject() {
+export async function initProject() {
   console.log("Initializing Sky project...");
 
   // Use current directory name as project name
@@ -45,9 +46,36 @@ dist/
 sky.lock
 go.mod
 go.sum
+
+# Databases
+*.db
+*.db-shm
+*.db-wal
+
+# Environment
+.env
 `;
     fs.writeFileSync(".gitignore", gitignore);
     console.log("Created .gitignore");
+  }
+
+  // Create CLAUDE.md for AI-assisted development
+  if (!fs.existsSync("CLAUDE.md")) {
+    const __dirname = path.dirname(fileURLToPath(import.meta.url));
+    const claudeMdPath = path.join(__dirname, "..", "..", "..", "templates", "CLAUDE.md");
+    if (fs.existsSync(claudeMdPath)) {
+      fs.copyFileSync(claudeMdPath, "CLAUDE.md");
+    } else {
+      // Fallback: try virtual assets
+      try {
+        const { VIRTUAL_ASSETS } = await import("../../utils/assets.js");
+        const content = VIRTUAL_ASSETS["templates/CLAUDE.md"];
+        if (content) fs.writeFileSync("CLAUDE.md", content);
+      } catch {}
+    }
+    if (fs.existsSync("CLAUDE.md")) {
+      console.log("Created CLAUDE.md");
+    }
   }
 
   console.log(`\nProject "${projectName}" initialized successfully.`);

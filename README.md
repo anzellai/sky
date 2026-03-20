@@ -93,9 +93,12 @@ This creates:
 ```
 my-app/
   sky.toml          -- project manifest
+  CLAUDE.md         -- AI-assisted development context (Claude Code)
   src/
     Main.sky        -- entry point
 ```
+
+The generated `CLAUDE.md` gives Claude Code full context about Sky syntax, stdlib, FFI, and Sky.Live — so it can write Sky code confidently from day one.
 
 ### Building a Self-Contained Binary
 
