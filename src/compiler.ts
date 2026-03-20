@@ -735,13 +735,40 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
         let lambdaBody = convertExpr(expr.body);
         for (let i = expr.parameters.length - 1; i >= 0; i--) {
           const param = expr.parameters[i];
-          const name = param.pattern.kind === "VariablePattern" ? param.pattern.name : "_";
-          lambdaBody = {
-            kind: "Lambda",
-            params: [name],
-            body: lambdaBody,
-            type: { kind: "TypeConstant", name: "Any" }
-          };
+          if (param.pattern.kind === "VariablePattern") {
+            lambdaBody = {
+              kind: "Lambda",
+              params: [param.pattern.name],
+              body: lambdaBody,
+              type: { kind: "TypeConstant", name: "Any" }
+            };
+          } else if (param.pattern.kind === "TuplePattern") {
+            // Desugar tuple destructuring: \(a, b) -> body  =>  \__tup -> case __tup of (a, b) -> body
+            const syntheticName = `__tup${i}`;
+            const pat: CoreIR.Pattern = {
+              kind: "ConstructorPattern",
+              name: "Tuple" + param.pattern.items.length,
+              args: param.pattern.items.map((p: AST.Pattern) => convertPattern(p))
+            };
+            lambdaBody = {
+              kind: "Lambda",
+              params: [syntheticName],
+              body: {
+                kind: "Match",
+                expr: { kind: "Variable", name: syntheticName, type: { kind: "TypeConstant", name: "Any" } },
+                cases: [{ pattern: pat, body: lambdaBody }],
+                type: { kind: "TypeConstant", name: "Any" }
+              },
+              type: { kind: "TypeConstant", name: "Any" }
+            };
+          } else {
+            lambdaBody = {
+              kind: "Lambda",
+              params: ["_"],
+              body: lambdaBody,
+              type: { kind: "TypeConstant", name: "Any" }
+            };
+          }
         }
         return lambdaBody;
       case "LetExpression": {
@@ -827,8 +854,16 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
       }
       case "BinaryExpression": {
         let retType: Type = { kind: "TypeConstant", name: "Any" };
-        if (expr.operator === "++") retType = { kind: "TypeConstant", name: "String" };
-        if (["+", "-", "*", "/"].includes(expr.operator)) retType = { kind: "TypeConstant", name: "Int" };
+        // Look up the inferred type from the type checker if available
+        const nodeKey = expr.span ? `${expr.span.start.line}:${expr.span.start.column}` : null;
+        const nodeType = nodeKey ? typeCheck.nodeTypes?.get(nodeKey) : undefined;
+        if (nodeType) {
+          retType = nodeType;
+        } else if (expr.operator === "++") {
+          retType = { kind: "TypeConstant", name: "String" };
+        } else if (["+", "-", "*", "/"].includes(expr.operator)) {
+          retType = { kind: "TypeConstant", name: "Int" };
+        }
         
         return {
           kind: "Application",
@@ -885,16 +920,43 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
       }
 
       let bodyExpr = convertExpr(decl.body);
-      
+
       for (let i = decl.parameters.length - 1; i >= 0; i--) {
         const paramPattern = decl.parameters[i].pattern;
-        const paramName = paramPattern.kind === "VariablePattern" ? paramPattern.name : "_";
-        bodyExpr = {
-          kind: "Lambda",
-          params: [paramName],
-          body: bodyExpr,
-          type: { kind: "TypeConstant", name: "Any" }
-        };
+        if (paramPattern.kind === "VariablePattern") {
+          bodyExpr = {
+            kind: "Lambda",
+            params: [paramPattern.name],
+            body: bodyExpr,
+            type: { kind: "TypeConstant", name: "Any" }
+          };
+        } else if (paramPattern.kind === "TuplePattern") {
+          // Desugar tuple destructuring: foo (a, b) = body  =>  foo __tup = case __tup of (a, b) -> body
+          const syntheticName = `__tup${i}`;
+          const pat: CoreIR.Pattern = {
+            kind: "ConstructorPattern",
+            name: "Tuple" + paramPattern.items.length,
+            args: paramPattern.items.map((p: AST.Pattern) => convertPattern(p))
+          };
+          bodyExpr = {
+            kind: "Lambda",
+            params: [syntheticName],
+            body: {
+              kind: "Match",
+              expr: { kind: "Variable", name: syntheticName, type: { kind: "TypeConstant", name: "Any" } },
+              cases: [{ pattern: pat, body: bodyExpr }],
+              type: { kind: "TypeConstant", name: "Any" }
+            },
+            type: { kind: "TypeConstant", name: "Any" }
+          };
+        } else {
+          bodyExpr = {
+            kind: "Lambda",
+            params: ["_"],
+            body: bodyExpr,
+            type: { kind: "TypeConstant", name: "Any" }
+          };
+        }
       }
 
       declarations.push({

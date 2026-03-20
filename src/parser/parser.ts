@@ -552,17 +552,26 @@ export class Parser {
 
     while (!this.match("Equals")) {
 
-      const id = this.consume("Identifier")
-
-      params.push({
-        kind: "Parameter",
-        pattern: {
-          kind: "VariablePattern",
-          name: id.lexeme,
+      if (this.match("LParen")) {
+        // Parse tuple/pattern parameter: (a, b)
+        const pat = this.parsePattern();
+        params.push({
+          kind: "Parameter",
+          pattern: pat,
+          span: pat.span
+        })
+      } else {
+        const id = this.consume("Identifier")
+        params.push({
+          kind: "Parameter",
+          pattern: {
+            kind: "VariablePattern",
+            name: id.lexeme,
+            span: id.span
+          },
           span: id.span
-        },
-        span: id.span
-      })
+        })
+      }
 
     }
 
@@ -956,8 +965,34 @@ private parsePrimary(): AST.Expression {
            pattern = this.parsePattern();
         }
 
+        // Support function definitions in let blocks: name param1 param2 = body
+        // Desugar to: name = \param1 -> \param2 -> ... -> body
+        let letParams: AST.Parameter[] = [];
+        if (pattern.kind === "VariablePattern" && !this.match("Equals")) {
+            while (this.peek().kind === "Identifier" && !this.match("Equals")) {
+                const paramToken = this.consume("Identifier");
+                letParams.push({
+                    kind: "Parameter",
+                    pattern: { kind: "VariablePattern", name: paramToken.lexeme, span: paramToken.span },
+                    span: paramToken.span,
+                } as AST.Parameter);
+            }
+        }
+
         this.consume("Equals");
-        const value = this.parseExpression(0, pattern.span.start.column);
+        let value = this.parseExpression(0, pattern.span.start.column);
+
+        // Wrap body in nested lambdas for let-function parameters
+        if (letParams.length > 0) {
+            for (let lp = letParams.length - 1; lp >= 0; lp--) {
+                value = {
+                    kind: "LambdaExpression",
+                    parameters: [letParams[lp]],
+                    body: value,
+                    span: { start: letParams[lp].span.start, end: value.span.end },
+                } as AST.LambdaExpression;
+            }
+        }
         bindings.push({
           kind: "LetBinding",
           pattern,

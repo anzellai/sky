@@ -53,8 +53,15 @@ function emitGoExprForLower(expr: any): string {
     }
 }
 
-function makeSafeGoPkgName(name: string): string {
+function makeSafeGoPkgName(name: string, fullModulePath?: string): string {
     if (name === "Main") return "main";
+    // Use full module path to avoid collisions (e.g., Std.Css vs SkyTailwind.Internal.Css)
+    if (fullModulePath) {
+        const parts = fullModulePath.split(".");
+        if (parts.length > 1) {
+            return "sky_" + parts.map(p => p.toLowerCase()).join("_");
+        }
+    }
     return "sky_" + name.toLowerCase();
 }
 
@@ -70,7 +77,7 @@ const stdlibPaths: Record<string, string> = {
 
 export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, Map<string, Scheme>>, foreignModules?: Set<string>, importedModules?: Set<string>): GoIR.GoPackage {
   const pkg: GoIR.GoPackage = {
-    name: makeSafeGoPkgName(module.name[module.name.length - 1]),
+    name: makeSafeGoPkgName(module.name[module.name.length - 1], module.name.join(".")),
     imports: [],
     declarations: []
   };
@@ -323,7 +330,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
       if (moduleExports) {
           for (const full of moduleExports.keys()) {
               const moduleParts = full.split(".");
-              const safeName = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
+              const safeName = makeSafeGoPkgName(moduleParts[moduleParts.length - 1], full);
               if (safeName === local) {
                   pkg.imports.push({ path: "sky-out/" + full.replace(/\./g, "/"), alias: local });
                   break;
@@ -365,7 +372,8 @@ function lowerType(t: Type): GoIR.GoType {
     
     if (t.name.includes(".")) {
         const parts = t.name.split(".");
-        const pkg = makeSafeGoPkgName(parts[parts.length - 2]);
+        const modulePath = parts.slice(0, -1).join(".");
+        const pkg = makeSafeGoPkgName(parts[parts.length - 2], modulePath);
         const name = parts[parts.length - 1];
         return { kind: "GoSelectorType", pkg, name };
     }
@@ -501,7 +509,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Cmd", "Log"]);
           if (moduleExports && moduleExports.has(pkgName) && !ffiWrappers.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
               // It's a non-foreign Sky module! Lower to direct Go package call.
-              const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1]);
+              const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1], pkgName);
               const selectorExpr: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
 
               // Auto-call zero-arg cross-module bindings (they compile to Go functions).
@@ -546,6 +554,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // Prelude: errorToString → sky_wrappers.Sky_errorToString
       if (expr.name === "errorToString" || expr.name === "Sky_errorToString") {
           return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "Sky_errorToString" };
+      }
+      // Prelude: not → inline Go negation function
+      if (expr.name === "not") {
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { if arg0.(bool) { return false }; return true }` } as any;
       }
       
       const goName = (expr.name[0] >= 'a' && expr.name[0] <= 'z') ? expr.name.charAt(0).toUpperCase() + expr.name.slice(1) : expr.name;
@@ -602,7 +614,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           if (candidates.length > 0) {
               const [modName, exports] = candidates[0];
               const modParts = modName.split(".");
-              const goPkg = makeSafeGoPkgName(modParts[modParts.length - 1]);
+              const goPkg = makeSafeGoPkgName(modParts[modParts.length - 1], modName);
               const selectorExpr2: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
               // Auto-call zero-arg cross-module bindings
               if (!_isCallTarget) {
@@ -724,7 +736,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                       const ffiWrapperModulesCheck = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
                       if (ffiWrapperModulesCheck.has(modName)) break; // Skip FFI wrapper modules
                       const parts = modName.split(".");
-                      const pkgName = makeSafeGoPkgName(parts[parts.length - 1]);
+                      const pkgName = makeSafeGoPkgName(parts[parts.length - 1], modName);
                       const goCtorName = flat.fn.name.charAt(0).toUpperCase() + flat.fn.name.slice(1);
                       const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
                       // Call the generated constructor function: pkg.CtorName(args...)
@@ -926,9 +938,22 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             args: args as GoIR.GoExpr[]
         } as any;
       } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
+          // Check if ++ is operating on lists (type is List/TypeApplication with List constructor)
+          if (fnExpr.name === "++" && expr.type && expr.type.kind === "TypeApplication" &&
+              expr.type.constructor.kind === "TypeConstant" && expr.type.constructor.name === "List") {
+              // List concatenation: append(left, right.([]any)...)
+              // Wrap in (any)(...) to handle both []any literals and any-typed variables
+              const l = emitGoExprForLower(args[0]);
+              const r = emitGoExprForLower(args[1]);
+              return {
+                  kind: "GoRawExpr",
+                  code: `append((any)(${l}).([]any), (any)(${r}).([]any)...)`
+              } as any;
+          }
+
           // Binary operator uncurried
           const op = fnExpr.name === "++" ? "+" : fnExpr.name;
-          
+
           // Add type assertions for binary operators on any-typed values
           const fnName0 = (fnExpr as any).name;
           const finalArgs = args.map((a, i) => {
@@ -941,7 +966,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
               // Determine the target assertion type from the operator
               let targetType: string | null = null;
-              if (fnName0 === "++" || fnName0 === "++") {
+              if (fnName0 === "++") {
                   targetType = "string";
               } else if (["+", "-", "*", "/", "%"].includes(fnName0)) {
                   targetType = "int";
@@ -977,14 +1002,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       
       // If calling a local variable (not a known Go function), add type assertion
       // so Go knows it's callable: fn.(func(any) any)(args...)
+      // Wrap in (any)(...) first to handle both any-typed and concrete-typed variables
       let callFn = fnExpr;
       if (fnExpr.kind === "GoIdent" && !["fmt", "len", "panic", "append", "make", "[]byte"].includes(fnExpr.name) && !fnExpr.name.startsWith(".")) {
           // Check if it's a local variable (lambda parameter or let binding) — needs type assertion
           if (localEnv && localEnv.has(fnExpr.name)) {
               callFn = {
-                  kind: "GoTypeAssertExpr",
-                  expr: fnExpr,
-                  type: { kind: "GoFuncType", params: [{ kind: "GoIdentType", name: "any" }], results: [{ kind: "GoIdentType", name: "any" }] }
+                  kind: "GoRawExpr",
+                  code: `(any)(${fnExpr.name}).(func(any) any)`
               } as any;
           }
       }
@@ -1499,7 +1524,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             for (const [modName, exports] of moduleExports) {
                 if (exports.has(expr.name)) {
                     const parts = modName.split(".");
-                    const pkgName = makeSafeGoPkgName(parts[parts.length - 1]);
+                    const pkgName = makeSafeGoPkgName(parts[parts.length - 1], modName);
                     qualifiedGoName = `${pkgName}.${goName}`;
                     break;
                 }

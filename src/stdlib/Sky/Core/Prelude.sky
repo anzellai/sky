@@ -6,6 +6,13 @@ type Result err ok
 
 identity x = x
 
+not : Bool -> Bool
+not b =
+    if b then
+        False
+    else
+        True
+
 foreign import "sky_wrappers" exposing (Sky_errorToString)
 
 errorToString : a -> String

@@ -550,19 +550,41 @@ export function inferExpression(
         }
 
         case "++": {
-          const s1 = unify(leftType, { kind: "TypeConstant", name: "String" });
-          const s2 = unify(
-            applySubstitution(rightType, s1),
-            { kind: "TypeConstant", name: "String" },
-          );
+          // ++ works on both String and List a
+          // First try String, then List a
+          try {
+            const s1 = unify(leftType, { kind: "TypeConstant", name: "String" });
+            const s2 = unify(
+              applySubstitution(rightType, s1),
+              { kind: "TypeConstant", name: "String" },
+            );
 
-          return {
-            substitution: composeSubstitutions(
-              s2,
-              composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
-            ),
-            type: { kind: "TypeConstant", name: "String" },
-          };
+            return {
+              substitution: composeSubstitutions(
+                s2,
+                composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+              ),
+              type: { kind: "TypeConstant", name: "String" },
+            };
+          } catch {
+            // Not String — try List a
+            const elemVar = freshTypeVariable();
+            const listType: Type = { kind: "TypeApplication", constructor: { kind: "TypeConstant", name: "List" }, arguments: [elemVar] };
+            const s1 = unify(leftType, listType);
+            const s2 = unify(
+              applySubstitution(rightType, s1),
+              applySubstitution(listType, s1),
+            );
+
+            const resultType = applySubstitution(listType, composeSubstitutions(s2, s1));
+            return {
+              substitution: composeSubstitutions(
+                s2,
+                composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+              ),
+              type: resultType,
+            };
+          }
         }
 
         case "==":
