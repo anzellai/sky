@@ -483,6 +483,48 @@ import Drivers.Sqlite as _ exposing (..)
 
 The `as _` syntax generates a Go blank import (`import _ "package"`).
 
+#### Auto-Generated Bindings
+
+When you `import` a Go package, Sky **introspects it at build time** using Go's type system and automatically generates type-safe wrapper functions. You never write binding code manually.
+
+**Naming convention**: Go's `Package.Method` becomes `packageMethod` in Sky (lowerCamelCase). Struct methods are prefixed with the type name:
+
+| Go                              | Sky                           | Notes                                   |
+| ------------------------------- | ----------------------------- | --------------------------------------- |
+| `uuid.NewString()`             | `Uuid.newString ()`           | Package function                        |
+| `mux.NewRouter()`              | `Mux.newRouter ()`            | Package function                        |
+| `router.HandleFunc(p, h)`      | `Mux.routerHandleFunc r p h`  | Method: `{Type}{Method}`                |
+| `db.Query(q, args...)`         | `Sql.dbQuery db q args`       | Method on `*sql.DB`                     |
+| `rows.Close()`                 | `Sql.rowsClose rows`          | Method on `*sql.Rows`                   |
+| `req.URL`                      | `Http.requestUrl req`         | Field accessor: `{Type}{Field}`         |
+| `http.StatusOK` (const)        | `Http.statusOK ()`            | Constants become zero-arg functions     |
+| `os.Stdin` (var)               | `Os.stdin ()`                 | Variables become zero-arg functions      |
+
+**Return type mapping**:
+
+| Go Return                       | Sky Return                    |
+| -------------------------------- | ----------------------------- |
+| `(T, error)`                    | `Result Error T`              |
+| `error`                         | `Result Error Unit`           |
+| `*string`, `*int`              | `Maybe String`, `Maybe Int`   |
+| `*sql.DB`                       | `Db` (opaque handle)          |
+| `[]string`                      | `List String`                 |
+| `map[string]int`                | `Map String Int`              |
+
+**Convenience wrappers** are auto-generated for common patterns:
+
+- Types with `Next()`, `Scan()`, `Columns()`, `Close()` methods (like `sql.Rows`) get a `rowsToMaps` helper that returns `Result Error (List (Dict String String))`
+- Types with `Exec()` and `Query()` methods (like `sql.DB`, `sql.Tx`) get `dbExecResult` and `dbQueryToMaps` helpers
+
+**Callback bridging**: Go functions that accept callbacks (e.g., `http.HandleFunc`) are automatically bridged. Sky's curried functions (`func(any) any`) are wrapped into the concrete Go signature:
+
+```elm
+-- Sky: pass a curried function
+Mux.routerHandleFunc router "/api" myHandler
+
+-- Generated Go: bridges func(any) any → func(http.ResponseWriter, *http.Request)
+```
+
 ### TEA Architecture
 
 Sky supports The Elm Architecture for stateful applications:
@@ -724,10 +766,12 @@ See [docs/design/sky-live-components.md](docs/design/sky-live-components.md) for
 ```toml
 [live]
 port = 4000
-ttl = "30m"
+input = "blur"            # "debounce" | "blur"
+poll_interval = 5000      # ms (0 = SSE only; >0 enables polling fallback for serverless)
 
 [live.session]
-store = "memory"
+store = "redis"           # memory | sqlite | redis | postgresql
+url = "redis://localhost:6379"
 
 [live.static]
 dir = "static"
@@ -1063,6 +1107,19 @@ src/
 
 ---
 
+## Contributing
+
+Sky is experimental and under active development. Contributions are welcome! Here's how you can help:
+
+- **Try building something** -- the best feedback comes from real usage. Build a small app, hit the rough edges, and report what you find
+- **Create examples** -- real-world examples (CRUD apps, API integrations, dashboards) help validate the language and show others what's possible
+- **Report issues** -- compiler bugs, type checker edge cases, FFI gaps, or confusing error messages
+- **Improve the stdlib** -- add missing functions to List, String, Dict, or propose new modules
+- **Test Sky.Live** -- try the server-driven UI on different browsers, test SSE subscriptions, stress-test session management
+- **Editor support** -- improve the LSP, add integrations for VS Code, Neovim, Zed
+
+If you're interested, open an issue or start a discussion. PRs are welcome for bug fixes, examples, and stdlib additions.
+
 ## License
 
-This project is experimental and under active development.
+MIT License. See [LICENSE](LICENSE) for details.
