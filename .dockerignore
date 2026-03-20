@@ -1,0 +1,14 @@
+.DS_Store
+.git
+.github
+.claude
+.env
+bin/
+dist/
+node_modules/
+.skycache/
+.skydeps/
+*.db
+*.db-shm
+*.db-wal
+examples/*/dist/

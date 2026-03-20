@@ -117,6 +117,31 @@ cp bin/sky /usr/local/bin/sky
 cp bin/sky-lsp /usr/local/bin/sky-lsp
 ```
 
+### Docker
+
+Build the Docker image with `sky` and `sky-lsp` pre-installed alongside Node.js and Go:
+
+```bash
+docker build -t sky .
+```
+
+Run Sky commands against a local project:
+
+```bash
+docker run --rm -v $(pwd)/my-app:/app -w /app sky sky build src/Main.sky
+docker run --rm -v $(pwd)/my-app:/app -w /app sky sky run src/Main.sky
+```
+
+Use as a CI/CD base image:
+
+```dockerfile
+FROM sky:latest
+COPY . /app
+WORKDIR /app
+RUN sky build src/Main.sky
+CMD ["./dist/app"]
+```
+
 ---
 
 ## Language Features
