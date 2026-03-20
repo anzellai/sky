@@ -84,6 +84,10 @@ export function unify(a: Type, b: Type): Substitution {
       if ((a.name === "Int" && b.name === "Float") || (a.name === "Float" && b.name === "Int")) {
         return emptySubstitution();
       }
+      // Allow Char and String to unify (Char is a single-character String in Sky/Go)
+      if ((a.name === "Char" && b.name === "String") || (a.name === "String" && b.name === "Char")) {
+        return emptySubstitution();
+      }
       // Allow Go FFI types to unify with each other (Go interface satisfaction).
       // E.g., ResponseWriter unifies with Writer, Router with Handler.
       if (isForeignGoType(a) && isForeignGoType(b)) {

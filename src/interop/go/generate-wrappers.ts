@@ -265,6 +265,96 @@ func Sky_list_IndexedMap(fn any, list any) any {
 	return result
 }
 
+func Sky_list_Zip(listA any, listB any) any {
+	a, ok1 := listA.([]any)
+	b, ok2 := listB.([]any)
+	if !ok1 || !ok2 { return []any{} }
+	n := len(a); if len(b) < n { n = len(b) }
+	result := make([]any, n)
+	for i := 0; i < n; i++ { result[i] = Tuple2{a[i], b[i]} }
+	return result
+}
+
+func Sky_list_Unzip(list any) any {
+	lst, ok := list.([]any)
+	if !ok { return Tuple2{[]any{}, []any{}} }
+	as := make([]any, len(lst))
+	bs := make([]any, len(lst))
+	for i, item := range lst {
+		t := item.(Tuple2)
+		as[i] = t.V0
+		bs[i] = t.V1
+	}
+	return Tuple2{as, bs}
+}
+
+func Sky_list_Map2(fn any, listA any, listB any) any {
+	a, ok1 := listA.([]any)
+	b, ok2 := listB.([]any)
+	if !ok1 || !ok2 { return []any{} }
+	f := fn.(func(any) any)
+	n := len(a); if len(b) < n { n = len(b) }
+	result := make([]any, n)
+	for i := 0; i < n; i++ { result[i] = f(a[i]).(func(any) any)(b[i]) }
+	return result
+}
+
+func Sky_list_Maximum(list any) any {
+	lst, ok := list.([]any)
+	if !ok || len(lst) == 0 { return struct{ Tag int; JustValue any }{Tag: 1} }
+	best := lst[0]
+	for _, item := range lst[1:] {
+		if fmt.Sprintf("%v", item) > fmt.Sprintf("%v", best) { best = item }
+	}
+	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: best}
+}
+
+func Sky_list_Minimum(list any) any {
+	lst, ok := list.([]any)
+	if !ok || len(lst) == 0 { return struct{ Tag int; JustValue any }{Tag: 1} }
+	best := lst[0]
+	for _, item := range lst[1:] {
+		if fmt.Sprintf("%v", item) < fmt.Sprintf("%v", best) { best = item }
+	}
+	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: best}
+}
+
+func Sky_list_Find(pred any, list any) any {
+	lst, ok := list.([]any)
+	if !ok { return struct{ Tag int; JustValue any }{Tag: 1} }
+	fn := pred.(func(any) any)
+	for _, item := range lst {
+		if fn(item).(bool) { return struct{ Tag int; JustValue any }{Tag: 0, JustValue: item} }
+	}
+	return struct{ Tag int; JustValue any }{Tag: 1}
+}
+
+func Sky_list_FilterMap(fn any, list any) any {
+	lst, ok := list.([]any)
+	if !ok { return []any{} }
+	f := fn.(func(any) any)
+	result := []any{}
+	for _, item := range lst {
+		maybe := f(item)
+		// Check if it's Just (Tag 0) or Nothing (Tag 1)
+		type MaybeResult struct { Tag int; JustValue any }
+		if m, ok := maybe.(MaybeResult); ok && m.Tag == 0 {
+			result = append(result, m.JustValue)
+		} else {
+			// Try struct literal form
+			v := reflect.ValueOf(maybe)
+			if v.Kind() == reflect.Struct {
+				tagField := v.FieldByName("Tag")
+				if tagField.IsValid() && tagField.Int() == 0 {
+					valField := v.FieldByName("JustValue")
+					if valField.IsValid() { result = append(result, valField.Interface()) }
+				}
+			}
+		}
+	}
+	return result
+}
+
 // ============= String Operations =============
 
 func Sky_string_Split(sep any, s any) any {

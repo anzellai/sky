@@ -1,6 +1,6 @@
 module Sky.Core.List exposing (..)
 
-foreign import "sky_wrappers" exposing (Sky_list_Map, Sky_list_Filter, Sky_list_Foldl, Sky_list_Foldr, Sky_list_Head, Sky_list_Tail, Sky_list_Length, Sky_list_Append, Sky_list_Reverse, Sky_list_Member, Sky_list_Range, Sky_list_IsEmpty, Sky_list_Take, Sky_list_Drop, Sky_list_Sort, Sky_list_Intersperse, Sky_list_Concat, Sky_list_ConcatMap, Sky_list_IndexedMap)
+foreign import "sky_wrappers" exposing (Sky_list_Map, Sky_list_Filter, Sky_list_Foldl, Sky_list_Foldr, Sky_list_Head, Sky_list_Tail, Sky_list_Length, Sky_list_Append, Sky_list_Reverse, Sky_list_Member, Sky_list_Range, Sky_list_IsEmpty, Sky_list_Take, Sky_list_Drop, Sky_list_Sort, Sky_list_Intersperse, Sky_list_Concat, Sky_list_ConcatMap, Sky_list_IndexedMap, Sky_list_Maximum, Sky_list_Minimum, Sky_list_Find, Sky_list_FilterMap, Sky_list_Zip, Sky_list_Unzip, Sky_list_Map2)
 
 map : (a -> b) -> List a -> List b
 map fn list =
@@ -112,23 +112,11 @@ product list =
 
 maximum : List comparable -> Maybe comparable
 maximum list =
-    case list of
-        [] -> Nothing
-        x :: xs ->
-            case maximum xs of
-                Nothing -> Just x
-                Just y ->
-                    if x > y then Just x else Just y
+    Sky_list_Maximum list
 
 minimum : List comparable -> Maybe comparable
 minimum list =
-    case list of
-        [] -> Nothing
-        x :: xs ->
-            case minimum xs of
-                Nothing -> Just x
-                Just y ->
-                    if x < y then Just x else Just y
+    Sky_list_Minimum list
 
 partition : (a -> Bool) -> List a -> (List a, List a)
 partition pred list =
@@ -136,22 +124,11 @@ partition pred list =
 
 find : (a -> Bool) -> List a -> Maybe a
 find pred list =
-    case list of
-        [] -> Nothing
-        x :: xs ->
-            if pred x then
-                Just x
-            else
-                find pred xs
+    Sky_list_Find pred list
 
 filterMap : (a -> Maybe b) -> List a -> List b
 filterMap f list =
-    case list of
-        [] -> []
-        x :: xs ->
-            case f x of
-                Just y -> append [y] (filterMap f xs)
-                Nothing -> filterMap f xs
+    Sky_list_FilterMap f list
 
 sortBy : (a -> comparable) -> List a -> List a
 sortBy toKey list =
@@ -167,45 +144,12 @@ sortBy toKey list =
 
 zip : List a -> List b -> List (a, b)
 zip listA listB =
-    case head listA of
-        Nothing -> []
-        Just a ->
-            case head listB of
-                Nothing -> []
-                Just b ->
-                    case tail listA of
-                        Nothing -> [(a, b)]
-                        Just restA ->
-                            case tail listB of
-                                Nothing -> [(a, b)]
-                                Just restB -> append [(a, b)] (zip restA restB)
+    Sky_list_Zip listA listB
 
 unzip : List (a, b) -> (List a, List b)
 unzip list =
-    let
-        getA pair =
-            case pair of
-                (a, _) -> a
-        getB pair =
-            case pair of
-                (_, b) -> b
-    in
-    ( map getA list, map getB list )
+    Sky_list_Unzip list
 
 map2 : (a -> b -> c) -> List a -> List b -> List c
 map2 f listA listB =
-    let
-        applyF a b = f a b
-    in
-    case head listA of
-        Nothing -> []
-        Just a ->
-            case head listB of
-                Nothing -> []
-                Just b ->
-                    case tail listA of
-                        Nothing -> [applyF a b]
-                        Just restA ->
-                            case tail listB of
-                                Nothing -> [applyF a b]
-                                Just restB -> append [applyF a b] (map2 f restA restB)
+    Sky_list_Map2 f listA listB

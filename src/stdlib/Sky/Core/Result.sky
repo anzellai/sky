@@ -1,5 +1,7 @@
 module Sky.Core.Result exposing (..)
 
+import Sky.Core.Maybe exposing (..)
+
 foreign import "sky_wrappers" exposing (Sky_result_WithDefault, Sky_result_Map, Sky_result_AndThen, Sky_result_MapError, Sky_result_ToMaybe)
 
 withDefault : a -> Result err a -> a

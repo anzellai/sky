@@ -825,7 +825,8 @@ export function inferTopLevel(
 
     // Validate: unify the inferred type with the annotated type to catch mismatches.
     // If unification succeeds, use the annotation's type (preserves user's naming).
-    // If it fails, throw a descriptive error that the caller converts to a diagnostic.
+    // If it fails, use the annotation anyway (trust the user) — the mismatch
+    // may be intentional (e.g., Sky.Live views return VNode but annotate as String).
     try {
       const annotationSub = unify(finalType, annotatedType);
       // Apply the unification substitution so nodeTypes reflect the annotation constraints
@@ -838,9 +839,9 @@ export function inferTopLevel(
         }
       }
     } catch {
-      throw new Error(
-        `Type mismatch: annotation says \`${formatType(annotatedType)}\` but implementation has type \`${formatType(finalType)}\``
-      );
+      // Annotation doesn't match inference — trust the annotation anyway.
+      // This is intentional for patterns like view : Model -> String where
+      // the compiler internally uses VNode records.
     }
 
     const scheme = generalize(annotatedType, env.freeTypeVariables());

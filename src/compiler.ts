@@ -115,6 +115,17 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
       }
     }
 
+    // Make Maybe constructors (Just, Nothing) available unqualified everywhere,
+    // matching Elm where Maybe is part of the implicit prelude
+    const maybeExports = moduleExports.get("Sky.Core.Maybe");
+    if (maybeExports) {
+      for (const [name, scheme] of maybeExports) {
+        if ((name === "Just" || name === "Nothing") && !importsMap.has(name)) {
+          importsMap.set(name, scheme);
+        }
+      }
+    }
+
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
     const typeCheck = checkModule(loaded.moduleAst, {
         imports: importsMap,
