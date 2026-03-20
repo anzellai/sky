@@ -204,15 +204,25 @@ func main() {
 					decl.Kind = "other"
 				}
 
-				for i := 0; i < named.NumMethods(); i++ {
-					m := named.Method(i)
-					if m.Exported() {
-						sig := m.Type().(*types.Signature)
-						meth := MethodDecl{Name: m.Name(), Variadic: sig.Variadic()}
-						meth.Params = extractParams(sig.Params(), sig.Variadic())
-						meth.Results = extractParams(sig.Results(), false)
-						decl.Methods = append(decl.Methods, meth)
+				// Use NewMethodSet on pointer-to-type to get all methods,
+				// including promoted methods from embedded structs.
+				mset := types.NewMethodSet(types.NewPointer(named))
+				seen := map[string]bool{}
+				for i := 0; i < mset.Len(); i++ {
+					sel := mset.At(i)
+					fn, ok := sel.Obj().(*types.Func)
+					if !ok || !fn.Exported() {
+						continue
 					}
+					if seen[fn.Name()] {
+						continue
+					}
+					seen[fn.Name()] = true
+					sig := fn.Type().(*types.Signature)
+					meth := MethodDecl{Name: fn.Name(), Variadic: sig.Variadic()}
+					meth.Params = extractParams(sig.Params(), sig.Variadic())
+					meth.Results = extractParams(sig.Results(), false)
+					decl.Methods = append(decl.Methods, meth)
 				}
 			}
 			out.Types = append(out.Types, decl)

@@ -1,0 +1,42 @@
+module Sky.Core.Array exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_array_Empty, Sky_array_FromList, Sky_array_ToList, Sky_array_Get, Sky_array_Set, Sky_array_Push, Sky_array_Length, Sky_array_Slice, Sky_array_Map, Sky_array_Foldl, Sky_array_Foldr, Sky_array_Append, Sky_array_IndexedMap)
+
+empty =
+    Sky_array_Empty ()
+
+fromList list =
+    Sky_array_FromList list
+
+toList arr =
+    Sky_array_ToList arr
+
+get index arr =
+    Sky_array_Get index arr
+
+set index val arr =
+    Sky_array_Set index val arr
+
+push val arr =
+    Sky_array_Push val arr
+
+length arr =
+    Sky_array_Length arr
+
+slice start end arr =
+    Sky_array_Slice start end arr
+
+map f arr =
+    Sky_array_Map f arr
+
+foldl f acc arr =
+    Sky_array_Foldl f acc arr
+
+foldr f acc arr =
+    Sky_array_Foldr f acc arr
+
+append a b =
+    Sky_array_Append a b
+
+indexedMap f arr =
+    Sky_array_IndexedMap f arr

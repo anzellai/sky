@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: node18-linux-x64
+            artifact: sky-linux-x64
+            lsp_artifact: sky-lsp-linux-x64
+          - os: ubuntu-24.04-arm
+            target: node18-linux-arm64
+            artifact: sky-linux-arm64
+            lsp_artifact: sky-lsp-linux-arm64
+          - os: macos-13
+            target: node18-macos-x64
+            artifact: sky-darwin-x64
+            lsp_artifact: sky-lsp-darwin-x64
+          - os: macos-latest
+            target: node18-macos-arm64
+            artifact: sky-darwin-arm64
+            lsp_artifact: sky-lsp-darwin-arm64
+          - os: windows-latest
+            target: node18-win-x64
+            artifact: sky-windows-x64.exe
+            lsp_artifact: sky-lsp-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build bundles
+        run: |
+          node -e "
+          const esbuild = require('esbuild');
+          const fs = require('fs');
+          const path = require('path');
+
+          function walkDir(dir, cb) {
+            fs.readdirSync(dir).forEach(f => {
+              const p = path.join(dir, f);
+              fs.statSync(p).isDirectory() ? walkDir(p, cb) : cb(p);
+            });
+          }
+
+          const assets = {};
+          if (fs.existsSync('src/stdlib')) walkDir('src/stdlib', p => { if (p.endsWith('.sky')) assets[path.relative('src', p)] = fs.readFileSync(p, 'utf8'); });
+          if (fs.existsSync('templates')) walkDir('templates', p => { assets[p] = fs.readFileSync(p, 'utf8'); });
+          if (fs.existsSync('src/runtime/go/skylive_rt')) walkDir('src/runtime/go/skylive_rt', p => { if (p.endsWith('.go')) assets[path.relative('src', p)] = fs.readFileSync(p, 'utf8'); });
+
+          fs.writeFileSync('src/utils/assets.ts', [
+            '// AUTO-GENERATED',
+            'export const VIRTUAL_ASSETS: Record<string, string> = ' + JSON.stringify(assets, null, 2) + ';',
+            'export function readVirtualAsset(path: string): string | undefined { return VIRTUAL_ASSETS[path]; }',
+            'export function isVirtualAsset(path: string): boolean { return path in VIRTUAL_ASSETS; }',
+          ].join('\n'));
+
+          const opts = { bundle: true, platform: 'node', format: 'cjs', external: ['fsevents'],
+            banner: { js: 'const import_meta_url = typeof document === \"undefined\" ? require(\"url\").pathToFileURL(__filename).href : undefined;' },
+            define: { 'import.meta.url': 'import_meta_url' } };
+          esbuild.buildSync({ ...opts, entryPoints: ['src/bin/sky.ts'], outfile: 'dist/sky.cjs' });
+          esbuild.buildSync({ ...opts, entryPoints: ['src/bin/sky-lsp.ts'], outfile: 'dist/sky-lsp.cjs' });
+          "
+
+      - name: Build native binaries
+        run: |
+          npx pkg dist/sky.cjs --target ${{ matrix.target }} --output dist/${{ matrix.artifact }}
+          npx pkg dist/sky-lsp.cjs --target ${{ matrix.target }} --output dist/${{ matrix.lsp_artifact }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            dist/${{ matrix.artifact }}
+            dist/${{ matrix.lsp_artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            for file in "$dir"dist/*; do
+              cp "$file" release/
+            done
+          done
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/*
+
+  docker:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            anzel/sky:latest
+            anzel/sky:${{ steps.version.outputs.VERSION }}
+          platforms: linux/amd64,linux/arm64

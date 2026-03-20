@@ -1,0 +1,30 @@
+module Sky.Core.Tuple exposing (..)
+
+first : (a, b) -> a
+first pair =
+    case pair of
+        (a, _) -> a
+
+second : (a, b) -> b
+second pair =
+    case pair of
+        (_, b) -> b
+
+mapFirst : (a -> c) -> (a, b) -> (c, b)
+mapFirst f pair =
+    case pair of
+        (a, b) -> (f a, b)
+
+mapSecond : (b -> c) -> (a, b) -> (a, c)
+mapSecond f pair =
+    case pair of
+        (a, b) -> (a, f b)
+
+mapBoth : (a -> c) -> (b -> d) -> (a, b) -> (c, d)
+mapBoth f g pair =
+    case pair of
+        (a, b) -> (f a, g b)
+
+pair : a -> b -> (a, b)
+pair a b =
+    (a, b)

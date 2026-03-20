@@ -629,7 +629,7 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
         return {
           kind: "ConstructorPattern",
           name: pattern.constructorName.parts.join("."),
-          args: pattern.arguments.map(a => convertPattern(a)),
+          args: pattern.arguments.map((a: AST.Pattern) => convertPattern(a)),
         };
       case "LiteralPattern":
         return { kind: "LiteralPattern", value: pattern.value };
@@ -649,13 +649,17 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
         return {
           kind: "ConstructorPattern",
           name: "Tuple" + pattern.items.length,
-          args: pattern.items.map(p => convertPattern(p)),
+          args: pattern.items.map((p: AST.Pattern) => convertPattern(p)),
         };
       case "ListPattern":
         if (pattern.items.length === 0) {
           // Empty list pattern: match when list is empty
           return { kind: "LiteralPattern", value: "__empty_list__" };
         }
+        return { kind: "WildcardPattern" };
+      case "RecordPattern":
+        // Record patterns are catch-all (always match); field extraction
+        // is handled by desugaring into let bindings at the use site.
         return { kind: "WildcardPattern" };
       default:
         return { kind: "WildcardPattern" };
@@ -761,6 +765,32 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
               },
               type: { kind: "TypeConstant", name: "Any" }
             };
+          } else if (param.pattern.kind === "RecordPattern") {
+            // Desugar record destructuring: \{ name, age } -> body
+            // =>  \__rec -> let name = __rec.name in let age = __rec.age in body
+            const syntheticName = `__rec${i}`;
+            let desugaredBody = lambdaBody;
+            for (let fi = param.pattern.fields.length - 1; fi >= 0; fi--) {
+              const fieldName = param.pattern.fields[fi];
+              desugaredBody = {
+                kind: "LetBinding",
+                name: fieldName,
+                value: {
+                  kind: "Application",
+                  fn: { kind: "Variable", name: "." + fieldName, type: { kind: "TypeConstant", name: "Any" } },
+                  args: [{ kind: "Variable", name: syntheticName, type: { kind: "TypeConstant", name: "Any" } }],
+                  type: { kind: "TypeConstant", name: "Any" }
+                },
+                body: desugaredBody,
+                type: { kind: "TypeConstant", name: "Any" }
+              };
+            }
+            lambdaBody = {
+              kind: "Lambda",
+              params: [syntheticName],
+              body: desugaredBody,
+              type: { kind: "TypeConstant", name: "Any" }
+            };
           } else {
             lambdaBody = {
               kind: "Lambda",
@@ -791,6 +821,34 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
               body: letBody,
               type: { kind: "TypeConstant", name: "Any" }
             };
+          } else if (binding.pattern.kind === "RecordPattern") {
+              // Desugar record destructuring in let:
+              // let { name, age } = expr in body
+              // =>  let __rec = expr in let name = __rec.name in let age = __rec.age in body
+              const syntheticName = `__rec_let${i}`;
+              let desugaredBody = letBody;
+              for (let fi = binding.pattern.fields.length - 1; fi >= 0; fi--) {
+                  const fieldName = binding.pattern.fields[fi];
+                  desugaredBody = {
+                      kind: "LetBinding",
+                      name: fieldName,
+                      value: {
+                          kind: "Application",
+                          fn: { kind: "Variable", name: "." + fieldName, type: { kind: "TypeConstant", name: "Any" } },
+                          args: [{ kind: "Variable", name: syntheticName, type: { kind: "TypeConstant", name: "Any" } }],
+                          type: { kind: "TypeConstant", name: "Any" }
+                      },
+                      body: desugaredBody,
+                      type: { kind: "TypeConstant", name: "Any" }
+                  };
+              }
+              letBody = {
+                  kind: "LetBinding",
+                  name: syntheticName,
+                  value: convertExpr(binding.value),
+                  body: desugaredBody,
+                  type: { kind: "TypeConstant", name: "Any" }
+              };
           } else {
               let pat: CoreIR.Pattern = { kind: "WildcardPattern" };
               if (binding.pattern.kind === "TuplePattern") {
@@ -915,13 +973,35 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
         };
       }
       case "CaseExpression": {
+        // For record patterns in case branches, we need to desugar field extraction
+        // into the branch body since CoreIR doesn't have native record patterns.
+        const subjectExpr = convertExpr(expr.subject);
         return {
           kind: "Match",
-          expr: convertExpr(expr.subject),
+          expr: subjectExpr,
           cases: expr.branches.map(b => {
+            let body = convertExpr(b.body);
+            if (b.pattern.kind === "RecordPattern") {
+              // Wrap body with let bindings that extract each field from the match subject
+              for (let fi = b.pattern.fields.length - 1; fi >= 0; fi--) {
+                const fieldName = b.pattern.fields[fi];
+                body = {
+                  kind: "LetBinding",
+                  name: fieldName,
+                  value: {
+                    kind: "Application",
+                    fn: { kind: "Variable", name: "." + fieldName, type: { kind: "TypeConstant", name: "Any" } },
+                    args: [subjectExpr],
+                    type: { kind: "TypeConstant", name: "Any" }
+                  },
+                  body,
+                  type: { kind: "TypeConstant", name: "Any" }
+                };
+              }
+            }
             return {
               pattern: convertPattern(b.pattern),
-              body: convertExpr(b.body)
+              body
             };
           }),
           type: { kind: "TypeConstant", name: "Any" }
@@ -974,6 +1054,32 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
               cases: [{ pattern: pat, body: bodyExpr }],
               type: { kind: "TypeConstant", name: "Any" }
             },
+            type: { kind: "TypeConstant", name: "Any" }
+          };
+        } else if (paramPattern.kind === "RecordPattern") {
+          // Desugar record destructuring: foo { name, age } = body
+          // =>  foo __rec = let name = __rec.name in let age = __rec.age in body
+          const syntheticName = `__rec${i}`;
+          let desugaredBody = bodyExpr;
+          for (let fi = paramPattern.fields.length - 1; fi >= 0; fi--) {
+            const fieldName = paramPattern.fields[fi];
+            desugaredBody = {
+              kind: "LetBinding",
+              name: fieldName,
+              value: {
+                kind: "Application",
+                fn: { kind: "Variable", name: "." + fieldName, type: { kind: "TypeConstant", name: "Any" } },
+                args: [{ kind: "Variable", name: syntheticName, type: { kind: "TypeConstant", name: "Any" } }],
+                type: { kind: "TypeConstant", name: "Any" }
+              },
+              body: desugaredBody,
+              type: { kind: "TypeConstant", name: "Any" }
+            };
+          }
+          bodyExpr = {
+            kind: "Lambda",
+            params: [syntheticName],
+            body: desugaredBody,
             type: { kind: "TypeConstant", name: "Any" }
           };
         } else {

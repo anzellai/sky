@@ -1,0 +1,31 @@
+module Sky.Core.Bitwise exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_bitwise_And, Sky_bitwise_Or, Sky_bitwise_Xor, Sky_bitwise_ShiftLeftBy, Sky_bitwise_ShiftRightBy, Sky_bitwise_ShiftRightZfBy, Sky_bitwise_Complement)
+
+and : Int -> Int -> Int
+and a b =
+    Sky_bitwise_And a b
+
+or : Int -> Int -> Int
+or a b =
+    Sky_bitwise_Or a b
+
+xor : Int -> Int -> Int
+xor a b =
+    Sky_bitwise_Xor a b
+
+complement : Int -> Int
+complement a =
+    Sky_bitwise_Complement a
+
+shiftLeftBy : Int -> Int -> Int
+shiftLeftBy amount val =
+    Sky_bitwise_ShiftLeftBy amount val
+
+shiftRightBy : Int -> Int -> Int
+shiftRightBy amount val =
+    Sky_bitwise_ShiftRightBy amount val
+
+shiftRightZfBy : Int -> Int -> Int
+shiftRightZfBy amount val =
+    Sky_bitwise_ShiftRightZfBy amount val

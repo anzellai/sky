@@ -189,6 +189,8 @@ export class Lexer {
       if (ch === "-") {
         if (this.peek(1) === ">") {
           this.pushSimple("Arrow", 2);
+        } else if (isDigit(this.peek(1)) && this.isNegativeLiteralContext()) {
+          this.lexNegativeNumber();
         } else {
           this.lexOperator();
         }
@@ -399,6 +401,45 @@ export class Lexer {
     this.tokens.push(this.makeToken(kind, lexeme, start, this.currentPosition()));
   }
 
+  private lexNegativeNumber(): void {
+    const start = this.currentPosition();
+    let lexeme = this.advance(); // consume '-'
+
+    while (!this.isEOF() && isDigit(this.peek())) {
+      lexeme += this.advance();
+    }
+
+    let kind: TokenKind = "Integer";
+    if (this.peek() === "." && isDigit(this.peek(1))) {
+      kind = "Float";
+      lexeme += this.advance();
+      while (!this.isEOF() && isDigit(this.peek())) {
+        lexeme += this.advance();
+      }
+    }
+
+    this.tokens.push(this.makeToken(kind, lexeme, start, this.currentPosition()));
+  }
+
+  private isNegativeLiteralContext(): boolean {
+    if (this.tokens.length === 0) return true;
+    const prev = this.tokens[this.tokens.length - 1];
+    switch (prev.kind) {
+      case "Identifier":
+      case "UpperIdentifier":
+      case "Integer":
+      case "Float":
+      case "String":
+      case "Char":
+      case "RParen":
+      case "RBracket":
+      case "RBrace":
+        return false;
+      default:
+        return true;
+    }
+  }
+
   private lexString(): void {
     const start = this.currentPosition();
     let lexeme = "";
@@ -468,6 +509,11 @@ export class Lexer {
     let lexeme = "";
 
     while (!this.isEOF() && OPERATOR_CHARS.has(this.peek())) {
+      lexeme += this.advance();
+    }
+
+    // Handle compound operators ending with '=' (>=, <=, /=, !=)
+    if (!this.isEOF() && this.peek() === "=" && (lexeme === ">" || lexeme === "<" || lexeme === "/" || lexeme === "!")) {
       lexeme += this.advance();
     }
 

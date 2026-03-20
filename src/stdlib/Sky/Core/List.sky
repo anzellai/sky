@@ -77,3 +77,135 @@ concatMap fn list =
 indexedMap : (Int -> a -> b) -> List a -> List b
 indexedMap fn list =
     Sky_list_IndexedMap fn list
+
+singleton : a -> List a
+singleton x =
+    [ x ]
+
+all : (a -> Bool) -> List a -> Bool
+all pred list =
+    case list of
+        [] -> True
+        x :: xs ->
+            if pred x then
+                all pred xs
+            else
+                False
+
+any : (a -> Bool) -> List a -> Bool
+any pred list =
+    case list of
+        [] -> False
+        x :: xs ->
+            if pred x then
+                True
+            else
+                any pred xs
+
+sum : List Int -> Int
+sum list =
+    foldl (\x acc -> x + acc) 0 list
+
+product : List Int -> Int
+product list =
+    foldl (\x acc -> x * acc) 1 list
+
+maximum : List comparable -> Maybe comparable
+maximum list =
+    case list of
+        [] -> Nothing
+        x :: xs ->
+            case maximum xs of
+                Nothing -> Just x
+                Just y ->
+                    if x > y then Just x else Just y
+
+minimum : List comparable -> Maybe comparable
+minimum list =
+    case list of
+        [] -> Nothing
+        x :: xs ->
+            case minimum xs of
+                Nothing -> Just x
+                Just y ->
+                    if x < y then Just x else Just y
+
+partition : (a -> Bool) -> List a -> (List a, List a)
+partition pred list =
+    ( filter pred list, filter (\x -> not (pred x)) list )
+
+find : (a -> Bool) -> List a -> Maybe a
+find pred list =
+    case list of
+        [] -> Nothing
+        x :: xs ->
+            if pred x then
+                Just x
+            else
+                find pred xs
+
+filterMap : (a -> Maybe b) -> List a -> List b
+filterMap f list =
+    case list of
+        [] -> []
+        x :: xs ->
+            case f x of
+                Just y -> append [y] (filterMap f xs)
+                Nothing -> filterMap f xs
+
+sortBy : (a -> comparable) -> List a -> List a
+sortBy toKey list =
+    case list of
+        [] -> []
+        pivot :: rest ->
+            let
+                pivotKey = toKey pivot
+                lesser = filter (\x -> toKey x < pivotKey) rest
+                greater = filter (\x -> toKey x >= pivotKey) rest
+            in
+            sortBy toKey lesser ++ [ pivot ] ++ sortBy toKey greater
+
+zip : List a -> List b -> List (a, b)
+zip listA listB =
+    case head listA of
+        Nothing -> []
+        Just a ->
+            case head listB of
+                Nothing -> []
+                Just b ->
+                    case tail listA of
+                        Nothing -> [(a, b)]
+                        Just restA ->
+                            case tail listB of
+                                Nothing -> [(a, b)]
+                                Just restB -> append [(a, b)] (zip restA restB)
+
+unzip : List (a, b) -> (List a, List b)
+unzip list =
+    let
+        getA pair =
+            case pair of
+                (a, _) -> a
+        getB pair =
+            case pair of
+                (_, b) -> b
+    in
+    ( map getA list, map getB list )
+
+map2 : (a -> b -> c) -> List a -> List b -> List c
+map2 f listA listB =
+    let
+        applyF a b = f a b
+    in
+    case head listA of
+        Nothing -> []
+        Just a ->
+            case head listB of
+                Nothing -> []
+                Just b ->
+                    case tail listA of
+                        Nothing -> [applyF a b]
+                        Just restA ->
+                            case tail listB of
+                                Nothing -> [applyF a b]
+                                Just restB -> append [applyF a b] (map2 f restA restB)

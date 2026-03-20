@@ -60,3 +60,11 @@ reverse s =
     Sky_string_Reverse s
 indexes sub s =
     Sky_string_Indexes sub s
+
+concat : List String -> String
+concat strs =
+    join "" strs
+
+fromChar : Char -> String
+fromChar c =
+    c

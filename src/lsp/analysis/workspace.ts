@@ -11,6 +11,10 @@ import { getHover } from '../features/hover.js';
 import { getDefinition } from '../features/definition.js';
 import { getCompletions } from '../features/completion.js';
 import { getSignatureHelp } from '../features/signature.js';
+import { getDocumentSymbols } from '../features/symbols.js';
+import { findReferences } from '../features/references.js';
+import { getFoldingRanges } from '../features/folding.js';
+import { renameSymbol } from '../features/rename.js';
 
 export interface DocumentInfo {
   uri: string;
@@ -180,6 +184,69 @@ export class Workspace {
 
   public getSignatureHelp(uri: string, position: Position) {
     return getSignatureHelp(this, uri, position);
+  }
+
+  public getDocumentSymbols(uri: string): import('vscode-languageserver/node.js').DocumentSymbol[] {
+    const doc = this.documents.get(uri);
+    if (!doc || !doc.ast) return [];
+    return getDocumentSymbols(doc.ast);
+  }
+
+  public getReferences(uri: string, position: Position): Location[] {
+    const doc = this.documents.get(uri);
+    if (!doc || !doc.ast) return [];
+
+    const node = this.findNodeAtPosition(doc.ast, position);
+    if (!node) return [];
+
+    let name = "";
+    if (node.kind === "IdentifierExpression") {
+      name = (node as AST.IdentifierExpression).name;
+    } else if (node.kind === "QualifiedIdentifierExpression") {
+      const parts = (node as AST.QualifiedIdentifierExpression).name.parts;
+      name = parts[parts.length - 1];
+    } else if (node.kind === "FunctionDeclaration") {
+      name = (node as AST.FunctionDeclaration).name;
+    } else {
+      return [];
+    }
+
+    if (!name) return [];
+
+    const modules = doc.modules || [];
+    return findReferences(name, modules as { filePath: string; moduleAst: AST.Module }[]);
+  }
+
+  public getFoldingRanges(uri: string): import('vscode-languageserver/node.js').FoldingRange[] {
+    const doc = this.documents.get(uri);
+    if (!doc || !doc.ast) return [];
+    return getFoldingRanges(doc.ast);
+  }
+
+  public getRename(uri: string, position: Position, newName: string): import('vscode-languageserver/node.js').WorkspaceEdit | null {
+    const doc = this.documents.get(uri);
+    if (!doc || !doc.ast) return null;
+
+    const node = this.findNodeAtPosition(doc.ast, position);
+    if (!node) return null;
+
+    let oldName = "";
+    if (node.kind === "IdentifierExpression") {
+      oldName = (node as AST.IdentifierExpression).name;
+    } else if (node.kind === "FunctionDeclaration") {
+      oldName = (node as AST.FunctionDeclaration).name;
+    } else {
+      return null;
+    }
+
+    if (!oldName) return null;
+
+    const modules = doc.modules || [];
+    const moduleMap = new Map<string, { filePath: string; moduleAst: AST.Module }>();
+    for (const m of modules) {
+      moduleMap.set(m.filePath, m as { filePath: string; moduleAst: AST.Module });
+    }
+    return renameSymbol(oldName, newName, moduleMap);
   }
 
   public findNodeAtPosition(ast: AST.Module, position: Position): AST.NodeBase | null {

@@ -96,6 +96,36 @@ export function inferPattern(
         },
       };
     }
+
+    case "RecordPattern": {
+      // Create a record type with fresh type variables for each field
+      const fieldTypes: Record<string, Type> = {};
+      const bindings: Record<string, Type> = {};
+
+      for (const fieldName of pattern.fields) {
+        const fieldType = freshTypeVariable();
+        fieldTypes[fieldName] = fieldType;
+        bindings[fieldName] = fieldType;
+      }
+
+      // Unify expectedType with a record type containing these fields
+      const recordType: Type = {
+        kind: "TypeRecord",
+        fields: fieldTypes,
+      };
+      const substitution = unify(expectedType, recordType);
+
+      // Apply substitution to bindings
+      const resolvedBindings: Record<string, Type> = {};
+      for (const [name, type] of Object.entries(bindings)) {
+        resolvedBindings[name] = applySubstitution(type, substitution);
+      }
+
+      return {
+        substitution,
+        bindings: resolvedBindings,
+      };
+    }
   }
 }
 

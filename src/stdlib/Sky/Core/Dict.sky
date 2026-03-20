@@ -32,3 +32,41 @@ member key d =
     Sky_dict_Member key d
 update key fn d =
     Sky_dict_Update key fn d
+
+filter : (k -> v -> Bool) -> Dict k v -> Dict k v
+filter pred dict =
+    let
+        addIfMatch k v acc =
+            if pred k v then
+                insert k v acc
+            else
+                acc
+    in
+    foldl addIfMatch empty dict
+
+union : Dict k v -> Dict k v -> Dict k v
+union d1 d2 =
+    foldl (\k v acc -> insert k v acc) d2 d1
+
+intersect : Dict k v -> Dict k v -> Dict k v
+intersect d1 d2 =
+    filter (\k _ -> member k d2) d1
+
+diff : Dict k v -> Dict k v -> Dict k v
+diff d1 d2 =
+    filter (\k _ -> not (member k d2)) d1
+
+partition : (k -> v -> Bool) -> Dict k v -> (Dict k v, Dict k v)
+partition pred dict =
+    foldl (\k v acc ->
+        case acc of
+            ( yes, no ) ->
+                if pred k v then
+                    ( insert k v yes, no )
+                else
+                    ( yes, insert k v no )
+    ) ( empty, empty ) dict
+
+foldr : (k -> v -> b -> b) -> b -> Dict k v -> b
+foldr f acc dict =
+    foldl f acc dict

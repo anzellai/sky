@@ -552,8 +552,8 @@ export class Parser {
 
     while (!this.match("Equals")) {
 
-      if (this.match("LParen")) {
-        // Parse tuple/pattern parameter: (a, b)
+      if (this.match("LParen") || this.match("LBrace")) {
+        // Parse tuple/record/pattern parameter: (a, b) or { name, age }
         const pat = this.parsePattern();
         params.push({
           kind: "Parameter",
@@ -682,6 +682,7 @@ export class Parser {
       this.match("Integer") ||
       this.match("Float") ||
       this.match("String") ||
+      this.match("Char") ||
       this.match("LParen") ||
       this.match("LBrace") ||
       this.match("LBracket") ||
@@ -865,6 +866,21 @@ export class Parser {
          items,
          span: { start: start.span.start, end: end.span.end }
        } as AST.Pattern;
+    } else if (this.match("LBrace")) {
+       const start = this.consume("LBrace");
+       const fields: string[] = [];
+       while (!this.match("RBrace")) {
+         fields.push(this.consume("Identifier").lexeme);
+         if (this.match("Comma")) {
+           this.consume("Comma");
+         }
+       }
+       const end = this.consume("RBrace");
+       return {
+         kind: "RecordPattern",
+         fields,
+         span: { start: start.span.start, end: end.span.end }
+       } as AST.Pattern;
     }
     const t = this.peek();
     throw new Error(`Unexpected token ${t.kind}:${t.lexeme} in pattern`);
@@ -878,13 +894,20 @@ private parsePrimary(): AST.Expression {
       this.consume("Keyword", "of");
       
       const branches: AST.CaseBranch[] = [];
+      let branchMinColumn = 0;
       while (true) {
         if (this.match("EOF")) break;
-        if (this.peek().span.start.column === 1 && this.peek().kind !== "Pipe") break;
-        
+        const nextCol = this.peek().span.start.column;
+        const nextLine = this.peek().span.start.line;
+        const prevLine = this.previous().span.end.line;
+        // Stop if we're on a new line and indentation dropped below branch level
+        if (branchMinColumn > 0 && nextLine > prevLine && nextCol < branchMinColumn) break;
+        if (nextCol === 1 && this.peek().kind !== "Pipe") break;
+
         if (this.match("Pipe")) this.consume("Pipe");
-        
+
         const pattern = this.parsePattern();
+        if (branchMinColumn === 0) branchMinColumn = pattern.span.start.column;
         this.consume("Arrow");
         const body = this.parseExpression(0, pattern.span.start.column);
         branches.push({
@@ -1171,6 +1194,13 @@ private parsePrimary(): AST.Expression {
       const t = this.consume("String");
       expr = {
         kind: "StringLiteralExpression",
+        value: t.lexeme,
+        span: t.span,
+      };
+    } else if (this.match("Char")) {
+      const t = this.consume("Char");
+      expr = {
+        kind: "CharLiteralExpression",
         value: t.lexeme,
         span: t.span,
       };

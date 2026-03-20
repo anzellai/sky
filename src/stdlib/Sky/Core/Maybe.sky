@@ -18,3 +18,24 @@ map fn maybe =
 andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 andThen fn maybe =
     Sky_maybe_AndThen fn maybe
+
+map2 : (a -> b -> c) -> Maybe a -> Maybe b -> Maybe c
+map2 f ma mb =
+    case ma of
+        Nothing -> Nothing
+        Just a ->
+            case mb of
+                Nothing -> Nothing
+                Just b -> Just (f a b)
+
+map3 : (a -> b -> c -> d) -> Maybe a -> Maybe b -> Maybe c -> Maybe d
+map3 f ma mb mc =
+    case ma of
+        Nothing -> Nothing
+        Just a ->
+            case mb of
+                Nothing -> Nothing
+                Just b ->
+                    case mc of
+                        Nothing -> Nothing
+                        Just c -> Just (f a b c)

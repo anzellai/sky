@@ -1,0 +1,69 @@
+module Sky.Core.Set exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_dict_Empty, Sky_dict_Insert, Sky_dict_Remove, Sky_dict_Member, Sky_dict_Keys, Sky_dict_Size, Sky_dict_IsEmpty, Sky_dict_Foldl, Sky_list_Foldl)
+
+empty =
+    Sky_dict_Empty ()
+
+singleton x =
+    Sky_dict_Insert x () (Sky_dict_Empty ())
+
+insert x set =
+    Sky_dict_Insert x () set
+
+remove x set =
+    Sky_dict_Remove x set
+
+member x set =
+    Sky_dict_Member x set
+
+size set =
+    Sky_dict_Size set
+
+isEmpty set =
+    Sky_dict_IsEmpty set
+
+toList set =
+    Sky_dict_Keys set
+
+fromList list =
+    Sky_list_Foldl (\x acc -> Sky_dict_Insert x () acc) (Sky_dict_Empty ()) list
+
+union s1 s2 =
+    Sky_dict_Foldl (\k _ acc -> Sky_dict_Insert k () acc) s2 s1
+
+intersect s1 s2 =
+    let
+        keepIfMember k _ acc =
+            if Sky_dict_Member k s2 then
+                Sky_dict_Insert k () acc
+            else
+                acc
+    in
+    Sky_dict_Foldl keepIfMember (Sky_dict_Empty ()) s1
+
+diff s1 s2 =
+    let
+        removeIfMember k _ acc =
+            if Sky_dict_Member k s2 then
+                acc
+            else
+                Sky_dict_Insert k () acc
+    in
+    Sky_dict_Foldl removeIfMember (Sky_dict_Empty ()) s1
+
+map f set =
+    Sky_dict_Foldl (\k _ acc -> Sky_dict_Insert (f k) () acc) (Sky_dict_Empty ()) set
+
+filter pred set =
+    let
+        keepIf k _ acc =
+            if pred k then
+                Sky_dict_Insert k () acc
+            else
+                acc
+    in
+    Sky_dict_Foldl keepIf (Sky_dict_Empty ()) set
+
+foldl f acc set =
+    Sky_dict_Foldl (\k _ a -> f k a) acc set

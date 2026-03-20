@@ -54,6 +54,7 @@ export type SyntaxKind =
   | "ListPattern"
   | "ConsPattern"
   | "AsPattern"
+  | "RecordPattern"
   | "Expression"
   | "IdentifierExpression"
   | "QualifiedIdentifierExpression"
@@ -222,7 +223,8 @@ export type Pattern =
   | TuplePattern
   | ListPattern
   | ConsPattern
-  | AsPattern;
+  | AsPattern
+  | RecordPattern;
 
 export interface WildcardPattern extends NodeBase {
   readonly kind: "WildcardPattern";
@@ -266,6 +268,11 @@ export interface AsPattern extends NodeBase {
   readonly kind: "AsPattern";
   readonly pattern: Pattern;
   readonly name: string;
+}
+
+export interface RecordPattern extends NodeBase {
+  readonly kind: "RecordPattern";
+  readonly fields: readonly string[];
 }
 
 export type Expression =

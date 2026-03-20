@@ -1,0 +1,19 @@
+module Sky.Core.Process exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_process_Run, Sky_process_Exit, Sky_process_GetEnv, Sky_process_GetCwd)
+
+run : String -> List String -> Result Error String
+run command args =
+    Sky_process_Run command args
+
+exit : Int -> Unit
+exit code =
+    Sky_process_Exit code
+
+getEnv : String -> Maybe String
+getEnv key =
+    Sky_process_GetEnv key
+
+getCwd : Result Error String
+getCwd =
+    Sky_process_GetCwd ()

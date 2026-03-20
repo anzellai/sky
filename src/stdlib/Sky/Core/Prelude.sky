@@ -18,3 +18,30 @@ foreign import "sky_wrappers" exposing (Sky_errorToString)
 errorToString : a -> String
 errorToString e =
     Sky_errorToString e
+
+always : a -> b -> a
+always a _ =
+    a
+
+fst : (a, b) -> a
+fst pair =
+    case pair of
+        ( a, _ ) -> a
+
+snd : (a, b) -> b
+snd pair =
+    case pair of
+        ( _, b ) -> b
+
+clamp : comparable -> comparable -> comparable -> comparable
+clamp low high val =
+    if val < low then
+        low
+    else if val > high then
+        high
+    else
+        val
+
+modBy : Int -> Int -> Int
+modBy divisor n =
+    n % divisor

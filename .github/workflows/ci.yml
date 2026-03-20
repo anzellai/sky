@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - run: npm ci
+
+      # TypeScript type checking
+      - name: Type check
+        run: npx tsc --noEmit
+
+      # Build binaries
+      - name: Build
+        run: npm run bundle
+
+      # Test: Hello World example
+      - name: Test hello-world
+        run: |
+          cd examples/01-hello-world
+          node ../../dist/bin/sky.js run src/Main.sky 2>&1 | grep "Hello from Sky!"
+
+      # Test: JSON example
+      - name: Test json
+        run: |
+          cd examples/06-json
+          node ../../dist/bin/sky.js run src/Main.sky 2>&1 | grep "Done!"
+
+      # Test: Multi-module example
+      - name: Test local-pkg
+        run: |
+          cd examples/04-local-pkg
+          node ../../dist/bin/sky.js run src/Main.sky 2>&1 | grep "Calculation result"

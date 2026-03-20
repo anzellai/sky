@@ -50,7 +50,11 @@ export function startServer() {
         definitionProvider: true,
         documentFormattingProvider: true,
         completionProvider: { resolveProvider: false, triggerCharacters: ['.'] },
-        signatureHelpProvider: { triggerCharacters: [' ', '('] }
+        signatureHelpProvider: { triggerCharacters: [' ', '('] },
+        documentSymbolProvider: true,
+        referencesProvider: true,
+        foldingRangeProvider: true,
+        renameProvider: true
       }
     };
     return result;
@@ -98,6 +102,26 @@ export function startServer() {
 
   connection.onSignatureHelp((params: SignatureHelpParams): SignatureHelp | null => {
     try { return workspace.getSignatureHelp(params.textDocument.uri, params.position); }
+    catch { return null; }
+  });
+
+  connection.onDocumentSymbol((params) => {
+    try { return workspace.getDocumentSymbols(params.textDocument.uri); }
+    catch { return []; }
+  });
+
+  connection.onReferences((params) => {
+    try { return workspace.getReferences(params.textDocument.uri, params.position); }
+    catch { return []; }
+  });
+
+  connection.onFoldingRanges((params) => {
+    try { return workspace.getFoldingRanges(params.textDocument.uri); }
+    catch { return []; }
+  });
+
+  connection.onRenameRequest((params) => {
+    try { return workspace.getRename(params.textDocument.uri, params.position, params.newName); }
     catch { return null; }
   });
 

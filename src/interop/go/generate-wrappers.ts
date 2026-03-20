@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"reflect"
 	"sort"
 	"strings"
@@ -1173,6 +1174,251 @@ func Sky_errorToString(e any) any {
 		return err.Error()
 	}
 	return fmt.Sprintf("%v", e)
+}
+
+// ============= Char Operations =============
+
+func Sky_char_IsUpper(c any) any {
+	s := c.(string)
+	if len(s) == 0 { return false }
+	r := []rune(s)[0]
+	return r >= 'A' && r <= 'Z'
+}
+
+func Sky_char_IsLower(c any) any {
+	s := c.(string)
+	if len(s) == 0 { return false }
+	r := []rune(s)[0]
+	return r >= 'a' && r <= 'z'
+}
+
+func Sky_char_IsAlpha(c any) any {
+	s := c.(string)
+	if len(s) == 0 { return false }
+	r := []rune(s)[0]
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+}
+
+func Sky_char_IsDigit(c any) any {
+	s := c.(string)
+	if len(s) == 0 { return false }
+	r := []rune(s)[0]
+	return r >= '0' && r <= '9'
+}
+
+func Sky_char_IsAlphaNum(c any) any {
+	s := c.(string)
+	if len(s) == 0 { return false }
+	r := []rune(s)[0]
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+}
+
+func Sky_char_ToUpper(c any) any {
+	s := c.(string)
+	return strings.ToUpper(s)
+}
+
+func Sky_char_ToLower(c any) any {
+	s := c.(string)
+	return strings.ToLower(s)
+}
+
+func Sky_char_ToCode(c any) any {
+	s := c.(string)
+	if len(s) == 0 { return 0 }
+	return int([]rune(s)[0])
+}
+
+func Sky_char_FromCode(n any) any {
+	return string(rune(n.(int)))
+}
+
+// ============= Bitwise Operations =============
+
+func Sky_bitwise_And(a any, b any) any { return a.(int) & b.(int) }
+func Sky_bitwise_Or(a any, b any) any { return a.(int) | b.(int) }
+func Sky_bitwise_Xor(a any, b any) any { return a.(int) ^ b.(int) }
+func Sky_bitwise_Complement(a any) any { return ^a.(int) }
+func Sky_bitwise_ShiftLeftBy(amount any, val any) any { return val.(int) << uint(amount.(int)) }
+func Sky_bitwise_ShiftRightBy(amount any, val any) any { return val.(int) >> uint(amount.(int)) }
+func Sky_bitwise_ShiftRightZfBy(amount any, val any) any { return int(uint(val.(int)) >> uint(amount.(int))) }
+
+// ============= Array Operations =============
+
+func Sky_array_Empty() any { return []any{} }
+
+func Sky_array_FromList(list any) any { return list }
+
+func Sky_array_ToList(arr any) any { return arr }
+
+func Sky_array_Get(index any, arr any) any {
+	a := arr.([]any)
+	i := index.(int)
+	if i < 0 || i >= len(a) {
+		return struct{ Tag int; JustValue any }{Tag: 1} // Nothing
+	}
+	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: a[i]} // Just
+}
+
+func Sky_array_Set(index any, val any, arr any) any {
+	a := arr.([]any)
+	i := index.(int)
+	if i < 0 || i >= len(a) { return arr }
+	newArr := make([]any, len(a))
+	copy(newArr, a)
+	newArr[i] = val
+	return newArr
+}
+
+func Sky_array_Push(val any, arr any) any {
+	a := arr.([]any)
+	return append(a, val)
+}
+
+func Sky_array_Length(arr any) any {
+	return len(arr.([]any))
+}
+
+func Sky_array_Slice(start any, end any, arr any) any {
+	a := arr.([]any)
+	s := start.(int)
+	e := end.(int)
+	if s < 0 { s = 0 }
+	if e > len(a) { e = len(a) }
+	if s > e { return []any{} }
+	return a[s:e]
+}
+
+func Sky_array_Map(f any, arr any) any {
+	a := arr.([]any)
+	fn := f.(func(any) any)
+	result := make([]any, len(a))
+	for i, v := range a { result[i] = fn(v) }
+	return result
+}
+
+func Sky_array_Foldl(f any, acc any, arr any) any {
+	a := arr.([]any)
+	fn := f.(func(any) any)
+	result := acc
+	for _, v := range a { result = fn(v).(func(any) any)(result) }
+	return result
+}
+
+func Sky_array_Foldr(f any, acc any, arr any) any {
+	a := arr.([]any)
+	fn := f.(func(any) any)
+	result := acc
+	for i := len(a) - 1; i >= 0; i-- { result = fn(a[i]).(func(any) any)(result) }
+	return result
+}
+
+func Sky_array_Append(a any, b any) any {
+	return append(a.([]any), b.([]any)...)
+}
+
+func Sky_array_IndexedMap(f any, arr any) any {
+	a := arr.([]any)
+	fn := f.(func(any) any)
+	result := make([]any, len(a))
+	for i, v := range a { result[i] = fn(i).(func(any) any)(v) }
+	return result
+}
+
+// ============= File Operations =============
+
+func Sky_file_ReadFile(path any) any {
+	data, err := os.ReadFile(path.(string))
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: string(data)}
+}
+
+func Sky_file_WriteFile(path any, content any) any {
+	err := os.WriteFile(path.(string), []byte(content.(string)), 0644)
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: struct{}{}}
+}
+
+func Sky_file_Exists(path any) any {
+	_, err := os.Stat(path.(string))
+	return err == nil
+}
+
+func Sky_file_Remove(path any) any {
+	err := os.Remove(path.(string))
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: struct{}{}}
+}
+
+func Sky_file_MkdirAll(path any) any {
+	err := os.MkdirAll(path.(string), 0755)
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: struct{}{}}
+}
+
+func Sky_file_ReadDir(path any) any {
+	entries, err := os.ReadDir(path.(string))
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	names := make([]any, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return SkyResult{Tag: 0, OkValue: names}
+}
+
+func Sky_file_IsDir(path any) any {
+	info, err := os.Stat(path.(string))
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
+// ============= Process Operations =============
+
+func Sky_process_Run(command any, args any) any {
+	argList := args.([]any)
+	strArgs := make([]string, len(argList))
+	for i, a := range argList {
+		strArgs[i] = a.(string)
+	}
+	cmd := exec.Command(command.(string), strArgs...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: fmt.Errorf("%s: %s", err.Error(), string(output))}
+	}
+	return SkyResult{Tag: 0, OkValue: string(output)}
+}
+
+func Sky_process_Exit(code any) any {
+	os.Exit(code.(int))
+	return struct{}{}
+}
+
+func Sky_process_GetEnv(key any) any {
+	val, ok := os.LookupEnv(key.(string))
+	if !ok {
+		return struct{ Tag int; JustValue any }{Tag: 1} // Nothing
+	}
+	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: val} // Just
+}
+
+func Sky_process_GetCwd() any {
+	dir, err := os.Getwd()
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: dir}
 }
 `;
       fs.writeFileSync(helperPath, helperCode);

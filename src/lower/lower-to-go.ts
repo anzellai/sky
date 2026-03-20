@@ -4,6 +4,22 @@ import * as GoIR from "../go-ir/go-ir.js";
 import type { Scheme, Type } from "../types/types.js";
 import { pascalToKebab } from "../utils/path.js";
 
+const GO_RESERVED_WORDS = new Set([
+  "break", "case", "chan", "const", "continue", "default", "defer", "else",
+  "fallthrough", "for", "func", "go", "goto", "if", "import", "interface",
+  "map", "package", "range", "return", "select", "struct", "switch", "type",
+  "var", "true", "false", "nil", "int", "string", "bool", "float64", "any",
+  "error", "len", "cap", "make", "new", "append", "copy", "delete", "panic",
+  "recover", "close", "print", "println", "complex", "real", "imag",
+]);
+
+function sanitizeGoIdent(name: string): string {
+  if (GO_RESERVED_WORDS.has(name)) {
+    return name + "_";
+  }
+  return name;
+}
+
 // Minimal Go expression serializer used by the lowerer for GoRawExpr construction.
 // Handles the subset of GoIR nodes that appear inside well-known constructor args.
 function emitGoExprForLower(expr: any): string {
@@ -193,7 +209,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
                     skyType = currentType.from;
                     currentType = currentType.to;
                 }
-                params.push({ name: p, type: { kind: "GoIdentType", name: "any" } });
+                params.push({ name: sanitizeGoIdent(p), type: { kind: "GoIdentType", name: "any" } });
                 localEnv.set(p, skyType);
             }
             flattenLambda(e.body);
@@ -210,7 +226,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
                         stmts.push({
                             kind: "GoAssignStmt",
                             define: true,
-                            left: [{ kind: "GoIdent", name: inner.name }],
+                            left: [{ kind: "GoIdent", name: sanitizeGoIdent(inner.name) }],
                             right: lowerExpr(inner.value, moduleExports, localEnv, foreignModules, constructorMap)
                         });
                         localEnv.set(inner.name, inner.value.type);
@@ -564,7 +580,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
       // If it's a local variable, don't capitalize
       if (localEnv && localEnv.has(expr.name)) {
-          return { kind: "GoIdent", name: expr.name };
+          return { kind: "GoIdent", name: sanitizeGoIdent(expr.name) };
       }
 
       // If the variable is a multi-param top-level function used as a value,
@@ -644,7 +660,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         body: [
           ...expr.params.map((p, i): GoIR.GoStmt => ({
             kind: "GoAssignStmt",
-            left: [{ kind: "GoIdent", name: p }],
+            left: [{ kind: "GoIdent", name: sanitizeGoIdent(p) }],
             right: { kind: "GoIdent", name: `arg${i}` },
             define: true
           })),
@@ -1007,9 +1023,19 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       if (fnExpr.kind === "GoIdent" && !["fmt", "len", "panic", "append", "make", "[]byte"].includes(fnExpr.name) && !fnExpr.name.startsWith(".")) {
           // Check if it's a local variable (lambda parameter or let binding) — needs type assertion
           if (localEnv && localEnv.has(fnExpr.name)) {
+              // Emit curried calls for multi-arg local variable calls:
+              // f(a, b, c) → (any)(f).(func(any) any)(a).(func(any) any)(b).(func(any) any)(c)
+              if (args.length > 1) {
+                  const safeName = sanitizeGoIdent(fnExpr.name);
+                  let code = `(any)(${safeName}).(func(any) any)(${emitGoExprForLower(args[0])})`;
+                  for (let ci = 1; ci < args.length; ci++) {
+                      code = `(any)(${code}).(func(any) any)(${emitGoExprForLower(args[ci])})`;
+                  }
+                  return { kind: "GoRawExpr", code } as any;
+              }
               callFn = {
                   kind: "GoRawExpr",
-                  code: `(any)(${fnExpr.name}).(func(any) any)`
+                  code: `(any)(${sanitizeGoIdent(fnExpr.name)}).(func(any) any)`
               } as any;
           }
       }
@@ -1033,7 +1059,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           stmts.push({
             kind: "GoAssignStmt",
             define: true,
-            left: [{ kind: "GoIdent", name: e.name }],
+            left: [{ kind: "GoIdent", name: sanitizeGoIdent(e.name) }],
             right: lowerExpr(e.value, moduleExports, newLocalEnv, foreignModules, constructorMap)
           });
           flattenLet(e.body);
@@ -1096,7 +1122,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
-                      left: [{ kind: "GoIdent", name: argPat.name }],
+                      left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
                       right: { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: tmpName }, sel: "V" + j }
                   });
               }
@@ -1149,7 +1175,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                       branchStmts.push({
                           kind: "GoAssignStmt",
                           define: true,
-                          left: [{ kind: "GoIdent", name: c.pattern.head.name }],
+                          left: [{ kind: "GoIdent", name: sanitizeGoIdent(c.pattern.head.name) }],
                           right: { kind: "GoIndexExpr", expr: { kind: "GoIdent", name: tmpName }, index: { kind: "GoBasicLit", value: "0" } } as any
                       });
                   }
@@ -1158,7 +1184,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                       branchStmts.push({
                           kind: "GoAssignStmt",
                           define: true,
-                          left: [{ kind: "GoIdent", name: c.pattern.tail.name }],
+                          left: [{ kind: "GoIdent", name: sanitizeGoIdent(c.pattern.tail.name) }],
                           right: { kind: "GoSliceExpr", expr: { kind: "GoIdent", name: tmpName }, low: { kind: "GoBasicLit", value: "1" } } as any
                       });
                   }
@@ -1199,7 +1225,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                       branchStmts.push({
                           kind: "GoAssignStmt",
                           define: true,
-                          left: [{ kind: "GoIdent", name: c.pattern.name }],
+                          left: [{ kind: "GoIdent", name: sanitizeGoIdent(c.pattern.name) }],
                           right: { kind: "GoIdent", name: tmpName }
                       });
                   }
@@ -1275,7 +1301,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
-                      left: [{ kind: "GoIdent", name: c.pattern.name }],
+                      left: [{ kind: "GoIdent", name: sanitizeGoIdent(c.pattern.name) }],
                       right: lowerExpr(expr.expr, moduleExports, newLocalEnv, foreignModules, constructorMap)
                   });
               }
@@ -1366,7 +1392,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
-                      left: [{ kind: "GoIdent", name: argPat.name }],
+                      left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
                       right: { kind: "GoSelectorExpr", expr: subj, sel: fieldName }
                   });
               }
@@ -1387,7 +1413,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                stmts.push({
                    kind: "GoAssignStmt",
                    define: true,
-                   left: [{ kind: "GoIdent", name: c.pattern.name }],
+                   left: [{ kind: "GoIdent", name: sanitizeGoIdent(c.pattern.name) }],
                    right: subjRef
                });
            }

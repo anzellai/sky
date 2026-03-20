@@ -87,23 +87,20 @@ esbuild.buildSync({
 // 4. Build native binaries with pkg
 console.log("Packaging with pkg...");
 try {
-  // We use the --targets to specify platform. 
-  // For simplicity, we just build for the current host platform.
-  // Example: node18-macos-x64, node18-linux-x64, node18-win-x64
-  const platformMap = {
-    darwin: "macos",
-    win32: "win",
-    linux: "linux"
-  };
-  const archMap = {
-    arm64: "arm64",
-    x64: "x64"
-  };
-  const target = `node18-${platformMap[process.platform]}-${archMap[process.arch]}`; // You might want to detect this or build for all
-  
-  // pkg dist/sky.cjs --output bin/sky
-  execSync(`npx pkg dist/sky.cjs --target ${target} --output bin/sky`, { stdio: "inherit" });
-  execSync(`npx pkg dist/sky-lsp.cjs --target ${target} --output bin/sky-lsp`, { stdio: "inherit" });
+  const platformMap = { darwin: "macos", win32: "win", linux: "linux" };
+  const archMap = { arm64: "arm64", x64: "x64" };
+
+  // Support cross-compilation via SKY_BUILD_TARGET env var
+  // Examples: node18-macos-arm64, node18-linux-x64, node18-win-x64
+  const target = process.env.SKY_BUILD_TARGET ||
+    `node18-${platformMap[process.platform]}-${archMap[process.arch]}`;
+
+  // Support custom output names via SKY_BUILD_OUTPUT env var (for CI release builds)
+  const skyOutput = process.env.SKY_BUILD_OUTPUT || "bin/sky";
+  const lspOutput = process.env.SKY_LSP_BUILD_OUTPUT || "bin/sky-lsp";
+
+  execSync(`npx pkg dist/sky.cjs --target ${target} --output ${skyOutput}`, { stdio: "inherit" });
+  execSync(`npx pkg dist/sky-lsp.cjs --target ${target} --output ${lspOutput}`, { stdio: "inherit" });
 
   console.log("Native binaries created in bin/ folder.");
 } catch (e) {

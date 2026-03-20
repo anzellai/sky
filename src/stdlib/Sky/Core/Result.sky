@@ -21,3 +21,30 @@ mapError fn result =
 toMaybe : Result err a -> Maybe a
 toMaybe result =
     Sky_result_ToMaybe result
+
+map2 : (a -> b -> c) -> Result e a -> Result e b -> Result e c
+map2 f ra rb =
+    case ra of
+        Err e -> Err e
+        Ok a ->
+            case rb of
+                Err e -> Err e
+                Ok b -> Ok (f a b)
+
+map3 : (a -> b -> c -> d) -> Result e a -> Result e b -> Result e c -> Result e d
+map3 f ra rb rc =
+    case ra of
+        Err e -> Err e
+        Ok a ->
+            case rb of
+                Err e -> Err e
+                Ok b ->
+                    case rc of
+                        Err e -> Err e
+                        Ok c -> Ok (f a b c)
+
+fromMaybe : e -> Maybe a -> Result e a
+fromMaybe err maybe =
+    case maybe of
+        Just v -> Ok v
+        Nothing -> Err err

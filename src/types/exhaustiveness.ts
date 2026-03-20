@@ -165,7 +165,7 @@ function isBoolType(type: Type | undefined): boolean {
 }
 
 function isCatchAllPattern(pattern: AST.Pattern): boolean {
-  return pattern.kind === "WildcardPattern" || pattern.kind === "VariablePattern";
+  return pattern.kind === "WildcardPattern" || pattern.kind === "VariablePattern" || pattern.kind === "RecordPattern";
 }
 
 function visitExpression(

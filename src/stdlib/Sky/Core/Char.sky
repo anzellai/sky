@@ -1,0 +1,39 @@
+module Sky.Core.Char exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_char_IsUpper, Sky_char_IsLower, Sky_char_IsAlpha, Sky_char_IsDigit, Sky_char_IsAlphaNum, Sky_char_ToUpper, Sky_char_ToLower, Sky_char_ToCode, Sky_char_FromCode)
+
+isUpper : Char -> Bool
+isUpper c =
+    Sky_char_IsUpper c
+
+isLower : Char -> Bool
+isLower c =
+    Sky_char_IsLower c
+
+isAlpha : Char -> Bool
+isAlpha c =
+    Sky_char_IsAlpha c
+
+isDigit : Char -> Bool
+isDigit c =
+    Sky_char_IsDigit c
+
+isAlphaNum : Char -> Bool
+isAlphaNum c =
+    Sky_char_IsAlphaNum c
+
+toUpper : Char -> Char
+toUpper c =
+    Sky_char_ToUpper c
+
+toLower : Char -> Char
+toLower c =
+    Sky_char_ToLower c
+
+toCode : Char -> Int
+toCode c =
+    Sky_char_ToCode c
+
+fromCode : Int -> Char
+fromCode n =
+    Sky_char_FromCode n

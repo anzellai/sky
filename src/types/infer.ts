@@ -822,11 +822,29 @@ export function inferTopLevel(
 
   if (effectiveAnnotation) {
     const annotatedType = translateTypeExpression(effectiveAnnotation.type);
-    
-    // In a more complete implementation, we would unify finalType with annotatedType here.
-    // For now, we trust the annotation for the exported scheme but ensure the body was checked.
+
+    // Validate: unify the inferred type with the annotated type to catch mismatches.
+    // If unification succeeds, use the annotation's type (preserves user's naming).
+    // If it fails, throw a descriptive error that the caller converts to a diagnostic.
+    try {
+      const annotationSub = unify(finalType, annotatedType);
+      // Apply the unification substitution so nodeTypes reflect the annotation constraints
+      if (nodeTypes) {
+        for (const [key, type] of nodeTypes) {
+          const refined = applySubstitution(type, annotationSub);
+          if (refined !== type) {
+            nodeTypes.set(key, refined);
+          }
+        }
+      }
+    } catch {
+      throw new Error(
+        `Type mismatch: annotation says \`${formatType(annotatedType)}\` but implementation has type \`${formatType(finalType)}\``
+      );
+    }
+
     const scheme = generalize(annotatedType, env.freeTypeVariables());
-    
+
     return {
       name: decl.name,
       scheme,
