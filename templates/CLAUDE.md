@@ -68,6 +68,20 @@ main =
 
 Literals, constructors (`Just x`, `Ok v`, `Err e`), tuples `(a, b)`, lists `[]`, `[x]`, `x :: xs`, wildcards `_`, as-patterns `Just x as original`, nested `Ok (Just x)`
 
+### Record Patterns
+
+```elm
+-- Record patterns (destructuring)
+case user of
+    { name, age } -> name ++ " is " ++ String.fromInt age
+
+-- In function params
+greet { name } = "Hello, " ++ name
+
+-- In let bindings
+let { x, y } = point in x + y
+```
+
 ## Go Interop (FFI)
 
 Sky can import any Go package. The compiler auto-generates type-safe bindings at build time:
@@ -119,6 +133,11 @@ type Maybe a = Just a | Nothing    -- (defined in Sky.Core.Maybe)
 
 -- Functions
 identity : a -> a
+always : a -> b -> a
+fst : (a, b) -> a
+snd : (a, b) -> b
+clamp : comparable -> comparable -> comparable -> comparable
+modBy : Int -> Int -> Int
 errorToString : a -> String        -- converts Go error to String
 ```
 
@@ -129,7 +148,21 @@ type Maybe a = Just a | Nothing
 
 withDefault : a -> Maybe a -> a
 map : (a -> b) -> Maybe a -> Maybe b
+map2 : (a -> b -> c) -> Maybe a -> Maybe b -> Maybe c
+map3 : (a -> b -> c -> d) -> Maybe a -> Maybe b -> Maybe c -> Maybe d
 andThen : (a -> Maybe b) -> Maybe a -> Maybe b
+```
+
+### Sky.Core.Result
+
+```elm
+map : (a -> b) -> Result e a -> Result e b
+map2 : (a -> b -> c) -> Result e a -> Result e b -> Result e c
+map3 : (a -> b -> c -> d) -> Result e a -> Result e b -> Result e c -> Result e d
+andThen : (a -> Result e b) -> Result e a -> Result e b
+withDefault : a -> Result e a -> a
+fromMaybe : e -> Maybe a -> Result e a
+mapError : (e -> f) -> Result e a -> Result f a
 ```
 
 ### Sky.Core.List
@@ -154,6 +187,20 @@ intersperse : a -> List a -> List a
 concat : List (List a) -> List a
 concatMap : (a -> List b) -> List a -> List b
 indexedMap : (Int -> a -> b) -> List a -> List b
+singleton : a -> List a
+all : (a -> Bool) -> List a -> Bool
+any : (a -> Bool) -> List a -> Bool
+sum : List Int -> Int
+product : List Int -> Int
+maximum : List comparable -> Maybe comparable
+minimum : List comparable -> Maybe comparable
+partition : (a -> Bool) -> List a -> (List a, List a)
+find : (a -> Bool) -> List a -> Maybe a
+filterMap : (a -> Maybe b) -> List a -> List b
+sortBy : (a -> comparable) -> List a -> List a
+zip : List a -> List b -> List (a, b)
+unzip : List (a, b) -> (List a, List b)
+map2 : (a -> b -> c) -> List a -> List b -> List c
 ```
 
 ### Sky.Core.String
@@ -184,6 +231,8 @@ left : Int -> String -> String
 right : Int -> String -> String
 reverse : String -> String
 indexes : String -> String -> List Int
+concat : List String -> String
+fromChar : Char -> String
 ```
 
 ### Sky.Core.Dict
@@ -204,6 +253,108 @@ isEmpty : Dict k v -> Bool
 size : Dict k v -> Int
 member : k -> Dict k v -> Bool
 update : k -> (Maybe v -> Maybe v) -> Dict k v -> Dict k v
+filter : (k -> v -> Bool) -> Dict k v -> Dict k v
+union : Dict k v -> Dict k v -> Dict k v
+intersect : Dict k v -> Dict k v -> Dict k v
+diff : Dict k v -> Dict k v -> Dict k v
+partition : (k -> v -> Bool) -> Dict k v -> (Dict k v, Dict k v)
+foldr : (k -> v -> b -> b) -> b -> Dict k v -> b
+```
+
+### Sky.Core.Char
+
+```elm
+isUpper : Char -> Bool
+isLower : Char -> Bool
+isAlpha : Char -> Bool
+isDigit : Char -> Bool
+isAlphaNum : Char -> Bool
+toUpper : Char -> Char
+toLower : Char -> Char
+toCode : Char -> Int
+fromCode : Int -> Char
+```
+
+### Sky.Core.Tuple
+
+```elm
+first : (a, b) -> a
+second : (a, b) -> b
+mapFirst : (a -> c) -> (a, b) -> (c, b)
+mapSecond : (b -> c) -> (a, b) -> (a, c)
+mapBoth : (a -> c) -> (b -> d) -> (a, b) -> (c, d)
+pair : a -> b -> (a, b)
+```
+
+### Sky.Core.Bitwise
+
+```elm
+and : Int -> Int -> Int
+or : Int -> Int -> Int
+xor : Int -> Int -> Int
+complement : Int -> Int
+shiftLeftBy : Int -> Int -> Int
+shiftRightBy : Int -> Int -> Int
+shiftRightZfBy : Int -> Int -> Int
+```
+
+### Sky.Core.Set
+
+```elm
+empty : Set a
+singleton : a -> Set a
+insert : a -> Set a -> Set a
+remove : a -> Set a -> Set a
+member : a -> Set a -> Bool
+size : Set a -> Int
+isEmpty : Set a -> Bool
+toList : Set a -> List a
+fromList : List a -> Set a
+union : Set a -> Set a -> Set a
+intersect : Set a -> Set a -> Set a
+diff : Set a -> Set a -> Set a
+map : (a -> b) -> Set a -> Set b
+filter : (a -> Bool) -> Set a -> Set a
+foldl : (a -> b -> b) -> b -> Set a -> b
+```
+
+### Sky.Core.Array
+
+```elm
+empty : Array a
+fromList : List a -> Array a
+toList : Array a -> List a
+get : Int -> Array a -> Maybe a
+set : Int -> a -> Array a -> Array a
+push : a -> Array a -> Array a
+length : Array a -> Int
+slice : Int -> Int -> Array a -> Array a
+map : (a -> b) -> Array a -> Array b
+foldl : (a -> b -> b) -> b -> Array a -> b
+foldr : (a -> b -> b) -> b -> Array a -> b
+append : Array a -> Array a -> Array a
+indexedMap : (Int -> a -> b) -> Array a -> Array b
+```
+
+### Sky.Core.File
+
+```elm
+readFile : String -> Result Error String
+writeFile : String -> String -> Result Error Unit
+exists : String -> Bool
+remove : String -> Result Error Unit
+mkdirAll : String -> Result Error Unit
+readDir : String -> Result Error (List String)
+isDir : String -> Bool
+```
+
+### Sky.Core.Process
+
+```elm
+run : String -> List String -> Result Error String
+exit : Int -> Unit
+getEnv : String -> Maybe String
+getCwd : Result Error String
 ```
 
 ### Sky.Core.Debug

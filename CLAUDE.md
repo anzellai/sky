@@ -28,7 +28,8 @@ src/
   live/                -- Sky.Live compiler support
   runtime/             -- Sky.Live Go runtime files
   lsp/                 -- Language Server (completion, definition, hover, signature, formatter)
-  stdlib/              -- Core/Std library .sky files (Prelude, Maybe, String, Cmd, Task, Sub, Log, Html, Css, Live, etc.)
+  stdlib/              -- Core/Std library .sky files (Prelude, Maybe, String, Cmd, Task, Sub, Log,
+                          Html, Css, Live, Char, Tuple, Bitwise, Set, Array, File, Process, etc.)
   cli/                 -- CLI commands (init, add, remove, install, update, build, run, dev, fmt)
   bin/                 -- Entry points: sky.ts, sky-lsp.ts, build-binary.js
   utils/               -- Helpers (assets.ts, path.ts)
@@ -42,6 +43,7 @@ npm run bundle         # esbuild + pkg -> native binaries in bin/
 node dist/bin/sky.js fmt examples/simple/src/Main.sky
 node dist/bin/sky.js build examples/01-hello-world/src/Main.sky
 node dist/bin/sky.js run examples/01-hello-world/src/Main.sky
+sky fmt src/Main.sky           # Format .sky/.skyi files (always run after changes)
 ```
 
 ## Critical Rules
@@ -58,6 +60,8 @@ node dist/bin/sky.js run examples/01-hello-world/src/Main.sky
 10. **Sub type** -- `Std.Sub` is a normal ADT module (not an FFI wrapper). `Sub` has constructors `SubNone`, `SubTimer Int msg`, `SubBatch (List (Sub msg))`. The Go runtime walks these values to set up SSE subscriptions.
 11. **Embedded assets** -- `src/utils/assets.ts` contains embedded stdlib. Must be updated whenever stdlib `.sky` files change.
 12. **VNode emission** -- `Std.Html` functions return VNode records (`{ tag, attrs, children, text }`), not HTML strings. Attributes are `(key, value)` tuples. The Go runtime converts these via `MapToVNode` -- no HTML parsing needed. Non-Live apps use `render`/`toString` to convert VNode records to HTML strings.
+13. **Go reserved words** -- The Go lowerer (`sanitizeGoIdent`) appends `_` to Sky identifiers that clash with Go keywords (`go`, `type`, `func`, `var`, `return`, etc.). Never use Go keywords as Sky variable names in stdlib code.
+14. **Distribution** -- Release binaries via `git tag v0.x.0 && git push --tags`. CI builds for macOS (arm64/x64), Linux (arm64/x64), Windows (x64). Users install via `curl -fsSL .../install.sh | sh` or Docker.
 
 ## Package Management
 
