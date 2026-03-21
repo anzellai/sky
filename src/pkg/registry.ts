@@ -2,6 +2,10 @@
 
 export function resolveRegistryPackage(pkgName: string, version: string) {
   // Prototype falls back to GitHub directly
+  // If pkgName already starts with github.com/, construct URL directly
+  if (pkgName.startsWith("github.com/")) {
+    return `https://${pkgName}.git`;
+  }
   return `https://github.com/${pkgName}.git`;
 }
 

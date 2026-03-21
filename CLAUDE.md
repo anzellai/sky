@@ -54,9 +54,9 @@ sky fmt src/Main.sky           # Format .sky/.skyi files (always run after chang
 4. **Universal unifiers** -- `JsValue`, `Foreign`, and variants are universal unifiers for interop. Do not remove.
 5. **Prelude** -- `Sky.Core.Prelude` is implicitly imported everywhere. Provides `Result`, `Maybe`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`, `js`.
 6. **Go FFI** -- Wrappers accept `any` params with internal type assertions. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`). Auto-generated bindings: struct methods become `{Type}{Method}` (e.g., `db.Query` → `dbQuery`), fields become `{Type}{Field}`, constants/vars become zero-arg functions.
-7. **Pointer safety** -- Go `*primitive` types (`*string`, `*int`, etc.) map to `Maybe T` in Sky. Opaque struct pointers (`*sql.DB`) stay as their type name (`Db`).
+7. **Pointer safety** -- Go `*primitive` types (`*string`, `*int`, etc.) map to `Maybe T` in Sky. Opaque struct pointers (`*sql.DB`) stay as their type name (`Db`). Go `(T, bool)` comma-ok returns map to `Maybe T`. Go `(T1, T2, ..., error)` multi-return maps to `Result Error (TupleN T1 T2 ...)`.
 8. **AST lowering** -- Uppercase identifiers = Constructors unless declared as `foreign import` (then lower as Variable). Don't inject `GoTypeAssertExpr` on FFI return values. ADT constructors generate Go constructor functions for cross-module use.
-9. **Pipeline operators** -- `|>` and `<|` (Elm-style).
+9. **Pipeline operators** -- `|>` and `<|` (Elm-style). `::` (cons) works in both patterns and expressions: `1 :: 2 :: []` builds `[1, 2]`.
 10. **Sub type** -- `Std.Sub` is a normal ADT module (not an FFI wrapper). `Sub` has constructors `SubNone`, `SubTimer Int msg`, `SubBatch (List (Sub msg))`. The Go runtime walks these values to set up SSE subscriptions.
 11. **Embedded assets** -- `src/utils/assets.ts` contains embedded stdlib. Must be updated whenever stdlib `.sky` files change.
 12. **VNode emission** -- `Std.Html` functions return VNode records (`{ tag, attrs, children, text }`), not HTML strings. Attributes are `(key, value)` tuples. The Go runtime converts these via `MapToVNode` -- no HTML parsing needed. Non-Live apps use `render`/`toString` to convert VNode records to HTML strings.

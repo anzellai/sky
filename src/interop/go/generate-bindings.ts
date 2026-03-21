@@ -75,18 +75,32 @@ export async function generateForeignBindings(packageName: string, requestedName
 
         let retType = "Unit";
         if (results && results.length > 0) {
+            const lastType = results[results.length - 1].type;
+            const hasError = lastType.endsWith("error");
             if (results.length === 1) {
-                if (results[0].type.endsWith("error")) {
+                if (hasError) {
                     retType = "Result Error Unit";
                 } else {
                     retType = mapGoTypeToSky(results[0].type, packageName);
                 }
-            } else if (results.length === 2 && results[1].type.endsWith("error")) {
+            } else if (results.length === 2 && hasError) {
                 const t = mapGoTypeToSky(results[0].type, packageName);
                 retType = `Result Error ${t.includes(" ") ? `(${t})` : t}`;
+            } else if (results.length === 2 && results[1].type === "bool") {
+                // (T, bool) comma-ok pattern → Maybe T
+                const t = mapGoTypeToSky(results[0].type, packageName);
+                retType = `Maybe ${t.includes(" ") ? `(${t})` : t}`;
+            } else if (hasError) {
+                // (T1, T2, ..., error) → Result Error (TupleN T1 T2 ...)
+                const valueResults = results.slice(0, -1);
+                const mapped = valueResults.map(r => mapGoTypeToSky(r.type, packageName));
+                const tupleInner = mapped.map(m => m.includes(" ") ? `(${m})` : m).join(" ");
+                retType = `Result Error (Tuple${valueResults.length} ${tupleInner})`;
             } else {
+                // Multi-return without error → TupleN
                 const mapped = results.map(r => mapGoTypeToSky(r.type, packageName));
-                retType = `Tuple${mapped.length} ${mapped.join(" ")}`;
+                const tupleInner = mapped.map(m => m.includes(" ") ? `(${m})` : m).join(" ");
+                retType = `Tuple${mapped.length} ${tupleInner}`;
             }
         }
 

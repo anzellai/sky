@@ -34,7 +34,9 @@ function ensureGoModDir(): string {
  */
 export async function detectPackageType(pkgName: string): Promise<"sky" | "go"> {
   // Try GitHub raw URL for sky.toml
-  const rawUrl = `https://raw.githubusercontent.com/${pkgName}/HEAD/sky.toml`;
+  // Strip github.com/ prefix since raw.githubusercontent.com expects owner/repo
+  const repoPath = pkgName.startsWith("github.com/") ? pkgName.slice("github.com/".length) : pkgName;
+  const rawUrl = `https://raw.githubusercontent.com/${repoPath}/HEAD/sky.toml`;
   try {
     const resp = await fetch(rawUrl);
     if (resp.ok) return "sky";

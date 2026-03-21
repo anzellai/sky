@@ -1025,6 +1025,19 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
       }
       case "BinaryExpression": {
         let retType: Type = { kind: "TypeConstant", name: "Any" };
+        if (expr.operator === "::") {
+          // Cons expression: head :: tail → Application("::", [head, tail]) with List type
+          const leftConverted = convertExpr(expr.left);
+          const rightConverted = convertExpr(expr.right);
+          const elemType: Type = leftConverted.type || { kind: "TypeConstant", name: "Any" };
+          const listType: Type = { kind: "TypeApplication", constructor: { kind: "TypeConstant", name: "List" }, arguments: [elemType] };
+          return {
+            kind: "Application",
+            fn: { kind: "Variable", name: "::", type: { kind: "TypeConstant", name: "Any" } },
+            args: [leftConverted, rightConverted],
+            type: listType
+          };
+        }
         if (expr.operator === "++") {
           // Check if operands are lists to determine String vs List concatenation
           const leftConverted = convertExpr(expr.left);

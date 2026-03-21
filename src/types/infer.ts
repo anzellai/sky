@@ -587,6 +587,26 @@ export function inferExpression(
           }
         }
 
+        case "::": {
+          // :: (cons): left is element type a, right is List a, result is List a
+          const elemVar = freshTypeVariable();
+          const listType: Type = { kind: "TypeApplication", constructor: { kind: "TypeConstant", name: "List" }, arguments: [elemVar] };
+          const s1 = unify(leftType, elemVar);
+          const s2 = unify(
+            applySubstitution(rightType, s1),
+            applySubstitution(listType, s1),
+          );
+
+          const resultType = applySubstitution(listType, composeSubstitutions(s2, s1));
+          return {
+            substitution: composeSubstitutions(
+              s2,
+              composeSubstitutions(s1, composeSubstitutions(right.substitution, left.substitution)),
+            ),
+            type: resultType,
+          };
+        }
+
         case "==":
         case "!=":
         case "<":

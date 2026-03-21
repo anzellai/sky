@@ -1736,18 +1736,23 @@ func Sky_process_GetCwd() any {
         let goReturns = " ";
         let retTypes = results.map(r => cleanType(r.type));
         
-        // Wrap in SkyResult if a function OR method returns an error
+        // Wrap in SkyResult if a function OR method returns an error as the last return value
         // Variables and fields should be returned as-is
-        const shouldWrap = !isField && (
-            (retTypes.length === 1 && retTypes[0] === "error") ||
-            (retTypes.length === 2 && retTypes[1] === "error")
-        );
+        const shouldWrap = !isField && retTypes.length >= 1 && retTypes[retTypes.length - 1] === "error";
+
+        // (T, bool) comma-ok pattern → Maybe T in Sky
+        const isCommaOk = !isField && !shouldWrap && retTypes.length === 2 && retTypes[1] === "bool";
 
         // Check if the first result is a pointer-to-primitive (returns Maybe in Sky)
         const firstResultPtrPrimitive = results.length > 0 && isGoPointerToPrimitive(results[0].type);
 
+        // Multi-return without error or comma-ok → wrap as Tuple
+        const isMultiReturn = !isField && !shouldWrap && !isCommaOk && retTypes.length >= 2;
+
         if (shouldWrap) {
             goReturns = ` SkyResult `;
+        } else if (isCommaOk || isMultiReturn) {
+            goReturns = ` any `;
         } else if (retTypes.length > 0) {
             if (retTypes.length === 1) {
                 if (firstResultPtrPrimitive) {
@@ -1808,15 +1813,35 @@ func Sky_process_GetCwd() any {
             } else if (shouldWrap) {
                 if (retTypes.length === 1) {
                     goCode += `\terr := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(struct{}{})\n`;
-                } else if (firstResultPtrPrimitive) {
+                } else if (retTypes.length === 2 && firstResultPtrPrimitive) {
                     // (*primitive, error) → Result Error (Maybe T)
                     goCode += `\t_res, err := ${callExpr}\n`;
                     goCode += `\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n`;
                     goCode += `\tif _res == nil {\n\t\treturn SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})\n\t}\n`;
                     goCode += `\treturn SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_res})\n`;
-                } else {
+                } else if (retTypes.length === 2) {
+                    // (T, error) → Result Error T
                     goCode += `\tres, err := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(res)\n`;
+                } else {
+                    // (T1, T2, ..., error) → Result Error (Tuple of non-error values)
+                    const valueCount = retTypes.length - 1;
+                    const varNames = Array.from({length: valueCount}, (_, i) => `_r${i}`);
+                    goCode += `\t${varNames.join(", ")}, err := ${callExpr}\n`;
+                    goCode += `\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n`;
+                    const tupleFields = varNames.map((v, i) => `V${i}: ${v}`).join(", ");
+                    goCode += `\treturn SkyOk(Tuple${valueCount}{${tupleFields}})\n`;
                 }
+            } else if (isCommaOk) {
+                // (T, bool) comma-ok → Maybe T
+                goCode += `\t_val, _ok := ${callExpr}\n`;
+                goCode += `\tif !_ok {\n\t\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}\n\t}\n`;
+                goCode += `\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: _val}\n`;
+            } else if (isMultiReturn) {
+                // (T1, T2, ...) without error → Tuple
+                const varNames = retTypes.map((_, i) => `_r${i}`);
+                goCode += `\t${varNames.join(", ")} := ${callExpr}\n`;
+                const tupleFields = varNames.map((v, i) => `V${i}: ${v}`).join(", ");
+                goCode += `\treturn Tuple${retTypes.length}{${tupleFields}}\n`;
             } else if (firstResultPtrPrimitive) {
                 // Single *primitive return → Maybe T
                 goCode += `\t_res := ${callExpr}\n`;

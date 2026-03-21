@@ -108,7 +108,9 @@ import Drivers.Sqlite as _ exposing (..)   -- side-effect import (Go driver)
 | Go Return | Sky Return |
 |-----------|------------|
 | `(T, error)` | `Result Error T` |
+| `(T1, T2, error)` | `Result Error (Tuple2 T1 T2)` |
 | `error` | `Result Error Unit` |
+| `(T, bool)` | `Maybe T` (comma-ok pattern) |
 | `*string`, `*int` | `Maybe String`, `Maybe Int` |
 | `*sql.DB` | `Db` (opaque handle) |
 | `[]string` | `List String` |
@@ -616,6 +618,248 @@ main =
 
 **Navigation**: `a [ href "/about", attribute "sky-nav" "" ] [ text "About" ]`
 **Styling**: Use `Std.Css` with `stylesheet`/`rule` — not inline style strings.
+
+### Sky.Live Component Protocol
+
+Components are separate modules with their own `Model`/`Msg`/`update`/`view`. The compiler auto-wires message routing.
+
+```elm
+-- Counter.sky
+module Counter exposing (..)
+
+type alias Counter = { count : Int, label : String }
+
+type Msg = Increment | Decrement | Reset
+
+initWith : String -> Counter
+initWith label = { count = 0, label = label }
+
+update : Msg -> Counter -> (Counter, Cmd Msg)
+update msg counter =
+    case msg of
+        Increment -> ({ counter | count = counter.count + 1 }, Cmd.none)
+        _ -> (counter, Cmd.none)
+
+-- View takes a Msg wrapper function from parent
+view : (Msg -> parentMsg) -> Counter -> VNode
+view toMsg counter =
+    div []
+        [ text (String.fromInt counter.count)
+        , button [ onClick (toMsg Increment) ] [ text "+" ]
+        ]
+```
+
+```elm
+-- Main.sky (parent)
+type alias Model = { myCounter : Counter.Counter }
+type Msg = CounterMsg Counter.Msg | ...
+
+-- In view:
+Counter.view CounterMsg model.myCounter
+```
+
+### Subscriptions & Time (SSE Server-Push)
+
+`Sub msg` drives server-sent events. The Go runtime walks the subscription tree to set up SSE.
+
+```elm
+-- Timer: fires Tick every 1000ms via SSE
+subscriptions model = Time.every 1000 Tick
+
+-- Conditional subscription
+subscriptions model =
+    if model.autoRefresh then
+        Time.every 5000 RefreshData
+    else
+        Sub.none
+
+-- Multiple subscriptions
+subscriptions model =
+    Sub.batch
+        [ Time.every 1000 Tick
+        , Time.every 5000 RefreshData
+        ]
+```
+
+### Cmd (Side Effects)
+
+`Cmd.none` is used in most cases. `Cmd.batch` combines multiple commands.
+
+```elm
+update msg model =
+    case msg of
+        Increment ->
+            ( { model | count = model.count + 1 }, Cmd.none )
+
+        MultipleSideEffects ->
+            ( model, Cmd.batch [ cmd1, cmd2 ] )
+```
+
+## Application Patterns — When to Use What
+
+### 1. Simple CLI App
+
+No `[live]` in sky.toml. Just `main` calling functions directly.
+
+```elm
+module Main exposing (main)
+import Std.Log exposing (println)
+import Sky.Core.Platform as Platform
+
+main =
+    let
+        args = Platform.getArgs ()
+    in
+    case args of
+        _ :: "add" :: title :: _ -> addItem title
+        _ :: "list" :: _ -> listItems
+        _ -> println "Usage: app [add|list]"
+```
+
+### 2. HTTP Server (non-Live, Go-style)
+
+Uses gorilla/mux or net/http directly. Server renders HTML with `Std.Html.render`.
+
+```elm
+import Net.Http as Http
+import Github.Com.Gorilla.Mux as Mux
+
+main =
+    let
+        r = Mux.newRouter ()
+        _ = Mux.routerHandleFunc r "/" indexHandler
+    in
+    Http.listenAndServe ":4000" r
+
+indexHandler w req =
+    let
+        header = Http.responseWriterHeader w
+        _ = Http.headerSet header "Content-Type" "text/html"
+    in
+    Io.writeString w (render (div [] [ text "Hello" ]))
+```
+
+### 3. Sky.Live App (Server-Driven UI with SSE)
+
+Uses TEA architecture. Server holds state, pushes DOM diffs via SSE. Add `[live]` to sky.toml.
+
+Use when: interactive web UIs, real-time dashboards, forms, admin panels.
+
+### 4. Database App
+
+Wrap `database/sql` in a `Lib.Db` helper module for cleaner API:
+
+```elm
+-- Lib/Db.sky
+module Lib.Db exposing (open, close, exec, queryRows, getField)
+import Database.Sql as Sql
+import Modernc.Org.Sqlite as _    -- side-effect: loads SQLite driver
+
+open path = Sql.open "sqlite" path
+close db = Sql.dBClose db
+exec db query args = Sql.dBExecResult db query args
+queryRows db query args = Sql.dBQueryToMaps db query args
+getField field row = Maybe.withDefault "" (Dict.get field row)
+```
+
+```toml
+# sky.toml
+["go.dependencies"]
+"database/sql" = "latest"
+"modernc.org/sqlite" = "latest"
+```
+
+## Go FFI — Detailed Semantics
+
+### Adding Go Dependencies
+
+```bash
+sky add github.com/google/uuid    # external Go package
+sky add database/sql               # Go stdlib
+sky install                        # install all from sky.toml
+```
+
+This auto-generates `.skycache/go/<package>/bindings.skyi` with type-safe wrappers. **Never write FFI code manually** — the compiler generates everything.
+
+### Import Path Mapping
+
+Go package paths map to PascalCase Sky module names:
+
+| Go Package | Sky Import |
+|-----------|-----------|
+| `net/http` | `import Net.Http as Http` |
+| `database/sql` | `import Database.Sql as Sql` |
+| `crypto/sha256` | `import Crypto.Sha256 as Sha256` |
+| `encoding/hex` | `import Encoding.Hex as Hex` |
+| `os` | `import Os` |
+| `os/exec` | `import Os.Exec as Exec` |
+| `bufio` | `import Bufio` |
+| `io` | `import Io` |
+| `github.com/google/uuid` | `import Github.Com.Google.Uuid as Uuid` |
+| `github.com/gorilla/mux` | `import Github.Com.Gorilla.Mux as Mux` |
+| `modernc.org/sqlite` | `import Modernc.Org.Sqlite as _` |
+| `fyne.io/fyne/v2` | `import Fyne.Io.Fyne.V2 as Fyne` |
+
+### Calling Conventions
+
+```elm
+-- Zero-arg Go functions/variables: pass unit ()
+args = Os.stdin ()           -- os.Stdin
+uuid = Uuid.newString ()     -- uuid.NewString()
+now = Time.now ()            -- time.Now()
+
+-- Go methods: first arg is receiver
+Mux.routerHandleFunc router "/path" handler   -- router.HandleFunc("/path", handler)
+Sql.dBClose db                                -- db.Close()
+Http.responseWriterHeader w                   -- w.Header()
+
+-- Go struct fields: accessor function
+Http.requestBody req         -- req.Body
+Http.requestUrl req          -- req.URL
+
+-- Go constants: accessed as values (no parens needed for most)
+Http.statusOK                -- http.StatusOK
+
+-- Variadic args: pass as List
+Exec.command "sh" ["-c", "echo hello"]   -- exec.Command("sh", "-c", "echo hello")
+
+-- []byte args: use String.toBytes
+Sha256.sum256 (String.toBytes data)
+```
+
+### Side-Effect Imports (Database Drivers)
+
+Some Go packages are drivers that register themselves via `init()`. Import with `_`:
+
+```elm
+import Modernc.Org.Sqlite as _    -- registers "sqlite" driver for database/sql
+```
+
+### Handler Functions (HTTP)
+
+Go HTTP handlers take `(http.ResponseWriter, *http.Request)`:
+
+```elm
+handler : ResponseWriter -> Request -> Unit
+handler w req =
+    let
+        header = Http.responseWriterHeader w
+        _ = Http.headerSet header "Content-Type" "text/html"
+        _ = Io.writeString w "Hello"
+    in
+    ()
+
+-- Cookie management
+token = case Http.requestCookie req "session" of
+    Ok cookie -> Http.cookieValue cookie
+    Err _ -> ""
+
+-- Form values
+email = Http.requestFormValue req "email"
+
+-- Redirect
+Http.redirect w req "/login" 302
+```
 
 ## Project Structure
 

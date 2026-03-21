@@ -65,6 +65,22 @@ function emitGoExprForLower(expr: any): string {
             }
             return `${emitGoExprForLower(expr.expr)}.(${typeStr})`;
         }
+        case "GoFuncLit": {
+            const params = (expr.type?.params || []).map((p: any, i: number) => `arg${i} ${p.name || "any"}`).join(", ");
+            const retType = expr.type?.results?.[0] ? (expr.type.results[0].name || "any") : "any";
+            let body = "";
+            for (const stmt of (expr.body || [])) {
+                if (stmt.kind === "GoAssignStmt") {
+                    const op = stmt.define ? ":=" : "=";
+                    body += `${stmt.left.map((l: any) => emitGoExprForLower(l)).join(", ")} ${op} ${emitGoExprForLower(stmt.right)}; `;
+                } else if (stmt.kind === "GoReturnStmt") {
+                    body += `return ${emitGoExprForLower(stmt.expr)}`;
+                } else if (stmt.kind === "GoExprStmt") {
+                    body += `${emitGoExprForLower(stmt.expr)}; `;
+                }
+            }
+            return `func(${params}) ${retType} { ${body} }`;
+        }
         default: return `(any)(nil) /* unsupported ${expr.kind} */`;
     }
 }
@@ -831,11 +847,11 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
           // Heuristic: if it's a Go FFI call and the arg is known to be Bytes (which might be an array in Go)
           const coreArg = flat.args[i];
-          const isForeign = (fnExpr.kind === "GoSelectorExpr" && 
-                           fnExpr.expr.kind === "GoIdent" && 
-                           fnExpr.expr.name === "sky_wrappers") ||
-                           (fnExpr.kind === "GoSelectorExpr" && 
-                           fnExpr.expr.kind === "GoIdent" && 
+          // Only add byte-slice conversions when calling Go stdlib functions directly,
+          // NOT when calling sky_wrappers — those wrappers handle type assertions internally.
+          const isForeign = (fnExpr.kind === "GoSelectorExpr" &&
+                           fnExpr.expr.kind === "GoIdent" &&
+                           fnExpr.expr.name !== "sky_wrappers" &&
                            stdlibPaths[fnExpr.expr.name]);
           
           if (isForeign) {
@@ -877,10 +893,18 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       }
 
       // Handle Go FFI zero-arg calls (which take unit () in Sky)
-      if (args.length === 1 && (flat.args[0] as any).kind === "Literal" && (flat.args[0] as any).literalType === "Unit") {
-          const isWrappers = (fnExpr.kind === "GoSelectorExpr" && fnExpr.expr.kind === "GoIdent" && fnExpr.expr.name === "sky_wrappers");
-          if (isWrappers) {
-              args = [];
+      // Strip the unit argument when calling sky_wrappers functions — the Go wrapper takes 0 args.
+      // This covers both direct calls like `wrapper ()` (Literal Unit) and forwarded calls
+      // like `skyName arg0 = wrapper arg0` where arg0 is a unit-typed variable.
+      if (args.length === 1) {
+          const coreArg0 = flat.args[0] as any;
+          const isUnitLiteral = coreArg0.kind === "Literal" && coreArg0.literalType === "Unit";
+          const isUnitTypedVar = coreArg0.kind === "Variable" && coreArg0.type?.kind === "TypeConstant" && coreArg0.type?.name === "Unit";
+          if (isUnitLiteral || isUnitTypedVar) {
+              const isWrappers = (fnExpr.kind === "GoSelectorExpr" && fnExpr.expr.kind === "GoIdent" && fnExpr.expr.name === "sky_wrappers");
+              if (isWrappers) {
+                  args = [];
+              }
           }
       }
 
@@ -976,6 +1000,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             },
             args: args as GoIR.GoExpr[]
         } as any;
+      } else if (fnExpr.kind === "GoIdent" && fnExpr.name === "::" && args.length === 2) {
+          // Cons expression: head :: tail → append([]any{head}, tail...)
+          const h = emitGoExprForLower(args[0]);
+          const t = emitGoExprForLower(args[1]);
+          return {
+              kind: "GoRawExpr",
+              code: `append([]any{${h}}, (any)(${t}).([]any)...)`
+          } as any;
       } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "%", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
           // Check if ++ is operating on lists (type is List/TypeApplication with List constructor)
           if (fnExpr.name === "++" && expr.type && expr.type.kind === "TypeApplication" &&
