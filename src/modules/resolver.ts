@@ -276,9 +276,15 @@ function resolveModuleToFile(
         }
       }
 
-      // Try direct module path first (for local-style imports)
+      // Derive PascalCase package name for prefix matching
+      const pkgName = depManifest?.name || "";
+      const pkgPascal = pkgName.split(/[-_.]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+
+      // Try multiple resolution strategies:
+      // 1. Direct path: import Tailwind → src/Tailwind.sky
       const depFilePath = path.join(pkgSrc, ...moduleName) + ".sky";
-      // Then try stripping the package prefix (for qualified imports like Github.Com.Org.Pkg.Module)
+
+      // 2. Strip full URL prefix: import Github.Com.Anzellai.SkyTailwind.Tailwind → src/Tailwind.sky
       let strippedPath: string | undefined;
       if (moduleName.length > importPrefix.length) {
         const prefixMatches = importPrefix.every((seg: string, i: number) => seg === moduleName[i]);
@@ -288,23 +294,29 @@ function resolveModuleToFile(
         }
       }
 
+      // 3. Strip PascalCase package name prefix: import SkyTailwind.Tailwind → src/Tailwind.sky
+      let pkgPrefixPath: string | undefined;
+      if (pkgPascal && moduleName.length > 1 && moduleName[0] === pkgPascal) {
+        const stripped = moduleName.slice(1);
+        pkgPrefixPath = path.join(pkgSrc, ...stripped) + ".sky";
+      }
+
       const resolvedPath = fs.existsSync(depFilePath) ? depFilePath :
-                           (strippedPath && fs.existsSync(strippedPath)) ? strippedPath : undefined;
+                           (strippedPath && fs.existsSync(strippedPath)) ? strippedPath :
+                           (pkgPrefixPath && fs.existsSync(pkgPrefixPath)) ? pkgPrefixPath : undefined;
       if (resolvedPath) {
         // Enforce [lib].exposing — if the package declares exposed modules,
         // only those are importable. No [lib] = all modules are internal.
         if (depManifest?.lib?.exposing) {
           const moduleNameStr = moduleName.join(".");
           const strippedNameStr = strippedPath ? moduleName.slice(importPrefix.length).join(".") : "";
-          // The exposing list may use the PascalCase package name as prefix
-          // e.g., package "sky-tailwind" exposes "SkyTailwind" for root module
-          const pkgName = depManifest.name || "";
-          const pkgPascal = pkgName.split(/[-_.]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
-          // Build the prefixed module name: e.g., "SkyTailwind" for root, "SkyTailwind.Spacing" for submodule
+          const pkgStrippedNameStr = pkgPrefixPath ? moduleName.slice(1).join(".") : "";
+          // Build the prefixed module name: e.g., "SkyTailwind.Tailwind" for root
           const prefixedName = strippedNameStr ? `${pkgPascal}.${strippedNameStr}` : pkgPascal;
 
           const isExposed = depManifest.lib.exposing.includes(moduleNameStr) ||
                             depManifest.lib.exposing.includes(strippedNameStr) ||
+                            depManifest.lib.exposing.includes(pkgStrippedNameStr) ||
                             depManifest.lib.exposing.includes(prefixedName);
           if (!isExposed) {
             return undefined; // Module exists but is not publicly exposed
