@@ -28,16 +28,17 @@ import (
 
 type SkyResult struct {
 	Tag int
+	SkyName string
 	OkValue any
 	ErrValue any
 }
 
 func SkyOk(v any) SkyResult {
-	return SkyResult{Tag: 0, OkValue: v}
+	return SkyResult{Tag: 0, SkyName: "Ok", OkValue: v}
 }
 
 func SkyErr(e any) SkyResult {
-	return SkyResult{Tag: 1, ErrValue: e}
+	return SkyResult{Tag: 1, SkyName: "Err", ErrValue: e}
 }
 
 type Tuple2 struct {
@@ -117,19 +118,19 @@ func Sky_list_Foldr(fn any, acc any, list any) any {
 func Sky_list_Head(list any) any {
 	lst, ok := list.([]any)
 	if !ok || len(lst) == 0 {
-		return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil} // Nothing
+		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil} // Nothing
 	}
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: lst[0]}
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: lst[0]}
 }
 
 func Sky_list_Tail(list any) any {
 	lst, ok := list.([]any)
 	if !ok || len(lst) == 0 {
-		return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil} // Nothing
+		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil} // Nothing
 	}
 	tail := make([]any, len(lst)-1)
 	copy(tail, lst[1:])
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: tail}
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: tail}
 }
 
 func Sky_list_Length(list any) any {
@@ -301,32 +302,32 @@ func Sky_list_Map2(fn any, listA any, listB any) any {
 
 func Sky_list_Maximum(list any) any {
 	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 { return struct{ Tag int; JustValue any }{Tag: 1} }
+	if !ok || len(lst) == 0 { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} }
 	best := lst[0]
 	for _, item := range lst[1:] {
 		if fmt.Sprintf("%v", item) > fmt.Sprintf("%v", best) { best = item }
 	}
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: best}
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: best}
 }
 
 func Sky_list_Minimum(list any) any {
 	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 { return struct{ Tag int; JustValue any }{Tag: 1} }
+	if !ok || len(lst) == 0 { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} }
 	best := lst[0]
 	for _, item := range lst[1:] {
 		if fmt.Sprintf("%v", item) < fmt.Sprintf("%v", best) { best = item }
 	}
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: best}
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: best}
 }
 
 func Sky_list_Find(pred any, list any) any {
 	lst, ok := list.([]any)
-	if !ok { return struct{ Tag int; JustValue any }{Tag: 1} }
+	if !ok { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} }
 	fn := pred.(func(any) any)
 	for _, item := range lst {
-		if fn(item).(bool) { return struct{ Tag int; JustValue any }{Tag: 0, JustValue: item} }
+		if fn(item).(bool) { return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: item} }
 	}
-	return struct{ Tag int; JustValue any }{Tag: 1}
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"}
 }
 
 func Sky_list_FilterMap(fn any, list any) any {
@@ -522,8 +523,8 @@ func Sky_dict_Insert(key any, val any, dict any) any {
 func Sky_dict_Get(key any, dict any) any {
 	m := dict.(map[any]any)
 	val, ok := m[key]
-	if !ok { return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil} } // Nothing
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: val}
+	if !ok { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil} } // Nothing
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val}
 }
 
 func Sky_dict_Remove(key any, dict any) any {
@@ -611,9 +612,9 @@ func Sky_dict_Update(key any, fn any, dict any) any {
 	val, ok := m[key]
 	var maybeVal any
 	if ok {
-		maybeVal = struct{ Tag int; JustValue any }{Tag: 0, JustValue: val}
+		maybeVal = struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val}
 	} else {
-		maybeVal = struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}
+		maybeVal = struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}
 	}
 	newMaybe := fn.(func(any) any)(maybeVal)
 	newVal := reflect.ValueOf(newMaybe)
@@ -720,8 +721,8 @@ func Sky_json_AsList(val any) any {
 }
 
 func Sky_json_AsNullable(val any) any {
-	if val == nil { return SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}) } // Ok Nothing
-	return SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: val})
+	if val == nil { return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}) } // Ok Nothing
+	return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val})
 }
 
 func Sky_json_At(keys any, obj any) any {
@@ -870,7 +871,7 @@ func Sky_json_decoder_Fail(msg any) any {
 func Sky_json_decoder_Nullable(decoder any) any {
 	return func(val any) any {
 		if val == nil {
-			return SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil})
+			return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})
 		}
 		result := decoder.(func(any) any)(val)
 		r := reflect.ValueOf(result)
@@ -878,7 +879,7 @@ func Sky_json_decoder_Nullable(decoder any) any {
 			return result
 		}
 		inner := r.FieldByName("OkValue").Interface()
-		return SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: inner})
+		return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: inner})
 	}
 }
 
@@ -1123,10 +1124,10 @@ func Sky_json_decoder_Maybe(decoder any) any {
 		result := decoder.(func(any) any)(val)
 		r := reflect.ValueOf(result)
 		if r.Kind() == reflect.Struct && r.FieldByName("Tag").Interface().(int) == 1 {
-			return SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil})
+			return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})
 		}
 		inner := r.FieldByName("OkValue").Interface()
-		return SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: inner})
+		return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: inner})
 	}
 }
 
@@ -1179,7 +1180,7 @@ func Sky_maybe_Map(fn any, maybe any) any {
 			return maybe
 		}
 		inner := r.FieldByName("JustValue").Interface()
-		return struct{ Tag int; JustValue any }{Tag: 0, JustValue: fn.(func(any) any)(inner)}
+		return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: fn.(func(any) any)(inner)}
 	}
 	return maybe
 }
@@ -1248,13 +1249,45 @@ func Sky_result_ToMaybe(result any) any {
 	r := reflect.ValueOf(result)
 	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
 		if r.FieldByName("Tag").Interface().(int) == 0 {
-			return struct{ Tag int; JustValue any }{Tag: 0, JustValue: r.FieldByName("OkValue").Interface()}
+			return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: r.FieldByName("OkValue").Interface()}
 		}
 	}
-	return struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}
 }
 
 // ============= Error Operations =============
+
+// ============= Msg Encoding =============
+
+func Sky_msgToString(v any) any {
+	if s, ok := v.(string); ok { return s }
+	val := reflect.ValueOf(v)
+	if val.Kind() != reflect.Struct { return fmt.Sprintf("%v", v) }
+	nameField := val.FieldByName("SkyName")
+	if !nameField.IsValid() { return fmt.Sprintf("%v", v) }
+	name := nameField.String()
+	// Collect constructor arguments (fields ending in "Value")
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Type().Field(i)
+		if field.Name == "Tag" || field.Name == "SkyName" { continue }
+		if !strings.Contains(field.Name, "Value") { continue }
+		argVal := val.Field(i).Interface()
+		if argVal == nil { continue }
+		switch a := argVal.(type) {
+		case string:
+			name += " \\"" + a + "\\""
+		case int:
+			name += " " + fmt.Sprintf("%d", a)
+		default:
+			argStr := Sky_msgToString(a)
+			name += " " + argStr.(string)
+		}
+	}
+	return name
+}
+
+// JS escape hatch: passes a raw string through for inline JavaScript
+func Sky_JS(s any) any { return s }
 
 func Sky_errorToString(e any) any {
 	if e == nil {
@@ -1345,9 +1378,9 @@ func Sky_array_Get(index any, arr any) any {
 	a := arr.([]any)
 	i := index.(int)
 	if i < 0 || i >= len(a) {
-		return struct{ Tag int; JustValue any }{Tag: 1} // Nothing
+		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} // Nothing
 	}
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: a[i]} // Just
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: a[i]} // Just
 }
 
 func Sky_array_Set(index any, val any, arr any) any {
@@ -1498,9 +1531,9 @@ func Sky_process_Exit(code any) any {
 func Sky_process_GetEnv(key any) any {
 	val, ok := os.LookupEnv(key.(string))
 	if !ok {
-		return struct{ Tag int; JustValue any }{Tag: 1} // Nothing
+		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} // Nothing
 	}
-	return struct{ Tag int; JustValue any }{Tag: 0, JustValue: val} // Just
+	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val} // Just
 }
 
 func Sky_process_GetCwd() any {
@@ -1737,8 +1770,8 @@ func Sky_process_GetCwd() any {
             if (firstResultPtrPrimitive) {
                 // Pointer-to-primitive field: wrap in Maybe (Just/Nothing)
                 goCode += `\t_fv := ${fieldExpr}\n`;
-                goCode += `\tif _fv == nil {\n\t\treturn struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}\n\t}\n`;
-                goCode += `\treturn struct{ Tag int; JustValue any }{Tag: 0, JustValue: *_fv}\n`;
+                goCode += `\tif _fv == nil {\n\t\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}\n\t}\n`;
+                goCode += `\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_fv}\n`;
             } else if (fieldRetType.startsWith("[]") && fieldRetType !== "[]any") {
                 goCode += `\t_val := ${fieldExpr}\n`;
                 goCode += `\t_result := make([]any, len(_val))\n`;
@@ -1762,16 +1795,16 @@ func Sky_process_GetCwd() any {
                     // (*primitive, error) → Result Error (Maybe T)
                     goCode += `\t_res, err := ${callExpr}\n`;
                     goCode += `\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n`;
-                    goCode += `\tif _res == nil {\n\t\treturn SkyOk(struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil})\n\t}\n`;
-                    goCode += `\treturn SkyOk(struct{ Tag int; JustValue any }{Tag: 0, JustValue: *_res})\n`;
+                    goCode += `\tif _res == nil {\n\t\treturn SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})\n\t}\n`;
+                    goCode += `\treturn SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_res})\n`;
                 } else {
                     goCode += `\tres, err := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(res)\n`;
                 }
             } else if (firstResultPtrPrimitive) {
                 // Single *primitive return → Maybe T
                 goCode += `\t_res := ${callExpr}\n`;
-                goCode += `\tif _res == nil {\n\t\treturn struct{ Tag int; JustValue any }{Tag: 1, JustValue: nil}\n\t}\n`;
-                goCode += `\treturn struct{ Tag int; JustValue any }{Tag: 0, JustValue: *_res}\n`;
+                goCode += `\tif _res == nil {\n\t\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}\n\t}\n`;
+                goCode += `\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_res}\n`;
             } else {
                 goCode += `\treturn ${callExpr}\n`;
             }

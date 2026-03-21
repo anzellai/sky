@@ -13,7 +13,7 @@ not b =
     else
         True
 
-foreign import "sky_wrappers" exposing (Sky_errorToString)
+foreign import "sky_wrappers" exposing (Sky_errorToString, Sky_JS)
 
 errorToString : a -> String
 errorToString e =
@@ -45,3 +45,7 @@ clamp low high val =
 modBy : Int -> Int -> Int
 modBy divisor n =
     n % divisor
+
+js : String -> String
+js s =
+    Sky_JS s

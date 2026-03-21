@@ -143,7 +143,8 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     if (recordAliasTypes.has(tDecl.name)) continue;
 
     const fields: { name: string; type: GoIR.GoType }[] = [
-      { name: "Tag", type: { kind: "GoIdentType", name: "int" } }
+      { name: "Tag", type: { kind: "GoIdentType", name: "int" } },
+      { name: "SkyName", type: { kind: "GoIdentType", name: "string" } }
     ];
 
     // Naive variant field mapping
@@ -176,7 +177,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     if (tDecl.constructors.length === 1 && tDecl.constructors[0].name === tDecl.name) continue;
     for (let i = 0; i < tDecl.constructors.length; i++) {
       const c = tDecl.constructors[i];
-      const kvPairs: string[] = [`Tag: ${i}`];
+      const kvPairs: string[] = [`Tag: ${i}`, `SkyName: "${c.name}"`];
       const goParams: string[] = [];
       for (let j = 0; j < c.types.length; j++) {
         const fieldName = c.name + "Value" + (j > 0 ? j : "");
@@ -726,7 +727,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               // Maybe Just
               return {
                   kind: "GoRawExpr",
-                  code: `struct{ Tag int; ${wk.field} any }{Tag: ${wk.tag}, ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
+                  code: `struct{ Tag int; SkyName string; ${wk.field} any }{Tag: ${wk.tag}, SkyName: "${flat.fn.name}", ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
               } as any;
           }
           // Check local constructorMap for ADT constructor applications
@@ -734,7 +735,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           if (localCtorInfo) {
               const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
               // Use named field init so constructors with shared structs work correctly
-              const kvPairs: string[] = [`Tag: ${localCtorInfo.tagIndex}`];
+              const kvPairs: string[] = [`Tag: ${localCtorInfo.tagIndex}`, `SkyName: "${flat.fn.name}"`];
               for (let j = 0; j < flat.args.length; j++) {
                   const fieldName = flat.fn.name + "Value" + (j > 0 ? j : "");
                   kvPairs.push(`${fieldName}: ${emitGoExprForLower(argExprs[j])}`);
@@ -1345,9 +1346,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           if (ctorNames.includes("Ok") || ctorNames.includes("Err")) {
               adtTypeName = "sky_wrappers.SkyResult";
           } else if (ctorNames.includes("Just") || ctorNames.includes("Nothing")) {
-              // Maybe type: both Just and Nothing use struct{ Tag int; JustValue any }
+              // Maybe type: both Just and Nothing use struct{ Tag int; SkyName string; JustValue any }
               // so the type assertion is consistent for the switch statement.
-              adtTypeName = "struct{ Tag int; JustValue any }";
+              adtTypeName = "struct{ Tag int; SkyName string; JustValue any }";
           }
       }
 
@@ -1384,7 +1385,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   const fieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value" + (j > 0 ? j : ""));
                   // For Maybe's Just branch, use the full struct type that includes JustValue
                   const fieldAssertType = (adtTypeName === "struct{ Tag int }" && fieldName === "JustValue")
-                      ? "struct{ Tag int; JustValue any }"
+                      ? "struct{ Tag int; SkyName string; JustValue any }"
                       : adtTypeName;
                   if (fieldAssertType) {
                       subj = { kind: "GoTypeAssertExpr", expr: subj, type: { kind: "GoIdentType", name: fieldAssertType } } as any;
@@ -1487,7 +1488,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         if (ctorInfo) {
             // Known ADT constructor: emit ParentType{Tag: tagIndex, CtorValueN: arg}
             const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-            const kvPairs: string[] = [`Tag: ${ctorInfo.tagIndex}`];
+            const kvPairs: string[] = [`Tag: ${ctorInfo.tagIndex}`, `SkyName: "${expr.name}"`];
             for (let j = 0; j < expr.args.length; j++) {
                 const fieldName = expr.name + "Value" + (j > 0 ? j : "");
                 kvPairs.push(`${fieldName}: ${emitGoExprForLower(argExprs[j])}`);
@@ -1522,21 +1523,21 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                 // Just value
                 return {
                     kind: "GoRawExpr",
-                    code: `struct{ Tag int; ${wk.field} any }{Tag: ${wk.tag}, ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
+                    code: `struct{ Tag int; SkyName string; ${wk.field} any }{Tag: ${wk.tag}, SkyName: "${expr.name}", ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
                 } as any;
             }
             // Nothing (no args) — include JustValue: nil so the struct type
-            // matches Just's struct{ Tag int; JustValue any } for consistent matching.
+            // matches Just's struct{ Tag int; SkyName string; JustValue any } for consistent matching.
             if (expr.name === "Nothing") {
                 return {
                     kind: "GoRawExpr",
-                    code: `struct{ Tag int; JustValue any }{Tag: ${wk.tag}, JustValue: nil}`
+                    code: `struct{ Tag int; SkyName string; JustValue any }{Tag: ${wk.tag}, SkyName: "Nothing", JustValue: nil}`
                 } as any;
             }
             return {
                 kind: "GoRawExpr",
-                code: `struct{ Tag int }{Tag: ${wk.tag}}`
-            } as any;
+                code: `struct{ Tag int; SkyName string }{Tag: ${wk.tag}, SkyName: "${expr.name}"}`
+                } as any;
         }
         // Special interop types: Foreign, JsValue map to nil in Go
         if (expr.name === "Foreign" || expr.name === "JsValue") {
@@ -1557,7 +1558,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             }
         }
         const argExprs2 = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-        const kvPairs2: string[] = ["Tag: 0"];
+        const kvPairs2: string[] = ["Tag: 0", `SkyName: "${expr.name}"`];
         for (let j = 0; j < argExprs2.length; j++) {
             const fieldName = expr.name + "Value" + (j > 0 ? j : "");
             kvPairs2.push(`${fieldName}: ${emitGoExprForLower(argExprs2[j])}`);

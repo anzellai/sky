@@ -2,52 +2,50 @@ module Std.Live.Events exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 
+foreign import "sky_wrappers" exposing (Sky_msgToString)
 
 -- ============================================================
--- Std.Live.Events — Server-driven event attributes for Sky.Live
+-- Std.Live.Events — Type-safe event attributes for Sky.Live
 --
--- These produce (key, value) tuples for sky-* data attributes
--- that the JS client intercepts and POSTs to the server.
+-- Events accept Msg constructors directly (type-safe):
+--     button [ onClick Increment ] [ text "+" ]
+--     button [ onClick (Navigate HomePage) ] [ text "Home" ]
 --
--- Usage:
---     import Std.Live.Events exposing (onClick, onInput, onSubmit)
---
+-- String message names also work (backward compatible):
 --     button [ onClick "Increment" ] [ text "+" ]
---     input [ onInput "UpdateDraft", value model.draft ]
---     form [ onSubmit "AddTodo" ] [ ... ]
 -- ============================================================
 
 
--- Click event: sends the named Msg to the server when clicked.
-onClick msgName =
-    ( "sky-click", msgName )
+-- Click event: sends the Msg to the server when clicked.
+onClick msg =
+    ( "sky-click", Sky_msgToString msg )
 
 
--- Input event: sends the named Msg with the input value.
-onInput msgName =
-    ( "sky-input", msgName )
+-- Input event: sends the Msg with the input value.
+onInput msg =
+    ( "sky-input", Sky_msgToString msg )
 
 
--- Submit event: sends the named Msg with form data.
-onSubmit msgName =
-    ( "sky-submit", msgName )
+-- Submit event: sends the Msg with form data.
+onSubmit msg =
+    ( "sky-submit", Sky_msgToString msg )
 
 
 -- Double-click event.
-onDblClick msgName =
-    ( "sky-dblclick", msgName )
+onDblClick msg =
+    ( "sky-dblclick", Sky_msgToString msg )
 
 
 -- Change event (for select, checkbox, etc.)
-onChange msgName =
-    ( "sky-change", msgName )
+onChange msg =
+    ( "sky-change", Sky_msgToString msg )
 
 
 -- Focus event.
-onFocus msgName =
-    ( "sky-focus", msgName )
+onFocus msg =
+    ( "sky-focus", Sky_msgToString msg )
 
 
 -- Blur event.
-onBlur msgName =
-    ( "sky-blur", msgName )
+onBlur msg =
+    ( "sky-blur", Sky_msgToString msg )
