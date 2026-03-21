@@ -1,6 +1,16 @@
 module Sky.Core.Process exposing (..)
 
-foreign import "sky_wrappers" exposing (Sky_process_Run, Sky_process_Exit, Sky_process_GetEnv, Sky_process_GetCwd)
+import Sky.Core.Prelude exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_process_Run)
+
+foreign import "sky_wrappers" exposing (Sky_process_Exit)
+
+foreign import "sky_wrappers" exposing (Sky_process_GetEnv)
+
+foreign import "sky_wrappers" exposing (Sky_process_GetCwd)
+
+foreign import "sky_wrappers" exposing (Sky_process_LoadEnv)
 
 run : String -> List String -> Result Error String
 run command args =
@@ -17,3 +27,7 @@ getEnv key =
 getCwd : Result Error String
 getCwd =
     Sky_process_GetCwd ()
+
+loadEnv : String -> Result Error Unit
+loadEnv filePath =
+    Sky_process_LoadEnv filePath

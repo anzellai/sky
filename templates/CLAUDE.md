@@ -357,6 +357,7 @@ run : String -> List String -> Result Error String
 exit : Int -> Unit
 getEnv : String -> Maybe String
 getCwd : Result Error String
+loadEnv : String -> Result Error ()     -- load .env file (pass "" for default ".env")
 ```
 
 ### Sky.Core.Debug
@@ -718,18 +719,22 @@ main =
 
 ### 2. HTTP Server (non-Live, Go-style)
 
-Uses gorilla/mux or net/http directly. Server renders HTML with `Std.Html.render`.
+Uses gorilla/mux or net/http directly. Server renders HTML with `Std.Html.render`. Use `Process.loadEnv` to load `.env` files for configuration.
 
 ```elm
 import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
+import Sky.Core.Process as Process exposing (getEnv, loadEnv)
+import Sky.Core.Maybe as Maybe
 
 main =
     let
+        _ = loadEnv ""   -- load .env file
+        port = Maybe.withDefault "4000" (getEnv "PORT")
         r = Mux.newRouter ()
         _ = Mux.routerHandleFunc r "/" indexHandler
     in
-    Http.listenAndServe ":4000" r
+    Http.listenAndServe (":" ++ port) r
 
 indexHandler w req =
     let
@@ -894,6 +899,8 @@ input = "debounce"              # "debounce" | "blur"
 [live.session]
 store = "memory"                # memory | sqlite | redis | postgresql
 ```
+
+Sky.Live config is embedded at compile time but can be overridden at runtime via env vars (`SKY_LIVE_PORT`, `SKY_LIVE_STORE_TYPE`, `SKY_LIVE_STORE_PATH`, `SKY_LIVE_INPUT_MODE`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_TTL`) or a `.env` file. Priority: compiled defaults < sky.toml < env vars < .env file.
 
 ## Coding Conventions
 

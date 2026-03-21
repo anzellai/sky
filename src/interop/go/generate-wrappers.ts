@@ -17,6 +17,7 @@ export function generateWrappers(pkgName: string, pkg: InspectResult, usedSymbol
       let helperCode = `package sky_wrappers
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -1559,6 +1560,39 @@ func Sky_process_GetCwd() any {
 		return SkyResult{Tag: 1, ErrValue: err}
 	}
 	return SkyResult{Tag: 0, OkValue: dir}
+}
+
+func Sky_process_LoadEnv(filePath any) any {
+	p := filePath.(string)
+	if p == "" {
+		p = ".env"
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		eqIdx := strings.Index(line, "=")
+		if eqIdx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:eqIdx])
+		val := strings.TrimSpace(line[eqIdx+1:])
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			val = val[1 : len(val)-1]
+		}
+		os.Setenv(key, val)
+	}
+	if err := scanner.Err(); err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: struct{}{}}
 }
 `;
       fs.writeFileSync(helperPath, helperCode);

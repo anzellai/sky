@@ -576,7 +576,7 @@ Key modules: `Std.Cmd`, `Std.Sub`, `Std.Task`, `Std.Program`.
 | `Sky.Core.Set`     | `empty`, `singleton`, `insert`, `remove`, `member`, `size`, `toList`, `fromList`, `union`, `intersect`, `diff`, `map`, `filter`, `foldl` |
 | `Sky.Core.Array`   | `empty`, `fromList`, `toList`, `get`, `set`, `push`, `length`, `slice`, `map`, `foldl`, `foldr`, `append` |
 | `Sky.Core.File`    | `readFile`, `writeFile`, `exists`, `remove`, `mkdirAll`, `readDir`, `isDir` |
-| `Sky.Core.Process` | `run`, `exit`, `getEnv`, `getCwd` |
+| `Sky.Core.Process` | `run`, `exit`, `getEnv`, `getCwd`, `loadEnv` |
 
 ### Sky.Core.Json
 
@@ -823,6 +823,28 @@ url = "redis://localhost:6379"
 
 [live.static]
 dir = "static"
+```
+
+#### Runtime Environment Overrides
+
+Sky.Live config values from `sky.toml` are embedded at compile time, but can be overridden at runtime via environment variables or a `.env` file. Priority (lowest to highest): compiled defaults < `sky.toml` < env vars < `.env` file.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SKY_LIVE_PORT` | `4000` | Server port |
+| `SKY_LIVE_STORE_TYPE` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgresql` |
+| `SKY_LIVE_STORE_PATH` | _(empty)_ | Store connection string/path |
+| `SKY_LIVE_INPUT_MODE` | `debounce` | Input handling: `debounce` or `blur` |
+| `SKY_LIVE_POLL_INTERVAL` | `0` | Polling interval in ms (0 = SSE only) |
+| `SKY_LIVE_TTL` | `30m` | Session TTL (Go duration format) |
+
+```bash
+# Override via env var
+SKY_LIVE_PORT=8000 ./dist/app
+
+# Or via .env file in the working directory
+echo "SKY_LIVE_PORT=8000" > .env
+./dist/app
 ```
 
 See the [design docs](docs/design/) for the full architecture:

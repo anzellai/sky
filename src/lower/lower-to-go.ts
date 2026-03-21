@@ -1398,61 +1398,94 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       }
 
       // ADT pattern matching
-      // Determine the ADT type name from the first constructor pattern
+      // Determine the ADT type name from the constructor patterns.
+      // Strategy: check local constructorMap first, then _importedCtorTags
+      // (which has accurate ADT info from the module graph), and only fall
+      // back to moduleExports search as a last resort.
       let adtTypeName: string | undefined;
-      for (const c of expr.cases) {
-          if (c.pattern.kind === "ConstructorPattern") {
-              const info = constructorMap?.get(c.pattern.name);
+
+      // Collect all constructor names from this case expression
+      const ctorPatternNames = expr.cases
+          .filter((c: any) => c.pattern.kind === "ConstructorPattern")
+          .map((c: any) => c.pattern.name as string);
+
+      // 1. Check local constructorMap (for constructors defined in this module)
+      for (const name of ctorPatternNames) {
+          const info = constructorMap?.get(name);
+          if (info) {
+              adtTypeName = info.adtName;
+              break;
+          }
+      }
+
+      // 2. Well-known Prelude types (must be checked before _importedCtorTags
+      //    because Ok/Err/Just/Nothing use sky_wrappers runtime types, not the
+      //    Sky.Core.Prelude Go package types)
+      if (!adtTypeName) {
+          if (ctorPatternNames.includes("Ok") || ctorPatternNames.includes("Err")) {
+              adtTypeName = "sky_wrappers.SkyResult";
+          } else if (ctorPatternNames.includes("Just") || ctorPatternNames.includes("Nothing")) {
+              adtTypeName = "struct{ Tag int; SkyName string; JustValue any }";
+          }
+      }
+
+      // 3. Check _importedCtorTags (has correct adtName from module graph)
+      //    When multiple constructors match different ADTs (collision), use
+      //    majority vote — the ADT that matches the most constructors wins.
+      if (!adtTypeName) {
+          const adtCounts = new Map<string, number>();
+          for (const name of ctorPatternNames) {
+              const info = _importedCtorTags.get(name);
               if (info) {
-                  adtTypeName = info.adtName;
-                  break;
+                  adtCounts.set(info.adtName, (adtCounts.get(info.adtName) || 0) + 1);
+              }
+          }
+          let maxCount = 0;
+          for (const [adt, count] of adtCounts) {
+              if (count > maxCount) {
+                  maxCount = count;
+                  adtTypeName = adt;
               }
           }
       }
 
-      // Fallback: check imported modules for the constructor's ADT type
+      // 4. Fallback: search moduleExports
       if (!adtTypeName && moduleExports) {
-          const ctorNames = expr.cases
-              .filter(c => c.pattern.kind === "ConstructorPattern")
-              .map(c => (c.pattern as any).name);
-          // Well-known Prelude types
-          if (ctorNames.includes("Ok") || ctorNames.includes("Err")) {
-              adtTypeName = "sky_wrappers.SkyResult";
-          } else if (ctorNames.includes("Just") || ctorNames.includes("Nothing")) {
-              adtTypeName = "struct{ Tag int; SkyName string; JustValue any }";
-          } else {
-              // Search imported modules for the constructor
-              for (const ctorName of ctorNames) {
-                  const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
-                  for (const [modName, exports] of moduleExports) {
-                      if (ffiWrappers.has(modName)) continue;
-                      if (exports.has(ctorName)) {
+          // Search imported modules — cross-reference ALL constructors to find
+          // the module that exports the most of them (avoids name collisions
+          // where e.g. "Error" exists in both a Sky ADT and an FFI module).
+          const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+          const candidates = new Map<string, { goPkg: string; typeName: string; count: number }>();
+
+          for (const ctorName of ctorPatternNames) {
+              for (const [modName, exports] of moduleExports) {
+                  if (ffiWrappers.has(modName)) continue;
+                  if (!exports.has(ctorName)) continue;
+                  const scheme = exports.get(ctorName);
+                  if (scheme?.type) {
+                      let retType = scheme.type;
+                      while (retType.kind === "TypeFunction") retType = retType.to;
+                      if (retType.kind === "TypeConstant") {
                           const parts = modName.split(".");
                           const goPkg = makeSafeGoPkgName(parts[parts.length - 1], modName);
-                          // Find the ADT type name by looking at the module's type declarations
-                          // Convention: the constructor function is in the package, and the type
-                          // name is determined by the Go struct type generated for that module
-                          // For imported constructors, the Go package has a named type
-                          // Find by checking which type declaration contains this constructor
-                          if (_importedModules.has(modName) || true) {
-                              // Use the module's Go type. For most cases, the ADT is named after
-                              // the type declaration (e.g., State module's Msg → sky_state.Msg)
-                              // We need to find the actual type name from the export scheme
-                              const scheme = exports.get(ctorName);
-                              if (scheme?.type) {
-                                  // The constructor's return type tells us the ADT name
-                                  let retType = scheme.type;
-                                  while (retType.kind === "TypeFunction") retType = retType.to;
-                                  if (retType.kind === "TypeConstant") {
-                                      const typeName = retType.name.split(".").pop() || retType.name;
-                                      adtTypeName = `${goPkg}.${typeName}`;
-                                  }
-                              }
-                          }
-                          if (adtTypeName) break;
+                          const typeName = retType.name.split(".").pop() || retType.name;
+                          const key = `${goPkg}.${typeName}`;
+                          const existing = candidates.get(key);
+                          candidates.set(key, {
+                              goPkg, typeName,
+                              count: (existing?.count || 0) + 1
+                          });
                       }
                   }
-                  if (adtTypeName) break;
+              }
+          }
+
+          // Pick the candidate that matches the most constructors
+          let maxCount = 0;
+          for (const [key, info] of candidates) {
+              if (info.count > maxCount) {
+                  maxCount = info.count;
+                  adtTypeName = key;
               }
           }
       }

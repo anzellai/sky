@@ -94,6 +94,8 @@ poll_interval = 0                  # ms (0 = SSE only)
 store = "memory"                   # memory | sqlite | redis | postgresql
 ```
 
+Sky.Live config is embedded at compile time but overridable at runtime via env vars (`SKY_LIVE_PORT`, `SKY_LIVE_STORE_TYPE`, `SKY_LIVE_STORE_PATH`, `SKY_LIVE_INPUT_MODE`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_TTL`) or `.env` file. Priority: compiled defaults < sky.toml < env vars < .env file. Non-Live apps can use `Process.loadEnv ""` to load `.env` files and `Process.getEnv` to read env vars.
+
 ### Package Types
 
 - **App**: has `entry`, no `[lib]` -- runnable application

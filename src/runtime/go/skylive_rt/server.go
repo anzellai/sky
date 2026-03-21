@@ -1,10 +1,13 @@
 package skylive_rt
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -84,8 +87,73 @@ type EventResponse struct {
 	Title   string  `json:"title,omitempty"` // Set when page title changes
 }
 
+// loadDotEnv reads a .env file and sets environment variables.
+// Only sets vars that are not already set in the environment,
+// so real env vars take precedence over .env values.
+// After loading, env var overrides are applied to the config.
+func loadDotEnv() {
+	f, err := os.Open(".env")
+	if err != nil {
+		return // no .env file, that's fine
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		val = strings.TrimSpace(val)
+		// Remove surrounding quotes
+		if len(val) >= 2 && ((val[0] == '"' && val[len(val)-1] == '"') || (val[0] == '\'' && val[len(val)-1] == '\'')) {
+			val = val[1 : len(val)-1]
+		}
+		// .env values override everything (set unconditionally)
+		os.Setenv(key, val)
+	}
+}
+
+// applyEnvOverrides reads SKY_LIVE_* environment variables and overrides
+// the compiled-in config values. Priority: compiled defaults < sky.toml < env vars < .env
+func applyEnvOverrides(config *LiveConfig) {
+	if v := os.Getenv("SKY_LIVE_PORT"); v != "" {
+		if port, err := strconv.Atoi(v); err == nil {
+			config.Port = port
+		}
+	}
+	if v := os.Getenv("SKY_LIVE_STORE_TYPE"); v != "" {
+		config.StoreType = v
+	}
+	if v := os.Getenv("SKY_LIVE_STORE_PATH"); v != "" {
+		config.StorePath = v
+	}
+	if v := os.Getenv("SKY_LIVE_INPUT_MODE"); v != "" {
+		config.InputMode = v
+	}
+	if v := os.Getenv("SKY_LIVE_POLL_INTERVAL"); v != "" {
+		if interval, err := strconv.Atoi(v); err == nil {
+			config.PollInterval = interval
+		}
+	}
+	if v := os.Getenv("SKY_LIVE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			config.TTL = d
+		}
+	}
+}
+
 // StartServer creates and starts the Sky.Live HTTP server.
 func StartServer(config LiveConfig, app LiveApp) {
+	// Load .env file first (sets env vars), then apply env overrides to config.
+	// Priority: compiled defaults < sky.toml (compile time) < env vars < .env file
+	loadDotEnv()
+	applyEnvOverrides(&config)
 	app.config = config
 	var store SessionStore
 	switch config.StoreType {

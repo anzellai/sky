@@ -230,6 +230,9 @@ export function checkModule(
 
   }
 
+  // Warn about Go reserved words used as identifiers
+  collectGoReservedWordDiagnostics(module, diagnostics)
+
   return {
     environment: env,
     declarations,
@@ -574,4 +577,127 @@ function collectDiscardedFunctionDiagnostics(
       }
     }
   });
+}
+
+/* -----------------------------------------------------------
+   Go reserved word diagnostics
+----------------------------------------------------------- */
+
+const GO_RESERVED_WORDS = new Set([
+  "break", "case", "chan", "const", "continue", "default", "defer", "else",
+  "fallthrough", "for", "func", "go", "goto", "if", "import", "interface",
+  "map", "package", "range", "return", "select", "struct", "switch", "type",
+  "var", "true", "false", "nil", "int", "string", "bool", "float64", "any",
+  "error", "len", "cap", "make", "new", "append", "copy", "delete", "panic",
+  "recover", "close", "print", "println", "complex", "real", "imag",
+])
+
+function isGoReserved(name: string): boolean {
+  return GO_RESERVED_WORDS.has(name)
+}
+
+function warnGoReserved(
+  name: string,
+  what: string,
+  span: AST.NodeBase["span"],
+  diagnostics: TypeDiagnostic[]
+) {
+  if (isGoReserved(name)) {
+    diagnostics.push({
+      severity: "warning",
+      message: `${what} '${name}' clashes with a Go reserved word and will be renamed to '${name}_' in generated code.`,
+      span
+    })
+  }
+}
+
+function collectGoReservedWordDiagnostics(
+  module: AST.Module,
+  diagnostics: TypeDiagnostic[]
+) {
+  for (const decl of module.declarations) {
+    switch (decl.kind) {
+      case "FunctionDeclaration":
+        warnGoReserved(decl.name, "Function", decl.span, diagnostics)
+        // Check parameters
+        for (const param of decl.parameters) {
+          checkPatternForGoReserved(param.pattern, "Parameter", diagnostics)
+        }
+        // Check let bindings and lambda params in the body
+        checkExprForGoReserved(decl.body, diagnostics)
+        break
+
+      case "TypeDeclaration":
+        warnGoReserved(decl.name, "Type", decl.span, diagnostics)
+        for (const variant of decl.variants) {
+          warnGoReserved(variant.name, "Constructor", variant.span, diagnostics)
+        }
+        break
+
+      case "TypeAliasDeclaration":
+        warnGoReserved(decl.name, "Type alias", decl.span, diagnostics)
+        break
+    }
+  }
+}
+
+function checkPatternForGoReserved(
+  pattern: AST.Pattern,
+  what: string,
+  diagnostics: TypeDiagnostic[]
+) {
+  switch (pattern.kind) {
+    case "VariablePattern":
+      if (pattern.name !== "_") {
+        warnGoReserved(pattern.name, what, pattern.span, diagnostics)
+      }
+      break
+    case "ConstructorPattern":
+      for (const arg of pattern.arguments) {
+        checkPatternForGoReserved(arg, what, diagnostics)
+      }
+      break
+    case "TuplePattern":
+    case "ListPattern":
+      for (const item of pattern.items) {
+        checkPatternForGoReserved(item, what, diagnostics)
+      }
+      break
+    case "ConsPattern":
+      checkPatternForGoReserved(pattern.head, what, diagnostics)
+      checkPatternForGoReserved(pattern.tail, what, diagnostics)
+      break
+    case "AsPattern":
+      warnGoReserved(pattern.name, what, pattern.span, diagnostics)
+      checkPatternForGoReserved(pattern.pattern, what, diagnostics)
+      break
+    case "RecordPattern":
+      for (const field of pattern.fields) {
+        warnGoReserved(field, what, pattern.span, diagnostics)
+      }
+      break
+  }
+}
+
+function checkExprForGoReserved(
+  expression: AST.Expression,
+  diagnostics: TypeDiagnostic[]
+) {
+  visitExpression(expression, expr => {
+    if (expr.kind === "LetExpression") {
+      for (const binding of expr.bindings) {
+        checkPatternForGoReserved(binding.pattern, "Variable", diagnostics)
+      }
+    }
+    if (expr.kind === "LambdaExpression") {
+      for (const param of expr.parameters) {
+        checkPatternForGoReserved(param.pattern, "Parameter", diagnostics)
+      }
+    }
+    if (expr.kind === "CaseExpression") {
+      for (const branch of expr.branches) {
+        checkPatternForGoReserved(branch.pattern, "Variable", diagnostics)
+      }
+    }
+  })
 }

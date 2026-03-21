@@ -405,23 +405,34 @@ export async function compileProject(entryFile: string, outDir: string) {
         importedModules.add(imp.moduleName.join("."));
     }
 
-    // Build imported constructor tag info for cross-module case matching
-    const importedCtors = new Map<string, { adtName: string; tagIndex: number; arity: number }>();
+    // Build imported constructor tag info for cross-module case matching.
+    // When two imported modules define a constructor with the same name (e.g.,
+    // both Log.Entry and State.Msg have an "Error" variant), prefer the one
+    // from the ADT with more constructors — a larger ADT is more likely to be
+    // the one the user is pattern-matching on, while single-variant collisions
+    // are often FFI wrappers.
+    const importedCtors = new Map<string, { adtName: string; tagIndex: number; arity: number; adtSize: number }>();
     for (const imp of loaded.moduleAst.imports) {
       const depName = imp.moduleName.join(".");
       const depModule = graph.modules.find((m: any) => m.moduleAst.name.join(".") === depName);
       if (depModule) {
         for (const decl of depModule.moduleAst.declarations) {
           if (decl.kind === "TypeDeclaration" && decl.variants) {
+            const adtSize = decl.variants.length;
             for (let vi = 0; vi < decl.variants.length; vi++) {
               const v = decl.variants[vi];
               const parts = depName.split(".");
               const goPkg2 = "sky_" + parts.map(p => p.toLowerCase()).join("_");
-              importedCtors.set(v.name, {
-                adtName: `${goPkg2}.${decl.name}`,
-                tagIndex: vi,
-                arity: v.fields?.length || 0
-              });
+              const existing = importedCtors.get(v.name);
+              // On collision, prefer the ADT with more constructors
+              if (!existing || adtSize > existing.adtSize) {
+                importedCtors.set(v.name, {
+                  adtName: `${goPkg2}.${decl.name}`,
+                  tagIndex: vi,
+                  arity: v.fields?.length || 0,
+                  adtSize
+                });
+              }
             }
           }
         }
