@@ -159,8 +159,36 @@ export async function buildModuleGraph(
 
     const imports = moduleAst.imports.map((imp: any) => imp.moduleName);
 
+    // If this module lives inside .skydeps, resolve its imports against its
+    // own package's src root first (for internal modules like Tailwind.Internal.Css).
+    const projectRoot = path.dirname(srcRoot);
+    let depSrcRoot: string | undefined;
+    const skydepsDir = path.join(projectRoot, ".skydeps");
+    if (abs.startsWith(skydepsDir)) {
+      // Walk up from the module file to find the package root (contains sky.toml)
+      let dir = path.dirname(abs);
+      while (dir.length > skydepsDir.length) {
+        if (fs.existsSync(path.join(dir, "sky.toml"))) {
+          const depManifest = readDepManifest(dir);
+          depSrcRoot = path.join(dir, depManifest?.source?.root || "src");
+          break;
+        }
+        dir = path.dirname(dir);
+      }
+    }
+
     for (const importParts of imports) {
-      let importFile = resolveModuleToFile(srcRoot, importParts);
+      // For .skydeps modules, try resolving against the package's own src root first
+      let importFile: string | undefined;
+      if (depSrcRoot) {
+        const internalPath = path.join(depSrcRoot, ...importParts) + ".sky";
+        if (fs.existsSync(internalPath)) {
+          importFile = internalPath;
+        }
+      }
+      if (!importFile) {
+        importFile = resolveModuleToFile(srcRoot, importParts);
+      }
 
       if (!importFile) {
         // Try Go package resolution via .skycache

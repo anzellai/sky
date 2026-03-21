@@ -8,7 +8,7 @@ import path from 'path';
 // Cache for .skycache/go module scanning (refreshed every 10s)
 const _skycacheModuleCache = new Map<string, { timestamp: number; modules: Set<string> }>();
 
-export function getCompletions(workspace: Workspace, uri: string, position: Position): CompletionItem[] {
+export function getCompletions(workspace: Workspace, uri: string, position: Position, liveText?: string): CompletionItem[] {
   const items: CompletionItem[] = [];
   const doc = workspace.getDocument(uri);
 
@@ -16,7 +16,10 @@ export function getCompletions(workspace: Workspace, uri: string, position: Posi
     return addKeywords(items);
   }
 
-  const lines = doc.source.split("\n");
+  // Use live document text (from TextDocuments) if available, so completions
+  // work even before the background type check has updated doc.source.
+  const source = liveText || doc.source;
+  const lines = source.split("\n");
   const currentLine = lines[position.line] || "";
   const textBeforeCursor = currentLine.substring(0, position.character);
 
@@ -96,7 +99,22 @@ function getQualifiedCompletions(
             const lastPart = imp.moduleName[imp.moduleName.length - 1];
 
             if (qualifier === moduleName || qualifier === alias || qualifier === lastPart) {
-                const exports = doc.moduleExports.get(moduleName);
+                // Try the import path first, then fall back to the module's
+                // declared name (which may differ for .skydeps packages where
+                // import path is e.g. "SkyTailwind.Tailwind" but module declares "Tailwind")
+                let exports = doc.moduleExports.get(moduleName);
+                if (!exports || exports.size === 0) {
+                    // Find the module's declared name from loaded modules
+                    if (doc.modules) {
+                        for (const mod of doc.modules) {
+                            const declaredName = mod.moduleAst.name.join(".");
+                            if (declaredName === lastPart || moduleName.endsWith("." + declaredName) || declaredName === moduleName) {
+                                exports = doc.moduleExports.get(declaredName);
+                                if (exports && exports.size > 0) break;
+                            }
+                        }
+                    }
+                }
                 if (exports && exports.size > 0) {
                     for (const [name, scheme] of exports) {
                         // Filter raw Go wrapper names
@@ -204,6 +222,9 @@ function getImportCompletions(
                 _skycacheModuleCache.set(skycacheGoDir, { timestamp: Date.now(), modules: new Set(knownModules) });
             }
         }
+
+        // Scan .skydeps/ for installed Sky packages and their exposed modules
+        scanSkydepModules(projectRoot, knownModules);
     }
 
     const prefix = typed.trim().toLowerCase();
@@ -278,6 +299,143 @@ function goPathToSkyModule(goPath: string): string | null {
 }
 
 /**
+ * Scan .skydeps/ for installed Sky packages and add their exposed modules
+ * as import completions. Generates all three import syntaxes:
+ * - Stripped: Tailwind
+ * - Prefixed: SkyTailwind.Tailwind
+ * - Full path: Github.Com.Anzellai.SkyTailwind.Tailwind
+ */
+function scanSkydepModules(projectRoot: string, modules: Set<string>): void {
+    const skydepsDir = path.join(projectRoot, ".skydeps");
+    if (!fs.existsSync(skydepsDir)) return;
+
+    const pkgDirs = findSkydepPackageDirs(skydepsDir);
+    for (const pkgDir of pkgDirs) {
+        const manifestPath = path.join(pkgDir, "sky.toml");
+        if (!fs.existsSync(manifestPath)) continue;
+
+        let manifest: any;
+        try {
+            const content = fs.readFileSync(manifestPath, "utf8");
+            manifest = parseSimpleToml(content);
+        } catch { continue; }
+
+        const exposing: string[] = manifest?.lib?.exposing || [];
+        if (exposing.length === 0) continue;
+
+        const pkgName = manifest?.name || "";
+        const pkgPascal = pkgName.split(/[-_.]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+
+        // Derive full import prefix from package path
+        const relPath = path.relative(skydepsDir, pkgDir);
+        const fullPrefix: string[] = [];
+        for (const seg of relPath.split(path.sep)) {
+            for (const dotPart of seg.split(".")) {
+                fullPrefix.push(dotPart.split(/[-_]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(""));
+            }
+        }
+        const fullPrefixStr = fullPrefix.join(".");
+
+        for (const exposed of exposing) {
+            // Stripped: the exposed name itself (e.g., "Tailwind")
+            modules.add(exposed);
+            // Prefixed: PkgPascal.Exposed (e.g., "SkyTailwind.Tailwind")
+            if (pkgPascal) {
+                modules.add(`${pkgPascal}.${exposed}`);
+            }
+            // Full path: Github.Com.Org.Pkg.Exposed
+            modules.add(`${fullPrefixStr}.${exposed}`);
+        }
+    }
+}
+
+function findSkydepPackageDirs(dir: string): string[] {
+    const results: string[] = [];
+    if (fs.existsSync(path.join(dir, "sky.toml"))) {
+        results.push(dir);
+        return results;
+    }
+    try {
+        for (const entry of fs.readdirSync(dir)) {
+            if (entry.startsWith(".")) continue;
+            const full = path.join(dir, entry);
+            if (fs.statSync(full).isDirectory()) {
+                results.push(...findSkydepPackageDirs(full));
+            }
+        }
+    } catch {}
+    return results;
+}
+
+/**
+ * Minimal TOML parser for sky.toml — extracts name, source.root, and lib.exposing.
+ */
+function parseSimpleToml(content: string): any {
+    const result: any = {};
+    let currentSection = result;
+    const lines = content.split("\n");
+    let inArray: string[] | null = null;
+    let arrayKey = "";
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith("#")) continue;
+
+        // Collecting multi-line array
+        if (inArray !== null) {
+            const matches = trimmed.match(/"([^"]+)"/g);
+            if (matches) {
+                for (const m of matches) inArray.push(m.slice(1, -1));
+            }
+            if (trimmed.includes("]")) {
+                currentSection[arrayKey] = inArray;
+                inArray = null;
+            }
+            continue;
+        }
+
+        // Section header: [foo] or [foo.bar]
+        const sectionMatch = trimmed.match(/^\[([^\]]+)\]$/);
+        if (sectionMatch) {
+            const sectionPath = sectionMatch[1].replace(/"/g, "").split(".");
+            currentSection = result;
+            for (const part of sectionPath) {
+                if (!currentSection[part]) currentSection[part] = {};
+                currentSection = currentSection[part];
+            }
+            continue;
+        }
+
+        // Key = value
+        const kvMatch = trimmed.match(/^([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*(.+)$/);
+        if (kvMatch) {
+            const key = kvMatch[1];
+            const val = kvMatch[2].trim();
+            if (val.startsWith('"') && val.endsWith('"')) {
+                currentSection[key] = val.slice(1, -1);
+            } else if (val.startsWith("[")) {
+                const items: string[] = [];
+                const matches = val.match(/"([^"]+)"/g);
+                if (matches) {
+                    for (const m of matches) items.push(m.slice(1, -1));
+                }
+                if (val.includes("]")) {
+                    currentSection[key] = items;
+                } else {
+                    inArray = items;
+                    arrayKey = key;
+                }
+            } else if (/^\d+$/.test(val)) {
+                currentSection[key] = parseInt(val);
+            } else {
+                currentSection[key] = val;
+            }
+        }
+    }
+    return result;
+}
+
+/**
  * Find the project root by walking up from the file URI to find a directory
  * containing src/ or .skycache/.
  */
@@ -289,7 +447,7 @@ function findProjectRoot(uri: string): string | null {
 
     let dir = path.dirname(filePath);
     for (let i = 0; i < 10; i++) {
-        if (fs.existsSync(path.join(dir, ".skycache")) || fs.existsSync(path.join(dir, "sky.json"))) {
+        if (fs.existsSync(path.join(dir, ".skycache")) || fs.existsSync(path.join(dir, "sky.toml")) || fs.existsSync(path.join(dir, "sky.json"))) {
             return dir;
         }
         // Check if "src" is a child — project root is the parent of src

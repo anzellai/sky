@@ -91,11 +91,11 @@ export class Workspace {
     try {
         const filePath = uriToPath(uri);
         const result = await typeCheckProject(filePath, { path: filePath, content: source });
-        
+
         if (result.latestModuleAst) {
             ast = result.latestModuleAst;
         }
-        
+
         modules = result.modules;
 
         moduleExports = result.exports;
@@ -178,8 +178,8 @@ export class Workspace {
     return getDefinition(this, uri, position);
   }
 
-  public getCompletions(uri: string, position: Position) {
-    return getCompletions(this, uri, position);
+  public getCompletions(uri: string, position: Position, liveText?: string) {
+    return getCompletions(this, uri, position, liveText);
   }
 
   public getSignatureHelp(uri: string, position: Position) {

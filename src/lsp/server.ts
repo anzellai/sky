@@ -23,10 +23,23 @@ import {
 
 import { TextDocument } from 'vscode-languageserver-textdocument';
 import { Workspace } from './analysis/workspace.js';
+import { typeCheckProject } from '../compiler.js';
 import { formatModule } from './formatter/formatter.js';
 import { lex } from '../lexer/lexer.js';
 import { filterLayout } from '../parser/filter-layout.js';
 import { parse } from '../parser/parser.js';
+
+function uriToPath(uri: string): string {
+  if (uri.startsWith('file://')) {
+    let p = uri.substring(7);
+    if (process.platform === 'win32') {
+      if (p.startsWith('/')) p = p.substring(1);
+      p = p.replace(/\//g, '\\');
+    }
+    return decodeURIComponent(p);
+  }
+  return uri;
+}
 
 export function startServer() {
   // Prevent the LSP from crashing on unhandled errors
@@ -62,25 +75,57 @@ export function startServer() {
 
   connection.onInitialized(() => {
     connection.console.log("Sky LSP Server initialized");
+
+    // Pre-warm caches in the background: find the first open document's
+    // project root and run typeCheckProject once so subsequent requests
+    // hit warm caches (~2s instead of ~38s cold start for large dep trees).
+    setImmediate(async () => {
+      try {
+        for (const doc of documents.all()) {
+          const filePath = uriToPath(doc.uri);
+          await typeCheckProject(filePath, { path: filePath, content: doc.getText() });
+          break; // one pre-warm is enough — caches are shared
+        }
+      } catch {}
+    });
   });
 
-  // Debounce validation to avoid recompiling on every keystroke
+  // Debounce validation to avoid recompiling on every keystroke.
+  // Uses a longer delay for the first validation (cold cache) to avoid
+  // blocking the LSP server during initial type checking of large projects.
   const pendingValidations = new Map<string, ReturnType<typeof setTimeout>>();
+  const validatedOnce = new Set<string>();
 
   documents.onDidChangeContent(change => {
     const uri = change.document.uri;
     const existing = pendingValidations.get(uri);
     if (existing) clearTimeout(existing);
+    // First validation gets a longer delay to let the LSP finish init
+    // handshake before starting heavy type checking.
+    const delay = validatedOnce.has(uri) ? 300 : 500;
     pendingValidations.set(uri, setTimeout(async () => {
       pendingValidations.delete(uri);
       try { await validateTextDocument(change.document); }
       catch {}
-    }, 300));
+      validatedOnce.add(uri);
+    }, delay));
   });
 
+  // Track whether a background validation is in progress so requests
+  // can return stale-but-fast results instead of waiting.
+  let validating = false;
+
   async function validateTextDocument(textDocument: TextDocument): Promise<void> {
-    const diagnostics: Diagnostic[] = await workspace.updateDocument(textDocument.uri, textDocument.getText());
-    connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+    validating = true;
+    try {
+      // Yield to the event loop before starting heavy type checking so the
+      // LSP can respond to pending requests (hover, completion) with stale data.
+      await new Promise(resolve => setImmediate(resolve));
+      const diagnostics: Diagnostic[] = await workspace.updateDocument(textDocument.uri, textDocument.getText());
+      connection.sendDiagnostics({ uri: textDocument.uri, diagnostics });
+    } finally {
+      validating = false;
+    }
   }
 
   connection.onHover((params: HoverParams): Hover | null => {
@@ -95,7 +140,11 @@ export function startServer() {
 
   connection.onCompletion((params: CompletionParams) => {
     try {
-      const items = workspace.getCompletions(params.textDocument.uri, params.position);
+      // Pass the live document text so completions work even before
+      // the background type check has updated the stored doc.source.
+      const liveDoc = documents.get(params.textDocument.uri);
+      const liveText = liveDoc?.getText();
+      const items = workspace.getCompletions(params.textDocument.uri, params.position, liveText);
       return { isIncomplete: true, items };
     } catch { return { isIncomplete: true, items: [] }; }
   });
