@@ -221,6 +221,10 @@ export function applySubstitution(type: Type, sub: Substitution): Type {
   switch (type.kind) {
     case "TypeVariable": {
       const replacement = sub.mappings.get(type.id);
+      // Guard against self-referencing substitutions (id maps to itself)
+      if (replacement && replacement.kind === "TypeVariable" && replacement.id === type.id) {
+        return type;
+      }
       return replacement ? applySubstitution(replacement, sub) : type;
     }
 

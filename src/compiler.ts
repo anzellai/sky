@@ -135,6 +135,12 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
         for (const decl of depModule.moduleAst.declarations) {
           if (decl.kind === "TypeAliasDeclaration") {
             importedTypeAliases.set(decl.name, decl.aliasedType);
+            // Also register under qualified names (alias and full module name)
+            // so `Config.Source` resolves when imported as `import Log.Config as Config`
+            if (imp.alias) {
+              importedTypeAliases.set(`${imp.alias.name}.${decl.name}`, decl.aliasedType);
+            }
+            importedTypeAliases.set(`${depName}.${decl.name}`, decl.aliasedType);
           }
         }
       }
