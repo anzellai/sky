@@ -1,0 +1,57 @@
+module State exposing (..)
+
+import Sky.Core.Maybe exposing (..)
+
+
+type Page
+    = BoardPage
+    | DetailPage
+    | SubmitPage
+    | SignInPage
+    | SignUpPage
+    | AboutPage
+    | RoadmapPage
+    | NotFoundPage
+
+type alias Model =
+    { page : Page
+    , currentUser : Maybe (Dict String String)
+    , ideas : List (Dict String String)
+    , sortBy : String
+    , filterCategory : String
+    , searchQuery : String
+    , selectedIdeaId : String
+    , selectedIdea : Maybe (Dict String String)
+    , ideaComments : List (Dict String String)
+    , newComment : String
+    , submitTitle : String
+    , submitDescription : String
+    , submitCategory : String
+    , authEmail : String
+    , authUsername : String
+    , authPassword : String
+    , authError : String
+    , notification : String
+    }
+
+type Msg
+    = Navigate Page
+    | SetSort String
+    | SetFilter String
+    | SetSearch String
+    | ToggleVote String
+    | ViewIdea String
+    | UpdateComment String
+    | SubmitComment
+    | BackToBoard
+    | UpdateTitle String
+    | UpdateDescription String
+    | UpdateCategory String
+    | SubmitIdea
+    | UpdateEmail String
+    | UpdateUsername String
+    | UpdatePassword String
+    | DoSignIn
+    | DoSignUp
+    | DoSignOut
+    | Tick

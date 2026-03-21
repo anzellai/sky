@@ -385,8 +385,31 @@ export async function compileProject(entryFile: string, outDir: string) {
         importedModules.add(imp.moduleName.join("."));
     }
 
+    // Build imported constructor tag info for cross-module case matching
+    const importedCtors = new Map<string, { adtName: string; tagIndex: number; arity: number }>();
+    for (const imp of loaded.moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = graph.modules.find((m: any) => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        for (const decl of depModule.moduleAst.declarations) {
+          if (decl.kind === "TypeDeclaration" && decl.variants) {
+            for (let vi = 0; vi < decl.variants.length; vi++) {
+              const v = decl.variants[vi];
+              const parts = depName.split(".");
+              const goPkg2 = "sky_" + parts.map(p => p.toLowerCase()).join("_");
+              importedCtors.set(v.name, {
+                adtName: `${goPkg2}.${decl.name}`,
+                tagIndex: vi,
+                arity: v.fields?.length || 0
+              });
+            }
+          }
+        }
+      }
+    }
+
     // Lower to GoIR
-    const goPkg = lowerModule(coreModule, moduleExports, allForeignModules, importedModules);
+    const goPkg = lowerModule(coreModule, moduleExports, allForeignModules, importedModules, importedCtors);
 
     // Inject blank imports into the Go package
     for (const blankPkg of blankImports) {
@@ -405,14 +428,14 @@ export async function compileProject(entryFile: string, outDir: string) {
   let isLiveApp = false;
   const mainModuleLoaded = graph.modules.find(m => m.moduleAst.name.length === 1 && m.moduleAst.name[0] === "Main");
   if (mainModuleLoaded) {
-    const liveDetection = detectLiveApp(mainModuleLoaded.moduleAst);
+    const liveDetection = detectLiveApp(mainModuleLoaded.moduleAst, graph.modules);
     if (liveDetection.isLive) {
       isLiveApp = true;
       console.log("Detected Sky.Live application");
 
       // Extract route definitions from the main module
       const routes = extractRoutes(mainModuleLoaded.moduleAst);
-      const pageTypeDecl = findPageType(mainModuleLoaded.moduleAst);
+      const pageTypeDecl = findPageType(mainModuleLoaded.moduleAst, graph.modules);
 
       // Read port from sky.toml if available
       const { readManifest } = await import("./pkg/manifest.js");
@@ -429,12 +452,45 @@ export async function compileProject(entryFile: string, outDir: string) {
       const notFoundPage = extractNotFound(mainModuleLoaded.moduleAst) || "";
 
       // Detect component bindings
-      const componentBindings = detectComponents(mainModuleLoaded.moduleAst, moduleExports);
+      const componentBindings = detectComponents(mainModuleLoaded.moduleAst, moduleExports, graph.modules);
       let componentInfos: ComponentModuleInfo[] = [];
       if (componentBindings.length > 0) {
         componentInfos = buildComponentInfos(componentBindings, graph.modules, outDir);
         for (const info of componentInfos) {
           console.log(`  Component: ${info.binding.fieldName} : ${info.binding.typeName} → ${info.binding.msgWrapperName} (auto-wired)`);
+        }
+      }
+
+      // Determine Go package prefix if Msg/Page are from imported modules
+      let msgGoPrefix = "";
+      let pageGoPrefix = "";
+      const mainHasMsg = mainModuleLoaded.moduleAst.declarations.some(
+        (d: any) => d.kind === "TypeDeclaration" && d.name === "Msg"
+      );
+      const mainHasPage = mainModuleLoaded.moduleAst.declarations.some(
+        (d: any) => d.kind === "TypeDeclaration" && d.name === "Page"
+      );
+      if (!mainHasMsg && liveDetection.msgType) {
+        // Find which imported module has the Msg type
+        for (const imp of mainModuleLoaded.moduleAst.imports) {
+          const depName = imp.moduleName.join(".");
+          const depModule = graph.modules.find((m: any) => m.moduleAst.name.join(".") === depName);
+          if (depModule?.moduleAst.declarations.some((d: any) => d.kind === "TypeDeclaration" && d.name === "Msg")) {
+            const parts = depName.split(".");
+            msgGoPrefix = "sky_" + parts.map((p: string) => p.toLowerCase()).join("_") + ".";
+            break;
+          }
+        }
+      }
+      if (!mainHasPage && pageTypeDecl) {
+        for (const imp of mainModuleLoaded.moduleAst.imports) {
+          const depName = imp.moduleName.join(".");
+          const depModule = graph.modules.find((m: any) => m.moduleAst.name.join(".") === depName);
+          if (depModule?.moduleAst.declarations.some((d: any) => d.kind === "TypeDeclaration" && d.name === "Page")) {
+            const parts = depName.split(".");
+            pageGoPrefix = "sky_" + parts.map((p: string) => p.toLowerCase()).join("_") + ".";
+            break;
+          }
         }
       }
 
@@ -450,7 +506,9 @@ export async function compileProject(entryFile: string, outDir: string) {
         notFoundPage,
         componentInfos,
         inputMode,
-        pollInterval
+        pollInterval,
+        msgGoPrefix,
+        pageGoPrefix
       );
 
       // Read the existing main.go to preserve the compiled functions

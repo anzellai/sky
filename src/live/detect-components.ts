@@ -22,14 +22,27 @@ export interface ComponentBinding {
  */
 export function detectComponents(
   moduleAst: AST.Module,
-  moduleExports: Map<string, Map<string, Scheme>>
+  moduleExports: Map<string, Map<string, Scheme>>,
+  allModules?: { moduleAst: AST.Module }[]
 ): ComponentBinding[] {
   const bindings: ComponentBinding[] = [];
 
-  // Find Msg type declaration
-  const msgDecl = moduleAst.declarations.find(
+  // Find Msg type declaration — locally first, then in imported modules
+  let msgDecl = moduleAst.declarations.find(
     d => d.kind === "TypeDeclaration" && d.name === "Msg"
   ) as any;
+  if (!msgDecl?.variants && allModules) {
+    for (const imp of moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = allModules.find(m => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        msgDecl = depModule.moduleAst.declarations.find(
+          (d: any) => d.kind === "TypeDeclaration" && d.name === "Msg"
+        ) as any;
+        if (msgDecl?.variants) break;
+      }
+    }
+  }
   if (!msgDecl?.variants) return bindings;
 
   // Find update function for explicit case detection

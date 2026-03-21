@@ -4,19 +4,20 @@ import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import State exposing (..)
 import Ui.Layout as Layout
 
 -- ══════════════════════════════════════════════════════
 -- SIGN IN
 -- ══════════════════════════════════════════════════════
-viewSignIn doSignInMsg signOutMsg model =
-    Layout.page signOutMsg model
+viewSignIn model =
+    Layout.page model
         (
         div [ class "auth-container" ]
             [ div [ class "auth-card" ]
                 [ h1 [ class "auth-title" ] [ text "Welcome back" ]
                 , viewAuthError model.authError
-                , form [ onSubmit doSignInMsg ]
+                , form [ onSubmit DoSignIn ]
                     [ div [ class "form-group" ]
                         [ label [ class "form-label" ] [ text "Email" ]
                         , input
@@ -56,14 +57,14 @@ viewSignIn doSignInMsg signOutMsg model =
 -- ══════════════════════════════════════════════════════
 -- SIGN UP
 -- ══════════════════════════════════════════════════════
-viewSignUp doSignUpMsg signOutMsg model =
-    Layout.page signOutMsg model
+viewSignUp model =
+    Layout.page model
         (
         div [ class "auth-container" ]
             [ div [ class "auth-card" ]
                 [ h1 [ class "auth-title" ] [ text "Create an account" ]
                 , viewAuthError model.authError
-                , form [ onSubmit doSignUpMsg ]
+                , form [ onSubmit DoSignUp ]
                     [ div [ class "form-group" ]
                         [ label [ class "form-label" ] [ text "Username" ]
                         , input

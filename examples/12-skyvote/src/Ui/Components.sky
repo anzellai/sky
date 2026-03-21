@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
+import State exposing (..)
 import Lib.Db as Db
 
 -- ══════════════════════════════════════════════════════
@@ -65,7 +66,7 @@ ideaCard idea userId =
         div [ class "idea-card" ]
             [ div []
                 [ button
-                    [ onClick ("ToggleVote " ++ ideaId) , class "vote-btn" ]
+                    [ onClick (ToggleVote ideaId) , class "vote-btn" ]
                     [ span [ class "vote-count" ] [ text voteCount ]
                     , span [ class "vote-label" ] [ text "votes" ]
                     ]
@@ -73,7 +74,7 @@ ideaCard idea userId =
             , div [ class "idea-content" ]
                 [ div []
                     [ button
-                        [ onClick ("ViewIdea " ++ ideaId)
+                        [ onClick (ViewIdea ideaId)
                         , class "idea-title-btn"
                         ]
                         [ text (Db.getField "title" idea) ]

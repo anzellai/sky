@@ -16,7 +16,7 @@ export interface LiveDetection {
  * Detect if a module is a Sky.Live app.
  * Checks for: import Std.Live and a call to `app` in the main declaration.
  */
-export function detectLiveApp(moduleAst: AST.Module): LiveDetection {
+export function detectLiveApp(moduleAst: AST.Module, allModules?: { moduleAst: AST.Module }[]): LiveDetection {
   // Check if Std.Live is imported
   const hasLiveImport = moduleAst.imports.some(
     (imp) => imp.moduleName.join(".") === "Std.Live"
@@ -26,7 +26,7 @@ export function detectLiveApp(moduleAst: AST.Module): LiveDetection {
     return { isLive: false };
   }
 
-  // Find the Msg type declaration
+  // Find the Msg type declaration — first locally, then in imported modules
   let msgType: AST.TypeDeclaration | undefined;
   for (const decl of moduleAst.declarations) {
     if (decl.kind === "TypeDeclaration" && decl.name === "Msg") {
@@ -34,13 +34,43 @@ export function detectLiveApp(moduleAst: AST.Module): LiveDetection {
       break;
     }
   }
+  if (!msgType && allModules) {
+    for (const imp of moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = allModules.find(m => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        for (const decl of depModule.moduleAst.declarations) {
+          if (decl.kind === "TypeDeclaration" && decl.name === "Msg") {
+            msgType = decl;
+            break;
+          }
+        }
+        if (msgType) break;
+      }
+    }
+  }
 
-  // Find Page type declaration
+  // Find Page type declaration — first locally, then in imported modules
   let pageType: AST.TypeDeclaration | undefined;
   for (const decl of moduleAst.declarations) {
     if (decl.kind === "TypeDeclaration" && decl.name === "Page") {
       pageType = decl;
       break;
+    }
+  }
+  if (!pageType && allModules) {
+    for (const imp of moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = allModules.find(m => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        for (const decl of depModule.moduleAst.declarations) {
+          if (decl.kind === "TypeDeclaration" && decl.name === "Page") {
+            pageType = decl;
+            break;
+          }
+        }
+        if (pageType) break;
+      }
     }
   }
 

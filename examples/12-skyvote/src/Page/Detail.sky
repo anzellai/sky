@@ -7,28 +7,29 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import State exposing (..)
 import Lib.Db as Db
 import Ui.Layout as Layout
 import Ui.Components exposing (statusBadge, emptyState)
 
-viewDetail backToBoardMsg submitCommentMsg signOutMsg model =
+viewDetail model =
     case model.selectedIdea of
         Just idea ->
-            Layout.page signOutMsg model (viewIdeaDetail backToBoardMsg submitCommentMsg model idea)
+            Layout.page model (viewIdeaDetail model idea)
 
         Nothing ->
-            Layout.page signOutMsg model (viewNotFound backToBoardMsg model)
+            Layout.page model (viewNotFound model)
 
-viewNotFound backToBoardMsg model =
+viewNotFound model =
     div [ class "mt-32" ]
         [ emptyState "Idea not found."
         , div [ class "text-center" ]
-            [ button [ onClick backToBoardMsg , class "btn btn-secondary" ]
+            [ button [ onClick BackToBoard , class "btn btn-secondary" ]
                 [ text "Back to Board" ]
             ]
         ]
 
-viewIdeaDetail backToBoardMsg submitCommentMsg model idea =
+viewIdeaDetail model idea =
     let
         ideaId =
             Db.getField "id" idea
@@ -43,7 +44,7 @@ viewIdeaDetail backToBoardMsg submitCommentMsg model idea =
     in
         div [ class "mt-32" ]
             [ button
-                [ onClick backToBoardMsg , class "btn btn-ghost btn-sm mb-16" ]
+                [ onClick BackToBoard , class "btn btn-ghost btn-sm mb-16" ]
                 [ text "< Back to Board" ]
             , div [ class "card" ]
                 [ div [ class "detail-header" ]
@@ -61,7 +62,7 @@ viewIdeaDetail backToBoardMsg submitCommentMsg model idea =
                     [ p [] [ text (Db.getField "description" idea) ] ]
                 , div [ class "detail-actions" ]
                     [ button
-                        [ onClick ("ToggleVote " ++ ideaId) , class "vote-btn" ]
+                        [ onClick (ToggleVote ideaId) , class "vote-btn" ]
                         [ span [ class "vote-count" ] [ text voteCount ]
                         , span [ class "vote-label" ] [ text "votes" ]
                         ]
@@ -69,7 +70,7 @@ viewIdeaDetail backToBoardMsg submitCommentMsg model idea =
                         [ text (commentCount ++ " comments") ]
                     ]
                 ]
-            , viewComments submitCommentMsg model
+            , viewComments model
             ]
 
 viewCategoryBadge category =
@@ -81,7 +82,7 @@ viewCategoryBadge category =
         else
             span [ class "badge badge-feature" ] [ text "Feature" ]
 
-viewComments submitCommentMsg model =
+viewComments model =
     div [ class "comments-section" ]
         [ h2 [ class "comments-title" ]
             [ text
@@ -90,7 +91,7 @@ viewComments submitCommentMsg model =
                 String.fromInt (List.length model.ideaComments) ++ ")"
                 )
             ]
-        , viewCommentForm submitCommentMsg model
+        , viewCommentForm model
         , viewCommentList model
         ]
 
@@ -116,17 +117,17 @@ viewComment comment =
         , div [ class "comment-body" ] [ text (Db.getField "content" comment) ]
         ]
 
-viewCommentForm submitCommentMsg model =
+viewCommentForm model =
     case model.currentUser of
         Just _ ->
-            viewCommentFormAuth submitCommentMsg model
+            viewCommentFormAuth model
 
         Nothing ->
             p [ class "text-secondary-sm" ]
                 [ text "Sign in to leave a comment." ]
 
-viewCommentFormAuth submitCommentMsg model =
-    form [ onSubmit submitCommentMsg , class "comment-form mb-20" ]
+viewCommentFormAuth model =
+    form [ onSubmit SubmitComment , class "comment-form mb-20" ]
         [ div [ class "form-group" ]
             [ textarea
                 [ class "form-input"

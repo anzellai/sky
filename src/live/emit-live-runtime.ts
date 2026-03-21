@@ -256,7 +256,9 @@ export function generateLiveMain(
   notFoundPage: string = "",
   componentInfos: ComponentModuleInfo[] = [],
   inputMode: string = "debounce",
-  pollInterval: number = 0
+  pollInterval: number = 0,
+  msgGoPrefix: string = "",
+  pageGoPrefix: string = ""
 ): string {
   const msgVariants = msgTypeDecl ? extractVariants(msgTypeDecl) : [];
   const pageVariants = pageTypeDecl ? extractVariants(pageTypeDecl) : [];
@@ -373,6 +375,29 @@ ${componentInfos.length > 0 ? generateComponentUpdateCases(componentInfos) : ""}
 }
 `;
 
+  // Apply cross-module type prefixes for Msg and Page types from imported modules
+  if (msgGoPrefix) {
+    code = code.replace(/\bMsg\{/g, `${msgGoPrefix}Msg{`);
+    code = code.replace(/\.\(Msg\)/g, `.(${msgGoPrefix}Msg)`);
+  }
+  if (pageGoPrefix) {
+    code = code.replace(/\bPage\{/g, `${pageGoPrefix}Page{`);
+    code = code.replace(/\.\(Page\)/g, `.(${pageGoPrefix}Page)`);
+    code = code.replace(/\bcase Page:/g, `case ${pageGoPrefix}Page:`);
+  }
+
+  // Add import for the state module if types are imported
+  if (msgGoPrefix || pageGoPrefix) {
+    const prefix = msgGoPrefix || pageGoPrefix;
+    const pkgName = prefix.replace(/\.$/, "");
+    // Find the module path from the prefix
+    const modulePath = pkgName.replace(/^sky_/, "").split("_").map((s: string) => s.charAt(0).toUpperCase() + s.slice(1)).join("/");
+    code = code.replace(
+      /import \(\n/,
+      `import (\n\t${pkgName} "sky-out/${modulePath}"\n`
+    );
+  }
+
   return code;
 }
 
@@ -481,10 +506,23 @@ function extractRoutesFromExpr(expr: AST.Expression, routes: RouteMapping[]): vo
 /**
  * Find the Page type declaration in a module.
  */
-export function findPageType(moduleAst: AST.Module): AST.TypeDeclaration | undefined {
+export function findPageType(moduleAst: AST.Module, allModules?: { moduleAst: AST.Module }[]): AST.TypeDeclaration | undefined {
   for (const decl of moduleAst.declarations) {
     if (decl.kind === "TypeDeclaration" && decl.name === "Page") {
       return decl;
+    }
+  }
+  if (allModules) {
+    for (const imp of moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = allModules.find(m => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        for (const decl of depModule.moduleAst.declarations) {
+          if (decl.kind === "TypeDeclaration" && decl.name === "Page") {
+            return decl;
+          }
+        }
+      }
     }
   }
   return undefined;

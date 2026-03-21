@@ -6,12 +6,13 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
+import State exposing (..)
 import Lib.Db as Db
 import Lib.Ideas as Ideas
 import Ui.Layout as Layout
 import Ui.Components exposing (emptyState)
 
-viewRoadmap signOutMsg model =
+viewRoadmap model =
     let
         planned =
             Ideas.getIdeasByStatus "planned"
@@ -22,7 +23,7 @@ viewRoadmap signOutMsg model =
         open_ =
             Ideas.getIdeasByStatus "open"
     in
-        Layout.page signOutMsg model
+        Layout.page model
             (
             div [ class "mt-32" ]
                 [ h1 [ class "page-title" ] [ text "Roadmap" ]
@@ -66,7 +67,7 @@ roadmapItem idea =
     in
         div [ class "roadmap-item" ]
             [ button
-                [ onClick ("ViewIdea " ++ ideaId) , class "roadmap-item-title" ]
+                [ onClick (ViewIdea ideaId) , class "roadmap-item-title" ]
                 [ text (Db.getField "title" idea) ]
             , div [ class "roadmap-item-votes" ]
                 [ text (voteCount ++ " votes") ]

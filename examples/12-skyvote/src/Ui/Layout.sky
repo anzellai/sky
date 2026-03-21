@@ -6,26 +6,27 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
+import State exposing (..)
 import Ui.Styles exposing (globalStyles)
 import Lib.Db as Db
 
 -- ══════════════════════════════════════════════════════
 -- PAGE LAYOUT
 -- ══════════════════════════════════════════════════════
-page signOutMsg model content =
+page model content =
     div []
         [ styleNode [] globalStyles
-        , viewHeader signOutMsg model
+        , viewHeader model
         , div [ class "container" ] [ viewNotification model , content ]
         ]
 
-pageWithAuth signOutMsg model content =
+pageWithAuth model content =
     case model.currentUser of
         Just _ ->
-            page signOutMsg model content
+            page model content
 
         Nothing ->
-            page signOutMsg model
+            page model
                 (
                 div [ class "auth-container" ]
                     [ div [ class "card" ]
@@ -42,7 +43,7 @@ pageWithAuth signOutMsg model content =
 -- ══════════════════════════════════════════════════════
 -- HEADER
 -- ══════════════════════════════════════════════════════
-viewHeader signOutMsg model =
+viewHeader model =
     headerNode [ class "header" ]
         [ div [ class "header-inner" ]
             [ a [ href "/" , attribute "sky-nav" "" , class "logo" ]
@@ -62,12 +63,12 @@ viewHeader signOutMsg model =
                     , class "nav-link"
                     ]
                     [ text "About" ]
-                , viewAuthNav signOutMsg model
+                , viewAuthNav model
                 ]
             ]
         ]
 
-viewAuthNav signOutMsg model =
+viewAuthNav model =
     case model.currentUser of
         Just user ->
             span [ class "auth-nav" ]
@@ -79,7 +80,7 @@ viewAuthNav signOutMsg model =
                     [ text "Submit Idea" ]
                 , span [ class "nav-link" ]
                     [ text (Db.getField "username" user) ]
-                , button [ onClick signOutMsg , class "btn btn-ghost btn-sm" ]
+                , button [ onClick DoSignOut , class "btn btn-ghost btn-sm" ]
                     [ text "Sign out" ]
                 ]
         

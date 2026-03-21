@@ -91,12 +91,15 @@ const stdlibPaths: Record<string, string> = {
     "hex": "encoding/hex"
 };
 
-export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, Map<string, Scheme>>, foreignModules?: Set<string>, importedModules?: Set<string>): GoIR.GoPackage {
+export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, Map<string, Scheme>>, foreignModules?: Set<string>, importedModules?: Set<string>, importedConstructors?: Map<string, { adtName: string; tagIndex: number; arity: number }>): GoIR.GoPackage {
   const pkg: GoIR.GoPackage = {
     name: makeSafeGoPkgName(module.name[module.name.length - 1], module.name.join(".")),
     imports: [],
     declarations: []
   };
+
+  // Set imported constructor tags for cross-module case matching
+  _importedCtorTags = importedConstructors || new Map();
 
   const localEnvOuter = new Map<string, Type>();
 
@@ -363,6 +366,8 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
 let _recordAliasTypes: Set<string> = new Set();
 let _declParamCounts: Map<string, number> = new Map();
 let _importedModules: Set<string> = new Set();
+// Constructor tag info from imported modules (for cross-module case matching)
+let _importedCtorTags: Map<string, { adtName: string; tagIndex: number; arity: number }> = new Map();
 
 function lowerType(t: Type): GoIR.GoType {
   if (!t || !t.kind) {
@@ -1337,18 +1342,50 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           }
       }
 
-      // Fallback: detect well-known constructors not in the local constructorMap
-      // (e.g., Ok/Err from Prelude's Result, Just/Nothing from Maybe)
-      if (!adtTypeName) {
+      // Fallback: check imported modules for the constructor's ADT type
+      if (!adtTypeName && moduleExports) {
           const ctorNames = expr.cases
               .filter(c => c.pattern.kind === "ConstructorPattern")
               .map(c => (c.pattern as any).name);
+          // Well-known Prelude types
           if (ctorNames.includes("Ok") || ctorNames.includes("Err")) {
               adtTypeName = "sky_wrappers.SkyResult";
           } else if (ctorNames.includes("Just") || ctorNames.includes("Nothing")) {
-              // Maybe type: both Just and Nothing use struct{ Tag int; SkyName string; JustValue any }
-              // so the type assertion is consistent for the switch statement.
               adtTypeName = "struct{ Tag int; SkyName string; JustValue any }";
+          } else {
+              // Search imported modules for the constructor
+              for (const ctorName of ctorNames) {
+                  const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+                  for (const [modName, exports] of moduleExports) {
+                      if (ffiWrappers.has(modName)) continue;
+                      if (exports.has(ctorName)) {
+                          const parts = modName.split(".");
+                          const goPkg = makeSafeGoPkgName(parts[parts.length - 1], modName);
+                          // Find the ADT type name by looking at the module's type declarations
+                          // Convention: the constructor function is in the package, and the type
+                          // name is determined by the Go struct type generated for that module
+                          // For imported constructors, the Go package has a named type
+                          // Find by checking which type declaration contains this constructor
+                          if (_importedModules.has(modName) || true) {
+                              // Use the module's Go type. For most cases, the ADT is named after
+                              // the type declaration (e.g., State module's Msg → sky_state.Msg)
+                              // We need to find the actual type name from the export scheme
+                              const scheme = exports.get(ctorName);
+                              if (scheme?.type) {
+                                  // The constructor's return type tells us the ADT name
+                                  let retType = scheme.type;
+                                  while (retType.kind === "TypeFunction") retType = retType.to;
+                                  if (retType.kind === "TypeConstant") {
+                                      const typeName = retType.name.split(".").pop() || retType.name;
+                                      adtTypeName = `${goPkg}.${typeName}`;
+                                  }
+                              }
+                          }
+                          if (adtTypeName) break;
+                      }
+                  }
+                  if (adtTypeName) break;
+              }
           }
       }
 
@@ -1373,7 +1410,12 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         const newLocalEnv = new Map(localEnv || []);
 
         if (c.pattern.kind === "ConstructorPattern") {
-           const ctorInfo = constructorMap?.get(c.pattern.name);
+           let ctorInfo = constructorMap?.get(c.pattern.name);
+           // For imported constructors not in local constructorMap, resolve tag from the
+           // imported module's type declaration via the _importedCtorTags map
+           if (!ctorInfo && _importedCtorTags.has(c.pattern.name)) {
+               ctorInfo = _importedCtorTags.get(c.pattern.name);
+           }
            const tagIndex = ctorInfo ? ctorInfo.tagIndex : (wellKnownTags[c.pattern.name]?.tag ?? i);
 
            // Extract variables from the ADT struct fields

@@ -4,10 +4,11 @@ import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput, onSubmit, onChange)
+import State exposing (..)
 import Ui.Layout as Layout
 
-viewSubmit submitIdeaMsg backToBoardMsg signOutMsg model =
-    Layout.pageWithAuth signOutMsg model
+viewSubmit model =
+    Layout.pageWithAuth model
         (
         div [ class "submit-container" ]
             [ h1 [ class "page-title" ] [ text "Submit an Idea" ]
@@ -16,7 +17,7 @@ viewSubmit submitIdeaMsg backToBoardMsg signOutMsg model =
                     "Have a feature request, bug report, or improvement? Share it with the community."
                 ]
             , div [ class "card" ]
-                [ form [ onSubmit submitIdeaMsg ]
+                [ form [ onSubmit SubmitIdea ]
                     [ div [ class "form-group" ]
                         [ label [ class "form-label" ] [ text "Title" ]
                         , input
@@ -55,7 +56,7 @@ viewSubmit submitIdeaMsg backToBoardMsg signOutMsg model =
                         ]
                     , div [ class "form-actions" ]
                         [ button
-                            [ onClick backToBoardMsg
+                            [ onClick BackToBoard
                             , type_ "button"
                             , class "btn btn-secondary"
                             ]

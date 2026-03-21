@@ -7,6 +7,7 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput)
+import State exposing (..)
 import Lib.Db as Db
 import Ui.Layout as Layout
 import Ui.Components exposing (ideaCard, emptyState)
@@ -37,12 +38,12 @@ viewSubmitButton model =
                 ]
                 [ text "Sign in to vote" ]
 
-viewBoard signOutMsg model =
+viewBoard model =
     let
         userId =
             getUserId model
     in
-        Layout.page signOutMsg model
+        Layout.page model
             (
             div []
                 [ div [ class "board-header" ]
@@ -93,7 +94,7 @@ viewToolbar model =
 
 filterBtn filterValue label activeFilter =
     button
-        [ onClick ("SetFilter " ++ filterValue)
+        [ onClick (SetFilter filterValue)
         , class
             (
             if activeFilter == filterValue then
@@ -106,7 +107,7 @@ filterBtn filterValue label activeFilter =
 
 sortBtn sortValue label activeSort =
     button
-        [ onClick ("SetSort " ++ sortValue)
+        [ onClick (SetSort sortValue)
         , class
             (
             if activeSort == sortValue then
