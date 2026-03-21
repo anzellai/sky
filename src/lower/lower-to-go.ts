@@ -581,6 +581,21 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       if (expr.name === "not") {
           return { kind: "GoRawExpr", code: `func(arg0 any) any { if arg0.(bool) { return false }; return true }` } as any;
       }
+      // Prelude: fst/snd → inline tuple accessors (tuples are sky_wrappers.Tuple2 structs)
+      if (expr.name === "fst") {
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { return arg0.(sky_wrappers.Tuple2).V0 }` } as any;
+      }
+      if (expr.name === "snd") {
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { return arg0.(sky_wrappers.Tuple2).V1 }` } as any;
+      }
+      // Prelude: identity → inline pass-through
+      if (expr.name === "identity") {
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { return arg0 }` } as any;
+      }
+      // Prelude: always → inline constant function
+      if (expr.name === "always") {
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { return func(_ any) any { return arg0 } }` } as any;
+      }
       
       const goName = (expr.name[0] >= 'a' && expr.name[0] <= 'z') ? expr.name.charAt(0).toUpperCase() + expr.name.slice(1) : expr.name;
 
@@ -680,7 +695,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // If the condition is already a binary comparison (GoBinaryExpr), it's bool.
       // Otherwise, add a type assertion.
       if ((condExpr as any).kind !== "GoBinaryExpr") {
-          condExpr = { kind: "GoTypeAssertExpr", expr: condExpr, type: { kind: "GoIdentType", name: "bool" } } as any;
+          // Wrap in (any)(...).(bool) to handle both interface and concrete-typed FFI returns
+          const inner = emitGoExprForLower(condExpr);
+          condExpr = { kind: "GoRawExpr", code: `(any)(${inner}).(bool)` } as any;
       }
       return {
         kind: "GoCallExpr",
@@ -959,7 +976,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             },
             args: args as GoIR.GoExpr[]
         } as any;
-      } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
+      } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "%", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
           // Check if ++ is operating on lists (type is List/TypeApplication with List constructor)
           if (fnExpr.name === "++" && expr.type && expr.type.kind === "TypeApplication" &&
               expr.type.constructor.kind === "TypeConstant" && expr.type.constructor.name === "List") {
@@ -1176,7 +1193,31 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   const branchEnv = new Map(newLocalEnv);
                   const branchStmts: GoIR.GoStmt[] = [];
 
-                  if (c.pattern.head.kind === "VariablePattern" && c.pattern.head.name !== "_") {
+                  // Base condition: len(list) > 0
+                  let condition: any = {
+                      kind: "GoBinaryExpr",
+                      left: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "len" }, args: [{ kind: "GoIdent", name: tmpName }] },
+                      op: ">",
+                      right: { kind: "GoBasicLit", value: "0" }
+                  };
+
+                  if (c.pattern.head.kind === "LiteralPattern") {
+                      // Literal head (e.g., "--flag" :: rest): add && list[0] == "literal"
+                      const litValue = typeof c.pattern.head.value === "string"
+                          ? JSON.stringify(c.pattern.head.value)
+                          : String(c.pattern.head.value);
+                      condition = {
+                          kind: "GoBinaryExpr",
+                          left: condition,
+                          op: "&&",
+                          right: {
+                              kind: "GoBinaryExpr",
+                              left: { kind: "GoIndexExpr", expr: { kind: "GoIdent", name: tmpName }, index: { kind: "GoBasicLit", value: "0" } },
+                              op: "==",
+                              right: { kind: "GoBasicLit", value: litValue }
+                          }
+                      };
+                  } else if (c.pattern.head.kind === "VariablePattern" && c.pattern.head.name !== "_") {
                       branchEnv.set(c.pattern.head.name, { kind: "TypeConstant", name: "Any" });
                       branchStmts.push({
                           kind: "GoAssignStmt",
@@ -1198,12 +1239,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
                   return [{
                       kind: "GoIfStmt",
-                      condition: {
-                          kind: "GoBinaryExpr",
-                          left: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "len" }, args: [{ kind: "GoIdent", name: tmpName }] },
-                          op: ">",
-                          right: { kind: "GoBasicLit", value: "0" }
-                      } as any,
+                      condition: condition,
                       thenBranch: branchStmts,
                       elseBranch: buildConsChain(caseIdx + 1)
                   }];
@@ -1526,7 +1562,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       };
     }
     case "Constructor": {
-        const ctorInfo = constructorMap?.get(expr.name);
+        const ctorInfo = constructorMap?.get(expr.name) || _importedCtorTags?.get(expr.name);
         if (ctorInfo) {
             // Known ADT constructor: emit ParentType{Tag: tagIndex, CtorValueN: arg}
             const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));

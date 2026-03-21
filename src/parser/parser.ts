@@ -185,9 +185,20 @@ export class Parser {
         ? this.consume("UpperIdentifier")
         : this.consume("Identifier");
 
+      // Check for Type(..) syntax to expose ADT constructors
+      let exposeConstructors = false;
+      if (nameToken.kind === "UpperIdentifier" && this.match("LParen")) {
+        this.consume("LParen");
+        this.consume("Dot");
+        this.consume("Dot");
+        this.consume("RParen");
+        exposeConstructors = true;
+      }
+
       items.push({
         kind: nameToken.kind === "UpperIdentifier" ? "type" : "value",
         name: nameToken.lexeme,
+        exposeConstructors,
         span: nameToken.span,
       } as AST.ExposedItem);
 

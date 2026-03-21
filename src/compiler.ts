@@ -198,6 +198,20 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
             myExports.set(itemName, envScheme);
           }
         }
+        // Type(..) syntax: also export ADT variant constructors
+        if ((item as any).kind === "type" && (item as any).exposeConstructors) {
+          const typeDecl = loaded.moduleAst.declarations.find(
+            (d: any) => d.kind === "TypeDeclaration" && d.name === itemName
+          );
+          if (typeDecl && typeDecl.kind === "TypeDeclaration") {
+            for (const variant of typeDecl.variants) {
+              const variantScheme = typeCheck.environment.get(variant.name);
+              if (variantScheme && !myExports.has(variant.name)) {
+                myExports.set(variant.name, variantScheme);
+              }
+            }
+          }
+        }
       }
     }
 

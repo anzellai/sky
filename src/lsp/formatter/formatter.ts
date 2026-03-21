@@ -126,7 +126,7 @@ function formatModuleHeader(module: AST.Module): Doc {
     if (module.exposing.open) {
       exposingDoc = text(" exposing (..)");
     } else if (module.exposing.items && module.exposing.items.length > 0) {
-      const items = module.exposing.items.map(i => text(i.name));
+      const items = module.exposing.items.map(i => text((i as any).exposeConstructors ? i.name + "(..)" : i.name));
       exposingDoc = concat(text(" exposing ("), joinDocs(items, text(", ")), text(")"));
     }
   }
@@ -142,7 +142,7 @@ function formatImport(imp: AST.ImportDeclaration): Doc {
     if (imp.exposing.open) {
       parts.push(text(" exposing (..)"));
     } else if (imp.exposing.items && imp.exposing.items.length > 0) {
-      const items = imp.exposing.items.map(i => text(i.name));
+      const items = imp.exposing.items.map(i => text((i as any).exposeConstructors ? i.name + "(..)" : i.name));
       parts.push(text(" exposing ("), joinDocs(items, text(", ")), text(")"));
     }
   }
