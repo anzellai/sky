@@ -21,7 +21,8 @@ import {
   type Scheme,
   typeConstant,
   freshTypeVariable,
-  mono
+  mono,
+  registerRecordAlias
 } from "../types/types.js"
 
 export interface TypeDiagnostic {
@@ -144,6 +145,14 @@ export function checkModule(
 
   // Set type aliases for expansion in type annotations
   setTypeAliases(typeAliases);
+
+  // Register record type aliases for pretty-printing (LSP hover)
+  for (const [name, aliasType] of typeAliases) {
+    if (aliasType.kind === "RecordType" && aliasType.fields) {
+      const fieldNames = aliasType.fields.map((f: any) => f.name);
+      registerRecordAlias(fieldNames, name);
+    }
+  }
 
   // Pre-register all function declarations with fresh type variables
   // to support forward references (e.g., update calling handleSetSort defined later)

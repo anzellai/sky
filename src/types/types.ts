@@ -321,6 +321,14 @@ export function generalize(type: Type, environmentFreeVars: ReadonlySet<number>)
   return scheme(quantified, type);
 }
 
+// Registry of type alias names for record types, populated by the checker.
+// Maps sorted field names → alias name (e.g., "count,page" → "Model")
+const _recordAliasNames = new Map<string, string>();
+
+export function registerRecordAlias(fieldNames: string[], aliasName: string): void {
+  _recordAliasNames.set(fieldNames.sort().join(","), aliasName);
+}
+
 export function formatType(type: Type): string {
   switch (type.kind) {
     case "TypeVariable":
@@ -348,6 +356,11 @@ export function formatType(type: Type): string {
       return `(${type.items.map(formatType).join(", ")})`;
 
     case "TypeRecord": {
+      // Check if this record matches a known type alias
+      const fieldNames = Object.keys(type.fields).sort().join(",");
+      const aliasName = _recordAliasNames.get(fieldNames);
+      if (aliasName && !type.rest) return aliasName;
+
       const fieldStrs = Object.entries(type.fields).map(([k, v]) => `${k} : ${formatType(v)}`).join(", ");
       if (type.rest) return `{ ${fieldStrs}, ...${formatType(type.rest)} }`;
       return `{ ${fieldStrs} }`;
