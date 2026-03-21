@@ -254,34 +254,66 @@ function resolveModuleToFile(
   if (fs.existsSync(filePath)) return filePath;
 
   // 2. .skydeps — scan installed Sky packages, respect source.root and [lib].exposing
+  // Packages may be nested at any depth (e.g., github.com/org/repo → 3 levels).
+  // Recursively find directories containing sky.toml.
   const skydepsPath = path.join(projectRoot, ".skydeps");
   if (fs.existsSync(skydepsPath)) {
-    const orgs = fs.readdirSync(skydepsPath);
-    for (const org of orgs) {
-      if (org.startsWith(".")) continue;
-      const orgPath = path.join(skydepsPath, org);
-      if (!fs.statSync(orgPath).isDirectory()) continue;
-      const repos = fs.readdirSync(orgPath);
-      for (const repo of repos) {
-        const pkgDir = path.join(orgPath, repo);
-        const depManifest = readDepManifest(pkgDir);
-        const depSrcRoot = depManifest?.source?.root || "src";
-        const pkgSrc = path.join(pkgDir, depSrcRoot);
-        const depFilePath = path.join(pkgSrc, ...moduleName) + ".sky";
-        if (fs.existsSync(depFilePath)) {
-          // Enforce [lib].exposing — if the package declares exposed modules,
-          // only those are importable. No [lib] = all modules are internal.
-          if (depManifest?.lib?.exposing) {
-            const moduleNameStr = moduleName.join(".");
-            if (!depManifest.lib.exposing.includes(moduleNameStr)) {
-              return undefined; // Module exists but is not publicly exposed
-            }
-          } else {
-            // No [lib] section — package doesn't expose any modules
-            return undefined;
-          }
-          return depFilePath;
+    const pkgDirs = findSkydepPackages(skydepsPath);
+    for (const pkgDir of pkgDirs) {
+      const depManifest = readDepManifest(pkgDir);
+      const depSrcRoot = depManifest?.source?.root || "src";
+      const pkgSrc = path.join(pkgDir, depSrcRoot);
+
+      // Derive the import prefix from the package's path relative to .skydeps.
+      // e.g., .skydeps/github.com/anzellai/sky-tailwind → ["Github", "Com", "Anzellai", "SkyTailwind"]
+      // Dots in path segments (like github.com) become separate parts (Github, Com).
+      // Hyphens/underscores within a segment are joined (sky-tailwind → SkyTailwind).
+      const relPkgPath = path.relative(skydepsPath, pkgDir);
+      const importPrefix: string[] = [];
+      for (const seg of relPkgPath.split(path.sep)) {
+        for (const dotPart of seg.split(".")) {
+          importPrefix.push(dotPart.split(/[-_]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(""));
         }
+      }
+
+      // Try direct module path first (for local-style imports)
+      const depFilePath = path.join(pkgSrc, ...moduleName) + ".sky";
+      // Then try stripping the package prefix (for qualified imports like Github.Com.Org.Pkg.Module)
+      let strippedPath: string | undefined;
+      if (moduleName.length > importPrefix.length) {
+        const prefixMatches = importPrefix.every((seg: string, i: number) => seg === moduleName[i]);
+        if (prefixMatches) {
+          const stripped = moduleName.slice(importPrefix.length);
+          strippedPath = path.join(pkgSrc, ...stripped) + ".sky";
+        }
+      }
+
+      const resolvedPath = fs.existsSync(depFilePath) ? depFilePath :
+                           (strippedPath && fs.existsSync(strippedPath)) ? strippedPath : undefined;
+      if (resolvedPath) {
+        // Enforce [lib].exposing — if the package declares exposed modules,
+        // only those are importable. No [lib] = all modules are internal.
+        if (depManifest?.lib?.exposing) {
+          const moduleNameStr = moduleName.join(".");
+          const strippedNameStr = strippedPath ? moduleName.slice(importPrefix.length).join(".") : "";
+          // The exposing list may use the PascalCase package name as prefix
+          // e.g., package "sky-tailwind" exposes "SkyTailwind" for root module
+          const pkgName = depManifest.name || "";
+          const pkgPascal = pkgName.split(/[-_.]/).map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join("");
+          // Build the prefixed module name: e.g., "SkyTailwind" for root, "SkyTailwind.Spacing" for submodule
+          const prefixedName = strippedNameStr ? `${pkgPascal}.${strippedNameStr}` : pkgPascal;
+
+          const isExposed = depManifest.lib.exposing.includes(moduleNameStr) ||
+                            depManifest.lib.exposing.includes(strippedNameStr) ||
+                            depManifest.lib.exposing.includes(prefixedName);
+          if (!isExposed) {
+            return undefined; // Module exists but is not publicly exposed
+          }
+        } else {
+          // No [lib] section — package doesn't expose any modules
+          return undefined;
+        }
+        return resolvedPath;
       }
     }
   }
@@ -329,6 +361,26 @@ function formatDiagnostic(message: string, line?: number, column?: number, file?
   if (column) res += `${column}: `;
   res += message;
   return res;
+}
+
+// Recursively find package directories (containing sky.toml) in .skydeps.
+// Handles arbitrary nesting depth (e.g., github.com/org/repo = 3 levels).
+function findSkydepPackages(dir: string): string[] {
+  const results: string[] = [];
+  if (fs.existsSync(path.join(dir, "sky.toml"))) {
+    results.push(dir);
+    return results; // Don't recurse into packages
+  }
+  try {
+    for (const entry of fs.readdirSync(dir)) {
+      if (entry.startsWith(".")) continue;
+      const full = path.join(dir, entry);
+      if (fs.statSync(full).isDirectory()) {
+        results.push(...findSkydepPackages(full));
+      }
+    }
+  } catch {}
+  return results;
 }
 
 // Cache dep manifests to avoid re-reading sky.toml for every import resolution

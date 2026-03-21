@@ -902,6 +902,23 @@ store = "memory"                # memory | sqlite | redis | postgresql
 
 Sky.Live config is embedded at compile time but can be overridden at runtime via env vars or a `.env` file. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Priority: compiled defaults < sky.toml < env vars < .env file.
 
+### Importing Sky Dependencies
+
+Three import syntaxes are supported for `.skydeps/` packages (all resolve to the same file):
+
+```elm
+-- Stripped (cleanest, recommended)
+import Tailwind as Tw
+
+-- Prefixed (PascalCase package name + module)
+import SkyTailwind.Tailwind as Tw
+
+-- Full path (mirrors the dependency URL)
+import Github.Com.Anzellai.SkyTailwind.Tailwind as Tw
+```
+
+Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow dependencies; use full/prefixed path to disambiguate. Only modules listed in the package's `[lib].exposing` are importable.
+
 ## Coding Conventions
 
 - **Module names** are PascalCase, match file paths: `Lib.Utils` → `src/Lib/Utils.sky`

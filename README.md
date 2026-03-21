@@ -951,16 +951,22 @@ sky remove github.com/google/uuid
 
 #### Using Sky Dependencies
 
-After `sky add github.com/someone/sky-utils` (assuming it exposes `Utils.String`):
+After `sky add github.com/someone/sky-utils` (assuming it exposes `Utils.String`), three import syntaxes are supported:
 
 ```elm
+-- Stripped (cleanest, recommended)
 import Utils.String exposing (capitalize)
 
-main =
-    println (capitalize "hello")
+-- Prefixed (PascalCase package name + module)
+import SkyUtils.Utils.String exposing (capitalize)
+
+-- Full path (mirrors the dependency URL)
+import Github.Com.Someone.SkyUtils.Utils.String exposing (capitalize)
 ```
 
-The module resolver searches `.skydeps/` and respects each package's `[lib].exposing` list -- only publicly exposed modules are importable.
+All three resolve to the same file in `.skydeps/`. The resolver respects each package's `[lib].exposing` list -- only publicly exposed modules are importable.
+
+**Resolution precedence**: local `src/` modules > `.skydeps/` packages > stdlib. If a local module name conflicts with a dependency, use the full or prefixed import path to reach the dependency.
 
 #### Using Go Dependencies
 

@@ -116,6 +116,11 @@ Sky.Live config is embedded at compile time but overridable at runtime via env v
 - `.skydeps/` packages: resolver reads each dep's `sky.toml` for `source.root`
 - Only modules listed in `[lib].exposing` are importable
 - No `[lib]` section = nothing is publicly importable
+- Three import syntaxes are supported (all resolve to the same file):
+  - **Stripped**: `import Tailwind as Tw` (cleanest, recommended)
+  - **Prefixed**: `import SkyTailwind.Tailwind as Tw` (PascalCase package name + module)
+  - **Full path**: `import Github.Com.Anzellai.SkyTailwind.Tailwind as Tw` (mirrors dependency URL)
+- Resolution precedence: local `src/` modules > `.skydeps/` packages > stdlib. Local modules shadow dependency modules; use full/prefixed path to disambiguate.
 
 ## Examples
 
