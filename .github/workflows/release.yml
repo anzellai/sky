@@ -50,15 +50,15 @@ jobs:
         run: node src/bin/build-binary.js
         env:
           SKY_BUILD_TARGET: ${{ matrix.target }}
-          SKY_BUILD_OUTPUT: dist/${{ matrix.artifact }}
-          SKY_LSP_BUILD_OUTPUT: dist/${{ matrix.lsp_artifact }}
+          SKY_BUILD_OUTPUT: ${{ matrix.artifact }}
+          SKY_LSP_BUILD_OUTPUT: ${{ matrix.lsp_artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: |
-            dist/${{ matrix.artifact }}
-            dist/${{ matrix.lsp_artifact }}
+            ${{ matrix.artifact }}
+            ${{ matrix.lsp_artifact }}
 
   release:
     needs: build
@@ -72,9 +72,7 @@ jobs:
         run: |
           mkdir -p release
           for dir in artifacts/*/; do
-            for file in "$dir"dist/*; do
-              cp "$file" release/
-            done
+            cp "$dir"* release/ 2>/dev/null || true
           done
           ls -la release/
 
