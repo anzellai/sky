@@ -39,9 +39,12 @@ func NewSQLiteStore(dbPath string, ttl time.Duration) (*SQLiteStore, error) {
 			model_json    TEXT    NOT NULL,
 			prev_view_html TEXT   NOT NULL,
 			created_at    INTEGER NOT NULL,
-			last_seen     INTEGER NOT NULL
+			last_seen     INTEGER NOT NULL,
+			version       INTEGER NOT NULL DEFAULT 0
 		)
 	`
+	// Add version column if upgrading from older schema
+	db.Exec("ALTER TABLE sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
 	if _, err := db.Exec(createTable); err != nil {
 		db.Close()
 		return nil, err
@@ -57,7 +60,7 @@ func NewSQLiteStore(dbPath string, ttl time.Duration) (*SQLiteStore, error) {
 // by parsing the stored HTML via ParseHTML.
 func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 	row := s.db.QueryRow(
-		"SELECT model_json, prev_view_html, created_at, last_seen FROM sessions WHERE sid = ?",
+		"SELECT model_json, prev_view_html, created_at, last_seen, version FROM sessions WHERE sid = ?",
 		sid,
 	)
 
@@ -65,8 +68,9 @@ func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 	var prevViewHTML string
 	var createdAt int64
 	var lastSeen int64
+	var version int64
 
-	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen, &version); err != nil {
 		return nil, false
 	}
 
@@ -91,6 +95,7 @@ func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 		PrevView: prevView,
 		Created:  time.Unix(createdAt, 0),
 		LastSeen: time.Unix(lastSeen, 0),
+		Version:  version,
 	}
 
 	// Touch last_seen
@@ -103,14 +108,14 @@ func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 
 // Set serialises the session model as JSON and the previous view tree as
 // HTML, then upserts the row into the sessions table.
-func (s *SQLiteStore) Set(sid string, sess *Session) {
+func (s *SQLiteStore) Set(sid string, sess *Session) bool {
 	now := time.Now()
 	sess.LastSeen = now
 
 	modelBytes, err := json.Marshal(sess.Model)
 	if err != nil {
 		log.Printf("skylive_rt: SQLiteStore.Set: failed to marshal model: %v", err)
-		return
+		return false
 	}
 
 	var prevViewHTML string
@@ -123,18 +128,35 @@ func (s *SQLiteStore) Set(sid string, sess *Session) {
 		createdAt = now.Unix()
 	}
 
-	_, err = s.db.Exec(
-		`INSERT INTO sessions (sid, model_json, prev_view_html, created_at, last_seen)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(sid) DO UPDATE SET
-		   model_json     = excluded.model_json,
-		   prev_view_html = excluded.prev_view_html,
-		   last_seen      = excluded.last_seen`,
-		sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(),
-	)
+	newVersion := sess.Version + 1
+
+	// For new sessions (version 0), insert. For existing, use optimistic locking.
+	if sess.Version == 0 {
+		_, err = s.db.Exec(
+			`INSERT OR IGNORE INTO sessions (sid, model_json, prev_view_html, created_at, last_seen, version)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(), newVersion,
+		)
+	} else {
+		var result sql.Result
+		result, err = s.db.Exec(
+			`UPDATE sessions SET model_json = ?, prev_view_html = ?, last_seen = ?, version = ?
+			 WHERE sid = ? AND version = ?`,
+			string(modelBytes), prevViewHTML, now.Unix(), newVersion, sid, sess.Version,
+		)
+		if err == nil {
+			rows, _ := result.RowsAffected()
+			if rows == 0 {
+				return false // version conflict
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("skylive_rt: SQLiteStore.Set: failed to upsert session: %v", err)
+		return false
 	}
+	sess.Version = newVersion
+	return true
 }
 
 // Delete removes a session from the database.

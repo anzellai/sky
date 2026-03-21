@@ -42,6 +42,7 @@ type redisSession struct {
 	PrevViewHTML string `json:"prev_view"`
 	CreatedAt    int64  `json:"created_at"`
 	LastSeen     int64  `json:"last_seen"`
+	Version      int64  `json:"version"`
 }
 
 func (s *RedisStore) Get(sid string) (*Session, bool) {
@@ -73,6 +74,7 @@ func (s *RedisStore) Get(sid string) (*Session, bool) {
 		PrevView: prevView,
 		Created:  time.Unix(rs.CreatedAt, 0),
 		LastSeen: time.Now(),
+		Version:  rs.Version,
 	}
 
 	// Refresh TTL
@@ -81,14 +83,14 @@ func (s *RedisStore) Get(sid string) (*Session, bool) {
 	return sess, true
 }
 
-func (s *RedisStore) Set(sid string, sess *Session) {
+func (s *RedisStore) Set(sid string, sess *Session) bool {
 	now := time.Now()
 	sess.LastSeen = now
 
 	modelBytes, err := json.Marshal(sess.Model)
 	if err != nil {
 		log.Printf("skylive_rt: RedisStore.Set: failed to marshal model: %v", err)
-		return
+		return false
 	}
 
 	var prevViewHTML string
@@ -101,20 +103,54 @@ func (s *RedisStore) Set(sid string, sess *Session) {
 		createdAt = now.Unix()
 	}
 
+	newVersion := sess.Version + 1
 	rs := redisSession{
 		ModelJSON:    string(modelBytes),
 		PrevViewHTML: prevViewHTML,
 		CreatedAt:    createdAt,
 		LastSeen:     now.Unix(),
+		Version:      newVersion,
 	}
 
 	data, err := json.Marshal(rs)
 	if err != nil {
 		log.Printf("skylive_rt: RedisStore.Set: failed to marshal session: %v", err)
-		return
+		return false
 	}
 
-	s.client.Set(s.ctx, "sky:sess:"+sid, string(data), s.ttl)
+	key := "sky:sess:" + sid
+
+	// Use Redis WATCH for optimistic concurrency: if another writer changed
+	// the key between our GET and this SET, the transaction aborts.
+	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+		// Check current version
+		if sess.Version > 0 {
+			val, err := tx.Get(s.ctx, key).Result()
+			if err == nil {
+				var current redisSession
+				if json.Unmarshal([]byte(val), &current) == nil {
+					if current.Version != sess.Version {
+						return redis.TxFailedErr // version mismatch
+					}
+				}
+			}
+		}
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, key, string(data), s.ttl)
+			return nil
+		})
+		return err
+	}, key)
+
+	if err != nil {
+		if err == redis.TxFailedErr {
+			return false // version conflict
+		}
+		log.Printf("skylive_rt: RedisStore.Set: failed: %v", err)
+		return false
+	}
+	sess.Version = newVersion
+	return true
 }
 
 func (s *RedisStore) Delete(sid string) {

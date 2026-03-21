@@ -26,6 +26,7 @@ type SSEManager struct {
 	connections map[string]*SSEConn // sid → connection
 	app         *LiveApp
 	store       SessionStore
+	sessLock    *SessionLocker
 }
 
 // SSEConn represents a single SSE connection.
@@ -39,11 +40,12 @@ type SSEConn struct {
 }
 
 // NewSSEManager creates a new SSE manager.
-func NewSSEManager(app *LiveApp, store SessionStore) *SSEManager {
+func NewSSEManager(app *LiveApp, store SessionStore, sessLock *SessionLocker) *SSEManager {
 	return &SSEManager{
 		connections: make(map[string]*SSEConn),
 		app:         app,
 		store:       store,
+		sessLock:    sessLock,
 	}
 }
 
@@ -278,10 +280,9 @@ func extractIntField(v any, fieldName string) int {
 }
 
 func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.RawMessage) {
-	sess, ok := m.store.Get(sid)
-	if !ok {
-		return
-	}
+	// Lock this session to prevent race with event handling (single-instance)
+	m.sessLock.Lock(sid)
+	defer m.sessLock.Unlock(sid)
 
 	msg, err := m.app.DecodeMsg(msgName, msgArgs)
 	if err != nil {
@@ -289,21 +290,27 @@ func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.Ra
 		return
 	}
 
-	// Run update
-	newModel, _ := m.app.Update(msg, sess.Model)
+	// Optimistic concurrency retry loop
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := m.store.Get(sid)
+		if !ok {
+			return
+		}
 
-	// Render and diff
-	newView := m.app.View(newModel)
-	AssignSkyIDs(newView)
-	patches := Diff(sess.PrevView, newView)
+		newModel, _ := m.app.Update(msg, sess.Model)
+		newView := m.app.View(newModel)
+		AssignSkyIDs(newView)
+		patches := Diff(sess.PrevView, newView)
 
-	// Update session atomically via store.Set
-	sess.Model = newModel
-	sess.PrevView = newView
-	m.store.Set(sid, sess)
-
-	// Send patches via SSE if there are any changes
-	if len(patches) > 0 {
-		m.SendPatches(sid, patches, "", "")
+		sess.Model = newModel
+		sess.PrevView = newView
+		if m.store.Set(sid, sess) {
+			if len(patches) > 0 {
+				m.SendPatches(sid, patches, "", "")
+			}
+			return // success
+		}
+		// Version conflict — retry with fresh session
 	}
 }

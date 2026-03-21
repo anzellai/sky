@@ -164,6 +164,10 @@ func StartServer(config LiveConfig, app LiveApp) {
 	loadDotEnv()
 	applyEnvOverrides(&config)
 	app.config = config
+
+	// Per-session mutex to prevent race conditions between event handling
+	// and SSE subscription ticks on the same session.
+	sessLock := NewSessionLocker()
 	var store SessionStore
 	switch config.StoreType {
 	case "sqlite":
@@ -222,7 +226,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 
 	// Event handler — processes Msg from the JS client
 	mux.HandleFunc("POST /_sky/event", func(w http.ResponseWriter, r *http.Request) {
-		handleEvent(w, r, store, &app)
+		handleEvent(w, r, store, &app, sessLock)
 	})
 
 	// URL resolver — maps a URL path back to a Navigate Msg (for browser back/forward)
@@ -232,7 +236,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 
 	// Polling endpoint — fallback for serverless (Lambda, etc.) where SSE isn't available
 	mux.HandleFunc("GET /_sky/poll", func(w http.ResponseWriter, r *http.Request) {
-		handlePoll(w, r, store, &app)
+		handlePoll(w, r, store, &app, sessLock)
 	})
 
 	// Client config endpoint — passes LiveConfig to JS client
@@ -247,7 +251,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 	})
 
 	// SSE subscriptions
-	sseManager := NewSSEManager(&app, store)
+	sseManager := NewSSEManager(&app, store, sessLock)
 	mux.HandleFunc("GET /_sky/stream", sseManager.HandleSSE)
 
 	// Start subscription timers if app defines subscriptions
@@ -343,54 +347,58 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 	w.Write([]byte(html))
 }
 
-func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp) {
+func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
 	var env MsgEnvelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		http.Error(w, "bad request", 400)
 		return
 	}
 
-	sess, ok := store.Get(env.SID)
-	if !ok {
-		http.Error(w, "session expired", 410)
-		return
-	}
+	// Lock this session to prevent race with SSE subscription ticks (single-instance)
+	sessLock.Lock(env.SID)
+	defer sessLock.Unlock(env.SID)
 
-	// Decode the message
+	// Decode the message (done once, outside retry loop)
 	msg, err := app.DecodeMsg(env.Msg, env.Args)
 	if err != nil {
 		http.Error(w, "unknown message: "+env.Msg, 400)
 		return
 	}
 
-	// Track old page for URL sync
-	oldPage := getPageFromModel(sess.Model)
+	// Optimistic concurrency retry loop (handles multi-instance races via store versioning)
+	var patches []Patch
+	var resp EventResponse
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := store.Get(env.SID)
+		if !ok {
+			http.Error(w, "session expired", 410)
+			return
+		}
 
-	// Run update
-	newModel, cmds := app.Update(msg, sess.Model)
-	_ = cmds // TODO: process commands
+		oldPage := getPageFromModel(sess.Model)
 
-	// Render new view
-	newView := app.View(newModel)
-	AssignSkyIDs(newView)
+		newModel, cmds := app.Update(msg, sess.Model)
+		_ = cmds
 
-	// Diff against previous view
-	patches := Diff(sess.PrevView, newView)
+		newView := app.View(newModel)
+		AssignSkyIDs(newView)
 
-	// Update session and persist
-	sess.Model = newModel
-	sess.PrevView = newView
-	sess.MsgLog = append(sess.MsgLog, msg)
-	store.Set(env.SID, sess)
+		patches = Diff(sess.PrevView, newView)
 
-	// Build response
-	resp := EventResponse{Patches: patches}
-
-	// Detect page change for URL sync
-	newPage := getPageFromModel(newModel)
-	if !pagesEqual(oldPage, newPage) {
-		resp.URL = app.URLForPage(newPage)
-		resp.Title = app.TitleForPage(newPage)
+		sess.Model = newModel
+		sess.PrevView = newView
+		sess.MsgLog = append(sess.MsgLog, msg)
+		if store.Set(env.SID, sess) {
+			resp = EventResponse{Patches: patches}
+			newPage := getPageFromModel(newModel)
+			if !pagesEqual(oldPage, newPage) {
+				resp.URL = app.URLForPage(newPage)
+				resp.Title = app.TitleForPage(newPage)
+			}
+			break // success
+		}
+		// Version conflict — retry with fresh session
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -548,7 +556,7 @@ func extractTag(v any) int {
 // handlePoll is a polling fallback for environments where SSE isn't available
 // (e.g., Lambda). The client periodically calls GET /_sky/poll?sid=X and the
 // server re-renders the view, diffs against PrevView, and returns patches.
-func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp) {
+func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
 	sid := r.URL.Query().Get("sid")
 	if sid == "" {
 		if cookie, err := r.Cookie("sky_sid"); err == nil {
@@ -560,24 +568,32 @@ func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app 
 		return
 	}
 
-	sess, ok := store.Get(sid)
-	if !ok {
-		http.Error(w, "session expired", 410)
-		return
+	sessLock.Lock(sid)
+	defer sessLock.Unlock(sid)
+
+	var resp EventResponse
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := store.Get(sid)
+		if !ok {
+			http.Error(w, "session expired", 410)
+			return
+		}
+
+		newView := app.View(sess.Model)
+		AssignSkyIDs(newView)
+		patches := Diff(sess.PrevView, newView)
+
+		if len(patches) > 0 {
+			sess.PrevView = newView
+			if !store.Set(sid, sess) {
+				continue // version conflict — retry
+			}
+		}
+		resp = EventResponse{Patches: patches}
+		break
 	}
 
-	// Re-render view with current model
-	newView := app.View(sess.Model)
-	AssignSkyIDs(newView)
-	patches := Diff(sess.PrevView, newView)
-
-	// Update stored view
-	if len(patches) > 0 {
-		sess.PrevView = newView
-		store.Set(sid, sess)
-	}
-
-	resp := EventResponse{Patches: patches}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }

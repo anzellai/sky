@@ -3373,6 +3373,8 @@ subscriptions model =
         ]
 \`\`\`
 
+The runtime uses per-session locking and optimistic concurrency (version field) to prevent race conditions between SSE ticks and user events, even across multiple server instances sharing a database.
+
 ### Cmd (Side Effects)
 
 \`Cmd.none\` is used in most cases. \`Cmd.batch\` combines multiple commands.
@@ -4816,6 +4818,10 @@ func StartServer(config LiveConfig, app LiveApp) {
 	loadDotEnv()
 	applyEnvOverrides(&config)
 	app.config = config
+
+	// Per-session mutex to prevent race conditions between event handling
+	// and SSE subscription ticks on the same session.
+	sessLock := NewSessionLocker()
 	var store SessionStore
 	switch config.StoreType {
 	case "sqlite":
@@ -4874,7 +4880,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 
 	// Event handler — processes Msg from the JS client
 	mux.HandleFunc("POST /_sky/event", func(w http.ResponseWriter, r *http.Request) {
-		handleEvent(w, r, store, &app)
+		handleEvent(w, r, store, &app, sessLock)
 	})
 
 	// URL resolver — maps a URL path back to a Navigate Msg (for browser back/forward)
@@ -4884,7 +4890,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 
 	// Polling endpoint — fallback for serverless (Lambda, etc.) where SSE isn't available
 	mux.HandleFunc("GET /_sky/poll", func(w http.ResponseWriter, r *http.Request) {
-		handlePoll(w, r, store, &app)
+		handlePoll(w, r, store, &app, sessLock)
 	})
 
 	// Client config endpoint — passes LiveConfig to JS client
@@ -4899,7 +4905,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 	})
 
 	// SSE subscriptions
-	sseManager := NewSSEManager(&app, store)
+	sseManager := NewSSEManager(&app, store, sessLock)
 	mux.HandleFunc("GET /_sky/stream", sseManager.HandleSSE)
 
 	// Start subscription timers if app defines subscriptions
@@ -4995,54 +5001,58 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 	w.Write([]byte(html))
 }
 
-func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp) {
+func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
 	var env MsgEnvelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		http.Error(w, "bad request", 400)
 		return
 	}
 
-	sess, ok := store.Get(env.SID)
-	if !ok {
-		http.Error(w, "session expired", 410)
-		return
-	}
+	// Lock this session to prevent race with SSE subscription ticks (single-instance)
+	sessLock.Lock(env.SID)
+	defer sessLock.Unlock(env.SID)
 
-	// Decode the message
+	// Decode the message (done once, outside retry loop)
 	msg, err := app.DecodeMsg(env.Msg, env.Args)
 	if err != nil {
 		http.Error(w, "unknown message: "+env.Msg, 400)
 		return
 	}
 
-	// Track old page for URL sync
-	oldPage := getPageFromModel(sess.Model)
+	// Optimistic concurrency retry loop (handles multi-instance races via store versioning)
+	var patches []Patch
+	var resp EventResponse
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := store.Get(env.SID)
+		if !ok {
+			http.Error(w, "session expired", 410)
+			return
+		}
 
-	// Run update
-	newModel, cmds := app.Update(msg, sess.Model)
-	_ = cmds // TODO: process commands
+		oldPage := getPageFromModel(sess.Model)
 
-	// Render new view
-	newView := app.View(newModel)
-	AssignSkyIDs(newView)
+		newModel, cmds := app.Update(msg, sess.Model)
+		_ = cmds
 
-	// Diff against previous view
-	patches := Diff(sess.PrevView, newView)
+		newView := app.View(newModel)
+		AssignSkyIDs(newView)
 
-	// Update session and persist
-	sess.Model = newModel
-	sess.PrevView = newView
-	sess.MsgLog = append(sess.MsgLog, msg)
-	store.Set(env.SID, sess)
+		patches = Diff(sess.PrevView, newView)
 
-	// Build response
-	resp := EventResponse{Patches: patches}
-
-	// Detect page change for URL sync
-	newPage := getPageFromModel(newModel)
-	if !pagesEqual(oldPage, newPage) {
-		resp.URL = app.URLForPage(newPage)
-		resp.Title = app.TitleForPage(newPage)
+		sess.Model = newModel
+		sess.PrevView = newView
+		sess.MsgLog = append(sess.MsgLog, msg)
+		if store.Set(env.SID, sess) {
+			resp = EventResponse{Patches: patches}
+			newPage := getPageFromModel(newModel)
+			if !pagesEqual(oldPage, newPage) {
+				resp.URL = app.URLForPage(newPage)
+				resp.Title = app.TitleForPage(newPage)
+			}
+			break // success
+		}
+		// Version conflict — retry with fresh session
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -5200,7 +5210,7 @@ func extractTag(v any) int {
 // handlePoll is a polling fallback for environments where SSE isn't available
 // (e.g., Lambda). The client periodically calls GET /_sky/poll?sid=X and the
 // server re-renders the view, diffs against PrevView, and returns patches.
-func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp) {
+func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
 	sid := r.URL.Query().Get("sid")
 	if sid == "" {
 		if cookie, err := r.Cookie("sky_sid"); err == nil {
@@ -5212,24 +5222,32 @@ func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app 
 		return
 	}
 
-	sess, ok := store.Get(sid)
-	if !ok {
-		http.Error(w, "session expired", 410)
-		return
+	sessLock.Lock(sid)
+	defer sessLock.Unlock(sid)
+
+	var resp EventResponse
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := store.Get(sid)
+		if !ok {
+			http.Error(w, "session expired", 410)
+			return
+		}
+
+		newView := app.View(sess.Model)
+		AssignSkyIDs(newView)
+		patches := Diff(sess.PrevView, newView)
+
+		if len(patches) > 0 {
+			sess.PrevView = newView
+			if !store.Set(sid, sess) {
+				continue // version conflict — retry
+			}
+		}
+		resp = EventResponse{Patches: patches}
+		break
 	}
 
-	// Re-render view with current model
-	newView := app.View(sess.Model)
-	AssignSkyIDs(newView)
-	patches := Diff(sess.PrevView, newView)
-
-	// Update stored view
-	if len(patches) > 0 {
-		sess.PrevView = newView
-		store.Set(sid, sess)
-	}
-
-	resp := EventResponse{Patches: patches}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -5250,14 +5268,16 @@ type Session struct {
 	MsgLog   []any     // Event log for replay (future use)
 	Created  time.Time // When the session was created
 	LastSeen time.Time // Last activity timestamp
+	Version  int64     // Monotonic version for optimistic concurrency control
 }
 
 // SessionStore is the interface for session persistence.
-// V1 implements in-memory only. Other backends (sqlite, redis, etc.)
-// implement this same interface.
+// Set uses optimistic concurrency: it only writes if the session's Version
+// matches what's in the store. Returns true on success, false on conflict.
+// On conflict the caller should re-Get, re-apply the update, and retry.
 type SessionStore interface {
 	Get(sid string) (*Session, bool)
-	Set(sid string, sess *Session)
+	Set(sid string, sess *Session) bool // returns false on version conflict
 	Delete(sid string)
 	NewID() string
 }
@@ -5290,11 +5310,17 @@ func (s *MemoryStore) Get(sid string) (*Session, bool) {
 	return sess, ok
 }
 
-func (s *MemoryStore) Set(sid string, sess *Session) {
+func (s *MemoryStore) Set(sid string, sess *Session) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	existing, ok := s.sessions[sid]
+	if ok && existing.Version != sess.Version {
+		return false // version conflict
+	}
+	sess.Version++
 	sess.LastSeen = time.Now()
 	s.sessions[sid] = sess
+	return true
 }
 
 func (s *MemoryStore) Delete(sid string) {
@@ -5313,6 +5339,57 @@ func generateSessionID() string {
 	b := make([]byte, 32) // 256 bits
 	rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// SessionLocker provides per-session mutexes so that concurrent operations
+// (event handling and SSE subscriptions) on the same session are serialized.
+// This prevents race conditions where an SSE tick overwrites an in-flight
+// event handler's model update.
+//
+// Scales to millions of sessions: each session gets its own lightweight mutex
+// (only contention is between a single user's concurrent event + SSE tick).
+// Ref-counted entries are cleaned up automatically when no goroutine holds
+// the lock, so memory stays proportional to active (in-flight) sessions,
+// not total sessions.
+type SessionLocker struct {
+	mu    sync.Mutex
+	locks map[string]*lockEntry
+}
+
+type lockEntry struct {
+	mu      sync.Mutex
+	waiters int // number of goroutines waiting or holding this lock
+}
+
+func NewSessionLocker() *SessionLocker {
+	return &SessionLocker{locks: make(map[string]*lockEntry)}
+}
+
+func (sl *SessionLocker) Lock(sid string) {
+	sl.mu.Lock()
+	e, ok := sl.locks[sid]
+	if !ok {
+		e = &lockEntry{}
+		sl.locks[sid] = e
+	}
+	e.waiters++
+	sl.mu.Unlock()
+	e.mu.Lock()
+}
+
+func (sl *SessionLocker) Unlock(sid string) {
+	sl.mu.Lock()
+	e, ok := sl.locks[sid]
+	if ok {
+		e.waiters--
+		if e.waiters == 0 {
+			delete(sl.locks, sid) // No one waiting — free the entry
+		}
+	}
+	sl.mu.Unlock()
+	if ok {
+		e.mu.Unlock()
+	}
 }
 
 func (s *MemoryStore) cleanup() {
@@ -5358,6 +5435,7 @@ type SSEManager struct {
 	connections map[string]*SSEConn // sid → connection
 	app         *LiveApp
 	store       SessionStore
+	sessLock    *SessionLocker
 }
 
 // SSEConn represents a single SSE connection.
@@ -5371,11 +5449,12 @@ type SSEConn struct {
 }
 
 // NewSSEManager creates a new SSE manager.
-func NewSSEManager(app *LiveApp, store SessionStore) *SSEManager {
+func NewSSEManager(app *LiveApp, store SessionStore, sessLock *SessionLocker) *SSEManager {
 	return &SSEManager{
 		connections: make(map[string]*SSEConn),
 		app:         app,
 		store:       store,
+		sessLock:    sessLock,
 	}
 }
 
@@ -5610,10 +5689,9 @@ func extractIntField(v any, fieldName string) int {
 }
 
 func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.RawMessage) {
-	sess, ok := m.store.Get(sid)
-	if !ok {
-		return
-	}
+	// Lock this session to prevent race with event handling (single-instance)
+	m.sessLock.Lock(sid)
+	defer m.sessLock.Unlock(sid)
 
 	msg, err := m.app.DecodeMsg(msgName, msgArgs)
 	if err != nil {
@@ -5621,22 +5699,28 @@ func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.Ra
 		return
 	}
 
-	// Run update
-	newModel, _ := m.app.Update(msg, sess.Model)
+	// Optimistic concurrency retry loop
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := m.store.Get(sid)
+		if !ok {
+			return
+		}
 
-	// Render and diff
-	newView := m.app.View(newModel)
-	AssignSkyIDs(newView)
-	patches := Diff(sess.PrevView, newView)
+		newModel, _ := m.app.Update(msg, sess.Model)
+		newView := m.app.View(newModel)
+		AssignSkyIDs(newView)
+		patches := Diff(sess.PrevView, newView)
 
-	// Update session atomically via store.Set
-	sess.Model = newModel
-	sess.PrevView = newView
-	m.store.Set(sid, sess)
-
-	// Send patches via SSE if there are any changes
-	if len(patches) > 0 {
-		m.SendPatches(sid, patches, "", "")
+		sess.Model = newModel
+		sess.PrevView = newView
+		if m.store.Set(sid, sess) {
+			if len(patches) > 0 {
+				m.SendPatches(sid, patches, "", "")
+			}
+			return // success
+		}
+		// Version conflict — retry with fresh session
 	}
 }
 `,
@@ -5679,9 +5763,12 @@ func NewPostgresStore(url string, ttl time.Duration) (*PostgresStore, error) {
 			model_json    TEXT    NOT NULL,
 			prev_view_html TEXT   NOT NULL,
 			created_at    BIGINT NOT NULL,
-			last_seen     BIGINT NOT NULL
+			last_seen     BIGINT NOT NULL,
+			version       BIGINT NOT NULL DEFAULT 0
 		)
 	\`
+	// Add version column if upgrading from older schema
+	db.Exec("ALTER TABLE sky_sessions ADD COLUMN version BIGINT NOT NULL DEFAULT 0")
 	if _, err := db.Exec(createTable); err != nil {
 		db.Close()
 		return nil, err
@@ -5697,7 +5784,7 @@ func NewPostgresStore(url string, ttl time.Duration) (*PostgresStore, error) {
 
 func (s *PostgresStore) Get(sid string) (*Session, bool) {
 	row := s.db.QueryRow(
-		"SELECT model_json, prev_view_html, created_at, last_seen FROM sky_sessions WHERE sid = $1",
+		"SELECT model_json, prev_view_html, created_at, last_seen, version FROM sky_sessions WHERE sid = $1",
 		sid,
 	)
 
@@ -5705,8 +5792,9 @@ func (s *PostgresStore) Get(sid string) (*Session, bool) {
 	var prevViewHTML string
 	var createdAt int64
 	var lastSeen int64
+	var version int64
 
-	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen, &version); err != nil {
 		return nil, false
 	}
 
@@ -5728,6 +5816,7 @@ func (s *PostgresStore) Get(sid string) (*Session, bool) {
 		PrevView: prevView,
 		Created:  time.Unix(createdAt, 0),
 		LastSeen: time.Unix(lastSeen, 0),
+		Version:  version,
 	}
 
 	// Touch last_seen
@@ -5738,14 +5827,14 @@ func (s *PostgresStore) Get(sid string) (*Session, bool) {
 	return sess, true
 }
 
-func (s *PostgresStore) Set(sid string, sess *Session) {
+func (s *PostgresStore) Set(sid string, sess *Session) bool {
 	now := time.Now()
 	sess.LastSeen = now
 
 	modelBytes, err := json.Marshal(sess.Model)
 	if err != nil {
 		log.Printf("skylive_rt: PostgresStore.Set: failed to marshal model: %v", err)
-		return
+		return false
 	}
 
 	var prevViewHTML string
@@ -5758,18 +5847,35 @@ func (s *PostgresStore) Set(sid string, sess *Session) {
 		createdAt = now.Unix()
 	}
 
-	_, err = s.db.Exec(
-		\`INSERT INTO sky_sessions (sid, model_json, prev_view_html, created_at, last_seen)
-		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (sid) DO UPDATE SET
-		   model_json     = EXCLUDED.model_json,
-		   prev_view_html = EXCLUDED.prev_view_html,
-		   last_seen      = EXCLUDED.last_seen\`,
-		sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(),
-	)
+	newVersion := sess.Version + 1
+
+	if sess.Version == 0 {
+		_, err = s.db.Exec(
+			\`INSERT INTO sky_sessions (sid, model_json, prev_view_html, created_at, last_seen, version)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (sid) DO NOTHING\`,
+			sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(), newVersion,
+		)
+	} else {
+		var result sql.Result
+		result, err = s.db.Exec(
+			\`UPDATE sky_sessions SET model_json = $1, prev_view_html = $2, last_seen = $3, version = $4
+			 WHERE sid = $5 AND version = $6\`,
+			string(modelBytes), prevViewHTML, now.Unix(), newVersion, sid, sess.Version,
+		)
+		if err == nil {
+			rows, _ := result.RowsAffected()
+			if rows == 0 {
+				return false // version conflict
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("skylive_rt: PostgresStore.Set: failed to upsert session: %v", err)
+		return false
 	}
+	sess.Version = newVersion
+	return true
 }
 
 func (s *PostgresStore) Delete(sid string) {
@@ -5833,6 +5939,7 @@ type redisSession struct {
 	PrevViewHTML string \`json:"prev_view"\`
 	CreatedAt    int64  \`json:"created_at"\`
 	LastSeen     int64  \`json:"last_seen"\`
+	Version      int64  \`json:"version"\`
 }
 
 func (s *RedisStore) Get(sid string) (*Session, bool) {
@@ -5864,6 +5971,7 @@ func (s *RedisStore) Get(sid string) (*Session, bool) {
 		PrevView: prevView,
 		Created:  time.Unix(rs.CreatedAt, 0),
 		LastSeen: time.Now(),
+		Version:  rs.Version,
 	}
 
 	// Refresh TTL
@@ -5872,14 +5980,14 @@ func (s *RedisStore) Get(sid string) (*Session, bool) {
 	return sess, true
 }
 
-func (s *RedisStore) Set(sid string, sess *Session) {
+func (s *RedisStore) Set(sid string, sess *Session) bool {
 	now := time.Now()
 	sess.LastSeen = now
 
 	modelBytes, err := json.Marshal(sess.Model)
 	if err != nil {
 		log.Printf("skylive_rt: RedisStore.Set: failed to marshal model: %v", err)
-		return
+		return false
 	}
 
 	var prevViewHTML string
@@ -5892,20 +6000,54 @@ func (s *RedisStore) Set(sid string, sess *Session) {
 		createdAt = now.Unix()
 	}
 
+	newVersion := sess.Version + 1
 	rs := redisSession{
 		ModelJSON:    string(modelBytes),
 		PrevViewHTML: prevViewHTML,
 		CreatedAt:    createdAt,
 		LastSeen:     now.Unix(),
+		Version:      newVersion,
 	}
 
 	data, err := json.Marshal(rs)
 	if err != nil {
 		log.Printf("skylive_rt: RedisStore.Set: failed to marshal session: %v", err)
-		return
+		return false
 	}
 
-	s.client.Set(s.ctx, "sky:sess:"+sid, string(data), s.ttl)
+	key := "sky:sess:" + sid
+
+	// Use Redis WATCH for optimistic concurrency: if another writer changed
+	// the key between our GET and this SET, the transaction aborts.
+	err = s.client.Watch(s.ctx, func(tx *redis.Tx) error {
+		// Check current version
+		if sess.Version > 0 {
+			val, err := tx.Get(s.ctx, key).Result()
+			if err == nil {
+				var current redisSession
+				if json.Unmarshal([]byte(val), &current) == nil {
+					if current.Version != sess.Version {
+						return redis.TxFailedErr // version mismatch
+					}
+				}
+			}
+		}
+		_, err := tx.TxPipelined(s.ctx, func(pipe redis.Pipeliner) error {
+			pipe.Set(s.ctx, key, string(data), s.ttl)
+			return nil
+		})
+		return err
+	}, key)
+
+	if err != nil {
+		if err == redis.TxFailedErr {
+			return false // version conflict
+		}
+		log.Printf("skylive_rt: RedisStore.Set: failed: %v", err)
+		return false
+	}
+	sess.Version = newVersion
+	return true
 }
 
 func (s *RedisStore) Delete(sid string) {
@@ -5957,9 +6099,12 @@ func NewSQLiteStore(dbPath string, ttl time.Duration) (*SQLiteStore, error) {
 			model_json    TEXT    NOT NULL,
 			prev_view_html TEXT   NOT NULL,
 			created_at    INTEGER NOT NULL,
-			last_seen     INTEGER NOT NULL
+			last_seen     INTEGER NOT NULL,
+			version       INTEGER NOT NULL DEFAULT 0
 		)
 	\`
+	// Add version column if upgrading from older schema
+	db.Exec("ALTER TABLE sessions ADD COLUMN version INTEGER NOT NULL DEFAULT 0")
 	if _, err := db.Exec(createTable); err != nil {
 		db.Close()
 		return nil, err
@@ -5975,7 +6120,7 @@ func NewSQLiteStore(dbPath string, ttl time.Duration) (*SQLiteStore, error) {
 // by parsing the stored HTML via ParseHTML.
 func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 	row := s.db.QueryRow(
-		"SELECT model_json, prev_view_html, created_at, last_seen FROM sessions WHERE sid = ?",
+		"SELECT model_json, prev_view_html, created_at, last_seen, version FROM sessions WHERE sid = ?",
 		sid,
 	)
 
@@ -5983,8 +6128,9 @@ func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 	var prevViewHTML string
 	var createdAt int64
 	var lastSeen int64
+	var version int64
 
-	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen, &version); err != nil {
 		return nil, false
 	}
 
@@ -6009,6 +6155,7 @@ func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 		PrevView: prevView,
 		Created:  time.Unix(createdAt, 0),
 		LastSeen: time.Unix(lastSeen, 0),
+		Version:  version,
 	}
 
 	// Touch last_seen
@@ -6021,14 +6168,14 @@ func (s *SQLiteStore) Get(sid string) (*Session, bool) {
 
 // Set serialises the session model as JSON and the previous view tree as
 // HTML, then upserts the row into the sessions table.
-func (s *SQLiteStore) Set(sid string, sess *Session) {
+func (s *SQLiteStore) Set(sid string, sess *Session) bool {
 	now := time.Now()
 	sess.LastSeen = now
 
 	modelBytes, err := json.Marshal(sess.Model)
 	if err != nil {
 		log.Printf("skylive_rt: SQLiteStore.Set: failed to marshal model: %v", err)
-		return
+		return false
 	}
 
 	var prevViewHTML string
@@ -6041,18 +6188,35 @@ func (s *SQLiteStore) Set(sid string, sess *Session) {
 		createdAt = now.Unix()
 	}
 
-	_, err = s.db.Exec(
-		\`INSERT INTO sessions (sid, model_json, prev_view_html, created_at, last_seen)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(sid) DO UPDATE SET
-		   model_json     = excluded.model_json,
-		   prev_view_html = excluded.prev_view_html,
-		   last_seen      = excluded.last_seen\`,
-		sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(),
-	)
+	newVersion := sess.Version + 1
+
+	// For new sessions (version 0), insert. For existing, use optimistic locking.
+	if sess.Version == 0 {
+		_, err = s.db.Exec(
+			\`INSERT OR IGNORE INTO sessions (sid, model_json, prev_view_html, created_at, last_seen, version)
+			 VALUES (?, ?, ?, ?, ?, ?)\`,
+			sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(), newVersion,
+		)
+	} else {
+		var result sql.Result
+		result, err = s.db.Exec(
+			\`UPDATE sessions SET model_json = ?, prev_view_html = ?, last_seen = ?, version = ?
+			 WHERE sid = ? AND version = ?\`,
+			string(modelBytes), prevViewHTML, now.Unix(), newVersion, sid, sess.Version,
+		)
+		if err == nil {
+			rows, _ := result.RowsAffected()
+			if rows == 0 {
+				return false // version conflict
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("skylive_rt: SQLiteStore.Set: failed to upsert session: %v", err)
+		return false
 	}
+	sess.Version = newVersion
+	return true
 }
 
 // Delete removes a session from the database.

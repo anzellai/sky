@@ -37,9 +37,12 @@ func NewPostgresStore(url string, ttl time.Duration) (*PostgresStore, error) {
 			model_json    TEXT    NOT NULL,
 			prev_view_html TEXT   NOT NULL,
 			created_at    BIGINT NOT NULL,
-			last_seen     BIGINT NOT NULL
+			last_seen     BIGINT NOT NULL,
+			version       BIGINT NOT NULL DEFAULT 0
 		)
 	`
+	// Add version column if upgrading from older schema
+	db.Exec("ALTER TABLE sky_sessions ADD COLUMN version BIGINT NOT NULL DEFAULT 0")
 	if _, err := db.Exec(createTable); err != nil {
 		db.Close()
 		return nil, err
@@ -55,7 +58,7 @@ func NewPostgresStore(url string, ttl time.Duration) (*PostgresStore, error) {
 
 func (s *PostgresStore) Get(sid string) (*Session, bool) {
 	row := s.db.QueryRow(
-		"SELECT model_json, prev_view_html, created_at, last_seen FROM sky_sessions WHERE sid = $1",
+		"SELECT model_json, prev_view_html, created_at, last_seen, version FROM sky_sessions WHERE sid = $1",
 		sid,
 	)
 
@@ -63,8 +66,9 @@ func (s *PostgresStore) Get(sid string) (*Session, bool) {
 	var prevViewHTML string
 	var createdAt int64
 	var lastSeen int64
+	var version int64
 
-	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen); err != nil {
+	if err := row.Scan(&modelJSON, &prevViewHTML, &createdAt, &lastSeen, &version); err != nil {
 		return nil, false
 	}
 
@@ -86,6 +90,7 @@ func (s *PostgresStore) Get(sid string) (*Session, bool) {
 		PrevView: prevView,
 		Created:  time.Unix(createdAt, 0),
 		LastSeen: time.Unix(lastSeen, 0),
+		Version:  version,
 	}
 
 	// Touch last_seen
@@ -96,14 +101,14 @@ func (s *PostgresStore) Get(sid string) (*Session, bool) {
 	return sess, true
 }
 
-func (s *PostgresStore) Set(sid string, sess *Session) {
+func (s *PostgresStore) Set(sid string, sess *Session) bool {
 	now := time.Now()
 	sess.LastSeen = now
 
 	modelBytes, err := json.Marshal(sess.Model)
 	if err != nil {
 		log.Printf("skylive_rt: PostgresStore.Set: failed to marshal model: %v", err)
-		return
+		return false
 	}
 
 	var prevViewHTML string
@@ -116,18 +121,35 @@ func (s *PostgresStore) Set(sid string, sess *Session) {
 		createdAt = now.Unix()
 	}
 
-	_, err = s.db.Exec(
-		`INSERT INTO sky_sessions (sid, model_json, prev_view_html, created_at, last_seen)
-		 VALUES ($1, $2, $3, $4, $5)
-		 ON CONFLICT (sid) DO UPDATE SET
-		   model_json     = EXCLUDED.model_json,
-		   prev_view_html = EXCLUDED.prev_view_html,
-		   last_seen      = EXCLUDED.last_seen`,
-		sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(),
-	)
+	newVersion := sess.Version + 1
+
+	if sess.Version == 0 {
+		_, err = s.db.Exec(
+			`INSERT INTO sky_sessions (sid, model_json, prev_view_html, created_at, last_seen, version)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (sid) DO NOTHING`,
+			sid, string(modelBytes), prevViewHTML, createdAt, now.Unix(), newVersion,
+		)
+	} else {
+		var result sql.Result
+		result, err = s.db.Exec(
+			`UPDATE sky_sessions SET model_json = $1, prev_view_html = $2, last_seen = $3, version = $4
+			 WHERE sid = $5 AND version = $6`,
+			string(modelBytes), prevViewHTML, now.Unix(), newVersion, sid, sess.Version,
+		)
+		if err == nil {
+			rows, _ := result.RowsAffected()
+			if rows == 0 {
+				return false // version conflict
+			}
+		}
+	}
 	if err != nil {
 		log.Printf("skylive_rt: PostgresStore.Set: failed to upsert session: %v", err)
+		return false
 	}
+	sess.Version = newVersion
+	return true
 }
 
 func (s *PostgresStore) Delete(sid string) {

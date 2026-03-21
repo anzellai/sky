@@ -773,6 +773,7 @@ subscriptions model =
 - **Direct VNode emission** -- Html functions produce VNode records, not HTML strings. No parsing overhead
 - **Automatic component wiring** -- components following the protocol get auto-wired
 - **Session stores** -- memory (default), sqlite, redis, postgresql
+- **Concurrency-safe** -- per-session locking + optimistic concurrency (version field) prevents race conditions between SSE ticks and user events, even across multiple server instances
 - **Subscriptions** -- runtime-carrying `Sub` values drive SSE server-push
 - **256-bit session IDs** -- cryptographically random, base64url-encoded
 

@@ -63,6 +63,7 @@ sky fmt src/Main.sky           # Format .sky/.skyi files (always run after chang
 13. **Go reserved words** -- The Go lowerer (`sanitizeGoIdent`) appends `_` to Sky identifiers that clash with Go keywords (`go`, `type`, `func`, `var`, `return`, etc.). Never use Go keywords as Sky variable names in stdlib code.
 14. **Distribution** -- Release binaries via `git tag v0.x.0 && git push --tags`. CI builds for macOS (arm64/x64), Linux (arm64/x64), Windows (x64). Users install via `curl -fsSL .../install.sh | sh` or Docker.
 15. **Unicode safety** -- Never use `JSON.stringify` to quote Sky string/char literals in the formatter or emitter. `JSON.stringify` escapes non-ASCII characters to `\uXXXX`, which the lexer then misparses as literal `u{XXXX}` text. Use the formatter's `quoteString()`/`quoteChar()` helpers instead, which preserve unicode as-is. The esbuild config must include `charset: "utf8"` and `build-binary.js` must use backtick template literals (not `JSON.stringify`) when embedding assets.
+16. **Session concurrency** -- Sky.Live uses two layers of concurrency control: (1) per-session in-process mutex (`SessionLocker`) prevents races between event handling and SSE ticks within a single server, (2) optimistic concurrency via `Session.Version` field prevents races across multiple server instances sharing a database. All `SessionStore.Set` calls use `WHERE version = N` semantics and callers retry up to 3 times on conflict.
 
 ## Package Management
 

@@ -682,6 +682,8 @@ subscriptions model =
         ]
 ```
 
+The runtime uses per-session locking and optimistic concurrency (version field) to prevent race conditions between SSE ticks and user events, even across multiple server instances sharing a database.
+
 ### Cmd (Side Effects)
 
 `Cmd.none` is used in most cases. `Cmd.batch` combines multiple commands.
