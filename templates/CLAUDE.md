@@ -539,13 +539,30 @@ route : String -> page -> (String, page)   -- route "/" MyPage (supports :param)
 All return `(String, String)` attribute tuples.
 
 ```elm
-onClick : String -> (String, String)      -- "MsgName" or "MsgName arg"
-onInput : String -> (String, String)      -- sends input value with msg
-onSubmit : String -> (String, String)     -- sends form data with msg
-onChange : String -> (String, String)      -- for select, checkbox
-onDblClick : String -> (String, String)
-onFocus : String -> (String, String)
-onBlur : String -> (String, String)
+onClick : msg -> (String, String)          -- typed Msg constructor
+onInput : (String -> msg) -> (String, String)  -- sends input value with msg
+onSubmit : msg -> (String, String)         -- sends form data with msg
+onChange : (String -> msg) -> (String, String)  -- for select, checkbox
+onDblClick : msg -> (String, String)
+onFocus : msg -> (String, String)
+onBlur : msg -> (String, String)
+
+-- Usage:
+--     button [ onClick Increment ] [ text "+" ]
+--     input [ onInput UpdateDraft, value model.draft ] []
+--     form [ onSubmit AddTodo ] [ ... ]
+```
+
+### Escape Hatch & View Types
+
+```elm
+-- `js` is a Prelude function for embedding raw JS/Go expressions (use sparingly)
+js : String -> a
+
+-- View functions should annotate their return type as VNode:
+view : Model -> VNode
+view model =
+    div [] [ text "hello" ]
 ```
 
 ## Sky.Live — Server-Driven UI
@@ -583,7 +600,7 @@ view model =
     div []
         [ styleNode [] (stylesheet [ rule "body" [ fontFamily "sans-serif" ] ])
         , h1 [] [ text (String.fromInt model.count) ]
-        , button [ onClick "Increment" ] [ text "+" ]
+        , button [ onClick Increment ] [ text "+" ]
         ]
 
 main =

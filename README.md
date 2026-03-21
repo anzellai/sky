@@ -65,27 +65,24 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 
 ## Quick Start
 
-### Prerequisites
-
-- [Node.js](https://nodejs.org/) (v18+)
-- [Go](https://go.dev/) (for running compiled output)
-
-### Install and Build
+### Install
 
 ```bash
-# Install dependencies
-npm install
+# macOS / Linux
+curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
 
-# Build the compiler
-npm run build
+# Or with Docker
+docker run --rm -v $(pwd):/app -w /app anzel/sky sky --help
 ```
+
+> **Prerequisite**: [Go](https://go.dev/) must be installed (Sky compiles to Go).
 
 ### Create a Project
 
 ```bash
-node dist/bin/sky.js init my-app
+sky init my-app
 cd my-app
-node dist/bin/sky.js run
+sky run
 ```
 
 This creates:
@@ -100,49 +97,13 @@ my-app/
 
 The generated `CLAUDE.md` gives Claude Code full context about Sky syntax, stdlib, FFI, and Sky.Live — so it can write Sky code confidently from day one.
 
-### Building a Self-Contained Binary
-
-To produce a standalone native binary that requires no Node.js runtime:
-
-```bash
-npm run bundle
-```
-
-This bundles the compiler with esbuild, embeds the standard library, and uses [pkg](https://github.com/vercel/pkg) to produce native executables in `bin/`:
-
-- `bin/sky` -- the compiler CLI
-- `bin/sky-lsp` -- the language server
-
-Copy these anywhere on your `PATH`:
-
-```bash
-cp bin/sky /usr/local/bin/sky
-cp bin/sky-lsp /usr/local/bin/sky-lsp
-```
-
 ### Docker
 
-Build the Docker image with `sky` and `sky-lsp` pre-installed alongside Node.js and Go:
+Pre-built images are available on Docker Hub:
 
 ```bash
-docker build -t sky .
-```
-
-Run Sky commands against a local project:
-
-```bash
-docker run --rm -v $(pwd)/my-app:/app -w /app sky sky build src/Main.sky
-docker run --rm -v $(pwd)/my-app:/app -w /app sky sky run src/Main.sky
-```
-
-Use as a CI/CD base image:
-
-```dockerfile
-FROM sky:latest
-COPY . /app
-WORKDIR /app
-RUN sky build src/Main.sky
-CMD ["./dist/app"]
+docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky build src/Main.sky
+docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky run src/Main.sky
 ```
 
 ---
@@ -346,6 +307,10 @@ case items of
 -- As patterns (bind whole + parts)
 case value of
     Just x as original -> ...     -- original = Just x
+
+-- Record patterns
+case user of
+    { name, age } -> name ++ " is " ++ String.fromInt age
 
 -- Nested patterns
 case value of
@@ -597,14 +562,21 @@ Key modules: `Std.Cmd`, `Std.Sub`, `Std.Task`, `Std.Program`.
 
 | Module              | Key Functions                                                                                                                                                                                                                          |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Sky.Core.Prelude`  | `Result`, `Maybe`, `identity`, `errorToString` (auto-imported)                                                                                                                                                                         |
+| `Sky.Core.Prelude`  | `Result`, `Maybe`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`, `js` (auto-imported)                                                                                                                     |
 | `Sky.Core.Maybe`    | `withDefault`, `map`, `andThen`                                                                                                                                                                                                        |
 | `Sky.Core.Result`   | `withDefault`, `map`, `andThen`, `mapError`, `toMaybe`                                                                                                                                                                                 |
-| `Sky.Core.List`     | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty`                                             |
-| `Sky.Core.String`   | `split`, `join`, `contains`, `replace`, `trim`, `length`, `toLower`, `toUpper`, `startsWith`, `endsWith`, `slice`, `fromInt`, `toInt`, `fromFloat`, `toFloat`, `lines`, `words`, `repeat`, `padLeft`, `padRight`, `reverse`, `indexes` |
-| `Sky.Core.Dict`     | `empty`, `singleton`, `insert`, `get`, `remove`, `keys`, `values`, `map`, `foldl`, `fromList`, `toList`, `isEmpty`, `size`, `member`, `update`                                                                                         |
+| `Sky.Core.List`     | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty`, `singleton`, `all`, `any`, `sum`, `product`, `maximum`, `minimum`, `partition`, `find`, `filterMap`, `sortBy`, `zip`, `unzip`, `map2` |
+| `Sky.Core.String`   | `split`, `join`, `contains`, `replace`, `trim`, `length`, `toLower`, `toUpper`, `startsWith`, `endsWith`, `slice`, `fromInt`, `toInt`, `fromFloat`, `toFloat`, `lines`, `words`, `repeat`, `padLeft`, `padRight`, `reverse`, `indexes`, `concat`, `fromChar` |
+| `Sky.Core.Dict`     | `empty`, `singleton`, `insert`, `get`, `remove`, `keys`, `values`, `map`, `foldl`, `fromList`, `toList`, `isEmpty`, `size`, `member`, `update`, `filter`, `union`, `intersect`, `diff`, `partition`, `foldr`                            |
 | `Sky.Core.Debug`    | `log`, `toString`                                                                                                                                                                                                                      |
 | `Sky.Core.Platform` | `getArgs`                                                                                                                                                                                                                              |
+| `Sky.Core.Char`    | `isUpper`, `isLower`, `isAlpha`, `isDigit`, `isAlphaNum`, `toUpper`, `toLower`, `toCode`, `fromCode` |
+| `Sky.Core.Tuple`   | `first`, `second`, `mapFirst`, `mapSecond`, `mapBoth`, `pair` |
+| `Sky.Core.Bitwise` | `and`, `or`, `xor`, `complement`, `shiftLeftBy`, `shiftRightBy` |
+| `Sky.Core.Set`     | `empty`, `singleton`, `insert`, `remove`, `member`, `size`, `toList`, `fromList`, `union`, `intersect`, `diff`, `map`, `filter`, `foldl` |
+| `Sky.Core.Array`   | `empty`, `fromList`, `toList`, `get`, `set`, `push`, `length`, `slice`, `map`, `foldl`, `foldr`, `append` |
+| `Sky.Core.File`    | `readFile`, `writeFile`, `exists`, `remove`, `mkdirAll`, `readDir`, `isDir` |
+| `Sky.Core.Process` | `run`, `exit`, `getEnv`, `getCwd` |
 
 ### Sky.Core.Json
 
@@ -712,8 +684,8 @@ subscriptions model =
 view model =
     div []
         [ h1 [] [ text (String.fromInt model.count) ]
-        , button [ onClick "Increment" ] [ text "+" ]
-        , button [ onClick "Decrement" ] [ text "-" ]
+        , button [ onClick Increment ] [ text "+" ]
+        , button [ onClick Decrement ] [ text "-" ]
         ]
 
 main =
@@ -725,6 +697,36 @@ main =
         , routes = [ route "/" CounterPage, route "/about" AboutPage ]
         , notFound = CounterPage
         }
+```
+
+### Event Patterns
+
+Sky.Live events accept typed Msg constructors -- no string-based events needed:
+
+```elm
+-- Zero-arg constructors
+button [ onClick Increment ] [ text "+" ]
+button [ onClick DoSignOut ] [ text "Sign out" ]
+
+-- Constructors with arguments
+button [ onClick (Navigate HomePage) ] [ text "Home" ]
+button [ onClick (SetFilter "bug") ] [ text "Bugs" ]
+
+-- Input events with String-arg constructors (constructor as function reference)
+input [ onInput SetSearch, value model.query ] []
+input [ onInput UpdateEmail, value model.email ] []
+
+-- Form submission
+form [ onSubmit SubmitIdea ] [ ... ]
+```
+
+For non-Live server-rendered HTML, use `Std.Html.Events` which returns `(String, String)` attribute tuples with JavaScript handlers:
+
+```elm
+import Std.Html.Events as Events
+
+button [ Events.onClick "alert('Hello!')" ] [ text "Click" ]
+form [ Events.onSubmit "return confirm('Sure?')" ] [ ... ]
 ```
 
 ### How It Works
@@ -788,6 +790,24 @@ type Msg = CounterMsg Counter.Msg    -- compiler auto-wires this
 ```
 
 See [docs/design/sky-live-components.md](docs/design/sky-live-components.md) for the full protocol.
+
+### Shared State Module
+
+For multi-module Sky.Live apps, define Page, Model, and Msg in a shared `State.sky` module:
+
+```elm
+-- State.sky
+module State exposing (..)
+
+type Page = BoardPage | DetailPage | SubmitPage
+type Msg = Navigate Page | SetFilter String | DoSignOut | SubmitIdea
+
+-- Sub-modules import State directly:
+-- import State exposing (..)
+-- button [ onClick DoSignOut ] [ text "Sign out" ]
+```
+
+This avoids circular dependencies and gives all modules access to typed Msg constructors. See `examples/12-skyvote` for a full example.
 
 ### Sky.Live Configuration
 
@@ -1028,6 +1048,10 @@ Sky ships with a Language Server that provides:
 - **Hover** -- show type information
 - **Signature Help** -- function parameter hints
 - **Formatting** -- via `sky fmt`
+- **Document Symbols** -- outline view with functions, types, constructors
+- **Find References** -- cross-module identifier search
+- **Rename** -- workspace-wide symbol rename
+- **Folding Ranges** -- collapse declarations, let/case blocks, imports
 
 Start the LSP:
 
