@@ -57,7 +57,7 @@ update msg model =
 -- ══════════════════════════════════════════════════════
 -- VIEW
 -- ══════════════════════════════════════════════════════
-view : Model -> String
+view : Model -> VNode
 view model =
     div []
         [ styleNode [] pageStyles
@@ -67,8 +67,7 @@ view model =
                 [ text
                     "The counter below is a separate component. Its messages are auto-wired by the compiler."
                 ]
-            , Counter.view (\msgName -> "CounterMsg " ++ msgName)
-                model.myCounter
+            , Counter.view CounterMsg model.myCounter
             , p [ class "total" ]
                 [ text
                     (

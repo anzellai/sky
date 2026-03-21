@@ -74,7 +74,7 @@ subscriptions model =
 -- ══════════════════════════════════════════════════════
 -- VIEW
 -- ══════════════════════════════════════════════════════
-view : Model -> String
+view : Model -> VNode
 view model =
     div []
         [ styleNode [] pageStyles
@@ -89,7 +89,7 @@ view model =
             ]
         ]
 
-viewPage : Model -> String
+viewPage : Model -> VNode
 viewPage model =
     case model.page of
         CounterPage ->
@@ -98,7 +98,7 @@ viewPage model =
         AboutPage ->
             viewAbout
 
-viewCounter : Model -> String
+viewCounter : Model -> VNode
 viewCounter model =
     div [ class "counter" ]
         [ h1 [] [ text "Sky.Live Counter" ]

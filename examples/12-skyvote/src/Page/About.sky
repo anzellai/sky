@@ -5,8 +5,8 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Ui.Layout as Layout
 
-viewAbout model =
-    Layout.page model
+viewAbout signOutMsg model =
+    Layout.page signOutMsg model
         (
         div [ class "content-page" ]
             [ h1 [] [ text "About SkyVote" ]

@@ -477,32 +477,32 @@ update msg model =
 -- ══════════════════════════════════════════════════════
 -- VIEW
 -- ══════════════════════════════════════════════════════
-view : Model -> String
+view : Model -> VNode
 view model =
     case model.page of
         BoardPage ->
-            Board.viewBoard model
-        
+            Board.viewBoard DoSignOut model
+
         DetailPage ->
-            Detail.viewDetail model
-        
+            Detail.viewDetail BackToBoard SubmitComment DoSignOut model
+
         SubmitPage ->
-            Submit.viewSubmit model
-        
+            Submit.viewSubmit SubmitIdea BackToBoard DoSignOut model
+
         SignInPage ->
-            PageAuth.viewSignIn model
-        
+            PageAuth.viewSignIn DoSignIn DoSignOut model
+
         SignUpPage ->
-            PageAuth.viewSignUp model
-        
+            PageAuth.viewSignUp DoSignUp DoSignOut model
+
         AboutPage ->
-            About.viewAbout model
-        
+            About.viewAbout DoSignOut model
+
         RoadmapPage ->
-            Roadmap.viewRoadmap model
-        
+            Roadmap.viewRoadmap DoSignOut model
+
         NotFoundPage ->
-            Board.viewBoard model
+            Board.viewBoard DoSignOut model
 
 -- ══════════════════════════════════════════════════════
 -- SUBSCRIPTIONS

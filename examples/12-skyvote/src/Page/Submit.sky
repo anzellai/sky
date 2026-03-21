@@ -6,8 +6,8 @@ import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput, onSubmit, onChange)
 import Ui.Layout as Layout
 
-viewSubmit model =
-    Layout.pageWithAuth model
+viewSubmit submitIdeaMsg backToBoardMsg signOutMsg model =
+    Layout.pageWithAuth signOutMsg model
         (
         div [ class "submit-container" ]
             [ h1 [ class "page-title" ] [ text "Submit an Idea" ]
@@ -16,7 +16,7 @@ viewSubmit model =
                     "Have a feature request, bug report, or improvement? Share it with the community."
                 ]
             , div [ class "card" ]
-                [ form [ onSubmit "SubmitIdea" ]
+                [ form [ onSubmit submitIdeaMsg ]
                     [ div [ class "form-group" ]
                         [ label [ class "form-label" ] [ text "Title" ]
                         , input
@@ -55,7 +55,7 @@ viewSubmit model =
                         ]
                     , div [ class "form-actions" ]
                         [ button
-                            [ onClick "BackToBoard"
+                            [ onClick backToBoardMsg
                             , type_ "button"
                             , class "btn btn-secondary"
                             ]

@@ -9,14 +9,14 @@ import Ui.Layout as Layout
 -- ══════════════════════════════════════════════════════
 -- SIGN IN
 -- ══════════════════════════════════════════════════════
-viewSignIn model =
-    Layout.page model
+viewSignIn doSignInMsg signOutMsg model =
+    Layout.page signOutMsg model
         (
         div [ class "auth-container" ]
             [ div [ class "auth-card" ]
                 [ h1 [ class "auth-title" ] [ text "Welcome back" ]
                 , viewAuthError model.authError
-                , form [ onSubmit "DoSignIn" ]
+                , form [ onSubmit doSignInMsg ]
                     [ div [ class "form-group" ]
                         [ label [ class "form-label" ] [ text "Email" ]
                         , input
@@ -56,14 +56,14 @@ viewSignIn model =
 -- ══════════════════════════════════════════════════════
 -- SIGN UP
 -- ══════════════════════════════════════════════════════
-viewSignUp model =
-    Layout.page model
+viewSignUp doSignUpMsg signOutMsg model =
+    Layout.page signOutMsg model
         (
         div [ class "auth-container" ]
             [ div [ class "auth-card" ]
                 [ h1 [ class "auth-title" ] [ text "Create an account" ]
                 , viewAuthError model.authError
-                , form [ onSubmit "DoSignUp" ]
+                , form [ onSubmit doSignUpMsg ]
                     [ div [ class "form-group" ]
                         [ label [ class "form-label" ] [ text "Username" ]
                         , input

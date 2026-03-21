@@ -25,6 +25,20 @@ import Sky.Core.List as List
 -- ============================================================
 
 
+-- VNode type alias for clean view type annotations:
+--     view : Model -> VNode
+type alias VNode =
+    { tag : String
+    , attrs : List (String, String)
+    , children : List VNode
+    , text : String
+    }
+
+
+-- Attribute type alias
+type alias Attribute = (String, String)
+
+
 -- Escape HTML content to prevent XSS
 escapeHtml content =
     content

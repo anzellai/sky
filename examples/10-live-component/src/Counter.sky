@@ -15,7 +15,7 @@ import Std.Cmd as Cmd
 --   Counter.Msg      (internal message type)
 --   Counter.init     (initial state)
 --   Counter.update   (state machine)
---   Counter.view     (render with Config)
+--   Counter.view     (render with toMsg wrapper)
 -- ============================================================
 -- The component state type (same name as module)
 type alias Counter =
@@ -43,26 +43,26 @@ update msg counter =
     case msg of
         Increment ->
             ( { counter | count = counter.count + 1 } , Cmd.none )
-        
+
         Decrement ->
             ( { counter | count = counter.count - 1 } , Cmd.none )
-        
+
         Reset ->
             ( { counter | count = 0 } , Cmd.none )
 
--- View with toMsg config
+-- View with toMsg wrapper
 -- The toMsg function wraps internal Msgs for the parent's event system.
-view : (String -> String) -> Counter -> String
+view : (Msg -> parentMsg) -> Counter -> VNode
 view toMsg counter =
     div [ class "counter-component" ]
         [ h3 [] [ text counter.label ]
         , div [ class "counter-display" ]
             [ span [ class "count" ] [ text (String.fromInt counter.count) ] ]
         , div [ class "counter-buttons" ]
-            [ button [ onClick (toMsg "Decrement") , class "btn" ] [ text "-" ]
-            , button [ onClick (toMsg "Reset") , class "btn btn-sm" ]
+            [ button [ onClick (toMsg Decrement) , class "btn" ] [ text "-" ]
+            , button [ onClick (toMsg Reset) , class "btn btn-sm" ]
                 [ text "Reset" ]
-            , button [ onClick (toMsg "Increment") , class "btn" ] [ text "+" ]
+            , button [ onClick (toMsg Increment) , class "btn" ] [ text "+" ]
             ]
         ]
 

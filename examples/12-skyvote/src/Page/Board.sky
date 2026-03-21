@@ -37,12 +37,12 @@ viewSubmitButton model =
                 ]
                 [ text "Sign in to vote" ]
 
-viewBoard model =
+viewBoard signOutMsg model =
     let
         userId =
             getUserId model
     in
-        Layout.page model
+        Layout.page signOutMsg model
             (
             div []
                 [ div [ class "board-header" ]

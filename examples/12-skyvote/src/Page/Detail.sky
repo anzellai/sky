@@ -11,24 +11,24 @@ import Lib.Db as Db
 import Ui.Layout as Layout
 import Ui.Components exposing (statusBadge, emptyState)
 
-viewDetail model =
+viewDetail backToBoardMsg submitCommentMsg signOutMsg model =
     case model.selectedIdea of
         Just idea ->
-            Layout.page model (viewIdeaDetail model idea)
-        
-        Nothing ->
-            Layout.page model (viewNotFound model)
+            Layout.page signOutMsg model (viewIdeaDetail backToBoardMsg submitCommentMsg model idea)
 
-viewNotFound model =
+        Nothing ->
+            Layout.page signOutMsg model (viewNotFound backToBoardMsg model)
+
+viewNotFound backToBoardMsg model =
     div [ class "mt-32" ]
         [ emptyState "Idea not found."
         , div [ class "text-center" ]
-            [ button [ onClick "BackToBoard" , class "btn btn-secondary" ]
+            [ button [ onClick backToBoardMsg , class "btn btn-secondary" ]
                 [ text "Back to Board" ]
             ]
         ]
 
-viewIdeaDetail model idea =
+viewIdeaDetail backToBoardMsg submitCommentMsg model idea =
     let
         ideaId =
             Db.getField "id" idea
@@ -43,7 +43,7 @@ viewIdeaDetail model idea =
     in
         div [ class "mt-32" ]
             [ button
-                [ onClick "BackToBoard" , class "btn btn-ghost btn-sm mb-16" ]
+                [ onClick backToBoardMsg , class "btn btn-ghost btn-sm mb-16" ]
                 [ text "< Back to Board" ]
             , div [ class "card" ]
                 [ div [ class "detail-header" ]
@@ -69,7 +69,7 @@ viewIdeaDetail model idea =
                         [ text (commentCount ++ " comments") ]
                     ]
                 ]
-            , viewComments model
+            , viewComments submitCommentMsg model
             ]
 
 viewCategoryBadge category =
@@ -81,7 +81,7 @@ viewCategoryBadge category =
         else
             span [ class "badge badge-feature" ] [ text "Feature" ]
 
-viewComments model =
+viewComments submitCommentMsg model =
     div [ class "comments-section" ]
         [ h2 [ class "comments-title" ]
             [ text
@@ -90,7 +90,7 @@ viewComments model =
                 String.fromInt (List.length model.ideaComments) ++ ")"
                 )
             ]
-        , viewCommentForm model
+        , viewCommentForm submitCommentMsg model
         , viewCommentList model
         ]
 
@@ -116,17 +116,17 @@ viewComment comment =
         , div [ class "comment-body" ] [ text (Db.getField "content" comment) ]
         ]
 
-viewCommentForm model =
+viewCommentForm submitCommentMsg model =
     case model.currentUser of
         Just _ ->
-            viewCommentFormAuth model
-        
+            viewCommentFormAuth submitCommentMsg model
+
         Nothing ->
             p [ class "text-secondary-sm" ]
                 [ text "Sign in to leave a comment." ]
 
-viewCommentFormAuth model =
-    form [ onSubmit "SubmitComment" , class "comment-form mb-20" ]
+viewCommentFormAuth submitCommentMsg model =
+    form [ onSubmit submitCommentMsg , class "comment-form mb-20" ]
         [ div [ class "form-group" ]
             [ textarea
                 [ class "form-input"

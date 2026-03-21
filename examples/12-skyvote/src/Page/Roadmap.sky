@@ -11,7 +11,7 @@ import Lib.Ideas as Ideas
 import Ui.Layout as Layout
 import Ui.Components exposing (emptyState)
 
-viewRoadmap model =
+viewRoadmap signOutMsg model =
     let
         planned =
             Ideas.getIdeasByStatus "planned"
@@ -22,7 +22,7 @@ viewRoadmap model =
         open_ =
             Ideas.getIdeasByStatus "open"
     in
-        Layout.page model
+        Layout.page signOutMsg model
             (
             div [ class "mt-32" ]
                 [ h1 [ class "page-title" ] [ text "Roadmap" ]

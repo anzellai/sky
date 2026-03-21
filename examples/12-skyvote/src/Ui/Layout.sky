@@ -12,20 +12,20 @@ import Lib.Db as Db
 -- ══════════════════════════════════════════════════════
 -- PAGE LAYOUT
 -- ══════════════════════════════════════════════════════
-page model content =
+page signOutMsg model content =
     div []
         [ styleNode [] globalStyles
-        , viewHeader model
+        , viewHeader signOutMsg model
         , div [ class "container" ] [ viewNotification model , content ]
         ]
 
-pageWithAuth model content =
+pageWithAuth signOutMsg model content =
     case model.currentUser of
         Just _ ->
-            page model content
-        
+            page signOutMsg model content
+
         Nothing ->
-            page model
+            page signOutMsg model
                 (
                 div [ class "auth-container" ]
                     [ div [ class "card" ]
@@ -42,7 +42,7 @@ pageWithAuth model content =
 -- ══════════════════════════════════════════════════════
 -- HEADER
 -- ══════════════════════════════════════════════════════
-viewHeader model =
+viewHeader signOutMsg model =
     headerNode [ class "header" ]
         [ div [ class "header-inner" ]
             [ a [ href "/" , attribute "sky-nav" "" , class "logo" ]
@@ -62,12 +62,12 @@ viewHeader model =
                     , class "nav-link"
                     ]
                     [ text "About" ]
-                , viewAuthNav model
+                , viewAuthNav signOutMsg model
                 ]
             ]
         ]
 
-viewAuthNav model =
+viewAuthNav signOutMsg model =
     case model.currentUser of
         Just user ->
             span [ class "auth-nav" ]
@@ -79,7 +79,7 @@ viewAuthNav model =
                     [ text "Submit Idea" ]
                 , span [ class "nav-link" ]
                     [ text (Db.getField "username" user) ]
-                , button [ onClick "DoSignOut" , class "btn btn-ghost btn-sm" ]
+                , button [ onClick signOutMsg , class "btn btn-ghost btn-sm" ]
                     [ text "Sign out" ]
                 ]
         
