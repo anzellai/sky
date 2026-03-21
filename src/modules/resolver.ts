@@ -40,19 +40,10 @@ export async function buildModuleGraph(
   const entryAbs = path.resolve(entryFile);
   const srcRoot = findSourceRoot(entryAbs);
 
-  await loadModule(
-    entryAbs,
-    loaded,
-    visiting,
-    ordered,
-    diagnostics,
-    srcRoot,
-    virtualFile,
-  );
-
-  // Ensure implicit stdlib modules are always in the graph.
-  // This is needed for the LSP which may open a single file (not Main.sky)
-  // that uses qualified calls like Result.withDefault, Maybe.map, etc.
+  // Load implicit stdlib modules BEFORE the entry module so that
+  // Just/Nothing/Result constructors and qualified names (List.map, etc.)
+  // are available when type-checking the entry and its dependencies.
+  // This is critical for the LSP which opens individual files as entry points.
   const implicitModules = ["Sky.Core.Result", "Sky.Core.Maybe", "Sky.Core.List", "Sky.Core.String", "Sky.Core.Dict"];
   for (const modName of implicitModules) {
     const modFile = resolveModuleToFile(srcRoot, modName.split("."));
@@ -63,6 +54,16 @@ export async function buildModuleGraph(
       }
     }
   }
+
+  await loadModule(
+    entryAbs,
+    loaded,
+    visiting,
+    ordered,
+    diagnostics,
+    srcRoot,
+    virtualFile,
+  );
 
   return {
     modules: ordered,
