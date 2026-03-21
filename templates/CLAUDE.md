@@ -900,7 +900,7 @@ input = "debounce"              # "debounce" | "blur"
 store = "memory"                # memory | sqlite | redis | postgresql
 ```
 
-Sky.Live config is embedded at compile time but can be overridden at runtime via env vars (`SKY_LIVE_PORT`, `SKY_LIVE_STORE_TYPE`, `SKY_LIVE_STORE_PATH`, `SKY_LIVE_INPUT_MODE`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_TTL`) or a `.env` file. Priority: compiled defaults < sky.toml < env vars < .env file.
+Sky.Live config is embedded at compile time but can be overridden at runtime via env vars or a `.env` file. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Priority: compiled defaults < sky.toml < env vars < .env file.
 
 ## Coding Conventions
 

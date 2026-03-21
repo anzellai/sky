@@ -62,6 +62,7 @@ sky fmt src/Main.sky           # Format .sky/.skyi files (always run after chang
 12. **VNode emission** -- `Std.Html` functions return VNode records (`{ tag, attrs, children, text }`), not HTML strings. Attributes are `(key, value)` tuples. The Go runtime converts these via `MapToVNode` -- no HTML parsing needed. Non-Live apps use `render`/`toString` to convert VNode records to HTML strings.
 13. **Go reserved words** -- The Go lowerer (`sanitizeGoIdent`) appends `_` to Sky identifiers that clash with Go keywords (`go`, `type`, `func`, `var`, `return`, etc.). Never use Go keywords as Sky variable names in stdlib code.
 14. **Distribution** -- Release binaries via `git tag v0.x.0 && git push --tags`. CI builds for macOS (arm64/x64), Linux (arm64/x64), Windows (x64). Users install via `curl -fsSL .../install.sh | sh` or Docker.
+15. **Unicode safety** -- Never use `JSON.stringify` to quote Sky string/char literals in the formatter or emitter. `JSON.stringify` escapes non-ASCII characters to `\uXXXX`, which the lexer then misparses as literal `u{XXXX}` text. Use the formatter's `quoteString()`/`quoteChar()` helpers instead, which preserve unicode as-is. The esbuild config must include `charset: "utf8"` and `build-binary.js` must use backtick template literals (not `JSON.stringify`) when embedding assets.
 
 ## Package Management
 
@@ -94,7 +95,7 @@ poll_interval = 0                  # ms (0 = SSE only)
 store = "memory"                   # memory | sqlite | redis | postgresql
 ```
 
-Sky.Live config is embedded at compile time but overridable at runtime via env vars (`SKY_LIVE_PORT`, `SKY_LIVE_STORE_TYPE`, `SKY_LIVE_STORE_PATH`, `SKY_LIVE_INPUT_MODE`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_TTL`) or `.env` file. Priority: compiled defaults < sky.toml < env vars < .env file. Non-Live apps can use `Process.loadEnv ""` to load `.env` files and `Process.getEnv` to read env vars.
+Sky.Live config is embedded at compile time but overridable at runtime via env vars or `.env` file. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Priority: compiled defaults < sky.toml < env vars < .env file. Non-Live apps can use `Process.loadEnv ""` to load `.env` files and `Process.getEnv` to read env vars.
 
 ### Package Types
 

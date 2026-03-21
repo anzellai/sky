@@ -2,6 +2,30 @@ import * as AST from "../../ast/ast.js"
 import { align, concat, Doc, group, indent, line, text, hardline, softline } from "./layout.js"
 import { render } from "./printer.js"
 
+// Quote a Sky string literal, preserving unicode characters as-is.
+// Avoids JSON.stringify which may escape non-ASCII characters in some environments.
+function quoteString(s: string): string {
+  let out = '"';
+  for (const ch of s) {
+    if (ch === '"') out += '\\"';
+    else if (ch === '\\') out += '\\\\';
+    else if (ch === '\n') out += '\\n';
+    else if (ch === '\r') out += '\\r';
+    else if (ch === '\t') out += '\\t';
+    else out += ch;
+  }
+  return out + '"';
+}
+
+function quoteChar(s: string): string {
+  if (s === "'") return "'\\''";
+  if (s === '\\') return "'\\\\'";
+  if (s === '\n') return "'\\n'";
+  if (s === '\r') return "'\\r'";
+  if (s === '\t') return "'\\t'";
+  return "'" + s + "'";
+}
+
 export function formatModule(module: AST.Module, originalSource?: string): string {
 
   const docs: Doc[] = []
@@ -302,7 +326,7 @@ function formatPattern(pattern: AST.Pattern): Doc {
       if (pattern.items.length === 0) return text("[]");
       return concat(text("["), joinDocs(pattern.items.map(formatPattern), text(", ")), text("]"))
     case "LiteralPattern":
-      if (typeof pattern.value === "string") return text(JSON.stringify(pattern.value));
+      if (typeof pattern.value === "string") return text(quoteString(pattern.value));
       if (typeof pattern.value === "boolean") return text(pattern.value ? "True" : "False");
       return text(String(pattern.value));
     case "ConsPattern":
@@ -338,13 +362,13 @@ function formatExpression(expr: AST.Expression): Doc {
       return text(expr.raw)
 
     case "StringLiteralExpression":
-      return text(JSON.stringify(expr.value))
+      return text(quoteString(expr.value))
 
     case "BooleanLiteralExpression":
       return text(expr.value ? "True" : "False")
 
     case "CharLiteralExpression":
-      return text(JSON.stringify(expr.value))
+      return text(quoteChar(expr.value))
 
     case "UnitExpression":
       return text("()")

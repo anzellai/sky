@@ -827,16 +827,18 @@ dir = "static"
 
 #### Runtime Environment Overrides
 
-Sky.Live config values from `sky.toml` are embedded at compile time, but can be overridden at runtime via environment variables or a `.env` file. Priority (lowest to highest): compiled defaults < `sky.toml` < env vars < `.env` file.
+Sky.Live config values from `sky.toml` are embedded at compile time, but can be overridden at runtime via environment variables or a `.env` file. Env var names mirror the `sky.toml` structure with underscores. Priority (lowest to highest): compiled defaults < `sky.toml` < env vars < `.env` file.
 
-| Variable | Default | Description |
-|---|---|---|
-| `SKY_LIVE_PORT` | `4000` | Server port |
-| `SKY_LIVE_STORE_TYPE` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgresql` |
-| `SKY_LIVE_STORE_PATH` | _(empty)_ | Store connection string/path |
-| `SKY_LIVE_INPUT_MODE` | `debounce` | Input handling: `debounce` or `blur` |
-| `SKY_LIVE_POLL_INTERVAL` | `0` | Polling interval in ms (0 = SSE only) |
-| `SKY_LIVE_TTL` | `30m` | Session TTL (Go duration format) |
+| Variable | sky.toml | Default | Description |
+|---|---|---|---|
+| `SKY_LIVE_PORT` | `live.port` | `4000` | Server port |
+| `SKY_LIVE_INPUT` | `live.input` | `debounce` | Input handling: `debounce` or `blur` |
+| `SKY_LIVE_POLL_INTERVAL` | `live.poll_interval` | `0` | Polling interval in ms (0 = SSE only) |
+| `SKY_LIVE_SESSION_STORE` | `live.session.store` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgresql` |
+| `SKY_LIVE_SESSION_PATH` | `live.session.path` | _(empty)_ | Store file path (sqlite) |
+| `SKY_LIVE_SESSION_URL` | `live.session.url` | _(empty)_ | Store connection URL (redis, postgresql) |
+| `SKY_LIVE_STATIC_DIR` | `live.static.dir` | _(empty)_ | Path to static assets |
+| `SKY_LIVE_TTL` | — | `30m` | Session TTL (Go duration format) |
 
 ```bash
 # Override via env var

@@ -20,6 +20,7 @@ type LiveConfig struct {
 	StorePath    string        // Connection string/path for stores
 	InputMode    string        // "debounce" (default) or "blur" — when onInput sends to server
 	PollInterval int           // Polling fallback interval in ms (0 = SSE only, default: 0)
+	StaticDir    string        // Path to static assets (empty = no static serving)
 }
 
 // PageDef defines a route mapping: URL pattern → Page constructor value.
@@ -120,20 +121,15 @@ func loadDotEnv() {
 }
 
 // applyEnvOverrides reads SKY_LIVE_* environment variables and overrides
-// the compiled-in config values. Priority: compiled defaults < sky.toml < env vars < .env
+// the compiled-in config values. Env var names mirror sky.toml structure.
+// Priority: compiled defaults < sky.toml < env vars < .env
 func applyEnvOverrides(config *LiveConfig) {
 	if v := os.Getenv("SKY_LIVE_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
 			config.Port = port
 		}
 	}
-	if v := os.Getenv("SKY_LIVE_STORE_TYPE"); v != "" {
-		config.StoreType = v
-	}
-	if v := os.Getenv("SKY_LIVE_STORE_PATH"); v != "" {
-		config.StorePath = v
-	}
-	if v := os.Getenv("SKY_LIVE_INPUT_MODE"); v != "" {
+	if v := os.Getenv("SKY_LIVE_INPUT"); v != "" {
 		config.InputMode = v
 	}
 	if v := os.Getenv("SKY_LIVE_POLL_INTERVAL"); v != "" {
@@ -141,12 +137,25 @@ func applyEnvOverrides(config *LiveConfig) {
 			config.PollInterval = interval
 		}
 	}
+	if v := os.Getenv("SKY_LIVE_SESSION_STORE"); v != "" {
+		config.StoreType = v
+	}
+	if v := os.Getenv("SKY_LIVE_SESSION_PATH"); v != "" {
+		config.StorePath = v
+	}
+	if v := os.Getenv("SKY_LIVE_SESSION_URL"); v != "" {
+		config.StorePath = v
+	}
+	if v := os.Getenv("SKY_LIVE_STATIC_DIR"); v != "" {
+		config.StaticDir = v
+	}
 	if v := os.Getenv("SKY_LIVE_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			config.TTL = d
 		}
 	}
 }
+
 
 // StartServer creates and starts the Sky.Live HTTP server.
 func StartServer(config LiveConfig, app LiveApp) {
@@ -202,9 +211,13 @@ func StartServer(config LiveConfig, app LiveApp) {
 		w.Write([]byte(LiveJS))
 	})
 
-	// Serve static assets
-	if app.StaticDir != "" {
-		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(app.StaticDir))))
+	// Serve static assets (config overrides app default)
+	staticDir := app.StaticDir
+	if config.StaticDir != "" {
+		staticDir = config.StaticDir
+	}
+	if staticDir != "" {
+		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 	}
 
 	// Event handler — processes Msg from the JS client

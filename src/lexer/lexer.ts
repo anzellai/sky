@@ -535,8 +535,28 @@ export class Lexer {
         return "'";
       case "\\":
         return "\\";
+      case "u":
+        // Unicode escape: \u{XXXX} or \uXXXX
+        if (!this.isEOF() && this.peek() === "{") {
+          this.advance(); // consume {
+          let hex = "";
+          while (!this.isEOF() && this.peek() !== "}") {
+            hex += this.advance();
+          }
+          if (!this.isEOF()) this.advance(); // consume }
+          const cp = parseInt(hex, 16);
+          if (!isNaN(cp)) return String.fromCodePoint(cp);
+          return "?";
+        } else {
+          // \uXXXX (4-digit)
+          let hex = "";
+          for (let i = 0; i < 4 && !this.isEOF(); i++) hex += this.advance();
+          const cp = parseInt(hex, 16);
+          if (!isNaN(cp)) return String.fromCodePoint(cp);
+          return "?";
+        }
       default:
-        this.reportCurrent(`Unknown escape sequence \\${ch}.`, "Use one of: \\n, \\r, \\t, \\\\, \", or \\'.");
+        this.reportCurrent(`Unknown escape sequence \\${ch}.`, "Use one of: \\n, \\r, \\t, \\\\, \\\", \\', or \\u{XXXX}.");
         return ch;
     }
   }
