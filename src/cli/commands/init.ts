@@ -3,11 +3,18 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { writeManifest } from "../../pkg/manifest.js";
 
-export async function initProject() {
-  console.log("Initializing Sky project...");
+export async function initProject(name?: string) {
+  // If a name is provided, create the directory and work inside it
+  if (name) {
+    const targetDir = path.resolve(name);
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+    process.chdir(targetDir);
+  }
 
-  // Use current directory name as project name
-  const projectName = path.basename(process.cwd());
+  const projectName = name || path.basename(process.cwd());
+  console.log(`Initializing Sky project "${projectName}"...`);
 
   if (!fs.existsSync("sky.toml")) {
     writeManifest({

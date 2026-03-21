@@ -16,7 +16,7 @@ async function main() {
 
   switch (command) {
     case "init":
-      initProject();
+      await initProject(args[1]);
       return;
     case "add":
       await handleAdd(args[1]);
@@ -65,7 +65,7 @@ function printHelp() {
 Sky compiler (Go backend)
 
 Commands:
-  sky init
+  sky init [name]
   sky add <package>
   sky remove <package>
   sky install
