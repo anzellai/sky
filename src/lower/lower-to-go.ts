@@ -1547,15 +1547,46 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         const goName = expr.name.charAt(0).toUpperCase() + expr.name.slice(1);
         // Check if this constructor comes from an imported module
         let qualifiedGoName = goName;
+        let isImported = false;
         if (moduleExports) {
             for (const [modName, exports] of moduleExports) {
                 if (exports.has(expr.name)) {
+                    const ffiWrapperCheck = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+                    if (ffiWrapperCheck.has(modName)) break;
                     const parts = modName.split(".");
                     const pkgName = makeSafeGoPkgName(parts[parts.length - 1], modName);
                     qualifiedGoName = `${pkgName}.${goName}`;
+                    isImported = true;
                     break;
                 }
             }
+        }
+        // For imported constructors, use the generated constructor function
+        if (isImported) {
+            const argExprs2 = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+            if (argExprs2.length > 0) {
+                // Constructor with args: call it
+                return {
+                    kind: "GoCallExpr",
+                    fn: { kind: "GoRawExpr", code: qualifiedGoName } as any,
+                    args: argExprs2
+                } as any;
+            }
+            // Zero args: check if it's a zero-arg constructor (call it) or a
+            // multi-arg constructor used as a function reference (pass it)
+            const modExport = moduleExports ? Array.from(moduleExports.entries()).find(([_, exports]) => exports.has(expr.name)) : null;
+            const exportScheme = modExport ? modExport[1].get(expr.name) : null;
+            const isFunctionType = exportScheme?.type?.kind === "TypeFunction";
+            if (isFunctionType) {
+                // Constructor takes args but none provided — pass as function reference
+                return { kind: "GoRawExpr", code: qualifiedGoName } as any;
+            }
+            // Zero-arg constructor: call it to get the value
+            return {
+                kind: "GoCallExpr",
+                fn: { kind: "GoRawExpr", code: qualifiedGoName } as any,
+                args: []
+            } as any;
         }
         const argExprs2 = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
         const kvPairs2: string[] = ["Tag: 0", `SkyName: "${expr.name}"`];
