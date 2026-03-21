@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -1262,6 +1263,22 @@ func Sky_result_ToMaybe(result any) any {
 func Sky_msgToString(v any) any {
 	if s, ok := v.(string); ok { return s }
 	val := reflect.ValueOf(v)
+	// Handle constructor function references (e.g., onInput SetSearch where
+	// SetSearch : String -> Msg). Extract the constructor name from the Go
+	// function's runtime name (e.g., "sky_state.SetSearch" → "SetSearch").
+	if val.Kind() == reflect.Func {
+		pc := val.Pointer()
+		fn := runtime.FuncForPC(pc)
+		if fn != nil {
+			name := fn.Name()
+			parts := strings.Split(name, ".")
+			ctorName := parts[len(parts)-1]
+			// Go may suffix with "-fm" for method values
+			ctorName = strings.TrimSuffix(ctorName, "-fm")
+			return ctorName
+		}
+		return fmt.Sprintf("%v", v)
+	}
 	if val.Kind() != reflect.Struct { return fmt.Sprintf("%v", v) }
 	nameField := val.FieldByName("SkyName")
 	if !nameField.IsValid() { return fmt.Sprintf("%v", v) }

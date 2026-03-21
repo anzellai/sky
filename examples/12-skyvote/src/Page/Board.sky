@@ -77,7 +77,7 @@ viewToolbar model =
             , class "search-input"
             , placeholder "Search ideas..."
             , value model.searchQuery
-            , onInput "SetSearch"
+            , onInput SetSearch
             ]
         , div [ class "filter-group" ]
             [ filterBtn "all" "All" model.filterCategory

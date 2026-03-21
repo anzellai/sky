@@ -25,7 +25,7 @@ viewSubmit model =
                             , class "form-input"
                             , placeholder "A short, descriptive title"
                             , value model.submitTitle
-                            , onInput "UpdateTitle"
+                            , onInput UpdateTitle
                             ]
                         ]
                     , div [ class "form-group" ]
@@ -35,7 +35,7 @@ viewSubmit model =
                             , placeholder
                                 "Describe your idea in detail. What problem does it solve? How should it work?"
                             , value model.submitDescription
-                            , onInput "UpdateDescription"
+                            , onInput UpdateDescription
                             , rows 6
                             ]
                             []
@@ -45,7 +45,7 @@ viewSubmit model =
                         , select
                             [ class "form-input"
                             , value model.submitCategory
-                            , onChange "UpdateCategory"
+                            , onChange UpdateCategory
                             ]
                             [ option [ value "feature" ]
                                 [ text "Feature Request" ]

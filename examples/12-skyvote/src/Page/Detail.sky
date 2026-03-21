@@ -133,7 +133,7 @@ viewCommentFormAuth model =
                 [ class "form-input"
                 , placeholder "Share your thoughts..."
                 , value model.newComment
-                , onInput "UpdateComment"
+                , onInput UpdateComment
                 , rows 3
                 ]
                 []
