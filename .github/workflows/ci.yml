@@ -31,9 +31,9 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
 
-      # Build binaries
+      # Build compiler
       - name: Build
-        run: npm run bundle
+        run: npm run build
 
       # Test: Hello World example
       - name: Test hello-world

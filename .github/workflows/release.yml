@@ -21,7 +21,7 @@ jobs:
             target: node18-linux-arm64
             artifact: sky-linux-arm64
             lsp_artifact: sky-lsp-linux-arm64
-          - os: macos-13
+          - os: macos-15
             target: node18-macos-x64
             artifact: sky-darwin-x64
             lsp_artifact: sky-lsp-darwin-x64
@@ -46,43 +46,12 @@ jobs:
 
       - run: npm ci
 
-      - name: Build bundles
-        run: |
-          node -e "
-          const esbuild = require('esbuild');
-          const fs = require('fs');
-          const path = require('path');
-
-          function walkDir(dir, cb) {
-            fs.readdirSync(dir).forEach(f => {
-              const p = path.join(dir, f);
-              fs.statSync(p).isDirectory() ? walkDir(p, cb) : cb(p);
-            });
-          }
-
-          const assets = {};
-          if (fs.existsSync('src/stdlib')) walkDir('src/stdlib', p => { if (p.endsWith('.sky')) assets[path.relative('src', p)] = fs.readFileSync(p, 'utf8'); });
-          if (fs.existsSync('templates')) walkDir('templates', p => { assets[p] = fs.readFileSync(p, 'utf8'); });
-          if (fs.existsSync('src/runtime/go/skylive_rt')) walkDir('src/runtime/go/skylive_rt', p => { if (p.endsWith('.go')) assets[path.relative('src', p)] = fs.readFileSync(p, 'utf8'); });
-
-          fs.writeFileSync('src/utils/assets.ts', [
-            '// AUTO-GENERATED',
-            'export const VIRTUAL_ASSETS: Record<string, string> = ' + JSON.stringify(assets, null, 2) + ';',
-            'export function readVirtualAsset(path: string): string | undefined { return VIRTUAL_ASSETS[path]; }',
-            'export function isVirtualAsset(path: string): boolean { return path in VIRTUAL_ASSETS; }',
-          ].join('\n'));
-
-          const opts = { bundle: true, platform: 'node', format: 'cjs', external: ['fsevents'],
-            banner: { js: 'const import_meta_url = typeof document === \"undefined\" ? require(\"url\").pathToFileURL(__filename).href : undefined;' },
-            define: { 'import.meta.url': 'import_meta_url' } };
-          esbuild.buildSync({ ...opts, entryPoints: ['src/bin/sky.ts'], outfile: 'dist/sky.cjs' });
-          esbuild.buildSync({ ...opts, entryPoints: ['src/bin/sky-lsp.ts'], outfile: 'dist/sky-lsp.cjs' });
-          "
-
-      - name: Build native binaries
-        run: |
-          npx pkg dist/sky.cjs --target ${{ matrix.target }} --output dist/${{ matrix.artifact }}
-          npx pkg dist/sky-lsp.cjs --target ${{ matrix.target }} --output dist/${{ matrix.lsp_artifact }}
+      - name: Build and package
+        run: node src/bin/build-binary.js
+        env:
+          SKY_BUILD_TARGET: ${{ matrix.target }}
+          SKY_BUILD_OUTPUT: dist/${{ matrix.artifact }}
+          SKY_LSP_BUILD_OUTPUT: dist/${{ matrix.lsp_artifact }}
 
       - uses: actions/upload-artifact@v4
         with:
