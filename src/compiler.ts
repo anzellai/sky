@@ -126,10 +126,25 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
       }
     }
 
+    // Collect type aliases from imported modules for cross-module alias expansion
+    const importedTypeAliases = new Map<string, AST.TypeExpression>();
+    for (const imp of loaded.moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = graph.modules.find((m: any) => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        for (const decl of depModule.moduleAst.declarations) {
+          if (decl.kind === "TypeAliasDeclaration") {
+            importedTypeAliases.set(decl.name, decl.aliasedType);
+          }
+        }
+      }
+    }
+
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
     const typeCheck = checkModule(loaded.moduleAst, {
         imports: importsMap,
-        foreignBindings: foreignResult.bindings
+        foreignBindings: foreignResult.bindings,
+        importedTypeAliases
     });
 
     moduleResults.set(moduleNameStr, typeCheck);
@@ -260,12 +275,27 @@ export async function compileProject(entryFile: string, outDir: string) {
       }
     }
 
+    // Collect type aliases from imported modules
+    const importedTypeAliases2 = new Map<string, AST.TypeExpression>();
+    for (const imp of loaded.moduleAst.imports) {
+      const depName = imp.moduleName.join(".");
+      const depModule = graph.modules.find((m: any) => m.moduleAst.name.join(".") === depName);
+      if (depModule) {
+        for (const decl of depModule.moduleAst.declarations) {
+          if (decl.kind === "TypeAliasDeclaration") {
+            importedTypeAliases2.set(decl.name, decl.aliasedType);
+          }
+        }
+      }
+    }
+
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
     const typeCheck = checkModule(loaded.moduleAst, {
         imports: importsMap,
-        foreignBindings: foreignResult.bindings
+        foreignBindings: foreignResult.bindings,
+        importedTypeAliases: importedTypeAliases2
     });
-    
+
     const myExports = new Map<string, Scheme>();
     const isFullyExposed2 = loaded.moduleAst.exposing?.kind === "ExposingClause" && loaded.moduleAst.exposing.open;
 

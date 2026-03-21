@@ -60,6 +60,7 @@ export interface ForeignBindingSet {
 export interface CheckModuleOptions {
   readonly foreignBindings?: readonly ForeignBindingSet[]
   readonly imports?: ReadonlyMap<string, Scheme>
+  readonly importedTypeAliases?: ReadonlyMap<string, import("../ast/ast.js").TypeExpression>
 }
 
 /* -----------------------------------------------------------
@@ -130,6 +131,15 @@ export function checkModule(
       if (declaration.kind === "TypeAliasDeclaration") {
           typeAliases.set(declaration.name, declaration.aliasedType);
       }
+  }
+
+  // Merge imported type aliases (from other modules) into local aliases
+  if (options.importedTypeAliases) {
+    for (const [name, aliasType] of options.importedTypeAliases) {
+      if (!typeAliases.has(name)) {
+        typeAliases.set(name, aliasType);
+      }
+    }
   }
 
   // Set type aliases for expansion in type annotations

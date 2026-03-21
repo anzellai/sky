@@ -1,14 +1,15 @@
 module Std.Html.Events exposing (..)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.String as String
 
 
 -- ============================================================
 -- Std.Html.Events — JavaScript event handler attributes
 --
 -- For server-side rendered HTML, events are inline JavaScript
--- strings injected as HTML attributes (onclick, onsubmit, etc).
+-- strings injected as HTML attributes.
+--
+-- Returns (String, String) tuples consistent with Std.Html.Attributes.
 --
 -- Usage:
 --     import Std.Html.Events exposing (..)
@@ -18,16 +19,9 @@ import Sky.Core.String as String
 -- ============================================================
 
 
--- Escape attribute values (single-quote delimited)
-escapeAttr content =
-    content
-        |> String.replace "&" "&amp;"
-        |> String.replace "'" "&#39;"
-
-
--- Generic event attribute
+-- Generic event attribute: on "click" "handler()" -> ("onclick", "handler()")
 on event handler =
-    "on" ++ event ++ "='" ++ escapeAttr handler ++ "'"
+    ( "on" ++ event, handler )
 
 
 -- ============================================================

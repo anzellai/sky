@@ -99,6 +99,13 @@ export function unify(a: Type, b: Type): Substitution {
     return emptySubstitution();
   }
 
+  // VNode is a recursive record type used for HTML views.
+  // Allow it to unify with record types and String (backward compat).
+  if ((a.kind === "TypeConstant" && a.name === "VNode" && (b.kind === "TypeRecord" || (b.kind === "TypeConstant" && b.name === "String"))) ||
+      (b.kind === "TypeConstant" && b.name === "VNode" && (a.kind === "TypeRecord" || (a.kind === "TypeConstant" && a.name === "String")))) {
+    return emptySubstitution();
+  }
+
   if (a.kind === "TypeFunction" && b.kind === "TypeFunction") {
 
     const s1 = unify(a.from, b.from);
