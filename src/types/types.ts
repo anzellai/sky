@@ -18,6 +18,7 @@ export interface TypeVariable {
   readonly kind: "TypeVariable";
   readonly id: number;
   readonly name?: string;
+  readonly constraints?: readonly string[];  // "comparable" | "number" | "appendable"
 }
 
 export interface TypeConstant {
@@ -302,13 +303,50 @@ export function composeSubstitutions(left: Substitution, right: Substitution): S
 }
 
 export function instantiate(value: Scheme): Type {
+  // Collect constraints from type variables in the scheme
+  const constraintMap = new Map<number, readonly string[]>();
+  collectConstraints(value.type, constraintMap);
+
   const mapping = new Map<number, Type>();
 
   for (const quantified of value.quantified) {
-    mapping.set(quantified, freshTypeVariable());
+    const constraints = constraintMap.get(quantified);
+    const fresh = freshTypeVariable();
+    if (constraints && constraints.length > 0) {
+      mapping.set(quantified, { ...fresh, constraints });
+    } else {
+      mapping.set(quantified, fresh);
+    }
   }
 
   return applySubstitution(value.type, { mappings: mapping });
+}
+
+function collectConstraints(type: Type, out: Map<number, readonly string[]>): void {
+  switch (type.kind) {
+    case "TypeVariable":
+      if (type.constraints && type.constraints.length > 0) {
+        out.set(type.id, type.constraints);
+      }
+      return;
+    case "TypeConstant":
+      return;
+    case "TypeFunction":
+      collectConstraints(type.from, out);
+      collectConstraints(type.to, out);
+      return;
+    case "TypeApplication":
+      collectConstraints(type.constructor, out);
+      for (const arg of type.arguments) collectConstraints(arg, out);
+      return;
+    case "TypeTuple":
+      for (const item of type.items) collectConstraints(item, out);
+      return;
+    case "TypeRecord":
+      for (const value of Object.values(type.fields)) collectConstraints(value, out);
+      if (type.rest) collectConstraints(type.rest, out);
+      return;
+  }
 }
 
 export function generalize(type: Type, environmentFreeVars: ReadonlySet<number>): Scheme {

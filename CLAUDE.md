@@ -30,7 +30,7 @@ src/
   lsp/                 -- Language Server (completion, definition, hover, signature, formatter)
   stdlib/              -- Core/Std library .sky files (Prelude, Maybe, String, Cmd, Task, Sub, Log,
                           Html, Css, Live, Char, Tuple, Bitwise, Set, Array, File, Process, etc.)
-  cli/                 -- CLI commands (init, add, remove, install, update, build, run, dev, fmt)
+  cli/                 -- CLI commands (init, add, remove, install, update, build, run, dev, fmt, check)
   bin/                 -- Entry points: sky.ts, sky-lsp.ts, build-binary.js
   utils/               -- Helpers (assets.ts, path.ts)
 ```
@@ -40,10 +40,13 @@ src/
 ```bash
 npm run build          # TypeScript -> dist/
 npm run bundle         # esbuild + pkg -> native binaries in bin/
+npm test               # Run test suite (vitest)
+npm run test:watch     # Watch mode tests
 node dist/bin/sky.js fmt examples/simple/src/Main.sky
 node dist/bin/sky.js build examples/01-hello-world/src/Main.sky
 node dist/bin/sky.js run examples/01-hello-world/src/Main.sky
 sky fmt src/Main.sky           # Format .sky/.skyi files (always run after changes)
+sky check src/Main.sky         # Type-check without compiling (reports all diagnostics)
 ```
 
 ## Critical Rules
@@ -51,9 +54,10 @@ sky fmt src/Main.sky           # Format .sky/.skyi files (always run after chang
 1. **TypeScript only** -- Never commit `.js` files in `src/` (except `src/bin/build-binary.js`).
 2. **Indentation parser** -- The parser uses the column of the first token as the minimum indentation reference. Do not tighten rules that break slightly unaligned input.
 3. **Formatter (Elm-style)** -- 4-space indent, leading commas, `let`/`in` always multiline, 80-char line width. **Always run `sky fmt` on `.sky` and `.skyi` files after any changes** (`sky fmt <file>.sky` or `sky fmt <file>.skyi`).
-4. **Universal unifiers** -- `JsValue`, `Foreign`, and variants are universal unifiers for interop. Do not remove.
+4. **Universal unifiers** -- `JsValue`, `Foreign`, and variants are universal unifiers for interop. Do not remove. Named Go FFI types (e.g., `Db`, `Rows`, `Response`) are **opaque and strict** -- they must match exactly by name during unification and cannot be used interchangeably. This guarantees type safety at the Go boundary.
 5. **Prelude** -- `Sky.Core.Prelude` is implicitly imported everywhere. Provides `Result`, `Maybe`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`, `js`.
-6. **Go FFI** -- Wrappers accept `any` params with internal type assertions. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`). Auto-generated bindings: struct methods become `{Type}{Method}` (e.g., `db.Query` → `dbQuery`), fields become `{Type}{Field}`, constants/vars become zero-arg functions.
+6. **Go FFI** -- Wrappers accept `any` params with safe assertion helpers (`sky_asInt`, `sky_asString`, `sky_asFunc`, etc.) that return zero values instead of panicking. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`). Auto-generated bindings: struct methods become `{Type}{Method}` (e.g., `db.Query` → `dbQuery`), fields become `{Type}{Field}`, constants/vars become zero-arg functions.
+6a. **Type constraints** -- `comparable`, `number`, and `appendable` are enforced type constraints. `comparable` allows `Int`, `Float`, `String`, `Bool`, `Char`, and tuples/lists thereof. `number` allows `Int` and `Float`. `appendable` allows `String` and `List`. These are checked during unification.
 7. **Pointer safety** -- Go `*primitive` types (`*string`, `*int`, etc.) map to `Maybe T` in Sky. Opaque struct pointers (`*sql.DB`) stay as their type name (`Db`). Go `(T, bool)` comma-ok returns map to `Maybe T`. Go `(T1, T2, ..., error)` multi-return maps to `Result Error (TupleN T1 T2 ...)`.
 8. **AST lowering** -- Uppercase identifiers = Constructors unless declared as `foreign import` (then lower as Variable). Don't inject `GoTypeAssertExpr` on FFI return values. ADT constructors generate Go constructor functions for cross-module use.
 9. **Pipeline operators** -- `|>` and `<|` (Elm-style). `::` (cons) works in both patterns and expressions: `1 :: 2 :: []` builds `[1, 2]`.

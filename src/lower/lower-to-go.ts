@@ -63,7 +63,21 @@ function emitGoExprForLower(expr: any): string {
                 else if (expr.type.kind === "GoSliceType") typeStr = "[]any";
                 else if (expr.type.kind === "GoIdentType" || expr.type.name) typeStr = expr.type.name || "any";
             }
-            return `${emitGoExprForLower(expr.expr)}.(${typeStr})`;
+            const inner = emitGoExprForLower(expr.expr);
+            // Use safe helpers for basic types to prevent panics
+            const safeMap: Record<string, string> = {
+                "map[string]any": "sky_wrappers.Sky_AsMap",
+                "[]any": "sky_wrappers.Sky_AsList",
+                "int": "sky_wrappers.Sky_AsInt",
+                "string": "sky_wrappers.Sky_AsString",
+                "bool": "sky_wrappers.Sky_AsBool",
+                "float64": "sky_wrappers.Sky_AsFloat",
+            };
+            const safeHelper = safeMap[typeStr];
+            if (safeHelper) {
+                return `${safeHelper}(${inner})`;
+            }
+            return `${inner}.(${typeStr})`;
         }
         case "GoFuncLit": {
             const params = (expr.type?.params || []).map((p: any, i: number) => `arg${i} ${p.name || "any"}`).join(", ");
@@ -595,14 +609,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       }
       // Prelude: not → inline Go negation function
       if (expr.name === "not") {
-          return { kind: "GoRawExpr", code: `func(arg0 any) any { if arg0.(bool) { return false }; return true }` } as any;
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { if sky_wrappers.Sky_AsBool(arg0) { return false }; return true }` } as any;
       }
       // Prelude: fst/snd → inline tuple accessors (tuples are sky_wrappers.Tuple2 structs)
       if (expr.name === "fst") {
-          return { kind: "GoRawExpr", code: `func(arg0 any) any { return arg0.(sky_wrappers.Tuple2).V0 }` } as any;
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { return sky_wrappers.Sky_AsTuple2(arg0).V0 }` } as any;
       }
       if (expr.name === "snd") {
-          return { kind: "GoRawExpr", code: `func(arg0 any) any { return arg0.(sky_wrappers.Tuple2).V1 }` } as any;
+          return { kind: "GoRawExpr", code: `func(arg0 any) any { return sky_wrappers.Sky_AsTuple2(arg0).V1 }` } as any;
       }
       // Prelude: identity → inline pass-through
       if (expr.name === "identity") {
@@ -711,9 +725,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // If the condition is already a binary comparison (GoBinaryExpr), it's bool.
       // Otherwise, add a type assertion.
       if ((condExpr as any).kind !== "GoBinaryExpr") {
-          // Wrap in (any)(...).(bool) to handle both interface and concrete-typed FFI returns
+          // Use safe bool assertion to handle both interface and concrete-typed FFI returns
           const inner = emitGoExprForLower(condExpr);
-          condExpr = { kind: "GoRawExpr", code: `(any)(${inner}).(bool)` } as any;
+          condExpr = { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsBool(${inner})` } as any;
       }
       return {
         kind: "GoCallExpr",
@@ -879,11 +893,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       if (fnExpr.kind === "GoIdent" && fnExpr.name.startsWith(".")) {
           const fieldName = fnExpr.name.substring(1);
           const container = args[0];
-          // Type-assert container to map[string]any for record field access
+          // Safely assert container to map[string]any for record field access
           const assertedContainer: GoIR.GoExpr = {
-              kind: "GoTypeAssertExpr",
-              expr: container,
-              type: { kind: "GoMapType", key: { kind: "GoIdentType", name: "string" }, value: { kind: "GoIdentType", name: "any" } }
+              kind: "GoRawExpr",
+              code: `sky_wrappers.Sky_AsMap(${emitGoExprForLower(container)})`
           } as any;
           return {
               kind: "GoIndexExpr",
@@ -945,9 +958,8 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                       return a;
                   }
                   return {
-                      kind: "GoTypeAssertExpr",
-                      expr: a,
-                      type: { kind: "GoIdentType", name: "string" }
+                      kind: "GoRawExpr",
+                      code: `sky_wrappers.Sky_AsString(${emitGoExprForLower(a)})`
                   } as any;
               })
           };
@@ -967,7 +979,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         // Printf/Sprintf need first arg as string, rest as any
         const callArgs: GoIR.GoExpr[] = args.map((_, i) => {
             if (i === 0 && (fmtFn === "Printf" || fmtFn === "Sprintf")) {
-                return { kind: "GoTypeAssertExpr", expr: { kind: "GoIdent", name: "arg" + i }, type: { kind: "GoIdentType", name: "string" } } as any;
+                return { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsString(arg${i})` } as any;
             }
             return { kind: "GoIdent", name: "arg" + i } as any;
         });
@@ -1006,7 +1018,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           const t = emitGoExprForLower(args[1]);
           return {
               kind: "GoRawExpr",
-              code: `append([]any{${h}}, (any)(${t}).([]any)...)`
+              code: `append([]any{${h}}, sky_wrappers.Sky_AsList(${t})...)`
           } as any;
       } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "%", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
           // Check if ++ is operating on lists (type is List/TypeApplication with List constructor)
@@ -1018,7 +1030,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               const r = emitGoExprForLower(args[1]);
               return {
                   kind: "GoRawExpr",
-                  code: `append((any)(${l}).([]any), (any)(${r}).([]any)...)`
+                  code: `append(sky_wrappers.Sky_AsList(${l}), sky_wrappers.Sky_AsList(${r})...)`
               } as any;
           }
 
@@ -1053,10 +1065,21 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
               if (!targetType) return a;
 
-              // Wrap in (any)(...) to ensure the value is interface-typed
-              // before applying the type assertion.  This is necessary because
-              // Go FFI wrappers may return concrete types (e.g. string) and
-              // Go does not allow type assertions on non-interface values.
+              // Use safe assertion helpers from sky_wrappers to prevent panics
+              const safeHelperMap: Record<string, string> = {
+                  "int": "Sky_AsInt",
+                  "string": "Sky_AsString",
+                  "bool": "Sky_AsBool",
+                  "float64": "Sky_AsFloat",
+              };
+              const helper = safeHelperMap[targetType];
+              if (helper) {
+                  return {
+                      kind: "GoRawExpr",
+                      code: `sky_wrappers.${helper}(${emitGoExprForLower(a)})`
+                  } as any;
+              }
+              // Fallback for unknown types (shouldn't happen for binary ops)
               return {
                   kind: "GoRawExpr",
                   code: `(any)(${emitGoExprForLower(a)}).(${targetType})`
@@ -1079,18 +1102,18 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           // Check if it's a local variable (lambda parameter or let binding) — needs type assertion
           if (localEnv && localEnv.has(fnExpr.name)) {
               // Emit curried calls for multi-arg local variable calls:
-              // f(a, b, c) → (any)(f).(func(any) any)(a).(func(any) any)(b).(func(any) any)(c)
+              // f(a, b, c) → sky_wrappers.Sky_AsFunc(sky_wrappers.Sky_AsFunc(sky_wrappers.Sky_AsFunc(f)(a))(b))(c)
               if (args.length > 1) {
                   const safeName = sanitizeGoIdent(fnExpr.name);
-                  let code = `(any)(${safeName}).(func(any) any)(${emitGoExprForLower(args[0])})`;
+                  let code = `sky_wrappers.Sky_AsFunc(${safeName})(${emitGoExprForLower(args[0])})`;
                   for (let ci = 1; ci < args.length; ci++) {
-                      code = `(any)(${code}).(func(any) any)(${emitGoExprForLower(args[ci])})`;
+                      code = `sky_wrappers.Sky_AsFunc(${code})(${emitGoExprForLower(args[ci])})`;
                   }
                   return { kind: "GoRawExpr", code } as any;
               }
               callFn = {
                   kind: "GoRawExpr",
-                  code: `(any)(${sanitizeGoIdent(fnExpr.name)}).(func(any) any)`
+                  code: `sky_wrappers.Sky_AsFunc(${sanitizeGoIdent(fnExpr.name)})`
               } as any;
           }
       }
@@ -1202,23 +1225,22 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           const newLocalEnv = new Map(localEnv || []);
           const subjExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
 
-          // Type-assert subject to []any
+          // Safely assert subject to []any
           const tmpName = "__list" + Math.floor(Math.random() * 10000);
           stmts.push({
               kind: "GoAssignStmt",
               define: true,
               left: [{ kind: "GoIdent", name: tmpName }],
               right: {
-                  kind: "GoTypeAssertExpr",
-                  expr: subjExpr,
-                  type: { kind: "GoSliceType", elem: { kind: "GoIdentType", name: "any" } }
+                  kind: "GoRawExpr",
+                  code: `sky_wrappers.Sky_AsList(${emitGoExprForLower(subjExpr)})`
               } as any
           });
 
           // Build if-else chain for cons vs other patterns
           const buildConsChain = (caseIdx: number): GoIR.GoStmt[] => {
               if (caseIdx >= expr.cases.length) {
-                  return [{ kind: "GoExprStmt", expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] } }];
+                  return [{ kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" } }];
               }
               const c = expr.cases[caseIdx];
               if (c.pattern.kind === "ConsPattern") {
@@ -1390,7 +1412,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
                   body: [
                       { kind: "GoSwitchStmt", expr: switchSubj, cases: litCases },
-                      { kind: "GoExprStmt", expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] } }
+                      { kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" } }
                   ]
               },
               args: []
@@ -1612,8 +1634,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       }
 
       bodyStmts.push({
-          kind: "GoExprStmt",
-          expr: { kind: "GoCallExpr", fn: { kind: "GoIdent", name: "panic" }, args: [{ kind: "GoBasicLit", value: '"unmatched case"' }] }
+          kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" }
       });
 
       return {

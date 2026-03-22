@@ -4,17 +4,13 @@
 import {
   Type,
   TypeVariable,
-  TypeFunction,
-  TypeApplication,
-  TypeTuple,
-  TypeRecord,
   Substitution,
   emptySubstitution,
   substitution,
   applySubstitution,
   composeSubstitutions,
   isTypeVariable,
-  formatType,
+  formatTypeNormalized,
   freshTypeVariable,
   recordType
 } from "../types/types.js";
@@ -33,24 +29,6 @@ function isJsValue(t: Type): boolean {
     return isJsValue(t.constructor);
   }
   return false;
-}
-
-// Sky-native types that must match exactly during unification.
-// Any PascalCase TypeConstant NOT in this set is assumed to originate
-// from Go FFI and is treated permissively (Go interface satisfaction
-// cannot be verified statically by the Sky type checker).
-const SKY_NATIVE_TYPES = new Set([
-  "Int", "Float", "String", "Bool", "Unit",
-  "Result", "Maybe", "List", "Dict", "Map",
-  "Cmd", "Sub", "Task", "Program",
-  "Bytes", "Channel", "Tuple", "Error",
-]);
-
-function isForeignGoType(t: Type): boolean {
-  if (t.kind !== "TypeConstant") return false;
-  if (isJsValue(t)) return true;
-  // If it's not a known Sky type, it's likely from Go FFI
-  return !SKY_NATIVE_TYPES.has(t.name);
 }
 
 // Normalize TypeApplication("Tuple", [a, b]) to TypeTuple([a, b])
@@ -88,12 +66,10 @@ export function unify(a: Type, b: Type): Substitution {
       if ((a.name === "Char" && b.name === "String") || (a.name === "String" && b.name === "Char")) {
         return emptySubstitution();
       }
-      // Allow Go FFI types to unify with each other (Go interface satisfaction).
-      // E.g., ResponseWriter unifies with Writer, Router with Handler.
-      if (isForeignGoType(a) && isForeignGoType(b)) {
-        return emptySubstitution();
-      }
-      throw new UnificationError(`Type mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);
+      // Go FFI types are opaque — they must match exactly by name.
+      // JsValue/Foreign/Any are universal unifiers (handled above at line 62),
+      // but named Go types like Db, Rows, Response etc. are strict.
+      throw new UnificationError(`Type mismatch: expected ${formatTypeNormalized(a)}, but found ${formatTypeNormalized(b)}`);
     }
 
     return emptySubstitution();
@@ -141,7 +117,7 @@ export function unify(a: Type, b: Type): Substitution {
   if (a.kind === "TypeTuple" && b.kind === "TypeTuple") {
 
     if (a.items.length !== b.items.length) {
-      throw new UnificationError(`Tuple arity mismatch: expected ${formatType(a)}, but found ${formatType(b)}`);
+      throw new UnificationError(`Tuple arity mismatch: expected ${formatTypeNormalized(a)}, but found ${formatTypeNormalized(b)}`);
     }
 
     let current = emptySubstitution();
@@ -184,10 +160,10 @@ export function unify(a: Type, b: Type): Substitution {
 
     // Handle extra fields via rest variables
     if (aOnly.length > 0 && !b.rest) {
-      throw new UnificationError(`Missing field ${aOnly[0]} in ${formatType(b)}`);
+      throw new UnificationError(`Missing field ${aOnly[0]} in ${formatTypeNormalized(b)}`);
     }
     if (bOnly.length > 0 && !a.rest) {
-      throw new UnificationError(`Missing field ${bOnly[0]} in ${formatType(a)}`);
+      throw new UnificationError(`Missing field ${bOnly[0]} in ${formatTypeNormalized(a)}`);
     }
 
     if (aOnly.length > 0 || bOnly.length > 0) {
@@ -243,7 +219,72 @@ export function unify(a: Type, b: Type): Substitution {
     return current;
   }
 
-  throw new UnificationError(`Cannot unify types: expected ${formatType(a)}, but found ${formatType(b)}`);
+  throw new UnificationError(`Cannot unify types: expected ${formatTypeNormalized(a)}, but found ${formatTypeNormalized(b)}`);
+}
+
+function mergeConstraints(a?: readonly string[], b?: readonly string[]): string[] {
+  const set = new Set<string>([...(a || []), ...(b || [])]);
+  return Array.from(set);
+}
+
+function validateConstraint(constraint: string, type: Type, _variable: TypeVariable): void {
+  switch (constraint) {
+    case "comparable":
+      if (!isComparable(type)) {
+        throw new UnificationError(
+          `Type ${formatTypeNormalized(type)} is not comparable. Only Int, Float, String, Bool, Char, and tuples/lists of comparable types can be compared.`
+        );
+      }
+      break;
+    case "number":
+      if (!isNumber(type)) {
+        throw new UnificationError(
+          `Type ${formatTypeNormalized(type)} is not a number. Only Int and Float support arithmetic operations.`
+        );
+      }
+      break;
+    case "appendable":
+      if (!isAppendable(type)) {
+        throw new UnificationError(
+          `Type ${formatTypeNormalized(type)} is not appendable. Only String and List types support the ++ operator.`
+        );
+      }
+      break;
+  }
+}
+
+function isComparable(type: Type): boolean {
+  if (type.kind === "TypeConstant") {
+    return ["Int", "Float", "String", "Bool", "Char"].includes(type.name);
+  }
+  if (type.kind === "TypeTuple") {
+    return type.items.every(isComparable);
+  }
+  if (type.kind === "TypeApplication" && type.constructor.kind === "TypeConstant" && type.constructor.name === "List") {
+    return type.arguments.length === 1 && isComparable(type.arguments[0]);
+  }
+  // Type variables are potentially comparable (will be checked when resolved)
+  if (type.kind === "TypeVariable") return true;
+  return false;
+}
+
+function isNumber(type: Type): boolean {
+  if (type.kind === "TypeConstant") {
+    return type.name === "Int" || type.name === "Float";
+  }
+  if (type.kind === "TypeVariable") return true;
+  return false;
+}
+
+function isAppendable(type: Type): boolean {
+  if (type.kind === "TypeConstant") {
+    return type.name === "String";
+  }
+  if (type.kind === "TypeApplication" && type.constructor.kind === "TypeConstant" && type.constructor.name === "List") {
+    return true;
+  }
+  if (type.kind === "TypeVariable") return true;
+  return false;
 }
 
 function unifyVar(variable: TypeVariable, type: Type): Substitution {
@@ -253,7 +294,23 @@ function unifyVar(variable: TypeVariable, type: Type): Substitution {
   }
 
   if (occurs(variable, type)) {
-    throw new UnificationError(`Occurs check failed: cannot unify variable ${formatType(variable)} with ${formatType(type)}`);
+    throw new UnificationError(`Occurs check failed: cannot unify variable ${formatTypeNormalized(variable)} with ${formatTypeNormalized(type)}`);
+  }
+
+  // If the variable has constraints, validate them against the substituted type
+  if (variable.constraints && variable.constraints.length > 0 && !isTypeVariable(type)) {
+    for (const constraint of variable.constraints) {
+      validateConstraint(constraint, type, variable);
+    }
+  }
+
+  // If substituting into another type variable, transfer constraints
+  if (isTypeVariable(type) && variable.constraints && variable.constraints.length > 0) {
+    const merged = mergeConstraints(variable.constraints, (type as TypeVariable).constraints);
+    if (merged.length > 0) {
+      const constrained: TypeVariable = { kind: "TypeVariable", id: type.id, name: type.name, constraints: merged };
+      return substitution([[variable.id, constrained]]);
+    }
   }
 
   return substitution([[variable.id, type]]);

@@ -181,6 +181,17 @@ export function checkModule(
 
           declarations.push(inferred)
 
+          // Collect annotation mismatch warnings
+          if (inferred.warnings) {
+            for (const warning of inferred.warnings) {
+              diagnostics.push({
+                severity: "warning",
+                message: warning,
+                span: declaration.span
+              })
+            }
+          }
+
           env = env.extend(
             inferred.name,
             inferred.scheme
@@ -189,7 +200,8 @@ export function checkModule(
           collectCaseDiagnostics(
             adtRegistration.registry,
             declaration.body,
-            diagnostics
+            diagnostics,
+            nodeTypes
           )
 
           // Warn about discarded function values (likely partial application bugs)
@@ -334,7 +346,10 @@ function parseForeignType(typeText: string): Type {
       return { kind: "TypeApplication", constructor: { kind: "TypeConstant", name: "List" }, arguments: [parsePrimary()] };
     }
     
-    if (/^[a-z]/.test(name)) return { kind: "TypeVariable", id: stableTypeVar(name), name };
+    if (/^[a-z]/.test(name)) {
+      const constraints = constraintsForName(name);
+      return { kind: "TypeVariable", id: stableTypeVar(name), name, ...(constraints ? { constraints } : {}) };
+    }
     return { kind: "TypeConstant", name: name || "Foreign" };
   }
 
@@ -366,17 +381,24 @@ function parseAtomic(text: string): Type {
   }
 
   if (/^[a-z]/.test(text)) {
-
+    const constraints = constraintsForName(text);
     return {
       kind: "TypeVariable",
       id: stableTypeVar(text),
-      name: text
+      name: text,
+      ...(constraints ? { constraints } : {})
     }
 
   }
 
   return typeConstant(text)
 
+}
+
+const CONSTRAINT_NAMES = new Set(["comparable", "number", "appendable"])
+
+function constraintsForName(name: string): readonly string[] | undefined {
+  return CONSTRAINT_NAMES.has(name) ? [name] : undefined
 }
 
 function stableTypeVar(name: string): number {
@@ -398,7 +420,8 @@ function stableTypeVar(name: string): number {
 function collectCaseDiagnostics(
   registry: unknown,
   expression: AST.Expression,
-  diagnostics: TypeDiagnostic[]
+  diagnostics: TypeDiagnostic[],
+  nodeTypes?: Map<string, Type>
 ) {
 
   visitExpression(
@@ -409,19 +432,29 @@ function collectCaseDiagnostics(
         return
       }
 
-      const subjectType: Type | undefined = undefined
+      // Look up the subject's inferred type from nodeTypes
+      let subjectType: Type | undefined = undefined
+      if (nodeTypes && expr.subject.span) {
+        const key = `${expr.subject.span.start.line}:${expr.subject.span.start.column}`
+        subjectType = nodeTypes.get(key)
+      }
+
+      // Skip exhaustiveness check if we don't know the subject type
+      if (!subjectType) {
+        return
+      }
 
       const result =
         checkCaseExhaustiveness(
           registry as any,
-          subjectType as any,
+          subjectType,
           expr.branches
         )
 
       if (result) {
 
         diagnostics.push({
-          severity: "error",
+          severity: "warning",
           message: result.message,
           span: expr.span
         })

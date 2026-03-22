@@ -142,7 +142,7 @@ import Drivers.Sqlite as _ exposing (..)       -- side-effect import (Go driver)
 
 ### Types
 
-Sky uses Hindley-Milner type inference. Type annotations are optional but recommended for top-level definitions.
+Sky uses Hindley-Milner type inference with type class constraints. Type annotations are optional but recommended for top-level definitions. The type system enforces correctness at compile time -- if it compiles, it runs.
 
 #### Type Annotations
 
@@ -178,6 +178,28 @@ type alias Model =
     }
 
 type alias Point = { x : Int, y : Int }
+```
+
+#### Type Constraints
+
+Sky enforces three built-in type constraints, checked at compile time:
+
+| Constraint    | Allowed Types                                        | Used By                          |
+| ------------- | ---------------------------------------------------- | -------------------------------- |
+| `comparable`  | `Int`, `Float`, `String`, `Bool`, `Char`, tuples/lists of comparables | `List.sort`, `<`, `>`, `clamp`  |
+| `number`      | `Int`, `Float`                                       | `+`, `-`, `*`, `/`, `%`         |
+| `appendable`  | `String`, `List a`                                   | `++`                            |
+
+```elm
+sort : List comparable -> List comparable
+clamp : comparable -> comparable -> comparable -> comparable
+```
+
+Passing the wrong type is a compile error:
+
+```
+-- sort [Just 1, Nothing]
+-- Error: Type Maybe Int is not comparable.
 ```
 
 #### Algebraic Data Types (Union Types)
@@ -403,7 +425,9 @@ See [Pattern Matching](#pattern-matching).
 
 ### Go Interop (FFI)
 
-Sky can import and use any Go package -- both standard library and third-party. The FFI layer automatically generates type-safe wrappers.
+Sky can import and use any Go package -- both standard library and third-party. The FFI layer automatically generates type-safe wrappers with safe assertion helpers that prevent runtime panics.
+
+Go types are **opaque** in Sky -- each Go type (e.g., `Db`, `Rows`, `Response`) is a distinct type that cannot be confused with another. Passing a `Rows` where a `Db` is expected is a compile-time error, not a runtime crash. This strict type matching, combined with safe assertion helpers in the generated Go code, ensures that correctly-typed Sky programs cannot panic at the Go boundary.
 
 #### Importing Go Packages
 
@@ -1045,6 +1069,7 @@ sky update                   # Update lockfile
 sky build [file.sky]         # Compile to Go and build binary
 sky run [file.sky]           # Build and run (detects Sky.Live apps)
 sky dev [file.sky]           # Watch mode: auto-rebuild + restart on changes
+sky check [file.sky]         # Type-check without compiling (reports all diagnostics)
 sky fmt <file-or-dir>        # Format code (Elm-style)
 sky lsp                      # Start LSP server for editor integration
 ```
@@ -1059,6 +1084,24 @@ If `file.sky` is omitted, the CLI reads `entry` from `sky.toml`.
 2. Copy Go wrappers and helpers
 3. Run `go mod init` + `go mod tidy`
 4. Run `go build` -> output binary at `bin` path (default `dist/app`)
+
+### Type Checker
+
+`sky check` runs the full type-checking pipeline without compiling to Go:
+
+```bash
+sky check src/Main.sky        # Check a single file and its dependencies
+sky check                     # Check the entry from sky.toml
+```
+
+It reports:
+- **Type mismatches** with human-readable variable names (`a`, `b`, `c` instead of `'t123`)
+- **Non-exhaustive pattern matches** with missing constructors listed
+- **Type annotation mismatches** when the annotation disagrees with inference
+- **Type constraint violations** (e.g., sorting non-comparable types)
+- **Go reserved word clashes** that will be auto-renamed
+
+Multiple errors are reported per file (the parser recovers from syntax errors and continues).
 
 ### Formatter
 
@@ -1162,7 +1205,7 @@ src/
   lexer/lexer.ts         -- Indentation-aware lexer
   parser/                -- Pratt-style parser with layout filtering
   modules/resolver.ts    -- Module resolution & dependency graph
-  types/                 -- HM type system (infer, unify, checker, adt, exhaustiveness)
+  types/                 -- HM type system (infer, unify, checker, adt, exhaustiveness, constraints)
   core-ir/core-ir.ts     -- Core Intermediate Representation
   go-ir/go-ir.ts         -- Go Intermediate Representation
   lower/                 -- AST -> CoreIR -> GoIR lowering

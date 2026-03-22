@@ -39,6 +39,7 @@ export interface InferTopLevelResult {
   readonly name: string;
   readonly scheme: Scheme;
   readonly pretty: string;
+  readonly warnings?: readonly string[];
 }
 
 export function inferExpression(
@@ -723,6 +724,12 @@ export function inferExpression(
   }
 }
 
+const _constraintNames = new Set(["comparable", "number", "appendable"]);
+
+function constraintsForTypeVarName(name: string): readonly string[] | undefined {
+  return _constraintNames.has(name) ? [name] : undefined;
+}
+
 function translateTypeExpression(expr: AST.TypeExpression): Type {
   // Track name-to-id mapping so same-named type variables share IDs
   const nameToId = new Map<string, number>();
@@ -736,7 +743,8 @@ function translateTypeExpression(expr: AST.TypeExpression): Type {
           id = nextAnnotId--;
           nameToId.set(e.name, id);
         }
-        return { kind: "TypeVariable", id, name: e.name };
+        const constraints = constraintsForTypeVarName(e.name);
+        return { kind: "TypeVariable", id, name: e.name, ...(constraints ? { constraints } : {}) };
       }
 
       case "TypeReference": {
@@ -858,10 +866,19 @@ export function inferTopLevel(
           }
         }
       }
-    } catch {
-      // Annotation doesn't match inference — trust the annotation anyway.
-      // This is intentional for patterns like view : Model -> String where
+    } catch (e) {
+      // Annotation doesn't match inference — trust the annotation but warn.
+      // This allows intentional patterns like view : Model -> String where
       // the compiler internally uses VNode records.
+      const inferredPretty = formatType(finalType);
+      const annotatedPretty = formatType(annotatedType);
+      const scheme = generalize(annotatedType, env.freeTypeVariables());
+      return {
+        name: decl.name,
+        scheme,
+        pretty: formatType(scheme.type),
+        warnings: [`Type annotation for '${decl.name}' doesn't match inferred type. Annotation: ${annotatedPretty}, Inferred: ${inferredPretty}`],
+      };
     }
 
     const scheme = generalize(annotatedType, env.freeTypeVariables());

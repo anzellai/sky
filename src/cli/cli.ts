@@ -8,6 +8,7 @@ import { handleBuild } from "./commands/build.js";
 import { handleRun } from "./commands/run.js";
 import { handleDev } from "./commands/dev.js";
 import { handleFmt } from "./commands/fmt.js";
+import { handleCheck } from "./commands/check.js";
 import { startServer } from "../lsp/server.js";
 
 async function main() {
@@ -40,7 +41,7 @@ async function main() {
       await handleDev(args[1]);
       return;
     case "check":
-      console.log("Check not fully implemented yet.");
+      await handleCheck(args[1]);
       return;
     case "fmt":
       await handleFmt(args[1]);

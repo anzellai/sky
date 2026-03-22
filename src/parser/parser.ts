@@ -13,10 +13,24 @@ import * as AST from "../ast/ast.js";
 import { getOperatorInfo } from "../parser/operator-table.js";
 import { buildLeftSection, buildRightSection } from "../parser/sections.js";
 
+export interface ParseResult {
+  module: AST.Module;
+  errors: string[];
+}
+
 export class Parser {
   private pos = 0;
+  public parseErrors: string[] = [];
 
   constructor(private readonly tokens: Token[]) { }
+
+  private advance(): Token {
+    const token = this.peek();
+    if (token.kind !== "EOF") {
+      this.pos++;
+    }
+    return token;
+  }
 
   private peek(offset = 0): Token {
     return this.tokens[this.pos + offset] ?? this.tokens[this.tokens.length - 1];
@@ -44,6 +58,26 @@ export class Parser {
 
     this.pos++;
     return token;
+  }
+
+  private skipToNextDeclaration(): void {
+    // Always advance at least one token to avoid infinite loops
+    if (!this.match("EOF")) {
+      this.advance();
+    }
+    while (!this.match("EOF")) {
+      const token = this.peek();
+      // Declaration boundary: token at start of line (column 1)
+      if (token.span.start.column === 1) {
+        if (token.kind === "Keyword" && ["type", "foreign", "import"].includes(token.lexeme)) {
+          return;
+        }
+        if (token.kind === "Identifier" || token.kind === "UpperIdentifier") {
+          return;
+        }
+      }
+      this.advance();
+    }
   }
 
   parseModule(): AST.Module {
@@ -92,41 +126,48 @@ export class Parser {
     const declarations: AST.Declaration[] = [];
 
     while (!this.match("EOF")) {
+      try {
 
-      if (this.match("Keyword", "foreign") && this.peek(1).kind === "Keyword" && this.peek(1).lexeme === "import") {
-        declarations.push(...this.parseForeignImports());
-        continue;
-      }
-
-      if (this.match("Keyword", "type") && this.peek(1).kind === "Keyword" && this.peek(1).lexeme === "alias") {
-        declarations.push(this.parseTypeAliasDeclaration());
-        continue;
-      }
-
-      if (this.match("Keyword", "type")) {
-        declarations.push(this.parseTypeDeclaration());
-        continue;
-      }
-
-      if (this.match("Identifier") || this.match("UpperIdentifier")) {
-        if (this.peek(1).kind === "Colon") {
-          declarations.push(this.parseTypeAnnotation());
-        } else if (this.match("Identifier")) {
-          declarations.push(this.parseFunction());
-        } else {
-          const t = this.peek();
-          throw new Error(
-            `Unexpected top-level token ${t.kind}:${t.lexeme} at ${t.span.start.line}:${t.span.start.column}`
-          );
+        if (this.match("Keyword", "foreign") && this.peek(1).kind === "Keyword" && this.peek(1).lexeme === "import") {
+          declarations.push(...this.parseForeignImports());
+          continue;
         }
-        continue;
+
+        if (this.match("Keyword", "type") && this.peek(1).kind === "Keyword" && this.peek(1).lexeme === "alias") {
+          declarations.push(this.parseTypeAliasDeclaration());
+          continue;
+        }
+
+        if (this.match("Keyword", "type")) {
+          declarations.push(this.parseTypeDeclaration());
+          continue;
+        }
+
+        if (this.match("Identifier") || this.match("UpperIdentifier")) {
+          if (this.peek(1).kind === "Colon") {
+            declarations.push(this.parseTypeAnnotation());
+          } else if (this.match("Identifier")) {
+            declarations.push(this.parseFunction());
+          } else {
+            const t = this.peek();
+            throw new Error(
+              `Unexpected top-level token ${t.kind}:${t.lexeme} at ${t.span.start.line}:${t.span.start.column}`
+            );
+          }
+          continue;
+        }
+
+        const t = this.peek();
+
+        throw new Error(
+          `Unexpected token ${t.kind}:${t.lexeme} at ${t.span.start.line}:${t.span.start.column}`
+        );
+
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        this.parseErrors.push(msg);
+        this.skipToNextDeclaration();
       }
-
-      const t = this.peek();
-
-      throw new Error(
-        `Unexpected token ${t.kind}:${t.lexeme} at ${t.span.start.line}:${t.span.start.column}`
-      );
     }
 
     return {
@@ -1296,5 +1337,15 @@ private parsePrimary(): AST.Expression {
 }
 export function parse(tokens: Token[]): AST.Module {
   const parser = new Parser(tokens);
-  return parser.parseModule();
+  const mod = parser.parseModule();
+  if (parser.parseErrors.length > 0) {
+    throw new Error(parser.parseErrors.join("\n"));
+  }
+  return mod;
+}
+
+export function parseWithRecovery(tokens: Token[]): ParseResult {
+  const parser = new Parser(tokens);
+  const module = parser.parseModule();
+  return { module, errors: parser.parseErrors };
 }
