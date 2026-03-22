@@ -71,6 +71,9 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 # macOS / Linux
 curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
 
+# Custom install directory
+curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh -s -- --dir ~/.local/bin
+
 # Or with Docker
 docker run --rm -v $(pwd):/app -w /app anzel/sky sky --help
 ```
