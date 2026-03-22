@@ -1031,21 +1031,28 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               code: `append([]any{${h}}, sky_wrappers.Sky_AsList(${t})...)`
           } as any;
       } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "//", "%", "++", "==", "!=", "/=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
-          // Check if ++ is operating on lists (type is List/TypeApplication with List constructor)
-          if (fnExpr.name === "++" && expr.type && expr.type.kind === "TypeApplication" &&
-              expr.type.constructor.kind === "TypeConstant" && expr.type.constructor.name === "List") {
-              // List concatenation: append(left, right.([]any)...)
-              // Wrap in (any)(...) to handle both []any literals and any-typed variables
+          // ++ operator: handles both string concatenation and list append.
+          // Use compile-time type info when available, otherwise emit runtime dispatch.
+          if (fnExpr.name === "++") {
               const l = emitGoExprForLower(args[0]);
               const r = emitGoExprForLower(args[1]);
+              const isListType = expr.type && expr.type.kind === "TypeApplication" &&
+                  expr.type.constructor.kind === "TypeConstant" && expr.type.constructor.name === "List";
+              if (isListType) {
+                  return {
+                      kind: "GoRawExpr",
+                      code: `append(sky_wrappers.Sky_AsList(${l}), sky_wrappers.Sky_AsList(${r})...)`
+                  } as any;
+              }
+              // Runtime dispatch: check if operands are []any (list) or string
               return {
                   kind: "GoRawExpr",
-                  code: `append(sky_wrappers.Sky_AsList(${l}), sky_wrappers.Sky_AsList(${r})...)`
+                  code: `sky_wrappers.Sky_Append(${l}, ${r})`
               } as any;
           }
 
           // Binary operator uncurried
-          const op = fnExpr.name === "++" ? "+" : fnExpr.name === "/=" ? "!=" : fnExpr.name === "//" ? "/" : fnExpr.name;
+          const op = fnExpr.name === "/=" ? "!=" : fnExpr.name === "//" ? "/" : fnExpr.name;
 
           // Add type assertions for binary operators on any-typed values
           const fnName0 = (fnExpr as any).name;
@@ -1059,9 +1066,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
               // Determine the target assertion type from the operator
               let targetType: string | null = null;
-              if (fnName0 === "++") {
-                  targetType = "string";
-              } else if (["+", "-", "*", "/", "//", "%"].includes(fnName0)) {
+              if (["+", "-", "*", "/", "//", "%"].includes(fnName0)) {
                   targetType = "int";
               } else if (["<", ">", "<=", ">="].includes(fnName0)) {
                   // Comparison — check if any arg is a string literal

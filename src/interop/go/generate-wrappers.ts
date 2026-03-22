@@ -580,6 +580,21 @@ func Sky_string_FromBytes(b any) any {
 	return fmt.Sprintf("%v", b)
 }
 
+// ============= Append (++ operator) =============
+
+// Sky_Append implements the ++ operator with runtime dispatch:
+// - []any ++ []any → list concatenation (append)
+// - string ++ string → string concatenation
+func Sky_Append(a any, b any) any {
+	if la, ok := a.([]any); ok {
+		if lb, ok := b.([]any); ok {
+			return append(la, lb...)
+		}
+		return la
+	}
+	return sky_asString(a) + sky_asString(b)
+}
+
 // ============= Dict Operations =============
 
 func Sky_dict_Empty() any {
