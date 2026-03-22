@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	sky_wrappers "sky-out/sky_wrappers"
 	_ "modernc.org/sqlite"
 )
 
@@ -180,9 +181,10 @@ func (s *SQLiteStore) cleanup() {
 }
 
 // fixJSONNumbers recursively converts float64 values that represent whole
-// numbers back to int. This is needed because Go's encoding/json unmarshals
-// all JSON numbers into float64 when the target is any/interface{}, but
-// Sky's compiled code uses int type assertions for integer values.
+// numbers back to int, and reconstructs SkyMaybe/SkyResult structs from
+// their map representations. This is needed because Go's encoding/json
+// unmarshals all JSON numbers into float64 and all structs into
+// map[string]any when the target is any/interface{}.
 func fixJSONNumbers(m map[string]any) {
 	for k, v := range m {
 		switch val := v.(type) {
@@ -191,7 +193,11 @@ func fixJSONNumbers(m map[string]any) {
 				m[k] = int(val)
 			}
 		case map[string]any:
-			fixJSONNumbers(val)
+			if rebuilt := rebuildADT(val); rebuilt != nil {
+				m[k] = rebuilt
+			} else {
+				fixJSONNumbers(val)
+			}
 		case []any:
 			fixJSONSlice(val)
 		}
@@ -206,9 +212,61 @@ func fixJSONSlice(s []any) {
 				s[i] = int(val)
 			}
 		case map[string]any:
-			fixJSONNumbers(val)
+			if rebuilt := rebuildADT(val); rebuilt != nil {
+				s[i] = rebuilt
+			} else {
+				fixJSONNumbers(val)
+			}
 		case []any:
 			fixJSONSlice(val)
 		}
+	}
+}
+
+// rebuildADT checks if a map is a serialised ADT (has Tag + SkyName keys)
+// and reconstructs the proper named Go struct (SkyMaybe or SkyResult).
+// Returns nil if the map is not an ADT.
+func rebuildADT(m map[string]any) any {
+	skyName, hasSkyName := m["SkyName"]
+	if !hasSkyName {
+		return nil
+	}
+	name, ok := skyName.(string)
+	if !ok {
+		return nil
+	}
+	switch name {
+	case "Just":
+		val := m["JustValue"]
+		// Recursively fix nested values
+		if inner, ok := val.(map[string]any); ok {
+			if rebuilt := rebuildADT(inner); rebuilt != nil {
+				val = rebuilt
+			} else {
+				fixJSONNumbers(inner)
+			}
+		} else if inner, ok := val.([]any); ok {
+			fixJSONSlice(inner)
+		}
+		return sky_wrappers.SkyJust(val)
+	case "Nothing":
+		return sky_wrappers.SkyNothing()
+	case "Ok":
+		val := m["OkValue"]
+		if inner, ok := val.(map[string]any); ok {
+			if rebuilt := rebuildADT(inner); rebuilt != nil {
+				val = rebuilt
+			} else {
+				fixJSONNumbers(inner)
+			}
+		} else if inner, ok := val.([]any); ok {
+			fixJSONSlice(inner)
+		}
+		return sky_wrappers.SkyOk(val)
+	case "Err":
+		val := m["ErrValue"]
+		return sky_wrappers.SkyErr(val)
+	default:
+		return nil
 	}
 }
