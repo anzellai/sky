@@ -1,0 +1,34 @@
+name = "skyshop"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port = 4000
+input = "debounce"
+poll_interval = 0
+
+[live.session]
+store = "sqlite"
+path = "skyshop_sessions.db"
+
+[dependencies]
+"github.com/anzellai/sky-tailwind" = "latest"
+
+["go.dependencies"]
+"database/sql" = "latest"
+"modernc.org/sqlite" = "latest"
+"crypto/sha256" = "latest"
+"encoding/hex" = "latest"
+"encoding/base64" = "latest"
+"encoding/json" = "latest"
+"github.com/google/uuid" = "latest"
+"net/http" = "latest"
+"net/url" = "latest"
+"io" = "latest"
+"strings" = "latest"
+"strconv" = "latest"
+"os" = "latest"
+"fmt" = "latest"

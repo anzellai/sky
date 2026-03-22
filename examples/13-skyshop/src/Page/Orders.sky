@@ -1,0 +1,292 @@
+module Page.Orders exposing (viewOrders, viewOrder, viewOrderSuccess)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick)
+import State exposing (..)
+import Ui.Layout as Layout
+import Lib.Db as Db
+import Lib.Money as Money
+import Lib.Translation as Tr
+import Tailwind exposing (..)
+
+
+-- ══════════════════════════════════════════════════════
+-- ORDER LIST
+-- ══════════════════════════════════════════════════════
+
+viewOrders model =
+    Layout.page model
+        (case model.user of
+            Nothing ->
+                div [ tw [ textCenter, py16 ] ]
+                    [ a
+                        [ href "/auth/signin"
+                        , attribute "sky-nav" ""
+                        , tw [ bgBlue600, textWhite, px6, py3, roundedLg, fontSemibold ]
+                        ]
+                        [ text (Tr.t model.lang "nav.signin") ]
+                    ]
+
+            Just _ ->
+                div []
+                    [ h1 [ tw [ text3xl, fontBold, mb6 ] ]
+                        [ text (Tr.t model.lang "order.title") ]
+                    , if List.isEmpty model.orders then
+                        div [ tw [ textCenter, py16, textGray500 ] ]
+                            [ text (Tr.t model.lang "order.empty") ]
+                      else
+                        div [ tw [ flexCol, gap4 ] ]
+                            (List.map (viewOrderCard model) model.orders)
+                    ]
+        )
+
+
+viewOrderCard model order =
+    let
+        orderId =
+            Db.getField "id" order
+        state =
+            Db.getField "state" order
+        totalAmount =
+            Db.getInt "total_amount" order
+        totalCurrency =
+            Db.getField "total_currency" order
+        createdAt =
+            Db.getField "created_at" order
+        stateBg =
+            stateColor state
+    in
+        a
+            [ href ("/order/" ++ orderId)
+            , attribute "sky-nav" ""
+            , tw [ bgWhite, roundedXl, shadow, p6, flex, justifyBetween, itemsCenter, block ]
+            ]
+            [ div []
+                [ div [ tw [ flex, gap3, itemsCenter, mb2 ] ]
+                    [ span [ tw [ fontSemibold, textGray900 ] ]
+                        [ text (Money.formatPrice totalAmount totalCurrency) ]
+                    , span
+                        [ tw [ textXs, px2, py1, roundedFull, fontMedium ]
+                        , stateBg
+                        ]
+                        [ text (Tr.tCartState model.lang state) ]
+                    ]
+                , span [ tw [ textSm, textGray500 ] ]
+                    [ text (Tr.t model.lang "order.placed" ++ ": " ++ createdAt) ]
+                ]
+            ]
+
+
+stateColor state =
+    case state of
+        "ordered" ->
+            tw [ bgBlue100, textBlue700 ]
+
+        "shipped" ->
+            tw [ bgYellow100, textYellow500 ]
+
+        "delivered" ->
+            tw [ bgGreen100, textGreen700 ]
+
+        "cancelled" ->
+            tw [ bgRed100, textRed700 ]
+
+        "refunded" ->
+            tw [ bgGray100, textGray600 ]
+
+        "pending" ->
+            tw [ bgOrange100, textOrange500 ]
+
+        _ ->
+            tw [ bgGray100, textGray600 ]
+
+
+-- ══════════════════════════════════════════════════════
+-- ORDER DETAIL
+-- ══════════════════════════════════════════════════════
+
+viewOrder model =
+    Layout.page model
+        (case model.order of
+            Just order ->
+                viewOrderDetail model order
+
+            Nothing ->
+                div [ tw [ textCenter, py16, textGray500 ] ]
+                    [ text (Tr.t model.lang "common.loading") ]
+        )
+
+
+viewOrderDetail model order =
+    let
+        lang =
+            model.lang
+        state =
+            Db.getField "state" order
+        totalAmount =
+            Db.getInt "total_amount" order
+        totalCurrency =
+            Db.getField "total_currency" order
+        createdAt =
+            Db.getField "created_at" order
+        remarks =
+            Db.getField "checkout_remarks" order
+        shippingName =
+            Db.getField "shipping_name" order
+        shippingEmail =
+            Db.getField "shipping_email" order
+        shippingPhone =
+            Db.getField "shipping_phone" order
+        shippingLine1 =
+            Db.getField "shipping_line1" order
+        shippingCity =
+            Db.getField "shipping_city" order
+        shippingCountry =
+            Db.getField "shipping_country" order
+        shippingPostcode =
+            Db.getField "shipping_postcode" order
+    in
+        div []
+            [ div [ tw [ mb4 ] ]
+                [ a
+                    [ href "/orders"
+                    , attribute "sky-nav" ""
+                    , tw [ textSm, textBlue600 ]
+                    ]
+                    [ text ("< " ++ Tr.t lang "common.back") ]
+                ]
+            , div [ tw [ bgWhite, roundedXl, shadow, p6, mb6 ] ]
+                [ div [ tw [ flex, justifyBetween, itemsCenter, mb6 ] ]
+                    [ h1 [ tw [ text2xl, fontBold ] ]
+                        [ text (Tr.t lang "order.detail") ]
+                    , span
+                        [ tw [ px3, py1, roundedFull, fontMedium, textSm ]
+                        , stateColor state
+                        ]
+                        [ text (Tr.tCartState lang state) ]
+                    ]
+                , div [ tw [ grid, gridCols2, gap4, mb6 ] ]
+                    [ div []
+                        [ span [ tw [ textSm, textGray500, block ] ]
+                            [ text (Tr.t lang "cart.total") ]
+                        , span [ tw [ text2xl, fontBold ] ]
+                            [ text (Money.formatPrice totalAmount totalCurrency) ]
+                        ]
+                    , div []
+                        [ span [ tw [ textSm, textGray500, block ] ]
+                            [ text (Tr.t lang "order.placed") ]
+                        , span [ tw [ fontMedium ] ] [ text createdAt ]
+                        ]
+                    ]
+                , if shippingName /= "" then
+                    div [ tw [ borderT, borderGray200, pt4, mb4 ] ]
+                        [ h3 [ tw [ fontSemibold, mb2 ] ]
+                            [ text (Tr.t lang "order.shipping") ]
+                        , p [ tw [ textSm, textGray600 ] ] [ text shippingName ]
+                        , p [ tw [ textSm, textGray600 ] ] [ text shippingEmail ]
+                        , p [ tw [ textSm, textGray600 ] ] [ text shippingPhone ]
+                        , p [ tw [ textSm, textGray600 ] ]
+                            [ text (shippingLine1 ++ ", " ++ shippingCity ++ " " ++ shippingPostcode ++ ", " ++ shippingCountry) ]
+                        ]
+                  else
+                    text ""
+                , if remarks /= "" then
+                    div [ tw [ borderT, borderGray200, pt4, mb4 ] ]
+                        [ h3 [ tw [ fontSemibold, mb2 ] ] [ text "Remarks" ]
+                        , p [ tw [ textSm, textGray600 ] ] [ text remarks ]
+                        ]
+                  else
+                    text ""
+                ]
+            , div [ tw [ bgWhite, roundedXl, shadow, p6 ] ]
+                [ h2 [ tw [ fontSemibold, textLg, mb4 ] ]
+                    [ text (Tr.t lang "order.items") ]
+                , div [ tw [ flexCol, gap3 ] ]
+                    (List.map viewOrderItem model.orderItems)
+                ]
+            ]
+
+
+viewOrderItem item =
+    let
+        title =
+            Db.getField "title" item
+        qty =
+            Db.getInt "quantity" item
+        price =
+            Db.getInt "price_amount" item
+        discount =
+            Db.getInt "price_discount" item
+        currency =
+            Db.getField "price_currency" item
+        effectivePrice =
+            if discount > 0 then
+                price - discount
+            else
+                price
+        lineTotal_ =
+            Money.formatPrice (effectivePrice * qty) currency
+    in
+        div [ tw [ flex, justifyBetween, itemsCenter, py3, borderB, borderGray100 ] ]
+            [ div []
+                [ span [ tw [ fontMedium ] ] [ text title ]
+                , span [ tw [ textSm, textGray500, ml2 ] ]
+                    [ text ("x" ++ String.fromInt qty) ]
+                ]
+            , span [ tw [ fontSemibold ] ] [ text lineTotal_ ]
+            ]
+
+
+-- ══════════════════════════════════════════════════════
+-- ORDER SUCCESS
+-- ══════════════════════════════════════════════════════
+
+viewOrderSuccess model =
+    Layout.page model
+        (div [ tw [ textCenter, py16 ] ]
+            [ case model.order of
+                Just order ->
+                    let
+                        state =
+                            Db.getField "state" order
+                    in
+                        if state == "ordered" || state == "shipped" || state == "delivered" then
+                            div []
+                                [ div
+                                    [ tw [ w16, h16, bgGreen100, roundedFull, flex, itemsCenter, justifyCenter, mxAuto, mb4 ] ]
+                                    [ span [ tw [ text2xl, textGreen600 ] ] [ text "✓" ] ]
+                                , h1 [ tw [ text2xl, fontBold, mb4 ] ]
+                                    [ text (Tr.t model.lang "order.success") ]
+                                , a
+                                    [ href ("/order/" ++ Db.getField "id" order)
+                                    , attribute "sky-nav" ""
+                                    , tw [ bgBlue600, textWhite, px6, py3, roundedLg, fontSemibold, inlineBlock ]
+                                    ]
+                                    [ text (Tr.t model.lang "order.detail") ]
+                                ]
+                        else
+                            div []
+                                [ h1 [ tw [ text2xl, fontBold, mb4, textRed600 ] ]
+                                    [ text (Tr.t model.lang "order.failed") ]
+                                , p [ tw [ textGray500, mb4 ] ]
+                                    [ text (Tr.t model.lang "order.status" ++ ": " ++ Tr.tCartState model.lang state) ]
+                                , a
+                                    [ href "/cart"
+                                    , attribute "sky-nav" ""
+                                    , tw [ textBlue600 ]
+                                    ]
+                                    [ text (Tr.t model.lang "cart.continueShopping") ]
+                                ]
+
+                Nothing ->
+                    div []
+                        [ p [ tw [ textGray500 ] ]
+                            [ text (Tr.t model.lang "order.processing") ]
+                        ]
+            ]
+        )

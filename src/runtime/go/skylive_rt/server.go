@@ -203,6 +203,14 @@ func StartServer(config LiveConfig, app LiveApp) {
 			log.Fatalf("Failed to connect to PostgreSQL at %s: %v", url, err)
 		}
 		log.Printf("Using PostgreSQL session store")
+	case "firestore":
+		credPath := config.StorePath // service account JSON, "project:ID", or "" for ADC
+		var err error
+		store, err = NewFirestoreStore(credPath, config.TTL)
+		if err != nil {
+			log.Fatalf("Failed to connect to Firestore: %v", err)
+		}
+		log.Printf("Using Firestore session store")
 	default:
 		store = NewMemoryStore(config.TTL)
 	}

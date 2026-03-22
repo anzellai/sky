@@ -1,0 +1,946 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Log exposing (println)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Time as Time
+import State exposing (..)
+import Lib.Db as Db
+import Lib.Auth as Auth
+import Lib.Products as Products
+import Lib.Cart as Cart
+import Lib.Stripe as Stripe
+import Lib.Notify as Notify
+import Lib.Translation as Tr
+import Page.Home as Home
+import Page.Product as ProductPage
+import Page.CartPage as CartPage
+import Page.Orders as OrdersPage
+import Page.AuthPage as AuthPage
+import Page.Admin as Admin
+import Page.Static as Static
+
+
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        _ =
+            Db.initDb
+        _ =
+            println "[APP] SkyShop initialized"
+        products =
+            Products.listProducts
+    in
+        ( { emptyModel | products = products }
+        , Cmd.none
+        )
+
+
+-- ══════════════════════════════════════════════════════
+-- REFRESH HELPERS
+-- ══════════════════════════════════════════════════════
+
+refreshProducts model =
+    let
+        products =
+            if model.search /= "" || model.categoryFilter /= "all" then
+                Products.searchProducts model.search model.categoryFilter model.sortBy model.sortDir
+            else
+                Products.listProducts
+    in
+        { model | products = products }
+
+
+refreshCart model =
+    case model.user of
+        Just user ->
+            let
+                userId =
+                    Db.getField "id" user
+            in
+                case Cart.getOrCreateCart userId of
+                    Ok cart ->
+                        let
+                            cartId =
+                                Db.getField "id" cart
+                            items =
+                                Cart.getCartItems cartId
+                        in
+                            { model
+                              | cart = Just cart
+                              , cartItems = items
+                            }
+
+                    Err _ ->
+                        model
+
+        Nothing ->
+            { model | cart = Nothing , cartItems = [] }
+
+
+refreshOrders model =
+    case model.user of
+        Just user ->
+            { model | orders = Cart.getUserCarts (Db.getField "id" user) }
+
+        Nothing ->
+            { model | orders = [] }
+
+
+refreshAdminProducts model =
+    { model | products = Products.listAllProducts }
+
+
+refreshAdminOrders model =
+    { model | adminOrders = Cart.getOrdersByState model.adminOrderFilter }
+
+
+loadProductDetail model productId =
+    let
+        product =
+            Products.getProduct productId
+        images =
+            Products.listProductImages productId
+    in
+        { model
+          | product = product
+          , productImages = images
+          , quantity = "1"
+        }
+
+
+loadOrderDetail model orderId =
+    let
+        ( order , items ) =
+            Cart.getCartWithItems orderId
+    in
+        { model | order = order , orderItems = items }
+
+
+loadEditProduct model productId =
+    case Products.getProduct productId of
+        Just product ->
+            let
+                images =
+                    Products.listProductImages productId
+            in
+                { model
+                  | editProductId = productId
+                  , editTitle = Db.getField "title" product
+                  , editSummary = Db.getField "summary" product
+                  , editCategory = Db.getField "category" product
+                  , editPrice = Db.getField "price_amount" product
+                  , editDiscount = Db.getField "price_discount" product
+                  , editCurrency = Db.getField "price_currency" product
+                  , editStock = Db.getField "stock" product
+                  , editPublished = Db.getBool "published" product
+                  , productImages = images
+                  , editImageData = ""
+                }
+
+        Nothing ->
+            model
+
+
+clearEditForm model =
+    { model
+      | editProductId = ""
+      , editTitle = ""
+      , editSummary = ""
+      , editCategory = "Miscellaneous"
+      , editPrice = ""
+      , editDiscount = "0"
+      , editCurrency = "GBP"
+      , editStock = "-1"
+      , editPublished = False
+      , editImageData = ""
+      , productImages = []
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- NAVIGATION HANDLER
+-- ══════════════════════════════════════════════════════
+
+handleNavigate : Page -> Model -> ( Model, Cmd Msg )
+handleNavigate page model =
+    let
+        base =
+            { model
+              | page = page
+              , notification = ""
+              , notificationType = ""
+              , authError = ""
+              , checkoutUrl = ""
+            }
+    in
+        case page of
+            HomePage ->
+                ( refreshProducts base , Cmd.none )
+
+            ProductsPage ->
+                ( refreshProducts base , Cmd.none )
+
+            ProductPage productId ->
+                ( loadProductDetail base productId , Cmd.none )
+
+            CartPage ->
+                ( refreshCart base , Cmd.none )
+
+            OrdersPage ->
+                ( refreshOrders base , Cmd.none )
+
+            OrderPage orderId ->
+                ( loadOrderDetail base orderId , Cmd.none )
+
+            OrderSuccessPage cartId ->
+                handleVerifyPayment cartId base
+
+            AdminProductsPage ->
+                ( refreshAdminProducts base , Cmd.none )
+
+            AdminNewProductPage ->
+                ( clearEditForm base , Cmd.none )
+
+            AdminEditProductPage productId ->
+                ( loadEditProduct base productId , Cmd.none )
+
+            AdminOrdersPage ->
+                ( refreshAdminOrders base , Cmd.none )
+
+            AdminOrderPage orderId ->
+                ( loadOrderDetail base orderId , Cmd.none )
+
+            _ ->
+                ( base , Cmd.none )
+
+
+-- ══════════════════════════════════════════════════════
+-- AUTH HANDLERS
+-- ══════════════════════════════════════════════════════
+
+handleSignIn : Model -> ( Model, Cmd Msg )
+handleSignIn model =
+    case Auth.signIn model.authEmail model.authPassword of
+        Ok user ->
+            let
+                _ =
+                    println ("[AUTH] Signed in: " ++ Db.getField "email" user)
+                base =
+                    { model
+                      | user = Just user
+                      , page = HomePage
+                      , authEmail = ""
+                      , authPassword = ""
+                      , authError = ""
+                      , notification = "Welcome back!"
+                      , notificationType = "success"
+                    }
+            in
+                ( refreshProducts (refreshCart base) , Cmd.none )
+
+        Err error ->
+            ( { model | authError = error } , Cmd.none )
+
+
+handleSignUp : Model -> ( Model, Cmd Msg )
+handleSignUp model =
+    case Auth.signUp model.authName model.authEmail model.authPassword model.authPhone of
+        Ok user ->
+            let
+                base =
+                    { model
+                      | user = Just user
+                      , page = HomePage
+                      , authName = ""
+                      , authEmail = ""
+                      , authPassword = ""
+                      , authPhone = ""
+                      , authError = ""
+                      , notification = "Account created! Welcome to SkyShop."
+                      , notificationType = "success"
+                    }
+            in
+                ( refreshProducts (refreshCart base) , Cmd.none )
+
+        Err error ->
+            ( { model | authError = error } , Cmd.none )
+
+
+handleSignOut : Model -> ( Model, Cmd Msg )
+handleSignOut model =
+    let
+        _ =
+            Auth.signOut
+    in
+        ( refreshProducts
+            { model
+              | user = Nothing
+              , page = HomePage
+              , cart = Nothing
+              , cartItems = []
+              , orders = []
+              , notification = ""
+            }
+        , Cmd.none
+        )
+
+
+-- ══════════════════════════════════════════════════════
+-- CART HANDLERS
+-- ══════════════════════════════════════════════════════
+
+handleAddToCart : String -> Model -> ( Model, Cmd Msg )
+handleAddToCart productId model =
+    case model.user of
+        Just user ->
+            let
+                userId =
+                    Db.getField "id" user
+                qty =
+                    model.quantity
+                        |> String.toInt
+                        |> Maybe.withDefault 1
+            in
+                case Cart.getOrCreateCart userId of
+                    Ok cart ->
+                        let
+                            cartId =
+                                Db.getField "id" cart
+                            _ =
+                                Cart.addItem cartId productId qty
+                            updatedModel =
+                                refreshCart
+                                    { model
+                                      | notification = "Added to cart!"
+                                      , notificationType = "success"
+                                      , quantity = "1"
+                                    }
+                        in
+                            ( updatedModel , Cmd.none )
+
+                    Err e ->
+                        ( { model
+                          | notification = "Failed to add to cart: " ++ e
+                          , notificationType = "error"
+                          }
+                        , Cmd.none
+                        )
+
+        Nothing ->
+            ( { model | page = AuthSignInPage , authError = "Please sign in to add items." }
+            , Cmd.none
+            )
+
+
+handleUpdateCartItemQty : String -> String -> Model -> ( Model, Cmd Msg )
+handleUpdateCartItemQty itemId qtyStr model =
+    let
+        qty =
+            qtyStr
+                |> String.toInt
+                |> Maybe.withDefault 0
+        _ =
+            Cart.updateItemQty itemId qty
+    in
+        ( refreshCart model , Cmd.none )
+
+
+handleRemoveCartItem : String -> Model -> ( Model, Cmd Msg )
+handleRemoveCartItem itemId model =
+    let
+        _ =
+            Cart.removeItem itemId
+    in
+        ( refreshCart model , Cmd.none )
+
+
+-- ══════════════════════════════════════════════════════
+-- CHECKOUT HANDLERS
+-- ══════════════════════════════════════════════════════
+
+handleStartCheckout : Model -> ( Model, Cmd Msg )
+handleStartCheckout model =
+    case model.user of
+        Just user ->
+            case model.cart of
+                Just cart ->
+                    let
+                        cartId =
+                            Db.getField "id" cart
+                        userEmail =
+                            Db.getField "email" user
+                        items =
+                            model.cartItems
+                    in
+                        if List.isEmpty items then
+                            ( { model
+                              | notification = "Cart is empty."
+                              , notificationType = "error"
+                              }
+                            , Cmd.none
+                            )
+                        else
+                            case Stripe.createCheckoutSession cartId items userEmail model.cartRemarks of
+                                Ok session ->
+                                    let
+                                        _ =
+                                            Cart.setCheckout cartId session.url session.id model.cartRemarks
+                                    in
+                                        ( { model | checkoutUrl = session.url }
+                                        , Cmd.none
+                                        )
+
+                                Err e ->
+                                    ( { model
+                                      | notification = e
+                                      , notificationType = "error"
+                                      }
+                                    , Cmd.none
+                                    )
+
+                Nothing ->
+                    ( { model
+                      | notification = "No active cart."
+                      , notificationType = "error"
+                      }
+                    , Cmd.none
+                    )
+
+        Nothing ->
+            ( { model | page = AuthSignInPage } , Cmd.none )
+
+
+handleVerifyPayment : String -> Model -> ( Model, Cmd Msg )
+handleVerifyPayment cartId model =
+    let
+        ( order , items ) =
+            Cart.getCartWithItems cartId
+        base =
+            { model | order = order , orderItems = items }
+    in
+        case order of
+            Just cart ->
+                let
+                    state =
+                        Db.getField "state" cart
+                in
+                    if state == "ordered" || state == "shipped" || state == "delivered" then
+                        -- Already verified
+                        ( base , Cmd.none )
+                    else
+                        case Stripe.verifyPayment cartId of
+                            Ok status ->
+                                let
+                                    _ =
+                                        Cart.setCartState cartId "ordered"
+                                    _ =
+                                        Stripe.deductStock cartId
+                                    _ =
+                                        case model.user of
+                                            Just user ->
+                                                Notify.notifyOrderPlaced cart items (Db.getField "name" user) (Db.getField "email" user)
+
+                                            Nothing ->
+                                                ()
+                                    updatedOrder =
+                                        Cart.getCart cartId
+                                in
+                                    ( { base
+                                      | order = updatedOrder
+                                      , notification = Tr.t model.lang "order.success"
+                                      , notificationType = "success"
+                                      }
+                                    , Cmd.none
+                                    )
+
+                            Err e ->
+                                ( { base
+                                  | notification = e
+                                  , notificationType = "error"
+                                  }
+                                , Cmd.none
+                                )
+
+            Nothing ->
+                ( { base
+                  | notification = "Order not found."
+                  , notificationType = "error"
+                  }
+                , Cmd.none
+                )
+
+
+-- ══════════════════════════════════════════════════════
+-- ADMIN PRODUCT HANDLERS
+-- ══════════════════════════════════════════════════════
+
+handleSubmitProduct : Model -> ( Model, Cmd Msg )
+handleSubmitProduct model =
+    if model.editTitle == "" then
+        ( { model
+          | notification = "Title is required."
+          , notificationType = "error"
+          }
+        , Cmd.none
+        )
+    else if model.editPrice == "" then
+        ( { model
+          | notification = "Price is required."
+          , notificationType = "error"
+          }
+        , Cmd.none
+        )
+    else if model.editProductId == "" then
+        handleCreateProduct model
+    else
+        handleUpdateProduct model
+
+
+handleCreateProduct : Model -> ( Model, Cmd Msg )
+handleCreateProduct model =
+    case Products.createProduct model.editTitle model.editSummary model.editCategory model.editPrice model.editCurrency model.editDiscount model.editStock of
+        Ok productId ->
+            let
+                base =
+                    clearEditForm
+                        { model
+                          | page = AdminEditProductPage productId
+                          , notification = "Product created!"
+                          , notificationType = "success"
+                        }
+                withProducts =
+                    refreshAdminProducts base
+                withEdit =
+                    loadEditProduct withProducts productId
+            in
+                ( withEdit , Cmd.none )
+
+        Err e ->
+            ( { model
+              | notification = "Failed to create product: " ++ e
+              , notificationType = "error"
+              }
+            , Cmd.none
+            )
+
+
+handleUpdateProduct : Model -> ( Model, Cmd Msg )
+handleUpdateProduct model =
+    case Products.updateProduct model.editProductId model.editTitle model.editSummary model.editCategory model.editPrice model.editCurrency model.editDiscount model.editStock model.editPublished of
+        Ok _ ->
+            ( refreshAdminProducts
+                { model
+                  | notification = "Product updated!"
+                  , notificationType = "success"
+                }
+            , Cmd.none
+            )
+
+        Err e ->
+            ( { model
+              | notification = "Failed to update product: " ++ e
+              , notificationType = "error"
+              }
+            , Cmd.none
+            )
+
+
+handleDeleteProduct : String -> Model -> ( Model, Cmd Msg )
+handleDeleteProduct productId model =
+    case Products.deleteProduct productId of
+        Ok _ ->
+            ( refreshAdminProducts
+                (clearEditForm
+                    { model
+                      | page = AdminProductsPage
+                      , notification = "Product deleted."
+                      , notificationType = "success"
+                    }
+                )
+            , Cmd.none
+            )
+
+        Err e ->
+            ( { model
+              | notification = "Failed to delete product: " ++ e
+              , notificationType = "error"
+              }
+            , Cmd.none
+            )
+
+
+handleUploadImage : Model -> ( Model, Cmd Msg )
+handleUploadImage model =
+    if model.editImageData == "" then
+        ( { model
+          | notification = "Please select an image."
+          , notificationType = "error"
+          }
+        , Cmd.none
+        )
+    else
+        case Products.addProductImage model.editProductId model.editImageData of
+            Ok _ ->
+                let
+                    images =
+                        Products.listProductImages model.editProductId
+                in
+                    ( { model
+                      | productImages = images
+                      , editImageData = ""
+                      , notification = "Image uploaded!"
+                      , notificationType = "success"
+                      }
+                    , Cmd.none
+                    )
+
+            Err e ->
+                ( { model
+                  | notification = "Failed to upload image: " ++ e
+                  , notificationType = "error"
+                  }
+                , Cmd.none
+                )
+
+
+handleDeleteImage : String -> Model -> ( Model, Cmd Msg )
+handleDeleteImage imageId model =
+    case Products.deleteProductImage imageId of
+        Ok _ ->
+            let
+                images =
+                    Products.listProductImages model.editProductId
+            in
+                ( { model
+                  | productImages = images
+                  , notification = "Image deleted."
+                  , notificationType = "success"
+                  }
+                , Cmd.none
+                )
+
+        Err e ->
+            ( { model
+              | notification = "Failed to delete image: " ++ e
+              , notificationType = "error"
+              }
+            , Cmd.none
+            )
+
+
+-- ══════════════════════════════════════════════════════
+-- ADMIN ORDER HANDLERS
+-- ══════════════════════════════════════════════════════
+
+handleUpdateOrderState : String -> String -> Model -> ( Model, Cmd Msg )
+handleUpdateOrderState orderId newState model =
+    case Cart.setCartState orderId newState of
+        Ok _ ->
+            let
+                updatedModel =
+                    refreshAdminOrders model
+                ( order , items ) =
+                    Cart.getCartWithItems orderId
+            in
+                ( { updatedModel
+                  | order = order
+                  , orderItems = items
+                  , notification = "Order status updated to " ++ Tr.tCartState model.lang newState
+                  , notificationType = "success"
+                  }
+                , Cmd.none
+                )
+
+        Err e ->
+            ( { model
+              | notification = "Failed to update order: " ++ e
+              , notificationType = "error"
+              }
+            , Cmd.none
+            )
+
+
+-- ══════════════════════════════════════════════════════
+-- UPDATE
+-- ══════════════════════════════════════════════════════
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+        Navigate page ->
+            handleNavigate page model
+
+        SetLang lang ->
+            ( { model | lang = lang } , Cmd.none )
+
+        -- Auth fields
+        UpdateAuthName val ->
+            ( { model | authName = val } , Cmd.none )
+
+        UpdateAuthEmail val ->
+            ( { model | authEmail = val } , Cmd.none )
+
+        UpdateAuthPassword val ->
+            ( { model | authPassword = val } , Cmd.none )
+
+        UpdateAuthPhone val ->
+            ( { model | authPhone = val } , Cmd.none )
+
+        DoSignIn ->
+            handleSignIn model
+
+        DoSignUp ->
+            handleSignUp model
+
+        DoSignOut ->
+            handleSignOut model
+
+        -- Product browsing
+        SetSearch query ->
+            let
+                updated =
+                    { model | search = query }
+            in
+                ( refreshProducts updated , Cmd.none )
+
+        SetCategoryFilter cat ->
+            let
+                updated =
+                    { model | categoryFilter = cat }
+            in
+                ( refreshProducts updated , Cmd.none )
+
+        SetSortBy sortBy ->
+            let
+                updated =
+                    { model | sortBy = sortBy }
+            in
+                ( refreshProducts updated , Cmd.none )
+
+        ToggleSortDir ->
+            let
+                newDir =
+                    if model.sortDir == "asc" then
+                        "desc"
+                    else
+                        "asc"
+                updated =
+                    { model | sortDir = newDir }
+            in
+                ( refreshProducts updated , Cmd.none )
+
+        SelectProduct productId ->
+            ( loadProductDetail model productId , Cmd.none )
+
+        -- Cart
+        UpdateQuantity val ->
+            ( { model | quantity = val } , Cmd.none )
+
+        AddToCart productId ->
+            handleAddToCart productId model
+
+        UpdateCartItemQty itemId qtyStr ->
+            handleUpdateCartItemQty itemId qtyStr model
+
+        RemoveCartItem itemId ->
+            handleRemoveCartItem itemId model
+
+        UpdateRemarks val ->
+            ( { model | cartRemarks = val } , Cmd.none )
+
+        StartCheckout ->
+            handleStartCheckout model
+
+        VerifyPayment cartId ->
+            handleVerifyPayment cartId model
+
+        -- Admin product
+        UpdateEditTitle val ->
+            ( { model | editTitle = val } , Cmd.none )
+
+        UpdateEditSummary val ->
+            ( { model | editSummary = val } , Cmd.none )
+
+        UpdateEditCategory val ->
+            ( { model | editCategory = val } , Cmd.none )
+
+        UpdateEditPrice val ->
+            ( { model | editPrice = val } , Cmd.none )
+
+        UpdateEditDiscount val ->
+            ( { model | editDiscount = val } , Cmd.none )
+
+        UpdateEditCurrency val ->
+            ( { model | editCurrency = val } , Cmd.none )
+
+        UpdateEditStock val ->
+            ( { model | editStock = val } , Cmd.none )
+
+        ToggleEditPublished ->
+            ( { model | editPublished = not model.editPublished } , Cmd.none )
+
+        SubmitProduct ->
+            handleSubmitProduct model
+
+        DeleteProduct productId ->
+            handleDeleteProduct productId model
+
+        UpdateImageData val ->
+            ( { model | editImageData = val } , Cmd.none )
+
+        UploadImage ->
+            handleUploadImage model
+
+        DeleteImage imageId ->
+            handleDeleteImage imageId model
+
+        -- Admin orders
+        SetAdminOrderFilter filter ->
+            let
+                updated =
+                    { model | adminOrderFilter = filter }
+            in
+                ( refreshAdminOrders updated , Cmd.none )
+
+        UpdateOrderState orderId newState ->
+            handleUpdateOrderState orderId newState model
+
+        -- Notifications
+        DismissNotification ->
+            ( { model | notification = "" , notificationType = "" } , Cmd.none )
+
+        -- Tick (auto-refresh)
+        Tick ->
+            case model.page of
+                AdminOrdersPage ->
+                    ( refreshAdminOrders model , Cmd.none )
+
+                OrdersPage ->
+                    ( refreshOrders model , Cmd.none )
+
+                _ ->
+                    ( model , Cmd.none )
+
+        NoOp ->
+            ( model , Cmd.none )
+
+
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
+
+view : Model -> VNode
+view model =
+    case model.page of
+        HomePage ->
+            Home.viewHome model
+
+        ProductsPage ->
+            Home.viewProducts model
+
+        ProductPage _ ->
+            ProductPage.viewProduct model
+
+        CartPage ->
+            CartPage.viewCart model
+
+        OrdersPage ->
+            OrdersPage.viewOrders model
+
+        OrderPage _ ->
+            OrdersPage.viewOrder model
+
+        OrderSuccessPage _ ->
+            OrdersPage.viewOrderSuccess model
+
+        AuthSignInPage ->
+            AuthPage.viewSignIn model
+
+        AuthSignUpPage ->
+            AuthPage.viewSignUp model
+
+        AdminProductsPage ->
+            Admin.viewAdminProducts model
+
+        AdminNewProductPage ->
+            Admin.viewAdminNewProduct model
+
+        AdminEditProductPage _ ->
+            Admin.viewAdminEditProduct model
+
+        AdminOrdersPage ->
+            Admin.viewAdminOrders model
+
+        AdminOrderPage _ ->
+            Admin.viewAdminOrder model
+
+        PrivacyPolicyPage ->
+            Static.viewPrivacyPolicy model
+
+        TermsPage ->
+            Static.viewTerms model
+
+        NotFoundPage ->
+            Static.viewNotFound model
+
+
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS
+-- ══════════════════════════════════════════════════════
+
+subscriptions model =
+    case model.page of
+        AdminOrdersPage ->
+            Time.every 15000 Tick
+
+        OrdersPage ->
+            Time.every 30000 Tick
+
+        _ ->
+            Sub.none
+
+
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes =
+            [ route "/" HomePage
+            , route "/products" ProductsPage
+            , route "/product/:id" ProductPage
+            , route "/cart" CartPage
+            , route "/orders" OrdersPage
+            , route "/order/:id" OrderPage
+            , route "/order/:id/success" OrderSuccessPage
+            , route "/auth/signin" AuthSignInPage
+            , route "/auth/signup" AuthSignUpPage
+            , route "/admin/products" AdminProductsPage
+            , route "/admin/products/new" AdminNewProductPage
+            , route "/admin/products/:id" AdminEditProductPage
+            , route "/admin/orders" AdminOrdersPage
+            , route "/admin/orders/:id" AdminOrderPage
+            , route "/privacy-policy" PrivacyPolicyPage
+            , route "/terms" TermsPage
+            ]
+        , notFound = NotFoundPage
+        }

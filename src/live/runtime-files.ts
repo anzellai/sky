@@ -18,6 +18,7 @@ const RUNTIME_FILES = [
   "store_sqlite.go",
   "store_redis.go",
   "store_postgres.go",
+  "store_firestore.go",
   "eventsource.go",
   "sse.go",
   "livejs.go",

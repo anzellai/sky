@@ -1,0 +1,276 @@
+module Lib.Cart exposing (getOrCreateCart, getCart, getCartItems, getCartWithItems, addItem, updateItemQty, removeItem, recalculateTotal, setCartState, setCheckout, setShipping, getUserCarts, getOrdersByState, getAllOrders)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Github.Com.Google.Uuid as Uuid
+import Lib.Db as Db
+
+
+-- ══════════════════════════════════════════════════════
+-- CART QUERIES
+-- ══════════════════════════════════════════════════════
+
+getOrCreateCart userId =
+    case Db.queryOne "SELECT * FROM carts WHERE owner_id = ? AND state = 'ongoing' ORDER BY created_at DESC LIMIT 1" [ userId ] of
+        Ok (Just cart) ->
+            Ok cart
+
+        Ok Nothing ->
+            createCart userId
+
+        Err e ->
+            Err e
+
+
+createCart userId =
+    let
+        cartId =
+            Uuid.newString ()
+        result =
+            Db.exec
+                "INSERT INTO carts (id, owner_id, state) VALUES (?, ?, 'ongoing')"
+                [ cartId , userId ]
+    in
+        case result of
+            Ok _ ->
+                case Db.queryOne "SELECT * FROM carts WHERE id = ?" [ cartId ] of
+                    Ok (Just cart) ->
+                        Ok cart
+
+                    _ ->
+                        Err "Failed to create cart."
+
+            Err e ->
+                Err e
+
+
+getCart cartId =
+    case Db.queryOne "SELECT * FROM carts WHERE id = ?" [ cartId ] of
+        Ok maybeCart ->
+            maybeCart
+
+        Err _ ->
+            Nothing
+
+
+getCartItems cartId =
+    Result.withDefault []
+        (Db.queryRows
+            "SELECT ci.id, ci.cart_id, ci.product_id, ci.quantity, p.title, p.summary, p.price_amount, p.price_currency, p.price_discount, p.price_tax, p.stock FROM cart_items ci JOIN products p ON ci.product_id = p.id WHERE ci.cart_id = ?"
+            [ cartId ]
+        )
+
+
+getCartWithItems cartId =
+    let
+        cart =
+            getCart cartId
+        items =
+            case cart of
+                Just c ->
+                    getCartItems (Db.getField "id" c)
+
+                Nothing ->
+                    []
+    in
+        ( cart , items )
+
+
+-- ══════════════════════════════════════════════════════
+-- CART MUTATIONS
+-- ══════════════════════════════════════════════════════
+
+addItem cartId productId quantity =
+    let
+        existingRows =
+            Result.withDefault []
+                (Db.queryRows
+                    "SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ?"
+                    [ cartId , productId ]
+                )
+    in
+        case List.head existingRows of
+            Just existing ->
+                let
+                    existingQty =
+                        Db.getInt "quantity" existing
+                    newQty =
+                        existingQty + quantity
+                    itemId =
+                        Db.getField "id" existing
+                    _ =
+                        Db.exec
+                            "UPDATE cart_items SET quantity = ? WHERE id = ?"
+                            [ String.fromInt newQty , itemId ]
+                    _ =
+                        recalculateTotal cartId
+                in
+                    Ok ()
+
+            Nothing ->
+                let
+                    itemId =
+                        Uuid.newString ()
+                    _ =
+                        Db.exec
+                            "INSERT INTO cart_items (id, cart_id, product_id, quantity) VALUES (?, ?, ?, ?)"
+                            [ itemId , cartId , productId , String.fromInt quantity ]
+                    _ =
+                        recalculateTotal cartId
+                in
+                    Ok ()
+
+
+updateItemQty itemId quantity =
+    if quantity <= 0 then
+        removeItem itemId
+    else
+        let
+            _ =
+                Db.exec
+                    "UPDATE cart_items SET quantity = ? WHERE id = ?"
+                    [ String.fromInt quantity , itemId ]
+            -- Get cart_id to recalculate
+            itemRow =
+                Result.withDefault []
+                    (Db.queryRows "SELECT cart_id FROM cart_items WHERE id = ?" [ itemId ])
+        in
+            case List.head itemRow of
+                Just row ->
+                    let
+                        _ =
+                            recalculateTotal (Db.getField "cart_id" row)
+                    in
+                        Ok ()
+
+                Nothing ->
+                    Ok ()
+
+
+removeItem itemId =
+    let
+        itemRow =
+            Result.withDefault []
+                (Db.queryRows "SELECT cart_id FROM cart_items WHERE id = ?" [ itemId ])
+        cartId =
+            case List.head itemRow of
+                Just row ->
+                    Db.getField "cart_id" row
+
+                Nothing ->
+                    ""
+        _ =
+            Db.exec "DELETE FROM cart_items WHERE id = ?" [ itemId ]
+    in
+        if cartId /= "" then
+            let
+                _ =
+                    recalculateTotal cartId
+            in
+                Ok ()
+        else
+            Ok ()
+
+
+recalculateTotal cartId =
+    let
+        items =
+            getCartItems cartId
+        total =
+            List.foldl
+                (\item acc ->
+                    let
+                        price =
+                            Db.getInt "price_amount" item
+                        discount =
+                            Db.getInt "price_discount" item
+                        qty =
+                            Db.getInt "quantity" item
+                        effectivePrice =
+                            price - discount
+                        itemTotal =
+                            if effectivePrice > 0 then
+                                effectivePrice * qty
+                            else
+                                0
+                    in
+                        acc + itemTotal
+                )
+                0
+                items
+        currency =
+            case List.head items of
+                Just item ->
+                    Db.getField "price_currency" item
+
+                Nothing ->
+                    "GBP"
+        _ =
+            Db.exec
+                "UPDATE carts SET total_amount = ?, total_currency = ?, updated_at = datetime('now') WHERE id = ?"
+                [ String.fromInt total , currency , cartId ]
+    in
+        total
+
+
+-- ══════════════════════════════════════════════════════
+-- ORDER STATE
+-- ══════════════════════════════════════════════════════
+
+setCartState cartId newState =
+    let
+        result =
+            Db.exec
+                "UPDATE carts SET state = ?, updated_at = datetime('now') WHERE id = ?"
+                [ newState , cartId ]
+        _ =
+            println ("[CART] State changed: " ++ cartId ++ " -> " ++ newState)
+    in
+        result
+
+
+setCheckout cartId link reference remarks =
+    Db.exec
+        "UPDATE carts SET checkout_link = ?, checkout_reference = ?, checkout_remarks = ?, state = 'pending', updated_at = datetime('now') WHERE id = ?"
+        [ link , reference , remarks , cartId ]
+
+
+setShipping cartId name email phone line1 line2 city country postcode =
+    Db.exec
+        "UPDATE carts SET shipping_name = ?, shipping_email = ?, shipping_phone = ?, shipping_line1 = ?, shipping_line2 = ?, shipping_city = ?, shipping_country = ?, shipping_postcode = ?, updated_at = datetime('now') WHERE id = ?"
+        [ name , email , phone , line1 , line2 , city , country , postcode , cartId ]
+
+
+-- ══════════════════════════════════════════════════════
+-- ORDER QUERIES
+-- ══════════════════════════════════════════════════════
+
+getUserCarts userId =
+    Result.withDefault []
+        (Db.queryRows
+            "SELECT * FROM carts WHERE owner_id = ? AND state != 'ongoing' ORDER BY updated_at DESC"
+            [ userId ]
+        )
+
+
+getOrdersByState state =
+    if state == "all" then
+        getAllOrders
+    else
+        Result.withDefault []
+            (Db.queryRows
+                "SELECT c.*, u.name as user_name, u.email as user_email FROM carts c LEFT JOIN users u ON c.owner_id = u.id WHERE c.state = ? ORDER BY c.updated_at DESC"
+                [ state ]
+            )
+
+
+getAllOrders =
+    Result.withDefault []
+        (Db.queryRows
+            "SELECT c.*, u.name as user_name, u.email as user_email FROM carts c LEFT JOIN users u ON c.owner_id = u.id WHERE c.state != 'ongoing' ORDER BY c.updated_at DESC"
+            []
+        )

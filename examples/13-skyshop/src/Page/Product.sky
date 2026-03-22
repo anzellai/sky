@@ -1,0 +1,228 @@
+module Page.Product exposing (viewProduct)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput)
+import State exposing (..)
+import Ui.Layout as Layout
+import Lib.Db as Db
+import Lib.Money as Money
+import Lib.Products as Products
+import Lib.Translation as Tr
+import Tailwind exposing (..)
+
+
+viewProduct model =
+    Layout.page model
+        (case model.product of
+            Just product ->
+                viewProductDetail model product
+
+            Nothing ->
+                div [ tw [ textCenter, py16 ] ]
+                    [ p [ tw [ textGray400 ] ] [ text (Tr.t model.lang "common.loading") ] ]
+        )
+
+
+viewProductDetail model product =
+    let
+        productId =
+            Db.getField "id" product
+        title =
+            Db.getField "title" product
+        summary =
+            Db.getField "summary" product
+        category =
+            Db.getField "category" product
+        pricing =
+            Money.formatPriceFromRow product
+        stock =
+            Db.getInt "stock" product
+        images =
+            model.productImages
+        lang =
+            model.lang
+    in
+        div []
+            [ nav [ tw [ mb6, flex, itemsCenter, gap2 ] ]
+                [ a [ href "/", attribute "sky-nav" "", tw [ textSm, textGray400 ] ]
+                    [ text (Tr.t lang "nav.home") ]
+                , span [ tw [ textGray300, textSm ] ] [ text "/" ]
+                , a [ href "/products", attribute "sky-nav" "", tw [ textSm, textGray400 ] ]
+                    [ text (Tr.t lang "nav.products") ]
+                , span [ tw [ textGray300, textSm ] ] [ text "/" ]
+                , span [ tw [ textSm, textGray600 ] ] [ text title ]
+                ]
+            , div [ tw [ grid, gridCols2, gap8, itemsStart ], style "gap:3rem" ]
+                [ viewImageGallery images
+                , div []
+                    [ span [ tw [ textXs, fontSemibold, uppercase, textBlue500, mb3, block ], style "letter-spacing:.1em" ]
+                        [ text (Tr.tCategory lang category) ]
+                    , h1 [ tw [ text3xl, fontBold, textGray900, mb5 ], style "line-height:1.2" ]
+                        [ text title ]
+                    , viewDetailPrice pricing
+                    , viewDetailStock model stock
+                    , if summary /= "" then
+                        div [ tw [ mt6 ] ]
+                            [ h3 [ tw [ textSm, fontSemibold, textGray900, mb2 ] ]
+                                [ text
+                                    (if lang == "zh" then
+                                        "商品描述"
+                                    else
+                                        "Description"
+                                    )
+                                ]
+                            , p [ tw [ textGray500, leadingRelaxed ] ]
+                                [ text summary ]
+                            ]
+                      else
+                        text ""
+                    , viewAddToCart model product stock
+                    , div [ tw [ mt6, pt6, borderT, borderGray100 ] ]
+                        [ div [ tw [ flex, gap6 ] ]
+                            [ viewFeature
+                                (if lang == "zh" then
+                                    "品质保证"
+                                else
+                                    "Quality Guaranteed"
+                                )
+                            , viewFeature
+                                (if lang == "zh" then
+                                    "安全支付"
+                                else
+                                    "Secure Payment"
+                                )
+                            , viewFeature
+                                (if lang == "zh" then
+                                    "快速配送"
+                                else
+                                    "Fast Shipping"
+                                )
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+
+
+viewFeature label =
+    div [ tw [ flex, itemsCenter, gap2 ] ]
+        [ span [ tw [ w2, h2, roundedFull, bgGreen500, inlineBlock ] ] []
+        , span [ tw [ textXs, textGray500 ] ] [ text label ]
+        ]
+
+
+viewImageGallery images =
+    if List.isEmpty images then
+        div [ Layout.galleryPlaceholder ] [ text "No images" ]
+    else
+        div [ tw [ flex, flexCol, gap3 ] ]
+            [ case List.head images of
+                Just firstImg ->
+                    div [ Layout.galleryMain ]
+                        [ img [ src (Db.getField "data" firstImg), alt "Product", Layout.objectCover_ ] ]
+
+                Nothing ->
+                    text ""
+            , if List.length images > 1 then
+                div [ tw [ grid, gridCols4, gap2 ] ]
+                    (List.map
+                        (\imgRow ->
+                            div [ Layout.galleryThumb ]
+                                [ img [ src (Db.getField "data" imgRow), alt "Thumbnail", Layout.objectCover_ ] ]
+                        )
+                        images
+                    )
+              else
+                text ""
+            ]
+
+
+viewDetailPrice pricing =
+    if pricing.hasDiscount then
+        div [ tw [ flex, gap3, itemsCenter, mb3 ] ]
+            [ span [ tw [ text3xl, fontBold, textRed600 ] ] [ text pricing.discounted ]
+            , span [ tw [ textLg, textGray400 ], class "line-through" ] [ text pricing.original ]
+            , span [ tw [ textXs, fontSemibold, textRed600, bgRed50, px2, py1, roundedSm ] ] [ text "SALE" ]
+            ]
+    else
+        div [ tw [ mb3 ] ]
+            [ span [ tw [ text3xl, fontBold, textGray900 ] ] [ text pricing.original ] ]
+
+
+viewDetailStock model stock =
+    let
+        lang =
+            model.lang
+    in
+        div [ tw [ mb4 ] ]
+            [ if stock == 0 then
+                span [ tw [ textSm, fontSemibold, px3, py1, roundedFull, inlineBlock, textRed600, bgRed50 ] ]
+                    [ text (Tr.t lang "product.outOfStock") ]
+              else if stock > 0 then
+                span [ tw [ textSm, fontSemibold, px3, py1, roundedFull, inlineBlock, textGreen600, bgGreen50 ] ]
+                    [ text (Tr.t lang "product.inStock" ++ " - " ++ String.fromInt stock ++ " " ++ Tr.t lang "product.left") ]
+              else
+                span [ tw [ textSm, fontSemibold, px3, py1, roundedFull, inlineBlock, textGreen600, bgGreen50 ] ]
+                    [ text (Tr.t lang "product.unlimited") ]
+            ]
+
+
+viewAddToCart model product stock =
+    let
+        lang =
+            model.lang
+        productId =
+            Db.getField "id" product
+        canAdd =
+            stock /= 0
+    in
+        div [ tw [ mt8 ] ]
+            [ if canAdd then
+                div []
+                    [ div [ tw [ flex, itemsCenter, gap3, mb4 ] ]
+                        [ label [ tw [ textSm, fontMedium, textGray700 ] ]
+                            [ text (Tr.t lang "product.quantity") ]
+                        , div [ tw [ flex, itemsCenter ] ]
+                            [ button
+                                [ onClick (UpdateQuantity (String.fromInt (Maybe.withDefault 1 (String.toInt model.quantity) - 1)))
+                                , Layout.qtyBtn
+                                ]
+                                [ text "-" ]
+                            , input
+                                [ type_ "number"
+                                , value model.quantity
+                                , onInput UpdateQuantity
+                                , min "1"
+                                , max
+                                    (if stock > 0 then
+                                        String.fromInt stock
+                                    else
+                                        "99"
+                                    )
+                                , class "qty-input"
+                                ]
+                            , button
+                                [ onClick (UpdateQuantity (String.fromInt (Maybe.withDefault 1 (String.toInt model.quantity) + 1)))
+                                , Layout.qtyBtn
+                                ]
+                                [ text "+" ]
+                            ]
+                        ]
+                    , button
+                        [ onClick (AddToCart productId)
+                        , Layout.btnPrimaryLg
+                        ]
+                        [ text (Tr.t lang "product.addToCart") ]
+                    ]
+              else
+                button
+                    [ tw [ wFull, bgGray200, textGray400, py3, roundedLg, fontSemibold ]
+                    , disabled ()
+                    ]
+                    [ text (Tr.t lang "product.outOfStock") ]
+            ]

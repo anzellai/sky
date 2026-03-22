@@ -1,0 +1,346 @@
+module Lib.Stripe exposing (createCheckoutSession, verifyPayment, deductStock)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Std.Log exposing (println)
+import Net.Http as Http
+import Net.Url as Url
+import Io as Io
+import Strings as GoStrings
+import Sky.Core.Json.Decode as Decode
+import Os
+import Lib.Db as Db
+
+
+apiKey =
+    Os.getenv "STRIPE_API_KEY"
+
+
+domainUrl =
+    let
+        env =
+            Os.getenv "ENV"
+        domain =
+            Os.getenv "DOMAIN"
+        port_ =
+            Os.getenv "SKY_LIVE_PORT"
+        effectiveDomain =
+            if domain == "" then
+                "localhost"
+            else
+                domain
+        effectivePort =
+            if port_ == "" then
+                "4000"
+            else
+                port_
+    in
+        if env == "production" then
+            "https://" ++ effectiveDomain
+        else
+            "http://" ++ effectiveDomain ++ ":" ++ effectivePort
+
+
+-- ══════════════════════════════════════════════════════
+-- HTTP HELPERS
+-- ══════════════════════════════════════════════════════
+
+urlEncode value =
+    Url.queryEscape value
+
+
+buildFormBody params =
+    params
+        |> List.map (\( k, v ) -> urlEncode k ++ "=" ++ urlEncode v)
+        |> String.join "&"
+
+
+stripePost endpoint params =
+    let
+        url =
+            "https://api.stripe.com/v1/" ++ endpoint
+        body =
+            buildFormBody params
+        reader =
+            GoStrings.newReader body
+    in
+        case Http.newRequest "POST" url reader of
+            Err e ->
+                Err (errorToString e)
+
+            Ok req ->
+                let
+                    _ =
+                        headerSet (requestHeader req) "Authorization" ("Bearer " ++ apiKey)
+                    _ =
+                        headerSet (requestHeader req) "Content-Type" "application/x-www-form-urlencoded"
+                in
+                    case clientDo (Http.defaultClient ()) req of
+                        Err e ->
+                            Err (errorToString e)
+
+                        Ok resp ->
+                            case Io.readAll (responseBody resp) of
+                                Err e ->
+                                    Err (errorToString e)
+
+                                Ok bytes ->
+                                    Ok (String.fromBytes bytes)
+
+
+stripeGet endpoint =
+    let
+        url =
+            "https://api.stripe.com/v1/" ++ endpoint
+        reader =
+            GoStrings.newReader ""
+    in
+        case Http.newRequest "GET" url reader of
+            Err e ->
+                Err (errorToString e)
+
+            Ok req ->
+                let
+                    _ =
+                        headerSet (requestHeader req) "Authorization" ("Bearer " ++ apiKey)
+                in
+                    case clientDo (Http.defaultClient ()) req of
+                        Err e ->
+                            Err (errorToString e)
+
+                        Ok resp ->
+                            case Io.readAll (responseBody resp) of
+                                Err e ->
+                                    Err (errorToString e)
+
+                                Ok bytes ->
+                                    Ok (String.fromBytes bytes)
+
+
+-- ══════════════════════════════════════════════════════
+-- CHECKOUT SESSION
+-- ══════════════════════════════════════════════════════
+
+buildLineItemParams items =
+    items
+        |> List.indexedMap
+            (\i item ->
+                let
+                    prefix =
+                        "line_items[" ++ String.fromInt i ++ "]"
+                    title =
+                        Db.getField "title" item
+                    price =
+                        Db.getInt "price_amount" item
+                    discount =
+                        Db.getInt "price_discount" item
+                    effectivePrice =
+                        if price - discount > 0 then
+                            price - discount
+                        else
+                            price
+                    qty =
+                        Db.getField "quantity" item
+                    currency =
+                        String.toLower (Db.getField "price_currency" item)
+                in
+                    [ ( prefix ++ "[price_data][product_data][name]" , title )
+                    , ( prefix ++ "[price_data][unit_amount]" , String.fromInt effectivePrice )
+                    , ( prefix ++ "[price_data][currency]" , currency )
+                    , ( prefix ++ "[quantity]" , qty )
+                    ]
+            )
+        |> List.concat
+
+
+createCheckoutSession cartId items userEmail remarks =
+    if apiKey == "" then
+        Err "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
+    else
+        let
+            successUrl =
+                domainUrl ++ "/order/" ++ cartId ++ "/success"
+            cancelUrl =
+                domainUrl ++ "/cart"
+            lineItemParams =
+                buildLineItemParams items
+            baseParams =
+                [ ( "mode" , "payment" )
+                , ( "success_url" , successUrl )
+                , ( "cancel_url" , cancelUrl )
+                , ( "customer_email" , userEmail )
+                , ( "shipping_address_collection[allowed_countries][0]" , "GB" )
+                , ( "shipping_address_collection[allowed_countries][1]" , "HK" )
+                , ( "shipping_address_collection[allowed_countries][2]" , "MO" )
+                , ( "phone_number_collection[enabled]" , "true" )
+                , ( "custom_fields[0][key]" , "remarks" )
+                , ( "custom_fields[0][label][type]" , "custom" )
+                , ( "custom_fields[0][label][custom]" , "Delivery remarks" )
+                , ( "custom_fields[0][type]" , "text" )
+                , ( "custom_fields[0][optional]" , "true" )
+                , ( "metadata[cart_id]" , cartId )
+                , ( "metadata[remarks]" , remarks )
+                ]
+            allParams =
+                baseParams ++ lineItemParams
+            _ =
+                println ("[STRIPE] Creating checkout session for cart: " ++ cartId)
+        in
+            case stripePost "checkout/sessions" allParams of
+                Ok responseBody ->
+                    case decodeCheckoutResponse responseBody of
+                        Ok session ->
+                            Ok session
+
+                        Err e ->
+                            let
+                                _ =
+                                    println ("[STRIPE] Failed to parse response: " ++ e)
+                            in
+                                Err ("Failed to create checkout session: " ++ e)
+
+                Err e ->
+                    let
+                        _ =
+                            println ("[STRIPE] API error: " ++ e)
+                    in
+                        Err ("Stripe API error: " ++ e)
+
+
+decodeCheckoutResponse json =
+    Decode.decodeString
+        (Decode.map2
+            (\id url -> { id = id , url = url })
+            (Decode.field "id" Decode.string)
+            (Decode.field "url" Decode.string)
+        )
+        json
+
+
+-- ══════════════════════════════════════════════════════
+-- PAYMENT VERIFICATION
+-- ══════════════════════════════════════════════════════
+
+verifyPayment cartId =
+    case Db.queryOne "SELECT checkout_reference FROM carts WHERE id = ?" [ cartId ] of
+        Ok (Just cart) ->
+            let
+                reference =
+                    Db.getField "checkout_reference" cart
+            in
+                if reference == "" then
+                    Err "No checkout reference found."
+                else
+                    verifyStripeSession cartId reference
+
+        Ok Nothing ->
+            Err "Cart not found."
+
+        Err e ->
+            Err e
+
+
+verifyStripeSession cartId sessionId =
+    case stripeGet ("checkout/sessions/" ++ sessionId ++ "?expand[]=customer_details&expand[]=shipping_details") of
+        Ok responseBody ->
+            case decodePaymentStatus responseBody of
+                Ok status ->
+                    if status.status == "complete" && status.paymentStatus == "paid" then
+                        let
+                            _ =
+                                println ("[STRIPE] Payment verified for cart: " ++ cartId)
+                        in
+                            Ok status
+
+                    else
+                        Err ("Payment not complete. Status: " ++ status.status ++ ", Payment: " ++ status.paymentStatus)
+
+                Err e ->
+                    Err ("Failed to parse payment status: " ++ e)
+
+        Err e ->
+            Err ("Failed to retrieve checkout session: " ++ e)
+
+
+type alias PaymentStatus =
+    { status : String
+    , paymentStatus : String
+    , customerName : String
+    , customerEmail : String
+    , customerPhone : String
+    , shippingLine1 : String
+    , shippingLine2 : String
+    , shippingCity : String
+    , shippingCountry : String
+    , shippingPostalCode : String
+    }
+
+
+decodePaymentStatus json =
+    Decode.decodeString
+        (Decode.map2
+            (\status paymentStatus ->
+                { status = status
+                , paymentStatus = paymentStatus
+                , customerName = ""
+                , customerEmail = ""
+                , customerPhone = ""
+                , shippingLine1 = ""
+                , shippingLine2 = ""
+                , shippingCity = ""
+                , shippingCountry = ""
+                , shippingPostalCode = ""
+                }
+            )
+            (Decode.field "status" Decode.string)
+            (Decode.field "payment_status" Decode.string)
+        )
+        json
+
+
+-- ══════════════════════════════════════════════════════
+-- STOCK MANAGEMENT
+-- ══════════════════════════════════════════════════════
+
+deductStock cartId =
+    let
+        items =
+            Result.withDefault []
+                (Db.queryRows
+                    "SELECT ci.product_id, ci.quantity, p.stock FROM cart_items ci JOIN products p ON ci.product_id = p.id WHERE ci.cart_id = ?"
+                    [ cartId ]
+                )
+        _ =
+            List.map
+                (\item ->
+                    let
+                        productId =
+                            Db.getField "product_id" item
+                        qty =
+                            Db.getInt "quantity" item
+                        stock =
+                            Db.getInt "stock" item
+                    in
+                        if stock >= 0 then
+                            let
+                                newStock =
+                                    if stock - qty >= 0 then
+                                        stock - qty
+                                    else
+                                        0
+                            in
+                                Db.exec
+                                    "UPDATE products SET stock = ?, updated_at = datetime('now') WHERE id = ?"
+                                    [ String.fromInt newStock , productId ]
+                        else
+                            Ok ()
+                )
+                items
+        _ =
+            println ("[STOCK] Deducted for cart: " ++ cartId)
+    in
+        ()

@@ -97,7 +97,7 @@ input = "debounce"                 # "debounce" | "blur"
 poll_interval = 0                  # ms (0 = SSE only)
 
 [live.session]
-store = "memory"                   # memory | sqlite | redis | postgresql
+store = "memory"                   # memory | sqlite | redis | postgresql | firestore
 ```
 
 Sky.Live config is embedded at compile time but overridable at runtime via env vars or `.env` file. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Priority: compiled defaults < sky.toml < env vars < .env file. Non-Live apps can use `Process.loadEnv ""` to load `.env` files and `Process.getEnv` to read env vars.
@@ -142,6 +142,7 @@ Located in `examples/` with numbered directories:
 - `10-live-component` -- Sky.Live component protocol with auto-wiring
 - `11-fyne-stopwatch` -- Desktop GUI with Fyne toolkit
 - `12-skyvote` -- Full Sky.Live app with SQLite, auth, voting, SSE auto-refresh
+- `13-skyshop` -- Full e-commerce Sky.Live app: products, cart, Stripe checkout, admin panel, i18n, image uploads, order management
 
 ## Language Syntax (Elm-like)
 

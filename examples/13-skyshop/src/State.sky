@@ -1,0 +1,212 @@
+module State exposing (..)
+
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.Dict as Dict
+
+
+-- ══════════════════════════════════════════════════════
+-- PAGES
+-- ══════════════════════════════════════════════════════
+
+type Page
+    = HomePage
+    | ProductsPage
+    | ProductPage String
+    | CartPage
+    | OrdersPage
+    | OrderPage String
+    | OrderSuccessPage String
+    | AuthSignInPage
+    | AuthSignUpPage
+    | AdminProductsPage
+    | AdminNewProductPage
+    | AdminEditProductPage String
+    | AdminOrdersPage
+    | AdminOrderPage String
+    | PrivacyPolicyPage
+    | TermsPage
+    | NotFoundPage
+
+
+-- ══════════════════════════════════════════════════════
+-- MESSAGES
+-- ══════════════════════════════════════════════════════
+
+type Msg
+    = Navigate Page
+    | SetLang String
+    -- Auth fields
+    | UpdateAuthName String
+    | UpdateAuthEmail String
+    | UpdateAuthPassword String
+    | UpdateAuthPhone String
+    | DoSignIn
+    | DoSignUp
+    | DoSignOut
+    -- Product browsing
+    | SetSearch String
+    | SetCategoryFilter String
+    | SetSortBy String
+    | ToggleSortDir
+    | SelectProduct String
+    -- Cart
+    | UpdateQuantity String
+    | AddToCart String
+    | UpdateCartItemQty String String
+    | RemoveCartItem String
+    | UpdateRemarks String
+    | StartCheckout
+    | VerifyPayment String
+    -- Admin product
+    | UpdateEditTitle String
+    | UpdateEditSummary String
+    | UpdateEditCategory String
+    | UpdateEditPrice String
+    | UpdateEditDiscount String
+    | UpdateEditCurrency String
+    | UpdateEditStock String
+    | ToggleEditPublished
+    | SubmitProduct
+    | DeleteProduct String
+    | UpdateImageData String
+    | UploadImage
+    | DeleteImage String
+    -- Admin orders
+    | SetAdminOrderFilter String
+    | UpdateOrderState String String
+    -- Notifications
+    | DismissNotification
+    -- Tick
+    | Tick
+    | NoOp
+
+
+-- ══════════════════════════════════════════════════════
+-- MODEL
+-- ══════════════════════════════════════════════════════
+
+type alias Model =
+    { page : Page
+    , lang : String
+    -- Auth
+    , user : Maybe (Dict String String)
+    , authName : String
+    , authEmail : String
+    , authPassword : String
+    , authPhone : String
+    , authError : String
+    -- Products
+    , products : List (Dict String String)
+    , product : Maybe (Dict String String)
+    , productImages : List (Dict String String)
+    , search : String
+    , categoryFilter : String
+    , sortBy : String
+    , sortDir : String
+    -- Cart
+    , cart : Maybe (Dict String String)
+    , cartItems : List (Dict String String)
+    , cartRemarks : String
+    , checkoutUrl : String
+    -- Orders
+    , orders : List (Dict String String)
+    , order : Maybe (Dict String String)
+    , orderItems : List (Dict String String)
+    -- Admin product form
+    , editProductId : String
+    , editTitle : String
+    , editSummary : String
+    , editCategory : String
+    , editPrice : String
+    , editDiscount : String
+    , editCurrency : String
+    , editStock : String
+    , editPublished : Bool
+    , editImageData : String
+    -- Admin orders
+    , adminOrders : List (Dict String String)
+    , adminOrderFilter : String
+    -- Quantity selector (on product page)
+    , quantity : String
+    -- Notifications
+    , notification : String
+    , notificationType : String
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- INITIAL MODEL
+-- ══════════════════════════════════════════════════════
+
+emptyModel : Model
+emptyModel =
+    { page = HomePage
+    , lang = "en"
+    , user = Nothing
+    , authName = ""
+    , authEmail = ""
+    , authPassword = ""
+    , authPhone = ""
+    , authError = ""
+    , products = []
+    , product = Nothing
+    , productImages = []
+    , search = ""
+    , categoryFilter = "all"
+    , sortBy = "newest"
+    , sortDir = "desc"
+    , cart = Nothing
+    , cartItems = []
+    , cartRemarks = ""
+    , checkoutUrl = ""
+    , orders = []
+    , order = Nothing
+    , orderItems = []
+    , editProductId = ""
+    , editTitle = ""
+    , editSummary = ""
+    , editCategory = "Miscellaneous"
+    , editPrice = ""
+    , editDiscount = "0"
+    , editCurrency = "GBP"
+    , editStock = "-1"
+    , editPublished = False
+    , editImageData = ""
+    , adminOrders = []
+    , adminOrderFilter = "all"
+    , quantity = "1"
+    , notification = ""
+    , notificationType = ""
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- CONSTANTS
+-- ══════════════════════════════════════════════════════
+
+allCategories =
+    [ "Accessories"
+    , "Bags"
+    , "Fashion"
+    , "Jewellery And Watches"
+    , "Kids"
+    , "Luxury Brands"
+    , "Miscellaneous"
+    , "Wallet And Small Items"
+    ]
+
+allCartStates =
+    [ "ongoing"
+    , "pending"
+    , "ordered"
+    , "shipped"
+    , "delivered"
+    , "cancelled"
+    , "refunded"
+    ]
+
+allCurrencies =
+    [ "GBP"
+    , "HKD"
+    , "USD"
+    ]

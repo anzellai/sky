@@ -1,0 +1,193 @@
+module Lib.Auth exposing (signUp, signIn, signOut, getUserById, isAdmin, getSessionUser)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.Result as Result
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Crypto.Sha256 as Sha256
+import Encoding.Hex as Hex
+import Github.Com.Google.Uuid as Uuid
+import Lib.Db as Db
+import Os
+
+
+hashPassword password salt =
+    let
+        salted =
+            salt ++ ":" ++ password
+        hash =
+            Sha256.sum256 (String.toBytes salted)
+    in
+        Hex.encodeToString hash
+
+
+generateSalt =
+    Uuid.newString ()
+
+
+adminEmails =
+    let
+        envAdmins =
+            Os.getenv "ADMIN_EMAILS"
+    in
+        if envAdmins == "" then
+            [ "admin@example.com"
+            ]
+        else
+            String.split "," envAdmins
+
+
+isAdmin user =
+    Db.getBool "is_admin" user
+
+
+-- ══════════════════════════════════════════════════════
+-- SIGN UP
+-- ══════════════════════════════════════════════════════
+
+signUp name email password phone =
+    if name == "" then
+        Err "Name is required."
+    else if email == "" then
+        Err "Email is required."
+    else if String.length password < 8 then
+        Err "Password must be at least 8 characters."
+    else
+        doSignUp name email password phone
+
+
+doSignUp name email password phone =
+    let
+        userId =
+            Uuid.newString ()
+        salt =
+            generateSalt
+        hash =
+            hashPassword password salt
+        token =
+            Uuid.newString ()
+        isAdminUser =
+            if List.member email adminEmails then
+                "1"
+            else
+                "0"
+        result =
+            Db.exec
+                "INSERT INTO users (id, email, name, phone, password_hash, password_salt, session_token, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                [ userId
+                , email
+                , name
+                , phone
+                , hash
+                , salt
+                , token
+                , isAdminUser
+                ]
+    in
+        case result of
+            Ok _ ->
+                let
+                    _ =
+                        println ("[AUTH] User created: " ++ name ++ " (" ++ email ++ ")")
+                in
+                    getUserById userId
+                        |> Result.andThen
+                            (\maybeUser ->
+                                case maybeUser of
+                                    Just user ->
+                                        Ok user
+
+                                    Nothing ->
+                                        Err "Failed to retrieve created user."
+                            )
+
+            Err _ ->
+                Err "Email already taken."
+
+
+-- ══════════════════════════════════════════════════════
+-- SIGN IN
+-- ══════════════════════════════════════════════════════
+
+signIn email password =
+    if email == "" then
+        Err "Email is required."
+    else if password == "" then
+        Err "Password is required."
+    else
+        doSignIn email password
+
+
+doSignIn email password =
+    case Db.queryOne "SELECT * FROM users WHERE email = ?" [ email ] of
+        Ok (Just user) ->
+            let
+                storedHash =
+                    Db.getField "password_hash" user
+                storedSalt =
+                    Db.getField "password_salt" user
+                inputHash =
+                    hashPassword password storedSalt
+            in
+                if inputHash == storedHash then
+                    if Db.getBool "suspended" user then
+                        Err "Account suspended. Please contact support."
+                    else
+                        let
+                            token =
+                                Uuid.newString ()
+                            userId =
+                                Db.getField "id" user
+                            _ =
+                                Db.exec
+                                    "UPDATE users SET session_token = ?, updated_at = datetime('now') WHERE id = ?"
+                                    [ token , userId ]
+                            _ =
+                                println ("[AUTH] Sign-in success: " ++ email)
+                        in
+                            Ok user
+                else
+                    let
+                        _ =
+                            println ("[AUTH] Sign-in failed (bad password): " ++ email)
+                    in
+                        Err "Invalid email or password."
+
+        Ok Nothing ->
+            let
+                _ =
+                    println ("[AUTH] Sign-in failed (not found): " ++ email)
+            in
+                Err "Invalid email or password."
+
+        Err _ ->
+            Err "Database error. Please try again."
+
+
+-- ══════════════════════════════════════════════════════
+-- SESSION
+-- ══════════════════════════════════════════════════════
+
+signOut =
+    let
+        _ =
+            println "[AUTH] User signed out"
+    in
+        ()
+
+
+getUserById userId =
+    Db.queryOne
+        "SELECT id, email, name, phone, address_line1, address_line2, address_city, address_county, address_country, address_postcode, is_admin, suspended, created_at FROM users WHERE id = ?"
+        [ userId ]
+
+
+getSessionUser userId =
+    case getUserById userId of
+        Ok maybeUser ->
+            maybeUser
+
+        Err _ ->
+            Nothing

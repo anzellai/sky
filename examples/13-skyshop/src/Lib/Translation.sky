@@ -1,0 +1,233 @@
+module Lib.Translation exposing (t, tCategory, tCartState, tCurrency, tCurrencySymbol)
+
+import Sky.Core.Prelude exposing (..)
+
+
+-- ══════════════════════════════════════════════════════
+-- TRANSLATION
+-- ══════════════════════════════════════════════════════
+
+t lang key =
+    if lang == "zh" then
+        tZh key
+    else
+        tEn key
+
+
+tEn key =
+    case key of
+        "app.name" -> "SkyShop"
+        "nav.home" -> "Home"
+        "nav.products" -> "Products"
+        "nav.cart" -> "Cart"
+        "nav.orders" -> "My Orders"
+        "nav.admin" -> "Admin"
+        "nav.signin" -> "Sign In"
+        "nav.signout" -> "Sign Out"
+        "nav.signup" -> "Sign Up"
+        "auth.welcome" -> "Welcome back"
+        "auth.create" -> "Create an account"
+        "auth.email" -> "Email"
+        "auth.password" -> "Password"
+        "auth.name" -> "Full Name"
+        "auth.phone" -> "Phone Number"
+        "auth.signin.btn" -> "Sign In"
+        "auth.signup.btn" -> "Create Account"
+        "auth.signin.link" -> "Already have an account? Sign in"
+        "auth.signup.link" -> "Don't have an account? Sign up"
+        "product.addToCart" -> "Add to Cart"
+        "product.outOfStock" -> "Out of Stock"
+        "product.inStock" -> "In Stock"
+        "product.unlimited" -> "Available"
+        "product.left" -> "left"
+        "product.category" -> "Category"
+        "product.all" -> "All"
+        "product.search" -> "Search products..."
+        "product.sort.newest" -> "Newest"
+        "product.sort.price" -> "Price"
+        "product.sort.title" -> "Name"
+        "product.noResults" -> "No products found."
+        "product.quantity" -> "Quantity"
+        "cart.title" -> "Shopping Cart"
+        "cart.empty" -> "Your cart is empty."
+        "cart.total" -> "Total"
+        "cart.checkout" -> "Proceed to Checkout"
+        "cart.remove" -> "Remove"
+        "cart.remarks" -> "Delivery remarks (optional)"
+        "cart.continueShopping" -> "Continue Shopping"
+        "order.title" -> "My Orders"
+        "order.empty" -> "No orders yet."
+        "order.detail" -> "Order Details"
+        "order.placed" -> "Order placed"
+        "order.items" -> "Items"
+        "order.shipping" -> "Shipping"
+        "order.status" -> "Status"
+        "order.success" -> "Payment successful! Your order has been placed."
+        "order.failed" -> "Payment verification failed."
+        "order.processing" -> "Verifying payment..."
+        "admin.products" -> "Manage Products"
+        "admin.orders" -> "Manage Orders"
+        "admin.newProduct" -> "New Product"
+        "admin.editProduct" -> "Edit Product"
+        "admin.product.title" -> "Title"
+        "admin.product.summary" -> "Summary"
+        "admin.product.category" -> "Category"
+        "admin.product.price" -> "Price (pence)"
+        "admin.product.discount" -> "Discount (pence)"
+        "admin.product.currency" -> "Currency"
+        "admin.product.stock" -> "Stock (-1 = unlimited)"
+        "admin.product.published" -> "Published"
+        "admin.product.images" -> "Images"
+        "admin.product.save" -> "Save Product"
+        "admin.product.delete" -> "Delete Product"
+        "admin.product.upload" -> "Upload Image"
+        "admin.order.updateState" -> "Update Status"
+        "admin.order.filter" -> "Filter by status"
+        "footer.privacy" -> "Privacy Policy"
+        "footer.terms" -> "Terms & Conditions"
+        "footer.copyright" -> "SkyShop. All rights reserved."
+        "common.loading" -> "Loading..."
+        "common.error" -> "An error occurred."
+        "common.save" -> "Save"
+        "common.cancel" -> "Cancel"
+        "common.delete" -> "Delete"
+        "common.back" -> "Back"
+        "common.yes" -> "Yes"
+        "common.no" -> "No"
+        _ -> key
+
+
+tZh key =
+    case key of
+        "app.name" -> "SkyShop"
+        "nav.home" -> "首页"
+        "nav.products" -> "产品"
+        "nav.cart" -> "购物车"
+        "nav.orders" -> "我的订单"
+        "nav.admin" -> "管理"
+        "nav.signin" -> "登录"
+        "nav.signout" -> "退出"
+        "nav.signup" -> "注册"
+        "auth.welcome" -> "欢迎回来"
+        "auth.create" -> "创建账户"
+        "auth.email" -> "电邮"
+        "auth.password" -> "密码"
+        "auth.name" -> "全名"
+        "auth.phone" -> "电话"
+        "auth.signin.btn" -> "登录"
+        "auth.signup.btn" -> "创建账户"
+        "auth.signin.link" -> "已有账户？ 登录"
+        "auth.signup.link" -> "没有账户？ 注册"
+        "product.addToCart" -> "加入购物车"
+        "product.outOfStock" -> "缺货"
+        "product.inStock" -> "有货"
+        "product.unlimited" -> "现货"
+        "product.left" -> "剩余"
+        "product.category" -> "分类"
+        "product.all" -> "全部"
+        "product.search" -> "搜索产品..."
+        "product.sort.newest" -> "最新"
+        "product.sort.price" -> "价格"
+        "product.sort.title" -> "名称"
+        "product.noResults" -> "未找到产品。"
+        "product.quantity" -> "数量"
+        "cart.title" -> "购物车"
+        "cart.empty" -> "购物车为空。"
+        "cart.total" -> "总计"
+        "cart.checkout" -> "结账"
+        "cart.remove" -> "移除"
+        "cart.remarks" -> "配送备注（可选）"
+        "cart.continueShopping" -> "继续购物"
+        "order.title" -> "我的订单"
+        "order.empty" -> "暂无订单。"
+        "order.detail" -> "订单详情"
+        "order.placed" -> "下单时间"
+        "order.items" -> "商品"
+        "order.shipping" -> "配送"
+        "order.status" -> "状态"
+        "order.success" -> "支付成功！您的订单已提交。"
+        "order.failed" -> "支付验证失败。"
+        "order.processing" -> "正在验证支付..."
+        "admin.products" -> "产品管理"
+        "admin.orders" -> "订单管理"
+        "admin.newProduct" -> "新建产品"
+        "admin.editProduct" -> "编辑产品"
+        "admin.product.title" -> "标题"
+        "admin.product.summary" -> "描述"
+        "admin.product.category" -> "分类"
+        "admin.product.price" -> "价格（分）"
+        "admin.product.discount" -> "折扣（分）"
+        "admin.product.currency" -> "货币"
+        "admin.product.stock" -> "库存（-1 = 无限）"
+        "admin.product.published" -> "已发布"
+        "admin.product.images" -> "图片"
+        "admin.product.save" -> "保存产品"
+        "admin.product.delete" -> "删除产品"
+        "admin.product.upload" -> "上传图片"
+        "admin.order.updateState" -> "更新状态"
+        "admin.order.filter" -> "按状态筛选"
+        "footer.privacy" -> "隐私政策"
+        "footer.terms" -> "条款"
+        "footer.copyright" -> "SkyShop。保留所有权利。"
+        "common.loading" -> "加载中..."
+        "common.error" -> "发生错误。"
+        "common.save" -> "保存"
+        "common.cancel" -> "取消"
+        "common.delete" -> "删除"
+        "common.back" -> "返回"
+        _ -> key
+
+
+tCategory lang category =
+    if lang == "zh" then
+        case category of
+            "Accessories" -> "配饰"
+            "Bags" -> "包"
+            "Fashion" -> "时尚"
+            "Jewellery And Watches" -> "珠宝手表"
+            "Kids" -> "儿童"
+            "Luxury Brands" -> "奢侈品"
+            "Miscellaneous" -> "其他"
+            "Wallet And Small Items" -> "钱包小物"
+            _ -> category
+    else
+        category
+
+
+tCartState lang state =
+    if lang == "zh" then
+        case state of
+            "ongoing" -> "进行中"
+            "pending" -> "待付款"
+            "ordered" -> "已下单"
+            "shipped" -> "已发货"
+            "delivered" -> "已送达"
+            "cancelled" -> "已取消"
+            "refunded" -> "已退款"
+            _ -> state
+    else
+        case state of
+            "ongoing" -> "Ongoing"
+            "pending" -> "Pending"
+            "ordered" -> "Ordered"
+            "shipped" -> "Shipped"
+            "delivered" -> "Delivered"
+            "cancelled" -> "Cancelled"
+            "refunded" -> "Refunded"
+            _ -> state
+
+
+tCurrency currency =
+    case currency of
+        "GBP" -> "British Pound"
+        "HKD" -> "Hong Kong Dollar"
+        "USD" -> "US Dollar"
+        _ -> currency
+
+
+tCurrencySymbol currency =
+    case currency of
+        "GBP" -> "£"
+        "HKD" -> "HK$"
+        "USD" -> "$"
+        _ -> currency

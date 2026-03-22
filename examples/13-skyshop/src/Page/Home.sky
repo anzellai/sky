@@ -1,0 +1,296 @@
+module Page.Home exposing (viewHome, viewProducts)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput)
+import State exposing (..)
+import Ui.Layout as Layout
+import Lib.Db as Db
+import Lib.Money as Money
+import Lib.Translation as Tr
+import Lib.Products as Products
+import Tailwind exposing (..)
+
+
+-- ══════════════════════════════════════════════════════
+-- HOME PAGE
+-- ══════════════════════════════════════════════════════
+
+viewHome model =
+    Layout.page model
+        (div []
+            [ viewHero model
+            , viewCategoryBar model
+            , viewFeaturedProducts model
+            ]
+        )
+
+
+viewHero model =
+    let
+        lang =
+            model.lang
+    in
+        div [ tw [ bgGray900, textWhite, roundedXl, p12, mb10, textCenter ], style "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%)" ]
+            [ p [ tw [ textSm, uppercase, fontBold, textBlue400, mb3 ], style "letter-spacing:.1em" ]
+                [ text
+                    (if lang == "zh" then
+                        "精选正品"
+                    else
+                        "Curated Collection"
+                    )
+                ]
+            , h1 [ tw [ text5xl, fontBold, textWhite, mb4 ], style "line-height:1.1;letter-spacing:-.025em" ]
+                [ text (Tr.t lang "app.name") ]
+            , p [ tw [ textLg, textGray400, mb8, mxAuto ], style "max-width:480px" ]
+                [ text
+                    (if lang == "zh" then
+                        "品质保证，精心挑选每一件商品"
+                    else
+                        "Quality guaranteed. Every item handpicked with care."
+                    )
+                ]
+            , div [ tw [ flex, justifyCenter, gap3 ] ]
+                [ a
+                    [ href "/products"
+                    , attribute "sky-nav" ""
+                    , tw [ inlineFlex, itemsCenter, gap2, bgWhite, textGray900, px6, py3, roundedMd, fontSemibold, textSm, hover bgGray100 ]
+                    ]
+                    [ text
+                        (if lang == "zh" then
+                            "浏览商品"
+                        else
+                            "Browse Products"
+                        )
+                    ]
+                ]
+            ]
+
+
+viewCategoryBar model =
+    div [ tw [ mb8, flex, flexWrap, gap2, justifyCenter ] ]
+        (List.map
+            (\cat ->
+                a
+                    [ href "/products"
+                    , attribute "sky-nav" ""
+                    , onClick (SetCategoryFilter cat)
+                    , tw [ inlineBlock, px4, py2, roundedFull, textSm, fontMedium, textGray500, bgGray100, hover bgGray200, hover textGray900 ]
+                    ]
+                    [ text (Tr.tCategory model.lang cat) ]
+            )
+            (List.take 6 allCategories)
+        )
+
+
+viewFeaturedProducts model =
+    let
+        featured =
+            List.take 8 model.products
+    in
+        div []
+            [ div [ tw [ flex, justifyBetween, itemsCenter, mb6 ] ]
+                [ h2 [ tw [ text2xl, fontBold, textGray900 ] ]
+                    [ text
+                        (if model.lang == "zh" then
+                            "精选产品"
+                        else
+                            "Featured Products"
+                        )
+                    ]
+                , a
+                    [ href "/products"
+                    , attribute "sky-nav" ""
+                    , tw [ textSm, fontSemibold, textBlue600 ]
+                    ]
+                    [ text
+                        (if model.lang == "zh" then
+                            "查看全部"
+                        else
+                            "View all"
+                        )
+                    ]
+                ]
+            , viewProductGrid model featured
+            ]
+
+
+-- ══════════════════════════════════════════════════════
+-- PRODUCTS PAGE
+-- ══════════════════════════════════════════════════════
+
+viewProducts model =
+    Layout.page model
+        (div []
+            [ div [ tw [ mb8 ] ]
+                [ h1 [ tw [ text3xl, fontBold, textGray900 ] ]
+                    [ text (Tr.t model.lang "nav.products") ]
+                , p [ tw [ textGray500, mt1 ] ]
+                    [ text
+                        (if model.lang == "zh" then
+                            "浏览我们精选的商品系列"
+                        else
+                            "Browse our curated collection"
+                        )
+                    ]
+                ]
+            , viewToolbar model
+            , viewProductGrid model model.products
+            ]
+        )
+
+
+viewToolbar model =
+    let
+        lang =
+            model.lang
+    in
+        div [ tw [ mb8, flex, flexCol, gap4 ] ]
+            [ input
+                [ type_ "text"
+                , placeholder (Tr.t lang "product.search")
+                , value model.search
+                , onInput SetSearch
+                , Layout.formInput
+                ]
+            , div [ tw [ flex, flexWrap, gap2 ] ]
+                ([ filterBtn "all" (Tr.t lang "product.all") model.categoryFilter ]
+                    ++ List.map
+                        (\cat -> filterBtn cat (Tr.tCategory lang cat) model.categoryFilter)
+                        allCategories
+                )
+            , div [ tw [ flex, gap2, itemsCenter ] ]
+                [ span [ tw [ textSm, textGray500, mr2 ] ]
+                    [ text
+                        (if lang == "zh" then
+                            "排序"
+                        else
+                            "Sort by"
+                        )
+                    ]
+                , sortBtn "newest" (Tr.t lang "product.sort.newest") model.sortBy
+                , sortBtn "price" (Tr.t lang "product.sort.price") model.sortBy
+                , sortBtn "title" (Tr.t lang "product.sort.title") model.sortBy
+                , button
+                    [ onClick ToggleSortDir
+                    , Layout.qtyBtn
+                    ]
+                    [ text
+                        (if model.sortDir == "asc" then
+                            "↑"
+                        else
+                            "↓"
+                        )
+                    ]
+                ]
+            ]
+
+
+filterBtn filterValue label activeFilter =
+    button
+        [ onClick (SetCategoryFilter filterValue)
+        , if activeFilter == filterValue then
+            tw [ textSm, px4, py1, roundedFull, fontSemibold, bgBlue600, textWhite, border, borderBlue600 ]
+          else
+            tw [ textSm, px4, py1, roundedFull, fontMedium, bgWhite, textGray500, border, borderGray200, hover borderGray400 ]
+        ]
+        [ text label ]
+
+
+sortBtn sortValue label activeSort =
+    button
+        [ onClick (SetSortBy sortValue)
+        , if activeSort == sortValue then
+            tw [ textSm, px3, py1, roundedMd, fontSemibold, bgGray900, textWhite, border, borderGray900 ]
+          else
+            tw [ textSm, px3, py1, roundedMd, fontMedium, bgWhite, textGray500, border, borderGray200, hover borderGray400 ]
+        ]
+        [ text label ]
+
+
+-- ══════════════════════════════════════════════════════
+-- PRODUCT GRID
+-- ══════════════════════════════════════════════════════
+
+viewProductGrid model products =
+    if List.isEmpty products then
+        div [ tw [ textCenter, py16 ] ]
+            [ div [ Layout.emptyIcon ] [ text "~" ]
+            , p [ tw [ textGray500 ] ] [ text (Tr.t model.lang "product.noResults") ]
+            ]
+    else
+        div [ tw [ grid, gap6 ], style "grid-template-columns:repeat(auto-fill,minmax(260px,1fr))" ]
+            (List.map (viewProductCard model) products)
+
+
+viewProductCard model product =
+    let
+        productId =
+            Db.getField "id" product
+        title =
+            Db.getField "title" product
+        category =
+            Db.getField "category" product
+        pricing =
+            Money.formatPriceFromRow product
+        stock =
+            Db.getInt "stock" product
+        images =
+            Products.listProductImages productId
+        firstImage =
+            case List.head images of
+                Just img ->
+                    Db.getField "data" img
+
+                Nothing ->
+                    ""
+    in
+        a
+            [ href ("/product/" ++ productId)
+            , attribute "sky-nav" ""
+            , tw [ bgWhite, roundedLg, overflowHidden, border, borderGray200, block, group ]
+            , class "product-card"
+            ]
+            [ div [ style "aspect-ratio:4/3;overflow:hidden" ]
+                [ if firstImage /= "" then
+                    img [ src firstImage, alt title, Layout.objectCover_ ]
+                  else
+                    div [ Layout.imgPlaceholder, style "aspect-ratio:4/3" ] [ text "No image" ]
+                ]
+            , div [ tw [ p4 ] ]
+                [ div [ tw [ flex, justifyBetween, itemsCenter, mb2 ] ]
+                    [ span [ tw [ textXs, fontSemibold, uppercase, textBlue500 ], style "letter-spacing:.1em" ]
+                        [ text (Tr.tCategory model.lang category) ]
+                    , viewStockDot stock
+                    ]
+                , h3 [ tw [ fontSemibold, textGray900, mb2 ] ]
+                    [ text title ]
+                , viewPrice pricing
+                ]
+            ]
+
+
+viewPrice pricing =
+    if pricing.hasDiscount then
+        div [ tw [ flex, gap2, itemsCenter ] ]
+            [ span [ tw [ fontBold, textLg, textRed600 ] ]
+                [ text pricing.discounted ]
+            , span [ tw [ textSm, textGray400 ], class "line-through" ]
+                [ text pricing.original ]
+            ]
+    else
+        div []
+            [ span [ tw [ fontBold, textLg, textGray900 ] ]
+                [ text pricing.original ]
+            ]
+
+
+viewStockDot stock =
+    if stock == 0 then
+        span [ tw [ w2, h2, roundedFull, bgRed500, inlineBlock ] ] []
+    else
+        span [ tw [ w2, h2, roundedFull, bgGreen500, inlineBlock ] ] []

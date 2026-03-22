@@ -1,0 +1,90 @@
+module Lib.Notify exposing (notifyOrderPlaced)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Log exposing (println)
+import Lib.Db as Db
+import Os
+import Github.Com.Google.Uuid as Uuid
+import Net.Http as Http
+import Strings as GoStrings
+import Io as Io
+
+
+-- ══════════════════════════════════════════════════════
+-- NOTIFICATIONS
+-- ══════════════════════════════════════════════════════
+
+notifyOrderPlaced cart items userName userEmail =
+    let
+        env =
+            Os.getenv "ENV"
+        cartId =
+            Db.getField "id" cart
+        totalAmount =
+            Db.getField "total_amount" cart
+        totalCurrency =
+            Db.getField "total_currency" cart
+        itemCount =
+            String.fromInt (List.length items)
+        prefix =
+            if env == "production" then
+                "[REAL]"
+            else
+                "[Test]"
+        subject =
+            prefix ++ " New order from " ++ userName ++ " (" ++ userEmail ++ ")"
+        body =
+            subject ++ " - " ++ itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
+        notificationId =
+            Uuid.newString ()
+        _ =
+            Db.exec
+                "INSERT INTO notifications (id, notification_type, subject, body, sent) VALUES (?, ?, ?, ?, ?)"
+                [ notificationId , "order" , subject , body , "0" ]
+            |> ignoreResult
+        _ =
+            println ("[NOTIFY] " ++ body)
+        _ =
+            sendEmailNotification subject body
+    in
+        ()
+
+
+ignoreResult result =
+    case result of
+        Ok _ ->
+            ()
+
+        Err _ ->
+            ()
+
+
+sendEmailNotification subject body =
+    let
+        smtpHost =
+            Os.getenv "SMTP_HOST"
+        notifyTo =
+            Os.getenv "NOTIFY_TO"
+    in
+        if smtpHost == "" || notifyTo == "" then
+            let
+                _ =
+                    println "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
+            in
+                ()
+        else
+            let
+                -- Log the notification for manual sending if SMTP is configured
+                -- Full SMTP integration requires Go's net/smtp package
+                _ =
+                    println ("[NOTIFY] Would send email to " ++ notifyTo ++ ": " ++ subject)
+                -- Mark as sent in DB
+                _ =
+                    Db.exec
+                        "UPDATE notifications SET sent = 1 WHERE subject = ? AND sent = 0"
+                        [ subject ]
+            in
+                ()
