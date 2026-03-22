@@ -15,6 +15,14 @@ import {
   recordType
 } from "../types/types.js";
 
+// Type alias expansion hook — set by the checker so unification can expand
+// TypeConstant names to their underlying types when needed.
+let _expandTypeAlias: ((name: string) => Type | undefined) | undefined;
+
+export function setTypeAliasExpander(expander: ((name: string) => Type | undefined) | undefined): void {
+  _expandTypeAlias = expander;
+}
+
 export class UnificationError extends Error {
   constructor(message: string) {
     super(message);
@@ -46,6 +54,14 @@ function isForeignGoType(t: Type): boolean {
   if (t.kind !== "TypeConstant") return false;
   if (isJsValue(t)) return true;
   return !SKY_NATIVE_TYPES.has(t.name);
+}
+
+// Detect VNode-shaped records: { tag : String, attrs : ..., children : ..., text : String }
+function isVNodeRecord(t: Type): boolean {
+  if (t.kind !== "TypeRecord") return false;
+  const keys = Object.keys(t.fields);
+  return keys.includes("tag") && keys.includes("attrs") &&
+         keys.includes("children") && keys.includes("text");
 }
 
 // Normalize TypeApplication("Tuple", [a, b]) to TypeTuple([a, b])
@@ -106,6 +122,14 @@ export function unify(a: Type, b: Type): Substitution {
   // Allow it to unify with record types and String (backward compat).
   if ((a.kind === "TypeConstant" && a.name === "VNode" && (b.kind === "TypeRecord" || (b.kind === "TypeConstant" && b.name === "String"))) ||
       (b.kind === "TypeConstant" && b.name === "VNode" && (a.kind === "TypeRecord" || (a.kind === "TypeConstant" && a.name === "String")))) {
+    return emptySubstitution();
+  }
+
+  // VNode-shaped records ({ tag, attrs, children, text }) should also unify
+  // with String — Sky.Live view functions return VNode records but are annotated
+  // as String since the runtime renders them to HTML.
+  if ((isVNodeRecord(a) && b.kind === "TypeConstant" && b.name === "String") ||
+      (isVNodeRecord(b) && a.kind === "TypeConstant" && a.name === "String")) {
     return emptySubstitution();
   }
 
@@ -246,12 +270,17 @@ export function unify(a: Type, b: Type): Substitution {
     return current;
   }
 
-  // Allow TypeConstant (type alias name) to unify with TypeRecord
-  // when the TypeConstant represents a record type alias.
-  // This handles cross-module cases where one side is expanded and the other isn't.
-  if ((a.kind === "TypeConstant" && b.kind === "TypeRecord") ||
-      (a.kind === "TypeRecord" && b.kind === "TypeConstant")) {
-    return emptySubstitution();
+  // Try expanding type aliases before giving up.
+  // If one side is a TypeConstant that is a type alias, expand it and retry.
+  if (_expandTypeAlias) {
+    if (a.kind === "TypeConstant") {
+      const expanded = _expandTypeAlias(a.name);
+      if (expanded) return unify(expanded, b);
+    }
+    if (b.kind === "TypeConstant") {
+      const expanded = _expandTypeAlias(b.name);
+      if (expanded) return unify(a, expanded);
+    }
   }
 
   throw new UnificationError(`Cannot unify types: expected ${formatTypeNormalized(a)}, but found ${formatTypeNormalized(b)}`);

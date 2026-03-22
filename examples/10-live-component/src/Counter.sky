@@ -38,15 +38,15 @@ initWith label =
     { count = 0 , label = label }
 
 -- State machine
-update : Msg -> Counter -> ( Counter, Cmd, Msg )
+update : Msg -> Counter -> ( Counter, Cmd Msg )
 update msg counter =
     case msg of
         Increment ->
             ( { counter | count = counter.count + 1 } , Cmd.none )
-
+        
         Decrement ->
             ( { counter | count = counter.count - 1 } , Cmd.none )
-
+        
         Reset ->
             ( { counter | count = 0 } , Cmd.none )
 

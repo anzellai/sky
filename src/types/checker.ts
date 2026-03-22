@@ -15,6 +15,7 @@ import { TypeEnvironment, createPreludeEnvironment } from "./env.js"
 import { inferTopLevel, setTypeAliases } from "./infer.js"
 import { registerAdts } from "./adt.js"
 import { checkCaseExhaustiveness } from "./exhaustiveness.js"
+import { setTypeAliasExpander } from "./unify.js"
 
 import {
   type Type,
@@ -146,6 +147,17 @@ export function checkModule(
   // Set type aliases for expansion in type annotations
   setTypeAliases(typeAliases);
 
+  // Build a Type-level alias expander for the unifier.
+  // This converts AST.TypeExpression aliases to Type representations so the
+  // unifier can expand TypeConstant("Model") → TypeRecord({...}) on demand.
+  setTypeAliasExpander((name: string) => {
+    // Try exact name, then base name (for qualified references like "Page.Model")
+    const alias = typeAliases.get(name)
+      || (name.includes(".") ? typeAliases.get(name.split(".").pop()!) : undefined);
+    if (!alias) return undefined;
+    return astTypeExprToType(alias);
+  });
+
   // Register record type aliases for pretty-printing (LSP hover)
   for (const [name, aliasType] of typeAliases) {
     if (aliasType.kind === "RecordType" && aliasType.fields) {
@@ -245,6 +257,9 @@ export function checkModule(
   // Warn about Go reserved words used as identifiers
   collectGoReservedWordDiagnostics(module, diagnostics)
 
+  // Clear the alias expander so it doesn't leak across modules
+  setTypeAliasExpander(undefined);
+
   return {
     environment: env,
     declarations,
@@ -252,6 +267,41 @@ export function checkModule(
     nodeTypes
   }
 
+}
+
+/* -----------------------------------------------------------
+   AST type expression → Type conversion (for alias expansion)
+----------------------------------------------------------- */
+
+function astTypeExprToType(expr: AST.TypeExpression): Type {
+  switch (expr.kind) {
+    case "TypeVariable":
+      return { kind: "TypeVariable", id: stableTypeVar(expr.name), name: expr.name };
+
+    case "TypeReference": {
+      const fullName = expr.name.parts.join(".");
+      const base: Type = { kind: "TypeConstant", name: fullName };
+      if (expr.arguments && expr.arguments.length > 0) {
+        return {
+          kind: "TypeApplication",
+          constructor: base,
+          arguments: expr.arguments.map(astTypeExprToType)
+        };
+      }
+      return base;
+    }
+
+    case "FunctionType":
+      return { kind: "TypeFunction", from: astTypeExprToType(expr.from), to: astTypeExprToType(expr.to) };
+
+    case "RecordType": {
+      const fields: Record<string, Type> = {};
+      for (const f of expr.fields) {
+        fields[f.name] = astTypeExprToType(f.type);
+      }
+      return { kind: "TypeRecord", fields };
+    }
+  }
 }
 
 /* -----------------------------------------------------------

@@ -853,8 +853,9 @@ export function inferTopLevel(
 
     // Validate: unify the inferred type with the annotated type to catch mismatches.
     // If unification succeeds, use the annotation's type (preserves user's naming).
-    // If it fails, use the annotation anyway (trust the user) — the mismatch
-    // may be intentional (e.g., Sky.Live views return VNode but annotate as String).
+    // If it fails, report a warning — the annotation may be wrong.
+    // Known-safe patterns (VNode/String, FFI types) are handled by the unifier itself.
+    let warnings: string[] | undefined;
     try {
       const annotationSub = unify(finalType, annotatedType);
       // Apply the unification substitution so nodeTypes reflect the annotation constraints
@@ -867,10 +868,14 @@ export function inferTopLevel(
         }
       }
     } catch (e) {
-      // Annotation doesn't match inference — trust the annotation.
-      // This allows intentional patterns like view : Model -> String where
-      // the compiler internally uses VNode records, and cases where type
-      // alias names differ from their expanded forms.
+      // Annotation doesn't match inferred type — report as warning.
+      const inferredPretty = formatType(finalType);
+      const annotatedPretty = formatType(annotatedType);
+      warnings = [
+        `Type annotation for \`${decl.name}\` does not match the inferred type.\n` +
+        `  Annotation: ${annotatedPretty}\n` +
+        `  Inferred:   ${inferredPretty}`
+      ];
     }
 
     const scheme = generalize(annotatedType, env.freeTypeVariables());
@@ -879,6 +884,7 @@ export function inferTopLevel(
       name: decl.name,
       scheme,
       pretty: formatType(scheme.type),
+      warnings,
     };
   }
 
