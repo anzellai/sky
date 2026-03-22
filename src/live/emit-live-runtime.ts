@@ -55,7 +55,7 @@ function generateMsgDecoder(variants: MsgVariant[], pageVariants: PageVariant[],
   code += `\tswitch name {\n`;
   for (let i = 0; i < pageVariants.length; i++) {
     code += `\tcase "${pageVariants[i].name}":\n`;
-    code += `\t\treturn Page{Tag: ${i}}\n`;
+    code += `\t\treturn map[string]any{"Tag": ${i}, "SkyName": "${pageVariants[i].name}"}\n`;
   }
   code += `\t}\n\treturn nil\n}\n\n`;
 
@@ -85,19 +85,19 @@ function generateMsgDecoder(variants: MsgVariant[], pageVariants: PageVariant[],
     if (componentVariantNames.has(v.name)) continue;
     code += `\tcase "${v.name}":\n`;
     if (v.arity === 0) {
-      code += `\t\treturn Msg{Tag: ${tagIndex(v.name, variants)}}, nil\n`;
+      code += `\t\treturn map[string]any{"Tag": ${tagIndex(v.name, variants)}, "SkyName": "${v.name}"}, nil\n`;
     } else {
       if (v.arity === 1) {
         // Single arg: use inline resolved arg if available, else decode from JSON
         const suffix = "";
         code += `\t\tif inlineResolvedArg != nil {\n`;
-        code += `\t\t\treturn Msg{Tag: ${tagIndex(v.name, variants)}, ${v.name}Value${suffix}: inlineResolvedArg}, nil\n`;
+        code += `\t\t\treturn map[string]any{"Tag": ${tagIndex(v.name, variants)}, "SkyName": "${v.name}", "${v.name}Value${suffix}": inlineResolvedArg}, nil\n`;
         code += `\t\t}\n`;
         code += `\t\tif len(args) < 1 {\n`;
         code += `\t\t\treturn nil, fmt.Errorf("${v.name} expects 1 arg, got %d", len(args))\n`;
         code += `\t\t}\n`;
         code += generateArgDecoder(0, v.fields[0] || "Any");
-        code += `\t\treturn Msg{Tag: ${tagIndex(v.name, variants)}, ${v.name}Value${suffix}: arg0}, nil\n`;
+        code += `\t\treturn map[string]any{"Tag": ${tagIndex(v.name, variants)}, "SkyName": "${v.name}", "${v.name}Value${suffix}": arg0}, nil\n`;
       } else {
         // Multiple args: decode from JSON
         code += `\t\tif len(args) < ${v.arity} {\n`;
@@ -106,12 +106,12 @@ function generateMsgDecoder(variants: MsgVariant[], pageVariants: PageVariant[],
         for (let i = 0; i < v.arity; i++) {
           code += generateArgDecoder(i, v.fields[i] || "Any");
         }
-        const fieldAssignments = [];
+        const fieldAssignments = [`"Tag": ${tagIndex(v.name, variants)}`, `"SkyName": "${v.name}"`];
         for (let i = 0; i < v.arity; i++) {
           const suffix = i === 0 ? "" : String(i);
-          fieldAssignments.push(`${v.name}Value${suffix}: arg${i}`);
+          fieldAssignments.push(`"${v.name}Value${suffix}": arg${i}`);
         }
-        code += `\t\treturn Msg{Tag: ${tagIndex(v.name, variants)}, ${fieldAssignments.join(", ")}}, nil\n`;
+        code += `\t\treturn map[string]any{${fieldAssignments.join(", ")}}, nil\n`;
       }
     }
   }
@@ -178,11 +178,8 @@ function generateRouteTable(
 
   // Helper to get page tag as int from either Page struct or map
   code += `func pageTag(page any) int {\n`;
-  code += `\tswitch p := page.(type) {\n`;
-  code += `\tcase Page:\n`;
-  code += `\t\treturn p.Tag\n`;
-  code += `\tcase map[string]any:\n`;
-  code += `\t\tif t, ok := p["Tag"]; ok {\n`;
+  code += `\tif m, ok := page.(map[string]any); ok {\n`;
+  code += `\t\tif t, ok := m["Tag"]; ok {\n`;
   code += `\t\t\tif n, ok := t.(int); ok { return n }\n`;
   code += `\t\t\tif n, ok := t.(float64); ok { return int(n) }\n`;
   code += `\t\t}\n`;
@@ -217,20 +214,40 @@ function generateRouteTable(
  * Generate a fixModel function that reconstructs ADT structs from their
  * map[string]any representations (needed after JSON deserialization).
  */
-function generateModelFixup(pageVariants: PageVariant[]): string {
-  let code = `// fixModel reconstructs ADT structs from map representations after JSON deserialization.
+function generateModelFixup(_pageVariants: PageVariant[]): string {
+  // Custom ADTs are now map[string]any — they survive JSON round-trips natively.
+  // fixModel only needs to reconstruct Maybe/Result (SkyMaybe/SkyResult) and fix
+  // JSON float64→int conversions for Tag fields in nested ADT maps.
+  let code = `// fixModel fixes model values after JSON deserialization.
+// Custom ADTs use map[string]any and survive JSON round-trips natively.
+// Only Maybe/Result named types need reconstruction, plus float64→int for Tag fields.
 func fixModel(model any) any {
 \tm, ok := model.(map[string]any)
 \tif !ok { return model }
-\t// Fix the "page" field: convert map[string]any to Page struct
-\tif pageVal, ok := m["page"]; ok {
-\t\tif pageMap, ok := pageVal.(map[string]any); ok {
-\t\t\tif tag, ok := pageMap["Tag"]; ok {
-\t\t\t\tswitch t := tag.(type) {
-\t\t\t\tcase int:
-\t\t\t\t\tm["page"] = Page{Tag: t}
-\t\t\t\tcase float64:
-\t\t\t\t\tm["page"] = Page{Tag: int(t)}
+\tfor k, v := range m {
+\t\tswitch val := v.(type) {
+\t\tcase map[string]any:
+\t\t\t// Reconstruct Maybe/Result from map
+\t\t\tif rebuilt := skylive_rt.RebuildADT(val); rebuilt != nil {
+\t\t\t\tm[k] = rebuilt
+\t\t\t} else {
+\t\t\t\t// Fix float64→int for Tag fields in nested ADT maps
+\t\t\t\tif t, ok := val["Tag"]; ok {
+\t\t\t\t\tif f, ok := t.(float64); ok { val["Tag"] = int(f) }
+\t\t\t\t}
+\t\t\t}
+\t\tcase float64:
+\t\t\tif val == float64(int(val)) { m[k] = int(val) }
+\t\t case []any:
+\t\t\tfor i, item := range val {
+\t\t\t\tif inner, ok := item.(map[string]any); ok {
+\t\t\t\t\tif rebuilt := skylive_rt.RebuildADT(inner); rebuilt != nil {
+\t\t\t\t\t\tval[i] = rebuilt
+\t\t\t\t\t} else if t, ok := inner["Tag"]; ok {
+\t\t\t\t\t\tif f, ok := t.(float64); ok { inner["Tag"] = int(f) }
+\t\t\t\t\t}
+\t\t\t\t} else if f, ok := item.(float64); ok {
+\t\t\t\t\tif f == float64(int(f)) { val[i] = int(f) }
 \t\t\t\t}
 \t\t\t}
 \t\t}
@@ -356,13 +373,14 @@ ${componentInfos.length > 0 ? generateComponentUpdateCases(componentInfos) : ""}
 \t\t\tresult := View(model)
 \t\t\treturn skylive_rt.MapToVNode(result)
 \t\t},
+\t\tFixModel: fixModel,
 \t\tDecodeMsg: decodeMsg,
 \t\tURLForPage: urlForPage,
 \t\tTitleForPage: titleForPage,
 \t\tRoutes: getRoutes(),
-\t\tNotFound: func() any { p := resolvePageArg("${notFoundPage}"); if p != nil { return p }; return Page{Tag: 0} }(),
+\t\tNotFound: func() any { p := resolvePageArg("${notFoundPage}"); if p != nil { return p }; return map[string]any{"Tag": 0, "SkyName": ""} }(),
 \t\tBuildNavigateMsg: func(page any) any {
-\t\t\treturn Msg{Tag: ${navTagIdx}, NavigateValue: page}
+\t\t\treturn map[string]any{"Tag": ${navTagIdx}, "SkyName": "Navigate", "NavigateValue": page}
 \t\t},
 \t\tMsgTagToName: msgTagToName,${hasSubscriptions ? `
 \t\tSubscriptions: func(model any) any {
@@ -375,16 +393,7 @@ ${componentInfos.length > 0 ? generateComponentUpdateCases(componentInfos) : ""}
 }
 `;
 
-  // Apply cross-module type prefixes for Msg and Page types from imported modules
-  if (msgGoPrefix) {
-    code = code.replace(/\bMsg\{/g, `${msgGoPrefix}Msg{`);
-    code = code.replace(/\.\(Msg\)/g, `.(${msgGoPrefix}Msg)`);
-  }
-  if (pageGoPrefix) {
-    code = code.replace(/\bPage\{/g, `${pageGoPrefix}Page{`);
-    code = code.replace(/\.\(Page\)/g, `.(${pageGoPrefix}Page)`);
-    code = code.replace(/\bcase Page:/g, `case ${pageGoPrefix}Page:`);
-  }
+  // No struct type prefix replacements needed — custom ADTs use map[string]any.
 
   // Add import for the state module if types are imported
   if (msgGoPrefix || pageGoPrefix) {

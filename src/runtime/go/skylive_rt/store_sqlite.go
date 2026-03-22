@@ -193,7 +193,7 @@ func fixJSONNumbers(m map[string]any) {
 				m[k] = int(val)
 			}
 		case map[string]any:
-			if rebuilt := rebuildADT(val); rebuilt != nil {
+			if rebuilt := RebuildADT(val); rebuilt != nil {
 				m[k] = rebuilt
 			} else {
 				fixJSONNumbers(val)
@@ -212,7 +212,7 @@ func fixJSONSlice(s []any) {
 				s[i] = int(val)
 			}
 		case map[string]any:
-			if rebuilt := rebuildADT(val); rebuilt != nil {
+			if rebuilt := RebuildADT(val); rebuilt != nil {
 				s[i] = rebuilt
 			} else {
 				fixJSONNumbers(val)
@@ -223,10 +223,10 @@ func fixJSONSlice(s []any) {
 	}
 }
 
-// rebuildADT checks if a map is a serialised ADT (has Tag + SkyName keys)
+// RebuildADT checks if a map is a serialised ADT (has Tag + SkyName keys)
 // and reconstructs the proper named Go struct (SkyMaybe or SkyResult).
 // Returns nil if the map is not an ADT.
-func rebuildADT(m map[string]any) any {
+func RebuildADT(m map[string]any) any {
 	skyName, hasSkyName := m["SkyName"]
 	if !hasSkyName {
 		return nil
@@ -240,7 +240,7 @@ func rebuildADT(m map[string]any) any {
 		val := m["JustValue"]
 		// Recursively fix nested values
 		if inner, ok := val.(map[string]any); ok {
-			if rebuilt := rebuildADT(inner); rebuilt != nil {
+			if rebuilt := RebuildADT(inner); rebuilt != nil {
 				val = rebuilt
 			} else {
 				fixJSONNumbers(inner)
@@ -254,7 +254,7 @@ func rebuildADT(m map[string]any) any {
 	case "Ok":
 		val := m["OkValue"]
 		if inner, ok := val.(map[string]any); ok {
-			if rebuilt := rebuildADT(inner); rebuilt != nil {
+			if rebuilt := RebuildADT(inner); rebuilt != nil {
 				val = rebuilt
 			} else {
 				fixJSONNumbers(inner)

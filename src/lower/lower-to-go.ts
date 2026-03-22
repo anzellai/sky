@@ -176,38 +176,9 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
   const isWellKnownAdt = (tDecl: CoreIR.TypeDeclaration) =>
       tDecl.constructors.some(c => wellKnownAdtCtors.has(c.name));
 
-  // Convert types (skip record aliases and well-known ADTs like Maybe/Result)
-  for (const tDecl of module.typeDeclarations) {
-    if (recordAliasTypes.has(tDecl.name)) continue;
-    if (isWellKnownAdt(tDecl)) continue;
-
-    const fields: { name: string; type: GoIR.GoType }[] = [
-      { name: "Tag", type: { kind: "GoIdentType", name: "int" } },
-      { name: "SkyName", type: { kind: "GoIdentType", name: "string" } }
-    ];
-
-    // Naive variant field mapping
-    for (const c of tDecl.constructors) {
-        if (c.types.length > 0) {
-            for (let j = 0; j < c.types.length; j++) {
-                fields.push({
-                    name: `${c.name}Value${j > 0 ? j : ""}`,
-                    type: lowerType(c.types[j])
-                });
-            }
-        }
-    }
-
-    pkg.declarations.push({
-      kind: "GoTypeDecl",
-      name: tDecl.name,
-      typeParams: [],
-      underlyingType: {
-        kind: "GoStructType",
-        fields
-      }
-    });
-  }
+  // Skip ALL ADT type declarations — custom ADTs use map[string]any at runtime.
+  // Well-known types (Maybe/Result) live in sky_wrappers as named structs.
+  // Record aliases are also maps (handled separately above).
 
   // Generate constructor functions for ADT variants (for cross-module use)
   // Skip record aliases, single-constructor types, and well-known ADTs
@@ -217,16 +188,16 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     if (isWellKnownAdt(tDecl)) continue;
     for (let i = 0; i < tDecl.constructors.length; i++) {
       const c = tDecl.constructors[i];
-      const kvPairs: string[] = [`Tag: ${i}`, `SkyName: "${c.name}"`];
+      const kvPairs: string[] = [`"Tag": ${i}`, `"SkyName": "${c.name}"`];
       const goParams: string[] = [];
       for (let j = 0; j < c.types.length; j++) {
         const fieldName = c.name + "Value" + (j > 0 ? j : "");
         const paramName = `arg${j}`;
         goParams.push(`${paramName} any`);
-        kvPairs.push(`${fieldName}: ${paramName}`);
+        kvPairs.push(`"${fieldName}": ${paramName}`);
       }
       const goFnName = c.name.charAt(0).toUpperCase() + c.name.slice(1);
-      const body = `${tDecl.name}{${kvPairs.join(", ")}}`;
+      const body = `map[string]any{${kvPairs.join(", ")}}`;
       pkg.declarations.push({
         kind: "GoRawDecl",
         code: `func ${goFnName}(${goParams.join(", ")}) any {\n\treturn ${body}\n}`
@@ -796,15 +767,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           const localCtorInfo = constructorMap?.get(flat.fn.name);
           if (localCtorInfo) {
               const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-              // Use named field init so constructors with shared structs work correctly
-              const kvPairs: string[] = [`Tag: ${localCtorInfo.tagIndex}`, `SkyName: "${flat.fn.name}"`];
+              // Use map[string]any for custom ADT constructors
+              const kvPairs: string[] = [`"Tag": ${localCtorInfo.tagIndex}`, `"SkyName": "${flat.fn.name}"`];
               for (let j = 0; j < flat.args.length; j++) {
                   const fieldName = flat.fn.name + "Value" + (j > 0 ? j : "");
-                  kvPairs.push(`${fieldName}: ${emitGoExprForLower(argExprs[j])}`);
+                  kvPairs.push(`"${fieldName}": ${emitGoExprForLower(argExprs[j])}`);
               }
               return {
                   kind: "GoRawExpr",
-                  code: `${localCtorInfo.adtName}{${kvPairs.join(", ")}}`
+                  code: `map[string]any{${kvPairs.join(", ")}}`
               } as any;
           }
           // Check imported modules for constructor applications
@@ -1564,6 +1535,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           return "any";
       };
 
+      // Helper: determine if an ADT type is well-known (uses named structs, not maps)
+      const isWellKnownAdtType = (typeName: string | undefined): boolean =>
+          typeName === "sky_wrappers.SkyResult" || typeName === "sky_wrappers.SkyMaybe";
+
       // Helper: generate stmts for a simple (non-nested) constructor case
       const genSimpleCtorStmts = (
           pat: CoreIR.ConstructorPattern,
@@ -1577,20 +1552,26 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               const argPat = pat.args[j];
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
                   env.set(argPat.name, { kind: "TypeConstant", name: "Any" });
-                  let s: GoIR.GoExpr = subj;
                   const fieldName = wellKnownFields[pat.name] || (pat.name + "Value" + (j > 0 ? j : ""));
-                  const fieldAssertType = (outerAdtType === "struct{ Tag int }" && fieldName === "JustValue")
-                      ? "sky_wrappers.SkyMaybe"
-                      : outerAdtType;
-                  if (fieldAssertType) {
-                      s = { kind: "GoTypeAssertExpr", expr: s, type: { kind: "GoIdentType", name: fieldAssertType } } as any;
+                  if (isWellKnownAdtType(outerAdtType)) {
+                      // Well-known types: struct-based field access
+                      let s: GoIR.GoExpr = subj;
+                      s = { kind: "GoTypeAssertExpr", expr: s, type: { kind: "GoIdentType", name: outerAdtType! } } as any;
+                      stmts.push({
+                          kind: "GoAssignStmt",
+                          define: true,
+                          left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
+                          right: { kind: "GoSelectorExpr", expr: s, sel: fieldName }
+                      });
+                  } else {
+                      // Custom ADTs: map-based field access
+                      stmts.push({
+                          kind: "GoAssignStmt",
+                          define: true,
+                          left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
+                          right: { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsMap(${emitGoExprForLower(subj)})["${fieldName}"]` } as any
+                      });
                   }
-                  stmts.push({
-                      kind: "GoAssignStmt",
-                      define: true,
-                      left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
-                      right: { kind: "GoSelectorExpr", expr: s, sel: fieldName }
-                  });
               }
           }
           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(body, moduleExports, env, foreignModules, constructorMap) });
@@ -1640,22 +1621,29 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                const outerFieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value");
                const innerTmpName = `__inner_${Math.floor(Math.random() * 100000)}`;
 
-               // Type-assert subject to get the outer field
-               let outerSubj: GoIR.GoExpr = subjRef;
-               if (adtTypeName) {
-                   outerSubj = { kind: "GoTypeAssertExpr", expr: subjRef, type: { kind: "GoIdentType", name: adtTypeName } } as any;
-               }
-
                outerStmts.push({
                    kind: "GoExprStmt",
                    expr: { kind: "GoRawExpr", code: `var ${innerTmpName} any` } as any
                });
-               outerStmts.push({
-                   kind: "GoAssignStmt",
-                   define: false,
-                   left: [{ kind: "GoIdent", name: innerTmpName }],
-                   right: { kind: "GoSelectorExpr", expr: outerSubj, sel: outerFieldName }
-               } as any);
+
+               if (isWellKnownAdtType(adtTypeName)) {
+                   // Well-known types: struct-based field access
+                   const outerSubj: GoIR.GoExpr = { kind: "GoTypeAssertExpr", expr: subjRef, type: { kind: "GoIdentType", name: adtTypeName! } } as any;
+                   outerStmts.push({
+                       kind: "GoAssignStmt",
+                       define: false,
+                       left: [{ kind: "GoIdent", name: innerTmpName }],
+                       right: { kind: "GoSelectorExpr", expr: outerSubj, sel: outerFieldName }
+                   } as any);
+               } else {
+                   // Custom ADTs: map-based field access
+                   outerStmts.push({
+                       kind: "GoAssignStmt",
+                       define: false,
+                       left: [{ kind: "GoIdent", name: innerTmpName }],
+                       right: { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsMap(${subjTempName})["${outerFieldName}"]` } as any
+                   } as any);
+               }
 
                const innerRef: GoIR.GoExpr = { kind: "GoIdent", name: innerTmpName };
 
@@ -1723,13 +1711,17 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                }
 
                // Build inner switch on the inner value's .Tag
-               const innerAsserted: GoIR.GoExpr = innerAdtType
-                   ? { kind: "GoTypeAssertExpr", expr: innerRef, type: { kind: "GoIdentType", name: innerAdtType } } as any
-                   : innerRef;
+               let innerSwitchExpr: GoIR.GoExpr;
+               if (isWellKnownAdtType(innerAdtType)) {
+                   const innerAsserted: GoIR.GoExpr = { kind: "GoTypeAssertExpr", expr: innerRef, type: { kind: "GoIdentType", name: innerAdtType! } } as any;
+                   innerSwitchExpr = { kind: "GoSelectorExpr", expr: innerAsserted, sel: "Tag" };
+               } else {
+                   innerSwitchExpr = { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsInt(sky_wrappers.Sky_AsMap(${innerTmpName})["Tag"])` } as any;
+               }
 
                outerStmts.push({
                    kind: "GoSwitchStmt",
-                   expr: { kind: "GoSelectorExpr", expr: innerAsserted, sel: "Tag" },
+                   expr: innerSwitchExpr,
                    cases: innerCases
                });
 
@@ -1779,25 +1771,24 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // Build the switch — bind subject to a temp var, then switch on .Tag
       const bodyStmts: GoIR.GoStmt[] = [];
 
-      if (adtTypeName) {
-          // For well-known types (SkyResult), use: var __match any = <expr>
-          // Then assert to the concrete type for .Tag/.OkValue access.
-          // "var x any = expr" ensures x is interface-typed so assertion always works.
-          bodyStmts.push({
-              kind: "GoExprStmt",
-              expr: { kind: "GoRawExpr", code: `var ${subjTempName} any` } as any
-          });
-          bodyStmts.push({
-              kind: "GoAssignStmt",
-              define: false,
-              left: [{ kind: "GoIdent", name: subjTempName }],
-              right: subjExpr
-          } as any);
+      // Always bind subject to a var (interface-typed so assertions work)
+      bodyStmts.push({
+          kind: "GoExprStmt",
+          expr: { kind: "GoRawExpr", code: `var ${subjTempName} any` } as any
+      });
+      bodyStmts.push({
+          kind: "GoAssignStmt",
+          define: false,
+          left: [{ kind: "GoIdent", name: subjTempName }],
+          right: subjExpr
+      } as any);
 
+      if (isWellKnownAdtType(adtTypeName)) {
+          // Well-known types (SkyResult/SkyMaybe): struct-based type assertion for .Tag
           const assertedSubj: GoIR.GoExpr = {
               kind: "GoTypeAssertExpr",
               expr: subjRef,
-              type: { kind: "GoIdentType", name: adtTypeName }
+              type: { kind: "GoIdentType", name: adtTypeName! }
           } as any;
 
           bodyStmts.push({
@@ -1806,15 +1797,10 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               cases: cases
           });
       } else {
-          bodyStmts.push({
-              kind: "GoAssignStmt",
-              define: true,
-              left: [{ kind: "GoIdent", name: subjTempName }],
-              right: subjExpr
-          } as any);
+          // Custom ADTs: map-based Tag access
           bodyStmts.push({
               kind: "GoSwitchStmt",
-              expr: { kind: "GoSelectorExpr", expr: subjRef, sel: "Tag" },
+              expr: { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsInt(sky_wrappers.Sky_AsMap(${subjTempName})["Tag"])` } as any,
               cases: cases
           });
       }
@@ -1857,14 +1843,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         const ctorInfo = constructorMap?.get(expr.name) || _importedCtorTags?.get(expr.name);
         if (ctorInfo) {
             const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-            const kvPairs: string[] = [`Tag: ${ctorInfo.tagIndex}`, `SkyName: "${expr.name}"`];
+            const kvPairs: string[] = [`"Tag": ${ctorInfo.tagIndex}`, `"SkyName": "${expr.name}"`];
             for (let j = 0; j < expr.args.length; j++) {
                 const fieldName = expr.name + "Value" + (j > 0 ? j : "");
-                kvPairs.push(`${fieldName}: ${emitGoExprForLower(argExprs[j])}`);
+                kvPairs.push(`"${fieldName}": ${emitGoExprForLower(argExprs[j])}`);
             }
             return {
                 kind: "GoRawExpr",
-                code: `${ctorInfo.adtName}{${kvPairs.join(", ")}}`
+                code: `map[string]any{${kvPairs.join(", ")}}`
             } as any;
         }
         // Special interop types: Foreign, JsValue map to nil in Go
@@ -1917,14 +1903,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             } as any;
         }
         const argExprs2 = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-        const kvPairs2: string[] = ["Tag: 0", `SkyName: "${expr.name}"`];
+        const kvPairs2: string[] = [`"Tag": 0`, `"SkyName": "${expr.name}"`];
         for (let j = 0; j < argExprs2.length; j++) {
             const fieldName = expr.name + "Value" + (j > 0 ? j : "");
-            kvPairs2.push(`${fieldName}: ${emitGoExprForLower(argExprs2[j])}`);
+            kvPairs2.push(`"${fieldName}": ${emitGoExprForLower(argExprs2[j])}`);
         }
         return {
             kind: "GoRawExpr",
-            code: `${qualifiedGoName}{${kvPairs2.join(", ")}}`
+            code: `map[string]any{${kvPairs2.join(", ")}}`
         } as any;
     }
     case "RecordExpr": {
