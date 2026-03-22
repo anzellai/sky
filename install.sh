@@ -1,11 +1,22 @@
 #!/bin/sh
 # Sky Language Installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/anzellai/sky/main/install.sh | sh
+#    or: curl -fsSL ... | SKY_INSTALL_DIR=~/.local/bin sh
+#    or: curl -fsSL ... | sh -s -- --dir ~/.local/bin
 #
 # Environment variables:
 #   SKY_VERSION       - specific version to install (default: latest)
 #   SKY_INSTALL_DIR   - installation directory (default: /usr/local/bin)
 set -e
+
+# Parse --dir argument
+for arg in "$@"; do
+    case "$arg" in
+        --dir=*) SKY_INSTALL_DIR="${arg#--dir=}" ;;
+        --dir)   shift; SKY_INSTALL_DIR="$1" ;;
+    esac
+    shift 2>/dev/null || true
+done
 
 REPO="anzellai/sky"
 INSTALL_DIR="${SKY_INSTALL_DIR:-/usr/local/bin}"
