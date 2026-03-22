@@ -42,7 +42,12 @@ get_latest_version() {
     if ! command -v curl >/dev/null 2>&1; then
         error "curl is required but not installed"
     fi
-    VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
+    # Use GITHUB_TOKEN if available (avoids API rate limits in CI)
+    AUTH_HEADER=""
+    if [ -n "$GITHUB_TOKEN" ]; then
+        AUTH_HEADER="-H \"Authorization: token $GITHUB_TOKEN\""
+    fi
+    VERSION=$(eval curl -fsSL $AUTH_HEADER "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | sed 's/.*"v\(.*\)".*/\1/')
     if [ -z "$VERSION" ]; then
         error "Could not determine latest version. Check https://github.com/$REPO/releases"
     fi
