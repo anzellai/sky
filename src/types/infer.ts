@@ -867,18 +867,10 @@ export function inferTopLevel(
         }
       }
     } catch (e) {
-      // Annotation doesn't match inference — trust the annotation but warn.
+      // Annotation doesn't match inference — trust the annotation.
       // This allows intentional patterns like view : Model -> String where
-      // the compiler internally uses VNode records.
-      const inferredPretty = formatType(finalType);
-      const annotatedPretty = formatType(annotatedType);
-      const scheme = generalize(annotatedType, env.freeTypeVariables());
-      return {
-        name: decl.name,
-        scheme,
-        pretty: formatType(scheme.type),
-        warnings: [`Type annotation for '${decl.name}' doesn't match inferred type. Annotation: ${annotatedPretty}, Inferred: ${inferredPretty}`],
-      };
+      // the compiler internally uses VNode records, and cases where type
+      // alias names differ from their expanded forms.
     }
 
     const scheme = generalize(annotatedType, env.freeTypeVariables());

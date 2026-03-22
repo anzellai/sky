@@ -72,13 +72,14 @@ describe("unify", () => {
     expect(s).toBeDefined();
   });
 
-  it("rejects different Foreign Go types (strict opaque matching)", () => {
-    expect(() => unify(tc("ResponseWriter"), tc("Writer"))).toThrow(UnificationError);
+  it("allows Foreign Go types to unify (interface satisfaction)", () => {
+    const s = unify(tc("ResponseWriter"), tc("Writer"));
+    expect(s).toBeDefined();
   });
 
-  it("allows same Foreign Go types", () => {
-    const s = unify(tc("ResponseWriter"), tc("ResponseWriter"));
-    expect(s).toBeDefined();
+  it("rejects Sky native type mismatches", () => {
+    expect(() => unify(tc("Int"), tc("String"))).toThrow(UnificationError);
+    expect(() => unify(tc("Bool"), tc("List"))).toThrow(UnificationError);
   });
 });
 
