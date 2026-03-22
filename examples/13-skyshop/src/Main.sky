@@ -56,7 +56,7 @@ init _req =
 refreshProducts model =
     let
         products =
-            if model.search /= "" || model.categoryFilter /= "all" then
+            if model.search != "" || model.categoryFilter != "all" then
                 Products.searchProducts model.search model.categoryFilter model.sortBy model.sortDir
             else
                 Products.listProducts
@@ -313,7 +313,7 @@ handleAddToCart productId model =
                 qty =
                     model.quantity
                         |> String.toInt
-                        |> Maybe.withDefault 1
+                        |> withDefault 1
             in
                 case Cart.getOrCreateCart userId of
                     Ok cart ->
@@ -352,7 +352,7 @@ handleUpdateCartItemQty itemId qtyStr model =
         qty =
             qtyStr
                 |> String.toInt
-                |> Maybe.withDefault 0
+                |> withDefault 0
         _ =
             Cart.updateItemQty itemId qty
     in

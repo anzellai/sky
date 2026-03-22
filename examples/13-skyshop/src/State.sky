@@ -1,13 +1,12 @@
 module State exposing (..)
 
+import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Dict as Dict
-
 
 -- ══════════════════════════════════════════════════════
 -- PAGES
 -- ══════════════════════════════════════════════════════
-
 type Page
     = HomePage
     | ProductsPage
@@ -27,29 +26,38 @@ type Page
     | TermsPage
     | NotFoundPage
 
-
 -- ══════════════════════════════════════════════════════
 -- MESSAGES
 -- ══════════════════════════════════════════════════════
-
 type Msg
     = Navigate Page
-    | SetLang String
+
     -- Auth fields
+    | SetLang String
+
+    -- Product browsing
     | UpdateAuthName String
+
+    -- Cart
     | UpdateAuthEmail String
+
+    -- Admin product
     | UpdateAuthPassword String
+
+    -- Admin orders
     | UpdateAuthPhone String
+
+    -- Notifications
     | DoSignIn
+
+    -- Tick
     | DoSignUp
     | DoSignOut
-    -- Product browsing
     | SetSearch String
     | SetCategoryFilter String
     | SetSortBy String
     | ToggleSortDir
     | SelectProduct String
-    -- Cart
     | UpdateQuantity String
     | AddToCart String
     | UpdateCartItemQty String String
@@ -57,7 +65,6 @@ type Msg
     | UpdateRemarks String
     | StartCheckout
     | VerifyPayment String
-    -- Admin product
     | UpdateEditTitle String
     | UpdateEditSummary String
     | UpdateEditCategory String
@@ -71,31 +78,40 @@ type Msg
     | UpdateImageData String
     | UploadImage
     | DeleteImage String
-    -- Admin orders
     | SetAdminOrderFilter String
     | UpdateOrderState String String
-    -- Notifications
     | DismissNotification
-    -- Tick
     | Tick
     | NoOp
-
 
 -- ══════════════════════════════════════════════════════
 -- MODEL
 -- ══════════════════════════════════════════════════════
-
 type alias Model =
     { page : Page
-    , lang : String
+
     -- Auth
-    , user : Maybe (Dict String String)
-    , authName : String
-    , authEmail : String
-    , authPassword : String
-    , authPhone : String
-    , authError : String
+    , lang : String
+
     -- Products
+    , user : Maybe (Dict String String)
+
+    -- Cart
+    , authName : String
+
+    -- Orders
+    , authEmail : String
+
+    -- Admin product form
+    , authPassword : String
+
+    -- Admin orders
+    , authPhone : String
+
+    -- Quantity selector (on product page)
+    , authError : String
+
+    -- Notifications
     , products : List (Dict String String)
     , product : Maybe (Dict String String)
     , productImages : List (Dict String String)
@@ -103,16 +119,13 @@ type alias Model =
     , categoryFilter : String
     , sortBy : String
     , sortDir : String
-    -- Cart
     , cart : Maybe (Dict String String)
     , cartItems : List (Dict String String)
     , cartRemarks : String
     , checkoutUrl : String
-    -- Orders
     , orders : List (Dict String String)
     , order : Maybe (Dict String String)
     , orderItems : List (Dict String String)
-    -- Admin product form
     , editProductId : String
     , editTitle : String
     , editSummary : String
@@ -123,21 +136,16 @@ type alias Model =
     , editStock : String
     , editPublished : Bool
     , editImageData : String
-    -- Admin orders
     , adminOrders : List (Dict String String)
     , adminOrderFilter : String
-    -- Quantity selector (on product page)
     , quantity : String
-    -- Notifications
     , notification : String
     , notificationType : String
     }
 
-
 -- ══════════════════════════════════════════════════════
 -- INITIAL MODEL
 -- ══════════════════════════════════════════════════════
-
 emptyModel : Model
 emptyModel =
     { page = HomePage
@@ -179,11 +187,9 @@ emptyModel =
     , notificationType = ""
     }
 
-
 -- ══════════════════════════════════════════════════════
 -- CONSTANTS
 -- ══════════════════════════════════════════════════════
-
 allCategories =
     [ "Accessories"
     , "Bags"
@@ -206,7 +212,4 @@ allCartStates =
     ]
 
 allCurrencies =
-    [ "GBP"
-    , "HKD"
-    , "USD"
-    ]
+    [ "GBP" , "HKD" , "USD" ]

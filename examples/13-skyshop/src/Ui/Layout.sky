@@ -14,6 +14,13 @@ import Lib.Auth as Auth
 import Lib.Translation as Tr
 import Tailwind exposing (..)
 
+-- Aliases to avoid collision with Std.Html h5/h6 heading elements
+h5_ =
+    ( "class" , "h-5" )
+
+h6_ =
+    ( "class" , "h-6" )
+
 -- ══════════════════════════════════════════════════════
 -- STYLE HELPERS
 -- ══════════════════════════════════════════════════════
@@ -484,7 +491,7 @@ imgOverlayDelete =
         , top1
         , right1
         , w6
-        , h6
+        , h6_
         , bgGray900
         , textWhite
         , roundedFull
@@ -552,7 +559,7 @@ viewHeader model =
         lang =
             model.lang
     in
-        header
+        headerNode
             [ tw [ bgWhite , borderB , borderGray200 , sticky , top0 , z50 ]
             , style "backdrop-filter:blur(8px);background:rgba(255,255,255,.95)"
             ]
@@ -574,7 +581,7 @@ viewHeader model =
                         , tw [ text2xl , fontExtrabold , textGray900 ]
                         ]
                         [ text (Tr.t lang "app.name") ]
-                    , nav [ tw [ hidden , md flex , gap1 ] ]
+                    , nav [ tw [ hidden_ , md flex , gap1 ] ]
                         [ navLink "/" (Tr.t lang "nav.home") model
                         , navLink "/products" (Tr.t lang "nav.products") model
                         ]
@@ -792,7 +799,7 @@ viewCartBadge model =
                     , itemsCenter
                     , justifyCenter
                     , w5
-                    , h5
+                    , h5_
                     ]
                 , style "top:-4px;right:-4px;font-size:.625rem"
                 ]
@@ -888,7 +895,14 @@ viewFooter model =
         lang =
             model.lang
     in
-        footer [ tw [ bgWhite , borderT , borderGray200 , mtAuto ] ]
+        footerNode
+            [ tw
+                [ bgWhite
+                , borderT
+                , borderGray200
+                , ( "margin-top" , "auto" )
+                ]
+            ]
             [ div [ tw [ maxW7xl , mxAuto , px4 ] ]
                 [ div [ tw [ grid , gridCols3 , gap8 , py12 ] ]
                     [ div []

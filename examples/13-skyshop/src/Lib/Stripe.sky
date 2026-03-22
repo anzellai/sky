@@ -75,16 +75,16 @@ stripePost endpoint params =
             Ok req ->
                 let
                     _ =
-                        headerSet (requestHeader req) "Authorization" ("Bearer " ++ apiKey)
+                        Http.headerSet (Http.requestHeader req) "Authorization" ("Bearer " ++ apiKey)
                     _ =
-                        headerSet (requestHeader req) "Content-Type" "application/x-www-form-urlencoded"
+                        Http.headerSet (Http.requestHeader req) "Content-Type" "application/x-www-form-urlencoded"
                 in
-                    case clientDo (Http.defaultClient ()) req of
+                    case Http.clientDo (Http.defaultClient ()) req of
                         Err e ->
                             Err (errorToString e)
 
                         Ok resp ->
-                            case Io.readAll (responseBody resp) of
+                            case Io.readAll (Http.responseBody resp) of
                                 Err e ->
                                     Err (errorToString e)
 
@@ -106,14 +106,14 @@ stripeGet endpoint =
             Ok req ->
                 let
                     _ =
-                        headerSet (requestHeader req) "Authorization" ("Bearer " ++ apiKey)
+                        Http.headerSet (Http.requestHeader req) "Authorization" ("Bearer " ++ apiKey)
                 in
-                    case clientDo (Http.defaultClient ()) req of
+                    case Http.clientDo (Http.defaultClient ()) req of
                         Err e ->
                             Err (errorToString e)
 
                         Ok resp ->
-                            case Io.readAll (responseBody resp) of
+                            case Io.readAll (Http.responseBody resp) of
                                 Err e ->
                                     Err (errorToString e)
 
@@ -191,8 +191,8 @@ createCheckoutSession cartId items userEmail remarks =
                 println ("[STRIPE] Creating checkout session for cart: " ++ cartId)
         in
             case stripePost "checkout/sessions" allParams of
-                Ok responseBody ->
-                    case decodeCheckoutResponse responseBody of
+                Ok respBody ->
+                    case decodeCheckoutResponse respBody of
                         Ok session ->
                             Ok session
 
@@ -246,8 +246,8 @@ verifyPayment cartId =
 
 verifyStripeSession cartId sessionId =
     case stripeGet ("checkout/sessions/" ++ sessionId ++ "?expand[]=customer_details&expand[]=shipping_details") of
-        Ok responseBody ->
-            case decodePaymentStatus responseBody of
+        Ok respBody ->
+            case decodePaymentStatus respBody of
                 Ok status ->
                     if status.status == "complete" && status.paymentStatus == "paid" then
                         let

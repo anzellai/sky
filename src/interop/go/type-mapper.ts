@@ -85,6 +85,13 @@ function mapGoTypeToSkyInner(goType: string, currentPackage?: string): string {
         return "Foreign";
     }
 
+    // Strip generics [T] early — Go parameterized types (e.g. iter.Seq[string])
+    // can't be represented in Sky's type system, so map them to Foreign.
+    const bracketIdx = t.indexOf("[");
+    if (bracketIdx !== -1) {
+        return "Foreign";
+    }
+
     // Map package prefix to PascalCase
     const dotIdx = t.lastIndexOf(".");
     if (dotIdx !== -1) {
@@ -100,12 +107,6 @@ function mapGoTypeToSkyInner(goType: string, currentPackage?: string): string {
             ).join(".");
             return skyPkg + "." + name.charAt(0).toUpperCase() + name.slice(1);
         }
-    }
-
-    // Strip generics [T]
-    const bracketIdx = t.indexOf("[");
-    if (bracketIdx !== -1) {
-        t = t.substring(0, bracketIdx);
     }
 
     // Single uppercase letter = Go generic type parameter (T, K, V, E, etc.)

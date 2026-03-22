@@ -10,6 +10,11 @@ foreign import "sky_builtin" exposing (stringToBytes)
 toBytes s =
     stringToBytes s
 
+foreign import "sky_wrappers" exposing (Sky_string_FromBytes)
+
+fromBytes b =
+    Sky_string_FromBytes b
+
 foreign import "sky_wrappers" exposing (Sky_string_Split, Sky_string_Join, Sky_string_Contains, Sky_string_Replace, Sky_string_Trim, Sky_string_Length, Sky_string_ToLower, Sky_string_ToUpper, Sky_string_StartsWith, Sky_string_EndsWith, Sky_string_Slice, Sky_string_IsEmpty, Sky_string_FromFloat, Sky_string_ToInt, Sky_string_ToFloat, Sky_string_Lines, Sky_string_Words, Sky_string_Repeat, Sky_string_PadLeft, Sky_string_PadRight, Sky_string_Left, Sky_string_Right, Sky_string_Reverse, Sky_string_Indexes)
 
 split sep s =

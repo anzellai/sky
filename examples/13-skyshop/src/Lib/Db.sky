@@ -10,57 +10,48 @@ import Std.Log exposing (println)
 import Database.Sql as Sql
 import Modernc.Org.Sqlite as _
 
-
 -- Module-level database connection (opened once at Go package init)
 db =
     Sql.open "sqlite" "skyshop.db"
-
 
 exec query args =
     case db of
         Ok conn ->
             Sql.dBExecResult conn query args
-
+        
         Err e ->
             Err e
-
 
 queryRows query args =
     case db of
         Ok conn ->
             Sql.dBQueryToMaps conn query args
-
+        
         Err e ->
             Err e
-
 
 queryOne query args =
     case queryRows query args of
         Ok rows ->
             Ok (List.head rows)
-
+        
         Err e ->
             Err e
 
-
 getField field row =
     Maybe.withDefault "" (Dict.get field row)
-
 
 getInt field row =
     getField field row
         |> String.toInt
         |> Maybe.withDefault 0
 
-
 getBool field row =
     getField field row == "1"
-
 
 -- ══════════════════════════════════════════════════════
 -- SCHEMA
 -- ══════════════════════════════════════════════════════
-
 initDb =
     let
         _ =

@@ -649,10 +649,14 @@ export async function compileProject(entryFile: string, outDir: string) {
     const usage = analyzeUsage(coreModule);
     coreModule = eliminateDeadBindings(coreModule, usage);
 
-    // Collect the set of modules this file actually imports (for resolving ambiguous names)
+    // Collect the set of modules this file imports with `exposing` (for resolving ambiguous unqualified names).
+    // Modules imported only as qualified (e.g., `import Std.Css as Css`) should NOT
+    // contribute to unqualified name resolution — only `exposing (..)` imports do.
     const importedModules = new Set<string>();
     for (const imp of loaded.moduleAst.imports) {
-        importedModules.add(imp.moduleName.join("."));
+        if (imp.exposing) {
+            importedModules.add(imp.moduleName.join("."));
+        }
     }
 
     // Build imported constructor tag info for cross-module case matching.
@@ -1339,7 +1343,7 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
             type: retType
           };
         }
-        if (["+", "-", "*", "/"].includes(expr.operator)) {
+        if (["+", "-", "*", "/", "//"].includes(expr.operator)) {
           retType = { kind: "TypeConstant", name: "Int" };
         }
 

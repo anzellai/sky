@@ -12,11 +12,9 @@ import Net.Http as Http
 import Strings as GoStrings
 import Io as Io
 
-
 -- ══════════════════════════════════════════════════════
 -- NOTIFICATIONS
 -- ══════════════════════════════════════════════════════
-
 notifyOrderPlaced cart items userName userEmail =
     let
         env =
@@ -37,14 +35,21 @@ notifyOrderPlaced cart items userName userEmail =
         subject =
             prefix ++ " New order from " ++ userName ++ " (" ++ userEmail ++ ")"
         body =
-            subject ++ " - " ++ itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
+            subject ++
+            " - " ++
+            itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
         notificationId =
             Uuid.newString ()
+
+                -- Log the notification for manual sending if SMTP is configured
+                -- Full SMTP integration requires Go's net/smtp package
         _ =
             Db.exec
                 "INSERT INTO notifications (id, notification_type, subject, body, sent) VALUES (?, ?, ?, ?, ?)"
                 [ notificationId , "order" , subject , body , "0" ]
-            |> ignoreResult
+                |> ignoreResult
+
+                -- Mark as sent in DB
         _ =
             println ("[NOTIFY] " ++ body)
         _ =
@@ -52,15 +57,13 @@ notifyOrderPlaced cart items userName userEmail =
     in
         ()
 
-
 ignoreResult result =
     case result of
         Ok _ ->
             ()
-
+        
         Err _ ->
             ()
-
 
 sendEmailNotification subject body =
     let
@@ -72,16 +75,18 @@ sendEmailNotification subject body =
         if smtpHost == "" || notifyTo == "" then
             let
                 _ =
-                    println "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
+                    println
+                        "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
             in
                 ()
         else
             let
-                -- Log the notification for manual sending if SMTP is configured
-                -- Full SMTP integration requires Go's net/smtp package
                 _ =
-                    println ("[NOTIFY] Would send email to " ++ notifyTo ++ ": " ++ subject)
-                -- Mark as sent in DB
+                    println
+                        (
+                        "[NOTIFY] Would send email to " ++
+                        notifyTo ++ ": " ++ subject
+                        )
                 _ =
                     Db.exec
                         "UPDATE notifications SET sent = 1 WHERE subject = ? AND sent = 0"

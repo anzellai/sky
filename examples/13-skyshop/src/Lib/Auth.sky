@@ -12,7 +12,6 @@ import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 import Os
 
-
 hashPassword password salt =
     let
         salted =
@@ -22,10 +21,8 @@ hashPassword password salt =
     in
         Hex.encodeToString hash
 
-
 generateSalt =
     Uuid.newString ()
-
 
 adminEmails =
     let
@@ -33,30 +30,27 @@ adminEmails =
             Os.getenv "ADMIN_EMAILS"
     in
         if envAdmins == "" then
-            [ "admin@example.com"
-            ]
+            [ "admin@example.com" ]
         else
             String.split "," envAdmins
-
 
 isAdmin user =
     Db.getBool "is_admin" user
 
-
 -- ══════════════════════════════════════════════════════
 -- SIGN UP
 -- ══════════════════════════════════════════════════════
-
 signUp name email password phone =
     if name == "" then
         Err "Name is required."
-    else if email == "" then
-        Err "Email is required."
-    else if String.length password < 8 then
-        Err "Password must be at least 8 characters."
     else
-        doSignUp name email password phone
-
+        if email == "" then
+            Err "Email is required."
+        else
+            if String.length password < 8 then
+                Err "Password must be at least 8 characters."
+            else
+                doSignUp name email password phone
 
 doSignUp name email password phone =
     let
@@ -90,35 +84,38 @@ doSignUp name email password phone =
             Ok _ ->
                 let
                     _ =
-                        println ("[AUTH] User created: " ++ name ++ " (" ++ email ++ ")")
+                        println
+                            (
+                            "[AUTH] User created: " ++
+                            name ++ " (" ++ email ++ ")"
+                            )
                 in
                     getUserById userId
                         |> Result.andThen
-                            (\maybeUser ->
+                            (
+                            \maybeUser ->
                                 case maybeUser of
                                     Just user ->
                                         Ok user
-
+                                    
                                     Nothing ->
                                         Err "Failed to retrieve created user."
                             )
-
+            
             Err _ ->
                 Err "Email already taken."
-
 
 -- ══════════════════════════════════════════════════════
 -- SIGN IN
 -- ══════════════════════════════════════════════════════
-
 signIn email password =
     if email == "" then
         Err "Email is required."
-    else if password == "" then
-        Err "Password is required."
     else
-        doSignIn email password
-
+        if password == "" then
+            Err "Password is required."
+        else
+            doSignIn email password
 
 doSignIn email password =
     case Db.queryOne "SELECT * FROM users WHERE email = ?" [ email ] of
@@ -151,25 +148,27 @@ doSignIn email password =
                 else
                     let
                         _ =
-                            println ("[AUTH] Sign-in failed (bad password): " ++ email)
+                            println
+                                (
+                                "[AUTH] Sign-in failed (bad password): " ++
+                                email
+                                )
                     in
                         Err "Invalid email or password."
-
+        
         Ok Nothing ->
             let
                 _ =
                     println ("[AUTH] Sign-in failed (not found): " ++ email)
             in
                 Err "Invalid email or password."
-
+        
         Err _ ->
             Err "Database error. Please try again."
-
 
 -- ══════════════════════════════════════════════════════
 -- SESSION
 -- ══════════════════════════════════════════════════════
-
 signOut =
     let
         _ =
@@ -177,17 +176,15 @@ signOut =
     in
         ()
 
-
 getUserById userId =
     Db.queryOne
         "SELECT id, email, name, phone, address_line1, address_line2, address_city, address_county, address_country, address_postcode, is_admin, suspended, created_at FROM users WHERE id = ?"
         [ userId ]
 
-
 getSessionUser userId =
     case getUserById userId of
         Ok maybeUser ->
             maybeUser
-
+        
         Err _ ->
             Nothing

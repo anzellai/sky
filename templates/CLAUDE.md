@@ -62,7 +62,9 @@ main =
 
 ### Operators
 
-`++` (concat), `|>` `<|` (pipe), `>>` `<<` (compose), `==` `!=` `<` `>` `<=` `>=`, `&&` `||`, `+` `-` `*` `/` `%`, `::` (cons)
+`++` (concat), `|>` `<|` (pipe), `>>` `<<` (compose), `==` `!=` `/=` `<` `>` `<=` `>=`, `&&` `||`, `+` `-` `*` `/` `//` `%`, `::` (cons)
+
+Note: `/=` is Elm-compatible not-equal (alias for `!=`). `//` is integer division (always returns `Int`). Both forms are supported.
 
 ### Patterns
 
@@ -235,6 +237,8 @@ reverse : String -> String
 indexes : String -> String -> List Int
 concat : List String -> String
 fromChar : Char -> String
+toBytes : String -> Bytes             -- String to []byte
+fromBytes : Bytes -> String           -- []byte to String
 ```
 
 ### Sky.Core.Dict
@@ -481,6 +485,8 @@ toString : VNode -> String                                -- alias for render
 
 All element functions have signature: `List (String, String) -> List VNode -> VNode`
 Void elements: `List (String, String) -> VNode`
+
+**Important naming**: HTML5 elements that clash with common identifiers use suffixed names: `headerNode` (not `header`), `footerNode` (not `footer`), `mainNode`, `codeNode`, `linkNode`, `styleNode`, `titleNode`. The `textarea` function takes **2 arguments**: `textarea attrs children` (not just attrs).
 
 ### Std.Html.Attributes
 
@@ -899,7 +905,7 @@ port = 4000
 input = "debounce"              # "debounce" | "blur"
 
 [live.session]
-store = "memory"                # memory | sqlite | redis | postgresql
+store = "memory"                # memory | sqlite | redis | postgresql | firestore
 ```
 
 Sky.Live config is embedded at compile time but can be overridden at runtime via env vars or a `.env` file. Env var names mirror sky.toml: `SKY_LIVE_PORT`, `SKY_LIVE_INPUT`, `SKY_LIVE_POLL_INTERVAL`, `SKY_LIVE_SESSION_STORE`, `SKY_LIVE_SESSION_PATH`, `SKY_LIVE_SESSION_URL`, `SKY_LIVE_STATIC_DIR`, `SKY_LIVE_TTL`. Priority: compiled defaults < sky.toml < env vars < .env file.
@@ -929,6 +935,9 @@ Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow
 - Use **`errorToString`** to convert Go errors to strings
 - Pattern match on **`Result`** (`Ok val` / `Err e`) for Go functions returning errors
 - Pattern match on **`Maybe`** (`Just val` / `Nothing`) for Go `*primitive` pointer returns
+- **Nested patterns work**: `Ok (Just x)` and `Ok Nothing` are fully supported in case expressions
+- **Import conventions**: Use `exposing (..)` sparingly — when two modules export the same name (e.g., `Std.Html` and `Tailwind` both export `hidden`, `h2`, etc.), the first import wins. Prefer qualified imports (`import Foo as F`) to avoid collisions. If using `Tailwind exposing (..)` alongside `Std.Html exposing (..)`, use `hidden_` (with underscore) for the Tailwind version, and `headerNode`/`footerNode` for HTML5 semantic elements
+- **`//` for integer division**: Use `//` (Elm-style) or regular `/` — both work. `//` always returns `Int`, `modBy divisor n` returns `n % divisor`
 
 ## Code Formatting
 

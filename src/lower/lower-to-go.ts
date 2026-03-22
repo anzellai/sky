@@ -171,9 +171,15 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
     }
   }
 
-  // Convert types (skip record aliases)
+  // Well-known ADT types that live in sky_wrappers — skip type/ctor generation
+  const wellKnownAdtCtors = new Set(["Ok", "Err", "Just", "Nothing"]);
+  const isWellKnownAdt = (tDecl: CoreIR.TypeDeclaration) =>
+      tDecl.constructors.some(c => wellKnownAdtCtors.has(c.name));
+
+  // Convert types (skip record aliases and well-known ADTs like Maybe/Result)
   for (const tDecl of module.typeDeclarations) {
     if (recordAliasTypes.has(tDecl.name)) continue;
+    if (isWellKnownAdt(tDecl)) continue;
 
     const fields: { name: string; type: GoIR.GoType }[] = [
       { name: "Tag", type: { kind: "GoIdentType", name: "int" } },
@@ -204,10 +210,11 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
   }
 
   // Generate constructor functions for ADT variants (for cross-module use)
-  // Skip record aliases and single-constructor types where ctor name = type name
+  // Skip record aliases, single-constructor types, and well-known ADTs
   for (const tDecl of module.typeDeclarations) {
     if (recordAliasTypes.has(tDecl.name)) continue;
     if (tDecl.constructors.length === 1 && tDecl.constructors[0].name === tDecl.name) continue;
+    if (isWellKnownAdt(tDecl)) continue;
     for (let i = 0; i < tDecl.constructors.length; i++) {
       const c = tDecl.constructors[i];
       const kvPairs: string[] = [`Tag: ${i}`, `SkyName: "${c.name}"`];
@@ -319,6 +326,10 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
          } else {
              localModulesDetected.add(name);
          }
+      }
+      // Detect sky_wrappers references in GoIdent nodes (e.g., sky_wrappers.SkyNothing)
+      if (node.kind === "GoIdent" && typeof node.name === "string" && node.name.startsWith("sky_wrappers.")) {
+          foreignModulesDetected.add("sky_wrappers");
       }
       if (node.kind === "GoIdentType" && node.name.includes(".")) {
           const name = node.name.split(".")[0];
@@ -600,6 +611,9 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       if (expr.name === "stringToBytes") {
           return { kind: "GoIdent", name: "[]byte" };
       }
+      if (expr.name === "bytesToString") {
+          return { kind: "GoIdent", name: "string" };
+      }
       if (expr.name === "updateRecord") {
           return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "UpdateRecord" };
       }
@@ -664,12 +678,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       // but must be qualified with the Go package name in the output.
       // Excludes Prelude types (Ok, Err, identity) and thin FFI wrapper modules
       // (Std.Log, Std.Cmd, etc.) which have special lowering paths.
+      // Prelude names that have special-case lowering above (inline Go code or wrappers):
+      const preludeSpecialNames = new Set(["identity", "not", "fst", "snd", "always", "errorToString", "Ok", "Err", "Just", "Nothing"]);
       if (moduleExports && !_declParamCounts?.has(expr.name)) {
-          const ffiWrapperModules = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Sky.Core.Prelude"]);
+          const ffiWrapperModules = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program"]);
           // When multiple modules export the same name, prefer the one actually imported
           let candidates: [string, Map<string, Scheme>][] = [];
           for (const [modName, exports] of moduleExports) {
-              if (exports.has(expr.name) && !ffiWrapperModules.has(modName) && (!foreignModules || !foreignModules.has(modName))) {
+              const skipModule = ffiWrapperModules.has(modName) || (modName === "Sky.Core.Prelude" && preludeSpecialNames.has(expr.name));
+              if (exports.has(expr.name) && !skipModule && (!foreignModules || !foreignModules.has(modName))) {
                   candidates.push([modName, exports]);
               }
           }
@@ -763,23 +780,16 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           const wellKnownAppCtors: Record<string, { wrapper: string; tag: number; field: string }> = {
               "Ok":   { wrapper: "sky_wrappers.SkyOk",  tag: 0, field: "OkValue" },
               "Err":  { wrapper: "sky_wrappers.SkyErr",  tag: 1, field: "ErrValue" },
-              "Just": { wrapper: "",                     tag: 0, field: "JustValue" },
+              "Just": { wrapper: "sky_wrappers.SkyJust",  tag: 0, field: "JustValue" },
           };
           const wk = wellKnownAppCtors[flat.fn.name];
           if (wk) {
               const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-              if (wk.wrapper) {
-                  // Result Ok/Err
-                  return {
-                      kind: "GoCallExpr",
-                      fn: { kind: "GoIdent", name: wk.wrapper },
-                      args: argExprs
-                  } as any;
-              }
-              // Maybe Just
+              // Result Ok/Err, Maybe Just — use wrapper functions
               return {
-                  kind: "GoRawExpr",
-                  code: `struct{ Tag int; SkyName string; ${wk.field} any }{Tag: ${wk.tag}, SkyName: "${flat.fn.name}", ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
+                  kind: "GoCallExpr",
+                  fn: { kind: "GoIdent", name: wk.wrapper },
+                  args: argExprs
               } as any;
           }
           // Check local constructorMap for ADT constructor applications
@@ -1020,7 +1030,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               kind: "GoRawExpr",
               code: `append([]any{${h}}, sky_wrappers.Sky_AsList(${t})...)`
           } as any;
-      } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "%", "++", "==", "!=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
+      } else if (fnExpr.kind === "GoIdent" && (["+", "-", "*", "/", "//", "%", "++", "==", "!=", "/=", "<", ">", "<=", ">=", "&&", "||"].includes(fnExpr.name))) {
           // Check if ++ is operating on lists (type is List/TypeApplication with List constructor)
           if (fnExpr.name === "++" && expr.type && expr.type.kind === "TypeApplication" &&
               expr.type.constructor.kind === "TypeConstant" && expr.type.constructor.name === "List") {
@@ -1035,7 +1045,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           }
 
           // Binary operator uncurried
-          const op = fnExpr.name === "++" ? "+" : fnExpr.name;
+          const op = fnExpr.name === "++" ? "+" : fnExpr.name === "/=" ? "!=" : fnExpr.name === "//" ? "/" : fnExpr.name;
 
           // Add type assertions for binary operators on any-typed values
           const fnName0 = (fnExpr as any).name;
@@ -1051,13 +1061,13 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               let targetType: string | null = null;
               if (fnName0 === "++") {
                   targetType = "string";
-              } else if (["+", "-", "*", "/", "%"].includes(fnName0)) {
+              } else if (["+", "-", "*", "/", "//", "%"].includes(fnName0)) {
                   targetType = "int";
               } else if (["<", ">", "<=", ">="].includes(fnName0)) {
                   // Comparison — check if any arg is a string literal
                   const hasStringLit = flat.args.some(a2 => a2.kind === "Literal" && typeof (a2 as any).value === "string");
                   targetType = hasStringLit ? "string" : "int";
-              } else if (fnName0 === "==" || fnName0 === "!=") {
+              } else if (fnName0 === "==" || fnName0 === "!=" || fnName0 === "/=") {
                   targetType = null; // equality works on any
               } else if (fnName0 === "&&" || fnName0 === "||") {
                   targetType = "bool";
@@ -1143,7 +1153,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           flattenLet(e.body);
         } else if (e.kind === "Match") {
             stmts.push({
-                kind: "GoExprStmt",
+                kind: "GoReturnStmt",
                 expr: lowerExpr(e, moduleExports, newLocalEnv, foreignModules, constructorMap)
             });
         } else {
@@ -1431,23 +1441,24 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           .filter((c: any) => c.pattern.kind === "ConstructorPattern")
           .map((c: any) => c.pattern.name as string);
 
-      // 1. Check local constructorMap (for constructors defined in this module)
-      for (const name of ctorPatternNames) {
-          const info = constructorMap?.get(name);
-          if (info) {
-              adtTypeName = info.adtName;
-              break;
-          }
+      // 1. Well-known Prelude types — always use sky_wrappers runtime types.
+      //    Must be checked FIRST, even before local constructorMap, because
+      //    Ok/Err/Just/Nothing always use sky_wrappers types regardless of
+      //    which module defines them.
+      if (ctorPatternNames.includes("Ok") || ctorPatternNames.includes("Err")) {
+          adtTypeName = "sky_wrappers.SkyResult";
+      } else if (ctorPatternNames.includes("Just") || ctorPatternNames.includes("Nothing")) {
+          adtTypeName = "sky_wrappers.SkyMaybe";
       }
 
-      // 2. Well-known Prelude types (must be checked before _importedCtorTags
-      //    because Ok/Err/Just/Nothing use sky_wrappers runtime types, not the
-      //    Sky.Core.Prelude Go package types)
+      // 2. Check local constructorMap (for constructors defined in this module)
       if (!adtTypeName) {
-          if (ctorPatternNames.includes("Ok") || ctorPatternNames.includes("Err")) {
-              adtTypeName = "sky_wrappers.SkyResult";
-          } else if (ctorPatternNames.includes("Just") || ctorPatternNames.includes("Nothing")) {
-              adtTypeName = "struct{ Tag int; SkyName string; JustValue any }";
+          for (const name of ctorPatternNames) {
+              const info = constructorMap?.get(name);
+              if (info) {
+                  adtTypeName = info.adtName;
+                  break;
+              }
           }
       }
 
@@ -1528,52 +1539,221 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       const subjExpr = lowerExpr(expr.expr, moduleExports, localEnv, foreignModules, constructorMap);
       const subjRef: GoIR.GoExpr = { kind: "GoIdent", name: subjTempName };
 
-      const cases: GoIR.GoCaseClause[] = expr.cases.map((c, i) => {
-        const stmts: GoIR.GoStmt[] = [];
-        const newLocalEnv = new Map(localEnv || []);
+      // Helper: resolve tag index for a constructor pattern
+      const resolveTagIndex = (patName: string, fallback: number): number => {
+          let ctorInfo = constructorMap?.get(patName);
+          if (!ctorInfo && _importedCtorTags.has(patName)) {
+              ctorInfo = _importedCtorTags.get(patName);
+          }
+          return ctorInfo ? ctorInfo.tagIndex : (wellKnownTags[patName]?.tag ?? fallback);
+      };
 
-        if (c.pattern.kind === "ConstructorPattern") {
-           let ctorInfo = constructorMap?.get(c.pattern.name);
-           // For imported constructors not in local constructorMap, resolve tag from the
-           // imported module's type declaration via the _importedCtorTags map
-           if (!ctorInfo && _importedCtorTags.has(c.pattern.name)) {
-               ctorInfo = _importedCtorTags.get(c.pattern.name);
-           }
-           const tagIndex = ctorInfo ? ctorInfo.tagIndex : (wellKnownTags[c.pattern.name]?.tag ?? i);
+      // Helper: determine the inner ADT type for a nested constructor pattern
+      const resolveInnerAdtType = (innerCtorName: string): string => {
+          // Well-known types
+          if (innerCtorName === "Ok" || innerCtorName === "Err") return "sky_wrappers.SkyResult";
+          if (innerCtorName === "Just" || innerCtorName === "Nothing") return "sky_wrappers.SkyMaybe";
+          // Check constructorMap and _importedCtorTags
+          const info = constructorMap?.get(innerCtorName) || _importedCtorTags.get(innerCtorName);
+          if (info) return info.adtName;
+          return "any";
+      };
 
-           // Extract variables from the ADT struct fields
-           for (let j = 0; j < c.pattern.args.length; j++) {
-              const argPat = c.pattern.args[j];
+      // Helper: generate stmts for a simple (non-nested) constructor case
+      const genSimpleCtorStmts = (
+          pat: CoreIR.ConstructorPattern,
+          body: CoreIR.Expr,
+          env: Map<string, any>,
+          subj: GoIR.GoExpr,
+          outerAdtType: string | undefined
+      ): GoIR.GoStmt[] => {
+          const stmts: GoIR.GoStmt[] = [];
+          for (let j = 0; j < pat.args.length; j++) {
+              const argPat = pat.args[j];
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
-                  newLocalEnv.set(argPat.name, { kind: "TypeConstant", name: "Any" });
-                  let subj: GoIR.GoExpr = subjRef;
-                  const fieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value" + (j > 0 ? j : ""));
-                  // For Maybe's Just branch, use the full struct type that includes JustValue
-                  const fieldAssertType = (adtTypeName === "struct{ Tag int }" && fieldName === "JustValue")
-                      ? "struct{ Tag int; SkyName string; JustValue any }"
-                      : adtTypeName;
+                  env.set(argPat.name, { kind: "TypeConstant", name: "Any" });
+                  let s: GoIR.GoExpr = subj;
+                  const fieldName = wellKnownFields[pat.name] || (pat.name + "Value" + (j > 0 ? j : ""));
+                  const fieldAssertType = (outerAdtType === "struct{ Tag int }" && fieldName === "JustValue")
+                      ? "sky_wrappers.SkyMaybe"
+                      : outerAdtType;
                   if (fieldAssertType) {
-                      subj = { kind: "GoTypeAssertExpr", expr: subj, type: { kind: "GoIdentType", name: fieldAssertType } } as any;
+                      s = { kind: "GoTypeAssertExpr", expr: s, type: { kind: "GoIdentType", name: fieldAssertType } } as any;
                   }
                   stmts.push({
                       kind: "GoAssignStmt",
                       define: true,
                       left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
-                      right: { kind: "GoSelectorExpr", expr: subj, sel: fieldName }
+                      right: { kind: "GoSelectorExpr", expr: s, sel: fieldName }
                   });
               }
-           }
-           stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
+          }
+          stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(body, moduleExports, env, foreignModules, constructorMap) });
+          return stmts;
+      };
 
-           return {
-               kind: "GoCaseClause",
-               exprs: [{ kind: "GoBasicLit", value: String(tagIndex) }],
-               body: stmts
-           };
+      // Detect nested constructor patterns: cases where an outer constructor has
+      // a ConstructorPattern as one of its args (e.g., Ok (Just x), Ok Nothing).
+      // These share the same outer tag and need a nested switch.
+      // Group cases by their outer tag index to detect duplicates.
+      const outerTagGroups = new Map<number, { caseIdx: number; pat: CoreIR.ConstructorPattern; body: CoreIR.Expr }[]>();
+      for (let i = 0; i < expr.cases.length; i++) {
+          const c = expr.cases[i];
+          if (c.pattern.kind === "ConstructorPattern") {
+              const tagIndex = resolveTagIndex(c.pattern.name, i);
+              if (!outerTagGroups.has(tagIndex)) outerTagGroups.set(tagIndex, []);
+              outerTagGroups.get(tagIndex)!.push({ caseIdx: i, pat: c.pattern, body: c.body });
+          }
+      }
+
+      // Check if any outer tag has multiple cases (indicating nested patterns that need grouping)
+      const hasNestedCtorPatterns = (group: { pat: CoreIR.ConstructorPattern }[]) =>
+          group.length > 1 || group.some(g => g.pat.args.some(a => a.kind === "ConstructorPattern"));
+
+      const cases: GoIR.GoCaseClause[] = [];
+      const processedOuterTags = new Set<number>();
+
+      for (let i = 0; i < expr.cases.length; i++) {
+        const c = expr.cases[i];
+
+        if (c.pattern.kind === "ConstructorPattern") {
+           const tagIndex = resolveTagIndex(c.pattern.name, i);
+
+           // Skip if we already processed this outer tag as part of a group
+           if (processedOuterTags.has(tagIndex)) continue;
+
+           const group = outerTagGroups.get(tagIndex)!;
+
+           // Check if this group needs nested switching
+           if (hasNestedCtorPatterns(group)) {
+               processedOuterTags.add(tagIndex);
+
+               // Generate a single case clause with a nested switch for the inner constructors
+               const outerStmts: GoIR.GoStmt[] = [];
+
+               // Extract the outer field value into a temp variable
+               const outerFieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value");
+               const innerTmpName = `__inner_${Math.floor(Math.random() * 100000)}`;
+
+               // Type-assert subject to get the outer field
+               let outerSubj: GoIR.GoExpr = subjRef;
+               if (adtTypeName) {
+                   outerSubj = { kind: "GoTypeAssertExpr", expr: subjRef, type: { kind: "GoIdentType", name: adtTypeName } } as any;
+               }
+
+               outerStmts.push({
+                   kind: "GoExprStmt",
+                   expr: { kind: "GoRawExpr", code: `var ${innerTmpName} any` } as any
+               });
+               outerStmts.push({
+                   kind: "GoAssignStmt",
+                   define: false,
+                   left: [{ kind: "GoIdent", name: innerTmpName }],
+                   right: { kind: "GoSelectorExpr", expr: outerSubj, sel: outerFieldName }
+               } as any);
+
+               const innerRef: GoIR.GoExpr = { kind: "GoIdent", name: innerTmpName };
+
+               // Determine inner ADT type from the nested constructor patterns
+               let innerAdtType: string | undefined;
+               for (const g of group) {
+                   for (const arg of g.pat.args) {
+                       if (arg.kind === "ConstructorPattern") {
+                           innerAdtType = resolveInnerAdtType(arg.name);
+                           break;
+                       }
+                   }
+                   if (innerAdtType) break;
+               }
+
+               // Build inner case clauses
+               const innerCases: GoIR.GoCaseClause[] = [];
+               let hasInnerDefault = false;
+
+               for (const g of group) {
+                   const innerEnv = new Map(localEnv || []);
+
+                   // Check if the arg is a nested ConstructorPattern
+                   const innerCtorArg = g.pat.args.find(a => a.kind === "ConstructorPattern") as CoreIR.ConstructorPattern | undefined;
+
+                   if (innerCtorArg) {
+                       // Nested constructor: switch on inner tag
+                       const innerTagIndex = resolveTagIndex(innerCtorArg.name, 0);
+                       const innerStmts = genSimpleCtorStmts(innerCtorArg, g.body, innerEnv, innerRef, innerAdtType);
+                       innerCases.push({
+                           kind: "GoCaseClause",
+                           exprs: [{ kind: "GoBasicLit", value: String(innerTagIndex) }],
+                           body: innerStmts
+                       });
+                   } else if (g.pat.args.length === 1 && g.pat.args[0].kind === "VariablePattern") {
+                       // Single variable arg capturing the whole inner value (e.g., Ok value)
+                       // This is a catch-all for the inner switch
+                       const varPat = g.pat.args[0];
+                       const innerStmts: GoIR.GoStmt[] = [];
+                       if (varPat.name !== "_") {
+                           innerEnv.set(varPat.name, { kind: "TypeConstant", name: "Any" });
+                           innerStmts.push({
+                               kind: "GoAssignStmt",
+                               define: true,
+                               left: [{ kind: "GoIdent", name: sanitizeGoIdent(varPat.name) }],
+                               right: innerRef
+                           });
+                       }
+                       innerStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(g.body, moduleExports, innerEnv, foreignModules, constructorMap) });
+                       hasInnerDefault = true;
+                       innerCases.push({ kind: "GoCaseClause", exprs: [], body: innerStmts });
+                   } else if (g.pat.args.length === 0) {
+                       // No args (e.g., Ok Nothing where Nothing has no args but is not nested)
+                       // This shouldn't normally happen since Nothing would be a ConstructorPattern arg
+                       const innerStmts: GoIR.GoStmt[] = [];
+                       innerStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(g.body, moduleExports, innerEnv, foreignModules, constructorMap) });
+                       innerCases.push({ kind: "GoCaseClause", exprs: [], body: innerStmts });
+                   } else {
+                       // Wildcard or other pattern as arg — treat as default
+                       const innerStmts: GoIR.GoStmt[] = [];
+                       innerStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(g.body, moduleExports, innerEnv, foreignModules, constructorMap) });
+                       hasInnerDefault = true;
+                       innerCases.push({ kind: "GoCaseClause", exprs: [], body: innerStmts });
+                   }
+               }
+
+               // Build inner switch on the inner value's .Tag
+               const innerAsserted: GoIR.GoExpr = innerAdtType
+                   ? { kind: "GoTypeAssertExpr", expr: innerRef, type: { kind: "GoIdentType", name: innerAdtType } } as any
+                   : innerRef;
+
+               outerStmts.push({
+                   kind: "GoSwitchStmt",
+                   expr: { kind: "GoSelectorExpr", expr: innerAsserted, sel: "Tag" },
+                   cases: innerCases
+               });
+
+               outerStmts.push({ kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" } });
+
+               cases.push({
+                   kind: "GoCaseClause",
+                   exprs: [{ kind: "GoBasicLit", value: String(tagIndex) }],
+                   body: outerStmts
+               });
+           } else {
+               // Simple case: no nested constructor patterns
+               processedOuterTags.add(tagIndex);
+               const stmts: GoIR.GoStmt[] = [];
+               const newLocalEnv = new Map(localEnv || []);
+               const simpleStmts = genSimpleCtorStmts(c.pattern, c.body, newLocalEnv, subjRef, adtTypeName);
+               cases.push({
+                   kind: "GoCaseClause",
+                   exprs: [{ kind: "GoBasicLit", value: String(tagIndex) }],
+                   body: simpleStmts
+               });
+           }
+           continue;
         }
 
         // Fallback catch-all
         if (c.pattern.kind === "WildcardPattern" || c.pattern.kind === "VariablePattern") {
+           const stmts: GoIR.GoStmt[] = [];
+           const newLocalEnv = new Map(localEnv || []);
            if (c.pattern.kind === "VariablePattern" && c.pattern.name !== "_") {
                newLocalEnv.set(c.pattern.name, expr.expr.type);
                stmts.push({
@@ -1584,11 +1764,12 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                });
            }
            stmts.push({ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) });
-           return { kind: "GoCaseClause", exprs: [], body: stmts };
+           cases.push({ kind: "GoCaseClause", exprs: [], body: stmts });
+           continue;
         }
 
-        return { kind: "GoCaseClause", exprs: [], body: [{ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, newLocalEnv, foreignModules, constructorMap) }] };
-      });
+        cases.push({ kind: "GoCaseClause", exprs: [], body: [{ kind: "GoReturnStmt", expr: lowerExpr(c.body, moduleExports, localEnv, foreignModules, constructorMap) }] });
+      }
 
       // Build the switch — bind subject to a temp var, then switch on .Tag
       const bodyStmts: GoIR.GoStmt[] = [];
@@ -1648,9 +1829,28 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
       };
     }
     case "Constructor": {
+        // Well-known Prelude constructors: Ok, Err, Just, Nothing
+        // Must be checked FIRST — these always use sky_wrappers runtime types,
+        // even when defined in the current module (e.g., Sky.Core.Maybe).
+        const wellKnownCtors: Record<string, { tag: number; wrapper: string; field: string }> = {
+            "Ok":      { tag: 0, wrapper: "sky_wrappers.SkyOk",  field: "OkValue" },
+            "Err":     { tag: 1, wrapper: "sky_wrappers.SkyErr",  field: "ErrValue" },
+            "Just":    { tag: 0, wrapper: "sky_wrappers.SkyJust",    field: "JustValue" },
+            "Nothing": { tag: 1, wrapper: "sky_wrappers.SkyNothing", field: "" },
+        };
+        const wk = wellKnownCtors[expr.name];
+        if (wk) {
+            const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+            // Use wrapper functions: SkyOk/SkyErr/SkyJust/SkyNothing
+            return {
+                kind: "GoCallExpr",
+                fn: { kind: "GoIdent", name: wk.wrapper },
+                args: argExprs.length > 0 ? argExprs : (wk.field === "" ? [] : [{ kind: "GoIdent", name: "nil" }])
+            } as any;
+        }
+        // Local or imported ADT constructor (not well-known)
         const ctorInfo = constructorMap?.get(expr.name) || _importedCtorTags?.get(expr.name);
         if (ctorInfo) {
-            // Known ADT constructor: emit ParentType{Tag: tagIndex, CtorValueN: arg}
             const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
             const kvPairs: string[] = [`Tag: ${ctorInfo.tagIndex}`, `SkyName: "${expr.name}"`];
             for (let j = 0; j < expr.args.length; j++) {
@@ -1661,47 +1861,6 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                 kind: "GoRawExpr",
                 code: `${ctorInfo.adtName}{${kvPairs.join(", ")}}`
             } as any;
-        }
-        // Well-known Prelude constructors: Ok, Err, Just, Nothing
-        // These are defined in Sky.Core.Prelude/Maybe and may not be in the
-        // current module's constructorMap.  Emit proper Go runtime values.
-        const wellKnownCtors: Record<string, { tag: number; wrapper: string; field: string }> = {
-            "Ok":      { tag: 0, wrapper: "sky_wrappers.SkyOk",  field: "OkValue" },
-            "Err":     { tag: 1, wrapper: "sky_wrappers.SkyErr",  field: "ErrValue" },
-            "Just":    { tag: 0, wrapper: "",                     field: "JustValue" },
-            "Nothing": { tag: 1, wrapper: "",                     field: "" },
-        };
-        const wk = wellKnownCtors[expr.name];
-        if (wk) {
-            const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
-            if (wk.wrapper) {
-                // Result Ok/Err — use helper functions SkyOk / SkyErr
-                return {
-                    kind: "GoCallExpr",
-                    fn: { kind: "GoIdent", name: wk.wrapper },
-                    args: argExprs.length > 0 ? argExprs : [{ kind: "GoIdent", name: "nil" }]
-                } as any;
-            }
-            // Maybe Just/Nothing — use anonymous struct
-            if (argExprs.length > 0) {
-                // Just value
-                return {
-                    kind: "GoRawExpr",
-                    code: `struct{ Tag int; SkyName string; ${wk.field} any }{Tag: ${wk.tag}, SkyName: "${expr.name}", ${wk.field}: ${emitGoExprForLower(argExprs[0])}}`
-                } as any;
-            }
-            // Nothing (no args) — include JustValue: nil so the struct type
-            // matches Just's struct{ Tag int; SkyName string; JustValue any } for consistent matching.
-            if (expr.name === "Nothing") {
-                return {
-                    kind: "GoRawExpr",
-                    code: `struct{ Tag int; SkyName string; JustValue any }{Tag: ${wk.tag}, SkyName: "Nothing", JustValue: nil}`
-                } as any;
-            }
-            return {
-                kind: "GoRawExpr",
-                code: `struct{ Tag int; SkyName string }{Tag: ${wk.tag}, SkyName: "${expr.name}"}`
-                } as any;
         }
         // Special interop types: Foreign, JsValue map to nil in Go
         if (expr.name === "Foreign" || expr.name === "JsValue") {

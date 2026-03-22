@@ -15,11 +15,9 @@ import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
 
-
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT LIST
 -- ══════════════════════════════════════════════════════
-
 viewAdminProducts model =
     let
         lang =
@@ -32,12 +30,22 @@ viewAdminProducts model =
             List.length products - publishedCount
     in
         Layout.adminPage model
-            (div []
-                [ div [ tw [ flex, justifyBetween, itemsCenter, mb6 ] ]
+            (
+            div []
+                [ div [ tw [ flex , justifyBetween , itemsCenter , mb6 ] ]
                     [ div []
-                        [ h1 [ tw [ text2xl, fontBold, textGray900 ] ] [ text (Tr.t lang "admin.products") ]
-                        , p [ tw [ textGray500, mt1 ] ]
-                            [ text (String.fromInt (List.length products) ++ " total / " ++ String.fromInt publishedCount ++ " published / " ++ String.fromInt draftCount ++ " draft") ]
+                        [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                            [ text (Tr.t lang "admin.products") ]
+                        , p [ tw [ textGray500 , mt1 ] ]
+                            [ text
+                                (
+                                String.fromInt (List.length products) ++
+                                " total / " ++
+                                String.fromInt publishedCount ++
+                                " published / " ++
+                                String.fromInt draftCount ++ " draft"
+                                )
+                            ]
                         ]
                     , a
                         [ href "/admin/products/new"
@@ -47,31 +55,36 @@ viewAdminProducts model =
                         [ text ("+ " ++ Tr.t lang "admin.newProduct") ]
                     ]
                 , div [ Layout.card ]
-                    (if List.isEmpty products then
-                        [ div [ tw [ p8, textCenter ] ]
-                            [ p [ tw [ textGray400, mb4 ] ] [ text "No products yet" ]
+                    (
+                    if List.isEmpty products then
+                        [ div [ tw [ p8 , textCenter ] ]
+                            [ p [ tw [ textGray400 , mb4 ] ]
+                                [ text "No products yet" ]
                             , a
                                 [ href "/admin/products/new"
                                 , attribute "sky-nav" ""
-                                , tw [ textSm, textBlue600, fontSemibold ]
+                                , tw [ textSm , textBlue600 , fontSemibold ]
                                 ]
                                 [ text "Create your first product" ]
                             ]
                         ]
                     else
-                        [ div [ Layout.tableHeader_, style "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center" ]
+                        [ div
+                            [ Layout.tableHeader_
+                            , style
+                                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center"
+                            ]
                             [ text "Product"
                             , text "Category"
                             , text "Price"
                             , text "Stock"
                             , text "Status"
                             ]
-                        ]
-                        ++ List.map (viewAdminProductRow model) products
+                        ] ++
+                        List.map (viewAdminProductRow model) products
                     )
                 ]
             )
-
 
 viewAdminProductRow model product =
     let
@@ -93,7 +106,7 @@ viewAdminProductRow model product =
             case List.head images of
                 Just img ->
                     Db.getField "data" img
-
+                
                 Nothing ->
                     ""
     in
@@ -101,20 +114,24 @@ viewAdminProductRow model product =
             [ href ("/admin/products/" ++ productId)
             , attribute "sky-nav" ""
             , Layout.adminRow
-            , style "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center"
+            , style
+                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center"
             ]
-            [ div [ tw [ flex, itemsCenter, gap3 ] ]
-                [ if thumb /= "" then
-                    img [ src thumb, alt title, Layout.adminThumb ]
-                  else
+            [ div [ tw [ flex , itemsCenter , gap3 ] ]
+                [ if thumb != "" then
+                    img [ src thumb , alt title , Layout.adminThumb ]
+                else
                     div [ Layout.adminThumbPlaceholder ] [ text "~" ]
-                , span [ tw [ fontMedium, textGray900, textSm ] ] [ text title ]
+                , span [ tw [ fontMedium , textGray900 , textSm ] ]
+                    [ text title ]
                 ]
-            , span [ tw [ textSm, textGray500 ] ] [ text category ]
-            , span [ tw [ textSm, fontMedium, textGray900 ] ] [ text pricing.original ]
-            , span [ tw [ textSm, textGray500 ] ]
+            , span [ tw [ textSm , textGray500 ] ] [ text category ]
+            , span [ tw [ textSm , fontMedium , textGray900 ] ]
+                [ text pricing.original ]
+            , span [ tw [ textSm , textGray500 ] ]
                 [ text
-                    (if stock < 0 then
+                    (
+                    if stock < 0 then
                         "Unlimited"
                     else
                         String.fromInt stock
@@ -122,36 +139,45 @@ viewAdminProductRow model product =
                 ]
             , if published then
                 span [ Layout.badgeLive ] [ text "Live" ]
-              else
+            else
                 span [ Layout.badgeDraft ] [ text "Draft" ]
             ]
-
 
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT FORM
 -- ══════════════════════════════════════════════════════
-
 viewAdminNewProduct model =
     Layout.adminPage model
-        (div []
+        (
+        div []
             [ div [ tw [ mb6 ] ]
-                [ a [ href "/admin/products", attribute "sky-nav" "", tw [ textSm, textGray500 ] ]
+                [ a
+                    [ href "/admin/products"
+                    , attribute "sky-nav" ""
+                    , tw [ textSm , textGray500 ]
+                    ]
                     [ text "< Products" ]
-                , h1 [ tw [ text2xl, fontBold, textGray900, mt2 ] ] [ text (Tr.t model.lang "admin.newProduct") ]
+                , h1 [ tw [ text2xl , fontBold , textGray900 , mt2 ] ]
+                    [ text (Tr.t model.lang "admin.newProduct") ]
                 ]
             , viewProductForm model
             ]
         )
 
-
 viewAdminEditProduct model =
     Layout.adminPage model
-        (div []
+        (
+        div []
             [ div [ tw [ mb6 ] ]
-                [ a [ href "/admin/products", attribute "sky-nav" "", tw [ textSm, textGray500 ] ]
+                [ a
+                    [ href "/admin/products"
+                    , attribute "sky-nav" ""
+                    , tw [ textSm , textGray500 ]
+                    ]
                     [ text "< Products" ]
-                , div [ tw [ flex, justifyBetween, itemsCenter, mt2 ] ]
-                    [ h1 [ tw [ text2xl, fontBold, textGray900 ] ] [ text (Tr.t model.lang "admin.editProduct") ]
+                , div [ tw [ flex , justifyBetween , itemsCenter , mt2 ] ]
+                    [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                        [ text (Tr.t model.lang "admin.editProduct") ]
                     , button
                         [ onClick (DeleteProduct model.editProductId)
                         , Layout.btnDangerOutline
@@ -160,13 +186,16 @@ viewAdminEditProduct model =
                     ]
                 ]
             , viewProductForm model
-            , if model.editProductId /= "" then
+            , if model.editProductId != "" then
+
+-- ══════════════════════════════════════════════════════
+-- IMAGE MANAGER
+-- ══════════════════════════════════════════════════════
                 viewImageManager model
-              else
+            else
                 text ""
             ]
         )
-
 
 viewProductForm model =
     let
@@ -175,35 +204,76 @@ viewProductForm model =
     in
         div [ Layout.card ]
             [ div [ Layout.cardHeader ]
-                [ h3 [ tw [ fontSemibold, textGray900, textSm ] ]
+                [ h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
                     [ text
-                        (if lang == "zh" then
+                        (
+                        if lang == "zh" then
                             "基本信息"
                         else
                             "Basic Information"
                         )
                     ]
                 ]
-            , div [ Layout.cardBody, tw [ flex, flexCol, gap5 ] ]
+            , div [ Layout.cardBody , tw [ flex , flexCol , gap5 ] ]
                 [ formField (Tr.t lang "admin.product.title")
-                    (input [ type_ "text", value model.editTitle, onInput UpdateEditTitle, Layout.formInput, placeholder "Product name", required () ])
+                    (
+                    input
+                        [ type_ "text"
+                        , value model.editTitle
+                        , onInput UpdateEditTitle
+                        , Layout.formInput
+                        , placeholder "Product name"
+                        , required ()
+                        ]
+                    )
                 , formField (Tr.t lang "admin.product.summary")
-                    (textarea [ value model.editSummary, onInput UpdateEditSummary, rows 4, Layout.formInput, placeholder "Describe the product..." ])
-                , div [ tw [ grid, gridCols2, gap4 ] ]
+                    (
+                    textarea
+                        [ value model.editSummary
+                        , onInput UpdateEditSummary
+                        , rows 4
+                        , Layout.formInput
+                        , placeholder "Describe the product..."
+                        ]
+                        []
+                    )
+                , div [ tw [ grid , gridCols2 , gap4 ] ]
                     [ formField (Tr.t lang "admin.product.category")
-                        (select [ onChange UpdateEditCategory, Layout.formInput ]
-                            (List.map
-                                (\cat ->
-                                    option [ value cat, if cat == model.editCategory then selected () else class "" ] [ text cat ]
+                        (
+                        select
+                            [ onChange UpdateEditCategory , Layout.formInput ]
+                            (
+                            List.map
+                                (
+                                \cat ->
+                                    option
+                                        [ value cat
+                                        , if cat == model.editCategory then
+                                            selected ()
+                                        else
+                                            class ""
+                                        ]
+                                        [ text cat ]
                                 )
                                 allCategories
                             )
                         )
                     , formField (Tr.t lang "admin.product.currency")
-                        (select [ onChange UpdateEditCurrency, Layout.formInput ]
-                            (List.map
-                                (\cur ->
-                                    option [ value cur, if cur == model.editCurrency then selected () else class "" ] [ text cur ]
+                        (
+                        select
+                            [ onChange UpdateEditCurrency , Layout.formInput ]
+                            (
+                            List.map
+                                (
+                                \cur ->
+                                    option
+                                        [ value cur
+                                        , if cur == model.editCurrency then
+                                            selected ()
+                                        else
+                                            class ""
+                                        ]
+                                        [ text cur ]
                                 )
                                 allCurrencies
                             )
@@ -211,29 +281,59 @@ viewProductForm model =
                     ]
                 ]
             , div [ Layout.cardSection ]
-                [ h3 [ tw [ fontSemibold, textGray900, textSm, mb4 ] ]
+                [ h3 [ tw [ fontSemibold , textGray900 , textSm , mb4 ] ]
                     [ text
-                        (if lang == "zh" then
+                        (
+                        if lang == "zh" then
                             "价格与库存"
                         else
                             "Pricing & Inventory"
                         )
                     ]
-                , div [ tw [ grid, gridCols3, gap4 ] ]
+                , div [ tw [ grid , gridCols3 , gap4 ] ]
                     [ formField (Tr.t lang "admin.product.price")
-                        (input [ type_ "number", value model.editPrice, onInput UpdateEditPrice, Layout.formInput, placeholder "0", required (), min "0" ])
+                        (
+                        input
+                            [ type_ "number"
+                            , value model.editPrice
+                            , onInput UpdateEditPrice
+                            , Layout.formInput
+                            , placeholder "0"
+                            , required ()
+                            , min "0"
+                            ]
+                        )
                     , formField (Tr.t lang "admin.product.discount")
-                        (input [ type_ "number", value model.editDiscount, onInput UpdateEditDiscount, Layout.formInput, placeholder "0", min "0" ])
+                        (
+                        input
+                            [ type_ "number"
+                            , value model.editDiscount
+                            , onInput UpdateEditDiscount
+                            , Layout.formInput
+                            , placeholder "0"
+                            , min "0"
+                            ]
+                        )
                     , formField (Tr.t lang "admin.product.stock")
-                        (input [ type_ "number", value model.editStock, onInput UpdateEditStock, Layout.formInput, placeholder "-1", min "-1" ])
+                        (
+                        input
+                            [ type_ "number"
+                            , value model.editStock
+                            , onInput UpdateEditStock
+                            , Layout.formInput
+                            , placeholder "-1"
+                            , min "-1"
+                            ]
+                        )
                     ]
                 ]
             , div [ Layout.cardFooter ]
-                [ div [ tw [ flex, itemsCenter, gap3 ] ]
+                [ div [ tw [ flex , itemsCenter , gap3 ] ]
                     [ button
                         [ onClick ToggleEditPublished
                         , class
-                            (if model.editPublished then
+                            (
+                            if model.editPublished then
                                 "toggle toggle-on"
                             else
                                 "toggle toggle-off"
@@ -241,7 +341,8 @@ viewProductForm model =
                         ]
                         [ span
                             [ class
-                                (if model.editPublished then
+                                (
+                                if model.editPublished then
                                     "toggle-knob toggle-knob-on"
                                 else
                                     "toggle-knob toggle-knob-off"
@@ -249,29 +350,24 @@ viewProductForm model =
                             ]
                             []
                         ]
-                    , span [ tw [ textSm, fontMedium, textGray700 ] ]
+                    , span [ tw [ textSm , fontMedium , textGray700 ] ]
                         [ text (Tr.t lang "admin.product.published") ]
                     ]
-                , div [ tw [ flex, gap3 ] ]
-                    [ a [ href "/admin/products", attribute "sky-nav" "", Layout.btnSecondary ]
+                , div [ tw [ flex , gap3 ] ]
+                    [ a
+                        [ href "/admin/products"
+                        , attribute "sky-nav" ""
+                        , Layout.btnSecondary
+                        ]
                         [ text (Tr.t lang "common.cancel") ]
-                    , button [ onClick SubmitProduct, Layout.btnPrimary ]
+                    , button [ onClick SubmitProduct , Layout.btnPrimary ]
                         [ text (Tr.t lang "admin.product.save") ]
                     ]
                 ]
             ]
 
-
 formField label input_ =
-    div []
-        [ label [ Layout.formLabel_ ] [ text label ]
-        , input_
-        ]
-
-
--- ══════════════════════════════════════════════════════
--- IMAGE MANAGER
--- ══════════════════════════════════════════════════════
+    div [] [ label [ Layout.formLabel_ ] [ text label ] , input_ ]
 
 viewImageManager model =
     let
@@ -280,24 +376,42 @@ viewImageManager model =
         images =
             model.productImages
     in
-        div [ Layout.card, tw [ mt6 ] ]
-            [ div [ Layout.cardHeader, tw [ flex, justifyBetween, itemsCenter ] ]
-                [ h3 [ tw [ fontSemibold, textGray900, textSm ] ]
-                    [ text (Tr.t lang "admin.product.images" ++ " (" ++ String.fromInt (List.length images) ++ ")") ]
+        div [ Layout.card , tw [ mt6 ] ]
+            [ div
+                [ Layout.cardHeader
+                , tw [ flex , justifyBetween , itemsCenter ]
+                ]
+                [ h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
+                    [ text
+                        (
+                        Tr.t lang "admin.product.images" ++
+                        " (" ++ String.fromInt (List.length images) ++ ")"
+                        )
+                    ]
                 ]
             , div [ Layout.cardBody ]
                 [ if List.isEmpty images then
                     text ""
-                  else
-                    div [ tw [ grid, gap4, mb6 ], style "grid-template-columns:repeat(auto-fill,minmax(120px,1fr))" ]
-                        (List.map
-                            (\imgRow ->
+                else
+                    div
+                        [ tw [ grid , gap4 , mb6 ]
+                        , style
+                            "grid-template-columns:repeat(auto-fill,minmax(120px,1fr))"
+                        ]
+                        (
+                        List.map
+                            (
+                            \imgRow ->
                                 let
                                     imageId =
                                         Db.getField "id" imgRow
                                 in
                                     div [ Layout.imgCardSquare ]
-                                        [ img [ src (Db.getField "data" imgRow), alt "Product image", Layout.objectCover_ ]
+                                        [ img
+                                            [ src (Db.getField "data" imgRow)
+                                            , alt "Product image"
+                                            , Layout.objectCover_
+                                            ]
                                         , button
                                             [ onClick (DeleteImage imageId)
                                             , Layout.imgOverlayDelete
@@ -309,77 +423,131 @@ viewImageManager model =
                         )
                 , div [ Layout.uploadZone ]
                     [ div [ tw [ flex1 ] ]
-                        [ input [ type_ "file", attribute "accept" "image/*", id "imageFile", dataAttribute "target" "imageData", tw [ textSm ] ]
-                        , input [ type_ "hidden", id "imageData", onInput UpdateImageData ]
+                        [ input
+                            [ type_ "file"
+                            , attribute "accept" "image/*"
+                            , id "imageFile"
+                            , dataAttribute "target" "imageData"
+                            , tw [ textSm ]
+                            ]
+                        , input
+                            [ type_ "hidden"
+                            , id "imageData"
+                            , onInput UpdateImageData
+                            ]
                         ]
-                    , button [ onClick UploadImage, Layout.btnPrimary ]
+                    , button [ onClick UploadImage , Layout.btnPrimary ]
                         [ text (Tr.t lang "admin.product.upload") ]
                     ]
                 , fileUploadScript
                 ]
             ]
 
-
 fileUploadScript =
-    raw "<script>(function(){if(window._skyFileUpload)return;window._skyFileUpload=true;document.addEventListener('change',function(e){if(e.target&&e.target.type==='file'&&e.target.dataset.target){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(ev){var t=document.getElementById(e.target.dataset.target);if(t){t.value=ev.target.result;t.dispatchEvent(new Event('input',{bubbles:true}));}};r.readAsDataURL(f);}});})()</script>"
-
+    raw
+        "<script>(function(){if(window._skyFileUpload)return;window._skyFileUpload=true;document.addEventListener('change',function(e){if(e.target&&e.target.type==='file'&&e.target.dataset.target){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(ev){var t=document.getElementById(e.target.dataset.target);if(t){t.value=ev.target.result;t.dispatchEvent(new Event('input',{bubbles:true}));}};r.readAsDataURL(f);}});})()</script>"
 
 -- ══════════════════════════════════════════════════════
 -- ADMIN ORDERS
 -- ══════════════════════════════════════════════════════
-
 viewAdminOrders model =
     let
         lang =
             model.lang
     in
         Layout.adminPage model
-            (div []
+            (
+            div []
                 [ div [ tw [ mb6 ] ]
-                    [ h1 [ tw [ text2xl, fontBold, textGray900 ] ] [ text (Tr.t lang "admin.orders") ]
-                    , p [ tw [ textGray500, mt1 ] ]
-                        [ text (String.fromInt (List.length model.adminOrders) ++ " orders") ]
+                    [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                        [ text (Tr.t lang "admin.orders") ]
+                    , p [ tw [ textGray500 , mt1 ] ]
+                        [ text
+                            (
+                            String.fromInt (List.length model.adminOrders) ++
+                            " orders"
+                            )
+                        ]
                     ]
                 , viewOrderFilter model
                 , div [ Layout.card ]
-                    (if List.isEmpty model.adminOrders then
-                        [ div [ tw [ p8, textCenter ] ]
-                            [ p [ tw [ textGray400 ] ] [ text "No orders found" ] ]
+                    (
+                    if List.isEmpty model.adminOrders then
+                        [ div [ tw [ p8 , textCenter ] ]
+                            [ p [ tw [ textGray400 ] ]
+                                [ text "No orders found" ]
+                            ]
                         ]
                     else
-                        [ div [ Layout.tableHeader_, style "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center" ]
+                        [ div
+                            [ Layout.tableHeader_
+                            , style
+                                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center"
+                            ]
                             [ text "Customer"
                             , text "Total"
                             , text "Date"
                             , text "Status"
                             ]
-                        ]
-                        ++ List.map (viewAdminOrderRow model) model.adminOrders
+                        ] ++
+                        List.map (viewAdminOrderRow model) model.adminOrders
                     )
                 ]
             )
 
-
 viewOrderFilter model =
-    div [ tw [ flex, flexWrap, gap2, mb4 ] ]
-        ([ orderFilterBtn "all" "All" model.adminOrderFilter ]
-            ++ List.map
-                (\st -> orderFilterBtn st (Tr.tCartState model.lang st) model.adminOrderFilter)
-                [ "pending", "ordered", "shipped", "delivered", "cancelled", "refunded" ]
+    div [ tw [ flex , flexWrap , gap2 , mb4 ] ]
+        (
+        [ orderFilterBtn "all" "All" model.adminOrderFilter ] ++
+        List.map
+            (
+            \st ->
+                orderFilterBtn st (Tr.tCartState model.lang st)
+                    model.adminOrderFilter
+            )
+            [ "pending"
+            , "ordered"
+            , "shipped"
+            , "delivered"
+            , "cancelled"
+            , "refunded"
+            ]
         )
-
 
 orderFilterBtn filterValue label activeFilter =
     button
         [ onClick (SetAdminOrderFilter filterValue)
         , if activeFilter == filterValue then
-            tw [ textSm, px4, py1, roundedFull, fontSemibold, bgBlue600, textWhite, border, borderBlue600 ]
-          else
-            tw [ textSm, px4, py1, roundedFull, fontMedium, bgWhite, textGray500, border, borderGray200, hover borderGray400 ]
+            tw
+                [ textSm
+                , px4
+                , py1
+                , roundedFull
+                , fontSemibold
+                , bgBlue600
+                , textWhite
+                , border
+                , borderBlue600
+                ]
+        else
+            tw
+                [ textSm
+                , px4
+                , py1
+                , roundedFull
+                , fontMedium
+                , bgWhite
+                , textGray500
+                , border
+                , borderGray200
+                , hover borderGray400
+                ]
         ]
         [ text label ]
 
-
+-- ══════════════════════════════════════════════════════
+-- ADMIN ORDER DETAIL
+-- ══════════════════════════════════════════════════════
 viewAdminOrderRow model order =
     let
         orderId =
@@ -401,18 +569,19 @@ viewAdminOrderRow model order =
             [ href ("/admin/orders/" ++ orderId)
             , attribute "sky-nav" ""
             , Layout.adminRow
-            , style "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center"
+            , style
+                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center"
             ]
             [ div []
-                [ div [ tw [ fontMedium, textSm, textGray900 ] ] [ text userName ]
-                , div [ tw [ textXs, textGray400 ] ] [ text userEmail ]
+                [ div [ tw [ fontMedium , textSm , textGray900 ] ]
+                    [ text userName ]
+                , div [ tw [ textXs , textGray400 ] ] [ text userEmail ]
                 ]
-            , span [ tw [ textSm, fontMedium, textGray900 ] ]
+            , span [ tw [ textSm , fontMedium , textGray900 ] ]
                 [ text (Money.formatPrice totalAmount totalCurrency) ]
-            , span [ tw [ textXs, textGray500 ] ] [ text createdAt ]
+            , span [ tw [ textXs , textGray500 ] ] [ text createdAt ]
             , stateBadge model st
             ]
-
 
 stateBadge model st =
     let
@@ -420,43 +589,38 @@ stateBadge model st =
             case st of
                 "ordered" ->
                     Layout.badgeOrdered
-
+                
                 "shipped" ->
                     Layout.badgeShipped
-
+                
                 "delivered" ->
                     Layout.badgeDelivered
-
+                
                 "cancelled" ->
                     Layout.badgeCancelled
-
+                
                 "refunded" ->
                     Layout.badgeRefunded
-
+                
                 "pending" ->
                     Layout.badgePending
-
+                
                 _ ->
                     Layout.badgeDraft
     in
         span [ badgeStyle ] [ text (Tr.tCartState model.lang st) ]
 
-
--- ══════════════════════════════════════════════════════
--- ADMIN ORDER DETAIL
--- ══════════════════════════════════════════════════════
-
 viewAdminOrder model =
     Layout.adminPage model
-        (case model.order of
+        (
+        case model.order of
             Just order ->
                 viewAdminOrderDetail model order
-
+            
             Nothing ->
-                div [ tw [ textCenter, py16 ] ]
+                div [ tw [ textCenter , py16 ] ]
                     [ p [ tw [ textGray400 ] ] [ text "Order not found." ] ]
         )
-
 
 viewAdminOrderDetail model order =
     let
@@ -491,35 +655,48 @@ viewAdminOrderDetail model order =
     in
         div []
             [ div [ tw [ mb6 ] ]
-                [ a [ href "/admin/orders", attribute "sky-nav" "", tw [ textSm, textGray500 ] ]
+                [ a
+                    [ href "/admin/orders"
+                    , attribute "sky-nav" ""
+                    , tw [ textSm , textGray500 ]
+                    ]
                     [ text "< Orders" ]
-                , div [ tw [ flex, justifyBetween, itemsCenter, mt2 ] ]
-                    [ h1 [ tw [ text2xl, fontBold, textGray900 ] ] [ text (Tr.t lang "order.detail") ]
+                , div [ tw [ flex , justifyBetween , itemsCenter , mt2 ] ]
+                    [ h1 [ tw [ text2xl , fontBold , textGray900 ] ]
+                        [ text (Tr.t lang "order.detail") ]
                     , stateBadge model st
                     ]
                 ]
-            , div [ tw [ grid, gridCols2, gap6, mb6 ] ]
-                [ infoCard "Customer" [ userName, userEmail ]
-                , infoCard "Total" [ Money.formatPrice totalAmount totalCurrency, createdAt ]
-                , if shippingName /= "" then
-                    infoCard "Shipping" [ shippingName, shippingLine1 ++ ", " ++ shippingCity, shippingPostcode ++ " " ++ shippingCountry ]
-                  else
+            , div [ tw [ grid , gridCols2 , gap6 , mb6 ] ]
+                [ infoCard "Customer" [ userName , userEmail ]
+                , infoCard "Total"
+                    [ Money.formatPrice totalAmount totalCurrency , createdAt ]
+                , if shippingName != "" then
+                    infoCard "Shipping"
+                        [ shippingName
+                        , shippingLine1 ++ ", " ++ shippingCity
+                        , shippingPostcode ++ " " ++ shippingCountry
+                        ]
+                else
                     text ""
-                , if remarks /= "" then
+                , if remarks != "" then
                     infoCard "Remarks" [ remarks ]
-                  else
+                else
                     text ""
                 ]
-            , div [ Layout.card, tw [ mb6 ] ]
+            , div [ Layout.card , tw [ mb6 ] ]
                 [ div [ Layout.cardBody ]
-                    [ h3 [ tw [ fontSemibold, textGray900, textSm, mb3 ] ]
+                    [ h3 [ tw [ fontSemibold , textGray900 , textSm , mb3 ] ]
                         [ text (Tr.t lang "admin.order.updateState") ]
-                    , div [ tw [ flex, flexWrap, gap2 ] ]
-                        (List.map
-                            (\newState ->
-                                if newState /= st && newState /= "ongoing" then
+                    , div [ tw [ flex , flexWrap , gap2 ] ]
+                        (
+                        List.map
+                            (
+                            \newState ->
+                                if newState != st && newState != "ongoing" then
                                     button
-                                        [ onClick (UpdateOrderState orderId newState)
+                                        [ onClick
+                                            (UpdateOrderState orderId newState)
                                         , Layout.btnState
                                         ]
                                         [ text (Tr.tCartState lang newState) ]
@@ -532,20 +709,22 @@ viewAdminOrderDetail model order =
                 ]
             , div [ Layout.card ]
                 [ div [ Layout.cardHeader ]
-                    [ span [ tw [ textSm, fontSemibold, textGray600 ] ] [ text "Items" ] ]
-                , div []
-                    (List.map viewAdminOrderItem model.orderItems)
+                    [ span [ tw [ textSm , fontSemibold , textGray600 ] ]
+                        [ text "Items" ]
+                    ]
+                , div [] (List.map viewAdminOrderItem model.orderItems)
                 ]
             ]
-
 
 infoCard title lines =
     div [ Layout.infoCard_ ]
         [ span [ Layout.infoCardLabel ] [ text title ]
         , div []
-            (List.map (\line -> p [ tw [ textSm, textGray700 ] ] [ text line ]) lines)
+            (
+            List.map (\line -> p [ tw [ textSm , textGray700 ] ] [ text line ])
+                lines
+            )
         ]
-
 
 viewAdminOrderItem item =
     let
@@ -569,8 +748,11 @@ viewAdminOrderItem item =
     in
         div [ Layout.adminRow ]
             [ div [ tw [ flex1 ] ]
-                [ span [ tw [ textSm, fontMedium, textGray900 ] ] [ text title ]
-                , span [ tw [ textXs, textGray400, ml2 ] ] [ text ("x" ++ String.fromInt qty) ]
+                [ span [ tw [ textSm , fontMedium , textGray900 ] ]
+                    [ text title ]
+                , span [ tw [ textXs , textGray400 , ml2 ] ]
+                    [ text ("x" ++ String.fromInt qty) ]
                 ]
-            , span [ tw [ textSm, fontSemibold, textGray900 ] ] [ text lineTotal_ ]
+            , span [ tw [ textSm , fontSemibold , textGray900 ] ]
+                [ text lineTotal_ ]
             ]

@@ -32,6 +32,7 @@ const TABLE: Readonly<Record<string, OperatorInfo>> = Object.freeze({
 
   "==": { precedence: 4, associativity: "non" },
   "!=": { precedence: 4, associativity: "non" },
+  "/=": { precedence: 4, associativity: "non" },
   "<": { precedence: 4, associativity: "non" },
   "<=": { precedence: 4, associativity: "non" },
   ">": { precedence: 4, associativity: "non" },
@@ -44,6 +45,7 @@ const TABLE: Readonly<Record<string, OperatorInfo>> = Object.freeze({
 
   "*": { precedence: 7, associativity: "left" },
   "/": { precedence: 7, associativity: "left" },
+  "//": { precedence: 7, associativity: "left" },
   "%": { precedence: 7, associativity: "left" },
 });
 

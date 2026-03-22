@@ -43,6 +43,20 @@ func SkyErr(e any) SkyResult {
 	return SkyResult{Tag: 1, SkyName: "Err", ErrValue: e}
 }
 
+type SkyMaybe struct {
+	Tag int
+	SkyName string
+	JustValue any
+}
+
+func SkyJust(v any) SkyMaybe {
+	return SkyMaybe{Tag: 0, SkyName: "Just", JustValue: v}
+}
+
+func SkyNothing() SkyMaybe {
+	return SkyMaybe{Tag: 1, SkyName: "Nothing"}
+}
+
 type Tuple2 struct {
     V0 any
     V1 any
@@ -189,19 +203,19 @@ func Sky_list_Foldr(fn any, acc any, list any) any {
 func Sky_list_Head(list any) any {
 	lst, ok := list.([]any)
 	if !ok || len(lst) == 0 {
-		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil} // Nothing
+		return SkyNothing() // Nothing
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: lst[0]}
+	return SkyJust(lst[0])
 }
 
 func Sky_list_Tail(list any) any {
 	lst, ok := list.([]any)
 	if !ok || len(lst) == 0 {
-		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil} // Nothing
+		return SkyNothing() // Nothing
 	}
 	tail := make([]any, len(lst)-1)
 	copy(tail, lst[1:])
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: tail}
+	return SkyJust(tail)
 }
 
 func Sky_list_Length(list any) any {
@@ -373,32 +387,32 @@ func Sky_list_Map2(fn any, listA any, listB any) any {
 
 func Sky_list_Maximum(list any) any {
 	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} }
+	if !ok || len(lst) == 0 { return SkyNothing() }
 	best := lst[0]
 	for _, item := range lst[1:] {
 		if fmt.Sprintf("%v", item) > fmt.Sprintf("%v", best) { best = item }
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: best}
+	return SkyJust(best)
 }
 
 func Sky_list_Minimum(list any) any {
 	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} }
+	if !ok || len(lst) == 0 { return SkyNothing() }
 	best := lst[0]
 	for _, item := range lst[1:] {
 		if fmt.Sprintf("%v", item) < fmt.Sprintf("%v", best) { best = item }
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: best}
+	return SkyJust(best)
 }
 
 func Sky_list_Find(pred any, list any) any {
 	lst, ok := list.([]any)
-	if !ok { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} }
+	if !ok { return SkyNothing() }
 	fn := sky_asFunc(pred)
 	for _, item := range lst {
-		if sky_asBool(fn(item)) { return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: item} }
+		if sky_asBool(fn(item)) { return SkyJust(item) }
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"}
+	return SkyNothing()
 }
 
 func Sky_list_FilterMap(fn any, list any) any {
@@ -408,20 +422,8 @@ func Sky_list_FilterMap(fn any, list any) any {
 	result := []any{}
 	for _, item := range lst {
 		maybe := f(item)
-		// Check if it's Just (Tag 0) or Nothing (Tag 1)
-		type MaybeResult struct { Tag int; JustValue any }
-		if m, ok := maybe.(MaybeResult); ok && m.Tag == 0 {
+		if m, ok := maybe.(SkyMaybe); ok && m.Tag == 0 {
 			result = append(result, m.JustValue)
-		} else {
-			// Try struct literal form
-			v := reflect.ValueOf(maybe)
-			if v.Kind() == reflect.Struct {
-				tagField := v.FieldByName("Tag")
-				if tagField.IsValid() && tagField.Int() == 0 {
-					valField := v.FieldByName("JustValue")
-					if valField.IsValid() { result = append(result, valField.Interface()) }
-				}
-			}
 		}
 	}
 	return result
@@ -573,6 +575,11 @@ func Sky_string_Indexes(sub any, s any) any {
 	return result
 }
 
+func Sky_string_FromBytes(b any) any {
+	if bs, ok := b.([]byte); ok { return string(bs) }
+	return fmt.Sprintf("%v", b)
+}
+
 // ============= Dict Operations =============
 
 func Sky_dict_Empty() any {
@@ -594,8 +601,8 @@ func Sky_dict_Insert(key any, val any, dict any) any {
 func Sky_dict_Get(key any, dict any) any {
 	m := sky_asMapAny(dict)
 	val, ok := m[key]
-	if !ok { return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil} } // Nothing
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val}
+	if !ok { return SkyNothing() } // Nothing
+	return SkyJust(val)
 }
 
 func Sky_dict_Remove(key any, dict any) any {
@@ -683,19 +690,15 @@ func Sky_dict_Update(key any, fn any, dict any) any {
 	val, ok := m[key]
 	var maybeVal any
 	if ok {
-		maybeVal = struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val}
+		maybeVal = SkyJust(val)
 	} else {
-		maybeVal = struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}
+		maybeVal = SkyNothing()
 	}
 	newMaybe := sky_asFunc(fn)(maybeVal)
-	newVal := reflect.ValueOf(newMaybe)
-	if newVal.Kind() == reflect.Struct {
-		tagField := newVal.FieldByName("Tag")
-		if tagField.IsValid() && sky_getTag(newVal) == 0 {
-			result[key] = newVal.FieldByName("JustValue").Interface()
-		} else {
-			delete(result, key)
-		}
+	if m, ok := newMaybe.(SkyMaybe); ok && m.Tag == 0 {
+		result[key] = m.JustValue
+	} else {
+		delete(result, key)
 	}
 	return result
 }
@@ -793,8 +796,8 @@ func Sky_json_AsList(val any) any {
 }
 
 func Sky_json_AsNullable(val any) any {
-	if val == nil { return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}) } // Ok Nothing
-	return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val})
+	if val == nil { return SkyOk(SkyNothing()) } // Ok Nothing
+	return SkyOk(SkyJust(val))
 }
 
 func Sky_json_At(keys any, obj any) any {
@@ -947,7 +950,7 @@ func Sky_json_decoder_Fail(msg any) any {
 func Sky_json_decoder_Nullable(decoder any) any {
 	return func(val any) any {
 		if val == nil {
-			return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})
+			return SkyOk(SkyNothing())
 		}
 		result := sky_asFunc(decoder)(val)
 		r := reflect.ValueOf(result)
@@ -955,7 +958,7 @@ func Sky_json_decoder_Nullable(decoder any) any {
 			return result
 		}
 		inner := r.FieldByName("OkValue").Interface()
-		return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: inner})
+		return SkyOk(SkyJust(inner))
 	}
 }
 
@@ -1211,10 +1214,10 @@ func Sky_json_decoder_Maybe(decoder any) any {
 		result := sky_asFunc(decoder)(val)
 		r := reflect.ValueOf(result)
 		if sky_getTag(r) == 1 {
-			return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})
+			return SkyOk(SkyNothing())
 		}
 		inner := r.FieldByName("OkValue").Interface()
-		return SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: inner})
+		return SkyOk(SkyJust(inner))
 	}
 }
 
@@ -1251,35 +1254,30 @@ func Sky_os_GetArgs() any {
 // ============= Maybe Operations =============
 
 func Sky_maybe_WithDefault(defaultVal any, maybe any) any {
-	r := reflect.ValueOf(maybe)
-	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
-		if sky_getTag(r) == 0 {
-			return r.FieldByName("JustValue").Interface()
+	if m, ok := maybe.(SkyMaybe); ok {
+		if m.Tag == 0 {
+			return m.JustValue
 		}
 	}
 	return defaultVal
 }
 
 func Sky_maybe_Map(fn any, maybe any) any {
-	r := reflect.ValueOf(maybe)
-	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
-		if sky_getTag(r) == 1 {
+	if m, ok := maybe.(SkyMaybe); ok {
+		if m.Tag == 1 {
 			return maybe
 		}
-		inner := r.FieldByName("JustValue").Interface()
-		return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: sky_asFunc(fn)(inner)}
+		return SkyJust(sky_asFunc(fn)(m.JustValue))
 	}
 	return maybe
 }
 
 func Sky_maybe_AndThen(fn any, maybe any) any {
-	r := reflect.ValueOf(maybe)
-	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
-		if sky_getTag(r) == 1 {
+	if m, ok := maybe.(SkyMaybe); ok {
+		if m.Tag == 1 {
 			return maybe
 		}
-		inner := r.FieldByName("JustValue").Interface()
-		return sky_asFunc(fn)(inner)
+		return sky_asFunc(fn)(m.JustValue)
 	}
 	return maybe
 }
@@ -1336,10 +1334,10 @@ func Sky_result_ToMaybe(result any) any {
 	r := reflect.ValueOf(result)
 	if r.Kind() == reflect.Struct && r.FieldByName("Tag").IsValid() {
 		if sky_getTag(r) == 0 {
-			return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: r.FieldByName("OkValue").Interface()}
+			return SkyJust(r.FieldByName("OkValue").Interface())
 		}
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}
+	return SkyNothing()
 }
 
 // ============= Error Operations =============
@@ -1481,9 +1479,9 @@ func Sky_array_Get(index any, arr any) any {
 	a := sky_asList(arr)
 	i := sky_asInt(index)
 	if i < 0 || i >= len(a) {
-		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} // Nothing
+		return SkyNothing() // Nothing
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: a[i]} // Just
+	return SkyJust(a[i]) // Just
 }
 
 func Sky_array_Set(index any, val any, arr any) any {
@@ -1634,9 +1632,9 @@ func Sky_process_Exit(code any) any {
 func Sky_process_GetEnv(key any) any {
 	val, ok := os.LookupEnv(sky_asString(key))
 	if !ok {
-		return struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing"} // Nothing
+		return SkyNothing() // Nothing
 	}
-	return struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: val} // Just
+	return SkyJust(val) // Just
 }
 
 func Sky_process_GetCwd() any {
@@ -1826,13 +1824,9 @@ func Sky_process_LoadEnv(filePath any) any {
                 imports.add("reflect");
                 return [
                     `\tvar _arg${i} ${t}`,
-                    `\t_mv${i} := reflect.ValueOf(arg${i})`,
-                    `\tif _mv${i}.Kind() == reflect.Struct {`,
-                    `\t\t_tag${i} := _mv${i}.FieldByName("Tag")`,
-                    `\t\tif _tag${i}.IsValid() && sky_getTag(_mv${i}) == 0 {`,
-                    `\t\t\t_v${i} := _mv${i}.FieldByName("JustValue").Interface().(${baseGoType})`,
-                    `\t\t\t_arg${i} = &_v${i}`,
-                    `\t\t}`,
+                    `\tif _m${i}, _mok${i} := arg${i}.(SkyMaybe); _mok${i} && _m${i}.Tag == 0 {`,
+                    `\t\t_v${i} := _m${i}.JustValue.(${baseGoType})`,
+                    `\t\t_arg${i} = &_v${i}`,
                     `\t}`,
                 ].join("\n");
             }
@@ -1912,8 +1906,8 @@ func Sky_process_LoadEnv(filePath any) any {
             if (firstResultPtrPrimitive) {
                 // Pointer-to-primitive field: wrap in Maybe (Just/Nothing)
                 goCode += `\t_fv := ${fieldExpr}\n`;
-                goCode += `\tif _fv == nil {\n\t\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}\n\t}\n`;
-                goCode += `\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_fv}\n`;
+                goCode += `\tif _fv == nil {\n\t\treturn SkyNothing()\n\t}\n`;
+                goCode += `\treturn SkyJust(*_fv)\n`;
             } else if (fieldRetType.startsWith("[]") && fieldRetType !== "[]any") {
                 goCode += `\t_val := ${fieldExpr}\n`;
                 goCode += `\t_result := make([]any, len(_val))\n`;
@@ -1937,8 +1931,8 @@ func Sky_process_LoadEnv(filePath any) any {
                     // (*primitive, error) → Result Error (Maybe T)
                     goCode += `\t_res, err := ${callExpr}\n`;
                     goCode += `\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n`;
-                    goCode += `\tif _res == nil {\n\t\treturn SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil})\n\t}\n`;
-                    goCode += `\treturn SkyOk(struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_res})\n`;
+                    goCode += `\tif _res == nil {\n\t\treturn SkyOk(SkyNothing())\n\t}\n`;
+                    goCode += `\treturn SkyOk(SkyJust(*_res))\n`;
                 } else if (retTypes.length === 2) {
                     // (T, error) → Result Error T
                     goCode += `\tres, err := ${callExpr}\n\tif err != nil {\n\t\treturn SkyErr(err)\n\t}\n\treturn SkyOk(res)\n`;
@@ -1954,8 +1948,8 @@ func Sky_process_LoadEnv(filePath any) any {
             } else if (isCommaOk) {
                 // (T, bool) comma-ok → Maybe T
                 goCode += `\t_val, _ok := ${callExpr}\n`;
-                goCode += `\tif !_ok {\n\t\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}\n\t}\n`;
-                goCode += `\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: _val}\n`;
+                goCode += `\tif !_ok {\n\t\treturn SkyNothing()\n\t}\n`;
+                goCode += `\treturn SkyJust(_val)\n`;
             } else if (isMultiReturn) {
                 // (T1, T2, ...) without error → Tuple
                 const varNames = retTypes.map((_, i) => `_r${i}`);
@@ -1965,8 +1959,8 @@ func Sky_process_LoadEnv(filePath any) any {
             } else if (firstResultPtrPrimitive) {
                 // Single *primitive return → Maybe T
                 goCode += `\t_res := ${callExpr}\n`;
-                goCode += `\tif _res == nil {\n\t\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 1, SkyName: "Nothing", JustValue: nil}\n\t}\n`;
-                goCode += `\treturn struct{ Tag int; SkyName string; JustValue any }{Tag: 0, SkyName: "Just", JustValue: *_res}\n`;
+                goCode += `\tif _res == nil {\n\t\treturn SkyNothing()\n\t}\n`;
+                goCode += `\treturn SkyJust(*_res)\n`;
             } else {
                 goCode += `\treturn ${callExpr}\n`;
             }
@@ -2221,9 +2215,11 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         }
         // Skip functions that reference unresolved Go generic type parameters
         // These appear as bare T, K, V, E etc. in type assertions or return types
+        // Also skip functions returning Go parameterized types like iter.Seq[string]
         if (/\barg\d+\.\((?:\[\])?\*?[A-Z]\)/.test(block) ||       // .(T), .([]T), .(*T)
             /\) (?:\[\])?\*?[A-Z]\s*\{/.test(block) ||              // ) T {, ) *T {, ) []T {
-            /\) \(\*?[A-Z],/.test(block)) {                          // ) (T, bool) {
+            /\) \(\*?[A-Z],/.test(block) ||                          // ) (T, bool) {
+            /\) \w+\.?\w*\[/.test(block)) {                          // ) iter.Seq[string] {
             continue;
         }
         cleanedGoCode += block;

@@ -9,35 +9,28 @@ import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
-
 -- ══════════════════════════════════════════════════════
 -- QUERIES
 -- ══════════════════════════════════════════════════════
-
 listProducts =
     Result.withDefault []
-        (Db.queryRows
+        (
+        Db.queryRows
             "SELECT * FROM products WHERE published = 1 ORDER BY created_at DESC"
             []
         )
 
-
 listAllProducts =
     Result.withDefault []
-        (Db.queryRows
-            "SELECT * FROM products ORDER BY created_at DESC"
-            []
-        )
-
+        (Db.queryRows "SELECT * FROM products ORDER BY created_at DESC" [])
 
 getProduct productId =
     case Db.queryOne "SELECT * FROM products WHERE id = ?" [ productId ] of
         Ok maybeProduct ->
             maybeProduct
-
+        
         Err _ ->
             Nothing
-
 
 searchProducts query category sortBy sortDir =
     let
@@ -52,24 +45,24 @@ searchProducts query category sortBy sortDir =
             if query == "" then
                 ""
             else
-                " AND (title LIKE '%" ++ query ++ "%' OR summary LIKE '%" ++ query ++ "%')"
+                " AND (title LIKE '%" ++
+                query ++ "%' OR summary LIKE '%" ++ query ++ "%')"
         orderClause =
             if sortBy == "price" then
                 " ORDER BY (price_amount - price_discount) " ++ sortDir
-            else if sortBy == "title" then
-                " ORDER BY title " ++ sortDir
             else
-                " ORDER BY created_at " ++ sortDir
+                if sortBy == "title" then
+                    " ORDER BY title " ++ sortDir
+                else
+                    " ORDER BY created_at " ++ sortDir
         fullQuery =
             baseQuery ++ categoryClause ++ searchClause ++ orderClause
     in
         Result.withDefault [] (Db.queryRows fullQuery [])
 
-
 -- ══════════════════════════════════════════════════════
 -- MUTATIONS
 -- ══════════════════════════════════════════════════════
-
 createProduct title summary category priceAmount priceCurrency priceDiscount stock =
     let
         productId =
@@ -94,10 +87,9 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
                         println ("[PRODUCT] Created: " ++ title)
                 in
                     Ok productId
-
+            
             Err e ->
                 Err e
-
 
 updateProduct productId title summary category priceAmount priceCurrency priceDiscount stock published =
     let
@@ -127,15 +119,15 @@ updateProduct productId title summary category priceAmount priceCurrency priceDi
                         println ("[PRODUCT] Updated: " ++ productId)
                 in
                     Ok productId
-
+            
             Err e ->
                 Err e
-
 
 deleteProduct productId =
     let
         _ =
-            Db.exec "DELETE FROM product_images WHERE product_id = ?" [ productId ]
+            Db.exec "DELETE FROM product_images WHERE product_id = ?"
+                [ productId ]
         _ =
             Db.exec "DELETE FROM cart_items WHERE product_id = ?" [ productId ]
         result =
@@ -145,18 +137,16 @@ deleteProduct productId =
     in
         result
 
-
 -- ══════════════════════════════════════════════════════
 -- IMAGES
 -- ══════════════════════════════════════════════════════
-
 listProductImages productId =
     Result.withDefault []
-        (Db.queryRows
+        (
+        Db.queryRows
             "SELECT id, product_id, data, position FROM product_images WHERE product_id = ? ORDER BY position"
             [ productId ]
         )
-
 
 addProductImage productId imageData =
     let
@@ -164,7 +154,8 @@ addProductImage productId imageData =
             Uuid.newString ()
         positionRows =
             Result.withDefault []
-                (Db.queryRows
+                (
+                Db.queryRows
                     "SELECT COALESCE(MAX(position), -1) as max_pos FROM product_images WHERE product_id = ?"
                     [ productId ]
                 )
@@ -172,7 +163,7 @@ addProductImage productId imageData =
             case List.head positionRows of
                 Just row ->
                     String.fromInt (Db.getInt "max_pos" row + 1)
-
+                
                 Nothing ->
                     "0"
         result =
@@ -187,10 +178,9 @@ addProductImage productId imageData =
                         println ("[IMAGE] Added to product: " ++ productId)
                 in
                     Ok imageId
-
+            
             Err e ->
                 Err e
-
 
 deleteProductImage imageId =
     let

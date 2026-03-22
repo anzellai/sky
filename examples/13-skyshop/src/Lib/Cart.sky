@@ -41,7 +41,10 @@ createCart userId =
                     Ok (Just cart) ->
                         Ok cart
 
-                    _ ->
+                    Ok Nothing ->
+                        Err "Failed to create cart."
+
+                    Err _ ->
                         Err "Failed to create cart."
 
             Err e ->
@@ -134,7 +137,6 @@ updateItemQty itemId quantity =
                 Db.exec
                     "UPDATE cart_items SET quantity = ? WHERE id = ?"
                     [ String.fromInt quantity , itemId ]
-            -- Get cart_id to recalculate
             itemRow =
                 Result.withDefault []
                     (Db.queryRows "SELECT cart_id FROM cart_items WHERE id = ?" [ itemId ])
@@ -166,7 +168,7 @@ removeItem itemId =
         _ =
             Db.exec "DELETE FROM cart_items WHERE id = ?" [ itemId ]
     in
-        if cartId /= "" then
+        if cartId != "" then
             let
                 _ =
                     recalculateTotal cartId

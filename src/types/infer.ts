@@ -534,6 +534,7 @@ export function inferExpression(
         case "-":
         case "*":
         case "/":
+        case "//":
         case "%": {
           const s1 = unify(leftType, { kind: "TypeConstant", name: "Int" });
           const s2 = unify(
@@ -610,6 +611,7 @@ export function inferExpression(
 
         case "==":
         case "!=":
+        case "/=":
         case "<":
         case "<=":
         case ">":

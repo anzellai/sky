@@ -5,14 +5,19 @@ import Sky.Core.String as String
 import Sky.Core.Maybe as Maybe
 import Lib.Db as Db
 
-
 currencySymbol currency =
     case currency of
-        "GBP" -> "£"
-        "HKD" -> "HK$"
-        "USD" -> "$"
-        _ -> currency ++ " "
-
+        "GBP" ->
+            "£"
+        
+        "HKD" ->
+            "HK$"
+        
+        "USD" ->
+            "$"
+        
+        _ ->
+            currency ++ " "
 
 formatAmount amountInPence =
     let
@@ -28,10 +33,8 @@ formatAmount amountInPence =
     in
         String.fromInt pounds ++ "." ++ penceStr
 
-
 formatPrice amount currency =
     currencySymbol currency ++ formatAmount amount
-
 
 formatPriceFromRow row =
     let
@@ -49,7 +52,8 @@ formatPriceFromRow row =
     in
         if discount > 0 then
             { original = currencySymbol currency ++ formatAmount amount
-            , discounted = currencySymbol currency ++ formatAmount effectivePrice
+            , discounted =
+                currencySymbol currency ++ formatAmount effectivePrice
             , hasDiscount = True
             }
         else
