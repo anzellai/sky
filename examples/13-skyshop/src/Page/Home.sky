@@ -383,8 +383,11 @@ viewPrice pricing =
                 [ text pricing.original ]
             ]
 
+viewStockDot : Int -> VNode
 viewStockDot stock =
     if stock == 0 then
-        span [ tw [ w2 , h2 , roundedFull , bgRed500 , inlineBlock ] ] []
+        span [ tw [ w2 , Layout.h2_ , roundedFull , bgRed500 , inlineBlock ] ]
+            []
     else
-        span [ tw [ w2 , h2 , roundedFull , bgGreen500 , inlineBlock ] ] []
+        span [ tw [ w2 , Layout.h2_ , roundedFull , bgGreen500 , inlineBlock ] ]
+            []

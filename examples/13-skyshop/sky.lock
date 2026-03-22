@@ -1,15 +1,16 @@
 dependencies:
   github.com/anzellai/sky-tailwind: 1.0.0
 go:
+  cloud.google.com/go/firestore: latest
+  context: latest
   crypto/sha256: latest
-  database/sql: latest
   encoding/base64: latest
   encoding/hex: latest
   encoding/json: latest
   fmt: latest
   github.com/google/uuid: latest
+  google.golang.org/api/iterator: latest
   io: latest
-  modernc.org/sqlite: latest
   net/http: latest
   net/url: latest
   os: latest

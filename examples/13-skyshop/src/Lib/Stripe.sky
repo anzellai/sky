@@ -4,8 +4,8 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
-import Sky.Core.String as String
 import Sky.Core.Dict as Dict
+import Sky.Core.String as String
 import Std.Log exposing (println)
 import Net.Http as Http
 import Net.Url as Url
@@ -15,10 +15,8 @@ import Sky.Core.Json.Decode as Decode
 import Os
 import Lib.Db as Db
 
-
 apiKey =
     Os.getenv "STRIPE_API_KEY"
-
 
 domainUrl =
     let
@@ -44,20 +42,16 @@ domainUrl =
         else
             "http://" ++ effectiveDomain ++ ":" ++ effectivePort
 
-
 -- ══════════════════════════════════════════════════════
 -- HTTP HELPERS
 -- ══════════════════════════════════════════════════════
-
 urlEncode value =
     Url.queryEscape value
-
 
 buildFormBody params =
     params
         |> List.map (\( k, v ) -> urlEncode k ++ "=" ++ urlEncode v)
         |> String.join "&"
-
 
 stripePost endpoint params =
     let
@@ -71,26 +65,27 @@ stripePost endpoint params =
         case Http.newRequest "POST" url reader of
             Err e ->
                 Err (errorToString e)
-
+            
             Ok req ->
                 let
                     _ =
-                        Http.headerSet (Http.requestHeader req) "Authorization" ("Bearer " ++ apiKey)
+                        Http.headerSet (Http.requestHeader req) "Authorization"
+                            ("Bearer " ++ apiKey)
                     _ =
-                        Http.headerSet (Http.requestHeader req) "Content-Type" "application/x-www-form-urlencoded"
+                        Http.headerSet (Http.requestHeader req) "Content-Type"
+                            "application/x-www-form-urlencoded"
                 in
                     case Http.clientDo (Http.defaultClient ()) req of
                         Err e ->
                             Err (errorToString e)
-
+                        
                         Ok resp ->
                             case Io.readAll (Http.responseBody resp) of
                                 Err e ->
                                     Err (errorToString e)
-
+                                
                                 Ok bytes ->
                                     Ok (String.fromBytes bytes)
-
 
 stripeGet endpoint =
     let
@@ -102,33 +97,33 @@ stripeGet endpoint =
         case Http.newRequest "GET" url reader of
             Err e ->
                 Err (errorToString e)
-
+            
             Ok req ->
                 let
                     _ =
-                        Http.headerSet (Http.requestHeader req) "Authorization" ("Bearer " ++ apiKey)
+                        Http.headerSet (Http.requestHeader req) "Authorization"
+                            ("Bearer " ++ apiKey)
                 in
                     case Http.clientDo (Http.defaultClient ()) req of
                         Err e ->
                             Err (errorToString e)
-
+                        
                         Ok resp ->
                             case Io.readAll (Http.responseBody resp) of
                                 Err e ->
                                     Err (errorToString e)
-
+                                
                                 Ok bytes ->
                                     Ok (String.fromBytes bytes)
-
 
 -- ══════════════════════════════════════════════════════
 -- CHECKOUT SESSION
 -- ══════════════════════════════════════════════════════
-
 buildLineItemParams items =
     items
         |> List.indexedMap
-            (\i item ->
+            (
+            \i item ->
                 let
                     prefix =
                         "line_items[" ++ String.fromInt i ++ "]"
@@ -149,17 +144,19 @@ buildLineItemParams items =
                         String.toLower (Db.getField "price_currency" item)
                 in
                     [ ( prefix ++ "[price_data][product_data][name]" , title )
-                    , ( prefix ++ "[price_data][unit_amount]" , String.fromInt effectivePrice )
+                    , ( prefix ++ "[price_data][unit_amount]"
+                    , String.fromInt effectivePrice
+                    )
                     , ( prefix ++ "[price_data][currency]" , currency )
                     , ( prefix ++ "[quantity]" , qty )
                     ]
             )
         |> List.concat
 
-
 createCheckoutSession cartId items userEmail remarks =
     if apiKey == "" then
-        Err "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
+        Err
+            "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
     else
         let
             successUrl =
@@ -188,21 +185,26 @@ createCheckoutSession cartId items userEmail remarks =
             allParams =
                 baseParams ++ lineItemParams
             _ =
-                println ("[STRIPE] Creating checkout session for cart: " ++ cartId)
+                println
+                    ("[STRIPE] Creating checkout session for cart: " ++ cartId)
         in
             case stripePost "checkout/sessions" allParams of
                 Ok respBody ->
                     case decodeCheckoutResponse respBody of
                         Ok session ->
                             Ok session
-
+                        
                         Err e ->
                             let
                                 _ =
-                                    println ("[STRIPE] Failed to parse response: " ++ e)
+                                    println
+                                        (
+                                        "[STRIPE] Failed to parse response: " ++
+                                        e
+                                        )
                             in
                                 Err ("Failed to create checkout session: " ++ e)
-
+                
                 Err e ->
                     let
                         _ =
@@ -210,24 +212,21 @@ createCheckoutSession cartId items userEmail remarks =
                     in
                         Err ("Stripe API error: " ++ e)
 
-
 decodeCheckoutResponse json =
     Decode.decodeString
-        (Decode.map2
-            (\id url -> { id = id , url = url })
+        (
+        Decode.map2 (\id url -> { id = id , url = url })
             (Decode.field "id" Decode.string)
             (Decode.field "url" Decode.string)
         )
         json
 
-
 -- ══════════════════════════════════════════════════════
 -- PAYMENT VERIFICATION
 -- ══════════════════════════════════════════════════════
-
 verifyPayment cartId =
-    case Db.queryOne "SELECT checkout_reference FROM carts WHERE id = ?" [ cartId ] of
-        Ok (Just cart) ->
+    case Db.getDoc "carts" cartId of
+        Ok Just cart ->
             let
                 reference =
                     Db.getField "checkout_reference" cart
@@ -236,35 +235,47 @@ verifyPayment cartId =
                     Err "No checkout reference found."
                 else
                     verifyStripeSession cartId reference
-
+        
         Ok Nothing ->
             Err "Cart not found."
-
+        
         Err e ->
             Err e
 
-
 verifyStripeSession cartId sessionId =
-    case stripeGet ("checkout/sessions/" ++ sessionId ++ "?expand[]=customer_details&expand[]=shipping_details") of
-        Ok respBody ->
-            case decodePaymentStatus respBody of
-                Ok status ->
-                    if status.status == "complete" && status.paymentStatus == "paid" then
-                        let
-                            _ =
-                                println ("[STRIPE] Payment verified for cart: " ++ cartId)
-                        in
-                            Ok status
-
-                    else
-                        Err ("Payment not complete. Status: " ++ status.status ++ ", Payment: " ++ status.paymentStatus)
-
-                Err e ->
-                    Err ("Failed to parse payment status: " ++ e)
-
-        Err e ->
-            Err ("Failed to retrieve checkout session: " ++ e)
-
+    let
+        endpoint =
+            "checkout/sessions/" ++
+            sessionId ++ "?expand[]=customer_details&expand[]=shipping_details"
+    in
+        case stripeGet endpoint of
+            Ok respBody ->
+                case decodePaymentStatus respBody of
+                    Ok status ->
+                        if status.status == "complete" &&
+                        status.paymentStatus == "paid" then
+                            let
+                                _ =
+                                    println
+                                        (
+                                        "[STRIPE] Payment verified for cart: " ++
+                                        cartId
+                                        )
+                            in
+                                Ok status
+                        else
+                            Err
+                                (
+                                "Payment not complete. Status: " ++
+                                status.status ++
+                                ", Payment: " ++ status.paymentStatus
+                                )
+                    
+                    Err e ->
+                        Err ("Failed to parse payment status: " ++ e)
+            
+            Err e ->
+                Err ("Failed to retrieve checkout session: " ++ e)
 
 type alias PaymentStatus =
     { status : String
@@ -279,11 +290,12 @@ type alias PaymentStatus =
     , shippingPostalCode : String
     }
 
-
 decodePaymentStatus json =
     Decode.decodeString
-        (Decode.map2
-            (\status paymentStatus ->
+        (
+        Decode.map2
+            (
+            \status paymentStatus ->
                 { status = status
                 , paymentStatus = paymentStatus
                 , customerName = ""
@@ -301,46 +313,49 @@ decodePaymentStatus json =
         )
         json
 
-
 -- ══════════════════════════════════════════════════════
 -- STOCK MANAGEMENT
 -- ══════════════════════════════════════════════════════
-
 deductStock cartId =
     let
         items =
             Result.withDefault []
-                (Db.queryRows
-                    "SELECT ci.product_id, ci.quantity, p.stock FROM cart_items ci JOIN products p ON ci.product_id = p.id WHERE ci.cart_id = ?"
-                    [ cartId ]
-                )
+                (Db.queryWhere "cart_items" "cart_id" "==" cartId)
         _ =
-            List.map
-                (\item ->
-                    let
-                        productId =
-                            Db.getField "product_id" item
-                        qty =
-                            Db.getInt "quantity" item
-                        stock =
-                            Db.getInt "stock" item
-                    in
-                        if stock >= 0 then
-                            let
-                                newStock =
-                                    if stock - qty >= 0 then
-                                        stock - qty
-                                    else
-                                        0
-                            in
-                                Db.exec
-                                    "UPDATE products SET stock = ?, updated_at = datetime('now') WHERE id = ?"
-                                    [ String.fromInt newStock , productId ]
-                        else
-                            Ok ()
-                )
-                items
+            List.map (deductItemStock) items
         _ =
             println ("[STOCK] Deducted for cart: " ++ cartId)
     in
         ()
+
+deductItemStock item =
+    let
+        productId =
+            Db.getField "product_id" item
+        qty =
+            Db.getInt "quantity" item
+    in
+        case Db.getDoc "products" productId of
+            Ok Just product ->
+                let
+                    currentStock =
+                        Db.getInt "stock" product
+                in
+                    if currentStock >= 0 then
+                        let
+                            newStock =
+                                if (currentStock - qty) >= 0 then
+                                    String.fromInt (currentStock - qty)
+                                else
+                                    "0"
+                            updatedProduct =
+                                Dict.insert "stock" newStock product
+                            _ =
+                                Db.setDoc "products" productId updatedProduct
+                        in
+                            ()
+                    else
+                        ()
+            
+            _ ->
+                ()

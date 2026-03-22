@@ -40,8 +40,13 @@ export function pascalToKebab(s: string): string {
 /**
  * Convert Sky import parts to possible Go package paths.
  * Handles domain.tld patterns and kebab-case path segments.
+ * Tries joining 2, 3, etc. parts with dots to form domain names.
  * e.g. ["Github", "Com", "FyneIo", "Fyne"] ->
  *   ["github.com/fyne-io/fyne", "github.com/fyneio/fyne", ...]
+ * e.g. ["Cloud", "Google", "Com", "Go", "Firestore"] ->
+ *   ["cloud.google.com/go/firestore", ...]
+ * e.g. ["Firebase", "Google", "Com", "Go", "V4"] ->
+ *   ["firebase.google.com/go/v4", ...]
  */
 export function skyImportToGoPaths(importParts: readonly string[]): string[] {
   const kebabParts = importParts.map(pascalToKebab);
@@ -49,10 +54,17 @@ export function skyImportToGoPaths(importParts: readonly string[]): string[] {
 
   const paths: string[] = [];
 
-  // With domain.tld pattern (first two parts joined by dot)
-  if (importParts.length >= 2) {
-    const kebabPath = kebabParts[0] + "." + kebabParts[1] + "/" + kebabParts.slice(2).join("/");
-    const lowerPath = lowerParts[0] + "." + lowerParts[1] + "/" + lowerParts.slice(2).join("/");
+  // Try joining first N parts with dots to form domain (N = 2, 3, 4, ...)
+  // This handles domains like "github.com", "cloud.google.com",
+  // "firebase.google.com", "google.golang.org", etc.
+  const maxDomainParts = Math.min(importParts.length - 1, 4);
+  for (let n = 2; n <= maxDomainParts; n++) {
+    const kebabDomain = kebabParts.slice(0, n).join(".");
+    const lowerDomain = lowerParts.slice(0, n).join(".");
+    const kebabRest = kebabParts.slice(n).join("/");
+    const lowerRest = lowerParts.slice(n).join("/");
+    const kebabPath = kebabRest ? kebabDomain + "/" + kebabRest : kebabDomain;
+    const lowerPath = lowerRest ? lowerDomain + "/" + lowerRest : lowerDomain;
     paths.push(kebabPath);
     if (lowerPath !== kebabPath) paths.push(lowerPath);
   }

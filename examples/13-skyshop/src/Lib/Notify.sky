@@ -3,6 +3,7 @@ module Lib.Notify exposing (notifyOrderPlaced)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Lib.Db as Db
@@ -40,20 +41,25 @@ notifyOrderPlaced cart items userName userEmail =
             itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
         notificationId =
             Uuid.newString ()
+        notificationData =
+            Dict.fromList
+                [ ( "id" , notificationId )
+                , ( "notification_type" , "order" )
+                , ( "subject" , subject )
+                , ( "body" , body )
+                , ( "sent" , "false" )
+                ]
 
-                -- Log the notification for manual sending if SMTP is configured
-                -- Full SMTP integration requires Go's net/smtp package
+                -- Log the notification
         _ =
-            Db.exec
-                "INSERT INTO notifications (id, notification_type, subject, body, sent) VALUES (?, ?, ?, ?, ?)"
-                [ notificationId , "order" , subject , body , "0" ]
+            Db.setDoc "notifications" notificationId notificationData
                 |> ignoreResult
 
                 -- Mark as sent in DB
         _ =
             println ("[NOTIFY] " ++ body)
         _ =
-            sendEmailNotification subject body
+            sendEmailNotification notificationId subject body
     in
         ()
 
@@ -65,7 +71,7 @@ ignoreResult result =
         Err _ ->
             ()
 
-sendEmailNotification subject body =
+sendEmailNotification notificationId subject body =
     let
         smtpHost =
             Os.getenv "SMTP_HOST"
@@ -88,8 +94,12 @@ sendEmailNotification subject body =
                         notifyTo ++ ": " ++ subject
                         )
                 _ =
-                    Db.exec
-                        "UPDATE notifications SET sent = 1 WHERE subject = ? AND sent = 0"
-                        [ subject ]
+                    case Db.getDoc "notifications" notificationId of
+                        Ok Just notification ->
+                            Db.setDoc "notifications" notificationId
+                                (Dict.insert "sent" "true" notification)
+                        
+                        _ ->
+                            Ok ()
             in
                 ()

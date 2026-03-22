@@ -144,10 +144,13 @@ viewProductDetail model product =
                 ]
             ]
 
-viewFeature label =
+viewFeature : String -> VNode
+viewFeature featureLabel =
     div [ tw [ flex , itemsCenter , gap2 ] ]
-        [ span [ tw [ w2 , h2 , roundedFull , bgGreen500 , inlineBlock ] ] []
-        , span [ tw [ textXs , textGray500 ] ] [ text label ]
+        [ span
+            [ tw [ w2 , Layout.h2_ , roundedFull , bgGreen500 , inlineBlock ] ]
+            []
+        , span [ tw [ textXs , textGray500 ] ] [ text featureLabel ]
         ]
 
 viewImageGallery images =
@@ -271,6 +274,7 @@ viewDetailStock model stock =
                         [ text (Tr.t lang "product.unlimited") ]
             ]
 
+viewAddToCart : Model -> a -> Int -> VNode
 viewAddToCart model product stock =
     let
         lang =
@@ -349,7 +353,7 @@ viewAddToCart model product stock =
                         , roundedLg
                         , fontSemibold
                         ]
-                    , disabled ()
+                    , attribute "disabled" ""
                     ]
                     [ text (Tr.t lang "product.outOfStock") ]
             ]

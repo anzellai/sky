@@ -1,4 +1,4 @@
-module Ui.Layout exposing (page, adminPage, btnPrimary, btnPrimaryLg, btnSecondary, btnCheckout, btnDangerOutline, btnState, card, cardHeader, cardBody, cardSection, cardFooter, formInput, formLabel_, qtyBtn, emptyIcon, emptyIconSm, adminThumb, adminThumbPlaceholder, notificationSuccess, notificationError, sidebarLink_, sidebarLinkActive, tableHeader_, adminRow, badge_, badgeLive, badgeDraft, badgeOrdered, badgeShipped, badgeDelivered, badgeCancelled, badgeRefunded, badgePending, infoCard_, infoCardLabel, cartItem, cartThumb, cartThumbPlaceholder, lineTotal, removeBtn, galleryMain, galleryThumb, galleryPlaceholder, imgPlaceholder, objectCover_, uploadZone, imgCardSquare, imgOverlayDelete)
+module Ui.Layout exposing (page, adminPage, btnPrimary, btnPrimaryLg, btnSecondary, btnCheckout, btnDangerOutline, btnState, card, cardHeader, cardBody, cardSection, cardFooter, formInput, formLabel_, qtyBtn, emptyIcon, emptyIconSm, adminThumb, adminThumbPlaceholder, notificationSuccess, notificationError, sidebarLink_, sidebarLinkActive, tableHeader_, adminRow, badge_, badgeLive, badgeDraft, badgeOrdered, badgeShipped, badgeDelivered, badgeCancelled, badgeRefunded, badgePending, infoCard_, infoCardLabel, cartItem, cartThumb, cartThumbPlaceholder, lineTotal, removeBtn, galleryMain, galleryThumb, galleryPlaceholder, imgPlaceholder, objectCover_, uploadZone, imgCardSquare, imgOverlayDelete, h2_)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -14,7 +14,10 @@ import Lib.Auth as Auth
 import Lib.Translation as Tr
 import Tailwind exposing (..)
 
--- Aliases to avoid collision with Std.Html h5/h6 heading elements
+-- Aliases to avoid collision with Std.Html heading elements
+h2_ =
+    ( "class" , "h-2" )
+
 h5_ =
     ( "class" , "h-5" )
 

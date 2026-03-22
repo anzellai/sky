@@ -4,6 +4,7 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
+import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Crypto.Sha256 as Sha256
@@ -54,56 +55,63 @@ signUp name email password phone =
 
 doSignUp name email password phone =
     let
-        userId =
-            Uuid.newString ()
-        salt =
-            generateSalt
-        hash =
-            hashPassword password salt
-        token =
-            Uuid.newString ()
-        isAdminUser =
-            if List.member email adminEmails then
-                "1"
-            else
-                "0"
-        result =
-            Db.exec
-                "INSERT INTO users (id, email, name, phone, password_hash, password_salt, session_token, is_admin) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-                [ userId
-                , email
-                , name
-                , phone
-                , hash
-                , salt
-                , token
-                , isAdminUser
-                ]
+
+        -- Check if email already exists
+        existingUsers =
+            Result.withDefault [] (Db.queryWhere "users" "email" "==" email)
     in
-        case result of
-            Ok _ ->
-                let
-                    _ =
-                        println
-                            (
-                            "[AUTH] User created: " ++
-                            name ++ " (" ++ email ++ ")"
-                            )
-                in
-                    getUserById userId
-                        |> Result.andThen
-                            (
-                            \maybeUser ->
-                                case maybeUser of
-                                    Just user ->
-                                        Ok user
-                                    
-                                    Nothing ->
-                                        Err "Failed to retrieve created user."
-                            )
-            
-            Err _ ->
-                Err "Email already taken."
+        if List.length existingUsers > 0 then
+            Err "Email already taken."
+        else
+            let
+                userId =
+                    Uuid.newString ()
+                salt =
+                    generateSalt
+                hash =
+                    hashPassword password salt
+                token =
+                    Uuid.newString ()
+                isAdminUser =
+                    if List.member email adminEmails then
+                        "true"
+                    else
+                        "false"
+                userData =
+                    Dict.fromList
+                        [ ( "id" , userId )
+                        , ( "email" , email )
+                        , ( "name" , name )
+                        , ( "phone" , phone )
+                        , ( "address_line1" , "" )
+                        , ( "address_line2" , "" )
+                        , ( "address_city" , "" )
+                        , ( "address_county" , "" )
+                        , ( "address_country" , "" )
+                        , ( "address_postcode" , "" )
+                        , ( "password_hash" , hash )
+                        , ( "password_salt" , salt )
+                        , ( "is_admin" , isAdminUser )
+                        , ( "suspended" , "false" )
+                        , ( "session_token" , token )
+                        ]
+                result =
+                    Db.setDoc "users" userId userData
+            in
+                case result of
+                    Ok _ ->
+                        let
+                            _ =
+                                println
+                                    (
+                                    "[AUTH] User created: " ++
+                                    name ++ " (" ++ email ++ ")"
+                                    )
+                        in
+                            Ok userData
+                    
+                    Err e ->
+                        Err e
 
 -- ══════════════════════════════════════════════════════
 -- SIGN IN
@@ -118,53 +126,69 @@ signIn email password =
             doSignIn email password
 
 doSignIn email password =
-    case Db.queryOne "SELECT * FROM users WHERE email = ?" [ email ] of
-        Ok (Just user) ->
-            let
-                storedHash =
-                    Db.getField "password_hash" user
-                storedSalt =
-                    Db.getField "password_salt" user
-                inputHash =
-                    hashPassword password storedSalt
-            in
-                if inputHash == storedHash then
-                    if Db.getBool "suspended" user then
-                        Err "Account suspended. Please contact support."
-                    else
+    let
+        usersResult =
+            Db.queryWhere "users" "email" "==" email
+    in
+        case usersResult of
+            Ok users ->
+                case List.head users of
+                    Just user ->
                         let
-                            token =
-                                Uuid.newString ()
-                            userId =
-                                Db.getField "id" user
-                            _ =
-                                Db.exec
-                                    "UPDATE users SET session_token = ?, updated_at = datetime('now') WHERE id = ?"
-                                    [ token , userId ]
-                            _ =
-                                println ("[AUTH] Sign-in success: " ++ email)
+                            storedHash =
+                                Db.getField "password_hash" user
+                            storedSalt =
+                                Db.getField "password_salt" user
+                            inputHash =
+                                hashPassword password storedSalt
                         in
-                            Ok user
-                else
-                    let
-                        _ =
-                            println
-                                (
-                                "[AUTH] Sign-in failed (bad password): " ++
-                                email
-                                )
-                    in
-                        Err "Invalid email or password."
-        
-        Ok Nothing ->
-            let
-                _ =
-                    println ("[AUTH] Sign-in failed (not found): " ++ email)
-            in
-                Err "Invalid email or password."
-        
-        Err _ ->
-            Err "Database error. Please try again."
+                            if inputHash == storedHash then
+                                if Db.getBool "suspended" user then
+                                    Err
+                                        "Account suspended. Please contact support."
+                                else
+                                    let
+                                        token =
+                                            Uuid.newString ()
+                                        userId =
+                                            Db.getField "id" user
+                                        updatedUser =
+                                            Dict.insert "session_token" token
+                                                user
+                                        _ =
+                                            Db.setDoc "users" userId updatedUser
+                                        _ =
+                                            println
+                                                (
+                                                "[AUTH] Sign-in success: " ++
+                                                email
+                                                )
+                                    in
+                                        Ok updatedUser
+                            else
+                                let
+                                    _ =
+                                        println
+                                            (
+                                            "[AUTH] Sign-in failed (bad password): " ++
+                                            email
+                                            )
+                                in
+                                    Err "Invalid email or password."
+                    
+                    Nothing ->
+                        let
+                            _ =
+                                println
+                                    (
+                                    "[AUTH] Sign-in failed (not found): " ++
+                                    email
+                                    )
+                        in
+                            Err "Invalid email or password."
+            
+            Err _ ->
+                Err "Database error. Please try again."
 
 -- ══════════════════════════════════════════════════════
 -- SESSION
@@ -177,9 +201,7 @@ signOut =
         ()
 
 getUserById userId =
-    Db.queryOne
-        "SELECT id, email, name, phone, address_line1, address_line2, address_city, address_county, address_country, address_postcode, is_admin, suspended, created_at FROM users WHERE id = ?"
-        [ userId ]
+    Db.getDoc "users" userId
 
 getSessionUser userId =
     case getUserById userId of

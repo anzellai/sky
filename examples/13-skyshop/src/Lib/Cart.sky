@@ -4,69 +4,115 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
+import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
-
 -- ══════════════════════════════════════════════════════
 -- CART QUERIES
 -- ══════════════════════════════════════════════════════
-
 getOrCreateCart userId =
-    case Db.queryOne "SELECT * FROM carts WHERE owner_id = ? AND state = 'ongoing' ORDER BY created_at DESC LIMIT 1" [ userId ] of
-        Ok (Just cart) ->
-            Ok cart
-
-        Ok Nothing ->
-            createCart userId
-
+    case Db.queryWhere "carts" "owner_id" "==" userId of
+        Ok carts ->
+            let
+                ongoingCarts =
+                    List.filter (\c -> Db.getField "state" c == "ongoing") carts
+            in
+                case List.head ongoingCarts of
+                    Just cart ->
+                        Ok cart
+                    
+                    Nothing ->
+                        createCart userId
+        
         Err e ->
             Err e
-
 
 createCart userId =
     let
         cartId =
             Uuid.newString ()
-        result =
-            Db.exec
-                "INSERT INTO carts (id, owner_id, state) VALUES (?, ?, 'ongoing')"
-                [ cartId , userId ]
+        cartData =
+            Dict.fromList
+                [ ( "id" , cartId )
+                , ( "owner_id" , userId )
+                , ( "state" , "ongoing" )
+                , ( "checkout_link" , "" )
+                , ( "checkout_reference" , "" )
+                , ( "checkout_remarks" , "" )
+                , ( "shipping_name" , "" )
+                , ( "shipping_email" , "" )
+                , ( "shipping_phone" , "" )
+                , ( "shipping_line1" , "" )
+                , ( "shipping_line2" , "" )
+                , ( "shipping_city" , "" )
+                , ( "shipping_country" , "" )
+                , ( "shipping_postcode" , "" )
+                , ( "total_amount" , "0" )
+                , ( "total_currency" , "GBP" )
+                ]
     in
-        case result of
+        case Db.setDoc "carts" cartId cartData of
             Ok _ ->
-                case Db.queryOne "SELECT * FROM carts WHERE id = ?" [ cartId ] of
-                    Ok (Just cart) ->
-                        Ok cart
-
-                    Ok Nothing ->
-                        Err "Failed to create cart."
-
-                    Err _ ->
-                        Err "Failed to create cart."
-
+                Ok cartData
+            
             Err e ->
                 Err e
 
-
 getCart cartId =
-    case Db.queryOne "SELECT * FROM carts WHERE id = ?" [ cartId ] of
+    case Db.getDoc "carts" cartId of
         Ok maybeCart ->
             maybeCart
-
+        
         Err _ ->
             Nothing
 
-
 getCartItems cartId =
-    Result.withDefault []
-        (Db.queryRows
-            "SELECT ci.id, ci.cart_id, ci.product_id, ci.quantity, p.title, p.summary, p.price_amount, p.price_currency, p.price_discount, p.price_tax, p.stock FROM cart_items ci JOIN products p ON ci.product_id = p.id WHERE ci.cart_id = ?"
-            [ cartId ]
-        )
+    let
+        itemsResult =
+            Db.queryWhere "cart_items" "cart_id" "==" cartId
+        items =
+            Result.withDefault [] itemsResult
+    in
+        List.map (enrichCartItem) items
 
+enrichCartItem item =
+    let
+        productId =
+            Db.getField "product_id" item
+    in
+        case Db.getDoc "products" productId of
+            Ok Just product ->
+                Dict.insert "title" (Db.getField "title" product)
+                    (
+                    Dict.insert "summary" (Db.getField "summary" product)
+                        (
+                        Dict.insert "price_amount"
+                            (Db.getField "price_amount" product)
+                            (
+                            Dict.insert "price_currency"
+                                (Db.getField "price_currency" product)
+                                (
+                                Dict.insert "price_discount"
+                                    (Db.getField "price_discount" product)
+                                    (
+                                    Dict.insert "price_tax"
+                                        (Db.getField "price_tax" product)
+                                        (
+                                        Dict.insert "stock"
+                                            (Db.getField "stock" product)
+                                            item
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
+            
+            _ ->
+                item
 
 getCartWithItems cartId =
     let
@@ -76,27 +122,25 @@ getCartWithItems cartId =
             case cart of
                 Just c ->
                     getCartItems (Db.getField "id" c)
-
+                
                 Nothing ->
                     []
     in
         ( cart , items )
 
-
 -- ══════════════════════════════════════════════════════
 -- CART MUTATIONS
 -- ══════════════════════════════════════════════════════
-
 addItem cartId productId quantity =
     let
-        existingRows =
+        existingItems =
             Result.withDefault []
-                (Db.queryRows
-                    "SELECT id, quantity FROM cart_items WHERE cart_id = ? AND product_id = ?"
-                    [ cartId , productId ]
-                )
+                (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+        matchingItems =
+            List.filter (\item -> Db.getField "product_id" item == productId)
+                existingItems
     in
-        case List.head existingRows of
+        case List.head matchingItems of
             Just existing ->
                 let
                     existingQty =
@@ -105,78 +149,72 @@ addItem cartId productId quantity =
                         existingQty + quantity
                     itemId =
                         Db.getField "id" existing
+                    updatedItem =
+                        Dict.insert "quantity" (String.fromInt newQty) existing
                     _ =
-                        Db.exec
-                            "UPDATE cart_items SET quantity = ? WHERE id = ?"
-                            [ String.fromInt newQty , itemId ]
+                        Db.setDoc "cart_items" itemId updatedItem
                     _ =
                         recalculateTotal cartId
                 in
                     Ok ()
-
+            
             Nothing ->
                 let
                     itemId =
                         Uuid.newString ()
+                    itemData =
+                        Dict.fromList
+                            [ ( "id" , itemId )
+                            , ( "cart_id" , cartId )
+                            , ( "product_id" , productId )
+                            , ( "quantity" , String.fromInt quantity )
+                            ]
                     _ =
-                        Db.exec
-                            "INSERT INTO cart_items (id, cart_id, product_id, quantity) VALUES (?, ?, ?, ?)"
-                            [ itemId , cartId , productId , String.fromInt quantity ]
+                        Db.setDoc "cart_items" itemId itemData
                     _ =
                         recalculateTotal cartId
                 in
                     Ok ()
-
 
 updateItemQty itemId quantity =
     if quantity <= 0 then
         removeItem itemId
     else
-        let
-            _ =
-                Db.exec
-                    "UPDATE cart_items SET quantity = ? WHERE id = ?"
-                    [ String.fromInt quantity , itemId ]
-            itemRow =
-                Result.withDefault []
-                    (Db.queryRows "SELECT cart_id FROM cart_items WHERE id = ?" [ itemId ])
-        in
-            case List.head itemRow of
-                Just row ->
-                    let
-                        _ =
-                            recalculateTotal (Db.getField "cart_id" row)
-                    in
-                        Ok ()
-
-                Nothing ->
+        case Db.getDoc "cart_items" itemId of
+            Ok Just item ->
+                let
+                    updatedItem =
+                        Dict.insert "quantity" (String.fromInt quantity) item
+                    _ =
+                        Db.setDoc "cart_items" itemId updatedItem
+                    _ =
+                        recalculateTotal (Db.getField "cart_id" item)
+                in
                     Ok ()
-
+            
+            _ ->
+                Ok ()
 
 removeItem itemId =
-    let
-        itemRow =
-            Result.withDefault []
-                (Db.queryRows "SELECT cart_id FROM cart_items WHERE id = ?" [ itemId ])
-        cartId =
-            case List.head itemRow of
-                Just row ->
-                    Db.getField "cart_id" row
-
-                Nothing ->
-                    ""
-        _ =
-            Db.exec "DELETE FROM cart_items WHERE id = ?" [ itemId ]
-    in
-        if cartId != "" then
+    case Db.getDoc "cart_items" itemId of
+        Ok Just item ->
             let
+                cartId =
+                    Db.getField "cart_id" item
                 _ =
-                    recalculateTotal cartId
+                    Db.deleteDoc "cart_items" itemId
             in
-                Ok ()
-        else
+                if cartId != "" then
+                    let
+                        _ =
+                            recalculateTotal cartId
+                    in
+                        Ok ()
+                else
+                    Ok ()
+        
+        _ ->
             Ok ()
-
 
 recalculateTotal cartId =
     let
@@ -184,7 +222,8 @@ recalculateTotal cartId =
             getCartItems cartId
         total =
             List.foldl
-                (\item acc ->
+                (
+                \item acc ->
                     let
                         price =
                             Db.getInt "price_amount" item
@@ -208,71 +247,153 @@ recalculateTotal cartId =
             case List.head items of
                 Just item ->
                     Db.getField "price_currency" item
-
+                
                 Nothing ->
                     "GBP"
-        _ =
-            Db.exec
-                "UPDATE carts SET total_amount = ?, total_currency = ?, updated_at = datetime('now') WHERE id = ?"
-                [ String.fromInt total , currency , cartId ]
     in
-        total
-
+        case Db.getDoc "carts" cartId of
+            Ok Just cart ->
+                let
+                    updatedCart =
+                        Dict.insert "total_amount" (String.fromInt total)
+                            (Dict.insert "total_currency" currency cart)
+                    _ =
+                        Db.setDoc "carts" cartId updatedCart
+                in
+                    total
+            
+            _ ->
+                total
 
 -- ══════════════════════════════════════════════════════
 -- ORDER STATE
 -- ══════════════════════════════════════════════════════
-
 setCartState cartId newState =
-    let
-        result =
-            Db.exec
-                "UPDATE carts SET state = ?, updated_at = datetime('now') WHERE id = ?"
-                [ newState , cartId ]
-        _ =
-            println ("[CART] State changed: " ++ cartId ++ " -> " ++ newState)
-    in
-        result
-
+    case Db.getDoc "carts" cartId of
+        Ok Just cart ->
+            let
+                updatedCart =
+                    Dict.insert "state" newState cart
+                result =
+                    Db.setDoc "carts" cartId updatedCart
+                _ =
+                    println
+                        (
+                        "[CART] State changed: " ++ cartId ++ " -> " ++ newState
+                        )
+            in
+                case result of
+                    Ok v ->
+                        Ok v
+                    
+                    Err e ->
+                        Err e
+        
+        Ok Nothing ->
+            Err "Cart not found."
+        
+        Err e ->
+            Err e
 
 setCheckout cartId link reference remarks =
-    Db.exec
-        "UPDATE carts SET checkout_link = ?, checkout_reference = ?, checkout_remarks = ?, state = 'pending', updated_at = datetime('now') WHERE id = ?"
-        [ link , reference , remarks , cartId ]
-
+    case Db.getDoc "carts" cartId of
+        Ok Just cart ->
+            let
+                updatedCart =
+                    Dict.insert "checkout_link" link
+                        (
+                        Dict.insert "checkout_reference" reference
+                            (
+                            Dict.insert "checkout_remarks" remarks
+                                (Dict.insert "state" "pending" cart)
+                            )
+                        )
+            in
+                Db.setDoc "carts" cartId updatedCart
+        
+        Ok Nothing ->
+            Err "Cart not found."
+        
+        Err e ->
+            Err e
 
 setShipping cartId name email phone line1 line2 city country postcode =
-    Db.exec
-        "UPDATE carts SET shipping_name = ?, shipping_email = ?, shipping_phone = ?, shipping_line1 = ?, shipping_line2 = ?, shipping_city = ?, shipping_country = ?, shipping_postcode = ?, updated_at = datetime('now') WHERE id = ?"
-        [ name , email , phone , line1 , line2 , city , country , postcode , cartId ]
-
+    case Db.getDoc "carts" cartId of
+        Ok Just cart ->
+            let
+                updatedCart =
+                    Dict.insert "shipping_name" name
+                        (
+                        Dict.insert "shipping_email" email
+                            (
+                            Dict.insert "shipping_phone" phone
+                                (
+                                Dict.insert "shipping_line1" line1
+                                    (
+                                    Dict.insert "shipping_line2" line2
+                                        (
+                                        Dict.insert "shipping_city" city
+                                            (
+                                            Dict.insert "shipping_country"
+                                                country
+                                                (
+                                                Dict.insert "shipping_postcode"
+                                                    postcode
+                                                    cart
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
+            in
+                Db.setDoc "carts" cartId updatedCart
+        
+        Ok Nothing ->
+            Err "Cart not found."
+        
+        Err e ->
+            Err e
 
 -- ══════════════════════════════════════════════════════
 -- ORDER QUERIES
 -- ══════════════════════════════════════════════════════
-
 getUserCarts userId =
-    Result.withDefault []
-        (Db.queryRows
-            "SELECT * FROM carts WHERE owner_id = ? AND state != 'ongoing' ORDER BY updated_at DESC"
-            [ userId ]
-        )
-
+    let
+        allCarts =
+            Result.withDefault [] (Db.queryWhere "carts" "owner_id" "==" userId)
+    in
+        List.filter (\c -> Db.getField "state" c != "ongoing") allCarts
 
 getOrdersByState state =
     if state == "all" then
         getAllOrders
     else
-        Result.withDefault []
-            (Db.queryRows
-                "SELECT c.*, u.name as user_name, u.email as user_email FROM carts c LEFT JOIN users u ON c.owner_id = u.id WHERE c.state = ? ORDER BY c.updated_at DESC"
-                [ state ]
-            )
-
+        let
+            orders =
+                Result.withDefault [] (Db.queryWhere "carts" "state" "==" state)
+        in
+            List.map (enrichOrderWithUser) orders
 
 getAllOrders =
-    Result.withDefault []
-        (Db.queryRows
-            "SELECT c.*, u.name as user_name, u.email as user_email FROM carts c LEFT JOIN users u ON c.owner_id = u.id WHERE c.state != 'ongoing' ORDER BY c.updated_at DESC"
-            []
-        )
+    let
+        allCarts =
+            Result.withDefault [] (Db.queryDocs "carts")
+        nonOngoing =
+            List.filter (\c -> Db.getField "state" c != "ongoing") allCarts
+    in
+        List.map (enrichOrderWithUser) nonOngoing
+
+enrichOrderWithUser order =
+    let
+        ownerId =
+            Db.getField "owner_id" order
+    in
+        case Db.getDoc "users" ownerId of
+            Ok Just user ->
+                Dict.insert "user_name" (Db.getField "name" user)
+                    (Dict.insert "user_email" (Db.getField "email" user) order)
+            
+            _ ->
+                order

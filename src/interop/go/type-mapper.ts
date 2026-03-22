@@ -119,7 +119,16 @@ function mapGoTypeToSkyInner(goType: string, currentPackage?: string): string {
     return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
+// Sky reserved words that cannot be used as identifiers
+const SKY_RESERVED_WORDS = new Set([
+    "type", "module", "import", "exposing", "as", "if", "then", "else",
+    "case", "of", "let", "in", "where", "port", "foreign",
+]);
+
 export function lowerCamelCase(s: string): string {
     if (s.length === 0) return s;
-    return s.charAt(0).toLowerCase() + s.slice(1);
+    const result = s.charAt(0).toLowerCase() + s.slice(1);
+    // Append underscore if the name clashes with a Sky keyword
+    if (SKY_RESERVED_WORDS.has(result)) return result + "_";
+    return result;
 }

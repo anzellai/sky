@@ -215,9 +215,10 @@ viewProductForm model =
                     ]
                 ]
             , div [ Layout.cardBody , tw [ flex , flexCol , gap5 ] ]
-                [ formField (Tr.t lang "admin.product.title")
-                    (
-                    input
+                [ div []
+                    [ label [ Layout.formLabel_ ]
+                        [ text (Tr.t lang "admin.product.title") ]
+                    , input
                         [ type_ "text"
                         , value model.editTitle
                         , onInput UpdateEditTitle
@@ -225,10 +226,11 @@ viewProductForm model =
                         , placeholder "Product name"
                         , required ()
                         ]
-                    )
-                , formField (Tr.t lang "admin.product.summary")
-                    (
-                    textarea
+                    ]
+                , div []
+                    [ label [ Layout.formLabel_ ]
+                        [ text (Tr.t lang "admin.product.summary") ]
+                    , textarea
                         [ value model.editSummary
                         , onInput UpdateEditSummary
                         , rows 4
@@ -236,11 +238,12 @@ viewProductForm model =
                         , placeholder "Describe the product..."
                         ]
                         []
-                    )
+                    ]
                 , div [ tw [ grid , gridCols2 , gap4 ] ]
-                    [ formField (Tr.t lang "admin.product.category")
-                        (
-                        select
+                    [ div []
+                        [ label [ Layout.formLabel_ ]
+                            [ text (Tr.t lang "admin.product.category") ]
+                        , select
                             [ onChange UpdateEditCategory , Layout.formInput ]
                             (
                             List.map
@@ -257,10 +260,11 @@ viewProductForm model =
                                 )
                                 allCategories
                             )
-                        )
-                    , formField (Tr.t lang "admin.product.currency")
-                        (
-                        select
+                        ]
+                    , div []
+                        [ label [ Layout.formLabel_ ]
+                            [ text (Tr.t lang "admin.product.currency") ]
+                        , select
                             [ onChange UpdateEditCurrency , Layout.formInput ]
                             (
                             List.map
@@ -277,7 +281,7 @@ viewProductForm model =
                                 )
                                 allCurrencies
                             )
-                        )
+                        ]
                     ]
                 ]
             , div [ Layout.cardSection ]
@@ -291,9 +295,10 @@ viewProductForm model =
                         )
                     ]
                 , div [ tw [ grid , gridCols3 , gap4 ] ]
-                    [ formField (Tr.t lang "admin.product.price")
-                        (
-                        input
+                    [ div []
+                        [ label [ Layout.formLabel_ ]
+                            [ text (Tr.t lang "admin.product.price") ]
+                        , input
                             [ type_ "number"
                             , value model.editPrice
                             , onInput UpdateEditPrice
@@ -302,10 +307,11 @@ viewProductForm model =
                             , required ()
                             , min "0"
                             ]
-                        )
-                    , formField (Tr.t lang "admin.product.discount")
-                        (
-                        input
+                        ]
+                    , div []
+                        [ label [ Layout.formLabel_ ]
+                            [ text (Tr.t lang "admin.product.discount") ]
+                        , input
                             [ type_ "number"
                             , value model.editDiscount
                             , onInput UpdateEditDiscount
@@ -313,10 +319,11 @@ viewProductForm model =
                             , placeholder "0"
                             , min "0"
                             ]
-                        )
-                    , formField (Tr.t lang "admin.product.stock")
-                        (
-                        input
+                        ]
+                    , div []
+                        [ label [ Layout.formLabel_ ]
+                            [ text (Tr.t lang "admin.product.stock") ]
+                        , input
                             [ type_ "number"
                             , value model.editStock
                             , onInput UpdateEditStock
@@ -324,7 +331,7 @@ viewProductForm model =
                             , placeholder "-1"
                             , min "-1"
                             ]
-                        )
+                        ]
                     ]
                 ]
             , div [ Layout.cardFooter ]
@@ -365,9 +372,6 @@ viewProductForm model =
                     ]
                 ]
             ]
-
-formField label input_ =
-    div [] [ label [ Layout.formLabel_ ] [ text label ] , input_ ]
 
 viewImageManager model =
     let

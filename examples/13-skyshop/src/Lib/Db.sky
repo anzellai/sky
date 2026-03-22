@@ -1,4 +1,4 @@
-module Lib.Db exposing (exec, queryRows, queryOne, getField, getInt, getBool, initDb)
+module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, initDb)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
@@ -7,37 +7,190 @@ import Sky.Core.List as List
 import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Database.Sql as Sql
-import Modernc.Org.Sqlite as _
+import Cloud.Google.Com.Go.Firestore as Firestore
+import Context
+import Fmt
+import Os
 
--- Module-level database connection (opened once at Go package init)
-db =
-    Sql.open "sqlite" "skyshop.db"
+-- ══════════════════════════════════════════════════════
+-- FIRESTORE CLIENT
+-- ══════════════════════════════════════════════════════
+ctx =
+    Context.background ()
 
-exec query args =
-    case db of
-        Ok conn ->
-            Sql.dBExecResult conn query args
+projectId =
+    let
+        env =
+            Os.getenv "GCP_PROJECT"
+    in
+        if env == "" then
+            "skyshop"
+        else
+            env
+
+firestoreClient =
+    Firestore.newClient ctx projectId []
+
+-- ══════════════════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════════════════
+anyToString val =
+    Fmt.sprint [ val ]
+
+snapshotToDict snapshot =
+    let
+        rawData =
+            Firestore.documentSnapshotData snapshot
+        docId =
+            Firestore.documentRefID (Firestore.documentSnapshotRef snapshot)
+    in
+        Dict.insert "id" docId (mapToStringDict rawData)
+
+mapToStringDict rawMap =
+    Dict.map (\_ v -> anyToString v) rawMap
+
+dictToMap dict =
+    Dict.map (\_ v -> js v) dict
+
+-- ══════════════════════════════════════════════════════
+-- CORE API
+-- ══════════════════════════════════════════════════════
+getDoc collection docId =
+    case firestoreClient of
+        Ok client ->
+            let
+                colRef =
+                    Firestore.clientCollection client collection
+                docRef =
+                    Firestore.collectionRefDoc colRef docId
+            in
+                case Firestore.documentRefGet docRef ctx of
+                    Ok snapshot ->
+                        if Firestore.documentSnapshotExists snapshot then
+                            Ok (Just (snapshotToDict snapshot))
+                        else
+                            Ok Nothing
+                    
+                    Err _ ->
+                        Ok Nothing
         
         Err e ->
-            Err e
+            Err (errorToString e)
 
-queryRows query args =
-    case db of
-        Ok conn ->
-            Sql.dBQueryToMaps conn query args
+mergeOpts =
+    [ Firestore.mergeAll () ]
+
+setDoc collection docId data =
+    case firestoreClient of
+        Ok client ->
+            let
+                colRef =
+                    Firestore.clientCollection client collection
+                docRef =
+                    Firestore.collectionRefDoc colRef docId
+                goMap =
+                    dictToMap data
+            in
+                case Firestore.documentRefSet docRef ctx goMap mergeOpts of
+                    Ok _ ->
+                        Ok ()
+                    
+                    Err e ->
+                        Err (errorToString e)
         
         Err e ->
-            Err e
+            Err (errorToString e)
 
-queryOne query args =
-    case queryRows query args of
-        Ok rows ->
-            Ok (List.head rows)
+queryDocs collection =
+    case firestoreClient of
+        Ok client ->
+            let
+                colRef =
+                    Firestore.clientCollection client collection
+                iter =
+                    Firestore.collectionRefDocuments colRef ctx
+            in
+                case Firestore.documentIteratorGetAll iter of
+                    Ok snapshots ->
+                        Ok (List.map snapshotToDict snapshots)
+                    
+                    Err e ->
+                        Err (errorToString e)
         
         Err e ->
-            Err e
+            Err (errorToString e)
 
+queryWhere collection field op value =
+    case firestoreClient of
+        Ok client ->
+            let
+                colRef =
+                    Firestore.clientCollection client collection
+                q =
+                    Firestore.collectionRefWhere colRef field op (js value)
+                iter =
+                    Firestore.queryDocuments q ctx
+            in
+                case Firestore.documentIteratorGetAll iter of
+                    Ok snapshots ->
+                        Ok (List.map snapshotToDict snapshots)
+                    
+                    Err e ->
+                        Err (errorToString e)
+        
+        Err e ->
+            Err (errorToString e)
+
+queryWhereOrder collection field op value orderField dir =
+    case firestoreClient of
+        Ok client ->
+            let
+                colRef =
+                    Firestore.clientCollection client collection
+                q =
+                    Firestore.collectionRefWhere colRef field op (js value)
+                direction =
+                    if dir == "desc" then
+                        Firestore.desc
+                    else
+                        Firestore.asc
+                ordered =
+                    Firestore.queryOrderBy q orderField direction
+                iter =
+                    Firestore.queryDocuments ordered ctx
+            in
+                case Firestore.documentIteratorGetAll iter of
+                    Ok snapshots ->
+                        Ok (List.map snapshotToDict snapshots)
+                    
+                    Err e ->
+                        Err (errorToString e)
+        
+        Err e ->
+            Err (errorToString e)
+
+deleteDoc collection docId =
+    case firestoreClient of
+        Ok client ->
+            let
+                colRef =
+                    Firestore.clientCollection client collection
+                docRef =
+                    Firestore.collectionRefDoc colRef docId
+            in
+                case Firestore.documentRefDelete docRef ctx [] of
+                    Ok _ ->
+                        Ok ()
+                    
+                    Err e ->
+                        Err (errorToString e)
+        
+        Err e ->
+            Err (errorToString e)
+
+-- ══════════════════════════════════════════════════════
+-- FIELD ACCESSORS (same interface as before)
+-- ══════════════════════════════════════════════════════
 getField field row =
     Maybe.withDefault "" (Dict.get field row)
 
@@ -47,38 +200,31 @@ getInt field row =
         |> Maybe.withDefault 0
 
 getBool field row =
-    getField field row == "1"
+    let
+        val =
+            getField field row
+    in
+        val == "1" || val == "true"
 
 -- ══════════════════════════════════════════════════════
--- SCHEMA
+-- INIT (no schema needed for Firestore)
 -- ══════════════════════════════════════════════════════
 initDb =
-    let
-        _ =
-            exec "PRAGMA journal_mode=WAL" []
-        _ =
-            exec "PRAGMA foreign_keys=ON" []
-        _ =
-            exec
-                "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL DEFAULT '', phone TEXT DEFAULT '', address_line1 TEXT DEFAULT '', address_line2 TEXT DEFAULT '', address_city TEXT DEFAULT '', address_county TEXT DEFAULT '', address_country TEXT DEFAULT '', address_postcode TEXT DEFAULT '', password_hash TEXT NOT NULL, password_salt TEXT NOT NULL, is_admin INTEGER DEFAULT 0, suspended INTEGER DEFAULT 0, session_token TEXT DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))"
-                []
-        _ =
-            exec
-                "CREATE TABLE IF NOT EXISTS products (id TEXT PRIMARY KEY, title TEXT NOT NULL, summary TEXT DEFAULT '', category TEXT DEFAULT 'Miscellaneous', price_amount INTEGER DEFAULT 0, price_currency TEXT DEFAULT 'GBP', price_discount INTEGER DEFAULT 0, price_tax INTEGER DEFAULT 0, stock INTEGER DEFAULT -1, published INTEGER DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))"
-                []
-        _ =
-            exec
-                "CREATE TABLE IF NOT EXISTS product_images (id TEXT PRIMARY KEY, product_id TEXT NOT NULL, data TEXT NOT NULL, position INTEGER DEFAULT 0, FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE)"
-                []
-        _ =
-            exec
-                "CREATE TABLE IF NOT EXISTS carts (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, state TEXT DEFAULT 'ongoing', checkout_link TEXT DEFAULT '', checkout_reference TEXT DEFAULT '', checkout_remarks TEXT DEFAULT '', shipping_name TEXT DEFAULT '', shipping_email TEXT DEFAULT '', shipping_phone TEXT DEFAULT '', shipping_line1 TEXT DEFAULT '', shipping_line2 TEXT DEFAULT '', shipping_city TEXT DEFAULT '', shipping_country TEXT DEFAULT '', shipping_postcode TEXT DEFAULT '', total_amount INTEGER DEFAULT 0, total_currency TEXT DEFAULT 'GBP', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')), FOREIGN KEY (owner_id) REFERENCES users(id))"
-                []
-        _ =
-            exec
-                "CREATE TABLE IF NOT EXISTS cart_items (id TEXT PRIMARY KEY, cart_id TEXT NOT NULL, product_id TEXT NOT NULL, quantity INTEGER DEFAULT 1, FOREIGN KEY (cart_id) REFERENCES carts(id) ON DELETE CASCADE, FOREIGN KEY (product_id) REFERENCES products(id))"
-                []
-        _ =
-            println "[DB] Schema initialized"
-    in
-        ()
+    case firestoreClient of
+        Ok _ ->
+            let
+                _ =
+                    println "[DB] Firestore client initialized"
+            in
+                ()
+        
+        Err e ->
+            let
+                _ =
+                    println
+                        (
+                        "[DB] ERROR: Failed to initialize Firestore: " ++
+                        errorToString e
+                        )
+            in
+                ()

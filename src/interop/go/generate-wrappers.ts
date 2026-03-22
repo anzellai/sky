@@ -1738,6 +1738,11 @@ func Sky_process_LoadEnv(filePath any) any {
             return resolveGoPackageId(p1) + "." + p2;
         });
         if (res.includes("interface{}")) return res.replace(/interface\{\}/g, "any");
+        // Go generic type parameters (single lowercase letters like T, K, V, y)
+        // that aren't qualified by a package should be treated as `any`
+        if (/^[a-z]$/.test(res)) return "any";
+        if (/^\[\][a-z]$/.test(res)) return "[]any";
+        if (/^\*[a-z]$/.test(res)) return "*any";
         return res;
     };
 
@@ -1846,7 +1851,10 @@ func Sky_process_LoadEnv(filePath any) any {
                 ].join("\n");
             }
             if (variadic && i === params.length - 1) {
-                return `\tvar _arg${i} []${t.substring(2)}\n\tfor _, v := range sky_asList(arg${i}) {\n\t\t_arg${i} = append(_arg${i}, v.(${t.substring(2)}))\n\t}`;
+                // For variadic params, the type is the element type (not []element).
+                // e.g. ...interface{} gives "interface{}" -> cleaned to "any"
+                const elemType = t.startsWith("[]") ? t.substring(2) : t;
+                return `\tvar _arg${i} []${elemType}\n\tfor _, v := range sky_asList(arg${i}) {\n\t\t_arg${i} = append(_arg${i}, v.(${elemType}))\n\t}`;
             }
             // Bridge Sky callbacks (func(any) any) to Go callback signatures.
             // Sky lambdas always compile to func(any) any (curried).
@@ -1859,7 +1867,14 @@ func Sky_process_LoadEnv(filePath any) any {
         if (recvType && (isMethod || isField)) {
             const recvArg = `this any`;
             goParams = goParams ? `${recvArg}, ${goParams}` : recvArg;
-            casts = `\t_this := this.(${cleanType(recvType)})\n` + casts;
+            const ct = cleanType(recvType);
+            if (ct.startsWith("*")) {
+                // Pointer receiver: try pointer first, fall back to value (take address)
+                const valType = ct.substring(1);
+                casts = `\tvar _this ${ct}\n\tif _p, ok := this.(${ct}); ok { _this = _p } else { _v := this.(${valType}); _this = &_v }\n` + casts;
+            } else {
+                casts = `\t_this := this.(${ct})\n` + casts;
+            }
         }
 
         let goReturns = " ";
@@ -2234,7 +2249,7 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         if (/\barg\d+\.\((?:\[\])?\*?[A-Z]\)/.test(block) ||       // .(T), .([]T), .(*T)
             /\) (?:\[\])?\*?[A-Z]\s*\{/.test(block) ||              // ) T {, ) *T {, ) []T {
             /\) \(\*?[A-Z],/.test(block) ||                          // ) (T, bool) {
-            /\) \w+\.?\w*\[/.test(block)) {                          // ) iter.Seq[string] {
+            (/\) \w+\.?\w*\[/.test(block) && !/\) map\[/.test(block))) { // ) iter.Seq[string] { but not map[
             continue;
         }
         cleanedGoCode += block;

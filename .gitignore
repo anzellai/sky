@@ -30,3 +30,4 @@ data/
 # Test files
 test-*.js
 test-*.ts
+firebaseadminsdk*.json

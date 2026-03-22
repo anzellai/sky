@@ -22,9 +22,9 @@ import Lib.Stripe as Stripe
 import Lib.Notify as Notify
 import Lib.Translation as Tr
 import Page.Home as Home
-import Page.Product as ProductPage
-import Page.CartPage as CartPage
-import Page.Orders as OrdersPage
+import Page.Product as ProductView
+import Page.CartPage as CartView
+import Page.Orders as OrdersView
 import Page.AuthPage as AuthPage
 import Page.Admin as Admin
 import Page.Static as Static
@@ -853,19 +853,19 @@ view model =
             Home.viewProducts model
 
         ProductPage _ ->
-            ProductPage.viewProduct model
+            ProductView.viewProduct model
 
         CartPage ->
-            CartPage.viewCart model
+            CartView.viewCart model
 
         OrdersPage ->
-            OrdersPage.viewOrders model
+            OrdersView.viewOrders model
 
         OrderPage _ ->
-            OrdersPage.viewOrder model
+            OrdersView.viewOrder model
 
         OrderSuccessPage _ ->
-            OrdersPage.viewOrderSuccess model
+            OrdersView.viewOrderSuccess model
 
         AuthSignInPage ->
             AuthPage.viewSignIn model
@@ -927,18 +927,18 @@ main =
         , routes =
             [ route "/" HomePage
             , route "/products" ProductsPage
-            , route "/product/:id" ProductPage
+            , route "/product/:id" (ProductPage "")
             , route "/cart" CartPage
             , route "/orders" OrdersPage
-            , route "/order/:id" OrderPage
-            , route "/order/:id/success" OrderSuccessPage
+            , route "/order/:id" (OrderPage "")
+            , route "/order/:id/success" (OrderSuccessPage "")
             , route "/auth/signin" AuthSignInPage
             , route "/auth/signup" AuthSignUpPage
             , route "/admin/products" AdminProductsPage
             , route "/admin/products/new" AdminNewProductPage
-            , route "/admin/products/:id" AdminEditProductPage
+            , route "/admin/products/:id" (AdminEditProductPage "")
             , route "/admin/orders" AdminOrdersPage
-            , route "/admin/orders/:id" AdminOrderPage
+            , route "/admin/orders/:id" (AdminOrderPage "")
             , route "/privacy-policy" PrivacyPolicyPage
             , route "/terms" TermsPage
             ]
