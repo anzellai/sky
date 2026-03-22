@@ -11,7 +11,8 @@ input = "debounce"
 poll_interval = 0
 
 [live.session]
-store = "firestore"
+store = "sqlite"
+path = "skyshop_sessions.db"
 
 [dependencies]
 "github.com/anzellai/sky-tailwind" = "latest"

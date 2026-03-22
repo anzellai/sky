@@ -1378,6 +1378,27 @@ func Sky_msgToString(v any) any {
 		}
 		return fmt.Sprintf("%v", v)
 	}
+	// Handle map[string]any (custom ADTs use maps instead of named structs)
+	if m, ok := v.(map[string]any); ok {
+		skyName, _ := m["SkyName"].(string)
+		if skyName == "" { return fmt.Sprintf("%v", v) }
+		name := skyName
+		for k, argVal := range m {
+			if k == "Tag" || k == "SkyName" { continue }
+			if !strings.Contains(k, "Value") { continue }
+			if argVal == nil { continue }
+			switch a := argVal.(type) {
+			case string:
+				name += " \\"" + a + "\\""
+			case int:
+				name += " " + fmt.Sprintf("%d", a)
+			default:
+				argStr := Sky_msgToString(a)
+				name += " " + sky_asString(argStr)
+			}
+		}
+		return name
+	}
 	if val.Kind() != reflect.Struct { return fmt.Sprintf("%v", v) }
 	nameField := val.FieldByName("SkyName")
 	if !nameField.IsValid() { return fmt.Sprintf("%v", v) }
