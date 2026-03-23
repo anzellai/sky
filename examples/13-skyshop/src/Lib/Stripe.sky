@@ -118,6 +118,63 @@ stripeGet endpoint =
                                     Ok (String.fromBytes bytes)
 
 -- ══════════════════════════════════════════════════════
+-- CUSTOMER MANAGEMENT
+-- ══════════════════════════════════════════════════════
+
+-- Get or create a Stripe customer for this user.
+-- Uses email as lookup key (Stripe API: GET /customers?email=...).
+-- Idempotent: returns existing customer ID if found, creates if not.
+getOrCreateCustomer userId userName userEmail =
+    case stripeGet ("customers?email=" ++ urlEncode userEmail ++ "&limit=1") of
+        Ok respBody ->
+            case Decode.decodeString (Decode.field "data" (Decode.list (Decode.field "id" Decode.string))) respBody of
+                Ok customers ->
+                    case List.head customers of
+                        Just customerId ->
+                            let
+                                _ =
+                                    println ("[STRIPE] Found existing customer: " ++ customerId)
+                            in
+                                Ok customerId
+
+                        Nothing ->
+                            createCustomer userId userName userEmail
+
+                _ ->
+                    createCustomer userId userName userEmail
+
+        Err e ->
+            let
+                _ =
+                    println ("[STRIPE] Customer lookup failed: " ++ e ++ ", creating new")
+            in
+                createCustomer userId userName userEmail
+
+createCustomer userId userName userEmail =
+    let
+        params =
+            [ ( "email" , userEmail )
+            , ( "name" , userName )
+            , ( "metadata[sky_uid]" , userId )
+            ]
+    in
+    case stripePost "customers" params of
+        Ok respBody ->
+            case Decode.decodeString (Decode.field "id" Decode.string) respBody of
+                Ok customerId ->
+                    let
+                        _ =
+                            println ("[STRIPE] Created customer: " ++ customerId)
+                    in
+                        Ok customerId
+
+                Err e ->
+                    Err ("Failed to create Stripe customer: " ++ e)
+
+        Err e ->
+            Err ("Stripe customer creation failed: " ++ e)
+
+-- ══════════════════════════════════════════════════════
 -- CHECKOUT SESSION
 -- ══════════════════════════════════════════════════════
 buildLineItemParams items =
@@ -154,42 +211,47 @@ buildLineItemParams items =
             )
         |> List.concat
 
-createCheckoutSession cartId items userEmail remarks =
+createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
         Err
             "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
     else
-        let
-            successUrl =
-                domainUrl ++ "/order/" ++ cartId ++ "/success"
-            cancelUrl =
-                domainUrl ++ "/cart"
-            lineItemParams =
-                buildLineItemParams items
-            baseParams =
-                [ ( "mode" , "payment" )
-                , ( "success_url" , successUrl )
-                , ( "cancel_url" , cancelUrl )
-                , ( "customer_email" , userEmail )
-                , ( "shipping_address_collection[allowed_countries][0]" , "GB" )
-                , ( "shipping_address_collection[allowed_countries][1]" , "HK" )
-                , ( "shipping_address_collection[allowed_countries][2]" , "MO" )
-                , ( "phone_number_collection[enabled]" , "true" )
-                , ( "custom_fields[0][key]" , "remarks" )
-                , ( "custom_fields[0][label][type]" , "custom" )
-                , ( "custom_fields[0][label][custom]" , "Delivery remarks" )
-                , ( "custom_fields[0][type]" , "text" )
-                , ( "custom_fields[0][optional]" , "true" )
-                , ( "metadata[cart_id]" , cartId )
-                , ( "metadata[remarks]" , remarks )
-                ]
-            allParams =
-                baseParams ++ lineItemParams
-            _ =
-                println
-                    ("[STRIPE] Creating checkout session for cart: " ++ cartId)
-        in
-            case stripePost "checkout/sessions" allParams of
+        case getOrCreateCustomer userId userName userEmail of
+            Err e ->
+                Err e
+
+            Ok customerId ->
+                let
+                    successUrl =
+                        domainUrl ++ "/order/" ++ cartId ++ "/success"
+                    cancelUrl =
+                        domainUrl ++ "/cart"
+                    lineItemParams =
+                        buildLineItemParams items
+                    baseParams =
+                        [ ( "mode" , "payment" )
+                        , ( "success_url" , successUrl )
+                        , ( "cancel_url" , cancelUrl )
+                        , ( "customer" , customerId )
+                        , ( "shipping_address_collection[allowed_countries][0]" , "GB" )
+                        , ( "shipping_address_collection[allowed_countries][1]" , "HK" )
+                        , ( "shipping_address_collection[allowed_countries][2]" , "MO" )
+                        , ( "phone_number_collection[enabled]" , "true" )
+                        , ( "custom_fields[0][key]" , "remarks" )
+                        , ( "custom_fields[0][label][type]" , "custom" )
+                        , ( "custom_fields[0][label][custom]" , "Delivery remarks" )
+                        , ( "custom_fields[0][type]" , "text" )
+                        , ( "custom_fields[0][optional]" , "true" )
+                        , ( "metadata[cart_id]" , cartId )
+                        , ( "metadata[remarks]" , remarks )
+                        ]
+                    allParams =
+                        baseParams ++ lineItemParams
+                    _ =
+                        println
+                            ("[STRIPE] Creating checkout session for cart: " ++ cartId)
+                in
+                    case stripePost "checkout/sessions" allParams of
                 Ok respBody ->
                     case decodeCheckoutResponse respBody of
                         Ok session ->
@@ -231,23 +293,35 @@ decodeCheckoutResponse json =
 -- ══════════════════════════════════════════════════════
 -- PAYMENT VERIFICATION
 -- ══════════════════════════════════════════════════════
-verifyPayment cartId =
-    case Db.getDoc "carts" cartId of
-        Ok Just cart ->
-            let
-                reference =
-                    Db.getField "checkout_reference" cart
-            in
-                if reference == "" then
-                    Err "No checkout reference found."
-                else
-                    verifyStripeSession cartId reference
-        
-        Ok Nothing ->
-            Err "Cart not found."
-        
-        Err e ->
-            Err e
+verifyPayment orderId =
+    -- Check orders collection first (new flow), fall back to carts (legacy)
+    let
+        doc =
+            case Db.getDoc "orders" orderId of
+                Ok (Just order) ->
+                    Just order
+
+                _ ->
+                    case Db.getDoc "carts" orderId of
+                        Ok (Just cart) ->
+                            Just cart
+
+                        _ ->
+                            Nothing
+    in
+        case doc of
+            Just order ->
+                let
+                    reference =
+                        Db.getField "checkout_reference" order
+                in
+                    if reference == "" then
+                        Err "No checkout reference found."
+                    else
+                        verifyStripeSession orderId reference
+
+            Nothing ->
+                Err "Order not found."
 
 verifyStripeSession cartId sessionId =
     let

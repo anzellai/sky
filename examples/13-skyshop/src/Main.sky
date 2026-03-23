@@ -335,6 +335,10 @@ handleStartCheckout model =
                     let
                         cartId =
                             Db.getField "id" cart
+                        userId =
+                            Db.getField "id" user
+                        userName =
+                            Db.getField "name" user
                         userEmail =
                             Db.getField "email" user
                         items =
@@ -351,7 +355,7 @@ handleStartCheckout model =
                             -- Copy cart → orders collection, get order ID
                             case Cart.checkoutToOrder cartId of
                                 Ok orderId ->
-                                    case Stripe.createCheckoutSession orderId items userEmail model.cartRemarks of
+                                    case Stripe.createCheckoutSession orderId items userId userName userEmail model.cartRemarks of
                                         Ok session ->
                                             let
                                                 -- Set checkout info on the ORDER (not the cart)
