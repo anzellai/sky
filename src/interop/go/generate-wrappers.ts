@@ -248,13 +248,20 @@ func sky_asFunc(v any) func(any) any {
 func sky_asMap(v any) map[string]any {
 	if v == nil { return map[string]any{} }
 	if m, ok := v.(map[string]any); ok { return m }
-	// Also handle map[any]any (Sky's Dict type)
+	// Handle map[any]any (Sky's Dict type)
 	if m, ok := v.(map[any]any); ok {
 		result := make(map[string]any, len(m))
 		for k, val := range m { result[fmt.Sprintf("%v", k)] = val }
 		return result
 	}
-	// Handle any other map type via reflection (e.g., map[string]int from Go libs)
+	// Handle Tuple structs — convert to map for pattern match field access
+	if t, ok := v.(Tuple2); ok {
+		return map[string]any{"Tag": 0, "Tuple2Value": t.V0, "Tuple2Value1": t.V1}
+	}
+	if t, ok := v.(Tuple3); ok {
+		return map[string]any{"Tag": 0, "Tuple3Value": t.V0, "Tuple3Value1": t.V1, "Tuple3Value2": t.V2}
+	}
+	// Handle any other map type via reflection
 	rv := reflect.ValueOf(v)
 	if rv.Kind() == reflect.Map {
 		result := make(map[string]any, rv.Len())
