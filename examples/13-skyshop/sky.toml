@@ -11,17 +11,17 @@ input = "debounce"
 poll_interval = 0
 
 [live.session]
-store = "sqlite"
-path = "skyshop_sessions.db"
+store = "memory"
 
 [dependencies]
 "github.com/anzellai/sky-tailwind" = "latest"
 
 ["go.dependencies"]
 "cloud.google.com/go/firestore" = "latest"
+"firebase.google.com/go/v4" = "latest"
+"firebase.google.com/go/v4/auth" = "latest"
 "google.golang.org/api/iterator" = "latest"
-"crypto/sha256" = "latest"
-"encoding/hex" = "latest"
+"google.golang.org/api/option" = "latest"
 "encoding/base64" = "latest"
 "encoding/json" = "latest"
 "github.com/google/uuid" = "latest"

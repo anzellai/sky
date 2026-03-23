@@ -116,38 +116,41 @@ func diffChildren(old, new_ *VNode, patches *[]Patch) {
 		return
 	}
 
-	// Compare matching children
-	changed := false
+	// Compare matching children — recurse into all children with sky-ids,
+	// and detect structural changes for children without sky-ids.
+	structuralChange := false
 	for i := 0; i < minLen; i++ {
 		oldChild := old.Children[i]
 		newChild := new_.Children[i]
 
+		// Both text nodes — check if content changed
 		if oldChild.Tag == "" && newChild.Tag == "" {
 			if oldChild.Text != newChild.Text {
-				changed = true
-				break
+				structuralChange = true
 			}
 			continue
 		}
 
+		// Tag mismatch — structural change
 		if oldChild.Tag != newChild.Tag {
-			changed = true
-			break
+			structuralChange = true
+			continue
 		}
 
+		// Same tag with sky-id — recurse (always, regardless of structural changes)
 		if oldChild.SkyID != "" {
 			diffNodes(oldChild, newChild, patches)
-		} else {
-			// No sky-id — compare content
-			if RenderToString(oldChild) != RenderToString(newChild) {
-				changed = true
-				break
-			}
+			continue
+		}
+
+		// Same tag without sky-id (raw nodes, unstyled elements, etc.)
+		if RenderToString(oldChild) != RenderToString(newChild) {
+			structuralChange = true
 		}
 	}
 
 	// If children count changed or structural change detected, re-render the whole parent
-	if changed || oldLen != newLen {
+	if structuralChange || oldLen != newLen {
 		if old.SkyID != "" {
 			var childHTML string
 			for _, child := range new_.Children {

@@ -18,18 +18,18 @@ import Os
 ctx =
     Context.background ()
 
-projectId =
+getProjectId _ =
     let
         env =
-            Os.getenv "GCP_PROJECT"
+            Os.getenv "GOOGLE_CLOUD_PROJECT"
     in
         if env == "" then
             "skyshop"
         else
             env
 
-firestoreClient =
-    Firestore.newClient ctx projectId []
+getFirestoreClient _ =
+    Firestore.newClient ctx (getProjectId ()) []
 
 -- ══════════════════════════════════════════════════════
 -- HELPERS
@@ -49,14 +49,16 @@ snapshotToDict snapshot =
 mapToStringDict rawMap =
     Dict.map (\_ v -> anyToString v) rawMap
 
+foreign import "sky_wrappers" exposing (Sky_AsMap)
+
 dictToMap dict =
-    Dict.map (\_ v -> js v) dict
+    Sky_AsMap dict
 
 -- ══════════════════════════════════════════════════════
 -- CORE API
 -- ══════════════════════════════════════════════════════
 getDoc collection docId =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok client ->
             let
                 colRef =
@@ -81,7 +83,7 @@ mergeOpts =
     [ Firestore.mergeAll () ]
 
 setDoc collection docId data =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok client ->
             let
                 colRef =
@@ -102,7 +104,7 @@ setDoc collection docId data =
             Err (errorToString e)
 
 queryDocs collection =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok client ->
             let
                 colRef =
@@ -121,7 +123,7 @@ queryDocs collection =
             Err (errorToString e)
 
 queryWhere collection field op value =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok client ->
             let
                 colRef =
@@ -142,7 +144,7 @@ queryWhere collection field op value =
             Err (errorToString e)
 
 queryWhereOrder collection field op value orderField dir =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok client ->
             let
                 colRef =
@@ -170,7 +172,7 @@ queryWhereOrder collection field op value orderField dir =
             Err (errorToString e)
 
 deleteDoc collection docId =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok client ->
             let
                 colRef =
@@ -210,7 +212,7 @@ getBool field row =
 -- INIT (no schema needed for Firestore)
 -- ══════════════════════════════════════════════════════
 initDb =
-    case firestoreClient of
+    case getFirestoreClient () of
         Ok _ ->
             let
                 _ =

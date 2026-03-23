@@ -124,11 +124,23 @@ func sky_asFunc(v any) func(any) any {
 
 func sky_asMap(v any) map[string]any {
 	if m, ok := v.(map[string]any); ok { return m }
+	// Also handle map[any]any (Sky's Dict type)
+	if m, ok := v.(map[any]any); ok {
+		result := make(map[string]any, len(m))
+		for k, val := range m { result[fmt.Sprintf("%v", k)] = val }
+		return result
+	}
 	return map[string]any{}
 }
 
 func sky_asMapAny(v any) map[any]any {
 	if m, ok := v.(map[any]any); ok { return m }
+	// Also handle map[string]any (from Go stdlib, JSON, Sky.Live runtime, etc.)
+	if m, ok := v.(map[string]any); ok {
+		result := make(map[any]any, len(m))
+		for k, val := range m { result[k] = val }
+		return result
+	}
 	return map[any]any{}
 }
 
@@ -1882,6 +1894,10 @@ func Sky_process_LoadEnv(filePath any) any {
             // We generate adapter functions that unwrap the curried calls.
             const funcBridge = generateFuncBridge(t, i);
             if (funcBridge) return funcBridge;
+            // Pointer-to-struct params: allow nil (Sky passes js "nil" or Nothing)
+            if (t.startsWith("*")) {
+                return `\tvar _arg${i} ${t}\n\tif arg${i} != nil && arg${i} != "nil" { _arg${i} = arg${i}.(${t}) }`;
+            }
             return `\t_arg${i} := arg${i}.(${t})`;
         }).join("\n");
         
@@ -2275,11 +2291,20 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         }
         cleanedGoCode += block;
     }
-    // Remove any imports whose package identifier isn't actually used in the generated code
+    // Remove any imports whose package identifier isn't actually used in the generated code,
+    // and filter out Go internal packages (not allowed to be imported by external code).
     for (const imp of imports) {
         if (imp === pkgName) continue; // Always keep the main package import
         const base = resolveGoPackageId(imp);
         if (!cleanedGoCode.includes(base + ".")) {
+            imports.delete(imp);
+        }
+        // Go internal packages cannot be imported by external code
+        if (imp.includes("/internal") || imp.includes("/internal/")) {
+            // Remove functions that use this internal package
+            const internalBase = resolveGoPackageId(imp);
+            const funcBlocks2 = cleanedGoCode.split(/(?=^func )/m);
+            cleanedGoCode = funcBlocks2.filter(block => !block.includes(internalBase + ".")).join("");
             imports.delete(imp);
         }
     }

@@ -76,8 +76,37 @@ type LiveApp struct {
 	// MsgTagToName maps a Msg tag index to its constructor name.
 	MsgTagToName func(tag int) string
 
+	// CustomHandlers allows registering additional HTTP handlers for routes
+	// outside the TEA cycle (e.g., OAuth callbacks, API endpoints, webhooks).
+	// Registered before the catch-all page handler so they take priority.
+	CustomHandlers []CustomHandler
+
 	// config is set internally by StartServer
 	config LiveConfig
+}
+
+// CustomHandler defines a custom HTTP handler for a specific route pattern.
+type CustomHandler struct {
+	Pattern string                                   // e.g., "GET /auth/google", "POST /api/webhook"
+	Handler func(http.ResponseWriter, *http.Request)
+}
+
+// SessionHelper provides access to the session store for custom handlers.
+// Passed to custom handler setup functions so they can read/write sessions.
+type SessionHelper struct {
+	Store  SessionStore
+	NewID  func() string
+}
+
+// SetSessionCookie sets the Sky.Live session cookie on a response.
+func SetSessionCookie(w http.ResponseWriter, sid string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sky_sid",
+		Value:    sid,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
 }
 
 // MsgEnvelope is the JSON structure sent by the JS client.
@@ -279,6 +308,11 @@ func StartServer(config LiveConfig, app LiveApp) {
 		}
 	}
 
+	// Custom handlers (OAuth callbacks, API endpoints, etc.)
+	for _, ch := range app.CustomHandlers {
+		mux.HandleFunc(ch.Pattern, ch.Handler)
+	}
+
 	// Page routes — initial GET requests
 	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		// Skip non-page requests (favicon, robots.txt, etc.)
@@ -302,8 +336,9 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 	// Check for existing session via cookie (survives page refresh)
 	var sid string
 	var model any
+	hasQueryParams := len(r.URL.Query()) > 0
 	if cookie, err := r.Cookie("sky_sid"); err == nil && cookie.Value != "" {
-		if sess, ok := store.Get(cookie.Value); ok {
+		if sess, ok := store.Get(cookie.Value); ok && !hasQueryParams {
 			// Restore existing session — page refresh survival
 			sid = cookie.Value
 			if app.FixModel != nil {
@@ -326,13 +361,52 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 		}
 	}
 
-	// No existing session — create fresh
+	// No existing session (or forced re-init due to query params) — create fresh
 	if sid == "" {
 		req := buildRequest(r, params)
 		var cmds []any
 		model, cmds = app.Init(req, page)
 		_ = cmds
 		sid = store.NewID()
+
+		// When init handled a query-param route (e.g., /auth/callback?token=...),
+		// init may have changed the page (e.g., to HomePage after successful auth).
+		// If the page changed, save the session and redirect to the correct URL
+		// so the browser shows the right path.
+		if hasQueryParams {
+			currentPage := getPageFromModel(model)
+			if !pagesEqual(currentPage, page) {
+				// Save session first so the redirect finds it
+				viewTree := app.View(model)
+				AssignSkyIDs(viewTree)
+				store.Set(sid, &Session{
+					Model:    model,
+					PrevView: viewTree,
+					Created:  time.Now(),
+				})
+				http.SetCookie(w, &http.Cookie{
+					Name:     "sky_sid",
+					Value:    sid,
+					Path:     "/",
+					HttpOnly: true,
+					SameSite: http.SameSiteLaxMode,
+					MaxAge:   int(app.config.TTL.Seconds()),
+				})
+				// Redirect to the page's URL
+				redirectURL := app.URLForPage(currentPage)
+				http.Redirect(w, r, redirectURL, http.StatusFound)
+				return
+			}
+		} else if app.BuildNavigateMsg != nil {
+			// Normal page load without query params — send Navigate if page mismatch
+			currentPage := getPageFromModel(model)
+			if !pagesEqual(currentPage, page) {
+				navigateMsg := app.BuildNavigateMsg(page)
+				if navigateMsg != nil {
+					model, _ = app.Update(navigateMsg, model)
+				}
+			}
+		}
 	}
 
 	// Render view
@@ -400,7 +474,6 @@ func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app
 
 		newModel, cmds := app.Update(msg, sess.Model)
 		_ = cmds
-
 		newView := app.View(newModel)
 		AssignSkyIDs(newView)
 
@@ -505,6 +578,7 @@ func buildRequest(r *http.Request, params map[string]string) map[string]any {
 	return map[string]any{
 		"method":  r.Method,
 		"path":    r.URL.Path,
+		"rawUrl":  r.URL.String(),
 		"params":  paramsAny,
 		"query":   query,
 		"headers": headers,

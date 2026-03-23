@@ -31,3 +31,6 @@ data/
 test-*.js
 test-*.ts
 firebaseadminsdk*.json
+uploads/
+uploads/
+examples/13-skyshop/assets/

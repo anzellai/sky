@@ -3,13 +3,14 @@ dependencies:
 go:
   cloud.google.com/go/firestore: latest
   context: latest
-  crypto/sha256: latest
   encoding/base64: latest
-  encoding/hex: latest
   encoding/json: latest
+  firebase.google.com/go/v4: latest
+  firebase.google.com/go/v4/auth: latest
   fmt: latest
   github.com/google/uuid: latest
   google.golang.org/api/iterator: latest
+  google.golang.org/api/option: latest
   io: latest
   net/http: latest
   net/url: latest

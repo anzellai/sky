@@ -1,4 +1,4 @@
-module Lib.Auth exposing (signUp, signIn, signOut, getUserById, isAdmin, getSessionUser)
+module Lib.Auth exposing (verifyToken, signOut, getUserById, isAdmin, getSessionUser)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -7,23 +7,17 @@ import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Crypto.Sha256 as Sha256
-import Encoding.Hex as Hex
 import Github.Com.Google.Uuid as Uuid
+import Firebase.Google.Com.Go.V4 as Firebase
+import Firebase.Google.Com.Go.V4.Auth as FirebaseAuth
+import Google.Golang.Org.Api.Option as Option
+import Context
+import Fmt
 import Lib.Db as Db
 import Os
 
-hashPassword password salt =
-    let
-        salted =
-            salt ++ ":" ++ password
-        hash =
-            Sha256.sum256 (String.toBytes salted)
-    in
-        Hex.encodeToString hash
-
-generateSalt =
-    Uuid.newString ()
+ctx =
+    Context.background ()
 
 adminEmails =
     let
@@ -39,156 +33,162 @@ isAdmin user =
     Db.getBool "is_admin" user
 
 -- ══════════════════════════════════════════════════════
--- SIGN UP
+-- FIREBASE AUTH CLIENT (lazy — initialized on first use,
+-- after .env has been loaded by the Sky.Live runtime)
 -- ══════════════════════════════════════════════════════
-signUp name email password phone =
-    if name == "" then
-        Err "Name is required."
-    else
-        if email == "" then
-            Err "Email is required."
-        else
-            if String.length password < 8 then
-                Err "Password must be at least 8 characters."
+getAuthClient _ =
+    let
+        credFile =
+            Os.getenv "GOOGLE_APPLICATION_CREDENTIALS"
+        opts =
+            if credFile == "" then
+                []
             else
-                doSignUp name email password phone
-
-doSignUp name email password phone =
-    let
-
-        -- Check if email already exists
-        existingUsers =
-            Result.withDefault [] (Db.queryWhere "users" "email" "==" email)
+                [ Option.withCredentialsFile credFile ]
+        appResult =
+            Firebase.newApp ctx (js "nil") opts
     in
-        if List.length existingUsers > 0 then
-            Err "Email already taken."
-        else
+        case appResult of
+            Ok app_ ->
+                Firebase.appAuth app_ ctx
+
+            Err e ->
+                Err e
+
+-- ══════════════════════════════════════════════════════
+-- VERIFY TOKEN
+-- ══════════════════════════════════════════════════════
+claimString key claims =
+    case Dict.get key claims of
+        Just val ->
+            Fmt.sprint [ val ]
+        
+        Nothing ->
+            ""
+
+verifyToken idToken =
+    case getAuthClient () of
+        Ok client ->
+            case FirebaseAuth.clientVerifyIDToken client ctx idToken of
+                Ok token ->
+                    let
+                        uid =
+                            FirebaseAuth.tokenUID token
+                        claims =
+                            FirebaseAuth.tokenClaims token
+                        email =
+                            claimString "email" claims
+                        name =
+                            claimString "name" claims
+                        _ =
+                            println
+                                (
+                                "[AUTH] Firebase token verified for: " ++
+                                email ++ " (uid: " ++ uid ++ ")"
+                                )
+                    in
+                        findOrCreateUser uid email name
+                
+                Err e ->
+                    let
+                        _ =
+                            println
+                                (
+                                "[AUTH] Firebase token verification failed: " ++
+                                errorToString e
+                                )
+                    in
+                        Err "Authentication failed. Please try again."
+        
+        Err e ->
             let
-                userId =
-                    Uuid.newString ()
-                salt =
-                    generateSalt
-                hash =
-                    hashPassword password salt
-                token =
-                    Uuid.newString ()
-                isAdminUser =
-                    if List.member email adminEmails then
-                        "true"
-                    else
-                        "false"
-                userData =
-                    Dict.fromList
-                        [ ( "id" , userId )
-                        , ( "email" , email )
-                        , ( "name" , name )
-                        , ( "phone" , phone )
-                        , ( "address_line1" , "" )
-                        , ( "address_line2" , "" )
-                        , ( "address_city" , "" )
-                        , ( "address_county" , "" )
-                        , ( "address_country" , "" )
-                        , ( "address_postcode" , "" )
-                        , ( "password_hash" , hash )
-                        , ( "password_salt" , salt )
-                        , ( "is_admin" , isAdminUser )
-                        , ( "suspended" , "false" )
-                        , ( "session_token" , token )
-                        ]
-                result =
-                    Db.setDoc "users" userId userData
+                _ =
+                    println
+                        (
+                        "[AUTH] Firebase auth client error: " ++ errorToString e
+                        )
             in
-                case result of
-                    Ok _ ->
-                        let
-                            _ =
-                                println
-                                    (
-                                    "[AUTH] User created: " ++
-                                    name ++ " (" ++ email ++ ")"
-                                    )
-                        in
-                            Ok userData
-                    
-                    Err e ->
-                        Err e
+                Err "Authentication service unavailable."
 
--- ══════════════════════════════════════════════════════
--- SIGN IN
--- ══════════════════════════════════════════════════════
-signIn email password =
-    if email == "" then
-        Err "Email is required."
-    else
-        if password == "" then
-            Err "Password is required."
-        else
-            doSignIn email password
-
-doSignIn email password =
+findOrCreateUser uid email name =
     let
-        usersResult =
-            Db.queryWhere "users" "email" "==" email
+        existingResult =
+            Db.queryWhere "users" "firebase_uid" "==" uid
     in
-        case usersResult of
+        case existingResult of
             Ok users ->
                 case List.head users of
                     Just user ->
-                        let
-                            storedHash =
-                                Db.getField "password_hash" user
-                            storedSalt =
-                                Db.getField "password_salt" user
-                            inputHash =
-                                hashPassword password storedSalt
-                        in
-                            if inputHash == storedHash then
-                                if Db.getBool "suspended" user then
-                                    Err
-                                        "Account suspended. Please contact support."
-                                else
-                                    let
-                                        token =
-                                            Uuid.newString ()
-                                        userId =
-                                            Db.getField "id" user
-                                        updatedUser =
-                                            Dict.insert "session_token" token
-                                                user
-                                        _ =
-                                            Db.setDoc "users" userId updatedUser
-                                        _ =
-                                            println
-                                                (
-                                                "[AUTH] Sign-in success: " ++
-                                                email
-                                                )
-                                    in
-                                        Ok updatedUser
-                            else
-                                let
-                                    _ =
-                                        println
-                                            (
-                                            "[AUTH] Sign-in failed (bad password): " ++
-                                            email
-                                            )
-                                in
-                                    Err "Invalid email or password."
+                        if Db.getBool "suspended" user then
+                            Err "Account suspended. Please contact support."
+                        else
+                            let
+
+                                -- Update name/email if changed
+                                updatedUser =
+                                    Dict.insert "email" email
+                                        (Dict.insert "name" name user)
+                                userId =
+                                    Db.getField "id" user
+                                _ =
+                                    Db.setDoc "users" userId updatedUser
+                                _ =
+                                    println
+                                        (
+                                        "[AUTH] Existing user signed in: " ++
+                                        email
+                                        )
+                            in
+                                Ok updatedUser
                     
                     Nothing ->
-                        let
-                            _ =
-                                println
-                                    (
-                                    "[AUTH] Sign-in failed (not found): " ++
-                                    email
-                                    )
-                        in
-                            Err "Invalid email or password."
+                        createUser uid email name
             
             Err _ ->
-                Err "Database error. Please try again."
+                createUser uid email name
+
+createUser uid email name =
+    let
+        userId =
+            Uuid.newString ()
+        isAdminUser =
+            if List.member email adminEmails then
+                "true"
+            else
+                "false"
+        userData =
+            Dict.fromList
+                [ ( "id" , userId )
+                , ( "firebase_uid" , uid )
+                , ( "email" , email )
+                , ( "name" , name )
+                , ( "phone" , "" )
+                , ( "address_line1" , "" )
+                , ( "address_line2" , "" )
+                , ( "address_city" , "" )
+                , ( "address_county" , "" )
+                , ( "address_country" , "" )
+                , ( "address_postcode" , "" )
+                , ( "is_admin" , isAdminUser )
+                , ( "suspended" , "false" )
+                ]
+        result =
+            Db.setDoc "users" userId userData
+    in
+        case result of
+            Ok _ ->
+                let
+                    _ =
+                        println
+                            (
+                            "[AUTH] New user created: " ++
+                            name ++ " (" ++ email ++ ")"
+                            )
+                in
+                    Ok userData
+            
+            Err e ->
+                Err e
 
 -- ══════════════════════════════════════════════════════
 -- SESSION

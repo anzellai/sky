@@ -239,6 +239,11 @@ const LiveJS = `(function() {
     }, cfg.pollInterval || 5000);
   }
 
+  // ── Public API ──────────────────────────────────────
+  // Expose send() so custom client-side JS (e.g. Firebase Auth)
+  // can dispatch Sky.Live events programmatically.
+  window.__sky_send = function(msg, args) { send(msg, args || []); };
+
   // ── Init ─────────────────────────────────────────────
   bind();
   connectSSE();

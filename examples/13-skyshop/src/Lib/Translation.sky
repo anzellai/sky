@@ -247,6 +247,90 @@ tEn key =
         "common.no" ->
             "No"
         
+        "hero.badge" ->
+            "Curated Collection"
+        
+        "hero.subtitle" ->
+            "Quality guaranteed. Every item handpicked with care."
+        
+        "hero.cta" ->
+            "Browse Products"
+        
+        "hero.browse" ->
+            "Browse our curated collection"
+        
+        "product.quality" ->
+            "Quality Guaranteed"
+        
+        "footer.tagline" ->
+            "Curated luxury goods with quality guaranteed. Your trusted shopping destination."
+        
+        "auth.terms_notice" ->
+            "By signing in, you agree to our Terms of Service and Privacy Policy."
+        
+        "home.featured" ->
+            "Featured Products"
+        
+        "cart.signinPrompt" ->
+            "Sign in to add items and manage your cart"
+        
+        "cart.signinTitle" ->
+            "Sign in to view your cart"
+        
+        "cart.redirecting" ->
+            "Redirecting to payment..."
+        
+        "cart.redirectHint" ->
+            "If not redirected automatically, click below"
+        
+        "cart.goToPayment" ->
+            "Go to payment"
+        
+        "cart.startShopping" ->
+            "Start shopping to add items here"
+        
+        "cart.orderSummary" ->
+            "Order Summary"
+        
+        "cart.deliveryInstructions" ->
+            "Special delivery instructions..."
+        
+        "cart.subtotal" ->
+            "Subtotal"
+        
+        "cart.shipping" ->
+            "Shipping"
+        
+        "cart.shippingFree" ->
+            "Free"
+        
+        "home.viewAll" ->
+            "View all"
+        
+        "product.sortBy" ->
+            "Sort by"
+        
+        "product.description" ->
+            "Description"
+        
+        "product.securePayment" ->
+            "Secure Payment"
+        
+        "product.fastShipping" ->
+            "Fast Shipping"
+        
+        "footer.quickLinks" ->
+            "Quick Links"
+        
+        "footer.legal" ->
+            "Legal"
+        
+        "admin.product.basicInfo" ->
+            "Basic Information"
+        
+        "admin.product.pricingInventory" ->
+            "Pricing & Inventory"
+        
         _ ->
             key
 
@@ -256,130 +340,130 @@ tZh key =
             "SkyShop"
         
         "nav.home" ->
-            "首页"
+            "首頁"
         
         "nav.products" ->
-            "产品"
+            "商品"
         
         "nav.cart" ->
-            "购物车"
+            "購物車"
         
         "nav.orders" ->
-            "我的订单"
+            "我的訂單"
         
         "nav.admin" ->
             "管理"
         
         "nav.signin" ->
-            "登录"
+            "登錄"
         
         "nav.signout" ->
-            "退出"
+            "登出"
         
         "nav.signup" ->
-            "注册"
+            "註冊"
         
         "auth.welcome" ->
-            "欢迎回来"
+            "歡迎回來"
         
         "auth.create" ->
-            "创建账户"
+            "創建帳戶"
         
         "auth.email" ->
-            "电邮"
+            "電郵"
         
         "auth.password" ->
-            "密码"
+            "密碼"
         
         "auth.name" ->
             "全名"
         
         "auth.phone" ->
-            "电话"
+            "電話"
         
         "auth.signin.btn" ->
-            "登录"
+            "登錄"
         
         "auth.signup.btn" ->
-            "创建账户"
+            "創建帳戶"
         
         "auth.signin.link" ->
-            "已有账户？ 登录"
+            "已有帳戶？ 登錄"
         
         "auth.signup.link" ->
-            "没有账户？ 注册"
+            "沒有帳戶？ 註冊"
         
         "product.addToCart" ->
-            "加入购物车"
+            "加入購物車"
         
         "product.outOfStock" ->
-            "缺货"
+            "現正缺貨"
         
         "product.inStock" ->
-            "有货"
+            "有貨"
         
         "product.unlimited" ->
-            "现货"
+            "現貨"
         
         "product.left" ->
-            "剩余"
+            "剩餘"
         
         "product.category" ->
-            "分类"
+            "類別"
         
         "product.all" ->
             "全部"
         
         "product.search" ->
-            "搜索产品..."
+            "搜索商品..."
         
         "product.sort.newest" ->
             "最新"
         
         "product.sort.price" ->
-            "价格"
+            "價格"
         
         "product.sort.title" ->
-            "名称"
+            "名稱"
         
         "product.noResults" ->
-            "未找到产品。"
+            "未找到商品。"
         
         "product.quantity" ->
-            "数量"
+            "數量"
         
         "cart.title" ->
-            "购物车"
+            "購物車"
         
         "cart.empty" ->
-            "购物车为空。"
+            "您的購物車是空的"
         
         "cart.total" ->
-            "总计"
+            "總計"
         
         "cart.checkout" ->
-            "结账"
+            "結帳"
         
         "cart.remove" ->
             "移除"
         
         "cart.remarks" ->
-            "配送备注（可选）"
+            "配送備註（可選）"
         
         "cart.continueShopping" ->
-            "继续购物"
+            "繼續購物"
         
         "order.title" ->
-            "我的订单"
+            "我的訂單"
         
         "order.empty" ->
-            "暂无订单。"
+            "暫無訂單。"
         
         "order.detail" ->
-            "订单详情"
+            "訂單詳情"
         
         "order.placed" ->
-            "下单时间"
+            "下單時間"
         
         "order.items" ->
             "商品"
@@ -388,85 +472,85 @@ tZh key =
             "配送"
         
         "order.status" ->
-            "状态"
+            "狀態"
         
         "order.success" ->
-            "支付成功！您的订单已提交。"
+            "購物成功！您的訂單已提交。"
         
         "order.failed" ->
-            "支付验证失败。"
+            "支付驗證失敗。"
         
         "order.processing" ->
-            "正在验证支付..."
+            "正在驗證支付..."
         
         "admin.products" ->
-            "产品管理"
+            "商品管理"
         
         "admin.orders" ->
-            "订单管理"
+            "訂單管理"
         
         "admin.newProduct" ->
-            "新建产品"
+            "新建商品"
         
         "admin.editProduct" ->
-            "编辑产品"
+            "編輯商品"
         
         "admin.product.title" ->
-            "标题"
+            "標題"
         
         "admin.product.summary" ->
-            "描述"
+            "商品概要"
         
         "admin.product.category" ->
-            "分类"
+            "類別"
         
         "admin.product.price" ->
-            "价格（分）"
+            "價格（分）"
         
         "admin.product.discount" ->
             "折扣（分）"
         
         "admin.product.currency" ->
-            "货币"
+            "貨幣"
         
         "admin.product.stock" ->
-            "库存（-1 = 无限）"
+            "庫存（-1 = 無限）"
         
         "admin.product.published" ->
-            "已发布"
+            "已發佈"
         
         "admin.product.images" ->
-            "图片"
+            "圖片"
         
         "admin.product.save" ->
-            "保存产品"
+            "保存商品"
         
         "admin.product.delete" ->
-            "删除产品"
+            "刪除商品"
         
         "admin.product.upload" ->
-            "上传图片"
+            "上傳圖片"
         
         "admin.order.updateState" ->
-            "更新状态"
+            "更新狀態"
         
         "admin.order.filter" ->
-            "按状态筛选"
+            "按狀態篩選"
         
         "footer.privacy" ->
-            "隐私政策"
+            "隱私政策"
         
         "footer.terms" ->
-            "条款"
+            "條款和條件"
         
         "footer.copyright" ->
-            "SkyShop。保留所有权利。"
+            "SkyShop。保留所有權利。"
         
         "common.loading" ->
-            "加载中..."
+            "載入中..."
         
         "common.error" ->
-            "发生错误。"
+            "發生錯誤。"
         
         "common.save" ->
             "保存"
@@ -475,10 +559,94 @@ tZh key =
             "取消"
         
         "common.delete" ->
-            "删除"
+            "刪除"
         
         "common.back" ->
             "返回"
+        
+        "hero.badge" ->
+            "嚴選精品"
+        
+        "hero.subtitle" ->
+            "品質保證，精心挑選每一件商品。"
+        
+        "hero.cta" ->
+            "瀏覽商品"
+        
+        "hero.browse" ->
+            "瀏覽我們嚴選的商品系列"
+        
+        "product.quality" ->
+            "品質保證"
+        
+        "footer.tagline" ->
+            "嚴選精品，品質保證。您值得信賴的購物平台。"
+        
+        "auth.terms_notice" ->
+            "登入即表示您同意我們的服務條款和隱私政策。"
+        
+        "home.featured" ->
+            "精選商品"
+        
+        "cart.signinPrompt" ->
+            "登入後即可管理購物車"
+        
+        "cart.signinTitle" ->
+            "請先登入"
+        
+        "cart.redirecting" ->
+            "正在跳轉到支付..."
+        
+        "cart.redirectHint" ->
+            "如果沒有自動跳轉，請點擊下方連結"
+        
+        "cart.goToPayment" ->
+            "前往支付"
+        
+        "cart.startShopping" ->
+            "去逛逛吧"
+        
+        "cart.orderSummary" ->
+            "訂單摘要"
+        
+        "cart.deliveryInstructions" ->
+            "特殊配送說明..."
+        
+        "cart.subtotal" ->
+            "小計"
+        
+        "cart.shipping" ->
+            "運費"
+        
+        "cart.shippingFree" ->
+            "包郵"
+        
+        "home.viewAll" ->
+            "查看全部"
+        
+        "product.sortBy" ->
+            "排序"
+        
+        "product.description" ->
+            "商品描述"
+        
+        "product.securePayment" ->
+            "安全支付"
+        
+        "product.fastShipping" ->
+            "快速配送"
+        
+        "footer.quickLinks" ->
+            "快速連結"
+        
+        "footer.legal" ->
+            "法律"
+        
+        "admin.product.basicInfo" ->
+            "基本資訊"
+        
+        "admin.product.pricingInventory" ->
+            "價格與庫存"
         
         _ ->
             key
@@ -487,19 +655,19 @@ tCategory lang category =
     if lang == "zh" then
         case category of
             "Accessories" ->
-                "配饰"
+                "配飾"
             
             "Bags" ->
                 "包"
             
             "Fashion" ->
-                "时尚"
+                "時尚"
             
             "Jewellery And Watches" ->
-                "珠宝手表"
+                "珠寶手錶"
             
             "Kids" ->
-                "儿童"
+                "兒童"
             
             "Luxury Brands" ->
                 "奢侈品"
@@ -508,7 +676,7 @@ tCategory lang category =
                 "其他"
             
             "Wallet And Small Items" ->
-                "钱包小物"
+                "錢包小物"
             
             _ ->
                 category
@@ -519,19 +687,19 @@ tCartState lang state =
     if lang == "zh" then
         case state of
             "ongoing" ->
-                "进行中"
+                "進行中"
             
             "pending" ->
                 "待付款"
             
             "ordered" ->
-                "已下单"
+                "已下訂單"
             
             "shipped" ->
-                "已发货"
+                "已運送"
             
             "delivered" ->
-                "已送达"
+                "已遞送"
             
             "cancelled" ->
                 "已取消"

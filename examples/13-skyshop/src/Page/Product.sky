@@ -101,14 +101,7 @@ viewProductDetail model product =
                                     , mb2
                                     ]
                                 ]
-                                [ text
-                                    (
-                                    if lang == "zh" then
-                                        "商品描述"
-                                    else
-                                        "Description"
-                                    )
-                                ]
+                                [ text (Tr.t lang "product.description") ]
                             , p [ tw [ textGray500 , leadingRelaxed ] ]
                                 [ text summary ]
                             ]
@@ -117,27 +110,9 @@ viewProductDetail model product =
                     , viewAddToCart model product stock
                     , div [ tw [ mt6 , pt6 , borderT , borderGray100 ] ]
                         [ div [ tw [ flex , gap6 ] ]
-                            [ viewFeature
-                                (
-                                if lang == "zh" then
-                                    "品质保证"
-                                else
-                                    "Quality Guaranteed"
-                                )
-                            , viewFeature
-                                (
-                                if lang == "zh" then
-                                    "安全支付"
-                                else
-                                    "Secure Payment"
-                                )
-                            , viewFeature
-                                (
-                                if lang == "zh" then
-                                    "快速配送"
-                                else
-                                    "Fast Shipping"
-                                )
+                            [ viewFeature (Tr.t lang "product.quality")
+                            , viewFeature (Tr.t lang "product.securePayment")
+                            , viewFeature (Tr.t lang "product.fastShipping")
                             ]
                         ]
                     ]

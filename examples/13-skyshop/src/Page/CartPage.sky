@@ -30,23 +30,9 @@ viewSignInPrompt model =
     div [ tw [ textCenter , py20 ] ]
         [ div [ Layout.emptyIconSm ] [ text "Cart" ]
         , h2 [ tw [ text2xl , fontBold , mb2 , textGray900 ] ]
-            [ text
-                (
-                if model.lang == "zh" then
-                    "请先登录"
-                else
-                    "Sign in to view your cart"
-                )
-            ]
+            [ text (Tr.t model.lang "cart.signinTitle") ]
         , p [ tw [ textGray500 , mb6 ] ]
-            [ text
-                (
-                if model.lang == "zh" then
-                    "登录后即可管理购物车"
-                else
-                    "Sign in to add items and manage your cart"
-                )
-            ]
+            [ text (Tr.t model.lang "cart.signinPrompt") ]
         , a [ href "/auth/signin" , attribute "sky-nav" "" , Layout.btnPrimary ]
             [ text (Tr.t model.lang "nav.signin") ]
         ]
@@ -85,32 +71,11 @@ viewCheckoutRedirect model =
     div [ tw [ textCenter , py16 ] ]
         [ div [ class "spinner" ] []
         , p [ tw [ textLg , fontMedium , mb2 , textGray900 ] ]
-            [ text
-                (
-                if model.lang == "zh" then
-                    "正在跳转到支付..."
-                else
-                    "Redirecting to payment..."
-                )
-            ]
+            [ text (Tr.t model.lang "cart.redirecting") ]
         , p [ tw [ textSm , textGray500 , mb6 ] ]
-            [ text
-                (
-                if model.lang == "zh" then
-                    "如果没有自动跳转，请点击下方链接"
-                else
-                    "If not redirected automatically, click below"
-                )
-            ]
+            [ text (Tr.t model.lang "cart.redirectHint") ]
         , a [ href model.checkoutUrl , Layout.btnPrimary ]
-            [ text
-                (
-                if model.lang == "zh" then
-                    "前往支付"
-                else
-                    "Go to payment"
-                )
-            ]
+            [ text (Tr.t model.lang "cart.goToPayment") ]
         , raw
             (
             "<script>window.location.href='" ++
@@ -124,14 +89,7 @@ viewEmptyCart model =
         , h2 [ tw [ textXl , fontSemibold , mb2 , textGray900 ] ]
             [ text (Tr.t model.lang "cart.empty") ]
         , p [ tw [ textGray500 , mb6 ] ]
-            [ text
-                (
-                if model.lang == "zh" then
-                    "去逛逛吧"
-                else
-                    "Start shopping to add items here"
-                )
-            ]
+            [ text (Tr.t model.lang "cart.startShopping") ]
         , a [ href "/products" , attribute "sky-nav" "" , Layout.btnPrimary ]
             [ text (Tr.t model.lang "cart.continueShopping") ]
         ]
@@ -236,14 +194,7 @@ viewCartSummary model =
             , style "top:80px"
             ]
             [ h3 [ tw [ fontSemibold , textGray900 , mb4 ] ]
-                [ text
-                    (
-                    if lang == "zh" then
-                        "订单摘要"
-                    else
-                        "Order Summary"
-                    )
-                ]
+                [ text (Tr.t lang "cart.orderSummary") ]
             , div [ tw [ mb4 ] ]
                 [ label [ Layout.formLabel_ ]
                     [ text (Tr.t lang "cart.remarks") ]
@@ -252,49 +203,22 @@ viewCartSummary model =
                     , onInput UpdateRemarks
                     , rows 3
                     , Layout.formInput
-                    , placeholder
-                        (
-                        if lang == "zh" then
-                            "特殊配送说明..."
-                        else
-                            "Special delivery instructions..."
-                        )
+                    , placeholder (Tr.t lang "cart.deliveryInstructions")
                     ]
                     []
                 ]
             , div [ tw [ borderT , borderGray200 , mt4 , pt4 ] ]
                 [ div [ tw [ flex , justifyBetween , itemsCenter , mb1 ] ]
                     [ span [ tw [ textSm , textGray500 ] ]
-                        [ text
-                            (
-                            if lang == "zh" then
-                                "小计"
-                            else
-                                "Subtotal"
-                            )
-                        ]
+                        [ text (Tr.t lang "cart.subtotal") ]
                     , span [ tw [ fontMedium ] ]
                         [ text (Money.formatPrice totalAmount totalCurrency) ]
                     ]
                 , div [ tw [ flex , justifyBetween , itemsCenter , mb1 ] ]
                     [ span [ tw [ textSm , textGray500 ] ]
-                        [ text
-                            (
-                            if lang == "zh" then
-                                "运费"
-                            else
-                                "Shipping"
-                            )
-                        ]
+                        [ text (Tr.t lang "cart.shipping") ]
                     , span [ tw [ textSm , textGreen600 , fontMedium ] ]
-                        [ text
-                            (
-                            if lang == "zh" then
-                                "包邮"
-                            else
-                                "Free"
-                            )
-                        ]
+                        [ text (Tr.t lang "cart.shippingFree") ]
                     ]
                 , div
                     [ tw

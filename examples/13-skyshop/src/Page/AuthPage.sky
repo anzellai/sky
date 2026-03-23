@@ -1,174 +1,78 @@
-module Page.AuthPage exposing (viewSignIn, viewSignUp)
+module Page.AuthPage exposing (viewSignIn)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live.Events exposing (onClick, onInput, onSubmit)
 import State exposing (..)
 import Ui.Layout as Layout
 import Lib.Translation as Tr
 import Tailwind exposing (..)
 
--- ══════════════════════════════════════════════════════
--- SIGN IN
--- ══════════════════════════════════════════════════════
+
 viewSignIn model =
     let
         lang =
             model.lang
     in
         Layout.page model
-            (
-            div [ tw [ maxWSm , mxAuto , py12 ] ]
+            (div [ tw [ maxWSm , mxAuto , py12 ] ]
                 [ div [ tw [ bgWhite , roundedXl , shadow , p8 ] ]
                     [ h1 [ tw [ text2xl , fontBold , mb6 , textCenter ] ]
                         [ text (Tr.t lang "auth.welcome") ]
-                    , viewAuthError model.authError
-                    , form [ onSubmit DoSignIn ]
-                        [ div [ tw [ mb4 ] ]
-                            [ label [ Layout.formLabel_ ]
-                                [ text (Tr.t lang "auth.email") ]
-                            , input
-                                [ type_ "email"
-                                , placeholder "you@example.com"
-                                , value model.authEmail
-                                , onInput UpdateAuthEmail
-                                , Layout.formInput
-                                , required ()
+                    , div
+                        [ id "auth-error"
+                        , tw [ bgRed50 , textRed700 , p3 , roundedMd , mb4 , textSm ]
+                        , style "display:none"
+                        ]
+                        [ text (model.authError) ]
+                    , div [ tw [ flexCol , gap4 ] ]
+                        [ button
+                            [ attribute "onclick" "skySignIn('google')"
+                            , tw
+                                [ wFull
+                                , bgWhite
+                                , textGray700
+                                , py3
+                                , px4
+                                , roundedLg
+                                , fontSemibold
+                                , textCenter
+                                , border
+                                , borderGray300
+                                , flex
+                                , itemsCenter
+                                , justifyCenter
+                                , gap3
+                                , hover bgGray50
+                                , transitionColors
+                                , cursorPointer
                                 ]
                             ]
-                        , div [ tw [ mb6 ] ]
-                            [ label [ Layout.formLabel_ ]
-                                [ text (Tr.t lang "auth.password") ]
-                            , input
-                                [ type_ "password"
-                                , placeholder "Your password"
-                                , value model.authPassword
-                                , onInput UpdateAuthPassword
-                                , Layout.formInput
-                                , required ()
-                                ]
-                            ]
+                            [ text "Sign in with Google" ]
                         , button
-                            [ type_ "submit"
+                            [ attribute "onclick" "skySignIn('facebook')"
                             , tw
                                 [ wFull
                                 , bgBlue600
                                 , textWhite
                                 , py3
+                                , px4
                                 , roundedLg
                                 , fontSemibold
+                                , textCenter
+                                , flex
+                                , itemsCenter
+                                , justifyCenter
+                                , gap3
+                                , hover bgBlue700
+                                , transitionColors
+                                , cursorPointer
                                 ]
                             ]
-                            [ text (Tr.t lang "auth.signin.btn") ]
+                            [ text "Sign in with Facebook" ]
                         ]
-                    , div [ tw [ mt6 , textCenter , textSm , textGray500 ] ]
-                        [ a
-                            [ href "/auth/signup"
-                            , attribute "sky-nav" ""
-                            , tw [ textBlue600 , fontMedium ]
-                            ]
-                            [ text (Tr.t lang "auth.signup.link") ]
-                        ]
+                    , p [ tw [ textCenter , textSm , textGray500 , mt6 ] ]
+                        [ text (Tr.t lang "auth.terms_notice") ]
                     ]
                 ]
             )
-
--- ══════════════════════════════════════════════════════
--- SIGN UP
--- ══════════════════════════════════════════════════════
-viewSignUp model =
-    let
-        lang =
-            model.lang
-    in
-        Layout.page model
-            (
-            div [ tw [ maxWSm , mxAuto , py12 ] ]
-                [ div [ tw [ bgWhite , roundedXl , shadow , p8 ] ]
-                    [ h1 [ tw [ text2xl , fontBold , mb6 , textCenter ] ]
-                        [ text (Tr.t lang "auth.create") ]
-                    , viewAuthError model.authError
-                    , form [ onSubmit DoSignUp ]
-                        [ div [ tw [ mb4 ] ]
-                            [ label [ Layout.formLabel_ ]
-                                [ text (Tr.t lang "auth.name") ]
-                            , input
-                                [ type_ "text"
-                                , placeholder "Your full name"
-                                , value model.authName
-                                , onInput UpdateAuthName
-                                , Layout.formInput
-                                , required ()
-                                ]
-                            ]
-                        , div [ tw [ mb4 ] ]
-                            [ label [ Layout.formLabel_ ]
-                                [ text (Tr.t lang "auth.email") ]
-                            , input
-                                [ type_ "email"
-                                , placeholder "you@example.com"
-                                , value model.authEmail
-                                , onInput UpdateAuthEmail
-                                , Layout.formInput
-                                , required ()
-                                ]
-                            ]
-                        , div [ tw [ mb4 ] ]
-                            [ label [ Layout.formLabel_ ]
-                                [ text (Tr.t lang "auth.phone") ]
-                            , input
-                                [ type_ "tel"
-                                , placeholder "+44 ..."
-                                , value model.authPhone
-                                , onInput UpdateAuthPhone
-                                , Layout.formInput
-                                ]
-                            ]
-                        , div [ tw [ mb6 ] ]
-                            [ label [ Layout.formLabel_ ]
-                                [ text (Tr.t lang "auth.password") ]
-                            , input
-                                [ type_ "password"
-                                , placeholder "At least 8 characters"
-                                , value model.authPassword
-                                , onInput UpdateAuthPassword
-                                , Layout.formInput
-                                , required ()
-                                , minlength 8
-                                ]
-                            ]
-                        , button
-                            [ type_ "submit"
-                            , tw
-                                [ wFull
-                                , bgBlue600
-                                , textWhite
-                                , py3
-                                , roundedLg
-                                , fontSemibold
-                                ]
-                            ]
-                            [ text (Tr.t lang "auth.signup.btn") ]
-                        ]
-                    , div [ tw [ mt6 , textCenter , textSm , textGray500 ] ]
-                        [ a
-                            [ href "/auth/signin"
-                            , attribute "sky-nav" ""
-                            , tw [ textBlue600 , fontMedium ]
-                            ]
-                            [ text (Tr.t lang "auth.signin.link") ]
-                        ]
-                    ]
-                ]
-            )
-
--- ══════════════════════════════════════════════════════
--- HELPERS
--- ══════════════════════════════════════════════════════
-viewAuthError error =
-    if error == "" then
-        text ""
-    else
-        div [ tw [ bgRed50 , textRed700 , p3 , roundedMd , mb4 , textSm ] ]
-            [ text error ]

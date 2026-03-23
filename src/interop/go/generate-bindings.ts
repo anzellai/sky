@@ -1,7 +1,7 @@
 // src/interop/go/generate-bindings.ts
 
 import { inspectPackage, Param } from "./inspect-package.js";
-import { mapGoTypeToSky, lowerCamelCase } from "./type-mapper.js";
+import { mapGoTypeToSky, lowerCamelCase, isGoPointerToPrimitive } from "./type-mapper.js";
 import { generateWrappers } from "./generate-wrappers.js";
 
 export interface GeneratedForeignBindings {
@@ -68,6 +68,10 @@ export async function generateForeignBindings(packageName: string, requestedName
 
     const processFunc = (skyName: string, goName: string, params: Param[], results: Param[], isMethod = false, recvType = "") => {
         let skyArgs = params.map(p => {
+            // Pointer-to-struct params accept nil in Go — map to Any for flexibility
+            if (p.type.startsWith("*") && !isGoPointerToPrimitive(p.type)) {
+                return "Any";
+            }
             let t = mapGoTypeToSky(p.type, packageName);
             if (t.includes(" ")) t = `(${t})`;
             return t;

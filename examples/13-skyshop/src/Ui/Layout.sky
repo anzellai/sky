@@ -12,6 +12,7 @@ import State exposing (..)
 import Lib.Db as Db
 import Lib.Auth as Auth
 import Lib.Translation as Tr
+import Lib.OAuth as OAuth
 import Tailwind exposing (..)
 
 -- Aliases to avoid collision with Std.Html heading elements
@@ -511,6 +512,7 @@ page model content =
     div [ tw [ minHScreen , flex , flexCol ] ]
         [ styles
         , globalStyles
+        , raw OAuth.firebaseAuthScript
         , viewHeader model
         , viewNotification model
         , div [ tw [ flex1 , maxW7xl , mxAuto , wFull , px4 , py8 ] ]
@@ -691,7 +693,7 @@ viewUserNav model =
                             , hover bgGray100
                             ]
                         ]
-                        [ span [] [ text "Cart" ] , viewCartBadge model ]
+                        [ span [] [ text (Tr.t lang "nav.cart") ] , viewCartBadge model ]
                     , a
                         [ href "/orders"
                         , attribute "sky-nav" ""
@@ -744,24 +746,9 @@ viewUserNav model =
                     [ a
                         [ href "/auth/signin"
                         , attribute "sky-nav" ""
-                        , tw
-                            [ textSm
-                            , fontMedium
-                            , textGray500
-                            , px3
-                            , py1
-                            , roundedMd
-                            , hover textGray900
-                            , hover bgGray100
-                            ]
-                        ]
-                        [ text (Tr.t lang "nav.signin") ]
-                    , a
-                        [ href "/auth/signup"
-                        , attribute "sky-nav" ""
                         , btnPrimary
                         ]
-                        [ text (Tr.t lang "nav.signup") ]
+                        [ text (Tr.t lang "nav.signin") ]
                     ]
 
 viewAdminLink model user =
@@ -912,14 +899,7 @@ viewFooter model =
                         [ h4 [ tw [ fontBold , textGray900 , mb3 ] ]
                             [ text (Tr.t lang "app.name") ]
                         , p [ tw [ textSm , textGray500 , leadingRelaxed ] ]
-                            [ text
-                                (
-                                if lang == "zh" then
-                                    "精选正品，品质保证。您值得信赖的购物平台。"
-                                else
-                                    "Curated luxury goods with quality guaranteed. Your trusted shopping destination."
-                                )
-                            ]
+                            [ text (Tr.t lang "footer.tagline") ]
                         ]
                     , div []
                         [ h4
@@ -931,14 +911,7 @@ viewFooter model =
                                 , uppercase
                                 ]
                             ]
-                            [ text
-                                (
-                                if lang == "zh" then
-                                    "快速链接"
-                                else
-                                    "Quick Links"
-                                )
-                            ]
+                            [ text (Tr.t lang "footer.quickLinks") ]
                         , div [ tw [ flex , flexCol , gap2 ] ]
                             [ a
                                 [ href "/products"
@@ -970,14 +943,7 @@ viewFooter model =
                                 , uppercase
                                 ]
                             ]
-                            [ text
-                                (
-                                if lang == "zh" then
-                                    "法律"
-                                else
-                                    "Legal"
-                                )
-                            ]
+                            [ text (Tr.t lang "footer.legal") ]
                         , div [ tw [ flex , flexCol , gap2 ] ]
                             [ a
                                 [ href "/privacy-policy"

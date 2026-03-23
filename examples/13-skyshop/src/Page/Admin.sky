@@ -205,14 +205,7 @@ viewProductForm model =
         div [ Layout.card ]
             [ div [ Layout.cardHeader ]
                 [ h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
-                    [ text
-                        (
-                        if lang == "zh" then
-                            "基本信息"
-                        else
-                            "Basic Information"
-                        )
-                    ]
+                    [ text (Tr.t lang "admin.product.basicInfo") ]
                 ]
             , div [ Layout.cardBody , tw [ flex , flexCol , gap5 ] ]
                 [ div []
@@ -286,14 +279,7 @@ viewProductForm model =
                 ]
             , div [ Layout.cardSection ]
                 [ h3 [ tw [ fontSemibold , textGray900 , textSm , mb4 ] ]
-                    [ text
-                        (
-                        if lang == "zh" then
-                            "价格与库存"
-                        else
-                            "Pricing & Inventory"
-                        )
-                    ]
+                    [ text (Tr.t lang "admin.product.pricingInventory") ]
                 , div [ tw [ grid , gridCols3 , gap4 ] ]
                     [ div []
                         [ label [ Layout.formLabel_ ]

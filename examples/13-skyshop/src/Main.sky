@@ -5,6 +5,7 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Result as Result
+import Sky.Core.Dict as Dict
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Log exposing (println)
@@ -16,6 +17,7 @@ import Std.Time as Time
 import State exposing (..)
 import Lib.Db as Db
 import Lib.Auth as Auth
+import Lib.OAuth as OAuth
 import Lib.Products as Products
 import Lib.Cart as Cart
 import Lib.Stripe as Stripe
@@ -34,8 +36,9 @@ import Page.Static as Static
 -- INIT
 -- ══════════════════════════════════════════════════════
 
+
 init : a -> ( Model, Cmd Msg )
-init _req =
+init req =
     let
         _ =
             Db.initDb
@@ -43,10 +46,10 @@ init _req =
             println "[APP] SkyShop initialized"
         products =
             Products.listProducts
+        base =
+            { emptyModel | products = products }
     in
-        ( { emptyModel | products = products }
-        , Cmd.none
-        )
+        ( base , Cmd.none )
 
 
 -- ══════════════════════════════════════════════════════
@@ -224,6 +227,7 @@ handleNavigate page model =
             AdminOrderPage orderId ->
                 ( loadOrderDetail base orderId , Cmd.none )
 
+
             _ ->
                 ( base , Cmd.none )
 
@@ -231,54 +235,6 @@ handleNavigate page model =
 -- ══════════════════════════════════════════════════════
 -- AUTH HANDLERS
 -- ══════════════════════════════════════════════════════
-
-handleSignIn : Model -> ( Model, Cmd Msg )
-handleSignIn model =
-    case Auth.signIn model.authEmail model.authPassword of
-        Ok user ->
-            let
-                _ =
-                    println ("[AUTH] Signed in: " ++ Db.getField "email" user)
-                base =
-                    { model
-                      | user = Just user
-                      , page = HomePage
-                      , authEmail = ""
-                      , authPassword = ""
-                      , authError = ""
-                      , notification = "Welcome back!"
-                      , notificationType = "success"
-                    }
-            in
-                ( refreshProducts (refreshCart base) , Cmd.none )
-
-        Err error ->
-            ( { model | authError = error } , Cmd.none )
-
-
-handleSignUp : Model -> ( Model, Cmd Msg )
-handleSignUp model =
-    case Auth.signUp model.authName model.authEmail model.authPassword model.authPhone of
-        Ok user ->
-            let
-                base =
-                    { model
-                      | user = Just user
-                      , page = HomePage
-                      , authName = ""
-                      , authEmail = ""
-                      , authPassword = ""
-                      , authPhone = ""
-                      , authError = ""
-                      , notification = "Account created! Welcome to SkyShop."
-                      , notificationType = "success"
-                    }
-            in
-                ( refreshProducts (refreshCart base) , Cmd.none )
-
-        Err error ->
-            ( { model | authError = error } , Cmd.none )
-
 
 handleSignOut : Model -> ( Model, Cmd Msg )
 handleSignOut model =
@@ -687,24 +643,32 @@ update msg model =
         SetLang lang ->
             ( { model | lang = lang } , Cmd.none )
 
-        -- Auth fields
-        UpdateAuthName val ->
-            ( { model | authName = val } , Cmd.none )
+        FirebaseAuth token ->
+            case OAuth.handleAuthCallback token of
+                Ok user ->
+                    let
+                        _ =
+                            println ("[AUTH] Sign in: " ++ Db.getField "email" user)
+                        updated =
+                            refreshProducts
+                                (refreshCart
+                                    { model
+                                      | user = Just user
+                                      , page = HomePage
+                                      , notification = "Welcome!"
+                                      , notificationType = "success"
+                                      , authError = ""
+                                    }
+                                )
+                    in
+                        ( updated , Cmd.none )
 
-        UpdateAuthEmail val ->
-            ( { model | authEmail = val } , Cmd.none )
-
-        UpdateAuthPassword val ->
-            ( { model | authPassword = val } , Cmd.none )
-
-        UpdateAuthPhone val ->
-            ( { model | authPhone = val } , Cmd.none )
-
-        DoSignIn ->
-            handleSignIn model
-
-        DoSignUp ->
-            handleSignUp model
+                Err e ->
+                    let
+                        _ =
+                            println ("[AUTH] Error: " ++ e)
+                    in
+                        ( { model | authError = e } , Cmd.none )
 
         DoSignOut ->
             handleSignOut model
@@ -870,9 +834,6 @@ view model =
         AuthSignInPage ->
             AuthPage.viewSignIn model
 
-        AuthSignUpPage ->
-            AuthPage.viewSignUp model
-
         AdminProductsPage ->
             Admin.viewAdminProducts model
 
@@ -933,7 +894,6 @@ main =
             , route "/order/:id" (OrderPage "")
             , route "/order/:id/success" (OrderSuccessPage "")
             , route "/auth/signin" AuthSignInPage
-            , route "/auth/signup" AuthSignUpPage
             , route "/admin/products" AdminProductsPage
             , route "/admin/products/new" AdminNewProductPage
             , route "/admin/products/:id" (AdminEditProductPage "")

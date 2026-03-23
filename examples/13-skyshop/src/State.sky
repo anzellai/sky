@@ -16,7 +16,6 @@ type Page
     | OrderPage String
     | OrderSuccessPage String
     | AuthSignInPage
-    | AuthSignUpPage
     | AdminProductsPage
     | AdminNewProductPage
     | AdminEditProductPage String
@@ -31,27 +30,7 @@ type Page
 -- ══════════════════════════════════════════════════════
 type Msg
     = Navigate Page
-
-    -- Auth fields
     | SetLang String
-
-    -- Product browsing
-    | UpdateAuthName String
-
-    -- Cart
-    | UpdateAuthEmail String
-
-    -- Admin product
-    | UpdateAuthPassword String
-
-    -- Admin orders
-    | UpdateAuthPhone String
-
-    -- Notifications
-    | DoSignIn
-
-    -- Tick
-    | DoSignUp
     | DoSignOut
     | SetSearch String
     | SetCategoryFilter String
@@ -81,6 +60,7 @@ type Msg
     | SetAdminOrderFilter String
     | UpdateOrderState String String
     | DismissNotification
+    | FirebaseAuth String
     | Tick
     | NoOp
 
@@ -89,29 +69,9 @@ type Msg
 -- ══════════════════════════════════════════════════════
 type alias Model =
     { page : Page
-
-    -- Auth
     , lang : String
-
-    -- Products
     , user : Maybe (Dict String String)
-
-    -- Cart
-    , authName : String
-
-    -- Orders
-    , authEmail : String
-
-    -- Admin product form
-    , authPassword : String
-
-    -- Admin orders
-    , authPhone : String
-
-    -- Quantity selector (on product page)
     , authError : String
-
-    -- Notifications
     , products : List (Dict String String)
     , product : Maybe (Dict String String)
     , productImages : List (Dict String String)
@@ -151,10 +111,6 @@ emptyModel =
     { page = HomePage
     , lang = "en"
     , user = Nothing
-    , authName = ""
-    , authEmail = ""
-    , authPassword = ""
-    , authPhone = ""
     , authError = ""
     , products = []
     , product = Nothing

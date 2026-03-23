@@ -72,7 +72,12 @@ function generateMsgDecoder(variants: MsgVariant[], pageVariants: PageVariant[],
   code += `\t\tif page != nil {\n`;
   code += `\t\t\tinlineResolvedArg = page\n`;
   code += `\t\t} else {\n`;
-  code += `\t\t\tinlineResolvedArg = inlineArg\n`;
+  code += `\t\t\t// Strip surrounding quotes from string arguments (e.g., '"hello"' → 'hello')\n`;
+  code += `\t\t\tif len(inlineArg) >= 2 && inlineArg[0] == '\\x22' && inlineArg[len(inlineArg)-1] == '\\x22' {\n`;
+  code += `\t\t\t\tinlineResolvedArg = inlineArg[1:len(inlineArg)-1]\n`;
+  code += `\t\t\t} else {\n`;
+  code += `\t\t\t\tinlineResolvedArg = inlineArg\n`;
+  code += `\t\t\t}\n`;
   code += `\t\t}\n`;
   code += `\t}\n`;
   // Build set of component-wired variant names (handled by component decoder)

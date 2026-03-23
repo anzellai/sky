@@ -42,14 +42,7 @@ viewHero model =
                 [ tw [ textSm , uppercase , fontBold , textBlue400 , mb3 ]
                 , style "letter-spacing:.1em"
                 ]
-                [ text
-                    (
-                    if lang == "zh" then
-                        "精选正品"
-                    else
-                        "Curated Collection"
-                    )
-                ]
+                [ text (Tr.t lang "hero.badge") ]
             , h1
                 [ tw [ text5xl , fontBold , textWhite , mb4 ]
                 , style "line-height:1.1;letter-spacing:-.025em"
@@ -59,14 +52,7 @@ viewHero model =
                 [ tw [ textLg , textGray400 , mb8 , mxAuto ]
                 , style "max-width:480px"
                 ]
-                [ text
-                    (
-                    if lang == "zh" then
-                        "品质保证，精心挑选每一件商品"
-                    else
-                        "Quality guaranteed. Every item handpicked with care."
-                    )
-                ]
+                [ text (Tr.t lang "hero.subtitle") ]
             , div [ tw [ flex , justifyCenter , gap3 ] ]
                 [ a
                     [ href "/products"
@@ -85,14 +71,7 @@ viewHero model =
                         , hover bgGray100
                         ]
                     ]
-                    [ text
-                        (
-                        if lang == "zh" then
-                            "浏览商品"
-                        else
-                            "Browse Products"
-                        )
-                    ]
+                    [ text (Tr.t lang "hero.cta") ]
                 ]
             ]
 
@@ -132,27 +111,13 @@ viewFeaturedProducts model =
         div []
             [ div [ tw [ flex , justifyBetween , itemsCenter , mb6 ] ]
                 [ h2 [ tw [ text2xl , fontBold , textGray900 ] ]
-                    [ text
-                        (
-                        if model.lang == "zh" then
-                            "精选产品"
-                        else
-                            "Featured Products"
-                        )
-                    ]
+                    [ text (Tr.t model.lang "home.featured") ]
                 , a
                     [ href "/products"
                     , attribute "sky-nav" ""
                     , tw [ textSm , fontSemibold , textBlue600 ]
                     ]
-                    [ text
-                        (
-                        if model.lang == "zh" then
-                            "查看全部"
-                        else
-                            "View all"
-                        )
-                    ]
+                    [ text (Tr.t model.lang "home.viewAll") ]
                 ]
             , viewProductGrid model featured
             ]
@@ -168,14 +133,7 @@ viewProducts model =
                 [ h1 [ tw [ text3xl , fontBold , textGray900 ] ]
                     [ text (Tr.t model.lang "nav.products") ]
                 , p [ tw [ textGray500 , mt1 ] ]
-                    [ text
-                        (
-                        if model.lang == "zh" then
-                            "浏览我们精选的商品系列"
-                        else
-                            "Browse our curated collection"
-                        )
-                    ]
+                    [ text (Tr.t model.lang "hero.browse") ]
                 ]
             , viewToolbar model
             , viewProductGrid model model.products
@@ -209,14 +167,7 @@ viewToolbar model =
                 )
             , div [ tw [ flex , gap2 , itemsCenter ] ]
                 [ span [ tw [ textSm , textGray500 , mr2 ] ]
-                    [ text
-                        (
-                        if lang == "zh" then
-                            "排序"
-                        else
-                            "Sort by"
-                        )
-                    ]
+                    [ text (Tr.t lang "product.sortBy") ]
                 , sortBtn "newest" (Tr.t lang "product.sort.newest")
                     model.sortBy
                 , sortBtn "price" (Tr.t lang "product.sort.price") model.sortBy
