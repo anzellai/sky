@@ -213,13 +213,19 @@ createCheckoutSession cartId items userEmail remarks =
                         Err ("Stripe API error: " ++ e)
 
 decodeCheckoutResponse json =
-    Decode.decodeString
-        (
-        Decode.map2 (\id url -> { id = id , url = url })
-            (Decode.field "id" Decode.string)
-            (Decode.field "url" Decode.string)
-        )
-        json
+    -- Check for Stripe error response first
+    case Decode.decodeString (Decode.field "error" (Decode.field "message" Decode.string)) json of
+        Ok errMsg ->
+            Err errMsg
+
+        _ ->
+            Decode.decodeString
+                (
+                Decode.map2 (\id url -> { id = id , url = url })
+                    (Decode.field "id" Decode.string)
+                    (Decode.field "url" Decode.string)
+                )
+                json
 
 -- ══════════════════════════════════════════════════════
 -- PAYMENT VERIFICATION
@@ -291,27 +297,31 @@ type alias PaymentStatus =
     }
 
 decodePaymentStatus json =
-    Decode.decodeString
-        (
-        Decode.map2
-            (
-            \status paymentStatus ->
-                { status = status
-                , paymentStatus = paymentStatus
-                , customerName = ""
-                , customerEmail = ""
-                , customerPhone = ""
-                , shippingLine1 = ""
-                , shippingLine2 = ""
-                , shippingCity = ""
-                , shippingCountry = ""
-                , shippingPostalCode = ""
-                }
-            )
-            (Decode.field "status" Decode.string)
-            (Decode.field "payment_status" Decode.string)
-        )
-        json
+    case Decode.decodeString (Decode.field "error" (Decode.field "message" Decode.string)) json of
+        Ok errMsg ->
+            Err errMsg
+
+        _ ->
+            let
+                decoder =
+                    Decode.map2
+                        (\status paymentStatus ->
+                            { status = status
+                            , paymentStatus = paymentStatus
+                            , customerName = ""
+                            , customerEmail = ""
+                            , customerPhone = ""
+                            , shippingLine1 = ""
+                            , shippingLine2 = ""
+                            , shippingCity = ""
+                            , shippingCountry = ""
+                            , shippingPostalCode = ""
+                            }
+                        )
+                        (Decode.field "status" Decode.string)
+                        (Decode.field "payment_status" Decode.string)
+            in
+                Decode.decodeString decoder json
 
 -- ══════════════════════════════════════════════════════
 -- STOCK MANAGEMENT
