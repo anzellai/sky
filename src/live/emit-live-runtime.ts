@@ -218,8 +218,11 @@ function generateRouteTable(
   code += `\treturn -1\n}\n\n`;
 
   // URL reverse mapping — substitutes :param placeholders with Page field values
+  const hasParamRoutes = routes.some(r => r.pattern.includes(":"));
   code += `func urlForPage(page any) string {\n`;
-  code += `\tm, _ := page.(map[string]any)\n`;
+  if (hasParamRoutes) {
+    code += `\tm, _ := page.(map[string]any)\n`;
+  }
   code += `\tswitch pageTag(page) {\n`;
   for (let i = 0; i < pageVariants.length; i++) {
     const route = routes.find(r => r.pageConstructor === pageVariants[i].name);

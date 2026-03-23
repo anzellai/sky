@@ -1226,7 +1226,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           // Build if-else chain for cons vs other patterns
           const buildConsChain = (caseIdx: number): GoIR.GoStmt[] => {
               if (caseIdx >= expr.cases.length) {
-                  return [{ kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" } }];
+                  return [{ kind: "GoExprStmt", expr: { kind: "GoRawExpr", code: `panic("non-exhaustive pattern match in list expression")` } as any }];
               }
               const c = expr.cases[caseIdx];
               if (c.pattern.kind === "ConsPattern") {
@@ -1398,7 +1398,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   type: { kind: "GoFuncType", params: [], results: [lowerType(expr.type)] },
                   body: [
                       { kind: "GoSwitchStmt", expr: switchSubj, cases: litCases },
-                      { kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" } }
+                      { kind: "GoExprStmt", expr: { kind: "GoRawExpr", code: `panic("non-exhaustive pattern match on literal value")` } as any }
                   ]
               },
               args: []
@@ -1719,6 +1719,27 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                    innerSwitchExpr = { kind: "GoRawExpr", code: `sky_wrappers.Sky_AsInt(sky_wrappers.Sky_AsMap(${innerTmpName})["Tag"])` } as any;
                }
 
+               // Check if there's a wildcard/variable fallback case in the match expression.
+               // If so, use its body as the default for the inner switch (instead of returning nil).
+               const wildcardCase = expr.cases.find(
+                   wc => wc.pattern.kind === "WildcardPattern" || wc.pattern.kind === "VariablePattern"
+               );
+               if (wildcardCase) {
+                   const wcStmts: GoIR.GoStmt[] = [];
+                   const wcEnv = new Map(localEnv || []);
+                   if (wildcardCase.pattern.kind === "VariablePattern" && wildcardCase.pattern.name !== "_") {
+                       wcEnv.set(wildcardCase.pattern.name, expr.expr.type);
+                       wcStmts.push({
+                           kind: "GoAssignStmt",
+                           define: true,
+                           left: [{ kind: "GoIdent", name: sanitizeGoIdent(wildcardCase.pattern.name) }],
+                           right: subjRef
+                       });
+                   }
+                   wcStmts.push({ kind: "GoReturnStmt", expr: lowerExpr(wildcardCase.body, moduleExports, wcEnv, foreignModules, constructorMap) });
+                   innerCases.push({ kind: "GoCaseClause", exprs: [], body: wcStmts });
+               }
+
                outerStmts.push({
                    kind: "GoSwitchStmt",
                    expr: innerSwitchExpr,
@@ -1805,6 +1826,14 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           });
       }
 
+      // Only add nil fallback if no wildcard/default case was generated
+      // (wildcard cases generate default: clauses which cover all remaining values)
+      const hasWildcardCase = cases.some(c => c.exprs.length === 0);
+      if (!hasWildcardCase) {
+          bodyStmts.push({
+              kind: "GoExprStmt", expr: { kind: "GoRawExpr", code: `panic("non-exhaustive pattern match")` } as any
+          });
+      }
       bodyStmts.push({
           kind: "GoReturnStmt", expr: { kind: "GoBasicLit", value: "nil" }
       });

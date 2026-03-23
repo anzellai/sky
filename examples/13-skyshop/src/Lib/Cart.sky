@@ -276,49 +276,20 @@ recalculateTotal cartId =
 
 -- Find a document by ID, checking orders first then carts.
 findDocAndCollection docId =
-    let
-        ordersResult =
-            Db.getDoc "orders" docId
-    in
-        case ordersResult of
-            Ok maybeOrder ->
-                case maybeOrder of
-                    Just doc ->
-                        Ok ( "orders" , doc )
+    case Db.getDoc "orders" docId of
+        Ok (Just doc) ->
+            Ok ( "orders" , doc )
 
-                    Nothing ->
-                        let
-                            cartsResult =
-                                Db.getDoc "carts" docId
-                        in
-                            case cartsResult of
-                                Ok maybeCarts ->
-                                    case maybeCarts of
-                                        Just doc ->
-                                            Ok ( "carts" , doc )
+        _ ->
+            case Db.getDoc "carts" docId of
+                Ok (Just doc) ->
+                    Ok ( "carts" , doc )
 
-                                        Nothing ->
-                                            Err "Document not found."
+                Ok Nothing ->
+                    Err "Document not found."
 
-                                Err e ->
-                                    Err e
-
-            Err _ ->
-                let
-                    cartsResult =
-                        Db.getDoc "carts" docId
-                in
-                    case cartsResult of
-                        Ok maybeCarts ->
-                            case maybeCarts of
-                                Just doc ->
-                                    Ok ( "carts" , doc )
-
-                                Nothing ->
-                                    Err "Document not found."
-
-                        Err e ->
-                            Err e
+                Err e ->
+                    Err e
 
 setCartState docId newState =
     case findDocAndCollection docId of
