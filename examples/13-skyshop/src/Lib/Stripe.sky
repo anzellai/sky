@@ -316,15 +316,22 @@ decodePaymentStatus json =
 -- ══════════════════════════════════════════════════════
 -- STOCK MANAGEMENT
 -- ══════════════════════════════════════════════════════
-deductStock cartId =
+deductStock orderId =
     let
-        items =
+        -- Try order_items first (new flow), fall back to cart_items (legacy)
+        orderItems =
             Result.withDefault []
-                (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+                (Db.queryWhere "order_items" "order_id" "==" orderId)
+        items =
+            if List.isEmpty orderItems then
+                Result.withDefault []
+                    (Db.queryWhere "cart_items" "cart_id" "==" orderId)
+            else
+                orderItems
         _ =
             List.map (deductItemStock) items
         _ =
-            println ("[STOCK] Deducted for cart: " ++ cartId)
+            println ("[STOCK] Deducted for order: " ++ orderId)
     in
         ()
 

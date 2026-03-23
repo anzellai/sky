@@ -128,7 +128,7 @@ loadProductDetail model productId =
 loadOrderDetail model orderId =
     let
         ( order , items ) =
-            Cart.getCartWithItems orderId
+            Cart.getOrderWithItems orderId
     in
         { model | order = order , orderItems = items }
 
@@ -348,19 +348,40 @@ handleStartCheckout model =
                             , Cmd.none
                             )
                         else
-                            case Stripe.createCheckoutSession cartId items userEmail model.cartRemarks of
-                                Ok session ->
-                                    let
-                                        _ =
-                                            Cart.setCheckout cartId session.url session.id model.cartRemarks
-                                    in
-                                        ( { model | checkoutUrl = session.url }
-                                        , Cmd.none
-                                        )
+                            -- Copy cart → orders collection, get order ID
+                            case Cart.checkoutToOrder cartId of
+                                Ok orderId ->
+                                    case Stripe.createCheckoutSession orderId items userEmail model.cartRemarks of
+                                        Ok session ->
+                                            let
+                                                -- Set checkout info on the ORDER (not the cart)
+                                                _ =
+                                                    Cart.setCheckout orderId session.url session.id model.cartRemarks
+                                                _ =
+                                                    Cart.setCartState orderId "pending"
+
+                                                -- Reset the active cart to fresh "ongoing"
+                                                userId =
+                                                    Db.getField "id" user
+                                                _ =
+                                                    Cart.createCart userId
+                                            in
+                                                ( refreshCart
+                                                    { model | checkoutUrl = session.url }
+                                                , Cmd.none
+                                                )
+
+                                        Err e ->
+                                            ( { model
+                                              | notification = e
+                                              , notificationType = "error"
+                                              }
+                                            , Cmd.none
+                                            )
 
                                 Err e ->
                                     ( { model
-                                      | notification = e
+                                      | notification = "Checkout failed: " ++ e
                                       , notificationType = "error"
                                       }
                                     , Cmd.none
@@ -379,39 +400,39 @@ handleStartCheckout model =
 
 
 handleVerifyPayment : String -> Model -> ( Model, Cmd Msg )
-handleVerifyPayment cartId model =
+handleVerifyPayment orderId model =
     let
         ( order , items ) =
-            Cart.getCartWithItems cartId
+            Cart.getOrderWithItems orderId
         base =
             { model | order = order , orderItems = items }
     in
         case order of
-            Just cart ->
+            Just orderDoc ->
                 let
                     state =
-                        Db.getField "state" cart
+                        Db.getField "state" orderDoc
                 in
                     if state == "ordered" || state == "shipped" || state == "delivered" then
                         -- Already verified
                         ( base , Cmd.none )
                     else
-                        case Stripe.verifyPayment cartId of
+                        case Stripe.verifyPayment orderId of
                             Ok status ->
                                 let
                                     _ =
-                                        Cart.setCartState cartId "ordered"
+                                        Cart.setCartState orderId "ordered"
                                     _ =
-                                        Stripe.deductStock cartId
+                                        Stripe.deductStock orderId
                                     _ =
                                         case model.user of
                                             Just user ->
-                                                Notify.notifyOrderPlaced cart items (Db.getField "name" user) (Db.getField "email" user)
+                                                Notify.notifyOrderPlaced orderDoc items (Db.getField "name" user) (Db.getField "email" user)
 
                                             Nothing ->
                                                 ()
                                     updatedOrder =
-                                        Cart.getCart cartId
+                                        Cart.getOrder orderId
                                 in
                                     ( { base
                                       | order = updatedOrder

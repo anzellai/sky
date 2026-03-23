@@ -1,4 +1,4 @@
-module Lib.Cart exposing (getOrCreateCart, getCart, getCartItems, getCartWithItems, addItem, updateItemQty, removeItem, recalculateTotal, setCartState, setCheckout, setShipping, getUserCarts, getOrdersByState, getAllOrders)
+module Lib.Cart exposing (getOrCreateCart, createCart, getCart, getCartItems, getCartWithItems, addItem, updateItemQty, removeItem, recalculateTotal, setCartState, setCheckout, setShipping, getUserCarts, getOrdersByState, getAllOrders, checkoutToOrder, getOrder, getOrderItems, getOrderWithItems)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
@@ -22,10 +22,11 @@ getOrCreateCart userId =
     in
         case Db.getDoc "carts" cartId of
             Ok (Just cart) ->
+                -- Only return if ongoing; otherwise create fresh
+                -- (in-flight payments are moved to orders collection first)
                 if Db.getField "state" cart == "ongoing" then
                     Ok cart
                 else
-                    -- Previous cart was checked out; create a fresh one
                     createCart userId
 
             Ok Nothing ->
@@ -272,18 +273,36 @@ recalculateTotal cartId =
 -- ══════════════════════════════════════════════════════
 -- ORDER STATE
 -- ══════════════════════════════════════════════════════
-setCartState cartId newState =
-    case Db.getDoc "carts" cartId of
-        Ok Just cart ->
+
+-- Find a document by ID, checking orders first then carts.
+findDocAndCollection docId =
+    case Db.getDoc "orders" docId of
+        Ok (Just doc) ->
+            Ok ( "orders" , doc )
+
+        _ ->
+            case Db.getDoc "carts" docId of
+                Ok (Just doc) ->
+                    Ok ( "carts" , doc )
+
+                Ok Nothing ->
+                    Err "Document not found."
+
+                Err e ->
+                    Err e
+
+setCartState docId newState =
+    case findDocAndCollection docId of
+        Ok ( collection , doc ) ->
             let
-                updatedCart =
-                    Dict.insert "state" newState cart
+                updatedDoc =
+                    Dict.insert "state" newState doc
                 result =
-                    Db.setDoc "carts" cartId updatedCart
+                    Db.setDoc collection docId updatedDoc
                 _ =
                     println
                         (
-                        "[CART] State changed: " ++ cartId ++ " -> " ++ newState
+                        "[ORDER] State changed: " ++ docId ++ " -> " ++ newState
                         )
             in
                 case result of
@@ -293,39 +312,32 @@ setCartState cartId newState =
                     Err e ->
                         Err e
         
-        Ok Nothing ->
-            Err "Cart not found."
-        
         Err e ->
             Err e
 
-setCheckout cartId link reference remarks =
-    case Db.getDoc "carts" cartId of
-        Ok Just cart ->
+setCheckout docId link reference remarks =
+    case findDocAndCollection docId of
+        Ok ( collection , doc ) ->
             let
-                updatedCart =
+                updatedDoc =
                     Dict.insert "checkout_link" link
                         (
                         Dict.insert "checkout_reference" reference
                             (
-                            Dict.insert "checkout_remarks" remarks
-                                (Dict.insert "state" "pending" cart)
+                            Dict.insert "checkout_remarks" remarks doc
                             )
                         )
             in
-                Db.setDoc "carts" cartId updatedCart
-        
-        Ok Nothing ->
-            Err "Cart not found."
-        
+                Db.setDoc collection docId updatedDoc
+
         Err e ->
             Err e
 
-setShipping cartId name email phone line1 line2 city country postcode =
-    case Db.getDoc "carts" cartId of
-        Ok Just cart ->
+setShipping docId name email phone line1 line2 city country postcode =
+    case findDocAndCollection docId of
+        Ok ( collection , doc ) ->
             let
-                updatedCart =
+                updatedDoc =
                     Dict.insert "shipping_name" name
                         (
                         Dict.insert "shipping_email" email
@@ -343,7 +355,7 @@ setShipping cartId name email phone line1 line2 city country postcode =
                                                 (
                                                 Dict.insert "shipping_postcode"
                                                     postcode
-                                                    cart
+                                                    doc
                                                 )
                                             )
                                         )
@@ -352,23 +364,88 @@ setShipping cartId name email phone line1 line2 city country postcode =
                             )
                         )
             in
-                Db.setDoc "carts" cartId updatedCart
-        
-        Ok Nothing ->
-            Err "Cart not found."
-        
+                Db.setDoc collection docId updatedDoc
+
         Err e ->
             Err e
 
 -- ══════════════════════════════════════════════════════
--- ORDER QUERIES
+-- CHECKOUT → ORDER
 -- ══════════════════════════════════════════════════════
-getUserCarts userId =
+
+-- Copies the active cart + items to the orders collection with a new UUID,
+-- then resets the active cart to fresh "ongoing". Returns the order ID.
+-- This ensures in-flight payments are preserved even if the user refreshes.
+checkoutToOrder cartId =
     let
-        allCarts =
-            Result.withDefault [] (Db.queryWhere "carts" "owner_id" "==" userId)
+        orderId =
+            Uuid.newString ()
     in
-        List.filter (\c -> Db.getField "state" c != "ongoing") allCarts
+        case Db.getDoc "carts" cartId of
+            Ok (Just cart) ->
+                let
+                    -- Copy cart data to orders collection
+                    orderData =
+                        Dict.insert "id" orderId
+                            (Dict.insert "cart_id" cartId cart)
+                    _ =
+                        Db.setDoc "orders" orderId orderData
+
+                    -- Copy cart items to order_items collection
+                    cartItems =
+                        Result.withDefault [] (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+                    _ =
+                        List.map
+                            (\item ->
+                                let
+                                    itemId =
+                                        Uuid.newString ()
+                                    orderItem =
+                                        Dict.insert "id" itemId
+                                            (Dict.insert "order_id" orderId
+                                                (Dict.insert "cart_id" cartId item))
+                                in
+                                    Db.setDoc "order_items" itemId orderItem
+                            )
+                            cartItems
+                    _ =
+                        println ("[CHECKOUT] Created order " ++ orderId ++ " from cart " ++ cartId)
+                in
+                    Ok orderId
+
+            _ ->
+                Err "Cart not found."
+
+-- ══════════════════════════════════════════════════════
+-- ORDER QUERIES (read from orders + order_items collections)
+-- ══════════════════════════════════════════════════════
+getOrder orderId =
+    case Db.getDoc "orders" orderId of
+        Ok maybeOrder ->
+            maybeOrder
+
+        Err _ ->
+            Nothing
+
+getOrderItems orderId =
+    Result.withDefault [] (Db.queryWhere "order_items" "order_id" "==" orderId)
+
+getOrderWithItems orderId =
+    let
+        order =
+            getOrder orderId
+        items =
+            case order of
+                Just _ ->
+                    getOrderItems orderId
+
+                Nothing ->
+                    []
+    in
+        ( order , items )
+
+getUserCarts userId =
+    Result.withDefault [] (Db.queryWhere "orders" "owner_id" "==" userId)
 
 getOrdersByState state =
     if state == "all" then
@@ -376,18 +453,16 @@ getOrdersByState state =
     else
         let
             orders =
-                Result.withDefault [] (Db.queryWhere "carts" "state" "==" state)
+                Result.withDefault [] (Db.queryWhere "orders" "state" "==" state)
         in
             List.map (enrichOrderWithUser) orders
 
 getAllOrders =
     let
-        allCarts =
-            Result.withDefault [] (Db.queryDocs "carts")
-        nonOngoing =
-            List.filter (\c -> Db.getField "state" c != "ongoing") allCarts
+        allOrders =
+            Result.withDefault [] (Db.queryDocs "orders")
     in
-        List.map (enrichOrderWithUser) nonOngoing
+        List.map (enrichOrderWithUser) allOrders
 
 enrichOrderWithUser order =
     let
