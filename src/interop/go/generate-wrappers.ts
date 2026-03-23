@@ -1726,7 +1726,11 @@ func Sky_process_LoadEnv(filePath any) any {
 	return SkyResult{Tag: 0, OkValue: struct{}{}}
 }
 `;
-      fs.writeFileSync(helperPath, helperCode);
+      // Only write helper file if content changed (avoids triggering Go recompilation)
+      const existingHelper = fs.existsSync(helperPath) ? fs.readFileSync(helperPath, "utf8") : "";
+      if (existingHelper !== helperCode) {
+          fs.writeFileSync(helperPath, helperCode);
+      }
 
 
     const imports = new Set<string>();
@@ -1853,11 +1857,9 @@ func Sky_process_LoadEnv(filePath any) any {
         const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
         let wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
         
-        /* Disable tree-shaking for now
-        if (usedSymbols && !usedSymbols.has(wrapperName)) {
-            return; // Skip unused wrapper
+        if (usedSymbols && usedSymbols.size > 0 && !usedSymbols.has(wrapperName)) {
+            return; // Tree-shake: skip wrapper not referenced in emitted Go code
         }
-        */
         
         imports.add(pkgName);
 
@@ -2264,12 +2266,13 @@ func ${wrapperNameQ}(db any, query any, args any) any {
     }
 
     const wrapperPath = path.join(wrapperDir, `${safePkg}.go`);
-    if (fs.existsSync(wrapperPath)) {
-        fs.unlinkSync(wrapperPath);
-    }
 
     if (goCode.trim() === "") {
-        return; // No wrappers needed
+        // No wrappers needed — remove stale file if it exists
+        if (fs.existsSync(wrapperPath)) {
+            fs.unlinkSync(wrapperPath);
+        }
+        return;
     }
 
     // Clean goCode: remove functions that reference uninstantiated generic type parameters
@@ -2310,5 +2313,10 @@ func ${wrapperNameQ}(db any, query any, args any) any {
     }
     const importsStr = Array.from(imports).map(i => `\t"${i}"`).join("\n");
     const finalCode = `package sky_wrappers\n\nimport (\n${importsStr}\n)\n\n` + cleanedGoCode;
-    fs.writeFileSync(wrapperPath, finalCode);
+
+    // Only write if content changed (avoids triggering Go recompilation)
+    const existingWrapper = fs.existsSync(wrapperPath) ? fs.readFileSync(wrapperPath, "utf8") : "";
+    if (existingWrapper !== finalCode) {
+        fs.writeFileSync(wrapperPath, finalCode);
+    }
 }

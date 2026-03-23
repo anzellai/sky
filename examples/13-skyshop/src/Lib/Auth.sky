@@ -51,7 +51,7 @@ getAuthClient _ =
         case appResult of
             Ok app_ ->
                 Firebase.appAuth app_ ctx
-
+            
             Err e ->
                 Err e
 
@@ -123,11 +123,19 @@ findOrCreateUser uid email name =
                             Err "Account suspended. Please contact support."
                         else
                             let
+                                isAdminUser =
+                                    if List.member email adminEmails then
+                                        "true"
+                                    else
+                                        "false"
 
-                                -- Update name/email if changed
+                                -- Update name/email/admin if changed
                                 updatedUser =
-                                    Dict.insert "email" email
-                                        (Dict.insert "name" name user)
+                                    Dict.insert "is_admin" isAdminUser
+                                        (
+                                        Dict.insert "email" email
+                                            (Dict.insert "name" name user)
+                                        )
                                 userId =
                                     Db.getField "id" user
                                 _ =
@@ -136,7 +144,8 @@ findOrCreateUser uid email name =
                                     println
                                         (
                                         "[AUTH] Existing user signed in: " ++
-                                        email
+                                        email ++
+                                        " (admin: " ++ isAdminUser ++ ")"
                                         )
                             in
                                 Ok updatedUser

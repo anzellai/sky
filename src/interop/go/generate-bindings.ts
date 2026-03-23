@@ -12,7 +12,7 @@ export interface GeneratedForeignBindings {
   types: { skyName: string; jsName: string; sourceModule: string; typeParams: string[]; }[];
 }
 
-export async function generateForeignBindings(packageName: string, requestedNames: string[]): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[], skyiContent?: string }> {
+export async function generateForeignBindings(packageName: string, requestedNames: string[], options?: { skipWrappers?: boolean }): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[], skyiContent?: string }> {
   try {
     const pkg = inspectPackage(packageName);
 
@@ -21,10 +21,13 @@ export async function generateForeignBindings(packageName: string, requestedName
     const moduleName = packageName.split(/[\/\.]/).map(p =>
       p.split("-").map(s => s.charAt(0).toUpperCase() + s.slice(1)).join("")
     ).join(".");
-    
+
     // We will emit the skyi Content here as well.
     let skyiContent = `module ${moduleName} exposing (..)\n\n`;
-    generateWrappers(packageName, pkg);
+    // Skip wrapper generation when the compiler will handle it separately with tree-shaking
+    if (!options?.skipWrappers) {
+        generateWrappers(packageName, pkg);
+    }
 
     // Always emit base utility types
     skyiContent += `type Error = Error\n\ntype Any = Any\n\ntype List a = List\n\ntype Map k v = Map\n\ntype Bytes = Bytes\n\n`;

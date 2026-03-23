@@ -2,6 +2,7 @@ import process from "process";
 import { readManifest, writeManifest, SkyManifest } from "../../pkg/manifest.js";
 import { detectPackageType, installGoPackage, installSkyPackage, installTransitiveDependencies } from "../../pkg/installer.js";
 import { readLockfile, writeLockfile, SkyLockfile } from "../../pkg/lockfile.js";
+import { checkForUpdates } from "../update-check.js";
 
 const goStdlibRoots = ["archive", "bufio", "bytes", "compress", "container", "context", "crypto", "database", "debug", "embed", "encoding", "errors", "expvar", "flag", "fmt", "go", "hash", "html", "image", "index", "io", "log", "maps", "math", "mime", "net", "os", "path", "plugin", "reflect", "regexp", "runtime", "slices", "sort", "strconv", "strings", "sync", "syscall", "testing", "text", "time", "unicode", "unsafe"];
 
@@ -22,6 +23,7 @@ export async function handleAdd(pkgName: string) {
     writeManifest(manifest);
     writeLockfile(lockfile);
     console.log("Done.");
+    await checkForUpdates();
     return;
   }
 
@@ -45,6 +47,7 @@ export async function handleAdd(pkgName: string) {
   writeManifest(manifest);
   writeLockfile(lockfile);
   console.log("Done.");
+  await checkForUpdates();
 }
 
 async function addSkyPackage(pkgName: string, manifest: SkyManifest, lockfile: SkyLockfile) {

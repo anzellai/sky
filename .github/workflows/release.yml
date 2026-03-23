@@ -49,6 +49,7 @@ jobs:
       - name: Build and package
         run: node src/bin/build-binary.js
         env:
+          SKY_VERSION: ${{ github.ref_name }}
           SKY_BUILD_TARGET: ${{ matrix.target }}
           SKY_BUILD_OUTPUT: ${{ matrix.artifact }}
           SKY_LSP_BUILD_OUTPUT: ${{ matrix.lsp_artifact }}

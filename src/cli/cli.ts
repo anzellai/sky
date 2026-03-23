@@ -9,7 +9,10 @@ import { handleRun } from "./commands/run.js";
 import { handleDev } from "./commands/dev.js";
 import { handleFmt } from "./commands/fmt.js";
 import { handleCheck } from "./commands/check.js";
+import { handleClean } from "./commands/clean.js";
+import { handleUpgrade } from "./commands/upgrade.js";
 import { startServer } from "../lsp/server.js";
+import { SKY_VERSION } from "../utils/assets.js";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -26,7 +29,7 @@ async function main() {
       handleRemove(args[1]);
       return;
     case "install":
-      handleInstall();
+      await handleInstall();
       return;
     case "update":
       handleUpdate();
@@ -46,9 +49,19 @@ async function main() {
     case "fmt":
       await handleFmt(args[1]);
       return;
+    case "clean":
+      handleClean();
+      return;
+    case "upgrade":
+      await handleUpgrade();
+      return;
     case "lsp":
       // Helix sometimes passes "-" to mean stdin, but LSP is already stdio based.
       startServer();
+      return;
+    case "--version":
+    case "-v":
+      console.log(`sky v${SKY_VERSION}`);
       return;
     case "--help":
     case "-h":
@@ -63,7 +76,7 @@ async function main() {
 
 function printHelp() {
   console.log(`
-Sky compiler (Go backend)
+Sky compiler v${SKY_VERSION} (Go backend)
 
 Commands:
   sky init [name]
@@ -76,7 +89,13 @@ Commands:
   sky dev [file.sky]        (watch mode: auto-rebuild + restart on changes)
   sky check <file.sky>
   sky fmt <file-or-dir>
+  sky clean                 (remove dist/, .skycache/, .skydeps/)
+  sky upgrade               (update sky to the latest release)
   sky lsp
+
+Flags:
+  --version, -v             Show version
+  --help, -h                Show this help
 `);
 }
 

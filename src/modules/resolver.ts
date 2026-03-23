@@ -228,7 +228,7 @@ export async function buildModuleGraph(
                         const goModDir = path.join(projectRoot, ".skycache", "gomod");
                         execSync(`go get ${goPackage}`, { cwd: goModDir, stdio: "ignore" });
 
-                        const result = await generateForeignBindings(goPackage, []);
+                        const result = await generateForeignBindings(goPackage, [], { skipWrappers: true });
                         if (result.skyiContent) {
                             const cacheDir = path.join(projectRoot, ".skycache", "go", goPackage);
                             fs.mkdirSync(cacheDir, { recursive: true });

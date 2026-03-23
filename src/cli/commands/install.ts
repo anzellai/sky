@@ -2,8 +2,9 @@ import { readManifest } from "../../pkg/manifest.js";
 import { readLockfile, writeLockfile, SkyLockfile } from "../../pkg/lockfile.js";
 import { installGoPackage, installSkyPackage } from "../../pkg/installer.js";
 import { resolveDependencies } from "../../pkg/resolver.js";
+import { checkForUpdates } from "../update-check.js";
 
-export function handleInstall() {
+export async function handleInstall() {
   const manifest = readManifest();
   if (!manifest) {
     console.error("No sky.toml found.");
@@ -31,4 +32,5 @@ export function handleInstall() {
 
   writeLockfile(lockfile);
   console.log("Install complete.");
+  await checkForUpdates();
 }

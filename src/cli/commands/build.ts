@@ -3,6 +3,7 @@ import path from "path";
 import { execSync } from "child_process";
 import { compileProject } from "../../compiler.js";
 import { readManifest } from "../../pkg/manifest.js";
+import { checkForUpdates } from "../update-check.js";
 
 /**
  * Resolve the entry file from the argument or sky.toml.
@@ -98,4 +99,6 @@ export async function handleBuild(entryFile?: string) {
     console.error("go build failed", e);
     process.exit(1);
   }
+
+  await checkForUpdates();
 }

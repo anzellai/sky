@@ -7,6 +7,13 @@ import { getDirname } from "../../utils/path.js";
 
 const __dirname = getDirname(import.meta.url);
 
+// In-memory cache: avoids re-inspecting the same package within a single process
+const inspectCache = new Map<string, InspectResult>();
+
+export function clearInspectCache() {
+    inspectCache.clear();
+}
+
 export interface InspectResult {
     name: string;
     path: string;
@@ -58,10 +65,10 @@ export interface Param {
 }
 
 export function inspectPackage(pkgName: string): InspectResult {
-    
-    // Since pkg packages files in a virtual filesystem but go build needs real files,
-    // it's easier to just build the go tool once globally or generate the go script in the user project
-    // and run it.
+    // Return cached result if already inspected this process
+    const cached = inspectCache.get(pkgName);
+    if (cached) return cached;
+
     const projectDir = process.cwd();
     const inspectorDir = path.join(projectDir, ".skycache", "inspector");
     fs.mkdirSync(inspectorDir, { recursive: true });
@@ -295,26 +302,35 @@ func extractParams(tuple *types.Tuple, variadic bool) []Param {
 }
 `;
 
-    // Always overwrite main.go to ensure latest version
-    fs.writeFileSync(path.join(inspectorDir, "main.go"), inspectorGoCode);
+    // Only overwrite main.go if content changed (avoids triggering go build)
+    const mainGoPath = path.join(inspectorDir, "main.go");
+    const existing = fs.existsSync(mainGoPath) ? fs.readFileSync(mainGoPath, "utf8") : "";
+    if (existing !== inspectorGoCode) {
+        fs.writeFileSync(mainGoPath, inspectorGoCode);
+    }
 
     if (!fs.existsSync(path.join(inspectorDir, "go.mod"))) {
         execSync("go mod init sky-inspector", { cwd: inspectorDir, stdio: "ignore" });
         execSync("go get golang.org/x/tools/go/packages", { cwd: inspectorDir, stdio: "ignore" });
     }
 
-    
-    // Check if we need to build the inspector binary first
     const inspectorBin = process.platform === "win32" ? "sky-inspector.exe" : "sky-inspector";
     const binPath = path.join(inspectorDir, inspectorBin);
 
-    // Build the inspector
-    execSync(`go build -o ${inspectorBin} main.go`, { cwd: inspectorDir, stdio: "inherit" });
+    // Only rebuild inspector binary if main.go is newer or binary doesn't exist
+    const needsRebuild = !fs.existsSync(binPath) ||
+        fs.statSync(mainGoPath).mtimeMs > fs.statSync(binPath).mtimeMs;
 
-    const out = execSync(`"${binPath}" ${pkgName}`, { 
-        cwd: inspectorDir, 
+    if (needsRebuild) {
+        execSync(`go build -o ${inspectorBin} main.go`, { cwd: inspectorDir, stdio: "inherit" });
+    }
+
+    const out = execSync(`"${binPath}" ${pkgName}`, {
+        cwd: inspectorDir,
         maxBuffer: 1024 * 1024 * 10,
         env: { ...process.env, SKY_PROJECT_DIR: fs.existsSync(path.join(projectDir, ".skycache", "gomod", "go.mod")) ? path.join(projectDir, ".skycache", "gomod") : projectDir }
     }).toString();
-    return JSON.parse(out);
+    const result: InspectResult = JSON.parse(out);
+    inspectCache.set(pkgName, result);
+    return result;
 }
