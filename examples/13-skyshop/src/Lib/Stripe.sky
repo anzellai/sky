@@ -327,7 +327,7 @@ verifyStripeSession cartId sessionId =
     let
         endpoint =
             "checkout/sessions/" ++
-            sessionId ++ "?expand[]=customer_details&expand[]=shipping_details"
+            sessionId ++ "?expand[]=customer_details&expand[]=shipping_cost"
     in
         case stripeGet endpoint of
             Ok respBody ->
