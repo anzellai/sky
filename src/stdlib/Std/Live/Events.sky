@@ -1,6 +1,7 @@
 module Std.Live.Events exposing (..)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
 
 foreign import "sky_wrappers" exposing (Sky_msgToString)
 
@@ -49,3 +50,34 @@ onFocus msg =
 -- Blur event.
 onBlur msg =
     ( "sky-blur", Sky_msgToString msg )
+
+
+-- File input: reads the selected file as a base64 data URL and sends it
+-- as a String argument to the Msg constructor.
+-- Use with optional fileMaxWidth/fileMaxHeight/fileMaxSize to auto-resize
+-- images client-side before sending (useful for storage with size limits).
+--
+-- Example:
+--     input [ type_ "file", attribute "accept" "image/*"
+--           , onFile UpdateImage
+--           , fileMaxWidth 1200, fileMaxHeight 1200
+--           , fileMaxSize 900000
+--           ] []
+onFile msg =
+    ( "sky-file", Sky_msgToString msg )
+
+
+-- Maximum file size in bytes after client-side resize (default: no limit).
+-- Only applies to image files when used with onFile.
+fileMaxSize bytes =
+    ( "sky-file-max", String.fromInt bytes )
+
+
+-- Maximum image width in pixels for client-side resize (default: no resize).
+fileMaxWidth px =
+    ( "sky-file-width", String.fromInt px )
+
+
+-- Maximum image height in pixels for client-side resize (default: no resize).
+fileMaxHeight px =
+    ( "sky-file-height", String.fromInt px )

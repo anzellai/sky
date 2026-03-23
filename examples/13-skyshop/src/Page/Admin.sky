@@ -6,7 +6,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live.Events exposing (onClick, onInput, onChange)
+import Std.Live.Events exposing (onClick, onInput, onChange, onFile, fileMaxWidth, fileMaxHeight, fileMaxSize)
 import State exposing (..)
 import Ui.Layout as Layout
 import Lib.Db as Db
@@ -416,20 +416,18 @@ viewImageManager model =
                         [ input
                             [ type_ "file"
                             , attribute "accept" "image/*"
-                            , id "imageFile"
+                            , onFile UpdateImageData
+                            , fileMaxWidth 1200
+                            , fileMaxHeight 1200
+                            , fileMaxSize 900000
                             , tw [ textSm ]
                             ]
                         ]
                     , button [ onClick UploadImage , Layout.btnPrimary ]
                         [ text (Tr.t lang "admin.product.upload") ]
                     ]
-                , fileUploadScript
                 ]
             ]
-
-fileUploadScript =
-    raw
-        "<script>(function(){if(window._skyFileUpload)return;window._skyFileUpload=true;document.addEventListener('change',function(e){if(e.target&&e.target.type==='file'){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(ev){if(window.__sky_send){window.__sky_send('UpdateImageData',[ev.target.result]);}};r.readAsDataURL(f);}});})()</script>"
 
 -- ══════════════════════════════════════════════════════
 -- ADMIN ORDERS

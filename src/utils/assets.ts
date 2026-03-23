@@ -2474,6 +2474,7 @@ titleNode content =
   "stdlib/Std/Live/Events.sky": `module Std.Live.Events exposing (..)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
 
 foreign import "sky_wrappers" exposing (Sky_msgToString)
 
@@ -2522,6 +2523,37 @@ onFocus msg =
 -- Blur event.
 onBlur msg =
     ( "sky-blur", Sky_msgToString msg )
+
+
+-- File input: reads the selected file as a base64 data URL and sends it
+-- as a String argument to the Msg constructor.
+-- Use with optional fileMaxWidth/fileMaxHeight/fileMaxSize to auto-resize
+-- images client-side before sending (useful for storage with size limits).
+--
+-- Example:
+--     input [ type_ "file", attribute "accept" "image/*"
+--           , onFile UpdateImage
+--           , fileMaxWidth 1200, fileMaxHeight 1200
+--           , fileMaxSize 900000
+--           ] []
+onFile msg =
+    ( "sky-file", Sky_msgToString msg )
+
+
+-- Maximum file size in bytes after client-side resize (default: no limit).
+-- Only applies to image files when used with onFile.
+fileMaxSize bytes =
+    ( "sky-file-max", String.fromInt bytes )
+
+
+-- Maximum image width in pixels for client-side resize (default: no resize).
+fileMaxWidth px =
+    ( "sky-file-width", String.fromInt px )
+
+
+-- Maximum image height in pixels for client-side resize (default: no resize).
+fileMaxHeight px =
+    ( "sky-file-height", String.fromInt px )
 `,
   "stdlib/Std/Live/Navigation.sky": `module Std.Live.Navigation exposing (..)
 
@@ -4262,6 +4294,53 @@ const LiveJS = \`(function() {
         send(el.getAttribute('sky-blur'), []);
       });
     });
+    // File input: reads file as base64 data URL, optionally resizes images
+    root.querySelectorAll('[sky-file]').forEach(function(el) {
+      if (el._skyBound) return;
+      el._skyBound = true;
+      el.addEventListener('change', function(e) {
+        var f = e.target.files[0];
+        if (!f) return;
+        var maxW = parseInt(el.getAttribute('sky-file-width') || '0');
+        var maxH = parseInt(el.getAttribute('sky-file-height') || '0');
+        var maxBytes = parseInt(el.getAttribute('sky-file-max') || '0');
+        if (maxW > 0 || maxH > 0 || maxBytes > 0) {
+          _skyResizeImage(f, maxW || 1200, maxH || 1200, maxBytes || 900000, function(result) {
+            send(el.getAttribute('sky-file'), [result]);
+            el.value = '';
+          });
+        } else {
+          var r = new FileReader();
+          r.onload = function(ev) {
+            send(el.getAttribute('sky-file'), [ev.target.result]);
+            el.value = '';
+          };
+          r.readAsDataURL(f);
+        }
+      });
+    });
+  }
+
+  function _skyResizeImage(file, maxW, maxH, maxBytes, cb) {
+    var img = new Image();
+    var url = URL.createObjectURL(file);
+    img.onload = function() {
+      URL.revokeObjectURL(url);
+      var w = img.width, h = img.height;
+      if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
+      if (h > maxH) { w = Math.round(w * maxH / h); h = maxH; }
+      var canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      var quality = 0.92;
+      var result = canvas.toDataURL('image/jpeg', quality);
+      while (result.length > maxBytes && quality > 0.1) {
+        quality -= 0.1;
+        result = canvas.toDataURL('image/jpeg', quality);
+      }
+      cb(result);
+    };
+    img.src = url;
   }
 
   function rebindInputs() {
@@ -4327,7 +4406,15 @@ const LiveJS = \`(function() {
         for (var j = 0; j < keys.length; j++) {
           var k = keys[j];
           if (p.attrs[k] === null) el.removeAttribute(k);
-          else el.setAttribute(k, p.attrs[k]);
+          else {
+            el.setAttribute(k, p.attrs[k]);
+            // Sync DOM properties that don't reflect from attributes
+            if (k === 'value' && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
+              el.value = p.attrs[k];
+            } else if (k === 'checked' && el.tagName === 'INPUT') {
+              el.checked = p.attrs[k] !== 'false' && p.attrs[k] !== '';
+            }
+          }
         }
       }
       if (p.remove) el.remove();
