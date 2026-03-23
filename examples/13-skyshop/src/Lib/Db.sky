@@ -225,7 +225,7 @@ getInt field row =
         else
             val
                 |> String.toInt
-                |> Maybe.withDefault 0
+                |> Result.withDefault 0
 
 getBool field row =
     let

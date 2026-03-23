@@ -5406,7 +5406,30 @@ func matchRoute(urlPath string, routes []PageDef, notFound any) (page any, param
 
 	for _, route := range routes {
 		if matched, p := matchPattern(route.Pattern, urlPath); matched {
-			return route.Page, p
+			page := route.Page
+			// Inject URL params into the Page value for parameterized constructors.
+			// e.g., ProductPage String with :id → {"Tag":2, "SkyName":"ProductPage", "ProductPageValue":"abc"}
+			if len(p) > 0 {
+				if m, ok := page.(map[string]any); ok {
+					injected := make(map[string]any, len(m)+len(p))
+					for k, v := range m {
+						injected[k] = v
+					}
+					name, _ := m["name"].(string)
+					if name == "" {
+						name, _ = m["SkyName"].(string)
+					}
+					injected["SkyName"] = name
+					// For single-param pages, inject as {Name}Value
+					if len(p) == 1 {
+						for _, paramVal := range p {
+							injected[name+"Value"] = paramVal
+						}
+					}
+					page = injected
+				}
+			}
+			return page, p
 		}
 	}
 
