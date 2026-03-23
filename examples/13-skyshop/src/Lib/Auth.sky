@@ -112,50 +112,72 @@ verifyToken idToken =
 
 findOrCreateUser uid email name =
     let
-        existingResult =
-            Db.queryWhere "users" "firebase_uid" "==" uid
-    in
-        case existingResult of
-            Ok users ->
-                case List.head users of
-                    Just user ->
-                        if Db.getBool "suspended" user then
-                            Err "Account suspended. Please contact support."
-                        else
-                            let
-                                isAdminUser =
-                                    List.member email adminEmails
 
-                                -- Update name/email/admin if changed
-                                updatedUser =
-                                    Dict.insert "is_admin" (Db.boolVal isAdminUser)
-                                        (
-                                        Dict.insert "email" email
-                                            (Dict.insert "name" name user)
-                                        )
-                                userId =
-                                    Db.getField "id" user
-                                _ =
-                                    Db.setDoc "users" userId updatedUser
-                                adminStr =
-                                    if isAdminUser then
-                                        "true"
-                                    else
-                                        "false"
-                                _ =
-                                    println
-                                        (
-                                        "[AUTH] Existing user signed in: " ++
-                                        email ++
-                                        " (admin: " ++ adminStr ++ ")"
-                                        )
-                            in
-                                Ok updatedUser
-                    
-                    Nothing ->
-                        createUser uid email name
+        -- Look up by email first (primary dedup key — handles multiple auth providers)
+        existingByEmail =
+            Db.queryWhere "users" "email" "==" email
+        existing =
+            case existingByEmail of
+                Ok users ->
+                    case List.head users of
+                        Just u ->
+                            Just u
+
+                        Nothing ->
+                            -- Fall back to firebase_uid lookup
+                            case Db.queryWhere "users" "firebase_uid" "==" uid of
+                                Ok users2 ->
+                                    List.head users2
+
+                                _ ->
+                                    Nothing
+
+                _ ->
+                    case Db.queryWhere "users" "firebase_uid" "==" uid of
+                        Ok users2 ->
+                            List.head users2
+
+                        _ ->
+                            Nothing
+    in
+        case existing of
+            Just user ->
+                if Db.getBool "suspended" user then
+                    Err "Account suspended. Please contact support."
+                else
+                    let
+                        isAdminUser =
+                            List.member email adminEmails
+
+                        -- Update uid/name/email/admin on every sign-in (upsert)
+                        updatedUser =
+                            Dict.insert "firebase_uid" uid
+                                (
+                                Dict.insert "is_admin" (Db.boolVal isAdminUser)
+                                    (
+                                    Dict.insert "email" email
+                                        (Dict.insert "name" name user)
+                                    )
+                                )
+                        userId =
+                            Db.getField "id" user
+                        _ =
+                            Db.setDoc "users" userId updatedUser
+                        adminStr =
+                            if isAdminUser then
+                                "true"
+                            else
+                                "false"
+                        _ =
+                            println
+                                (
+                                "[AUTH] Existing user signed in: " ++
+                                email ++ " (admin: " ++ adminStr ++ ")"
+                                )
+                    in
+                        Ok updatedUser
             
-            Err _ ->
+            Nothing ->
                 createUser uid email name
 
 createUser uid email name =

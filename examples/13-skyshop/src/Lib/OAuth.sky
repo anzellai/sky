@@ -4,7 +4,6 @@ import Sky.Core.Prelude exposing (..)
 import Os
 import Lib.Auth as Auth
 
-
 -- ══════════════════════════════════════════════════════
 -- FIREBASE AUTH
 --
@@ -22,7 +21,6 @@ import Lib.Auth as Auth
 --   GOOGLE_CLOUD_PROJECT
 --   GOOGLE_APPLICATION_CREDENTIALS
 -- ══════════════════════════════════════════════════════
-
 firebaseAuthScript =
     let
         apiKey =
@@ -32,49 +30,61 @@ firebaseAuthScript =
         projectId =
             Os.getenv "GOOGLE_CLOUD_PROJECT"
     in
-        "<script>"
-            ++ "var _fbReady=false,_fbUser=null;"
-            -- Load Firebase SDK dynamically into <head>
-            ++ "function _fbLoad(url,cb){"
-            ++ "var s=document.createElement('script');"
-            ++ "s.src=url;s.onload=cb;document.head.appendChild(s);"
-            ++ "}"
-            ++ "_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',function(){"
-            ++ "_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js',function(){"
-            ++ "firebase.initializeApp({apiKey:'" ++ apiKey
-            ++ "',authDomain:'" ++ authDomain
-            ++ "',projectId:'" ++ projectId ++ "'});"
-            ++ "_fbReady=true;"
-            -- Listen for auth state changes (sign-in, sign-out, token refresh)
-            ++ "firebase.auth().onAuthStateChanged(function(user){"
-            ++ "_fbUser=user;"
-            ++ "if(user){"
-            ++ "user.getIdToken().then(function(token){"
-            -- Send token to Sky.Live server as a FirebaseAuth Msg
-            ++ "if(window.__sky_send){window.__sky_send('FirebaseAuth \"'+token+'\"');}"
-            ++ "});"
-            ++ "}"
-            ++ "});"
-            ++ "});"
-            ++ "});"
-            -- Sign-in function called by buttons
-            ++ "function skySignIn(provider){"
-            ++ "if(!_fbReady){setTimeout(function(){skySignIn(provider)},200);return;}"
-            ++ "var el=document.getElementById('auth-error');"
-            ++ "if(el){el.style.display='none';}"
-            ++ "var p=provider==='facebook'"
-            ++ "?new firebase.auth.FacebookAuthProvider()"
-            ++ ":new firebase.auth.GoogleAuthProvider();"
-            ++ "firebase.auth().signInWithPopup(p).catch(function(e){"
-            ++ "if(el){el.textContent=e.message;el.style.display='block';}"
-            ++ "});"
-            ++ "}"
-            -- Sign-out function
-            ++ "function skySignOut(){"
-            ++ "if(_fbReady){firebase.auth().signOut();}"
-            ++ "}"
-            ++ "</script>"
-
+        "<script>" ++
+        "var _fbReady=false,_fbUser=null;" ++
+        "function _fbLoad(url,cb){" ++
+        "var s=document.createElement('script');" ++
+        "s.src=url;s.onload=cb;document.head.appendChild(s);" ++
+        "}" ++
+        "_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',function(){" ++
+        "_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js',function(){" ++
+        "firebase.initializeApp({apiKey:'" ++
+        apiKey ++
+        "',authDomain:'" ++
+        authDomain ++
+        "',projectId:'" ++
+        projectId ++
+        "'});" ++
+        "_fbReady=true;" ++
+        "firebase.auth().onAuthStateChanged(function(user){" ++
+        "_fbUser=user;" ++
+        "if(user){" ++
+        "user.getIdToken().then(function(token){" ++
+        "function _trySend(t,n){" ++
+        "if(window.__sky_send){window.__sky_send('FirebaseAuth \"'+t+'\"');}" ++
+        "else if(n<20){setTimeout(function(){_trySend(t,n+1)},100);}" ++
+        "}" ++
+        "_trySend(token,0);" ++
+        "});" ++
+        "}" ++
+        "});" ++
+        "});" ++
+        "});" ++
+        "function skySignIn(provider){" ++
+        "if(!_fbReady){setTimeout(function(){skySignIn(provider)},200);return;}" ++
+        "var el=document.getElementById('auth-error');" ++
+        "if(el){el.style.display='none';}" ++
+        "var p=provider==='facebook'" ++
+        "?new firebase.auth.FacebookAuthProvider()" ++
+        ":new firebase.auth.GoogleAuthProvider();" ++
+        "firebase.auth().signInWithPopup(p).catch(function(e){" ++
+        "if(el){el.textContent=e.message;el.style.display='block';}" ++
+        "});" ++
+        "}" ++
+        "function skySignOut(){" ++
+        "if(_fbReady){firebase.auth().signOut();}" ++ "}" ++ "</script>"
 
 handleAuthCallback token =
     Auth.verifyToken token
+
+
+            -- Load Firebase SDK dynamically into <head>
+
+            -- Listen for auth state changes (sign-in, sign-out, token refresh)
+
+            -- Send token to Sky.Live server as a FirebaseAuth Msg
+            -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
+
+            -- Sign-in function called by buttons
+
+            -- Sign-out function
