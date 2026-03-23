@@ -2525,33 +2525,44 @@ onBlur msg =
     ( "sky-blur", Sky_msgToString msg )
 
 
--- File input: reads the selected file as a base64 data URL and sends it
--- as a String argument to the Msg constructor.
--- Use with optional fileMaxWidth/fileMaxHeight/fileMaxSize to auto-resize
--- images client-side before sending (useful for storage with size limits).
+-- Image file input: on selection, reads the image, resizes to
+-- fileMaxWidth/fileMaxHeight, compresses to JPEG, and sends the
+-- base64 data URL as a String argument to the Msg constructor.
+-- The file input is NOT reset after selection.
 --
 -- Example:
 --     input [ type_ "file", attribute "accept" "image/*"
---           , onFile UpdateImage
+--           , onImage UpdateImage
 --           , fileMaxWidth 1200, fileMaxHeight 1200
---           , fileMaxSize 900000
 --           ] []
+onImage msg =
+    ( "sky-image", Sky_msgToString msg )
+
+
+-- Generic file input: on selection, reads the file as a base64 data URL
+-- and sends it as a String argument to the Msg constructor.
+-- No compression or resize is performed. The file input is NOT reset.
+--
+-- Example:
+--     input [ type_ "file", onFile UpdateAttachment ] []
 onFile msg =
     ( "sky-file", Sky_msgToString msg )
 
 
--- Maximum file size in bytes after client-side resize (default: no limit).
--- Only applies to image files when used with onFile.
+-- Maximum file size in bytes. Used as a hint for server-side validation
+-- in the upload handler (not enforced on selection).
 fileMaxSize bytes =
     ( "sky-file-max", String.fromInt bytes )
 
 
--- Maximum image width in pixels for client-side resize (default: no resize).
+-- Maximum image width in pixels for client-side resize (used with onImage).
+-- Default: 1200.
 fileMaxWidth px =
     ( "sky-file-width", String.fromInt px )
 
 
--- Maximum image height in pixels for client-side resize (default: no resize).
+-- Maximum image height in pixels for client-side resize (used with onImage).
+-- Default: 1200.
 fileMaxHeight px =
     ( "sky-file-height", String.fromInt px )
 `,
@@ -3288,11 +3299,18 @@ onChange : (String -> msg) -> (String, String)  -- for select, checkbox
 onDblClick : msg -> (String, String)
 onFocus : msg -> (String, String)
 onBlur : msg -> (String, String)
+onImage : (String -> msg) -> (String, String)  -- image input: resize + compress + base64
+onFile : (String -> msg) -> (String, String)   -- file input: base64 data URL (no compress)
+fileMaxWidth : Int -> (String, String)         -- max image width in px (onImage, default 1200)
+fileMaxHeight : Int -> (String, String)        -- max image height in px (onImage, default 1200)
+fileMaxSize : Int -> (String, String)          -- max bytes hint (server-side validation)
 
 -- Usage:
 --     button [ onClick Increment ] [ text "+" ]
 --     input [ onInput UpdateDraft, value model.draft ] []
 --     form [ onSubmit AddTodo ] [ ... ]
+--     input [ type_ "file", attribute "accept" "image/*"
+--           , onImage UpdateImage, fileMaxWidth 1200 ] []
 \`\`\`
 
 ### Escape Hatch & View Types
@@ -3876,6 +3894,17 @@ func diffNodes(old, new_ *VNode, patches *[]Patch) {
 	if old.SkyID != "" {
 		// Diff attributes
 		attrChanges := diffAttrs(old.Attrs, new_.Attrs)
+		// Textarea: value is rendered as textContent, not an HTML attribute.
+		// Emit a Text patch instead of an Attrs patch for the value.
+		if old.Tag == "textarea" {
+			oldVal, _ := old.Attrs["value"]
+			newVal, _ := new_.Attrs["value"]
+			if oldVal != newVal {
+				*patches = append(*patches, Patch{ID: old.SkyID, Text: &newVal})
+			}
+			// Remove value from attrChanges — it's handled via Text patch
+			delete(attrChanges, "value")
+		}
 		if len(attrChanges) > 0 {
 			*patches = append(*patches, Patch{ID: old.SkyID, Attrs: attrChanges})
 		}
@@ -4294,34 +4323,37 @@ const LiveJS = \`(function() {
         send(el.getAttribute('sky-blur'), []);
       });
     });
-    // File input: reads file as base64 data URL, optionally resizes images
+    // Image input: reads file, resizes, compresses, sends base64 data URL
+    root.querySelectorAll('[sky-image]').forEach(function(el) {
+      if (el._skyBound) return;
+      el._skyBound = true;
+      el.addEventListener('change', function(e) {
+        var f = e.target.files[0];
+        if (!f) return;
+        var maxW = parseInt(el.getAttribute('sky-file-width') || '1200');
+        var maxH = parseInt(el.getAttribute('sky-file-height') || '1200');
+        _skyResizeImage(f, maxW, maxH, function(result) {
+          send(el.getAttribute('sky-image'), [result]);
+        });
+      });
+    });
+    // Generic file input: reads file as base64, sends data URL (no compression)
     root.querySelectorAll('[sky-file]').forEach(function(el) {
       if (el._skyBound) return;
       el._skyBound = true;
       el.addEventListener('change', function(e) {
         var f = e.target.files[0];
         if (!f) return;
-        var maxW = parseInt(el.getAttribute('sky-file-width') || '0');
-        var maxH = parseInt(el.getAttribute('sky-file-height') || '0');
-        var maxBytes = parseInt(el.getAttribute('sky-file-max') || '0');
-        if (maxW > 0 || maxH > 0 || maxBytes > 0) {
-          _skyResizeImage(f, maxW || 1200, maxH || 1200, maxBytes || 900000, function(result) {
-            send(el.getAttribute('sky-file'), [result]);
-            el.value = '';
-          });
-        } else {
-          var r = new FileReader();
-          r.onload = function(ev) {
-            send(el.getAttribute('sky-file'), [ev.target.result]);
-            el.value = '';
-          };
-          r.readAsDataURL(f);
-        }
+        var r = new FileReader();
+        r.onload = function(ev) {
+          send(el.getAttribute('sky-file'), [ev.target.result]);
+        };
+        r.readAsDataURL(f);
       });
     });
   }
 
-  function _skyResizeImage(file, maxW, maxH, maxBytes, cb) {
+  function _skyResizeImage(file, maxW, maxH, cb) {
     var img = new Image();
     var url = URL.createObjectURL(file);
     img.onload = function() {
@@ -4332,13 +4364,7 @@ const LiveJS = \`(function() {
       var canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      var quality = 0.92;
-      var result = canvas.toDataURL('image/jpeg', quality);
-      while (result.length > maxBytes && quality > 0.1) {
-        quality -= 0.1;
-        result = canvas.toDataURL('image/jpeg', quality);
-      }
-      cb(result);
+      cb(canvas.toDataURL('image/jpeg', 0.85));
     };
     img.src = url;
   }
@@ -6900,8 +6926,15 @@ func renderNode(sb *strings.Builder, node *VNode) {
 	sb.WriteByte('<')
 	sb.WriteString(node.Tag)
 
-	// Attributes (sorted for deterministic output)
+	// Attributes — for textarea, skip "value" (rendered as text content instead)
+	var textareaVal string
+	var hasTextareaVal bool
 	for k, v := range node.Attrs {
+		if node.Tag == "textarea" && k == "value" {
+			textareaVal = v
+			hasTextareaVal = true
+			continue
+		}
 		sb.WriteByte(' ')
 		sb.WriteString(k)
 		sb.WriteString("='")
@@ -6916,6 +6949,13 @@ func renderNode(sb *strings.Builder, node *VNode) {
 	}
 
 	sb.WriteByte('>')
+
+	// Textarea: render value as text content (browsers ignore value attribute)
+	if node.Tag == "textarea" && hasTextareaVal {
+		sb.WriteString(escapeHTML(textareaVal))
+		sb.WriteString("</textarea>")
+		return
+	}
 
 	// Children
 	for _, child := range node.Children {

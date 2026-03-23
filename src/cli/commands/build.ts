@@ -80,10 +80,15 @@ export async function handleBuild(entryFile?: string) {
     }
   } catch (e) {}
   try {
-    if (!fs.existsSync(`${outDir}/go.mod`)) {
+    const needsModInit = !fs.existsSync(`${outDir}/go.mod`);
+    if (needsModInit) {
       execSync(`cd ${outDir} && go mod init sky-out`, { stdio: "inherit" });
     }
-    execSync(`cd ${outDir} && go mod tidy`, { stdio: "inherit" });
+    // Only run go mod tidy on first build or when go.sum is missing.
+    // Subsequent builds: go build fetches missing modules automatically.
+    if (needsModInit || !fs.existsSync(`${outDir}/go.sum`)) {
+      execSync(`cd ${outDir} && go mod tidy`, { stdio: "inherit" });
+    }
 
     // Resolve output binary path from sky.toml bin field or default
     const manifest = readManifest();

@@ -481,11 +481,20 @@ export async function compileProject(entryFile: string, outDir: string) {
     return { diagnostics: graph.diagnostics };
   }
 
-  // Ensure output directory exists
+  // Clean output directory — preserve go.mod/go.sum for incremental Go builds
   if (fs.existsSync(outDir)) {
-    fs.rmSync(outDir, { recursive: true, force: true });
+    for (const item of fs.readdirSync(outDir)) {
+      if (item === "go.mod" || item === "go.sum") continue;
+      const p = path.join(outDir, item);
+      if (fs.statSync(p).isDirectory()) {
+        fs.rmSync(p, { recursive: true, force: true });
+      } else if (item.endsWith(".go")) {
+        fs.unlinkSync(p);
+      }
+    }
+  } else {
+    fs.mkdirSync(outDir, { recursive: true });
   }
-  fs.mkdirSync(outDir, { recursive: true });
 
   // Map of moduleName -> exported names -> type scheme
   const moduleExports = new Map<string, Map<string, Scheme>>();

@@ -558,17 +558,18 @@ onChange : (String -> msg) -> (String, String)  -- for select, checkbox
 onDblClick : msg -> (String, String)
 onFocus : msg -> (String, String)
 onBlur : msg -> (String, String)
-onFile : (String -> msg) -> (String, String)   -- file input: sends base64 data URL
-fileMaxSize : Int -> (String, String)          -- max bytes after resize (default: no limit)
-fileMaxWidth : Int -> (String, String)         -- max image width in px (default: no resize)
-fileMaxHeight : Int -> (String, String)        -- max image height in px (default: no resize)
+onImage : (String -> msg) -> (String, String)  -- image input: resize + compress + base64
+onFile : (String -> msg) -> (String, String)   -- file input: base64 data URL (no compress)
+fileMaxWidth : Int -> (String, String)         -- max image width in px (onImage, default 1200)
+fileMaxHeight : Int -> (String, String)        -- max image height in px (onImage, default 1200)
+fileMaxSize : Int -> (String, String)          -- max bytes hint (server-side validation)
 
 -- Usage:
 --     button [ onClick Increment ] [ text "+" ]
 --     input [ onInput UpdateDraft, value model.draft ] []
 --     form [ onSubmit AddTodo ] [ ... ]
 --     input [ type_ "file", attribute "accept" "image/*"
---           , onFile UpdateImage, fileMaxWidth 1200, fileMaxSize 900000 ] []
+--           , onImage UpdateImage, fileMaxWidth 1200 ] []
 ```
 
 ### Escape Hatch & View Types

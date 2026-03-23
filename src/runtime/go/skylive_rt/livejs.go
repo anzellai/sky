@@ -95,34 +95,37 @@ const LiveJS = `(function() {
         send(el.getAttribute('sky-blur'), []);
       });
     });
-    // File input: reads file as base64 data URL, optionally resizes images
+    // Image input: reads file, resizes, compresses, sends base64 data URL
+    root.querySelectorAll('[sky-image]').forEach(function(el) {
+      if (el._skyBound) return;
+      el._skyBound = true;
+      el.addEventListener('change', function(e) {
+        var f = e.target.files[0];
+        if (!f) return;
+        var maxW = parseInt(el.getAttribute('sky-file-width') || '1200');
+        var maxH = parseInt(el.getAttribute('sky-file-height') || '1200');
+        _skyResizeImage(f, maxW, maxH, function(result) {
+          send(el.getAttribute('sky-image'), [result]);
+        });
+      });
+    });
+    // Generic file input: reads file as base64, sends data URL (no compression)
     root.querySelectorAll('[sky-file]').forEach(function(el) {
       if (el._skyBound) return;
       el._skyBound = true;
       el.addEventListener('change', function(e) {
         var f = e.target.files[0];
         if (!f) return;
-        var maxW = parseInt(el.getAttribute('sky-file-width') || '0');
-        var maxH = parseInt(el.getAttribute('sky-file-height') || '0');
-        var maxBytes = parseInt(el.getAttribute('sky-file-max') || '0');
-        if (maxW > 0 || maxH > 0 || maxBytes > 0) {
-          _skyResizeImage(f, maxW || 1200, maxH || 1200, maxBytes || 900000, function(result) {
-            send(el.getAttribute('sky-file'), [result]);
-            el.value = '';
-          });
-        } else {
-          var r = new FileReader();
-          r.onload = function(ev) {
-            send(el.getAttribute('sky-file'), [ev.target.result]);
-            el.value = '';
-          };
-          r.readAsDataURL(f);
-        }
+        var r = new FileReader();
+        r.onload = function(ev) {
+          send(el.getAttribute('sky-file'), [ev.target.result]);
+        };
+        r.readAsDataURL(f);
       });
     });
   }
 
-  function _skyResizeImage(file, maxW, maxH, maxBytes, cb) {
+  function _skyResizeImage(file, maxW, maxH, cb) {
     var img = new Image();
     var url = URL.createObjectURL(file);
     img.onload = function() {
@@ -133,13 +136,7 @@ const LiveJS = `(function() {
       var canvas = document.createElement('canvas');
       canvas.width = w; canvas.height = h;
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      var quality = 0.92;
-      var result = canvas.toDataURL('image/jpeg', quality);
-      while (result.length > maxBytes && quality > 0.1) {
-        quality -= 0.1;
-        result = canvas.toDataURL('image/jpeg', quality);
-      }
-      cb(result);
+      cb(canvas.toDataURL('image/jpeg', 0.85));
     };
     img.src = url;
   }

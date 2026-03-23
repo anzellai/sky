@@ -52,32 +52,43 @@ onBlur msg =
     ( "sky-blur", Sky_msgToString msg )
 
 
--- File input: reads the selected file as a base64 data URL and sends it
--- as a String argument to the Msg constructor.
--- Use with optional fileMaxWidth/fileMaxHeight/fileMaxSize to auto-resize
--- images client-side before sending (useful for storage with size limits).
+-- Image file input: on selection, reads the image, resizes to
+-- fileMaxWidth/fileMaxHeight, compresses to JPEG, and sends the
+-- base64 data URL as a String argument to the Msg constructor.
+-- The file input is NOT reset after selection.
 --
 -- Example:
 --     input [ type_ "file", attribute "accept" "image/*"
---           , onFile UpdateImage
+--           , onImage UpdateImage
 --           , fileMaxWidth 1200, fileMaxHeight 1200
---           , fileMaxSize 900000
 --           ] []
+onImage msg =
+    ( "sky-image", Sky_msgToString msg )
+
+
+-- Generic file input: on selection, reads the file as a base64 data URL
+-- and sends it as a String argument to the Msg constructor.
+-- No compression or resize is performed. The file input is NOT reset.
+--
+-- Example:
+--     input [ type_ "file", onFile UpdateAttachment ] []
 onFile msg =
     ( "sky-file", Sky_msgToString msg )
 
 
--- Maximum file size in bytes after client-side resize (default: no limit).
--- Only applies to image files when used with onFile.
+-- Maximum file size in bytes. Used as a hint for server-side validation
+-- in the upload handler (not enforced on selection).
 fileMaxSize bytes =
     ( "sky-file-max", String.fromInt bytes )
 
 
--- Maximum image width in pixels for client-side resize (default: no resize).
+-- Maximum image width in pixels for client-side resize (used with onImage).
+-- Default: 1200.
 fileMaxWidth px =
     ( "sky-file-width", String.fromInt px )
 
 
--- Maximum image height in pixels for client-side resize (default: no resize).
+-- Maximum image height in pixels for client-side resize (used with onImage).
+-- Default: 1200.
 fileMaxHeight px =
     ( "sky-file-height", String.fromInt px )

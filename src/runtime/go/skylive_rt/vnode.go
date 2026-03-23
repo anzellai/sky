@@ -98,8 +98,15 @@ func renderNode(sb *strings.Builder, node *VNode) {
 	sb.WriteByte('<')
 	sb.WriteString(node.Tag)
 
-	// Attributes (sorted for deterministic output)
+	// Attributes — for textarea, skip "value" (rendered as text content instead)
+	var textareaVal string
+	var hasTextareaVal bool
 	for k, v := range node.Attrs {
+		if node.Tag == "textarea" && k == "value" {
+			textareaVal = v
+			hasTextareaVal = true
+			continue
+		}
 		sb.WriteByte(' ')
 		sb.WriteString(k)
 		sb.WriteString("='")
@@ -114,6 +121,13 @@ func renderNode(sb *strings.Builder, node *VNode) {
 	}
 
 	sb.WriteByte('>')
+
+	// Textarea: render value as text content (browsers ignore value attribute)
+	if node.Tag == "textarea" && hasTextareaVal {
+		sb.WriteString(escapeHTML(textareaVal))
+		sb.WriteString("</textarea>")
+		return
+	}
 
 	// Children
 	for _, child := range node.Children {

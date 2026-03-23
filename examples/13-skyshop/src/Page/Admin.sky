@@ -6,7 +6,7 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
-import Std.Live.Events exposing (onClick, onInput, onChange, onFile, fileMaxWidth, fileMaxHeight, fileMaxSize)
+import Std.Live.Events exposing (onClick, onInput, onChange, onImage, fileMaxWidth, fileMaxHeight)
 import State exposing (..)
 import Ui.Layout as Layout
 import Lib.Db as Db
@@ -416,10 +416,9 @@ viewImageManager model =
                         [ input
                             [ type_ "file"
                             , attribute "accept" "image/*"
-                            , onFile UpdateImageData
+                            , onImage UpdateImageData
                             , fileMaxWidth 1200
                             , fileMaxHeight 1200
-                            , fileMaxSize 900000
                             , tw [ textSm ]
                             ]
                         ]

@@ -58,6 +58,17 @@ func diffNodes(old, new_ *VNode, patches *[]Patch) {
 	if old.SkyID != "" {
 		// Diff attributes
 		attrChanges := diffAttrs(old.Attrs, new_.Attrs)
+		// Textarea: value is rendered as textContent, not an HTML attribute.
+		// Emit a Text patch instead of an Attrs patch for the value.
+		if old.Tag == "textarea" {
+			oldVal, _ := old.Attrs["value"]
+			newVal, _ := new_.Attrs["value"]
+			if oldVal != newVal {
+				*patches = append(*patches, Patch{ID: old.SkyID, Text: &newVal})
+			}
+			// Remove value from attrChanges — it's handled via Text patch
+			delete(attrChanges, "value")
+		}
 		if len(attrChanges) > 0 {
 			*patches = append(*patches, Patch{ID: old.SkyID, Attrs: attrChanges})
 		}
