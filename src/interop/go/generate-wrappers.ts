@@ -87,6 +87,10 @@ func UpdateRecord(base any, update map[string]any) any {
     return newMap
 }
 
+// Identity function: passes any value through unchanged.
+// Used by Sky's Db.intVal/boolVal/floatVal to store typed values in Dicts.
+func Sky_Identity(v any) any { return v }
+
 // ============= Safe Assertion Helpers =============
 // These prevent runtime panics by returning zero values on type mismatch.
 

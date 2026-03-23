@@ -124,14 +124,11 @@ findOrCreateUser uid email name =
                         else
                             let
                                 isAdminUser =
-                                    if List.member email adminEmails then
-                                        "true"
-                                    else
-                                        "false"
+                                    List.member email adminEmails
 
                                 -- Update name/email/admin if changed
                                 updatedUser =
-                                    Dict.insert "is_admin" isAdminUser
+                                    Dict.insert "is_admin" (Db.boolVal isAdminUser)
                                         (
                                         Dict.insert "email" email
                                             (Dict.insert "name" name user)
@@ -140,12 +137,17 @@ findOrCreateUser uid email name =
                                     Db.getField "id" user
                                 _ =
                                     Db.setDoc "users" userId updatedUser
+                                adminStr =
+                                    if isAdminUser then
+                                        "true"
+                                    else
+                                        "false"
                                 _ =
                                     println
                                         (
                                         "[AUTH] Existing user signed in: " ++
                                         email ++
-                                        " (admin: " ++ isAdminUser ++ ")"
+                                        " (admin: " ++ adminStr ++ ")"
                                         )
                             in
                                 Ok updatedUser
@@ -161,10 +163,7 @@ createUser uid email name =
         userId =
             Uuid.newString ()
         isAdminUser =
-            if List.member email adminEmails then
-                "true"
-            else
-                "false"
+            List.member email adminEmails
         userData =
             Dict.fromList
                 [ ( "id" , userId )
@@ -178,8 +177,8 @@ createUser uid email name =
                 , ( "address_county" , "" )
                 , ( "address_country" , "" )
                 , ( "address_postcode" , "" )
-                , ( "is_admin" , isAdminUser )
-                , ( "suspended" , "false" )
+                , ( "is_admin" , Db.boolVal isAdminUser )
+                , ( "suspended" , Db.boolVal False )
                 ]
         result =
             Db.setDoc "users" userId userData

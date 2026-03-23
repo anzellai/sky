@@ -47,7 +47,7 @@ notifyOrderPlaced cart items userName userEmail =
                 , ( "notification_type" , "order" )
                 , ( "subject" , subject )
                 , ( "body" , body )
-                , ( "sent" , "false" )
+                , ( "sent" , Db.boolVal False )
                 ]
 
                 -- Log the notification
@@ -97,7 +97,10 @@ sendEmailNotification notificationId subject body =
                     case Db.getDoc "notifications" notificationId of
                         Ok Just notification ->
                             Db.setDoc "notifications" notificationId
-                                (Dict.insert "sent" "true" notification)
+                                (
+                                Dict.insert "sent" (Db.boolVal True)
+                                    notification
+                                )
                         
                         _ ->
                             Ok ()

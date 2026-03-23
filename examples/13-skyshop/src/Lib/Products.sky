@@ -17,7 +17,7 @@ listProducts =
     let
         allProducts =
             Result.withDefault []
-                (Db.queryWhere "products" "published" "==" "1")
+                (Db.queryWhere "products" "published" "==" True)
     in
         allProducts
 
@@ -103,12 +103,12 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
                 , ( "title" , title )
                 , ( "summary" , summary )
                 , ( "category" , category )
-                , ( "price_amount" , priceAmount )
+                , ( "price_amount" , Db.intVal priceAmount )
                 , ( "price_currency" , priceCurrency )
-                , ( "price_discount" , priceDiscount )
-                , ( "price_tax" , "0" )
-                , ( "stock" , stock )
-                , ( "published" , "0" )
+                , ( "price_discount" , Db.intVal priceDiscount )
+                , ( "price_tax" , Db.intVal 0 )
+                , ( "stock" , Db.intVal stock )
+                , ( "published" , Db.boolVal False )
                 ]
         result =
             Db.setDoc "products" productId productData
@@ -126,22 +126,17 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
 
 updateProduct productId title summary category priceAmount priceCurrency priceDiscount stock published =
     let
-        publishedVal =
-            if published then
-                "1"
-            else
-                "0"
         productData =
             Dict.fromList
                 [ ( "id" , productId )
                 , ( "title" , title )
                 , ( "summary" , summary )
                 , ( "category" , category )
-                , ( "price_amount" , priceAmount )
+                , ( "price_amount" , Db.intVal priceAmount )
                 , ( "price_currency" , priceCurrency )
-                , ( "price_discount" , priceDiscount )
-                , ( "stock" , stock )
-                , ( "published" , publishedVal )
+                , ( "price_discount" , Db.intVal priceDiscount )
+                , ( "stock" , Db.intVal stock )
+                , ( "published" , Db.boolVal published )
                 ]
         result =
             Db.setDoc "products" productId productData

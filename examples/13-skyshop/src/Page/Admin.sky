@@ -286,7 +286,7 @@ viewProductForm model =
                             [ text (Tr.t lang "admin.product.price") ]
                         , input
                             [ type_ "number"
-                            , value model.editPrice
+                            , value (String.fromInt model.editPrice)
                             , onInput UpdateEditPrice
                             , Layout.formInput
                             , placeholder "0"
@@ -299,7 +299,7 @@ viewProductForm model =
                             [ text (Tr.t lang "admin.product.discount") ]
                         , input
                             [ type_ "number"
-                            , value model.editDiscount
+                            , value (String.fromInt model.editDiscount)
                             , onInput UpdateEditDiscount
                             , Layout.formInput
                             , placeholder "0"
@@ -311,7 +311,7 @@ viewProductForm model =
                             [ text (Tr.t lang "admin.product.stock") ]
                         , input
                             [ type_ "number"
-                            , value model.editStock
+                            , value (String.fromInt model.editStock)
                             , onInput UpdateEditStock
                             , Layout.formInput
                             , placeholder "-1"

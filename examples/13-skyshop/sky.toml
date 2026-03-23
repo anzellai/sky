@@ -5,14 +5,6 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[live]
-port = 4000
-input = "debounce"
-poll_interval = 0
-
-[live.session]
-store = "memory"
-
 [dependencies]
 "github.com/anzellai/sky-tailwind" = "latest"
 
@@ -27,9 +19,9 @@ store = "memory"
 "github.com/google/uuid" = "latest"
 "net/http" = "latest"
 "net/url" = "latest"
-"io" = "latest"
-"strings" = "latest"
-"strconv" = "latest"
-"os" = "latest"
-"fmt" = "latest"
-"context" = "latest"
+io = "latest"
+strings = "latest"
+strconv = "latest"
+os = "latest"
+fmt = "latest"
+context = "latest"

@@ -54,6 +54,25 @@ foreign import "sky_wrappers" exposing (Sky_AsMap)
 dictToMap dict =
     Sky_AsMap dict
 
+-- Typed value wrappers for storing native types in Firestore Dicts.
+-- These allow Dict values to carry proper Go types (int, bool, float)
+-- instead of strings, so Firestore stores them with correct types.
+-- Uses the identity function at runtime (Go any → any), but typed in
+-- Sky to allow mixing types in a Dict destined for Firestore.
+foreign import "sky_wrappers" exposing (Sky_Identity)
+
+intVal : Int -> a
+intVal n =
+    Sky_Identity n
+
+boolVal : Bool -> a
+boolVal b =
+    Sky_Identity b
+
+floatVal : Float -> a
+floatVal f =
+    Sky_Identity f
+
 -- ══════════════════════════════════════════════════════
 -- CORE API
 -- ══════════════════════════════════════════════════════
@@ -197,9 +216,16 @@ getField field row =
     Maybe.withDefault "" (Dict.get field row)
 
 getInt field row =
-    getField field row
-        |> String.toInt
-        |> Maybe.withDefault 0
+    let
+        val =
+            getField field row
+    in
+        if val == "" then
+            0
+        else
+            val
+                |> String.toInt
+                |> Maybe.withDefault 0
 
 getBool field row =
     let

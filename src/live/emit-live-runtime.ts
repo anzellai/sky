@@ -36,6 +36,12 @@ function extractVariants(typeDecl: AST.TypeDeclaration): MsgVariant[] {
   return typeDecl.variants.map((v: any) => ({
     name: v.name,
     fields: (v.fields || []).map((f: any) => {
+      // TypeReference: `Int`, `String`, `Bool`, `Float`, `Page`, etc.
+      if (f.kind === "TypeReference" && f.name?.parts) {
+        const typeName = f.name.parts[f.name.parts.length - 1];
+        return typeName || "Any";
+      }
+      // Legacy/simple AST forms
       if (f.kind === "TypeName" || f.kind === "TypeConstructor") {
         return f.name || "Any";
       }
@@ -144,11 +150,14 @@ function generateArgDecoder(index: number, fieldType: string): string {
     case "String":
       return `\t\tvar arg${index} string\n\t\tjson.Unmarshal(args[${index}], &arg${index})\n`;
     case "Int":
-      return `\t\tvar arg${index} int\n\t\tjson.Unmarshal(args[${index}], &arg${index})\n`;
+      // DOM inputs send strings ("42"), so try int first, fall back to parsing string
+      return `\t\tvar arg${index} int\n\t\tif err := json.Unmarshal(args[${index}], &arg${index}); err != nil {\n\t\t\tvar _s${index} string\n\t\t\tjson.Unmarshal(args[${index}], &_s${index})\n\t\t\targ${index}, _ = strconv.Atoi(_s${index})\n\t\t}\n`;
     case "Bool":
-      return `\t\tvar arg${index} bool\n\t\tjson.Unmarshal(args[${index}], &arg${index})\n`;
+      // DOM inputs send strings ("true"/"false"/"on"), so try bool first, fall back to parsing
+      return `\t\tvar arg${index} bool\n\t\tif err := json.Unmarshal(args[${index}], &arg${index}); err != nil {\n\t\t\tvar _s${index} string\n\t\t\tjson.Unmarshal(args[${index}], &_s${index})\n\t\t\targ${index} = _s${index} == "true" || _s${index} == "1" || _s${index} == "on"\n\t\t}\n`;
     case "Float":
-      return `\t\tvar arg${index} float64\n\t\tjson.Unmarshal(args[${index}], &arg${index})\n`;
+      // DOM inputs send strings ("3.14"), so try float first, fall back to parsing
+      return `\t\tvar arg${index} float64\n\t\tif err := json.Unmarshal(args[${index}], &arg${index}); err != nil {\n\t\t\tvar _s${index} string\n\t\t\tjson.Unmarshal(args[${index}], &_s${index})\n\t\t\targ${index}, _ = strconv.ParseFloat(_s${index}, 64)\n\t\t}\n`;
     default:
       // Complex types: decode as any via json
       return `\t\tvar arg${index} any\n\t\tjson.Unmarshal(args[${index}], &arg${index})\n`;
@@ -285,6 +294,9 @@ export function generateLiveMain(
   const msgVariants = msgTypeDecl ? extractVariants(msgTypeDecl) : [];
   const pageVariants = pageTypeDecl ? extractVariants(pageTypeDecl) : [];
 
+  // Check if any Msg variant has Int/Float/Bool args (needs strconv import)
+  const needsStrconv = msgVariants.some(v => v.fields.some(f => f === "Int" || f === "Float" || f === "Bool"));
+
   // Component imports
   const componentImports = getComponentImports(componentInfos);
   const componentImportsStr = componentImports.length > 0
@@ -296,7 +308,7 @@ export function generateLiveMain(
 import (
 \t"encoding/json"
 \t"fmt"
-\t"strings"
+${needsStrconv ? '\t"strconv"\n' : ''}\t"strings"
 \t"time"
 \t"sky-out/skylive_rt"${componentImportsStr}
 )

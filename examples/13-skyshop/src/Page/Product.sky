@@ -267,24 +267,13 @@ viewAddToCart model product stock =
                             [ text (Tr.t lang "product.quantity") ]
                         , div [ tw [ flex , itemsCenter ] ]
                             [ button
-                                [ onClick
-                                    (
-                                    UpdateQuantity
-                                        (
-                                        String.fromInt
-                                            (
-                                            withDefault 1
-                                                (String.toInt model.quantity) -
-                                            1
-                                            )
-                                        )
-                                    )
+                                [ onClick (UpdateQuantity (model.quantity - 1))
                                 , Layout.qtyBtn
                                 ]
                                 [ text "-" ]
                             , input
                                 [ type_ "number"
-                                , value model.quantity
+                                , value (String.fromInt model.quantity)
                                 , onInput UpdateQuantity
                                 , min "1"
                                 , max
@@ -297,18 +286,7 @@ viewAddToCart model product stock =
                                 , class "qty-input"
                                 ]
                             , button
-                                [ onClick
-                                    (
-                                    UpdateQuantity
-                                        (
-                                        String.fromInt
-                                            (
-                                            withDefault 1
-                                                (String.toInt model.quantity) +
-                                            1
-                                            )
-                                        )
-                                    )
+                                [ onClick (UpdateQuantity (model.quantity + 1))
                                 , Layout.qtyBtn
                                 ]
                                 [ text "+" ]

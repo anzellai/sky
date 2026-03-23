@@ -50,7 +50,7 @@ createCart userId =
                 , ( "shipping_city" , "" )
                 , ( "shipping_country" , "" )
                 , ( "shipping_postcode" , "" )
-                , ( "total_amount" , "0" )
+                , ( "total_amount" , Db.intVal 0 )
                 , ( "total_currency" , "GBP" )
                 ]
     in
@@ -150,7 +150,7 @@ addItem cartId productId quantity =
                     itemId =
                         Db.getField "id" existing
                     updatedItem =
-                        Dict.insert "quantity" (String.fromInt newQty) existing
+                        Dict.insert "quantity" (Db.intVal newQty) existing
                     _ =
                         Db.setDoc "cart_items" itemId updatedItem
                     _ =
@@ -167,7 +167,7 @@ addItem cartId productId quantity =
                             [ ( "id" , itemId )
                             , ( "cart_id" , cartId )
                             , ( "product_id" , productId )
-                            , ( "quantity" , String.fromInt quantity )
+                            , ( "quantity" , Db.intVal quantity )
                             ]
                     _ =
                         Db.setDoc "cart_items" itemId itemData
@@ -184,7 +184,7 @@ updateItemQty itemId quantity =
             Ok Just item ->
                 let
                     updatedItem =
-                        Dict.insert "quantity" (String.fromInt quantity) item
+                        Dict.insert "quantity" (Db.intVal quantity) item
                     _ =
                         Db.setDoc "cart_items" itemId updatedItem
                     _ =
@@ -255,7 +255,7 @@ recalculateTotal cartId =
             Ok Just cart ->
                 let
                     updatedCart =
-                        Dict.insert "total_amount" (String.fromInt total)
+                        Dict.insert "total_amount" (Db.intVal total)
                             (Dict.insert "total_currency" currency cart)
                     _ =
                         Db.setDoc "carts" cartId updatedCart

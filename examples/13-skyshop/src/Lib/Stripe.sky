@@ -139,7 +139,7 @@ buildLineItemParams items =
                         else
                             price
                     qty =
-                        Db.getField "quantity" item
+                        String.fromInt (Db.getInt "quantity" item)
                     currency =
                         String.toLower (Db.getField "price_currency" item)
                 in
@@ -345,11 +345,11 @@ deductItemStock item =
                         let
                             newStock =
                                 if (currentStock - qty) >= 0 then
-                                    String.fromInt (currentStock - qty)
+                                    currentStock - qty
                                 else
-                                    "0"
+                                    0
                             updatedProduct =
-                                Dict.insert "stock" newStock product
+                                Dict.insert "stock" (Db.intVal newStock) product
                             _ =
                                 Db.setDoc "products" productId updatedProduct
                         in

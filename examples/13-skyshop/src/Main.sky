@@ -121,7 +121,7 @@ loadProductDetail model productId =
         { model
           | product = product
           , productImages = images
-          , quantity = "1"
+          , quantity = 1
         }
 
 
@@ -145,10 +145,10 @@ loadEditProduct model productId =
                   , editTitle = Db.getField "title" product
                   , editSummary = Db.getField "summary" product
                   , editCategory = Db.getField "category" product
-                  , editPrice = Db.getField "price_amount" product
-                  , editDiscount = Db.getField "price_discount" product
+                  , editPrice = Db.getInt "price_amount" product
+                  , editDiscount = Db.getInt "price_discount" product
                   , editCurrency = Db.getField "price_currency" product
-                  , editStock = Db.getField "stock" product
+                  , editStock = Db.getInt "stock" product
                   , editPublished = Db.getBool "published" product
                   , productImages = images
                   , editImageData = ""
@@ -164,10 +164,10 @@ clearEditForm model =
       , editTitle = ""
       , editSummary = ""
       , editCategory = "Miscellaneous"
-      , editPrice = ""
-      , editDiscount = "0"
+      , editPrice = 0
+      , editDiscount = 0
       , editCurrency = "GBP"
-      , editStock = "-1"
+      , editStock = -1
       , editPublished = False
       , editImageData = ""
       , productImages = []
@@ -268,8 +268,6 @@ handleAddToCart productId model =
                     Db.getField "id" user
                 qty =
                     model.quantity
-                        |> String.toInt
-                        |> withDefault 1
             in
                 case Cart.getOrCreateCart userId of
                     Ok cart ->
@@ -283,7 +281,7 @@ handleAddToCart productId model =
                                     { model
                                       | notification = "Added to cart!"
                                       , notificationType = "success"
-                                      , quantity = "1"
+                                      , quantity = 1
                                     }
                         in
                             ( updatedModel , Cmd.none )
@@ -453,7 +451,7 @@ handleSubmitProduct model =
           }
         , Cmd.none
         )
-    else if model.editPrice == "" then
+    else if model.editPrice <= 0 then
         ( { model
           | notification = "Price is required."
           , notificationType = "error"

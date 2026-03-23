@@ -37,7 +37,7 @@ type Msg
     | SetSortBy String
     | ToggleSortDir
     | SelectProduct String
-    | UpdateQuantity String
+    | UpdateQuantity Int
     | AddToCart String
     | UpdateCartItemQty String String
     | RemoveCartItem String
@@ -47,10 +47,10 @@ type Msg
     | UpdateEditTitle String
     | UpdateEditSummary String
     | UpdateEditCategory String
-    | UpdateEditPrice String
-    | UpdateEditDiscount String
+    | UpdateEditPrice Int
+    | UpdateEditDiscount Int
     | UpdateEditCurrency String
-    | UpdateEditStock String
+    | UpdateEditStock Int
     | ToggleEditPublished
     | SubmitProduct
     | DeleteProduct String
@@ -90,15 +90,15 @@ type alias Model =
     , editTitle : String
     , editSummary : String
     , editCategory : String
-    , editPrice : String
-    , editDiscount : String
+    , editPrice : Int
+    , editDiscount : Int
     , editCurrency : String
-    , editStock : String
+    , editStock : Int
     , editPublished : Bool
     , editImageData : String
     , adminOrders : List (Dict String String)
     , adminOrderFilter : String
-    , quantity : String
+    , quantity : Int
     , notification : String
     , notificationType : String
     }
@@ -130,15 +130,15 @@ emptyModel =
     , editTitle = ""
     , editSummary = ""
     , editCategory = "Miscellaneous"
-    , editPrice = ""
-    , editDiscount = "0"
+    , editPrice = 0
+    , editDiscount = 0
     , editCurrency = "GBP"
-    , editStock = "-1"
+    , editStock = -1
     , editPublished = False
     , editImageData = ""
     , adminOrders = []
     , adminOrderFilter = "all"
-    , quantity = "1"
+    , quantity = 1
     , notification = ""
     , notificationType = ""
     }
