@@ -46,8 +46,33 @@ init req =
             println "[APP] SkyShop initialized"
         products =
             Products.listProducts
+
+        -- Check for sky_user cookie to pre-load user (instant auth on page load)
+        cookies =
+            case Dict.get "cookies" req of
+                Just c ->
+                    c
+
+                Nothing ->
+                    Dict.empty
+        userUid =
+            case Dict.get "sky_user" cookies of
+                Just uid ->
+                    uid
+
+                Nothing ->
+                    ""
+        user =
+            if userUid == "" then
+                Nothing
+            else
+                Auth.getSessionUser userUid
         base =
-            { emptyModel | products = products }
+            refreshCart
+                { emptyModel
+                  | products = products
+                  , user = user
+                }
     in
         ( base , Cmd.none )
 
@@ -406,8 +431,17 @@ handleStartCheckout model =
 handleVerifyPayment : String -> Model -> ( Model, Cmd Msg )
 handleVerifyPayment orderId model =
     let
+        _ =
+            println ("[VERIFY] Looking up order: " ++ orderId)
         ( order , items ) =
             Cart.getOrderWithItems orderId
+        _ =
+            case order of
+                Just _ ->
+                    println "[VERIFY] Order found"
+
+                Nothing ->
+                    println "[VERIFY] Order NOT found"
         base =
             { model | order = order , orderItems = items }
     in
@@ -421,9 +455,15 @@ handleVerifyPayment orderId model =
                         -- Already verified
                         ( base , Cmd.none )
                     else
+                        let
+                            _ =
+                                println ("[VERIFY] Checking payment for order: " ++ orderId)
+                        in
                         case Stripe.verifyPayment orderId of
                             Ok status ->
                                 let
+                                    _ =
+                                        println "[VERIFY] Payment verified!"
                                     _ =
                                         Cart.setCartState orderId "ordered"
                                     _ =
@@ -447,6 +487,10 @@ handleVerifyPayment orderId model =
                                     )
 
                             Err e ->
+                                let
+                                    _ =
+                                        println ("[VERIFY] Payment failed: " ++ e)
+                                in
                                 ( { base
                                   | notification = e
                                   , notificationType = "error"
@@ -455,6 +499,10 @@ handleVerifyPayment orderId model =
                                 )
 
             Nothing ->
+                let
+                    _ =
+                        println "[VERIFY] Order is Nothing in handleVerifyPayment"
+                in
                 ( { base
                   | notification = "Order not found."
                   , notificationType = "error"

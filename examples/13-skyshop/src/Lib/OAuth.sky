@@ -52,6 +52,8 @@ firebaseAuthScript =
         "if(user){" ++
         "if(_skyAuthUid===user.uid)return;" ++
         "_skyAuthUid=user.uid;" ++
+        -- Store UID cookie for instant server-side auth on page load
+        "document.cookie='sky_user='+user.uid+';path=/;max-age=2592000;SameSite=Lax';" ++
         "user.getIdToken().then(function(token){" ++
         "function _trySend(t,n){" ++
         "if(window.__sky_send){window.__sky_send('FirebaseAuth \"'+t+'\"');}" ++
@@ -59,7 +61,10 @@ firebaseAuthScript =
         "}" ++
         "_trySend(token,0);" ++
         "});" ++
-        "}else{_skyAuthUid=null;}" ++
+        "}else{_skyAuthUid=null;" ++
+        -- Clear cookie on sign-out
+        "document.cookie='sky_user=;path=/;max-age=0';" ++
+        "}" ++
         "});" ++
         "});" ++
         "});" ++
