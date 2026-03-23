@@ -417,13 +417,7 @@ viewImageManager model =
                             [ type_ "file"
                             , attribute "accept" "image/*"
                             , id "imageFile"
-                            , dataAttribute "target" "imageData"
                             , tw [ textSm ]
-                            ]
-                        , input
-                            [ type_ "hidden"
-                            , id "imageData"
-                            , onInput UpdateImageData
                             ]
                         ]
                     , button [ onClick UploadImage , Layout.btnPrimary ]
@@ -435,7 +429,7 @@ viewImageManager model =
 
 fileUploadScript =
     raw
-        "<script>(function(){if(window._skyFileUpload)return;window._skyFileUpload=true;document.addEventListener('change',function(e){if(e.target&&e.target.type==='file'&&e.target.dataset.target){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(ev){var t=document.getElementById(e.target.dataset.target);if(t){t.value=ev.target.result;t.dispatchEvent(new Event('input',{bubbles:true}));}};r.readAsDataURL(f);}});})()</script>"
+        "<script>(function(){if(window._skyFileUpload)return;window._skyFileUpload=true;document.addEventListener('change',function(e){if(e.target&&e.target.type==='file'){var f=e.target.files[0];if(!f)return;var r=new FileReader();r.onload=function(ev){if(window.__sky_send){window.__sky_send('UpdateImageData',[ev.target.result]);}};r.readAsDataURL(f);}});})()</script>"
 
 -- ══════════════════════════════════════════════════════
 -- ADMIN ORDERS

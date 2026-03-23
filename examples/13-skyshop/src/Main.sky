@@ -472,12 +472,11 @@ handleCreateProduct model =
         Ok productId ->
             let
                 base =
-                    clearEditForm
-                        { model
-                          | page = AdminEditProductPage productId
-                          , notification = "Product created!"
-                          , notificationType = "success"
-                        }
+                    { model
+                      | page = AdminEditProductPage productId
+                      , notification = "Product created!"
+                      , notificationType = "success"
+                    }
                 withProducts =
                     refreshAdminProducts base
                 withEdit =

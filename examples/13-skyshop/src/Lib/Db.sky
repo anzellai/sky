@@ -129,7 +129,7 @@ queryWhere collection field op value =
                 colRef =
                     Firestore.clientCollection client collection
                 q =
-                    Firestore.collectionRefWhere colRef field op (js value)
+                    Firestore.collectionRefWhere colRef field op value
                 iter =
                     Firestore.queryDocuments q ctx
             in
@@ -150,7 +150,7 @@ queryWhereOrder collection field op value orderField dir =
                 colRef =
                     Firestore.clientCollection client collection
                 q =
-                    Firestore.collectionRefWhere colRef field op (js value)
+                    Firestore.collectionRefWhere colRef field op value
                 direction =
                     if dir == "desc" then
                         Firestore.desc
