@@ -101,7 +101,24 @@ function generateMsgDecoder(variants: MsgVariant[], pageVariants: PageVariant[],
       if (v.arity === 1) {
         // Single arg: use inline resolved arg if available, else decode from JSON
         const suffix = "";
+        const fieldType = v.fields[0] || "Any";
         code += `\t\tif inlineResolvedArg != nil {\n`;
+        // Convert inline string arg to the expected type
+        if (fieldType === "Int") {
+          code += `\t\t\tif _s, ok := inlineResolvedArg.(string); ok {\n`;
+          code += `\t\t\t\t_n, _ := strconv.Atoi(_s)\n`;
+          code += `\t\t\t\tinlineResolvedArg = _n\n`;
+          code += `\t\t\t}\n`;
+        } else if (fieldType === "Float") {
+          code += `\t\t\tif _s, ok := inlineResolvedArg.(string); ok {\n`;
+          code += `\t\t\t\t_f, _ := strconv.ParseFloat(_s, 64)\n`;
+          code += `\t\t\t\tinlineResolvedArg = _f\n`;
+          code += `\t\t\t}\n`;
+        } else if (fieldType === "Bool") {
+          code += `\t\t\tif _s, ok := inlineResolvedArg.(string); ok {\n`;
+          code += `\t\t\t\tinlineResolvedArg = _s == "true" || _s == "1" || _s == "on"\n`;
+          code += `\t\t\t}\n`;
+        }
         code += `\t\t\treturn map[string]any{"Tag": ${tagIndex(v.name, variants)}, "SkyName": "${v.name}", "${v.name}Value${suffix}": inlineResolvedArg}, nil\n`;
         code += `\t\t}\n`;
         code += `\t\tif len(args) < 1 {\n`;
