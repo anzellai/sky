@@ -1,4 +1,4 @@
-module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, initDb)
+module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, intVal, boolVal, floatVal, initDb)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
