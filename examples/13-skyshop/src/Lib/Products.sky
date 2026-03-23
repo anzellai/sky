@@ -14,15 +14,22 @@ import Lib.Db as Db
 -- QUERIES
 -- ══════════════════════════════════════════════════════
 listProducts =
-    let
-        allProducts =
-            Result.withDefault []
-                (Db.queryWhere "products" "published" "==" True)
-    in
-        allProducts
+    Result.withDefault []
+        (Db.queryWhere "products" "published" "==" True)
 
 listAllProducts =
-    Result.withDefault [] (Db.queryDocs "products")
+    let
+        result =
+            Db.queryDocs "products"
+        _ =
+            case result of
+                Ok products ->
+                    println ("[PRODUCTS] Loaded " ++ String.fromInt (List.length products) ++ " products")
+
+                Err e ->
+                    println ("[PRODUCTS] ERROR loading products: " ++ e)
+    in
+        Result.withDefault [] result
 
 getProduct productId =
     case Db.getDoc "products" productId of
