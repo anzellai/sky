@@ -139,7 +139,7 @@ export function installGoPackage(pkgName: string, version: string): string {
   const cacheDir = path.join(".skycache", "go", pkgName.toLowerCase());
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  generateForeignBindings(pkgName, []).then(result => {
+  generateForeignBindings(pkgName, [], { skipWrappers: true }).then(result => {
       if (result.skyiContent) {
           fs.writeFileSync(path.join(cacheDir, "bindings.skyi"), result.skyiContent);
           console.log(`Generated bindings for ${pkgName} at ${cacheDir}/bindings.skyi`);

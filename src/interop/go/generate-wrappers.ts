@@ -1902,9 +1902,25 @@ func Sky_process_LoadEnv(filePath any) any {
     const resolveGoPackageId = (importPath: string): string => {
         if (importPath === pkgName) return pkg.name;
         const parts = importPath.split("/");
-        const last = parts[parts.length - 1];
+        let last = parts[parts.length - 1];
+        // Skip version suffix (v2, v84, etc.) — use the previous segment
         if (/^v\d+$/.test(last) && parts.length >= 2) {
-            return parts[parts.length - 2];
+            last = parts[parts.length - 2];
+        }
+        // Check if the import path is a parent/prefix of the package being wrapped.
+        // e.g., wrapping "stripe-go/v84/checkout/session" and type references "stripe-go/v84.Type"
+        // → the Go package name is "stripe" (from pkg.name of the parent package).
+        if (pkgName.startsWith(importPath + "/") || importPath.startsWith(pkgName.split("/").slice(0, -1).join("/"))) {
+            // This is a sibling/parent package — use the last segment cleaned up
+        }
+        // Go import paths can have hyphens but package identifiers can't.
+        // Go convention: "stripe-go" → package name is usually the base without the suffix.
+        // Common patterns: "stripe-go" → "stripe", "go-redis" → "redis"
+        if (last.includes("-")) {
+            // Try removing common suffixes: -go, go-
+            if (last.endsWith("-go")) return last.slice(0, -3);
+            if (last.startsWith("go-")) return last.slice(3);
+            return last.replace(/-/g, "_");
         }
         return last;
     };
@@ -2042,6 +2058,7 @@ func Sky_process_LoadEnv(filePath any) any {
             // from Sky record (map[string]any) to Go struct. This enables Sky records
             // to be used as Go struct arguments in FFI calls.
             if (t.startsWith("*")) {
+                imports.add("encoding/json");
                 const valType = t.substring(1);
                 return [
                     `\tvar _arg${i} ${t}`,
@@ -2060,6 +2077,7 @@ func Sky_process_LoadEnv(filePath any) any {
                 ].join("\n");
             }
             // Non-pointer struct params: same JSON conversion approach
+            imports.add("encoding/json");
             return [
                 `\tvar _arg${i} ${t}`,
                 `\tif _d, _dok := arg${i}.(${t}); _dok {`,

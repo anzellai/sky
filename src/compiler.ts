@@ -843,6 +843,27 @@ export async function compileProject(entryFile: string, outDir: string) {
       };
       scanDir(outDir);
 
+      // Derive additional Go packages from foreign import wrapper names.
+      // e.g., Sky_github_com_stripe_stripe_go_v84_String → github.com/stripe/stripe-go/v84
+      for (const sym of usedSymbols) {
+          // Try to match known package paths from .skycache/gomod/go.mod
+          const goModPath = path.join(process.cwd(), ".skycache", "gomod", "go.mod");
+          if (fs.existsSync(goModPath)) {
+              const goMod = fs.readFileSync(goModPath, "utf8");
+              const lines = goMod.split("\n").filter(l => l.includes("/"));
+              for (const line of lines) {
+                  const match = line.match(/^\s*(\S+)\s/);
+                  if (match) {
+                      const pkgPath = match[1];
+                      const safePkg = pkgPath.replace(/[\/\.-]/g, "_");
+                      if (sym.startsWith(`Sky_${safePkg}_`)) {
+                          allForeignPackages.add(pkgPath);
+                      }
+                  }
+              }
+          }
+      }
+
       for (const pkgName of allForeignPackages) {
           if (pkgName === "JSON" || pkgName === "global" || pkgName.startsWith("@sky/runtime/") || pkgName === "sky_wrappers" || pkgName === "sky_std_channel" || pkgName === "sky_builtin") continue;
           try {
