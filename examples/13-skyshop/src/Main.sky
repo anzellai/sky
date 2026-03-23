@@ -873,6 +873,64 @@ subscriptions model =
 
 
 -- ══════════════════════════════════════════════════════
+-- AUTHORIZATION GUARD
+-- ══════════════════════════════════════════════════════
+
+guard msg model =
+    case msg of
+        -- Admin-only messages
+        SubmitProduct ->
+            requireAdmin model
+
+        DeleteProduct _ ->
+            requireAdmin model
+
+        UpdateOrderState _ _ ->
+            requireAdmin model
+
+        UploadImage ->
+            requireAdmin model
+
+        DeleteImage _ ->
+            requireAdmin model
+
+        -- Auth-required messages
+        AddToCart _ ->
+            requireAuth model
+
+        StartCheckout ->
+            requireAuth model
+
+        UpdateRemarks _ ->
+            requireAuth model
+
+        -- Public messages (no auth needed)
+        _ ->
+            Ok ()
+
+
+requireAuth model =
+    case model.user of
+        Just _ ->
+            Ok ()
+
+        Nothing ->
+            Err "Authentication required"
+
+
+requireAdmin model =
+    case model.user of
+        Just user ->
+            if Auth.isAdmin user then
+                Ok ()
+            else
+                Err "Admin access required"
+
+        Nothing ->
+            Err "Authentication required"
+
+
+-- ══════════════════════════════════════════════════════
 -- APP
 -- ══════════════════════════════════════════════════════
 
@@ -900,4 +958,5 @@ main =
             , route "/terms" TermsPage
             ]
         , notFound = NotFoundPage
+        , guard = guard
         }

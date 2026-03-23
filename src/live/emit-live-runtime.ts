@@ -349,6 +349,11 @@ ${needsStrconv ? '\t"strconv"\n' : ''}\t"strings"
     (d) => d.kind === "FunctionDeclaration" && d.name === "subscriptions"
   );
 
+  // Check if module has a top-level guard function (Msg -> Model -> Result String ())
+  const hasGuard = mainModule.declarations.some(
+    (d) => d.kind === "FunctionDeclaration" && d.name === "guard"
+  );
+
   // Main function — starts the Live server
   // Note: Sky compiles Update as Update(msg, model) (flattened from curried form)
   // and Init returns sky_wrappers.Tuple2{V0: model, V1: cmd}
@@ -403,6 +408,19 @@ ${componentInfos.length > 0 ? generateComponentUpdateCases(componentInfos) : ""}
 \t\tSubscriptions: func(model any) any {
 \t\t\tmodel = fixModel(model)
 \t\t\treturn Subscriptions(model)
+\t\t},` : ""}${hasGuard ? `
+\t\tGuard: func(msg any, model any) error {
+\t\t\tmodel = fixModel(model)
+\t\t\tresult := Guard(msg, model)
+\t\t\tswitch r := result.(type) {
+\t\t\tcase sky_wrappers.SkyResult:
+\t\t\t\tif r.Tag == 1 {
+\t\t\t\t\treturn fmt.Errorf("%v", r.ErrValue)
+\t\t\t\t}
+\t\t\t\treturn nil
+\t\t\tdefault:
+\t\t\t\treturn nil
+\t\t\t}
 \t\t},` : ""}
 \t}
 

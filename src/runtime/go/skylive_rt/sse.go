@@ -57,6 +57,13 @@ func (m *SSEManager) HandleSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Session cookie validation — prevent eavesdropping on other sessions
+	cookie, err := r.Cookie("sky_sid")
+	if err != nil || cookie.Value != sid {
+		http.Error(w, "invalid session", 403)
+		return
+	}
+
 	_, ok := m.store.Get(sid)
 	if !ok {
 		http.Error(w, "session not found", 404)

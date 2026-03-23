@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -76,6 +77,12 @@ type LiveApp struct {
 	// MsgTagToName maps a Msg tag index to its constructor name.
 	MsgTagToName func(tag int) string
 
+	// Guard checks if a message is authorized before Update processes it.
+	// Receives the decoded Msg and current Model. Return nil to allow,
+	// non-nil error to reject (message is silently dropped).
+	// If nil, all messages are allowed (backward compatible).
+	Guard func(msg any, model any) error
+
 	// CustomHandlers allows registering additional HTTP handlers for routes
 	// outside the TEA cycle (e.g., OAuth callbacks, API endpoints, webhooks).
 	// Registered before the catch-all page handler so they take priority.
@@ -97,6 +104,62 @@ type SessionHelper struct {
 	Store  SessionStore
 	NewID  func() string
 }
+
+// ── Security Helpers ─────────────────────────────────
+
+// validateSession checks that the SID matches the HttpOnly session cookie.
+func validateSession(r *http.Request, sid string) bool {
+	cookie, err := r.Cookie("sky_sid")
+	if err != nil {
+		return false
+	}
+	return cookie.Value == sid
+}
+
+// rateLimiter implements a per-IP token bucket rate limiter.
+type rateLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*rlBucket
+}
+
+type rlBucket struct {
+	tokens    float64
+	lastCheck time.Time
+}
+
+func newRateLimiter() *rateLimiter {
+	return &rateLimiter{buckets: make(map[string]*rlBucket)}
+}
+
+func (rl *rateLimiter) allow(ip string, rate float64, burst int) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	b, ok := rl.buckets[ip]
+	if !ok {
+		b = &rlBucket{tokens: float64(burst), lastCheck: time.Now()}
+		rl.buckets[ip] = b
+	}
+	elapsed := time.Since(b.lastCheck).Seconds()
+	b.lastCheck = time.Now()
+	b.tokens += elapsed * rate
+	if b.tokens > float64(burst) {
+		b.tokens = float64(burst)
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// setSecurityHeaders adds standard security headers to the response.
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+}
+
+var eventLimiter = newRateLimiter()
 
 // SetSessionCookie sets the Sky.Live session cookie on a response.
 func SetSessionCookie(w http.ResponseWriter, sid string) {
@@ -439,9 +502,27 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 }
 
 func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
+	setSecurityHeaders(w)
+
+	// Rate limit per IP (30 req/s, burst 60)
+	ip := strings.Split(r.RemoteAddr, ":")[0]
+	if !eventLimiter.allow(ip, 30, 60) {
+		http.Error(w, "rate limited", 429)
+		return
+	}
+
+	// Body size limit (10MB — accommodates base64 image uploads)
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+
 	var env MsgEnvelope
 	if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 		http.Error(w, "bad request", 400)
+		return
+	}
+
+	// Session cookie validation — prevent session forging/hijacking
+	if !validateSession(r, env.SID) {
+		http.Error(w, "invalid session", 403)
 		return
 	}
 
@@ -454,6 +535,21 @@ func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app
 	if err != nil {
 		http.Error(w, "unknown message: "+env.Msg, 400)
 		return
+	}
+
+	// Guard: check if this message is authorized for the current session
+	if app.Guard != nil {
+		sess, ok := store.Get(env.SID)
+		if !ok {
+			http.Error(w, "session expired", 410)
+			return
+		}
+		if err := app.Guard(msg, sess.Model); err != nil {
+			log.Printf("[GUARD] Rejected %s: %s (sid=%s...)", env.Msg, err.Error(), env.SID[:8])
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(EventResponse{})
+			return
+		}
 	}
 
 	// Optimistic concurrency retry loop (handles multi-instance races via store versioning)
@@ -651,6 +747,8 @@ func extractTag(v any) int {
 // (e.g., Lambda). The client periodically calls GET /_sky/poll?sid=X and the
 // server re-renders the view, diffs against PrevView, and returns patches.
 func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
+	setSecurityHeaders(w)
+
 	sid := r.URL.Query().Get("sid")
 	if sid == "" {
 		if cookie, err := r.Cookie("sky_sid"); err == nil {
@@ -659,6 +757,12 @@ func handlePoll(w http.ResponseWriter, r *http.Request, store SessionStore, app 
 	}
 	if sid == "" {
 		http.Error(w, "missing sid", 400)
+		return
+	}
+
+	// Session cookie validation
+	if !validateSession(r, sid) {
+		http.Error(w, "invalid session", 403)
 		return
 	}
 
