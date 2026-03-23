@@ -1182,6 +1182,7 @@ source = { git = "https://github.com/anzellai/tree-sitter-sky", rev = "main" }
 | `10-live-component` | Sky.Live components        | Component protocol, auto-wiring                                |
 | `11-fyne-stopwatch` | Desktop GUI                | Fyne toolkit, timers, data binding                             |
 | `12-skyvote`        | Full Sky.Live app          | SQLite, auth, voting, SSE auto-refresh                         |
+| `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n, image uploads |
 
 Run any example:
 
