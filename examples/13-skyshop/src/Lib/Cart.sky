@@ -391,7 +391,7 @@ checkoutToOrder cartId =
                     _ =
                         Db.setDoc "orders" orderId orderData
 
-                    -- Copy cart items to order_items collection
+                    -- Copy cart items to order_items, enriched with product data
                     cartItems =
                         Result.withDefault [] (Db.queryWhere "cart_items" "cart_id" "==" cartId)
                     _ =
@@ -400,10 +400,12 @@ checkoutToOrder cartId =
                                 let
                                     itemId =
                                         Uuid.newString ()
+                                    enriched =
+                                        enrichCartItem item
                                     orderItem =
                                         Dict.insert "id" itemId
                                             (Dict.insert "order_id" orderId
-                                                (Dict.insert "cart_id" cartId item))
+                                                (Dict.insert "cart_id" cartId enriched))
                                 in
                                     Db.setDoc "order_items" itemId orderItem
                             )
