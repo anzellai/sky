@@ -161,7 +161,17 @@ func sky_normalizeValue(v any) any {
 		return v
 	case reflect.Ptr:
 		if rv.IsNil() { return nil }
-		// Pointers are opaque handles — keep as-is.
+		// Pointers to data types (primitives, slices, maps) are nullable values —
+		// dereference and normalize. Pointers to structs/interfaces are opaque handles.
+		switch rv.Elem().Kind() {
+		case reflect.String, reflect.Bool,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+			reflect.Float32, reflect.Float64,
+			reflect.Slice, reflect.Map, reflect.Array:
+			return sky_normalizeValue(rv.Elem().Interface())
+		}
+		// Pointers to structs/interfaces are opaque handles — keep as-is.
 		return v
 	}
 	return v
