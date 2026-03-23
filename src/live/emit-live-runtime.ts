@@ -488,6 +488,25 @@ function extractRoutesFromExpr(expr: AST.Expression, routes: RouteMapping[]): vo
               pageName = pageArg.name;
             } else if (pageArg.kind === "QualifiedIdentifierExpression") {
               pageName = pageArg.name.parts[pageArg.name.parts.length - 1];
+            } else if (pageArg.kind === "CallExpression") {
+              // Parameterized page: (ProductPage "") → callee is ProductPage
+              const callee = pageArg.callee;
+              if (callee.kind === "IdentifierExpression") {
+                pageName = callee.name;
+              } else if (callee.kind === "QualifiedIdentifierExpression") {
+                pageName = callee.name.parts[callee.name.parts.length - 1];
+              }
+            } else if (pageArg.kind === "ParenthesizedExpression") {
+              // (ProductPage "") wrapped in parens
+              const inner = pageArg.expression;
+              if (inner.kind === "CallExpression") {
+                const callee = inner.callee;
+                if (callee.kind === "IdentifierExpression") {
+                  pageName = callee.name;
+                } else if (callee.kind === "QualifiedIdentifierExpression") {
+                  pageName = callee.name.parts[callee.name.parts.length - 1];
+                }
+              }
             }
             routes.push({ pattern: patternArg.value, pageConstructor: pageName });
           }
