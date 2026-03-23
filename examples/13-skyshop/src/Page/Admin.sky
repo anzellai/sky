@@ -15,6 +15,10 @@ import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
 
+-- Tailwind utilities not yet in sky-tailwind
+borderBlue600 =
+    ( "class" , "border-blue-600" )
+
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT LIST
 -- ══════════════════════════════════════════════════════
