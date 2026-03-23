@@ -91,6 +91,24 @@ func UpdateRecord(base any, update map[string]any) any {
 // Used by Sky's Db.intVal/boolVal/floatVal to store typed values in Dicts.
 func Sky_Identity(v any) any { return v }
 
+// Sky_ToJSON marshals any Go value to a JSON string.
+// This is the universal FFI bridge — complex Go types that can't be
+// directly mapped to Sky types are serialized as JSON. The developer
+// uses Sky's Decode module to extract typed values.
+func Sky_ToJSON(v any) any {
+	bytes, err := json.Marshal(v)
+	if err != nil { return "" }
+	return string(bytes)
+}
+
+// Sky_FromJSON is the inverse — parses a JSON string into a Go any value.
+func Sky_FromJSON(s any) any {
+	var result any
+	err := json.Unmarshal([]byte(sky_asString(s)), &result)
+	if err != nil { return SkyErr(err.Error()) }
+	return SkyOk(result)
+}
+
 // sky_normalizeValue converts Go-typed values to Sky-compatible types.
 // Called at the FFI boundary to ensure all values use Sky's expected types:
 //   - int64/int32/uint/etc → int (Sky's Int)
@@ -109,19 +127,33 @@ func sky_normalizeValue(v any) any {
 	case reflect.Float32:
 		return rv.Float()
 	case reflect.Slice:
-		if _, ok := v.([]any); ok { return v }
-		if _, ok := v.([]byte); ok { return v } // Keep []byte as-is for String.fromBytes
+		if _, ok := v.([]byte); ok { return v }
 		result := make([]any, rv.Len())
-		for i := 0; i < rv.Len(); i++ { result[i] = rv.Index(i).Interface() }
-		return result
-	case reflect.Map:
-		if _, ok := v.(map[string]any); ok { return v }
-		if _, ok := v.(map[any]any); ok { return v }
-		result := make(map[string]any, rv.Len())
-		for _, key := range rv.MapKeys() {
-			result[fmt.Sprintf("%v", key.Interface())] = rv.MapIndex(key).Interface()
+		for i := 0; i < rv.Len(); i++ {
+			result[i] = sky_normalizeValue(rv.Index(i).Interface())
 		}
 		return result
+	case reflect.Map:
+		// Only normalize map values (recursively) for Sky-compatible map types.
+		// Keep other map types as-is (they might be opaque handles).
+		if m, ok := v.(map[string]any); ok {
+			for k, val := range m { m[k] = sky_normalizeValue(val) }
+			return m
+		}
+		if m, ok := v.(map[any]any); ok {
+			for k, val := range m { m[k] = sky_normalizeValue(val) }
+			return m
+		}
+		// Convert other typed maps to map[string]any with normalized values
+		result := make(map[string]any, rv.Len())
+		for _, key := range rv.MapKeys() {
+			result[fmt.Sprintf("%v", key.Interface())] = sky_normalizeValue(rv.MapIndex(key).Interface())
+		}
+		return result
+	case reflect.Ptr:
+		// Don't dereference pointers — they're opaque handles (e.g., *firestore.Client)
+		// that get passed back to Go methods. Normalizing them would destroy the handle.
+		return v
 	}
 	return v
 }
