@@ -454,6 +454,15 @@ handleVerifyPayment orderId model =
                     if state == "ordered" || state == "shipped" || state == "delivered" then
                         -- Already verified
                         ( base , Cmd.none )
+                    else if state == "ongoing" then
+                        -- Order was created but checkout didn't complete (stale data)
+                        ( { base
+                          | notification = "This order was not completed. Please try checking out again."
+                          , notificationType = "error"
+                          , page = CartPage
+                          }
+                        , Cmd.none
+                        )
                     else
                         let
                             _ =
