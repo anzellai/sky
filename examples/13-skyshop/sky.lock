@@ -9,6 +9,9 @@ go:
   firebase.google.com/go/v4/auth: latest
   fmt: latest
   github.com/google/uuid: latest
+  github.com/stripe/stripe-go/v84: latest
+  github.com/stripe/stripe-go/v84/checkout/session: latest
+  github.com/stripe/stripe-go/v84/customer: latest
   google.golang.org/api/iterator: latest
   google.golang.org/api/option: latest
   io: latest

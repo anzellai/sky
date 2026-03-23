@@ -33,6 +33,7 @@ export interface MethodDecl {
     params: Param[];
     results: Param[];
     variadic?: boolean;
+    hasTypeParams?: boolean;
 }
 
 export interface FuncDecl {
@@ -40,6 +41,7 @@ export interface FuncDecl {
     params: Param[];
     results: Param[];
     variadic?: boolean;
+    hasTypeParams?: boolean;
 }
 
 export interface FieldDecl {
@@ -106,17 +108,19 @@ type FieldDecl struct {
 }
 
 type MethodDecl struct {
-	Name     string  \`json:"name"\`
-	Params   []Param \`json:"params"\`
-	Results  []Param \`json:"results"\`
-	Variadic bool    \`json:"variadic"\`
+	Name          string  \`json:"name"\`
+	Params        []Param \`json:"params"\`
+	Results       []Param \`json:"results"\`
+	Variadic      bool    \`json:"variadic"\`
+	HasTypeParams bool    \`json:"hasTypeParams,omitempty"\`
 }
 
 type FuncDecl struct {
-	Name     string  \`json:"name"\`
-	Params   []Param \`json:"params"\`
-	Results  []Param \`json:"results"\`
-	Variadic bool    \`json:"variadic"\`
+	Name          string  \`json:"name"\`
+	Params        []Param \`json:"params"\`
+	Results       []Param \`json:"results"\`
+	Variadic      bool    \`json:"variadic"\`
+	HasTypeParams bool    \`json:"hasTypeParams,omitempty"\`
 }
 
 type VarDecl struct {
@@ -229,6 +233,13 @@ func main() {
 					meth := MethodDecl{Name: fn.Name(), Variadic: sig.Variadic()}
 					meth.Params = extractParams(sig.Params(), sig.Variadic())
 					meth.Results = extractParams(sig.Results(), false)
+					if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
+						meth.HasTypeParams = true
+					}
+					// Also check if the receiver type itself has type params
+					if sig.RecvTypeParams() != nil && sig.RecvTypeParams().Len() > 0 {
+						meth.HasTypeParams = true
+					}
 					decl.Methods = append(decl.Methods, meth)
 				}
 			}
@@ -240,6 +251,9 @@ func main() {
 				f := FuncDecl{Name: name, Variadic: sig.Variadic()}
 				f.Params = extractParams(sig.Params(), sig.Variadic())
 				f.Results = extractParams(sig.Results(), false)
+				if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
+					f.HasTypeParams = true
+				}
 				out.Funcs = append(out.Funcs, f)
 			}
 

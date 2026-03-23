@@ -2249,8 +2249,48 @@ func Sky_process_LoadEnv(filePath any) any {
     }
 
     for (const f of pkg.funcs || []) {
+        // Skip generic functions — Go can't infer type params from any-typed arguments
+        if (f.hasTypeParams) continue;
         generateFuncWrapper(lowerCamelCase(f.name), f.name, f.params || [], f.results || [], false, false, "", f.variadic);
     }
+
+    // Check if a Go type references unexported identifiers (lowercase after package dot).
+    // e.g., "http.noBody", "firestore.ro" — these can't be used in type assertions.
+    const hasUnexportedType = (goType: string): boolean => {
+        // Package-qualified unexported type: pkg.lowercase
+        if (/\b\w+\.[a-z]/.test(goType)) return true;
+        // Bare unexported type (not a primitive keyword)
+        const bare = goType.replace(/^\*+/, "").replace(/^\[\]/, "");
+        if (/^[a-z]/.test(bare) && !["string", "int", "int8", "int16", "int32", "int64",
+            "uint", "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64",
+            "bool", "byte", "rune", "error", "any", "interface{}"].includes(bare)) return true;
+        return false;
+    };
+
+    // Generate a Go assignment expression for setting a package variable.
+    // Handles type conversion from Sky's any to the appropriate Go type.
+    // Returns null if a setter can't be safely generated (e.g., unexported type).
+    const generateSetterCast = (goType: string, pkgId: string, varName: string): string | null => {
+        // Can't generate setter for unexported types — not accessible from external packages
+        if (hasUnexportedType(goType)) return null;
+        // Primitives: use safe assertion helpers
+        if (goType === "string") return `\t${pkgId}.${varName} = sky_asString(val)\n`;
+        if (goType === "int" || /^int\d*$/.test(goType) || /^uint\d*$/.test(goType)) return `\t${pkgId}.${varName} = ${goType}(sky_asInt(val))\n`;
+        if (goType === "float64" || goType === "float32") return `\t${pkgId}.${varName} = ${goType}(sky_asFloat(val))\n`;
+        if (goType === "bool") return `\t${pkgId}.${varName} = sky_asBool(val)\n`;
+        // Pointer-to-primitive: wrap in pointer
+        if (isGoPointerToPrimitive(goType)) {
+            const baseType = goType.replace(/^\*+/, "");
+            if (baseType === "string") return `\t_v := sky_asString(val); ${pkgId}.${varName} = &_v\n`;
+            if (/^int/.test(baseType) || /^uint/.test(baseType)) return `\t_v := ${baseType}(sky_asInt(val)); ${pkgId}.${varName} = &_v\n`;
+            if (/^float/.test(baseType)) return `\t_v := ${baseType}(sky_asFloat(val)); ${pkgId}.${varName} = &_v\n`;
+            if (baseType === "bool") return `\t_v := sky_asBool(val); ${pkgId}.${varName} = &_v\n`;
+        }
+        // any / interface{}: assign directly without type assertion
+        if (goType === "any" || goType === "interface{}") return `\t${pkgId}.${varName} = val\n`;
+        // Default: direct type assertion for exported opaque types
+        return `\t${pkgId}.${varName} = val.(${goType})\n`;
+    };
 
     for (const v of pkg.vars || []) {
         // Generate variable wrappers as zero-arg Go functions for proper call semantics
@@ -2261,19 +2301,49 @@ func Sky_process_LoadEnv(filePath any) any {
         const isSlice = rawType.startsWith("[]") && rawType !== "[]any";
 
         if (emittedWrappers.has(wrapperName)) continue;
+
+        // Tree-shake: skip variable getter not referenced in emitted Go code
+        const setterWrapperName = `Sky_${safePkg}_Set${skyNamePascal}`;
+        const getterUsed = !usedSymbols || usedSymbols.size === 0 || usedSymbols.has(wrapperName);
+        const setterUsed = !usedSymbols || usedSymbols.size === 0 || usedSymbols.has(setterWrapperName);
+        if (!getterUsed && !setterUsed) continue;
+
         emittedWrappers.add(wrapperName);
 
-        if (isSlice) {
-            goCode += `func ${wrapperName}() any {\n`;
-            goCode += `\t_val := ${pkgBase}.${v.name}\n`;
-            goCode += `\t_result := make([]any, len(_val))\n`;
-            goCode += `\tfor _i, _v := range _val { _result[_i] = _v }\n`;
-            goCode += `\treturn _result\n`;
-            goCode += `}\n\n`;
-        } else {
-            goCode += `func ${wrapperName}() any {\n`;
-            goCode += `\treturn ${pkgBase}.${v.name}\n`;
-            goCode += `}\n\n`;
+        if (getterUsed) {
+            if (isSlice) {
+                goCode += `func ${wrapperName}() any {\n`;
+                goCode += `\t_val := ${pkgBase}.${v.name}\n`;
+                goCode += `\t_result := make([]any, len(_val))\n`;
+                goCode += `\tfor _i, _v := range _val { _result[_i] = _v }\n`;
+                goCode += `\treturn _result\n`;
+                goCode += `}\n\n`;
+            } else {
+                goCode += `func ${wrapperName}() any {\n`;
+                goCode += `\treturn ${pkgBase}.${v.name}\n`;
+                goCode += `}\n\n`;
+            }
+        }
+
+        // Generate setter wrapper for package variables.
+        // Skip if:
+        // - type is unexported (can't assign from external code)
+        // - inspector returned interface{}/any (likely an unexported concrete type)
+        if (setterUsed && !emittedWrappers.has(setterWrapperName)) {
+            // Use the original inspector type to detect unexported types.
+            // The inspector returns "interface{}" for unexported Go types — these can't
+            // be set from external code even though the variable is exported.
+            const origType = v.type;
+            const isOpaqueType = origType.includes("interface{}") || rawType === "any";
+            const castExpr = isOpaqueType ? null : generateSetterCast(rawType, pkgBase, v.name);
+            if (castExpr !== null) {
+                emittedWrappers.add(setterWrapperName);
+                imports.add(pkgName);
+                goCode += `func ${setterWrapperName}(val any) any {\n`;
+                goCode += castExpr;
+                goCode += `\treturn struct{}{}\n`;
+                goCode += `}\n\n`;
+            }
         }
     }
 
@@ -2284,6 +2354,8 @@ func Sky_process_LoadEnv(filePath any) any {
         const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
 
         if (emittedWrappers.has(wrapperName)) continue;
+        // Tree-shake: skip constant not referenced in emitted Go code
+        if (usedSymbols && usedSymbols.size > 0 && !usedSymbols.has(wrapperName)) continue;
         emittedWrappers.add(wrapperName);
 
         goCode += `func ${wrapperName}() any {\n`;
@@ -2296,6 +2368,8 @@ func Sky_process_LoadEnv(filePath any) any {
         if ((t as any).typeParams && (t as any).typeParams.length > 0) continue;
         if (t.methods) {
             for (const m of t.methods) {
+                // Skip generic methods — Go can't infer type params from any-typed arguments
+                if (m.hasTypeParams) continue;
                 // Interfaces and map-based types (kind "other") use value receivers, not pointers
                 const isValueRecv = t.kind === "interface" || t.kind === "other";
                 const recv = isValueRecv ? `${pkg.name}.${t.name}` : `*${pkg.name}.${t.name}`;
@@ -2334,6 +2408,9 @@ func Sky_process_LoadEnv(filePath any) any {
             const skyName = lowerCamelCase(t.name + "ToMaps");
             const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
             const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
+
+            // Tree-shake: only emit if referenced in compiled Sky code
+            if (!usedSymbols || usedSymbols.size === 0 || usedSymbols.has(wrapperName)) {
 
             imports.add("fmt");
 
@@ -2379,6 +2456,7 @@ func ${wrapperName}(rows any) any {
 	}
 	return SkyOk(results)
 }\n\n`;
+            } // end tree-shake check for iterator pattern
         }
 
         // Pattern: DB-like type with Exec(string, ...any) + Query(string, ...any) methods
@@ -2394,6 +2472,9 @@ func ${wrapperName}(rows any) any {
             const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
             const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
 
+            // Tree-shake: only emit ExecResult if referenced
+            const _execUsed = !usedSymbols || usedSymbols.size === 0 || usedSymbols.has(wrapperName);
+            if (_execUsed) {
             goCode += `// Auto-generated convenience wrapper: exec on ${t.name} returning rows affected
 func ${wrapperName}(db any, query any, args any) any {
 	_db := db.(${cleanRecv})
@@ -2411,12 +2492,16 @@ func ${wrapperName}(db any, query any, args any) any {
 	affected, _ := result.RowsAffected()
 	return SkyOk(affected)
 }\n\n`;
+            } // end tree-shake check for ExecResult
 
             // Also generate a QueryToMaps convenience wrapper on DB/Tx types
             const skyNameQ = lowerCamelCase(t.name + "QueryToMaps");
             const skyNameQPascal = skyNameQ.charAt(0).toUpperCase() + skyNameQ.slice(1);
             const wrapperNameQ = `Sky_${safePkg}_${skyNameQPascal}`;
 
+            // Tree-shake: only emit QueryToMaps if referenced
+            const _queryUsed = !usedSymbols || usedSymbols.size === 0 || usedSymbols.has(wrapperNameQ);
+            if (_queryUsed) {
             imports.add("fmt");
 
             goCode += `// Auto-generated convenience wrapper: query on ${t.name} returning list of dicts
@@ -2472,6 +2557,7 @@ func ${wrapperNameQ}(db any, query any, args any) any {
 	}
 	return SkyOk(results)
 }\n\n`;
+            } // end tree-shake check for QueryToMaps
         }
     }
 

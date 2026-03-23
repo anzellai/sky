@@ -46,16 +46,37 @@ export async function generateForeignBindings(packageName: string, requestedName
 
     const safePkg = packageName.replace(/[\/\.-]/g, "_");
 
-    // 3. Variables — expose as zero-arg functions via wrappers for Sky-compatible types
+    // 3. Variables — expose as zero-arg getter and setter functions via wrappers
     for (const v of pkg.vars || []) {
         const skyName = lowerCamelCase(v.name);
         const t = mapGoTypeToSky(v.type, packageName);
         const skyNamePascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+
+        // Getter: varName : () -> T
         const wrapperName = `Sky_${safePkg}_${skyNamePascal}`;
         skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
         skyiContent += `${skyName} : () -> ${t}\n`;
         skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
         values.push({ skyName, jsName: v.name, sourceModule: packageName, skyType: "Foreign" });
+
+        // Setter: setVarName : T -> ()
+        // Skip setter for:
+        // - variables with unexported Go types (can't assign from external code)
+        // - variables whose inspector type is interface{} (unexported concrete type)
+        const rawGoType = v.type.replace(/^\*+/, "").replace(/^\[\]/, "");
+        const hasUnexportedGoType = v.type.includes("interface{}") ||
+            /\.\s*[a-z]/.test(v.type) ||
+            (/^[a-z]/.test(rawGoType) && !["string", "int", "int8", "int16", "int32", "int64",
+            "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64",
+            "bool", "byte", "rune", "error", "any", "interface{}"].includes(rawGoType));
+        if (!hasUnexportedGoType) {
+            const setterSkyName = `set${skyNamePascal}`;
+            const setterWrapperName = `Sky_${safePkg}_Set${skyNamePascal}`;
+            skyiContent += `foreign import "sky_wrappers" exposing (${setterWrapperName})\n\n`;
+            skyiContent += `${setterSkyName} : ${t} -> ()\n`;
+            skyiContent += `${setterSkyName} arg0 = ${setterWrapperName} arg0\n\n`;
+            values.push({ skyName: setterSkyName, jsName: `Set${v.name}`, sourceModule: packageName, skyType: "Foreign" });
+        }
     }
 
     const cleanType = (t: string) => {
@@ -134,8 +155,9 @@ export async function generateForeignBindings(packageName: string, requestedName
         });
     };
 
-    // 4. Functions
+    // 4. Functions (skip generic functions — Go can't infer type params from any)
     for (const f of pkg.funcs || []) {
+        if (f.hasTypeParams) continue;
         const skyName = lowerCamelCase(f.name);
         processFunc(skyName, f.name, f.params || [], f.results || []);
     }
@@ -144,9 +166,10 @@ export async function generateForeignBindings(packageName: string, requestedName
     for (const t of pkg.types || []) {
         if (!t.name) continue;
         
-        // Methods
+        // Methods (skip generic methods)
         if (t.methods) {
             for (const m of t.methods) {
+                if (m.hasTypeParams) continue;
                 const skyName = lowerCamelCase(t.name + m.name);
                 const params = [{ name: "this", type: t.name }, ...(m.params || [])];
                 processFunc(skyName, m.name, params, m.results || [], true, t.name);

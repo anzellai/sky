@@ -500,6 +500,7 @@ export async function compileProject(entryFile: string, outDir: string) {
   const moduleExports = new Map<string, Map<string, Scheme>>();
   const allForeignPackages = new Set<string>();
   const allForeignModules = new Set<string>();
+  const usedSkyWrapperSymbols = new Set<string>(); // Sky_* symbols from foreign import "sky_wrappers"
 
   for (const loaded of graph.modules) {
     const moduleNameStr = loaded.moduleAst.name.join(".");
@@ -625,6 +626,16 @@ export async function compileProject(entryFile: string, outDir: string) {
 
     for (const b of foreignResult.bindings) {
         allForeignPackages.add(b.packageName);
+        // When foreign import "sky_wrappers" exposing (Sky_xxx), the symbol name
+        // encodes the underlying Go package. Track these for later derivation.
+        if (b.packageName === "sky_wrappers") {
+            for (const v of b.values) {
+                if (v.skyName.startsWith("Sky_")) {
+                    // Will be resolved against go.mod/sky.toml in the post-compile phase
+                    usedSkyWrapperSymbols.add(v.skyName);
+                }
+            }
+        }
     }
 
     // Collect blank imports (import X as _) → Go blank import _ "pkg"
@@ -847,23 +858,62 @@ export async function compileProject(entryFile: string, outDir: string) {
       };
       scanDir(outDir);
 
-      // Derive additional Go packages from foreign import wrapper names.
-      // e.g., Sky_github_com_stripe_stripe_go_v84_String → github.com/stripe/stripe-go/v84
-      for (const sym of usedSymbols) {
-          // Try to match known package paths from .skycache/gomod/go.mod
-          const goModPath = path.join(process.cwd(), ".skycache", "gomod", "go.mod");
-          if (fs.existsSync(goModPath)) {
-              const goMod = fs.readFileSync(goModPath, "utf8");
-              const lines = goMod.split("\n").filter(l => l.includes("/"));
-              for (const line of lines) {
-                  const match = line.match(/^\s*(\S+)\s/);
-                  if (match) {
-                      const pkgPath = match[1];
-                      const safePkg = pkgPath.replace(/[\/\.-]/g, "_");
-                      if (sym.startsWith(`Sky_${safePkg}_`)) {
-                          allForeignPackages.add(pkgPath);
-                      }
+      // Derive additional Go packages from wrapper symbol names in compiled code.
+      // e.g., Sky_github_com_stripe_stripe_go_v84_Key → github.com/stripe/stripe-go/v84
+      // Build a lookup of known Go package paths from go.mod and sky.toml [go.dependencies].
+      const knownGoPkgs: string[] = [];
+      const goModPath = path.join(process.cwd(), ".skycache", "gomod", "go.mod");
+      if (fs.existsSync(goModPath)) {
+          const goMod = fs.readFileSync(goModPath, "utf8");
+          for (const line of goMod.split("\n")) {
+              const match = line.match(/^\s*(\S+)\s/);
+              if (match && match[1].includes("/")) {
+                  knownGoPkgs.push(match[1]);
+              }
+          }
+      }
+      // Also include packages from sky.toml [go.dependencies]
+      const skyTomlPath = path.join(process.cwd(), "sky.toml");
+      if (fs.existsSync(skyTomlPath)) {
+          try {
+              const { readManifest } = await import("./pkg/manifest.js");
+              const manifest = readManifest(skyTomlPath);
+              if (manifest && manifest.go?.dependencies) {
+                  for (const pkg of Object.keys(manifest.go.dependencies)) {
+                      if (!knownGoPkgs.includes(pkg)) knownGoPkgs.push(pkg);
                   }
+              }
+          } catch (_) { /* ignore parse errors */ }
+      }
+      // Also scan .skycache/go/ for existing bindings directories
+      const skycacheGoDir = path.join(process.cwd(), ".skycache", "go");
+      if (fs.existsSync(skycacheGoDir)) {
+          const scanBindings = (dir: string, prefix: string) => {
+              for (const item of fs.readdirSync(dir)) {
+                  if (item === "wrappers") continue;
+                  const p = path.join(dir, item);
+                  const pkgPath = prefix ? `${prefix}/${item}` : item;
+                  if (fs.statSync(p).isDirectory()) {
+                      if (fs.existsSync(path.join(p, "bindings.skyi"))) {
+                          if (!knownGoPkgs.includes(pkgPath)) knownGoPkgs.push(pkgPath);
+                      }
+                      scanBindings(p, pkgPath);
+                  }
+              }
+          };
+          scanBindings(skycacheGoDir, "");
+      }
+      // Sort by length descending so longer (more specific) paths match first
+      knownGoPkgs.sort((a, b) => b.length - a.length);
+
+      // Merge Sky_* symbols from compiled Go output AND from AST-level foreign imports
+      const allWrapperSymbols = new Set([...usedSymbols, ...usedSkyWrapperSymbols]);
+      for (const sym of allWrapperSymbols) {
+          for (const pkgPath of knownGoPkgs) {
+              const safePkg = pkgPath.replace(/[\/\.-]/g, "_");
+              if (sym.startsWith(`Sky_${safePkg}_`)) {
+                  allForeignPackages.add(pkgPath);
+                  break; // longest match wins (sorted desc)
               }
           }
       }
