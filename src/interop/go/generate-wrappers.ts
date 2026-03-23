@@ -151,20 +151,18 @@ func sky_normalizeValue(v any) any {
 		}
 		return result
 	case reflect.Struct:
-		// Structs with methods are opaque handles (e.g., firestore.Client) — keep as-is.
-		// Structs with NO methods are data containers — convert to map via JSON.
-		if reflect.TypeOf(v).NumMethod() > 0 { return v }
-		bytes, err := json.Marshal(v)
-		if err != nil { return v }
-		var m any
-		if json.Unmarshal(bytes, &m) == nil { return sky_normalizeValue(m) }
+		// NEVER normalize Sky's own runtime types
+		switch v.(type) {
+		case SkyResult, SkyMaybe, Tuple2, Tuple3:
+			return v
+		}
+		// All other structs: keep as-is (opaque handles).
+		// Developers use Sky_ToJSON for explicit data extraction.
 		return v
 	case reflect.Ptr:
 		if rv.IsNil() { return nil }
-		// Pointers to types with methods are opaque handles — keep as-is.
-		// Pointers to data structs — dereference and normalize.
-		if rv.Type().NumMethod() > 0 || rv.Elem().Type().NumMethod() > 0 { return v }
-		return sky_normalizeValue(rv.Elem().Interface())
+		// Pointers are opaque handles — keep as-is.
+		return v
 	}
 	return v
 }
