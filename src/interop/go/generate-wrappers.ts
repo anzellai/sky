@@ -2038,11 +2038,38 @@ func Sky_process_LoadEnv(filePath any) any {
             // We generate adapter functions that unwrap the curried calls.
             const funcBridge = generateFuncBridge(t, i);
             if (funcBridge) return funcBridge;
-            // Pointer-to-struct params: allow nil (Sky passes js "nil" or Nothing)
+            // Pointer-to-struct params: try direct assertion first, then JSON conversion
+            // from Sky record (map[string]any) to Go struct. This enables Sky records
+            // to be used as Go struct arguments in FFI calls.
             if (t.startsWith("*")) {
-                return `\tvar _arg${i} ${t}\n\tif arg${i} != nil && arg${i} != "nil" { _arg${i} = arg${i}.(${t}) }`;
+                const valType = t.substring(1);
+                return [
+                    `\tvar _arg${i} ${t}`,
+                    `\tif arg${i} != nil && arg${i} != "nil" {`,
+                    `\t\tif _p, _pok := arg${i}.(${t}); _pok {`,
+                    `\t\t\t_arg${i} = _p`,
+                    `\t\t} else {`,
+                    `\t\t\t// Sky record (map) → Go struct via JSON marshal/unmarshal`,
+                    `\t\t\tvar _v${i} ${valType}`,
+                    `\t\t\tif _b${i}, _e${i} := json.Marshal(arg${i}); _e${i} == nil {`,
+                    `\t\t\t\tjson.Unmarshal(_b${i}, &_v${i})`,
+                    `\t\t\t}`,
+                    `\t\t\t_arg${i} = &_v${i}`,
+                    `\t\t}`,
+                    `\t}`,
+                ].join("\n");
             }
-            return `\t_arg${i} := arg${i}.(${t})`;
+            // Non-pointer struct params: same JSON conversion approach
+            return [
+                `\tvar _arg${i} ${t}`,
+                `\tif _d, _dok := arg${i}.(${t}); _dok {`,
+                `\t\t_arg${i} = _d`,
+                `\t} else {`,
+                `\t\tif _b${i}, _e${i} := json.Marshal(arg${i}); _e${i} == nil {`,
+                `\t\t\tjson.Unmarshal(_b${i}, &_arg${i})`,
+                `\t\t}`,
+                `\t}`,
+            ].join("\n");
         }).join("\n");
         
         if (recvType && (isMethod || isField)) {
