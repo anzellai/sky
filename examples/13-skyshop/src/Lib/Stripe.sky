@@ -26,21 +26,22 @@ domainUrl =
             Os.getenv "DOMAIN"
         port_ =
             Os.getenv "SKY_LIVE_PORT"
-        effectiveDomain =
-            if domain == "" then
-                "localhost"
-            else
-                domain
-        effectivePort =
-            if port_ == "" then
-                "4000"
-            else
-                port_
     in
-        if env == "production" then
-            "https://" ++ effectiveDomain
+        if domain != "" then
+            -- DOMAIN env var is the full URL (e.g. http://localhost:8000 or https://mysite.com)
+            domain
         else
-            "http://" ++ effectiveDomain ++ ":" ++ effectivePort
+            let
+                effectivePort =
+                    if port_ == "" then
+                        "4000"
+                    else
+                        port_
+            in
+                if env == "production" then
+                    "https://localhost"
+                else
+                    "http://localhost:" ++ effectivePort
 
 -- ══════════════════════════════════════════════════════
 -- HTTP HELPERS
