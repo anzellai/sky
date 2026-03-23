@@ -150,10 +150,21 @@ func sky_normalizeValue(v any) any {
 			result[fmt.Sprintf("%v", key.Interface())] = sky_normalizeValue(rv.MapIndex(key).Interface())
 		}
 		return result
-	case reflect.Ptr:
-		// Don't dereference pointers — they're opaque handles (e.g., *firestore.Client)
-		// that get passed back to Go methods. Normalizing them would destroy the handle.
+	case reflect.Struct:
+		// Structs with methods are opaque handles (e.g., firestore.Client) — keep as-is.
+		// Structs with NO methods are data containers — convert to map via JSON.
+		if reflect.TypeOf(v).NumMethod() > 0 { return v }
+		bytes, err := json.Marshal(v)
+		if err != nil { return v }
+		var m any
+		if json.Unmarshal(bytes, &m) == nil { return sky_normalizeValue(m) }
 		return v
+	case reflect.Ptr:
+		if rv.IsNil() { return nil }
+		// Pointers to types with methods are opaque handles — keep as-is.
+		// Pointers to data structs — dereference and normalize.
+		if rv.Type().NumMethod() > 0 || rv.Elem().Type().NumMethod() > 0 { return v }
+		return sky_normalizeValue(rv.Elem().Interface())
 	}
 	return v
 }
