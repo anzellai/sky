@@ -4270,11 +4270,11 @@ const LiveJS = \`(function() {
       if (cfg.inputMode === 'blur') {
         // Blur mode: only send on blur/enter, keep input client-side
         el.addEventListener('blur', function(e) {
-          send(el.getAttribute('sky-input'), [e.target.value]);
+          send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
         });
         el.addEventListener('keydown', function(e) {
           if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') {
-            send(el.getAttribute('sky-input'), [e.target.value]);
+            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
           }
         });
       } else {
@@ -4283,7 +4283,7 @@ const LiveJS = \`(function() {
         el.addEventListener('input', function(e) {
           clearTimeout(timer);
           timer = setTimeout(function() {
-            send(el.getAttribute('sky-input'), [e.target.value]);
+            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
           }, 150);
         });
       }
@@ -4293,7 +4293,7 @@ const LiveJS = \`(function() {
       if (el._skyBound) return;
       el._skyBound = true;
       el.addEventListener('change', function(e) {
-        send(el.getAttribute('sky-change'), [e.target.value]);
+        send(el.getAttribute('sky-change'), [_skyInputVal(e.target)]);
       });
     });
     // Submit
@@ -4369,6 +4369,41 @@ const LiveJS = \`(function() {
     img.src = url;
   }
 
+  // Type-aware input value extraction: sends proper JSON types
+  // so the server doesn't have to guess/parse from strings.
+  function _skyInputVal(t) {
+    if (t.type === 'number' || t.type === 'range') {
+      return t.valueAsNumber || parseFloat(t.value) || 0;
+    }
+    if (t.type === 'checkbox') {
+      return t.checked;
+    }
+    return t.value;
+  }
+
+  // Property sync table for DOM patching: attributes like value/checked
+  // don't reflect to DOM properties automatically, so we sync them explicitly.
+  var _skyPropSync = {
+    'value': function(el, v) {
+      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
+        el.value = v;
+      }
+    },
+    'checked': function(el, v) {
+      if (el.tagName === 'INPUT') {
+        el.checked = v !== 'false' && v !== '' && v !== null;
+      }
+    },
+    'selected': function(el, v) {
+      if (el.tagName === 'OPTION') {
+        el.selected = v !== 'false' && v !== '';
+      }
+    },
+    'disabled': function(el, v) {
+      el.disabled = v !== 'false' && v !== '' && v !== null;
+    }
+  };
+
   function rebindInputs() {
     // Force re-bind inputs after config loads with blur mode
     root.querySelectorAll('[sky-input]').forEach(function(el) {
@@ -4435,11 +4470,7 @@ const LiveJS = \`(function() {
           else {
             el.setAttribute(k, p.attrs[k]);
             // Sync DOM properties that don't reflect from attributes
-            if (k === 'value' && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) {
-              el.value = p.attrs[k];
-            } else if (k === 'checked' && el.tagName === 'INPUT') {
-              el.checked = p.attrs[k] !== 'false' && p.attrs[k] !== '';
-            }
+            if (_skyPropSync[k]) _skyPropSync[k](el, p.attrs[k]);
           }
         }
       }
