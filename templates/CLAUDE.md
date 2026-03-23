@@ -11,6 +11,9 @@ sky dev src/Main.sky      # Watch mode: auto-rebuild on changes
 sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
 sky add <package>         # Add dependency (auto-detects Sky vs Go package)
 sky install               # Install all dependencies from sky.toml
+sky clean                 # Remove dist/, .skycache/, .skydeps/
+sky upgrade               # Self-update to latest release
+sky --version             # Show version
 ```
 
 ## Language Syntax

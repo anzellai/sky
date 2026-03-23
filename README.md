@@ -1071,7 +1071,10 @@ sky run [file.sky]           # Build and run (detects Sky.Live apps)
 sky dev [file.sky]           # Watch mode: auto-rebuild + restart on changes
 sky check [file.sky]         # Type-check without compiling (reports all diagnostics)
 sky fmt <file-or-dir>        # Format code (Elm-style)
+sky clean                    # Remove dist/, .skycache/, .skydeps/
+sky upgrade                  # Self-update to latest GitHub release
 sky lsp                      # Start LSP server for editor integration
+sky --version                # Show version
 ```
 
 If `file.sky` is omitted, the CLI reads `entry` from `sky.toml`.

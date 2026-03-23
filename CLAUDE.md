@@ -30,7 +30,7 @@ src/
   lsp/                 -- Language Server (completion, definition, hover, signature, formatter)
   stdlib/              -- Core/Std library .sky files (Prelude, Maybe, String, Cmd, Task, Sub, Log,
                           Html, Css, Live, Char, Tuple, Bitwise, Set, Array, File, Process, etc.)
-  cli/                 -- CLI commands (init, add, remove, install, update, build, run, dev, fmt, check)
+  cli/                 -- CLI commands (init, add, remove, install, update, build, run, dev, fmt, check, clean, upgrade)
   bin/                 -- Entry points: sky.ts, sky-lsp.ts, build-binary.js
   utils/               -- Helpers (assets.ts, path.ts)
 ```
@@ -47,6 +47,9 @@ node dist/bin/sky.js build examples/01-hello-world/src/Main.sky
 node dist/bin/sky.js run examples/01-hello-world/src/Main.sky
 sky fmt src/Main.sky           # Format .sky/.skyi files (always run after changes)
 sky check src/Main.sky         # Type-check without compiling (reports all diagnostics)
+sky clean                      # Remove dist/, .skycache/, .skydeps/
+sky upgrade                    # Self-update to latest GitHub release
+sky --version                  # Show embedded version (e.g. "sky v0.2.3")
 ```
 
 ## Critical Rules
@@ -62,10 +65,10 @@ sky check src/Main.sky         # Type-check without compiling (reports all diagn
 8. **AST lowering** -- Uppercase identifiers = Constructors unless declared as `foreign import` (then lower as Variable). Don't inject `GoTypeAssertExpr` on FFI return values. ADT constructors generate Go constructor functions for cross-module use. `Result` and `Maybe` use named runtime types (`SkyResult`/`SkyMaybe` in `sky_wrappers`) — never emit anonymous struct literals for these. Well-known constructors (`Ok`/`Err`/`Just`/`Nothing`) always use `SkyOk`/`SkyErr`/`SkyJust`/`SkyNothing` wrapper functions.
 9. **Pipeline operators** -- `|>` and `<|` (Elm-style). `::` (cons) works in both patterns and expressions: `1 :: 2 :: []` builds `[1, 2]`. Elm-compatible operators: `/=` (not-equal, alias for `!=`), `//` (integer division). Both `!=` and `/=` are supported for not-equal; both `/` and `//` work for division (`//` always returns `Int`).
 10. **Sub type** -- `Std.Sub` is a normal ADT module (not an FFI wrapper). `Sub` has constructors `SubNone`, `SubTimer Int msg`, `SubBatch (List (Sub msg))`. The Go runtime walks these values to set up SSE subscriptions.
-11. **Embedded assets** -- `src/utils/assets.ts` contains embedded stdlib. Must be updated whenever stdlib `.sky` files change.
+11. **Embedded assets** -- `src/utils/assets.ts` contains embedded stdlib and `SKY_VERSION`. Must be updated whenever stdlib `.sky` files change. `SKY_VERSION` is set by `build-binary.js`: CI passes `SKY_VERSION` env var from the git tag; local builds use `package.json version + "-dev"`.
 12. **VNode emission** -- `Std.Html` functions return VNode records (`{ tag, attrs, children, text }`), not HTML strings. Attributes are `(key, value)` tuples. The Go runtime converts these via `MapToVNode` -- no HTML parsing needed. Non-Live apps use `render`/`toString` to convert VNode records to HTML strings. HTML5 semantic elements that clash with common identifiers use suffixed names: `headerNode`, `footerNode`, `mainNode`, `codeNode`, `linkNode`, `styleNode`, `titleNode`.
 13. **Go reserved words** -- The Go lowerer (`sanitizeGoIdent`) appends `_` to Sky identifiers that clash with Go keywords (`go`, `type`, `func`, `var`, `return`, etc.). Never use Go keywords as Sky variable names in stdlib code.
-14. **Distribution** -- Release binaries via `git tag v0.x.0 && git push --tags`. CI builds for macOS (arm64/x64), Linux (arm64/x64), Windows (x64). Users install via `curl -fsSL .../install.sh | sh` or Docker.
+14. **Distribution** -- Release binaries via `git tag v0.x.0 && git push --tags`. CI builds for macOS (arm64/x64), Linux (arm64/x64), Windows (x64) with `SKY_VERSION` embedded from the git tag. Users install via `curl -fsSL .../install.sh | sh`, Docker, or `sky upgrade`. The CLI checks for updates (once per 24h) after `sky add/install/build` and shows a notice if a newer release is available.
 15. **Unicode safety** -- Never use `JSON.stringify` to quote Sky string/char literals in the formatter or emitter. `JSON.stringify` escapes non-ASCII characters to `\uXXXX`, which the lexer then misparses as literal `u{XXXX}` text. Use the formatter's `quoteString()`/`quoteChar()` helpers instead, which preserve unicode as-is. The esbuild config must include `charset: "utf8"` and `build-binary.js` must use backtick template literals (not `JSON.stringify`) when embedding assets.
 16. **Session concurrency** -- Sky.Live uses two layers of concurrency control: (1) per-session in-process mutex (`SessionLocker`) prevents races between event handling and SSE ticks within a single server, (2) optimistic concurrency via `Session.Version` field prevents races across multiple server instances sharing a database. All `SessionStore.Set` calls use `WHERE version = N` semantics and callers retry up to 3 times on conflict.
 
