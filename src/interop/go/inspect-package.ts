@@ -283,6 +283,22 @@ func typeToString(t types.Type) string {
 		}
 	case *types.Basic:
 		return u.String()
+	case *types.TypeParam:
+		// Go generic type parameter (e.g., T ~string) — resolve to constraint's underlying type.
+		// This allows Sky to generate correct type mappings for generic functions.
+		constraint := u.Constraint()
+		if iface, ok := constraint.Underlying().(*types.Interface); ok {
+			if iface.NumEmbeddeds() > 0 {
+				embedded := iface.EmbeddedType(0)
+				// Handle ~T (approximation) constraints
+				if union, ok := embedded.(*types.Union); ok && union.Len() > 0 {
+					term := union.Term(0)
+					return typeToString(term.Type())
+				}
+				return typeToString(embedded)
+			}
+		}
+		return "interface{}"
 	}
 
 	return t.String()

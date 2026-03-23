@@ -44,6 +44,16 @@ function mapGoTypeToSkyInner(goType: string, currentPackage?: string): string {
     if (t === "error") return "Error";
     if (t === "any" || t === "interface{}") return "Any";
 
+    // Go generic type parameters: single uppercase letters (T, K, V, E)
+    // or constrained types (~string, ~int). Map to the constraint's base type
+    // or Any if unconstrained.
+    if (/^[A-Z]$/.test(t)) return "Any";
+    if (t.startsWith("~")) {
+        const underlying = t.substring(1);
+        if (GO_PRIMITIVE_TYPES.has(underlying)) return mapGoTypeToSkyInner(underlying, currentPackage);
+        return "Any";
+    }
+
     // Arrays: [N]Type
     if (t.startsWith("[")) {
         const match = t.match(/^\[.*?\](.*)/);
