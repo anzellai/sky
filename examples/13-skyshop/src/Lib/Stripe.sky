@@ -326,8 +326,7 @@ verifyPayment orderId =
 verifyStripeSession cartId sessionId =
     let
         endpoint =
-            "checkout/sessions/" ++
-            sessionId ++ "?expand[]=customer_details&expand[]=shipping_cost"
+            "checkout/sessions/" ++ sessionId
     in
         case stripeGet endpoint of
             Ok respBody ->
@@ -378,25 +377,59 @@ decodePaymentStatus json =
 
         _ ->
             let
-                decoder =
-                    Decode.map2
-                        (\status paymentStatus ->
-                            { status = status
-                            , paymentStatus = paymentStatus
-                            , customerName = ""
-                            , customerEmail = ""
-                            , customerPhone = ""
-                            , shippingLine1 = ""
-                            , shippingLine2 = ""
-                            , shippingCity = ""
-                            , shippingCountry = ""
-                            , shippingPostalCode = ""
-                            }
-                        )
+                -- Parse status + payment_status (always present)
+                baseDecoder =
+                    Decode.map2 (\s p -> ( s , p ))
                         (Decode.field "status" Decode.string)
                         (Decode.field "payment_status" Decode.string)
+
+                -- Parse optional customer_details
+                optString path =
+                    Result.withDefault ""
+                        (Decode.decodeString (Decode.at path Decode.string) json)
+
+                customerName =
+                    optString [ "customer_details" , "name" ]
+                customerEmail =
+                    optString [ "customer_details" , "email" ]
+                customerPhone =
+                    optString [ "customer_details" , "phone" ]
+
+                -- Parse optional shipping_details.address
+                shippingName =
+                    optString [ "shipping_details" , "name" ]
+                shippingLine1 =
+                    optString [ "shipping_details" , "address" , "line1" ]
+                shippingLine2 =
+                    optString [ "shipping_details" , "address" , "line2" ]
+                shippingCity =
+                    optString [ "shipping_details" , "address" , "city" ]
+                shippingCountry =
+                    optString [ "shipping_details" , "address" , "country" ]
+                shippingPostalCode =
+                    optString [ "shipping_details" , "address" , "postal_code" ]
             in
-                Decode.decodeString decoder json
+                case Decode.decodeString baseDecoder json of
+                    Ok ( status , paymentStatus ) ->
+                        Ok
+                            { status = status
+                            , paymentStatus = paymentStatus
+                            , customerName =
+                                if customerName != "" then
+                                    customerName
+                                else
+                                    shippingName
+                            , customerEmail = customerEmail
+                            , customerPhone = customerPhone
+                            , shippingLine1 = shippingLine1
+                            , shippingLine2 = shippingLine2
+                            , shippingCity = shippingCity
+                            , shippingCountry = shippingCountry
+                            , shippingPostalCode = shippingPostalCode
+                            }
+
+                    Err e ->
+                        Err e
 
 -- ══════════════════════════════════════════════════════
 -- STOCK MANAGEMENT

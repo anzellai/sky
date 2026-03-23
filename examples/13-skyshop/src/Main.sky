@@ -475,6 +475,43 @@ handleVerifyPayment orderId model =
                                         println "[VERIFY] Payment verified!"
                                     _ =
                                         Cart.setCartState orderId "ordered"
+
+                                    -- Save shipping/customer details to order
+                                    _ =
+                                        Cart.setShipping orderId
+                                            status.customerName
+                                            status.customerEmail
+                                            status.customerPhone
+                                            status.shippingLine1
+                                            status.shippingLine2
+                                            status.shippingCity
+                                            status.shippingCountry
+                                            status.shippingPostalCode
+
+                                    -- Update user profile with shipping address
+                                    _ =
+                                        case model.user of
+                                            Just user ->
+                                                let
+                                                    userId =
+                                                        Db.getField "id" user
+                                                    updates =
+                                                        Dict.fromList
+                                                            [ ( "id" , userId )
+                                                            , ( "name" , status.customerName )
+                                                            , ( "email" , status.customerEmail )
+                                                            , ( "phone" , status.customerPhone )
+                                                            , ( "address_line1" , status.shippingLine1 )
+                                                            , ( "address_line2" , status.shippingLine2 )
+                                                            , ( "address_city" , status.shippingCity )
+                                                            , ( "address_country" , status.shippingCountry )
+                                                            , ( "address_postcode" , status.shippingPostalCode )
+                                                            ]
+                                                in
+                                                    Db.setDoc "users" userId updates
+
+                                            Nothing ->
+                                                Ok ()
                                     _ =
                                         Stripe.deductStock orderId
                                     _ =
