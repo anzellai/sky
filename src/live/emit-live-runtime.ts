@@ -217,14 +217,27 @@ function generateRouteTable(
   code += `\t}\n`;
   code += `\treturn -1\n}\n\n`;
 
-  // URL reverse mapping
+  // URL reverse mapping — substitutes :param placeholders with Page field values
   code += `func urlForPage(page any) string {\n`;
+  code += `\tm, _ := page.(map[string]any)\n`;
   code += `\tswitch pageTag(page) {\n`;
   for (let i = 0; i < pageVariants.length; i++) {
     const route = routes.find(r => r.pageConstructor === pageVariants[i].name);
     if (route) {
       code += `\tcase ${i}:\n`;
-      code += `\t\treturn "${route.pattern}"\n`;
+      if (route.pattern.includes(":")) {
+        // Parameterized route — substitute :param with the Page's Value field
+        const variantName = pageVariants[i].name;
+        code += `\t\turl := "${route.pattern}"\n`;
+        code += `\t\tif m != nil {\n`;
+        code += `\t\t\tif v, ok := m["${variantName}Value"]; ok {\n`;
+        code += `\t\t\t\turl = strings.Replace(url, ":id", fmt.Sprintf("%v", v), 1)\n`;
+        code += `\t\t\t}\n`;
+        code += `\t\t}\n`;
+        code += `\t\treturn url\n`;
+      } else {
+        code += `\t\treturn "${route.pattern}"\n`;
+      }
     }
   }
   code += `\t}\n\treturn "/"\n}\n\n`;
