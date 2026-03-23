@@ -162,6 +162,21 @@ func sky_asTuple2(v any) Tuple2 {
 	return Tuple2{}
 }
 
+func sky_asTuple3(v any) Tuple3 {
+	if t, ok := v.(Tuple3); ok { return t }
+	return Tuple3{}
+}
+
+func sky_asSkyResult(v any) SkyResult {
+	if r, ok := v.(SkyResult); ok { return r }
+	return SkyResult{}
+}
+
+func sky_asSkyMaybe(v any) SkyMaybe {
+	if m, ok := v.(SkyMaybe); ok { return m }
+	return SkyMaybe{}
+}
+
 func sky_getTag(v reflect.Value) int {
 	if v.Kind() != reflect.Struct { return -1 }
 	tag := v.FieldByName("Tag")
@@ -180,6 +195,9 @@ func Sky_AsFunc(v any) func(any) any { return sky_asFunc(v) }
 func Sky_AsMap(v any) map[string]any { return sky_asMap(v) }
 func Sky_AsMapAny(v any) map[any]any { return sky_asMapAny(v) }
 func Sky_AsTuple2(v any) Tuple2 { return sky_asTuple2(v) }
+func Sky_AsTuple3(v any) Tuple3 { return sky_asTuple3(v) }
+func Sky_AsSkyResult(v any) SkyResult { return sky_asSkyResult(v) }
+func Sky_AsSkyMaybe(v any) SkyMaybe { return sky_asSkyMaybe(v) }
 
 // ============= List Operations =============
 
@@ -1728,6 +1746,9 @@ func Sky_process_LoadEnv(filePath any) any {
 
 
     const imports = new Set<string>();
+    // Always import fmt and os for defer/recover panic handling in FFI wrappers
+    imports.add("fmt");
+    imports.add("os");
 
     const extractImports = (t: string) => {
         // ... previous implementation ...
@@ -1952,7 +1973,30 @@ func Sky_process_LoadEnv(filePath any) any {
         if (emittedWrappers.has(wrapperName)) return;
         emittedWrappers.add(wrapperName);
 
-        goCode += `func ${wrapperName}(${goParams})${goReturns}{\n`;
+        // Use named return + defer/recover to convert panics into SkyErr results.
+        // This prevents runtime panics from type assertion failures in FFI wrappers.
+        const trimmedRet = goReturns.trim();
+        const hasReturn = trimmedRet.length > 0;
+        let namedRetSig: string;
+        if (!hasReturn) {
+            // No return type (shouldn't happen — void funcs return struct{}{})
+            namedRetSig = ` `;
+        } else if (trimmedRet.startsWith("(")) {
+            // Multi-return already parenthesised (rare: only for field wrappers).
+            // Can't use a single named return for multi-value. Keep unnamed.
+            namedRetSig = ` ${trimmedRet} `;
+        } else {
+            namedRetSig = ` (_sky_result ${trimmedRet}) `;
+        }
+
+        goCode += `func ${wrapperName}(${goParams})${namedRetSig}{\n`;
+        // Defer/recover: catch any panics (type assertion failures, nil pointer, etc.)
+        // and convert them to SkyErr if the return type supports it, or zero value otherwise.
+        if (shouldWrap) {
+            goCode += `\tdefer func() {\n\t\tif r := recover(); r != nil {\n\t\t\t_sky_result = SkyErr(fmt.Sprintf("FFI panic in ${goName}: %v", r))\n\t\t}\n\t}()\n`;
+        } else {
+            goCode += `\tdefer func() {\n\t\tif r := recover(); r != nil {\n\t\t\tfmt.Fprintf(os.Stderr, "FFI panic in ${goName}: %v\\n", r)\n\t\t}\n\t}()\n`;
+        }
         if (casts.trim()) {
             goCode += `${casts}\n`;
         }
@@ -2281,9 +2325,10 @@ func ${wrapperNameQ}(db any, query any, args any) any {
         // These appear as bare T, K, V, E etc. in type assertions or return types
         // Also skip functions returning Go parameterized types like iter.Seq[string]
         if (/\barg\d+\.\((?:\[\])?\*?[A-Z]\)/.test(block) ||       // .(T), .([]T), .(*T)
-            /\) (?:\[\])?\*?[A-Z]\s*\{/.test(block) ||              // ) T {, ) *T {, ) []T {
+            /\) (?:\([^)]*\)\s*)?(?:\[\])?\*?[A-Z]\s*\{/.test(block) || // ) T {, ) *T {, ) (_sky_result T) {
             /\) \(\*?[A-Z],/.test(block) ||                          // ) (T, bool) {
-            (/\) \w+\.?\w*\[/.test(block) && !/\) map\[/.test(block))) { // ) iter.Seq[string] { but not map[
+            (/iter\.\w+\[/.test(block)) ||                            // iter.Seq[string] anywhere in block
+            (/\) \w+\.?\w*\[/.test(block) && !/map\[/.test(block))) { // ) pkg.Type[T] { but not map[
             continue;
         }
         cleanedGoCode += block;

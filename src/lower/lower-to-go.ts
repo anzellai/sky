@@ -64,7 +64,7 @@ function emitGoExprForLower(expr: any): string {
                 else if (expr.type.kind === "GoIdentType" || expr.type.name) typeStr = expr.type.name || "any";
             }
             const inner = emitGoExprForLower(expr.expr);
-            // Use safe helpers for basic types to prevent panics
+            // Use safe helpers for basic types and well-known ADTs to prevent panics
             const safeMap: Record<string, string> = {
                 "map[string]any": "sky_wrappers.Sky_AsMap",
                 "[]any": "sky_wrappers.Sky_AsList",
@@ -72,8 +72,19 @@ function emitGoExprForLower(expr: any): string {
                 "string": "sky_wrappers.Sky_AsString",
                 "bool": "sky_wrappers.Sky_AsBool",
                 "float64": "sky_wrappers.Sky_AsFloat",
+                "sky_wrappers.SkyResult": "sky_wrappers.Sky_AsSkyResult",
+                "sky_wrappers.SkyMaybe": "sky_wrappers.Sky_AsSkyMaybe",
+                "sky_wrappers.Tuple2": "sky_wrappers.Sky_AsTuple2",
+                "sky_wrappers.Tuple3": "sky_wrappers.Sky_AsTuple3",
             };
-            const safeHelper = safeMap[typeStr];
+            // Also handle unqualified names (used within sky_wrappers package)
+            const safeMapUnqualified: Record<string, string> = {
+                "SkyResult": "sky_wrappers.Sky_AsSkyResult",
+                "SkyMaybe": "sky_wrappers.Sky_AsSkyMaybe",
+                "Tuple2": "sky_wrappers.Sky_AsTuple2",
+                "Tuple3": "sky_wrappers.Sky_AsTuple3",
+            };
+            const safeHelper = safeMap[typeStr] || safeMapUnqualified[typeStr];
             if (safeHelper) {
                 return `${safeHelper}(${inner})`;
             }
