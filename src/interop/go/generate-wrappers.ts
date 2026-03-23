@@ -36,19 +36,7 @@ type SkyResult struct {
 }
 
 func SkyOk(v any) SkyResult {
-	// Convert typed slices to []any at the FFI boundary so Sky list
-	// functions (which expect []any) work with Go-returned slices.
-	rv := reflect.ValueOf(v)
-	if rv.IsValid() && rv.Kind() == reflect.Slice {
-		if _, ok := v.([]any); !ok {
-			result := make([]any, rv.Len())
-			for i := 0; i < rv.Len(); i++ {
-				result[i] = rv.Index(i).Interface()
-			}
-			return SkyResult{Tag: 0, SkyName: "Ok", OkValue: result}
-		}
-	}
-	return SkyResult{Tag: 0, SkyName: "Ok", OkValue: v}
+	return SkyResult{Tag: 0, SkyName: "Ok", OkValue: sky_normalizeValue(v)}
 }
 
 func SkyErr(e any) SkyResult {
@@ -62,18 +50,7 @@ type SkyMaybe struct {
 }
 
 func SkyJust(v any) SkyMaybe {
-	// Convert typed slices at FFI boundary (same as SkyOk)
-	rv := reflect.ValueOf(v)
-	if rv.IsValid() && rv.Kind() == reflect.Slice {
-		if _, ok := v.([]any); !ok {
-			result := make([]any, rv.Len())
-			for i := 0; i < rv.Len(); i++ {
-				result[i] = rv.Index(i).Interface()
-			}
-			return SkyMaybe{Tag: 0, SkyName: "Just", JustValue: result}
-		}
-	}
-	return SkyMaybe{Tag: 0, SkyName: "Just", JustValue: v}
+	return SkyMaybe{Tag: 0, SkyName: "Just", JustValue: sky_normalizeValue(v)}
 }
 
 func SkyNothing() SkyMaybe {
@@ -114,28 +91,87 @@ func UpdateRecord(base any, update map[string]any) any {
 // Used by Sky's Db.intVal/boolVal/floatVal to store typed values in Dicts.
 func Sky_Identity(v any) any { return v }
 
+// sky_normalizeValue converts Go-typed values to Sky-compatible types.
+// Called at the FFI boundary to ensure all values use Sky's expected types:
+//   - int64/int32/uint/etc → int (Sky's Int)
+//   - float32 → float64 (Sky's Float)
+//   - typed slices → []any
+//   - typed maps → map[string]any
+// This is the single normalization point for ALL Go→Sky value passing.
+func sky_normalizeValue(v any) any {
+	if v == nil { return v }
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int(rv.Uint())
+	case reflect.Float32:
+		return rv.Float()
+	case reflect.Slice:
+		if _, ok := v.([]any); ok { return v }
+		if _, ok := v.([]byte); ok { return v } // Keep []byte as-is for String.fromBytes
+		result := make([]any, rv.Len())
+		for i := 0; i < rv.Len(); i++ { result[i] = rv.Index(i).Interface() }
+		return result
+	case reflect.Map:
+		if _, ok := v.(map[string]any); ok { return v }
+		if _, ok := v.(map[any]any); ok { return v }
+		result := make(map[string]any, rv.Len())
+		for _, key := range rv.MapKeys() {
+			result[fmt.Sprintf("%v", key.Interface())] = rv.MapIndex(key).Interface()
+		}
+		return result
+	}
+	return v
+}
+
 // ============= Safe Assertion Helpers =============
-// These prevent runtime panics by returning zero values on type mismatch.
+// Handle ALL Go numeric types (int, int8-64, uint, uint8-64, float32/64)
+// that different Go libraries return. JSON returns float64, Firestore
+// returns int64, other libs may return int32, uint, etc.
 
 func sky_asInt(v any) int {
-	if i, ok := v.(int); ok { return i }
-	if f, ok := v.(float64); ok { return int(f) }
+	if v == nil { return 0 }
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return int(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int(rv.Uint())
+	case reflect.Float32, reflect.Float64:
+		return int(rv.Float())
+	}
 	return 0
 }
 
 func sky_asString(v any) string {
+	if v == nil { return "" }
 	if s, ok := v.(string); ok { return s }
-	return ""
+	// Handle fmt.Stringer interface (many Go types implement this)
+	if s, ok := v.(interface{ String() string }); ok { return s.String() }
+	return fmt.Sprintf("%v", v)
 }
 
 func sky_asBool(v any) bool {
+	if v == nil { return false }
 	if b, ok := v.(bool); ok { return b }
+	// Handle string bools from forms/JSON
+	if s, ok := v.(string); ok { return s == "true" || s == "1" || s == "on" }
 	return false
 }
 
 func sky_asFloat(v any) float64 {
-	if f, ok := v.(float64); ok { return f }
-	if i, ok := v.(int); ok { return float64(i) }
+	if v == nil { return 0 }
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Float32, reflect.Float64:
+		return rv.Float()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(rv.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(rv.Uint())
+	}
 	return 0
 }
 
@@ -159,11 +195,21 @@ func sky_asFunc(v any) func(any) any {
 }
 
 func sky_asMap(v any) map[string]any {
+	if v == nil { return map[string]any{} }
 	if m, ok := v.(map[string]any); ok { return m }
 	// Also handle map[any]any (Sky's Dict type)
 	if m, ok := v.(map[any]any); ok {
 		result := make(map[string]any, len(m))
 		for k, val := range m { result[fmt.Sprintf("%v", k)] = val }
+		return result
+	}
+	// Handle any other map type via reflection (e.g., map[string]int from Go libs)
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Map {
+		result := make(map[string]any, rv.Len())
+		for _, key := range rv.MapKeys() {
+			result[fmt.Sprintf("%v", key.Interface())] = rv.MapIndex(key).Interface()
+		}
 		return result
 	}
 	return map[string]any{}
