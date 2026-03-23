@@ -118,6 +118,15 @@ func sky_asFloat(v any) float64 {
 
 func sky_asList(v any) []any {
 	if l, ok := v.([]any); ok { return l }
+	// Handle typed slices (e.g., []*firestore.DocumentSnapshot) via reflection
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Slice {
+		result := make([]any, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			result[i] = rv.Index(i).Interface()
+		}
+		return result
+	}
 	return []any{}
 }
 
@@ -175,8 +184,7 @@ func Sky_AsTuple2(v any) Tuple2 { return sky_asTuple2(v) }
 // ============= List Operations =============
 
 func Sky_list_Map(fn any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	for i, item := range lst {
 		result[i] = sky_asFunc(fn)(item)
@@ -185,8 +193,7 @@ func Sky_list_Map(fn any, list any) any {
 }
 
 func Sky_list_Filter(fn any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	result := []any{}
 	for _, item := range lst {
 		if sky_asFunc(fn)(item) == true {
@@ -197,8 +204,7 @@ func Sky_list_Filter(fn any, list any) any {
 }
 
 func Sky_list_Foldl(fn any, acc any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return acc }
+	lst := sky_asList(list)
 	result := acc
 	for _, item := range lst {
 		result = sky_asFunc(sky_asFunc(fn)(item))(result)
@@ -207,8 +213,7 @@ func Sky_list_Foldl(fn any, acc any, list any) any {
 }
 
 func Sky_list_Foldr(fn any, acc any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return acc }
+	lst := sky_asList(list)
 	result := acc
 	for i := len(lst) - 1; i >= 0; i-- {
 		result = sky_asFunc(sky_asFunc(fn)(lst[i]))(result)
@@ -217,16 +222,16 @@ func Sky_list_Foldr(fn any, acc any, list any) any {
 }
 
 func Sky_list_Head(list any) any {
-	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 {
+	lst := sky_asList(list)
+	if len(lst) == 0 {
 		return SkyNothing() // Nothing
 	}
 	return SkyJust(lst[0])
 }
 
 func Sky_list_Tail(list any) any {
-	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 {
+	lst := sky_asList(list)
+	if len(lst) == 0 {
 		return SkyNothing() // Nothing
 	}
 	tail := make([]any, len(lst)-1)
@@ -235,16 +240,13 @@ func Sky_list_Tail(list any) any {
 }
 
 func Sky_list_Length(list any) any {
-	lst, ok := list.([]any)
-	if !ok { return 0 }
+	lst := sky_asList(list)
 	return len(lst)
 }
 
 func Sky_list_Append(a any, b any) any {
-	lstA, okA := a.([]any)
-	lstB, okB := b.([]any)
-	if !okA { lstA = []any{} }
-	if !okB { lstB = []any{} }
+	lstA := sky_asList(a)
+	lstB := sky_asList(b)
 	result := make([]any, 0, len(lstA)+len(lstB))
 	result = append(result, lstA...)
 	result = append(result, lstB...)
@@ -252,8 +254,7 @@ func Sky_list_Append(a any, b any) any {
 }
 
 func Sky_list_Reverse(list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	for i, item := range lst {
 		result[len(lst)-1-i] = item
@@ -262,8 +263,7 @@ func Sky_list_Reverse(list any) any {
 }
 
 func Sky_list_Member(item any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return false }
+	lst := sky_asList(list)
 	for _, v := range lst {
 		if reflect.DeepEqual(v, item) { return true }
 	}
@@ -283,15 +283,14 @@ func Sky_list_Range(from any, to any) any {
 }
 
 func Sky_list_IsEmpty(list any) any {
-	lst, ok := list.([]any)
-	if !ok { return true }
+	lst := sky_asList(list)
 	return len(lst) == 0
 }
 
 func Sky_list_Take(n any, list any) any {
 	count, ok1 := n.(int)
-	lst, ok2 := list.([]any)
-	if !ok1 || !ok2 { return []any{} }
+	lst := sky_asList(list)
+	if !ok1 { return []any{} }
 	if count > len(lst) { count = len(lst) }
 	if count < 0 { count = 0 }
 	result := make([]any, count)
@@ -301,8 +300,8 @@ func Sky_list_Take(n any, list any) any {
 
 func Sky_list_Drop(n any, list any) any {
 	count, ok1 := n.(int)
-	lst, ok2 := list.([]any)
-	if !ok1 || !ok2 { return []any{} }
+	lst := sky_asList(list)
+	if !ok1 { return []any{} }
 	if count > len(lst) { count = len(lst) }
 	if count < 0 { count = 0 }
 	result := make([]any, len(lst)-count)
@@ -311,8 +310,7 @@ func Sky_list_Drop(n any, list any) any {
 }
 
 func Sky_list_Sort(list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	copy(result, lst)
 	sort.Slice(result, func(i, j int) bool {
@@ -322,8 +320,7 @@ func Sky_list_Sort(list any) any {
 }
 
 func Sky_list_Intersperse(sep any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	if len(lst) <= 1 { return lst }
 	result := make([]any, 0, len(lst)*2-1)
 	for i, item := range lst {
@@ -334,8 +331,7 @@ func Sky_list_Intersperse(sep any, list any) any {
 }
 
 func Sky_list_Concat(lists any) any {
-	lst, ok := lists.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(lists)
 	result := []any{}
 	for _, item := range lst {
 		inner, ok := item.([]any)
@@ -345,8 +341,7 @@ func Sky_list_Concat(lists any) any {
 }
 
 func Sky_list_ConcatMap(fn any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	result := []any{}
 	for _, item := range lst {
 		inner := sky_asFunc(fn)(item)
@@ -358,8 +353,7 @@ func Sky_list_ConcatMap(fn any, list any) any {
 }
 
 func Sky_list_IndexedMap(fn any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	for i, item := range lst {
 		result[i] = sky_asFunc(sky_asFunc(fn)(i))(item)
@@ -368,9 +362,8 @@ func Sky_list_IndexedMap(fn any, list any) any {
 }
 
 func Sky_list_Zip(listA any, listB any) any {
-	a, ok1 := listA.([]any)
-	b, ok2 := listB.([]any)
-	if !ok1 || !ok2 { return []any{} }
+	a := sky_asList(listA)
+	b := sky_asList(listB)
 	n := len(a); if len(b) < n { n = len(b) }
 	result := make([]any, n)
 	for i := 0; i < n; i++ { result[i] = Tuple2{a[i], b[i]} }
@@ -378,8 +371,7 @@ func Sky_list_Zip(listA any, listB any) any {
 }
 
 func Sky_list_Unzip(list any) any {
-	lst, ok := list.([]any)
-	if !ok { return Tuple2{[]any{}, []any{}} }
+	lst := sky_asList(list)
 	as := make([]any, len(lst))
 	bs := make([]any, len(lst))
 	for i, item := range lst {
@@ -391,9 +383,8 @@ func Sky_list_Unzip(list any) any {
 }
 
 func Sky_list_Map2(fn any, listA any, listB any) any {
-	a, ok1 := listA.([]any)
-	b, ok2 := listB.([]any)
-	if !ok1 || !ok2 { return []any{} }
+	a := sky_asList(listA)
+	b := sky_asList(listB)
 	f := sky_asFunc(fn)
 	n := len(a); if len(b) < n { n = len(b) }
 	result := make([]any, n)
@@ -402,8 +393,8 @@ func Sky_list_Map2(fn any, listA any, listB any) any {
 }
 
 func Sky_list_Maximum(list any) any {
-	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 { return SkyNothing() }
+	lst := sky_asList(list)
+	if len(lst) == 0 { return SkyNothing() }
 	best := lst[0]
 	for _, item := range lst[1:] {
 		if fmt.Sprintf("%v", item) > fmt.Sprintf("%v", best) { best = item }
@@ -412,8 +403,8 @@ func Sky_list_Maximum(list any) any {
 }
 
 func Sky_list_Minimum(list any) any {
-	lst, ok := list.([]any)
-	if !ok || len(lst) == 0 { return SkyNothing() }
+	lst := sky_asList(list)
+	if len(lst) == 0 { return SkyNothing() }
 	best := lst[0]
 	for _, item := range lst[1:] {
 		if fmt.Sprintf("%v", item) < fmt.Sprintf("%v", best) { best = item }
@@ -422,8 +413,8 @@ func Sky_list_Minimum(list any) any {
 }
 
 func Sky_list_Find(pred any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return SkyNothing() }
+	lst := sky_asList(list)
+	if len(lst) == 0 { return SkyNothing() }
 	fn := sky_asFunc(pred)
 	for _, item := range lst {
 		if sky_asBool(fn(item)) { return SkyJust(item) }
@@ -432,8 +423,7 @@ func Sky_list_Find(pred any, list any) any {
 }
 
 func Sky_list_FilterMap(fn any, list any) any {
-	lst, ok := list.([]any)
-	if !ok { return []any{} }
+	lst := sky_asList(list)
 	f := sky_asFunc(fn)
 	result := []any{}
 	for _, item := range lst {

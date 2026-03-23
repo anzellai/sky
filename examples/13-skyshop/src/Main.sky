@@ -667,12 +667,19 @@ update msg model =
                     let
                         _ =
                             println ("[AUTH] Sign in: " ++ Db.getField "email" user)
+                        newPage =
+                            case model.page of
+                                AuthSignInPage ->
+                                    HomePage
+
+                                _ ->
+                                    model.page
                         updated =
                             refreshProducts
                                 (refreshCart
                                     { model
                                       | user = Just user
-                                      , page = HomePage
+                                      , page = newPage
                                       , notification = "Welcome!"
                                       , notificationType = "success"
                                       , authError = ""
