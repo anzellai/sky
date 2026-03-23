@@ -487,7 +487,7 @@ handleSubmitProduct model =
 
 handleCreateProduct : Model -> ( Model, Cmd Msg )
 handleCreateProduct model =
-    case Products.createProduct model.editTitle model.editSummary model.editCategory model.editPrice model.editCurrency model.editDiscount model.editStock of
+    case Products.createProduct model.editTitle model.editSummary model.editCategory model.editPrice model.editCurrency model.editDiscount model.editStock model.editPublished of
         Ok productId ->
             let
                 base =

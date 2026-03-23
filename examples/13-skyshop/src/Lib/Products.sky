@@ -93,7 +93,7 @@ sortProducts sortBy sortDir products =
 -- ══════════════════════════════════════════════════════
 -- MUTATIONS
 -- ══════════════════════════════════════════════════════
-createProduct title summary category priceAmount priceCurrency priceDiscount stock =
+createProduct title summary category priceAmount priceCurrency priceDiscount stock published =
     let
         productId =
             Uuid.newString ()
@@ -108,7 +108,7 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
                 , ( "price_discount" , Db.intVal priceDiscount )
                 , ( "price_tax" , Db.intVal 0 )
                 , ( "stock" , Db.intVal stock )
-                , ( "published" , Db.boolVal False )
+                , ( "published" , Db.boolVal published )
                 ]
         result =
             Db.setDoc "products" productId productData
