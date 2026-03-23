@@ -46,9 +46,12 @@ firebaseAuthScript =
         projectId ++
         "'});" ++
         "_fbReady=true;" ++
+        "var _skyAuthUid=null;" ++
         "firebase.auth().onAuthStateChanged(function(user){" ++
         "_fbUser=user;" ++
         "if(user){" ++
+        "if(_skyAuthUid===user.uid)return;" ++
+        "_skyAuthUid=user.uid;" ++
         "user.getIdToken().then(function(token){" ++
         "function _trySend(t,n){" ++
         "if(window.__sky_send){window.__sky_send('FirebaseAuth \"'+t+'\"');}" ++
@@ -56,7 +59,7 @@ firebaseAuthScript =
         "}" ++
         "_trySend(token,0);" ++
         "});" ++
-        "}" ++
+        "}else{_skyAuthUid=null;}" ++
         "});" ++
         "});" ++
         "});" ++

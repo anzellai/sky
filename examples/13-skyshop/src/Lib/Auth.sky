@@ -110,113 +110,58 @@ verifyToken idToken =
             in
                 Err "Authentication service unavailable."
 
+-- Idempotent upsert using firebase_uid as document ID.
+-- Concurrent calls from onAuthStateChanged can never create duplicates
+-- because Firestore Set with merge is atomic at the document level.
+-- No query-then-create race condition.
 findOrCreateUser uid email name =
     let
-
-        -- Look up by email first (primary dedup key — handles multiple auth providers)
-        existingByEmail =
-            Db.queryWhere "users" "email" "==" email
-        existing =
-            case existingByEmail of
-                Ok users ->
-                    case List.head users of
-                        Just u ->
-                            Just u
-
-                        Nothing ->
-                            -- Fall back to firebase_uid lookup
-                            case Db.queryWhere "users" "firebase_uid" "==" uid of
-                                Ok users2 ->
-                                    List.head users2
-
-                                _ ->
-                                    Nothing
-
-                _ ->
-                    case Db.queryWhere "users" "firebase_uid" "==" uid of
-                        Ok users2 ->
-                            List.head users2
-
-                        _ ->
-                            Nothing
-    in
-        case existing of
-            Just user ->
-                if Db.getBool "suspended" user then
-                    Err "Account suspended. Please contact support."
-                else
-                    let
-                        isAdminUser =
-                            List.member email adminEmails
-
-                        -- Update uid/name/email/admin on every sign-in (upsert)
-                        updatedUser =
-                            Dict.insert "firebase_uid" uid
-                                (
-                                Dict.insert "is_admin" (Db.boolVal isAdminUser)
-                                    (
-                                    Dict.insert "email" email
-                                        (Dict.insert "name" name user)
-                                    )
-                                )
-                        userId =
-                            Db.getField "id" user
-                        _ =
-                            Db.setDoc "users" userId updatedUser
-                        adminStr =
-                            if isAdminUser then
-                                "true"
-                            else
-                                "false"
-                        _ =
-                            println
-                                (
-                                "[AUTH] Existing user signed in: " ++
-                                email ++ " (admin: " ++ adminStr ++ ")"
-                                )
-                    in
-                        Ok updatedUser
-            
-            Nothing ->
-                createUser uid email name
-
-createUser uid email name =
-    let
-        userId =
-            Uuid.newString ()
         isAdminUser =
             List.member email adminEmails
-        userData =
+        adminStr =
+            if isAdminUser then
+                "true"
+            else
+                "false"
+
+        -- Set with merge: updates email/name/admin but preserves
+        -- existing fields (phone, address) from previous writes.
+        upsertData =
             Dict.fromList
-                [ ( "id" , userId )
+                [ ( "id" , uid )
                 , ( "firebase_uid" , uid )
                 , ( "email" , email )
                 , ( "name" , name )
-                , ( "phone" , "" )
-                , ( "address_line1" , "" )
-                , ( "address_line2" , "" )
-                , ( "address_city" , "" )
-                , ( "address_county" , "" )
-                , ( "address_country" , "" )
-                , ( "address_postcode" , "" )
                 , ( "is_admin" , Db.boolVal isAdminUser )
-                , ( "suspended" , Db.boolVal False )
                 ]
+        _ =
+            Db.setDoc "users" uid upsertData
+
+        -- Read back full document (includes address fields etc.)
         result =
-            Db.setDoc "users" userId userData
+            Db.getDoc "users" uid
     in
         case result of
-            Ok _ ->
-                let
-                    _ =
-                        println
-                            (
-                            "[AUTH] New user created: " ++
-                            name ++ " (" ++ email ++ ")"
-                            )
-                in
-                    Ok userData
-            
+            Ok maybeUser ->
+                case maybeUser of
+                    Just user ->
+                        if Db.getBool "suspended" user then
+                            Err "Account suspended. Please contact support."
+                        else
+                            let
+                                _ =
+                                    println
+                                        (
+                                        "[AUTH] Signed in: " ++
+                                        email ++
+                                        " (admin: " ++ adminStr ++ ")"
+                                        )
+                            in
+                                Ok user
+
+                    Nothing ->
+                        Err "Failed to load user profile."
+
             Err e ->
                 Err e
 

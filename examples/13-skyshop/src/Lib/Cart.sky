@@ -13,27 +13,31 @@ import Lib.Db as Db
 -- ══════════════════════════════════════════════════════
 -- CART QUERIES
 -- ══════════════════════════════════════════════════════
+-- Idempotent: uses deterministic cart ID (userId + "-cart") so concurrent
+-- calls can never create duplicate carts. Firestore Set with merge is atomic.
 getOrCreateCart userId =
-    case Db.queryWhere "carts" "owner_id" "==" userId of
-        Ok carts ->
-            let
-                ongoingCarts =
-                    List.filter (\c -> Db.getField "state" c == "ongoing") carts
-            in
-                case List.head ongoingCarts of
-                    Just cart ->
-                        Ok cart
-                    
-                    Nothing ->
-                        createCart userId
-        
-        Err e ->
-            Err e
+    let
+        cartId =
+            userId ++ "-cart"
+    in
+        case Db.getDoc "carts" cartId of
+            Ok (Just cart) ->
+                if Db.getField "state" cart == "ongoing" then
+                    Ok cart
+                else
+                    -- Previous cart was checked out; create a fresh one
+                    createCart userId
+
+            Ok Nothing ->
+                createCart userId
+
+            Err e ->
+                Err e
 
 createCart userId =
     let
         cartId =
-            Uuid.newString ()
+            userId ++ "-cart"
         cartData =
             Dict.fromList
                 [ ( "id" , cartId )
