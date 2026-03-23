@@ -14,6 +14,7 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
+import Tailwind.Responsive exposing (sm, md, lg)
 
 viewProduct model =
     Layout.page model
@@ -67,7 +68,7 @@ viewProductDetail model product =
                 , span [ tw [ textSm , textGray600 ] ] [ text title ]
                 ]
             , div
-                [ tw [ grid , gridCols2 , gap8 , itemsStart ]
+                [ tw [ grid , gridCols1 , lg gridCols2 , gap8 , itemsStart ]
                 , style "gap:3rem"
                 ]
                 [ viewImageGallery images
@@ -146,7 +147,7 @@ viewImageGallery images =
                 Nothing ->
                     text ""
             , if List.length images > 1 then
-                div [ tw [ grid , gridCols4 , gap2 ] ]
+                div [ tw [ grid , gridCols3 , md gridCols4 , gap2 ] ]
                     (
                     List.map
                         (

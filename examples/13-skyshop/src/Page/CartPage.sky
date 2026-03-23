@@ -14,6 +14,7 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
+import Tailwind.Responsive exposing (sm, md, lg)
 
 viewCart model =
     Layout.page model
@@ -60,10 +61,18 @@ viewCartContent model =
                                 )
                             ]
                         , div
-                            [ tw [ grid , gap8 , itemsStart ]
-                            , style "grid-template-columns:1fr 380px"
+                            [ tw
+                                [ flex
+                                , flexCol
+                                , lg flexRow
+                                , gap8
+                                , itemsStart
+                                ]
                             ]
-                            [ viewCartItems model , viewCartSummary model ]
+                            [ div [ tw [ flex1 ] ] [ viewCartItems model ]
+                            , div [ tw [ wFull , lg w96 , lg shrink0 ] ]
+                                [ viewCartSummary model ]
+                            ]
                         ]
             ]
 

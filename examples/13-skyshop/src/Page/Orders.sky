@@ -13,6 +13,7 @@ import Lib.Db as Db
 import Lib.Money as Money
 import Lib.Translation as Tr
 import Tailwind exposing (..)
+import Tailwind.Responsive exposing (sm, md, lg)
 
 -- ══════════════════════════════════════════════════════
 -- ORDER LIST
@@ -182,7 +183,7 @@ viewOrderDetail model order =
                         ]
                         [ text (Tr.tCartState lang state) ]
                     ]
-                , div [ tw [ grid , gridCols2 , gap4 , mb6 ] ]
+                , div [ tw [ grid , gridCols1 , sm gridCols2 , gap4 , mb6 ] ]
                     [ div []
                         [ span [ tw [ textSm , textGray500 , block ] ]
                             [ text (Tr.t lang "cart.total") ]

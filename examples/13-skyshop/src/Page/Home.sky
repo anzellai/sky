@@ -14,6 +14,7 @@ import Lib.Money as Money
 import Lib.Translation as Tr
 import Lib.Products as Products
 import Tailwind exposing (..)
+import Tailwind.Responsive exposing (sm, md, lg)
 
 -- ══════════════════════════════════════════════════════
 -- HOME PAGE
@@ -34,7 +35,15 @@ viewHero model =
             model.lang
     in
         div
-            [ tw [ bgGray900 , textWhite , roundedXl , p12 , mb10 , textCenter ]
+            [ tw
+                [ bgGray900
+                , textWhite
+                , roundedXl
+                , p6
+                , md p12
+                , mb10
+                , textCenter
+                ]
             , style
                 "background:linear-gradient(135deg,#0f172a 0%,#1e293b 50%,#334155 100%)"
             ]
@@ -44,12 +53,12 @@ viewHero model =
                 ]
                 [ text (Tr.t lang "hero.badge") ]
             , h1
-                [ tw [ text5xl , fontBold , textWhite , mb4 ]
+                [ tw [ text3xl , md text5xl , fontBold , textWhite , mb4 ]
                 , style "line-height:1.1;letter-spacing:-.025em"
                 ]
                 [ text (Tr.t lang "app.name") ]
             , p
-                [ tw [ textLg , textGray400 , mb8 , mxAuto ]
+                [ tw [ textBase , md textLg , textGray400 , mb8 , mxAuto ]
                 , style "max-width:480px"
                 ]
                 [ text (Tr.t lang "hero.subtitle") ]

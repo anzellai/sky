@@ -14,6 +14,7 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
+import Tailwind.Responsive exposing (sm, md, lg)
 
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT LIST
@@ -75,9 +76,12 @@ viewAdminProducts model =
                                 "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center"
                             ]
                             [ text "Product"
-                            , text "Category"
-                            , text "Price"
-                            , text "Stock"
+                            , span [ tw [ hidden_ , md block ] ]
+                                [ text "Category" ]
+                            , span [ tw [ hidden_ , md block ] ]
+                                [ text "Price" ]
+                            , span [ tw [ hidden_ , md block ] ]
+                                [ text "Stock" ]
                             , text "Status"
                             ]
                         ] ++
@@ -125,10 +129,13 @@ viewAdminProductRow model product =
                 , span [ tw [ fontMedium , textGray900 , textSm ] ]
                     [ text title ]
                 ]
-            , span [ tw [ textSm , textGray500 ] ] [ text category ]
-            , span [ tw [ textSm , fontMedium , textGray900 ] ]
+            , span [ tw [ hidden_ , md block , textSm , textGray500 ] ]
+                [ text category ]
+            , span
+                [ tw [ hidden_ , md block , textSm , fontMedium , textGray900 ]
+                ]
                 [ text pricing.original ]
-            , span [ tw [ textSm , textGray500 ] ]
+            , span [ tw [ hidden_ , md block , textSm , textGray500 ] ]
                 [ text
                     (
                     if stock < 0 then
@@ -232,7 +239,7 @@ viewProductForm model =
                         ]
                         []
                     ]
-                , div [ tw [ grid , gridCols2 , gap4 ] ]
+                , div [ tw [ grid , gridCols1 , sm gridCols2 , gap4 ] ]
                     [ div []
                         [ label [ Layout.formLabel_ ]
                             [ text (Tr.t lang "admin.product.category") ]
@@ -280,7 +287,7 @@ viewProductForm model =
             , div [ Layout.cardSection ]
                 [ h3 [ tw [ fontSemibold , textGray900 , textSm , mb4 ] ]
                     [ text (Tr.t lang "admin.product.pricingInventory") ]
-                , div [ tw [ grid , gridCols3 , gap4 ] ]
+                , div [ tw [ grid , gridCols1 , sm gridCols3 , gap4 ] ]
                     [ div []
                         [ label [ Layout.formLabel_ ]
                             [ text (Tr.t lang "admin.product.price") ]
@@ -466,8 +473,9 @@ viewAdminOrders model =
                                 "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center"
                             ]
                             [ text "Customer"
-                            , text "Total"
-                            , text "Date"
+                            , span [ tw [ hidden_ , md block ] ]
+                                [ text "Total" ]
+                            , span [ tw [ hidden_ , md block ] ] [ text "Date" ]
                             , text "Status"
                             ]
                         ] ++
@@ -558,9 +566,12 @@ viewAdminOrderRow model order =
                     [ text userName ]
                 , div [ tw [ textXs , textGray400 ] ] [ text userEmail ]
                 ]
-            , span [ tw [ textSm , fontMedium , textGray900 ] ]
+            , span
+                [ tw [ hidden_ , md block , textSm , fontMedium , textGray900 ]
+                ]
                 [ text (Money.formatPrice totalAmount totalCurrency) ]
-            , span [ tw [ textXs , textGray500 ] ] [ text createdAt ]
+            , span [ tw [ hidden_ , md block , textXs , textGray500 ] ]
+                [ text createdAt ]
             , stateBadge model st
             ]
 
@@ -648,7 +659,7 @@ viewAdminOrderDetail model order =
                     , stateBadge model st
                     ]
                 ]
-            , div [ tw [ grid , gridCols2 , gap6 , mb6 ] ]
+            , div [ tw [ grid , gridCols1 , sm gridCols2 , gap6 , mb6 ] ]
                 [ infoCard "Customer" [ userName , userEmail ]
                 , infoCard "Total"
                     [ Money.formatPrice totalAmount totalCurrency , createdAt ]

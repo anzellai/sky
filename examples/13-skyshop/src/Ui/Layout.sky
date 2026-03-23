@@ -14,6 +14,7 @@ import Lib.Auth as Auth
 import Lib.Translation as Tr
 import Lib.OAuth as OAuth
 import Tailwind exposing (..)
+import Tailwind.Responsive exposing (sm, md, lg)
 
 -- Aliases to avoid collision with Std.Html heading elements
 h2_ =
@@ -531,7 +532,7 @@ adminPage model content =
                     , viewNotification model
                     , div
                         [ tw [ flex1 , maxW7xl , mxAuto , wFull , px4 , py8 ] ]
-                        [ div [ tw [ flex , gap8 ] ]
+                        [ div [ tw [ flex , flexCol , md flexRow , gap8 ] ]
                             [ adminSidebar model
                             , div [ tw [ flex1 ] ] [ content ]
                             ]
@@ -832,13 +833,15 @@ adminSidebar model =
         lang =
             model.lang
     in
-        div [ tw [ w48 , shrink0 , pt2 ] ]
+        div [ tw [ wFull , md w48 , shrink0 , pt2 ] ]
             [ div [ tw [ px3 , py2 , mb2 ] ]
                 [ span [ tw [ textXs , uppercase , fontBold , textGray400 ] ]
                     [ text (Tr.t lang "nav.admin") ]
                 ]
-            , adminSidebarLink "/admin/products" "admin.products" model
-            , adminSidebarLink "/admin/orders" "admin.orders" model
+            , div [ tw [ flex , flexRow , md flexCol , gap1 , flexWrap ] ]
+                [ adminSidebarLink "/admin/products" "admin.products" model
+                , adminSidebarLink "/admin/orders" "admin.orders" model
+                ]
             , div [ tw [ borderT , borderGray200 , mt4 , pt4 ] ]
                 [ a [ href "/" , attribute "sky-nav" "" , sidebarLink_ ]
                     [ text "View Store" ]
@@ -896,7 +899,7 @@ viewFooter model =
                 ]
             ]
             [ div [ tw [ maxW7xl , mxAuto , px4 ] ]
-                [ div [ tw [ grid , gridCols3 , gap8 , py12 ] ]
+                [ div [ tw [ grid , gridCols1 , md gridCols3 , gap8 , py12 ] ]
                     [ div []
                         [ h4 [ tw [ fontBold , textGray900 , mb3 ] ]
                             [ text (Tr.t lang "app.name") ]
