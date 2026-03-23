@@ -826,9 +826,13 @@ export async function compileProject(entryFile: string, outDir: string) {
       const { inspectPackage } = await import("./interop/go/inspect-package.js");
       const { generateWrappers } = await import("./interop/go/generate-wrappers.js");
       
+      // Scan ONLY Sky-compiled Go modules for used wrapper symbols.
+      // Exclude sky_wrappers/ and skylive_rt/ — those are generated code
+      // that would pull in ALL symbols and defeat tree-shaking.
       const usedSymbols = new Set<string>();
       const scanDir = (dir: string) => {
           for (const item of fs.readdirSync(dir)) {
+              if (item === "sky_wrappers" || item === "skylive_rt") continue;
               const p = path.join(dir, item);
               if (fs.statSync(p).isDirectory()) {
                   scanDir(p);
