@@ -15,16 +15,6 @@ import Lib.Translation as Tr
 import Lib.Products as Products
 import Tailwind exposing (..)
 
--- Tailwind utilities not yet in sky-tailwind
-textBlue400 =
-    ( "class" , "text-blue-400" )
-
-borderBlue600 =
-    ( "class" , "border-blue-600" )
-
-borderGray900 =
-    ( "class" , "border-gray-900" )
-
 -- ══════════════════════════════════════════════════════
 -- HOME PAGE
 -- ══════════════════════════════════════════════════════

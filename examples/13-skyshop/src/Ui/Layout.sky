@@ -25,28 +25,6 @@ h5_ =
 h6_ =
     ( "class" , "h-6" )
 
--- Tailwind utilities not yet in sky-tailwind
-w5 =
-    ( "class" , "w-5" )
-
-w6 =
-    ( "class" , "w-6" )
-
-w10 =
-    ( "class" , "w-10" )
-
-h10 =
-    ( "class" , "h-10" )
-
-h20 =
-    ( "class" , "h-20" )
-
-right1 =
-    ( "class" , "right-1" )
-
-borderRed200 =
-    ( "class" , "border-red-200" )
-
 -- ══════════════════════════════════════════════════════
 -- STYLE HELPERS
 -- ══════════════════════════════════════════════════════
