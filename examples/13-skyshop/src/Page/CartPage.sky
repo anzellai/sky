@@ -85,11 +85,7 @@ viewCheckoutRedirect model =
             [ text (Tr.t model.lang "cart.redirectHint") ]
         , a [ href model.checkoutUrl , Layout.btnPrimary ]
             [ text (Tr.t model.lang "cart.goToPayment") ]
-        , raw
-            (
-            "<script>window.location.href='" ++
-            model.checkoutUrl ++ "';</script>"
-            )
+        , div [ attribute "data-sky-redirect" model.checkoutUrl ] []
         ]
 
 viewEmptyCart model =

@@ -251,6 +251,9 @@ const LiveJS = `(function() {
     }
     // Re-bind events for any new nodes
     bind();
+    // Check for external redirects (e.g., Stripe checkout URL)
+    var redir = root.querySelector('[data-sky-redirect]');
+    if (redir) { window.location.href = redir.getAttribute('data-sky-redirect'); }
   }
 
   // ── Client-Side Navigation ───────────────────────────
