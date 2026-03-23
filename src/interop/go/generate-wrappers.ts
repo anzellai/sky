@@ -36,6 +36,18 @@ type SkyResult struct {
 }
 
 func SkyOk(v any) SkyResult {
+	// Convert typed slices to []any at the FFI boundary so Sky list
+	// functions (which expect []any) work with Go-returned slices.
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Slice {
+		if _, ok := v.([]any); !ok {
+			result := make([]any, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				result[i] = rv.Index(i).Interface()
+			}
+			return SkyResult{Tag: 0, SkyName: "Ok", OkValue: result}
+		}
+	}
 	return SkyResult{Tag: 0, SkyName: "Ok", OkValue: v}
 }
 
@@ -50,6 +62,17 @@ type SkyMaybe struct {
 }
 
 func SkyJust(v any) SkyMaybe {
+	// Convert typed slices at FFI boundary (same as SkyOk)
+	rv := reflect.ValueOf(v)
+	if rv.IsValid() && rv.Kind() == reflect.Slice {
+		if _, ok := v.([]any); !ok {
+			result := make([]any, rv.Len())
+			for i := 0; i < rv.Len(); i++ {
+				result[i] = rv.Index(i).Interface()
+			}
+			return SkyMaybe{Tag: 0, SkyName: "Just", JustValue: result}
+		}
+	}
 	return SkyMaybe{Tag: 0, SkyName: "Just", JustValue: v}
 }
 
