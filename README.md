@@ -1256,3 +1256,7 @@ If you're interested, open an issue or start a discussion. PRs are welcome for b
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
+
+## Links
+
+[![Hypercommit](https://img.shields.io/badge/Hypercommit-DB2475)](https://hypercommit.com/sky)
