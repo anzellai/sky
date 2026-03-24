@@ -4500,6 +4500,9 @@ const LiveJS = \`(function() {
     // Check for external redirects (e.g., Stripe checkout URL)
     var redir = root.querySelector('[data-sky-redirect]');
     if (redir) { window.location.href = redir.getAttribute('data-sky-redirect'); }
+    // Check for client-side eval (e.g., Firebase sign-out)
+    var evalEl = root.querySelector('[data-sky-eval]');
+    if (evalEl) { try { (new Function(evalEl.getAttribute('data-sky-eval')))(); } catch(e) {} evalEl.remove(); }
   }
 
   // ── Client-Side Navigation ───────────────────────────

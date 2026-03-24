@@ -519,7 +519,14 @@ page model content =
         , div [ tw [ flex1 , maxW7xl , mxAuto , wFull , px4 , py8 ] ]
             [ content ]
         , viewFooter model
+        , viewSignOutTrigger model
         ]
+
+viewSignOutTrigger model =
+    if model.signOutPending == True then
+        div [ attribute "data-sky-eval" "skySignOut()" ] []
+    else
+        text ""
 
 adminPage model content =
     case model.user of

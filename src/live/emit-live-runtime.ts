@@ -66,23 +66,52 @@ function generateMsgDecoder(variants: MsgVariant[], pageVariants: PageVariant[],
   code += `\t}\n\treturn nil\n}\n\n`;
 
   code += `func decodeMsg(name string, args []json.RawMessage) (any, error) {\n`;
-  // Pre-process: if name contains a space, split into msg name + inline args
-  // e.g., "Navigate CounterPage" → name="Navigate", inlineArgs=["CounterPage"]
-  code += `\t// Handle compound msg strings like "Navigate CounterPage"\n`;
+  // Pre-process: if name contains spaces, extract inline args.
+  // Single arg: "Navigate CounterPage" → name="Navigate", inlineArgs=["CounterPage"]
+  // Multi arg: 'UpdateOrderState "id" "shipped"' → name="UpdateOrderState", inlineArgs=["id","shipped"]
+  code += `\t// Handle compound msg strings with inline args\n`;
   code += `\tvar inlineResolvedArg any\n`;
-  code += `\tparts := strings.SplitN(name, " ", 2)\n`;
-  code += `\tif len(parts) > 1 {\n`;
-  code += `\t\tname = parts[0]\n`;
-  code += `\t\tinlineArg := parts[1]\n`;
-  code += `\t\tpage := resolvePageArg(inlineArg)\n`;
-  code += `\t\tif page != nil {\n`;
-  code += `\t\t\tinlineResolvedArg = page\n`;
-  code += `\t\t} else {\n`;
-  code += `\t\t\t// Strip surrounding quotes from string arguments (e.g., '"hello"' → 'hello')\n`;
-  code += `\t\t\tif len(inlineArg) >= 2 && inlineArg[0] == '\\x22' && inlineArg[len(inlineArg)-1] == '\\x22' {\n`;
-  code += `\t\t\t\tinlineResolvedArg = inlineArg[1:len(inlineArg)-1]\n`;
+  code += `\tvar inlineArgs []string\n`;
+  code += `\tif idx := strings.IndexByte(name, ' '); idx >= 0 {\n`;
+  code += `\t\trest := name[idx+1:]\n`;
+  code += `\t\tname = name[:idx]\n`;
+  code += `\t\t// Parse quoted args: "arg1" "arg2" or unquoted single arg\n`;
+  code += `\t\tfor len(rest) > 0 {\n`;
+  code += `\t\t\trest = strings.TrimLeft(rest, " ")\n`;
+  code += `\t\t\tif len(rest) == 0 { break }\n`;
+  code += `\t\t\tif rest[0] == '\\x22' {\n`;
+  code += `\t\t\t\tend := strings.IndexByte(rest[1:], '\\x22')\n`;
+  code += `\t\t\t\tif end >= 0 {\n`;
+  code += `\t\t\t\t\tinlineArgs = append(inlineArgs, rest[1:1+end])\n`;
+  code += `\t\t\t\t\trest = rest[2+end:]\n`;
+  code += `\t\t\t\t} else {\n`;
+  code += `\t\t\t\t\tinlineArgs = append(inlineArgs, rest[1:])\n`;
+  code += `\t\t\t\t\trest = ""\n`;
+  code += `\t\t\t\t}\n`;
   code += `\t\t\t} else {\n`;
-  code += `\t\t\t\tinlineResolvedArg = inlineArg\n`;
+  code += `\t\t\t\tend := strings.IndexByte(rest, ' ')\n`;
+  code += `\t\t\t\tif end >= 0 {\n`;
+  code += `\t\t\t\t\tinlineArgs = append(inlineArgs, rest[:end])\n`;
+  code += `\t\t\t\t\trest = rest[end+1:]\n`;
+  code += `\t\t\t\t} else {\n`;
+  code += `\t\t\t\t\tinlineArgs = append(inlineArgs, rest)\n`;
+  code += `\t\t\t\t\trest = ""\n`;
+  code += `\t\t\t\t}\n`;
+  code += `\t\t\t}\n`;
+  code += `\t\t}\n`;
+  code += `\t\tif len(inlineArgs) == 1 {\n`;
+  code += `\t\t\tpage := resolvePageArg(inlineArgs[0])\n`;
+  code += `\t\t\tif page != nil {\n`;
+  code += `\t\t\t\tinlineResolvedArg = page\n`;
+  code += `\t\t\t} else {\n`;
+  code += `\t\t\t\tinlineResolvedArg = inlineArgs[0]\n`;
+  code += `\t\t\t}\n`;
+  code += `\t\t}\n`;
+  code += `\t\t// Convert inline args to JSON args for multi-arg messages\n`;
+  code += `\t\tif len(inlineArgs) > 1 && len(args) == 0 {\n`;
+  code += `\t\t\tfor _, ia := range inlineArgs {\n`;
+  code += `\t\t\t\tb, _ := json.Marshal(ia)\n`;
+  code += `\t\t\t\targs = append(args, b)\n`;
   code += `\t\t\t}\n`;
   code += `\t\t}\n`;
   code += `\t}\n`;

@@ -101,6 +101,7 @@ type alias Model =
     , quantity : Int
     , notification : String
     , notificationType : String
+    , signOutPending : Bool
     }
 
 -- ══════════════════════════════════════════════════════
@@ -141,6 +142,7 @@ emptyModel =
     , quantity = 1
     , notification = ""
     , notificationType = ""
+    , signOutPending = False
     }
 
 -- ══════════════════════════════════════════════════════

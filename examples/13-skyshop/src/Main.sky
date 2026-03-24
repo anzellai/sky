@@ -275,6 +275,7 @@ handleSignOut model =
               , cartItems = []
               , orders = []
               , notification = ""
+              , signOutPending = True
             }
         , Cmd.none
         )
