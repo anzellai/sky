@@ -632,10 +632,13 @@ patternToBindings ctx varName pat =
     case pat of
         PWildcard _ ->
             ""
-        
+
         PVariable name _ ->
             sanitizeGoIdent name ++ " := " ++ varName ++ "; "
-        
+
+        PLiteral _ _ ->
+            ""
+
         PConstructor parts argPats _ ->
             let
                 ctorName =
