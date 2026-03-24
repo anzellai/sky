@@ -13,6 +13,7 @@ import Compiler.Parser as Parser
 import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
 import Lsp.Server as LspServer
+import Formatter.Format as Format
 
 
 -- ══════════════════════════════════════════════════════
@@ -42,6 +43,8 @@ runCommand command args =
         cmdRun args
     else if command == "check" then
         cmdCheck args
+    else if command == "fmt" then
+        cmdFmt args
     else if command == "lsp" then
         cmdLsp args
     else if command == "version" || command == "--version" then
@@ -198,6 +201,57 @@ cmdLsp args =
 
 
 -- ══════════════════════════════════════════════════════
+-- FORMAT COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdFmt : List String -> ()
+cmdFmt args =
+    let
+        filePath =
+            case Args.getArg 2 of
+                Just f ->
+                    f
+
+                Nothing ->
+                    "src/Main.sky"
+    in
+        case File.readFile filePath of
+            Err readErr ->
+                let
+                    _ =
+                        println ("Cannot read: " ++ filePath ++ " (" ++ readErr ++ ")")
+                in
+                    Process.exit 1
+
+            Ok source ->
+                let
+                    lexResult =
+                        Lexer.lex source
+                in
+                    case Parser.parse lexResult.tokens of
+                        Err parseErr ->
+                            let
+                                _ =
+                                    println ("Parse error: " ++ parseErr)
+                            in
+                                Process.exit 1
+
+                        Ok mod ->
+                            let
+                                formatted =
+                                    Format.formatModule mod
+                            in
+                                if formatted == source then
+                                    ()
+                                else
+                                    let
+                                        _ =
+                                            File.writeFile filePath formatted
+                                    in
+                                        println ("Formatted " ++ filePath)
+
+
+-- ══════════════════════════════════════════════════════
 -- HELP COMMAND
 -- ══════════════════════════════════════════════════════
 
@@ -220,6 +274,8 @@ cmdHelp _ =
             println "  run [file]      Build and run"
         _ =
             println "  check [file]    Type-check without compiling"
+        _ =
+            println "  fmt [file]      Format Sky source code"
         _ =
             println "  lsp             Start Language Server"
         _ =

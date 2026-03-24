@@ -1,0 +1,579 @@
+module Formatter.Format exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Compiler.Ast exposing (..)
+import Compiler.Token exposing (SourceSpan, emptySpan)
+import Formatter.Doc exposing (..)
+
+
+-- ══════════════════════════════════════════════════════
+-- MODULE FORMATTING
+-- ══════════════════════════════════════════════════════
+
+formatModule : Module -> String
+formatModule mod =
+    let
+        header =
+            formatModuleHeader mod
+        importDocs =
+            List.map formatImport mod.imports
+        declDocs =
+            formatDeclarations mod.declarations
+        allDocs =
+            if List.isEmpty mod.imports then
+                concat [ header , hardline , hardline , declDocs ]
+            else
+                concat [ header
+                    , hardline
+                    , hardline
+                    , concat (List.map (\d -> concat [ d , hardline ]) importDocs)
+                    , hardline
+                    , declDocs
+                    ]
+    in
+        String.trim (render allDocs) ++ "\n"
+
+
+formatModuleHeader : Module -> Doc
+formatModuleHeader mod =
+    let
+        name =
+            String.join "." mod.name
+        exposing_ =
+            formatExposing mod.exposing_
+    in
+        concat [ text "module " , text name , text " exposing " , exposing_ ]
+
+
+formatExposing : ExposingClause -> Doc
+formatExposing clause =
+    case clause of
+        ExposeAll ->
+            text "(..)"
+
+        ExposeList items ->
+            group (concat [ text "("
+                , text (String.join ", " items)
+                , text ")"
+                ])
+
+        ExposeNone ->
+            text "(..)"
+
+
+formatImport : ImportDecl -> Doc
+formatImport imp =
+    let
+        name =
+            String.join "." imp.moduleName
+        aliasDoc =
+            if String.isEmpty imp.alias_ then
+                text ""
+            else
+                concat [ text " as " , text imp.alias_ ]
+        exposingDoc =
+            case imp.exposing_ of
+                ExposeAll ->
+                    text " exposing (..)"
+
+                ExposeList items ->
+                    concat [ text " exposing (" , text (String.join ", " items) , text ")" ]
+
+                ExposeNone ->
+                    text ""
+    in
+        concat [ text "import " , text name , aliasDoc , exposingDoc ]
+
+
+-- ══════════════════════════════════════════════════════
+-- DECLARATIONS
+-- ══════════════════════════════════════════════════════
+
+formatDeclarations : List Declaration -> Doc
+formatDeclarations decls =
+    joinDocs (List.map formatDeclaration decls) (concat [ hardline , hardline , hardline ])
+
+
+formatDeclaration : Declaration -> Doc
+formatDeclaration decl =
+    case decl of
+        FunDecl name params body _ ->
+            formatFunction name params body
+
+        TypeAnnotDecl name typeExpr _ ->
+            concat [ text name , text " : " , formatTypeExpr typeExpr ]
+
+        TypeDecl name typeParams variants _ ->
+            formatTypeDecl name typeParams variants
+
+        TypeAliasDecl name typeParams aliasType _ ->
+            formatTypeAlias name typeParams aliasType
+
+        ForeignImportDecl name pkg importName _ ->
+            concat [ text "foreign import \"" , text pkg , text "\" exposing (" , text name , text ")" ]
+
+
+formatFunction : String -> List Pattern -> Expression -> Doc
+formatFunction name params body =
+    let
+        paramDocs =
+            List.map formatPattern params
+        header =
+            if List.isEmpty params then
+                concat [ text name , text " =" ]
+            else
+                concat [ text name , text " " , joinDocs paramDocs (text " ") , text " =" ]
+    in
+        concat [ header , indent (concat [ hardline , formatExpr body ]) ]
+
+
+formatTypeDecl : String -> List String -> List TypeVariant -> Doc
+formatTypeDecl name params variants =
+    let
+        paramStr =
+            if List.isEmpty params then
+                ""
+            else
+                " " ++ String.join " " params
+        header =
+            text ("type " ++ name ++ paramStr)
+    in
+        case variants of
+            [] ->
+                header
+
+            first :: rest ->
+                let
+                    firstDoc =
+                        concat [ text "= " , formatVariant first ]
+                    restDocs =
+                        List.map (\v -> concat [ text "| " , formatVariant v ]) rest
+                in
+                    concat [ header
+                        , indent (concat [ hardline
+                            , joinDocs (firstDoc :: restDocs) hardline
+                            ])
+                        ]
+
+
+formatVariant : TypeVariant -> Doc
+formatVariant variant =
+    if List.isEmpty variant.fields then
+        text variant.name
+    else
+        concat [ text variant.name
+            , text " "
+            , joinDocs (List.map formatTypeExprParens variant.fields) (text " ")
+            ]
+
+
+formatTypeAlias : String -> List String -> TypeExpr -> Doc
+formatTypeAlias name params aliasType =
+    let
+        paramStr =
+            if List.isEmpty params then
+                ""
+            else
+                " " ++ String.join " " params
+    in
+        concat [ text ("type alias " ++ name ++ paramStr ++ " =")
+            , indent (concat [ hardline , formatTypeExpr aliasType ])
+            ]
+
+
+-- ══════════════════════════════════════════════════════
+-- EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+formatExpr : Expression -> Doc
+formatExpr expr =
+    case expr of
+        IdentifierExpr name _ ->
+            text name
+
+        QualifiedExpr parts _ ->
+            text (String.join "." parts)
+
+        IntLitExpr _ raw _ ->
+            text raw
+
+        FloatLitExpr _ raw _ ->
+            text raw
+
+        StringLitExpr s _ ->
+            text ("\"" ++ quoteString s ++ "\"")
+
+        CharLitExpr s _ ->
+            text s
+
+        BoolLitExpr b _ ->
+            if b then
+                text "True"
+            else
+                text "False"
+
+        UnitExpr _ ->
+            text "()"
+
+        TupleExpr items _ ->
+            formatTuple items
+
+        ListExpr items _ ->
+            formatList items
+
+        RecordExpr fields _ ->
+            formatRecord fields
+
+        RecordUpdateExpr base fields _ ->
+            formatRecordUpdate base fields
+
+        FieldAccessExpr target fieldName _ ->
+            concat [ formatExpr target , text "." , text fieldName ]
+
+        CallExpr callee args _ ->
+            formatCall callee args
+
+        LambdaExpr params body _ ->
+            formatLambda params body
+
+        IfExpr condition thenBranch elseBranch _ ->
+            formatIf condition thenBranch elseBranch
+
+        LetExpr bindings body _ ->
+            formatLet bindings body
+
+        CaseExpr subject branches _ ->
+            formatCase subject branches
+
+        BinaryExpr op leftExpr rightExpr _ ->
+            formatBinary op leftExpr rightExpr
+
+        NegateExpr inner _ ->
+            concat [ text "-" , formatExpr inner ]
+
+        ParenExpr inner _ ->
+            group (concat [ text "(" , softline , formatExpr inner , softline , text ")" ])
+
+
+-- ══════════════════════════════════════════════════════
+-- EXPRESSION HELPERS
+-- ══════════════════════════════════════════════════════
+
+formatTuple : List Expression -> Doc
+formatTuple items =
+    case items of
+        [] ->
+            text "()"
+
+        first :: rest ->
+            group (concat [ text "( "
+                , formatExpr first
+                , concat (List.map (\item -> concat [ line , text ", " , formatExpr item ]) rest)
+                , line
+                , text ")"
+                ])
+
+
+formatList : List Expression -> Doc
+formatList items =
+    case items of
+        [] ->
+            text "[]"
+
+        first :: rest ->
+            group (concat [ text "[ "
+                , formatExpr first
+                , concat (List.map (\item -> concat [ line , text ", " , formatExpr item ]) rest)
+                , line
+                , text "]"
+                ])
+
+
+formatRecord : List NamedExpr -> Doc
+formatRecord fields =
+    case fields of
+        [] ->
+            text "{}"
+
+        first :: rest ->
+            group (align (concat [ text "{ "
+                , formatField first
+                , concat (List.map (\f -> concat [ line , text ", " , formatField f ]) rest)
+                , line
+                , text "}"
+                ]))
+
+
+formatField : NamedExpr -> Doc
+formatField field =
+    concat [ text field.name , text " = " , formatExpr field.value ]
+
+
+formatRecordUpdate : Expression -> List NamedExpr -> Doc
+formatRecordUpdate base fields =
+    group (align (concat [ text "{ "
+        , formatExpr base
+        , line
+        , text "| "
+        , joinDocs (List.map formatField fields) (concat [ line , text ", " ])
+        , line
+        , text "}"
+        ]))
+
+
+formatCall : Expression -> List Expression -> Doc
+formatCall callee args =
+    group (concat [ formatExpr callee
+        , indent (concat (List.map (\arg -> concat [ line , formatExpr arg ]) args))
+        ])
+
+
+formatLambda : List Pattern -> Expression -> Doc
+formatLambda params body =
+    group (concat [ text "\\"
+        , joinDocs (List.map formatPattern params) (text " ")
+        , text " ->"
+        , indent (concat [ line , formatExpr body ])
+        ])
+
+
+formatBinary : String -> Expression -> Expression -> Doc
+formatBinary op leftExpr rightExpr =
+    if op == "|>" || op == "<|" then
+        concat [ formatExpr leftExpr
+            , indent (concat [ hardline , text op , text " " , formatExpr rightExpr ])
+            ]
+    else
+        group (concat [ formatExpr leftExpr
+            , text " "
+            , text op
+            , line
+            , formatExpr rightExpr
+            ])
+
+
+formatIf : Expression -> Expression -> Expression -> Doc
+formatIf condition thenBranch elseBranch =
+    concat [ text "if "
+        , formatExpr condition
+        , text " then"
+        , indent (concat [ hardline , formatExpr thenBranch ])
+        , hardline
+        , text "else"
+        , indent (concat [ hardline , formatExpr elseBranch ])
+        ]
+
+
+formatLet : List LetBinding -> Expression -> Doc
+formatLet bindings body =
+    concat [ text "let"
+        , indent (concat (List.map formatLetBinding bindings))
+        , hardline
+        , text "in"
+        , indent (concat [ hardline , formatExpr body ])
+        ]
+
+
+formatLetBinding : LetBinding -> Doc
+formatLetBinding binding =
+    concat [ hardline
+        , formatPattern binding.pattern
+        , text " ="
+        , indent (concat [ hardline , formatExpr binding.value ])
+        ]
+
+
+formatCase : Expression -> List CaseBranch -> Doc
+formatCase subject branches =
+    concat [ text "case "
+        , formatExpr subject
+        , text " of"
+        , indent (concat (List.map formatBranch branches))
+        ]
+
+
+formatBranch : CaseBranch -> Doc
+formatBranch branch =
+    concat [ hardline
+        , hardline
+        , formatPattern branch.pattern
+        , text " ->"
+        , indent (concat [ hardline , formatExpr branch.body ])
+        ]
+
+
+-- ══════════════════════════════════════════════════════
+-- PATTERNS
+-- ══════════════════════════════════════════════════════
+
+formatPattern : Pattern -> Doc
+formatPattern pat =
+    case pat of
+        PWildcard _ ->
+            text "_"
+
+        PVariable name _ ->
+            text name
+
+        PConstructor parts argPats _ ->
+            let
+                ctorName =
+                    String.join "." parts
+            in
+                if List.isEmpty argPats then
+                    text ctorName
+                else
+                    concat [ text ctorName , text " " , joinDocs (List.map formatPatternParens argPats) (text " ") ]
+
+        PLiteral lit _ ->
+            formatLiteral lit
+
+        PTuple items _ ->
+            group (concat [ text "( "
+                , joinDocs (List.map formatPattern items) (text " , ")
+                , text " )"
+                ])
+
+        PList items _ ->
+            group (concat [ text "[ "
+                , joinDocs (List.map formatPattern items) (text " , ")
+                , text " ]"
+                ])
+
+        PCons headPat tailPat _ ->
+            concat [ formatPattern headPat , text " :: " , formatPattern tailPat ]
+
+        PAs innerPat name _ ->
+            concat [ formatPattern innerPat , text " as " , text name ]
+
+        PRecord fields _ ->
+            text ("{ " ++ String.join " , " fields ++ " }")
+
+
+formatPatternParens : Pattern -> Doc
+formatPatternParens pat =
+    case pat of
+        PConstructor _ args _ ->
+            if List.isEmpty args then
+                formatPattern pat
+            else
+                concat [ text "(" , formatPattern pat , text ")" ]
+
+        PTuple _ _ ->
+            formatPattern pat
+
+        _ ->
+            formatPattern pat
+
+
+formatLiteral : LiteralValue -> Doc
+formatLiteral lit =
+    case lit of
+        LitInt n ->
+            text (String.fromInt n)
+
+        LitFloat f ->
+            text (String.fromFloat f)
+
+        LitString s ->
+            text ("\"" ++ quoteString s ++ "\"")
+
+        LitChar c ->
+            text ("'" ++ c ++ "'")
+
+        LitBool b ->
+            if b then
+                text "True"
+            else
+                text "False"
+
+
+-- ══════════════════════════════════════════════════════
+-- TYPE EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+formatTypeExpr : TypeExpr -> Doc
+formatTypeExpr texpr =
+    case texpr of
+        TypeRef parts args _ ->
+            let
+                name =
+                    String.join "." parts
+            in
+                if List.isEmpty args then
+                    text name
+                else
+                    concat [ text name
+                        , text " "
+                        , joinDocs (List.map formatTypeExprParens args) (text " ")
+                        ]
+
+        TypeVar name _ ->
+            text name
+
+        FunType fromT toT _ ->
+            concat [ formatTypeExprParens fromT , text " -> " , formatTypeExpr toT ]
+
+        RecordTypeExpr fields _ ->
+            formatRecordType fields
+
+        TupleTypeExpr items _ ->
+            group (concat [ text "( "
+                , joinDocs (List.map formatTypeExpr items) (text " , ")
+                , text " )"
+                ])
+
+        UnitTypeExpr _ ->
+            text "()"
+
+
+formatTypeExprParens : TypeExpr -> Doc
+formatTypeExprParens texpr =
+    case texpr of
+        FunType _ _ _ ->
+            concat [ text "(" , formatTypeExpr texpr , text ")" ]
+
+        TypeRef _ args _ ->
+            if List.isEmpty args then
+                formatTypeExpr texpr
+            else
+                concat [ text "(" , formatTypeExpr texpr , text ")" ]
+
+        _ ->
+            formatTypeExpr texpr
+
+
+formatRecordType : List NamedType -> Doc
+formatRecordType fields =
+    case fields of
+        [] ->
+            text "{}"
+
+        first :: rest ->
+            group (concat [ text "{ "
+                , formatNamedType first
+                , concat (List.map (\f -> concat [ line , text ", " , formatNamedType f ]) rest)
+                , line
+                , text "}"
+                ])
+
+
+formatNamedType : NamedType -> Doc
+formatNamedType field =
+    concat [ text field.name , text " : " , formatTypeExpr field.type_ ]
+
+
+-- ══════════════════════════════════════════════════════
+-- STRING QUOTING (Unicode-safe)
+-- ══════════════════════════════════════════════════════
+
+quoteString : String -> String
+quoteString s =
+    s
+        |> String.replace "\\" "\\\\"
+        |> String.replace "\"" "\\\""
+        |> String.replace "\n" "\\n"
+        |> String.replace "\r" "\\r"
+        |> String.replace "\t" "\\t"
