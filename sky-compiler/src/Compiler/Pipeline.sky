@@ -5,6 +5,7 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.File as File
+import Sky.Core.Process as Process
 import Sky.Core.Ref as Ref
 import Std.Log exposing (println)
 import Compiler.Token as Token
@@ -59,7 +60,7 @@ compile filePath outDir =
                         Ok mod ->
                             let
                                 srcRoot =
-                                    inferSrcRoot filePath mod.name
+                                    dirOfPath filePath
                                 hasLocalImports =
                                     List.foldl (\imp acc -> acc || not (Resolver.isStdlib (String.join "." imp.moduleName))) False mod.imports
                             in
@@ -131,16 +132,32 @@ compileMultiModule entryPath outDir srcRoot entryMod =
             Lower.generateHelperDecls
         allDecls =
             List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls ]
+        -- Check if any stdlib modules need wrappers
+        needsWrappers =
+            List.foldl (\imp acc -> acc || needsStdlibWrapper (String.join "." imp.moduleName)) False entryMod.imports
+        stdlibImports =
+            if needsWrappers then
+                buildStdlibGoImports entryMod.imports
+            else
+                []
         goPackage =
             { name = "main"
             , imports =
-                [ { path = "fmt" , alias_ = "" }
-                , { path = "strconv" , alias_ = "" }
-                , { path = "strings" , alias_ = "" }
-                , { path = "os" , alias_ = "" }
-                ]
+                List.append
+                    [ { path = "fmt" , alias_ = "" }
+                    , { path = "strconv" , alias_ = "" }
+                    , { path = "strings" , alias_ = "" }
+                    , { path = "os" , alias_ = "" }
+                    ]
+                    stdlibImports
             , declarations = allDecls
             }
+        -- Copy stdlib Go packages if needed
+        _ =
+            if needsWrappers then
+                copyStdlibGo outDir
+            else
+                Ok ()
         goCode =
             Emit.emitPackage goPackage
         outPath =
@@ -257,9 +274,109 @@ compileDependencyModule stdlibEnv pair =
             Lower.lowerDeclarations ctx mod.declarations
         ctorDecls =
             Lower.generateConstructorDecls registry mod.declarations
+        -- Filter out side-effect-only declarations (named _) then prefix
+        filtered =
+            List.filter isExportableDecl (List.append ctorDecls goDecls)
     in
-        -- Prefix all function names with module name and capitalize
-        List.map (prefixDecl prefix) (List.append ctorDecls goDecls)
+        List.map (prefixDecl prefix) filtered
+
+
+isExportableDecl : GoDecl -> Bool
+isExportableDecl decl =
+    case decl of
+        GoDeclFunc funcDecl ->
+            funcDecl.name /= "_" && funcDecl.name /= "main"
+
+        GoDeclVar name _ ->
+            name /= "_"
+
+        GoDeclRaw _ ->
+            True
+
+
+-- Check if a module needs stdlib Go wrappers
+
+-- Get the directory part of a file path
+
+dirOfPath : String -> String
+dirOfPath path =
+    let
+        lastSlash =
+            findLastSlash path (String.length path - 1)
+    in
+        if lastSlash > 0 then
+            String.slice 0 lastSlash path
+        else
+            "."
+
+
+findLastSlash : String -> Int -> Int
+findLastSlash path idx =
+    if idx < 0 then
+        -1
+    else if String.slice idx (idx + 1) path == "/" then
+        idx
+    else
+        findLastSlash path (idx - 1)
+
+
+needsStdlibWrapper : String -> Bool
+needsStdlibWrapper modName =
+    String.startsWith "Sky.Core.Json" modName ||
+    String.startsWith "Std.Html" modName ||
+    String.startsWith "Std.Css" modName ||
+    String.startsWith "Std.Live" modName ||
+    String.startsWith "Std.Cmd" modName ||
+    String.startsWith "Std.Sub" modName ||
+    String.startsWith "Std.Task" modName ||
+    String.startsWith "Std.Time" modName ||
+    String.startsWith "Std.Program" modName ||
+    modName == "Sky.Core.Result" ||
+    modName == "Sky.Core.Maybe"
+
+
+-- Build Go imports for stdlib modules
+
+buildStdlibGoImports : List Ast.ImportDecl -> List GoImport
+buildStdlibGoImports imports =
+    let
+        stdImports =
+            List.filterMap
+                (\imp ->
+                    let
+                        modName =
+                            String.join "." imp.moduleName
+                    in
+                        if Resolver.isStdlib modName then
+                            let
+                                goPath =
+                                    "sky-out/" ++ String.join "/" imp.moduleName
+                                goAlias =
+                                    "sky_" ++ String.toLower (String.replace "." "_" modName)
+                            in
+                                Just { path = goPath , alias_ = goAlias }
+                        else
+                            Nothing
+                )
+                imports
+    in
+        { path = "sky-out/sky_wrappers" , alias_ = "sky_wrappers" } :: stdImports
+
+
+-- Copy pre-built stdlib Go packages to output directory
+
+copyStdlibGo : String -> Result String ()
+copyStdlibGo outDir =
+    let
+        -- Copy from sky-compiler/stdlib-go/ to outDir/
+        cpResult =
+            Process.run "cp" [ "-r" , "sky-compiler/stdlib-go/Sky" , outDir ++ "/" ]
+        cpResult2 =
+            Process.run "cp" [ "-r" , "sky-compiler/stdlib-go/Std" , outDir ++ "/" ]
+        cpResult3 =
+            Process.run "cp" [ "-r" , "sky-compiler/stdlib-go/sky_wrappers" , outDir ++ "/" ]
+    in
+        Ok ()
 
 
 capitalizeFirst : String -> String
@@ -280,7 +397,11 @@ prefixDecl prefix decl =
                 GoDeclFunc { funcDecl | name = prefix ++ "_" ++ capitalizeFirst funcDecl.name }
 
         GoDeclVar name expr ->
-            GoDeclVar (prefix ++ "_" ++ capitalizeFirst name) expr
+            -- Skip blank _ declarations and raw helper vars
+            if name == "_" || String.startsWith "var _ =" name then
+                decl
+            else
+                GoDeclVar (prefix ++ "_" ++ capitalizeFirst name) expr
 
         GoDeclRaw code ->
             decl
