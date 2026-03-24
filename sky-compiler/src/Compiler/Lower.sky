@@ -8,7 +8,7 @@ import Sky.Core.String as String
 import Compiler.Ast as Ast exposing (..)
 import Compiler.GoIr exposing (..)
 import Compiler.Adt as Adt exposing (AdtRegistry)
-import Compiler.Types as Types
+import Compiler.Types exposing (Type, TFun, TConst, TVar, TApp, TTuple, TRecord, Scheme)
 
 -- ══════════════════════════════════════════════════════
 -- LOWERING CONTEXT
@@ -975,26 +975,44 @@ collectLocalFunctions decls =
 buildConstructorMap : AdtRegistry -> Dict.Dict String CtorInfo
 buildConstructorMap registry =
     Dict.foldl
-        (
-        \typeName adt acc ->
+        (\typeName adt acc ->
             let
-                ctorNames =
-                    Dict.keys adt.constructors
+                entries =
+                    Dict.toList adt.constructors
             in
-                addCtorsToMap typeName ctorNames 0 acc
+                addCtorsFromList typeName entries 0 acc
         )
         Dict.empty
         registry
 
-addCtorsToMap : String -> List String -> Int -> Dict.Dict String CtorInfo -> Dict.Dict String CtorInfo
-addCtorsToMap typeName ctorNames idx acc =
-    case ctorNames of
+
+addCtorsFromList : String -> List ( String , Scheme ) -> Int -> Dict.Dict String CtorInfo -> Dict.Dict String CtorInfo
+addCtorsFromList typeName entries idx acc =
+    case entries of
         [] ->
             acc
-        
-        name :: rest ->
-            Dict.insert name { adtName = typeName , tagIndex = idx , arity = 0 }
-                (addCtorsToMap typeName rest (idx + 1) acc)
+
+        entry :: rest ->
+            let
+                name =
+                    fst entry
+                scheme =
+                    snd entry
+                ctorArity =
+                    countFunArgs scheme.type_
+            in
+                Dict.insert name { adtName = typeName , tagIndex = idx , arity = ctorArity }
+                    (addCtorsFromList typeName rest (idx + 1) acc)
+
+
+countFunArgs : Type -> Int
+countFunArgs t =
+    case t of
+        TFun fromT toT ->
+            1 + countFunArgs toT
+
+        _ ->
+            0
 
 sanitizeGoIdent : String -> String
 sanitizeGoIdent name =

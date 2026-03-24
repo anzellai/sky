@@ -68,7 +68,7 @@ resolveProject entryPath srcRoot =
                                 resolveImports srcRoot entryMod.imports
                                     [ entryLoaded ]
                                     Set.empty
-                                    []
+                                    (List.reverse [])
 
                             -- Topological order: dependencies first, entry last
                             order =
