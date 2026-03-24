@@ -378,7 +378,6 @@ handleStartCheckout model =
                             , Cmd.none
                             )
                         else
-                            -- Copy cart → orders collection, get order ID
                             case Cart.checkoutToOrder cartId of
                                 Ok orderId ->
                                     case Stripe.createCheckoutSession orderId items userId userName userEmail model.cartRemarks of
@@ -453,11 +452,9 @@ handleVerifyPayment orderId model =
                         Db.getField "state" orderDoc
                 in
                     if state == "ordered" || state == "shipped" || state == "delivered" then
-                        -- Already verified
-                        ( base , Cmd.none )
+                        ( base , Cmd.none ) -- Already verified
                     else if state == "ongoing" then
-                        -- Order was created but checkout didn't complete (stale data)
-                        ( { base
+                        ( { base -- Order was created but checkout didn't complete
                           | notification = "This order was not completed. Please try checking out again."
                           , notificationType = "error"
                           , page = CartPage

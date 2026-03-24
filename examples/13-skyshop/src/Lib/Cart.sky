@@ -22,8 +22,6 @@ getOrCreateCart userId =
     in
         case Db.getDoc "carts" cartId of
             Ok (Just cart) ->
-                -- Only return if ongoing; otherwise create fresh
-                -- (in-flight payments are moved to orders collection first)
                 if Db.getField "state" cart == "ongoing" then
                     Ok cart
                 else

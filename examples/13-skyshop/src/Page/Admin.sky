@@ -193,11 +193,8 @@ viewAdminEditProduct model =
                     ]
                 ]
             , viewProductForm model
+            -- Image Manager
             , if model.editProductId != "" then
-
--- ══════════════════════════════════════════════════════
--- IMAGE MANAGER
--- ══════════════════════════════════════════════════════
                 viewImageManager model
             else
                 text ""
