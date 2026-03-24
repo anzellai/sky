@@ -251,11 +251,12 @@ verifyStripeSession cartId sessionId =
         Ok sess ->
             let
                 status =
-                    js (Stripe.checkoutSessionStatus sess)
+                    Stripe.checkoutSessionStatus sess
                 paymentStatus =
-                    js (Stripe.checkoutSessionPaymentStatus sess)
+                    Stripe.checkoutSessionPaymentStatus sess
             in
-                if status == "complete" && paymentStatus == "paid" then
+                if status == Stripe.checkoutSessionStatusComplete &&
+                paymentStatus == Stripe.checkoutSessionPaymentStatusPaid then
                     let
                         _ =
                             println
@@ -298,9 +299,7 @@ verifyStripeSession cartId sessionId =
                                 Stripe.addressPostalCode shippingAddr
                             }
                 else
-                    Err
-                        ("Payment not complete. Status: " ++ status ++
-                        ", Payment: " ++ paymentStatus)
+                    Err "Payment not complete."
 
         Err e ->
             Err ("Failed to retrieve checkout session: " ++ errorToString e)

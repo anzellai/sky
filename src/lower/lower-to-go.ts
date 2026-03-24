@@ -593,10 +593,27 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName };
           }
 
-          // For foreign Go FFI modules, reference the wrapper directly
+          // For foreign Go FFI modules, reference the wrapper directly.
+          // Constants/variables are zero-arg Go wrapper functions. When the
+          // identifier is NOT a call target (i.e., used as a value, not being called),
+          // check if its exported type is non-function and auto-call it.
           const wrapperName2 = "Sky_" + safePkg + "_" + goName;
           if (_collectedWrapperSymbols) _collectedWrapperSymbols.add(wrapperName2);
-          return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName2 };
+          const wrapperExpr2: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName2 };
+          // Auto-call constants/variables (non-function types) in FFI modules.
+          // These compile to zero-arg Go wrappers: Sky_pkg_Const()
+          if (!_isCallTarget && moduleExports) {
+              for (const [, exports] of moduleExports) {
+                  const scheme = exports.get(name);
+                  if (scheme) {
+                      if (scheme.type && scheme.type.kind !== "TypeFunction") {
+                          return { kind: "GoCallExpr", fn: wrapperExpr2, args: [] } as any;
+                      }
+                      break;
+                  }
+              }
+          }
+          return wrapperExpr2;
       }
       
       if (expr.name === "Sprintf") {

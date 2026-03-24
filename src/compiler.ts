@@ -300,9 +300,8 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
       }
 
       // Lazy binding index resolution for Go FFI modules.
-      // When a module is loaded via binding index (bindings.idx), the synthetic AST
-      // has no function declarations. Resolve symbols from the index on demand.
-      if (!depExports || depExports.size === 0) {
+      // Must check even if depExports has entries (type-only from ADT registration).
+      {
           const depModule = graph.modules.find((m: any) => {
               const n = m.moduleAst.name.join(".");
               return n === depName || depName.endsWith("." + n);
@@ -537,8 +536,17 @@ export async function compileProject(entryFile: string, outDir: string) {
   for (const loaded of graph.modules) {
     const moduleNameStr = loaded.moduleAst.name.join(".");
     
-    if (loaded.filePath.includes(".skycache/go/")) {
+    if (loaded.filePath.includes(".skycache/go/") || (loaded.moduleAst as any)._bindingIndex) {
         allForeignModules.add(moduleNameStr);
+        // Also add any import aliases that point to this module
+        for (const otherMod of graph.modules) {
+            for (const imp2 of otherMod.moduleAst.imports) {
+                const impName = imp2.moduleName.join(".");
+                if (impName === moduleNameStr || moduleNameStr.endsWith("." + impName.split(".").pop())) {
+                    if (imp2.alias) allForeignModules.add(imp2.alias.name);
+                }
+            }
+        }
         // Extract the Go package path from the .skycache file path
         // e.g., ".skycache/go/modernc.org/sqlite/bindings.skyi" → "modernc.org/sqlite"
         const cacheMatch = loaded.filePath.match(/\.skycache\/go\/(.+?)\/bindings\.skyi$/);
@@ -567,14 +575,19 @@ export async function compileProject(entryFile: string, outDir: string) {
           }
         }
       }
-      // Lazy binding index resolution for Go FFI modules (same as Pass 1)
-      if (!depExports || depExports.size === 0) {
+      // Lazy binding index resolution for Go FFI modules.
+      {
           const depModule = graph.modules.find((m: any) => {
               const n = m.moduleAst.name.join(".");
               return n === depName || depName.endsWith("." + n);
           });
           if (depModule && (depModule.moduleAst as any)._bindingIndex) {
               depExports = resolveBindingIndex(depModule, depName, imp, loaded, moduleExports);
+              // Register import alias in allForeignModules so the lowerer
+              // routes it through sky_wrappers, not as a Sky module call
+              const ffiAlias = imp.alias?.name || imp.moduleName[imp.moduleName.length - 1];
+              allForeignModules.add(ffiAlias);
+              allForeignModules.add(depName);
           }
       }
 
@@ -1136,10 +1149,15 @@ function resolveBindingIndex(
         const declaredName = depModule.moduleAst.name.join(".");
         if (declaredName !== depName) moduleExports.set(declaredName, idxExports);
     }
-    // Determine which symbols this module uses via the alias
     const alias = imp.alias?.name || imp.moduleName[imp.moduleName.length - 1];
+    // Also register under the import alias so the lowerer can find exports
+    if (alias !== depName) moduleExports.set(alias, idxExports);
+    // Mark as resolved so subsequent calls add to existing exports
+    (idxExports as any)._idxResolved = true;
     const usedSymNames = new Set<string>();
-    // Scan source AST for qualified references (Alias.symbol)
+    // Scan source AST for qualified references (Alias.symbol).
+    // Also scan the raw source text for Alias.identifier patterns as fallback,
+    // since some AST representations may not use QualifiedIdentifierExpression.
     const scanExpr = (node: any) => {
         if (!node || typeof node !== "object") return;
         // QualifiedIdentifierExpression: { name: { parts: ["Stripe", "setKey"] } }
@@ -1149,12 +1167,31 @@ function resolveBindingIndex(
                 usedSymNames.add(parts[parts.length - 1]);
             }
         }
+        // Also catch IdentifierExpression with qualified names (e.g., "Stripe.foo")
+        if (node.kind === "IdentifierExpression" && typeof node.name === "string" && node.name.includes(".")) {
+            const parts = node.name.split(".");
+            if (parts[0] === alias) {
+                usedSymNames.add(parts[parts.length - 1]);
+            }
+        }
         for (const v of Object.values(node)) {
             if (Array.isArray(v)) v.forEach(scanExpr);
             else if (v && typeof v === "object" && (v as any).kind) scanExpr(v);
         }
     };
     for (const d of loaded.moduleAst.declarations) scanExpr(d);
+    // Fallback: scan source text for Alias.identifier patterns
+    // This catches cases where the AST representation doesn't use qualified nodes
+    if (loaded.filePath && !loaded.filePath.startsWith("virtual:")) {
+        try {
+            const src = fs.readFileSync(loaded.filePath, "utf8");
+            const re = new RegExp(`\\b${alias}\\.([a-zA-Z][a-zA-Z0-9]*)`, "g");
+            let m;
+            while ((m = re.exec(src)) !== null) {
+                usedSymNames.add(m[1]);
+            }
+        } catch {}
+    }
     // Also catch unqualified exposed names
     if (imp.exposing?.kind === "ExposingClause") {
         for (const item of imp.exposing.items) usedSymNames.add((item as any).name);
@@ -1765,9 +1802,22 @@ function parseForeignTypeForIndex(typeStr: string): Type {
 
     const parseOne = (s: string): Type => {
         s = s.trim();
+        if (s === "()" || s === "Unit") return { kind: "TypeConstant", name: "Unit" };
+        if (s === "") return { kind: "TypeConstant", name: "Unit" };
         if (s.startsWith("(") && s.endsWith(")")) return parseForeignTypeForIndex(s.slice(1, -1));
-        if (/^[a-z]/.test(s)) return { kind: "TypeConstant", name: "Foreign" }; // type variable → Foreign
-        const tokens = s.split(/\s+/);
+        if (/^[a-z]/.test(s) && !s.includes(" ")) return { kind: "TypeConstant", name: "Foreign" }; // type variable → Foreign
+        // Split on spaces respecting parenthesized groups
+        const tokens: string[] = [];
+        let d2 = 0, cur = "";
+        for (let j = 0; j < s.length; j++) {
+            if (s[j] === "(") { d2++; cur += s[j]; }
+            else if (s[j] === ")") { d2--; cur += s[j]; }
+            else if (s[j] === " " && d2 === 0) {
+                if (cur) tokens.push(cur);
+                cur = "";
+            } else { cur += s[j]; }
+        }
+        if (cur) tokens.push(cur);
         if (tokens.length === 1) return { kind: "TypeConstant", name: tokens[0] };
         return {
             kind: "TypeApplication",
