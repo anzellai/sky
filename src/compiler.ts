@@ -367,10 +367,12 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     }
 
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
+    const isBindingsModule = loaded.filePath.endsWith(".skyi");
     const typeCheck = checkModule(loaded.moduleAst, {
         imports: importsMap,
         foreignBindings: foreignResult.bindings,
-        importedTypeAliases
+        importedTypeAliases,
+        bindingsOnly: isBindingsModule
     });
 
     moduleResults.set(moduleNameStr, typeCheck);
@@ -574,10 +576,12 @@ export async function compileProject(entryFile: string, outDir: string) {
     }
 
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
+    const isBindingsModule2 = loaded.filePath.endsWith(".skyi");
     const typeCheck = checkModule(loaded.moduleAst, {
         imports: importsMap,
         foreignBindings: foreignResult.bindings,
-        importedTypeAliases: importedTypeAliases2
+        importedTypeAliases: importedTypeAliases2,
+        bindingsOnly: isBindingsModule2
     });
 
     const myExports = new Map<string, Scheme>();
@@ -715,6 +719,13 @@ export async function compileProject(entryFile: string, outDir: string) {
           }
         }
       }
+    }
+
+    // Skip lowering/emission for .skyi binding modules — they provide type information
+    // for imports but don't produce Go code. The user's Sky code calls wrapper functions
+    // directly; the .skyi module declarations are not compiled to Go packages.
+    if (loaded.filePath.endsWith(".skyi")) {
+        continue;
     }
 
     // Lower to GoIR

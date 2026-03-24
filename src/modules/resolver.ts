@@ -8,8 +8,164 @@ import * as AST from "../ast/ast.js";
 import { getDirname, getFilename, skyImportToGoPaths } from "../utils/path.js";
 import { isVirtualAsset, readVirtualAsset } from "../utils/assets.js";
 import { readManifest, SkyManifest } from "../pkg/manifest.js";
-import { generateForeignBindings } from "../interop/go/generate-bindings.js";
+import { generateForeignBindings, type BindingIndex } from "../interop/go/generate-bindings.js";
 import { execSync } from "child_process";
+
+/**
+ * Build a synthetic AST.Module from a binding index (bindings.idx).
+ * This avoids parsing the full .skyi file (200K+ lines for large Go packages).
+ * The resulting AST has: module header, type declarations, type annotations,
+ * foreign import declarations, and function declarations for each symbol.
+ */
+function buildAstFromIndex(idx: BindingIndex): AST.Module {
+    const span = { start: { line: 0, column: 0, offset: 0 }, end: { line: 0, column: 0, offset: 0 } };
+    const declarations: AST.Declaration[] = [];
+
+    // Type declarations (Error, Any, List, Map, Bytes, CheckoutSession, etc.)
+    for (const typeName of idx.types) {
+        declarations.push({
+            kind: "TypeDeclaration",
+            name: typeName,
+            typeParameters: [],
+            variants: [{ kind: "TypeVariant", name: typeName, fields: [], span }],
+            span
+        } as any);
+    }
+
+    // For each symbol: type annotation + foreign import + function declaration
+    for (const [skyName, entry] of Object.entries(idx.symbols)) {
+        // Type annotation: skyName : Type
+        declarations.push({
+            kind: "TypeAnnotation",
+            name: skyName,
+            type: parseTypeString(entry.type),
+            span
+        } as any);
+
+        // Foreign import declaration
+        declarations.push({
+            kind: "ForeignImportDeclaration",
+            name: entry.wrapper,
+            sourceModule: entry.source,
+            span
+        } as any);
+
+        // Function declaration: skyName args = wrapper args
+        const arity = countArgsFromType(entry.type);
+        const params = arity > 0
+            ? Array.from({ length: arity }, (_, i) => `arg${i}`)
+            : ["arg0"];
+        declarations.push({
+            kind: "FunctionDeclaration",
+            name: skyName,
+            parameters: params.map(p => ({
+                kind: "Parameter",
+                pattern: { kind: "VariablePattern", name: p, span },
+                span
+            })),
+            body: {
+                kind: "CallExpression",
+                callee: { kind: "IdentifierExpression", name: entry.wrapper, span },
+                arguments: params.map(p => ({ kind: "IdentifierExpression", name: p, span })),
+                span
+            },
+            span
+        } as any);
+    }
+
+    return {
+        kind: "Module",
+        name: idx.module.split("."),
+        exposing: { kind: "ExposingClause", open: true, items: [], span },
+        imports: [],
+        declarations,
+        span
+    } as any;
+}
+
+/** Parse a simple type string like "String -> Int -> Result Error Unit" into an AST TypeExpression */
+function parseTypeString(typeStr: string): AST.TypeExpression {
+    const span = { start: { line: 0, column: 0, offset: 0 }, end: { line: 0, column: 0, offset: 0 } };
+
+    // Split on top-level " -> " (not inside parens)
+    const parts: string[] = [];
+    let depth = 0;
+    let current = "";
+    for (let i = 0; i < typeStr.length; i++) {
+        const ch = typeStr[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        else if (depth === 0 && typeStr.slice(i, i + 4) === " -> ") {
+            parts.push(current.trim());
+            current = "";
+            i += 3;
+            continue;
+        }
+        current += ch;
+    }
+    parts.push(current.trim());
+
+    // Parse each part as a type reference
+    const parseOne = (s: string): AST.TypeExpression => {
+        s = s.trim();
+        if (s.startsWith("(") && s.endsWith(")")) {
+            return parseTypeString(s.slice(1, -1));
+        }
+        // Check for lowercase single-char type variables (a, b, msg, etc.)
+        if (/^[a-z]/.test(s) && !s.includes(" ")) {
+            return { kind: "TypeVariable", name: s, span } as any;
+        }
+        // Handle type application: "Result Error Unit", "List String", etc.
+        // Split on spaces but respect parenthesized groups
+        const tokens: string[] = [];
+        let depth2 = 0, curr = "";
+        for (let j = 0; j < s.length; j++) {
+            if (s[j] === "(") { depth2++; curr += s[j]; }
+            else if (s[j] === ")") { depth2--; curr += s[j]; }
+            else if (s[j] === " " && depth2 === 0) {
+                if (curr) tokens.push(curr);
+                curr = "";
+            } else { curr += s[j]; }
+        }
+        if (curr) tokens.push(curr);
+
+        if (tokens.length === 1) {
+            return { kind: "TypeReference", name: { parts: tokens[0].split(".") }, arguments: [], span } as any;
+        }
+        // First token is the type constructor, rest are arguments
+        return {
+            kind: "TypeReference",
+            name: { parts: tokens[0].split(".") },
+            arguments: tokens.slice(1).map(t => parseOne(t)),
+            span
+        } as any;
+    };
+
+    if (parts.length === 1) return parseOne(parts[0]);
+
+    // Build right-associative function type
+    let result = parseOne(parts[parts.length - 1]);
+    for (let i = parts.length - 2; i >= 0; i--) {
+        result = { kind: "FunctionType", from: parseOne(parts[i]), to: result, span } as any;
+    }
+    return result;
+}
+
+/** Count the number of arguments from a type string */
+function countArgsFromType(typeStr: string): number {
+    let depth = 0;
+    let count = 0;
+    for (let i = 0; i < typeStr.length; i++) {
+        const ch = typeStr[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        else if (depth === 0 && typeStr.slice(i, i + 4) === " -> ") {
+            count++;
+            i += 3;
+        }
+    }
+    return count;
+}
 
 const __filename = getFilename(import.meta.url);
 const __dirname = getDirname(import.meta.url);
@@ -112,6 +268,28 @@ export async function buildModuleGraph(
           return;
         }
       } catch {}
+    }
+
+    // Fast path: for .skyi binding files, check for a pre-built index (bindings.idx).
+    // If present, create a minimal synthetic AST from the index instead of parsing
+    // the full .skyi file. This reduces parse time from seconds to milliseconds
+    // for large packages like Stripe SDK (200K+ lines → instant).
+    if (abs.endsWith("bindings.skyi") && !isVirtual && !isEdited) {
+      const idxPath = abs.replace(/bindings\.skyi$/, "bindings.idx");
+      if (fs.existsSync(idxPath)) {
+        try {
+          const idx = JSON.parse(fs.readFileSync(idxPath, "utf8"));
+          const moduleAst = buildAstFromIndex(idx);
+          const mod: LoadedModule = { filePath: abs, moduleAst };
+          loaded.set(abs, mod);
+          _parseCache.set(abs, { mtime: fs.statSync(abs).mtimeMs, ast: moduleAst });
+          ordered.push(mod);
+          visiting.delete(abs);
+          return;
+        } catch {
+          // Fall through to full parse if index is corrupted
+        }
+      }
     }
 
     let source: string;
@@ -233,6 +411,9 @@ export async function buildModuleGraph(
                             const cacheDir = path.join(projectRoot, ".skycache", "go", goPackage);
                             fs.mkdirSync(cacheDir, { recursive: true });
                             fs.writeFileSync(path.join(cacheDir, "bindings.skyi"), result.skyiContent);
+                            if (result.bindingIndex) {
+                                fs.writeFileSync(path.join(cacheDir, "bindings.idx"), JSON.stringify(result.bindingIndex));
+                            }
                             importFile = path.join(cacheDir, "bindings.skyi");
                         }
                     } catch {}

@@ -69,7 +69,7 @@ export function registerAdts(
     types.set(result.adt.name, result.adt);
 
     for (const [ctorName, ctorScheme] of Object.entries(result.adt.constructors)) {
-      env = env.extend(ctorName, ctorScheme);
+      env.addMut(ctorName, ctorScheme);
     }
   }
 

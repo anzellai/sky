@@ -65,6 +65,14 @@ export class TypeEnvironment {
 
   }
 
+  /**
+   * Mutably add a binding to this environment. Unlike extend(), does NOT clone.
+   * Use for sequential top-level declaration processing where immutability is not needed.
+   */
+  addMut(name: string, scheme: Scheme): void {
+    this.values.set(name, scheme);
+  }
+
   extendMany(bindings: Readonly<Record<string, Scheme>>): TypeEnvironment {
 
     const env = this.clone();

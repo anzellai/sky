@@ -63,6 +63,9 @@ export interface CheckModuleOptions {
   readonly foreignBindings?: readonly ForeignBindingSet[]
   readonly imports?: ReadonlyMap<string, Scheme>
   readonly importedTypeAliases?: ReadonlyMap<string, import("../ast/ast.js").TypeExpression>
+  /** When true, skip full HM inference for function declarations — use type annotations directly.
+   *  Used for .skyi binding modules where all functions have explicit type annotations. */
+  readonly bindingsOnly?: boolean
 }
 
 /* -----------------------------------------------------------
@@ -78,7 +81,7 @@ export function checkModule(
 
   if (options.imports) {
     for (const [name, scheme] of options.imports) {
-      env = env.extend(name, scheme)
+      env.addMut(name, scheme)
     }
   }
 
@@ -166,92 +169,112 @@ export function checkModule(
     }
   }
 
-  // Pre-register all function declarations with fresh type variables
-  // to support forward references (e.g., update calling handleSetSort defined later)
-  for (const declaration of module.declarations) {
-      if (declaration.kind === "FunctionDeclaration" && !env.get(declaration.name)) {
-          env = env.extend(declaration.name, { quantified: [], type: freshTypeVariable() });
+  // Bindings-only mode: skip full HM inference, use type annotations directly.
+  // Used for .skyi Go FFI binding modules where all functions have explicit types.
+  // Reduces O(N × inference_cost) to O(N) for modules with 40K+ declarations.
+  if (options.bindingsOnly) {
+    for (const declaration of module.declarations) {
+      if (declaration.kind === "FunctionDeclaration") {
+        const annotation = typeAnnotations.get(declaration.name);
+        if (annotation) {
+          const type = astTypeExprToType(annotation.type);
+          const scheme = mono(type);
+          env.addMut(declaration.name, scheme);
+          declarations.push({ name: declaration.name, scheme, pretty: declaration.name });
+        } else {
+          // No annotation — use Foreign-compatible type
+          env.addMut(declaration.name, mono(typeConstant("Foreign")));
+          declarations.push({ name: declaration.name, scheme: mono(typeConstant("Foreign")), pretty: declaration.name });
+        }
       }
-  }
+    }
+  } else {
+    // Normal mode: full HM type inference
 
-  for (const declaration of module.declarations) {
+    // Pre-register all function declarations with fresh type variables
+    // to support forward references (e.g., update calling handleSetSort defined later)
+    for (const declaration of module.declarations) {
+        if (declaration.kind === "FunctionDeclaration" && !env.get(declaration.name)) {
+            env.addMut(declaration.name, { quantified: [], type: freshTypeVariable() });
+        }
+    }
 
-    switch (declaration.kind) {
+    for (const declaration of module.declarations) {
 
-      case "FunctionDeclaration": {
+      switch (declaration.kind) {
 
-        try {
+        case "FunctionDeclaration": {
 
-          const inferred =
-            inferTopLevel(
+          try {
+
+            const inferred =
+              inferTopLevel(
+                adtRegistration.registry,
+                env,
+                declaration,
+                typeAnnotations.get(declaration.name),
+                nodeTypes
+              )
+
+            declarations.push(inferred)
+
+            // Collect annotation mismatch warnings
+            if (inferred.warnings) {
+              for (const warning of inferred.warnings) {
+                diagnostics.push({
+                  severity: "warning",
+                  message: warning,
+                  span: declaration.span
+                })
+              }
+            }
+
+            env.addMut(inferred.name, inferred.scheme)
+
+            collectCaseDiagnostics(
               adtRegistration.registry,
-              env,
-              declaration,
-              typeAnnotations.get(declaration.name),
+              declaration.body,
+              diagnostics,
               nodeTypes
             )
 
-          declarations.push(inferred)
+            // Warn about discarded function values (likely partial application bugs)
+            collectDiscardedFunctionDiagnostics(declaration.body, nodeTypes, diagnostics)
 
-          // Collect annotation mismatch warnings
-          if (inferred.warnings) {
-            for (const warning of inferred.warnings) {
-              diagnostics.push({
-                severity: "warning",
-                message: warning,
-                span: declaration.span
-              })
+          } catch (error) {
+
+            diagnostics.push({
+              severity: "error",
+              message:
+                error instanceof Error
+                  ? error.message
+                  : String(error),
+              span: declaration.span,
+              hint: `Could not infer the type of ${declaration.name}.`
+            })
+
+            // Add a fallback type so later declarations can still reference this function
+            // (prevents cascading "Unbound variable" errors)
+            const arity = declaration.parameters.length;
+            let fallbackType: import("../types/types.js").Type = typeConstant("Any");
+            for (let i = 0; i < arity; i++) {
+              fallbackType = { kind: "TypeFunction", from: typeConstant("Any"), to: fallbackType };
             }
+            env.addMut(declaration.name, mono(fallbackType));
+
           }
 
-          env = env.extend(
-            inferred.name,
-            inferred.scheme
-          )
-
-          collectCaseDiagnostics(
-            adtRegistration.registry,
-            declaration.body,
-            diagnostics,
-            nodeTypes
-          )
-
-          // Warn about discarded function values (likely partial application bugs)
-          collectDiscardedFunctionDiagnostics(declaration.body, nodeTypes, diagnostics)
-
-        } catch (error) {
-
-          diagnostics.push({
-            severity: "error",
-            message:
-              error instanceof Error
-                ? error.message
-                : String(error),
-            span: declaration.span,
-            hint: `Could not infer the type of ${declaration.name}.`
-          })
-
-          // Add a fallback type so later declarations can still reference this function
-          // (prevents cascading "Unbound variable" errors)
-          const arity = declaration.parameters.length;
-          let fallbackType: import("../types/types.js").Type = typeConstant("Any");
-          for (let i = 0; i < arity; i++) {
-            fallbackType = { kind: "TypeFunction", from: typeConstant("Any"), to: fallbackType };
-          }
-          env = env.extend(declaration.name, mono(fallbackType));
-
+          break
         }
 
-        break
+        case "TypeDeclaration":
+        case "TypeAliasDeclaration":
+        case "ForeignImportDeclaration":
+        case "TypeAnnotation":
+          break
       }
 
-      case "TypeDeclaration":
-      case "TypeAliasDeclaration":
-      case "ForeignImportDeclaration":
-      case "TypeAnnotation":
-        break
     }
-
   }
 
   // Warn about Go reserved words used as identifiers
@@ -343,7 +366,6 @@ function injectForeignBindings(
   bindingSets: readonly ForeignBindingSet[]
 ): TypeEnvironment {
 
-  let next = env
   let foreignVarId = -2000; // unique IDs for untyped foreign bindings
 
   for (const set of bindingSets) {
@@ -352,21 +374,21 @@ function injectForeignBindings(
 
       if (value.skyType) {
         const type = parseForeignType(value.skyType);
-        next = next.extend(value.skyName, mono(type));
+        env.addMut(value.skyName, mono(type));
       } else {
         // Untyped foreign bindings get a universally quantified a -> b type
         // so they can be applied to any args (like fmt.Println)
         const a: Type = { kind: "TypeVariable", id: foreignVarId--, name: undefined };
         const b: Type = { kind: "TypeVariable", id: foreignVarId--, name: undefined };
         const fnType = { kind: "TypeFunction" as const, from: a, to: b };
-        next = next.extend(value.skyName, { quantified: [a.id, b.id], type: fnType });
+        env.addMut(value.skyName, { quantified: [a.id, b.id], type: fnType });
       }
 
     }
 
   }
 
-  return next
+  return env
 }
 
 /* -----------------------------------------------------------

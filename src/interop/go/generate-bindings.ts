@@ -4,6 +4,22 @@ import { inspectPackage, Param } from "./inspect-package.js";
 import { mapGoTypeToSky, lowerCamelCase, isGoPointerToPrimitive } from "./type-mapper.js";
 import { generateWrappers } from "./generate-wrappers.js";
 
+/**
+ * Binding index entry: maps a Sky function name to its type signature and wrapper info.
+ * This is serialized to bindings.idx for fast lookup without parsing the full .skyi.
+ */
+export interface BindingIndexEntry {
+    type: string;        // Sky type signature (e.g., "String -> ()")
+    wrapper: string;     // Go wrapper name (e.g., "Sky_pkg_SetKey")
+    source: string;      // Go source module (e.g., "sky_wrappers")
+}
+
+export interface BindingIndex {
+    module: string;
+    types: string[];     // Type names declared in the module
+    symbols: Record<string, BindingIndexEntry>;
+}
+
 export interface GeneratedForeignBindings {
   packageName: string;
   skyModuleName: string;
@@ -12,7 +28,7 @@ export interface GeneratedForeignBindings {
   types: { skyName: string; jsName: string; sourceModule: string; typeParams: string[]; }[];
 }
 
-export async function generateForeignBindings(packageName: string, requestedNames: string[], options?: { skipWrappers?: boolean }): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[], skyiContent?: string }> {
+export async function generateForeignBindings(packageName: string, requestedNames: string[], options?: { skipWrappers?: boolean }): Promise<{ generated?: GeneratedForeignBindings, diagnostics: string[], skyiContent?: string, bindingIndex?: BindingIndex }> {
   try {
     const pkg = inspectPackage(packageName);
 
@@ -34,6 +50,18 @@ export async function generateForeignBindings(packageName: string, requestedName
 
     const values: GeneratedForeignBindings['values'] = [];
 
+    // Build binding index alongside skyiContent for fast lookup
+    const bindingIndex: BindingIndex = {
+        module: moduleName,
+        types: ["Error", "Any", "List", "Map", "Bytes"],
+        symbols: {}
+    };
+
+    // Helper: add an entry to the binding index
+    const addIdx = (skyName: string, typeSig: string, wrapper: string, source: string) => {
+        bindingIndex.symbols[skyName] = { type: typeSig, wrapper, source };
+    };
+
     // 2. Constants
     for (const c of pkg.consts || []) {
         const skyName = lowerCamelCase(c.name);
@@ -41,6 +69,7 @@ export async function generateForeignBindings(packageName: string, requestedName
         skyiContent += `foreign import "${packageName}" exposing (${c.name})\n\n`;
         skyiContent += `${skyName} : ${t}\n`;
         skyiContent += `${skyName} = ${c.name}\n\n`;
+        addIdx(skyName, t, c.name, packageName);
         values.push({ skyName, jsName: c.name, sourceModule: packageName, skyType: "Foreign" });
     }
 
@@ -57,6 +86,7 @@ export async function generateForeignBindings(packageName: string, requestedName
         skyiContent += `foreign import "sky_wrappers" exposing (${wrapperName})\n\n`;
         skyiContent += `${skyName} : () -> ${t}\n`;
         skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
+        addIdx(skyName, `() -> ${t}`, wrapperName, "sky_wrappers");
         values.push({ skyName, jsName: v.name, sourceModule: packageName, skyType: "Foreign" });
 
         // Setter: setVarName : T -> ()
@@ -75,6 +105,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             skyiContent += `foreign import "sky_wrappers" exposing (${setterWrapperName})\n\n`;
             skyiContent += `${setterSkyName} : ${t} -> ()\n`;
             skyiContent += `${setterSkyName} arg0 = ${setterWrapperName} arg0\n\n`;
+            addIdx(setterSkyName, `${t} -> ()`, setterWrapperName, "sky_wrappers");
             values.push({ skyName: setterSkyName, jsName: `Set${v.name}`, sourceModule: packageName, skyType: "Foreign" });
         }
     }
@@ -147,6 +178,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
         }
 
+        addIdx(skyName, sig, wrapperName, "sky_wrappers");
         values.push({
             skyName,
             jsName: goName,
@@ -165,6 +197,7 @@ export async function generateForeignBindings(packageName: string, requestedName
     // 5. Methods and Field Accessors
     for (const t of pkg.types || []) {
         if (!t.name) continue;
+        bindingIndex.types.push(t.name);
         
         // Methods (skip generic methods)
         if (t.methods) {
@@ -189,6 +222,7 @@ export async function generateForeignBindings(packageName: string, requestedName
                 skyiContent += `${skyName} : ${t.name} -> ${retType}\n`;
                 skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
 
+                addIdx(skyName, `${t.name} -> ${retType}`, wrapperName, "sky_wrappers");
                 values.push({ skyName, jsName: skyName, sourceModule: packageName, skyType: "Foreign" });
             }
         }
@@ -210,6 +244,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             skyiContent += `${skyName} : ${t.name} -> Result Error (List (Dict String String))\n`;
             skyiContent += `${skyName} arg0 = ${wrapperName} arg0\n\n`;
 
+            addIdx(skyName, `${t.name} -> Result Error (List (Dict String String))`, wrapperName, "sky_wrappers");
             values.push({ skyName, jsName: skyName, sourceModule: packageName, skyType: "Foreign" });
         }
 
@@ -228,6 +263,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             skyiContent += `${skyNameE} : ${t.name} -> String -> (List Any) -> Result Error Int\n`;
             skyiContent += `${skyNameE} arg0 arg1 arg2 = ${wrapperNameE} arg0 arg1 arg2\n\n`;
 
+            addIdx(skyNameE, `${t.name} -> String -> (List Any) -> Result Error Int`, wrapperNameE, "sky_wrappers");
             values.push({ skyName: skyNameE, jsName: skyNameE, sourceModule: packageName, skyType: "Foreign" });
 
             // QueryToMaps: db -> query -> args -> Result Error (List (Dict String String))
@@ -239,6 +275,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             skyiContent += `${skyNameQ} : ${t.name} -> String -> (List Any) -> Result Error (List (Dict String String))\n`;
             skyiContent += `${skyNameQ} arg0 arg1 arg2 = ${wrapperNameQ} arg0 arg1 arg2\n\n`;
 
+            addIdx(skyNameQ, `${t.name} -> String -> (List Any) -> Result Error (List (Dict String String))`, wrapperNameQ, "sky_wrappers");
             values.push({ skyName: skyNameQ, jsName: skyNameQ, sourceModule: packageName, skyType: "Foreign" });
         }
     }
@@ -257,6 +294,7 @@ export async function generateForeignBindings(packageName: string, requestedName
             }))
         },
         skyiContent,
+        bindingIndex,
         diagnostics: []
     };
   } catch (e: any) {

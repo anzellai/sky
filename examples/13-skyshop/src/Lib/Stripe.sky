@@ -7,28 +7,41 @@ import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Net.Http as Http
-import Net.Url as Url
-import Io as Io
-import Strings as GoStrings
-import Sky.Core.Json.Decode as Decode
 import Os
 import Lib.Db as Db
 
+-- Stripe Go SDK imports
+import Github.Com.Stripe.StripeGo.V84 as Stripe
+import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
+import Github.Com.Stripe.StripeGo.V84.Customer as Customer
+
+foreign import "sky_wrappers" exposing (Sky_ToJSON)
+
+
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+
+initStripe =
+    let
+        key =
+            Os.getenv "STRIPE_API_KEY"
+        _ =
+            Stripe.setKey key
+    in
+        key
+
 apiKey =
-    Os.getenv "STRIPE_API_KEY"
+    initStripe
 
 domainUrl =
     let
-        env =
-            Os.getenv "ENV"
         domain =
             Os.getenv "DOMAIN"
         port_ =
             Os.getenv "SKY_LIVE_PORT"
     in
         if domain != "" then
-            -- DOMAIN env var is the full URL (e.g. http://localhost:8000 or https://mysite.com)
             domain
         else
             let
@@ -38,153 +51,65 @@ domainUrl =
                     else
                         port_
             in
-                if env == "production" then
-                    "https://localhost"
-                else
-                    "http://localhost:" ++ effectivePort
+                "http://localhost:" ++ effectivePort
 
--- ══════════════════════════════════════════════════════
--- HTTP HELPERS
--- ══════════════════════════════════════════════════════
-urlEncode value =
-    Url.queryEscape value
-
-buildFormBody params =
-    params
-        |> List.map (\( k, v ) -> urlEncode k ++ "=" ++ urlEncode v)
-        |> String.join "&"
-
-stripePost endpoint params =
-    let
-        url =
-            "https://api.stripe.com/v1/" ++ endpoint
-        body =
-            buildFormBody params
-        reader =
-            GoStrings.newReader body
-    in
-        case Http.newRequest "POST" url reader of
-            Err e ->
-                Err (errorToString e)
-            
-            Ok req ->
-                let
-                    _ =
-                        Http.headerSet (Http.requestHeader req) "Authorization"
-                            ("Bearer " ++ apiKey)
-                    _ =
-                        Http.headerSet (Http.requestHeader req) "Content-Type"
-                            "application/x-www-form-urlencoded"
-                in
-                    case Http.clientDo (Http.defaultClient ()) req of
-                        Err e ->
-                            Err (errorToString e)
-                        
-                        Ok resp ->
-                            case Io.readAll (Http.responseBody resp) of
-                                Err e ->
-                                    Err (errorToString e)
-                                
-                                Ok bytes ->
-                                    Ok (String.fromBytes bytes)
-
-stripeGet endpoint =
-    let
-        url =
-            "https://api.stripe.com/v1/" ++ endpoint
-        reader =
-            GoStrings.newReader ""
-    in
-        case Http.newRequest "GET" url reader of
-            Err e ->
-                Err (errorToString e)
-            
-            Ok req ->
-                let
-                    _ =
-                        Http.headerSet (Http.requestHeader req) "Authorization"
-                            ("Bearer " ++ apiKey)
-                in
-                    case Http.clientDo (Http.defaultClient ()) req of
-                        Err e ->
-                            Err (errorToString e)
-                        
-                        Ok resp ->
-                            case Io.readAll (Http.responseBody resp) of
-                                Err e ->
-                                    Err (errorToString e)
-                                
-                                Ok bytes ->
-                                    Ok (String.fromBytes bytes)
 
 -- ══════════════════════════════════════════════════════
 -- CUSTOMER MANAGEMENT
 -- ══════════════════════════════════════════════════════
 
--- Get or create a Stripe customer for this user.
--- Uses email as lookup key (Stripe API: GET /customers?email=...).
--- Idempotent: returns existing customer ID if found, creates if not.
 getOrCreateCustomer userId userName userEmail =
-    case stripeGet ("customers?email=" ++ urlEncode userEmail ++ "&limit=1") of
-        Ok respBody ->
-            case Decode.decodeString (Decode.field "data" (Decode.list (Decode.field "id" Decode.string))) respBody of
-                Ok customers ->
-                    case List.head customers of
-                        Just customerId ->
-                            let
-                                _ =
-                                    println ("[STRIPE] Found existing customer: " ++ customerId)
-                            in
-                                Ok customerId
-
-                        Nothing ->
-                            createCustomer userId userName userEmail
-
-                _ ->
-                    createCustomer userId userName userEmail
-
-        Err e ->
+    let
+        iter =
+            Customer.list
+                { email = userEmail
+                , limit = 1
+                }
+    in
+        if Customer.iterNext iter then
             let
+                c =
+                    Customer.iterCustomer iter
+                customerId =
+                    Stripe.customerID c
                 _ =
-                    println ("[STRIPE] Customer lookup failed: " ++ e ++ ", creating new")
+                    println ("[STRIPE] Found existing customer: " ++ customerId)
             in
-                createCustomer userId userName userEmail
+                Ok customerId
+        else
+            createCustomer userId userName userEmail
 
 createCustomer userId userName userEmail =
     let
         params =
-            [ ( "email" , userEmail )
-            , ( "name" , userName )
-            , ( "metadata[sky_uid]" , userId )
-            ]
+            { email = userEmail
+            , name = userName
+            , metadata = Dict.fromList [ ( "sky_uid" , userId ) ]
+            }
     in
-    case stripePost "customers" params of
-        Ok respBody ->
-            case Decode.decodeString (Decode.field "id" Decode.string) respBody of
-                Ok customerId ->
-                    let
-                        _ =
-                            println ("[STRIPE] Created customer: " ++ customerId)
-                    in
-                        Ok customerId
+        case Customer.new params of
+            Ok c ->
+                let
+                    customerId =
+                        Stripe.customerID c
+                    _ =
+                        println ("[STRIPE] Created customer: " ++ customerId)
+                in
+                    Ok customerId
 
-                Err e ->
-                    Err ("Failed to create Stripe customer: " ++ e)
+            Err e ->
+                Err ("Failed to create Stripe customer: " ++ errorToString e)
 
-        Err e ->
-            Err ("Stripe customer creation failed: " ++ e)
 
 -- ══════════════════════════════════════════════════════
 -- CHECKOUT SESSION
 -- ══════════════════════════════════════════════════════
-buildLineItemParams items =
+
+buildLineItems items =
     items
-        |> List.indexedMap
-            (
-            \i item ->
+        |> List.map
+            (\item ->
                 let
-                    prefix =
-                        "line_items[" ++ String.fromInt i ++ "]"
                     title =
                         Db.getField "title" item
                     price =
@@ -197,19 +122,18 @@ buildLineItemParams items =
                         else
                             price
                     qty =
-                        String.fromInt (Db.getInt "quantity" item)
+                        Db.getInt "quantity" item
                     currency =
                         String.toLower (Db.getField "price_currency" item)
                 in
-                    [ ( prefix ++ "[price_data][product_data][name]" , title )
-                    , ( prefix ++ "[price_data][unit_amount]"
-                    , String.fromInt effectivePrice
-                    )
-                    , ( prefix ++ "[price_data][currency]" , currency )
-                    , ( prefix ++ "[quantity]" , qty )
-                    ]
+                    { price_data =
+                        { product_data = { name = title }
+                        , unit_amount = effectivePrice
+                        , currency = currency
+                        }
+                    , quantity = qty
+                    }
             )
-        |> List.concat
 
 createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
@@ -226,75 +150,74 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                         domainUrl ++ "/order/" ++ cartId ++ "/success"
                     cancelUrl =
                         domainUrl ++ "/cart"
-                    lineItemParams =
-                        buildLineItemParams items
-                    baseParams =
-                        [ ( "mode" , "payment" )
-                        , ( "success_url" , successUrl )
-                        , ( "cancel_url" , cancelUrl )
-                        , ( "customer" , customerId )
-                        , ( "shipping_address_collection[allowed_countries][0]" , "GB" )
-                        , ( "shipping_address_collection[allowed_countries][1]" , "HK" )
-                        , ( "shipping_address_collection[allowed_countries][2]" , "MO" )
-                        , ( "phone_number_collection[enabled]" , "true" )
-                        , ( "custom_fields[0][key]" , "remarks" )
-                        , ( "custom_fields[0][label][type]" , "custom" )
-                        , ( "custom_fields[0][label][custom]" , "Delivery remarks" )
-                        , ( "custom_fields[0][type]" , "text" )
-                        , ( "custom_fields[0][optional]" , "true" )
-                        , ( "metadata[cart_id]" , cartId )
-                        , ( "metadata[remarks]" , remarks )
-                        ]
-                    allParams =
-                        baseParams ++ lineItemParams
+                    lineItems =
+                        buildLineItems items
+                    params =
+                        { mode = "payment"
+                        , success_url = successUrl
+                        , cancel_url = cancelUrl
+                        , customer = customerId
+                        , line_items = lineItems
+                        , shipping_address_collection =
+                            { allowed_countries = [ "GB" , "HK" , "MO" ] }
+                        , phone_number_collection = { enabled = True }
+                        , custom_fields =
+                            [ { key = "remarks"
+                              , label =
+                                    { type_ = "custom"
+                                    , custom = "Delivery remarks"
+                                    }
+                              , type_ = "text"
+                              , optional = True
+                              }
+                            ]
+                        , metadata =
+                            Dict.fromList
+                                [ ( "cart_id" , cartId )
+                                , ( "remarks" , remarks )
+                                ]
+                        }
                     _ =
                         println
                             ("[STRIPE] Creating checkout session for cart: " ++ cartId)
                 in
-                    case stripePost "checkout/sessions" allParams of
-                Ok respBody ->
-                    case decodeCheckoutResponse respBody of
-                        Ok session ->
-                            Ok session
-                        
+                    case Session.new params of
+                        Ok sess ->
+                            let
+                                sessionId =
+                                    Stripe.checkoutSessionID sess
+                                sessionUrl =
+                                    Stripe.checkoutSessionURL sess
+                            in
+                                Ok { id = sessionId , url = sessionUrl }
+
                         Err e ->
                             let
                                 _ =
                                     println
-                                        (
-                                        "[STRIPE] Failed to parse response: " ++
-                                        e
-                                        )
+                                        ("[STRIPE] API error: " ++ errorToString e)
                             in
-                                Err ("Failed to create checkout session: " ++ e)
-                
-                Err e ->
-                    let
-                        _ =
-                            println ("[STRIPE] API error: " ++ e)
-                    in
-                        Err ("Stripe API error: " ++ e)
+                                Err ("Stripe API error: " ++ errorToString e)
 
-decodeCheckoutResponse json =
-    -- Check for Stripe error response first
-    case Decode.decodeString (Decode.field "error" (Decode.field "message" Decode.string)) json of
-        Ok errMsg ->
-            Err errMsg
-
-        _ ->
-            Decode.decodeString
-                (
-                Decode.map2 (\id url -> { id = id , url = url })
-                    (Decode.field "id" Decode.string)
-                    (Decode.field "url" Decode.string)
-                )
-                json
 
 -- ══════════════════════════════════════════════════════
 -- PAYMENT VERIFICATION
 -- ══════════════════════════════════════════════════════
+
+type alias PaymentStatus =
+    { status : String
+    , paymentStatus : String
+    , customerName : String
+    , customerEmail : String
+    , customerPhone : String
+    , shippingLine1 : String
+    , shippingLine2 : String
+    , shippingCity : String
+    , shippingCountry : String
+    , shippingPostalCode : String
+    }
+
 verifyPayment orderId =
-    -- Check orders collection first (new flow), fall back to carts (legacy)
     let
         doc =
             case Db.getDoc "orders" orderId of
@@ -324,119 +247,71 @@ verifyPayment orderId =
                 Err "Order not found."
 
 verifyStripeSession cartId sessionId =
-    let
-        endpoint =
-            "checkout/sessions/" ++ sessionId
-    in
-        case stripeGet endpoint of
-            Ok respBody ->
-                case decodePaymentStatus respBody of
-                    Ok status ->
-                        if status.status == "complete" &&
-                        status.paymentStatus == "paid" then
-                            let
-                                _ =
-                                    println
-                                        (
-                                        "[STRIPE] Payment verified for cart: " ++
-                                        cartId
-                                        )
-                            in
-                                Ok status
-                        else
-                            Err
-                                (
-                                "Payment not complete. Status: " ++
-                                status.status ++
-                                ", Payment: " ++ status.paymentStatus
-                                )
-                    
-                    Err e ->
-                        Err ("Failed to parse payment status: " ++ e)
-            
-            Err e ->
-                Err ("Failed to retrieve checkout session: " ++ e)
-
-type alias PaymentStatus =
-    { status : String
-    , paymentStatus : String
-    , customerName : String
-    , customerEmail : String
-    , customerPhone : String
-    , shippingLine1 : String
-    , shippingLine2 : String
-    , shippingCity : String
-    , shippingCountry : String
-    , shippingPostalCode : String
-    }
-
-decodePaymentStatus json =
-    case Decode.decodeString (Decode.field "error" (Decode.field "message" Decode.string)) json of
-        Ok errMsg ->
-            Err errMsg
-
-        _ ->
+    case Session.get sessionId js of
+        Ok sess ->
             let
-                -- Parse status + payment_status (always present)
-                baseDecoder =
-                    Decode.map2 (\s p -> ( s , p ))
-                        (Decode.field "status" Decode.string)
-                        (Decode.field "payment_status" Decode.string)
-
-                -- Parse optional customer_details
-                optString path =
-                    Result.withDefault ""
-                        (Decode.decodeString (Decode.at path Decode.string) json)
-
-                customerName =
-                    optString [ "customer_details" , "name" ]
-                customerEmail =
-                    optString [ "customer_details" , "email" ]
-                customerPhone =
-                    optString [ "customer_details" , "phone" ]
-
-                -- Parse optional shipping_details.address
-                shippingName =
-                    optString [ "shipping_details" , "name" ]
-                shippingLine1 =
-                    optString [ "shipping_details" , "address" , "line1" ]
-                shippingLine2 =
-                    optString [ "shipping_details" , "address" , "line2" ]
-                shippingCity =
-                    optString [ "shipping_details" , "address" , "city" ]
-                shippingCountry =
-                    optString [ "shipping_details" , "address" , "country" ]
-                shippingPostalCode =
-                    optString [ "shipping_details" , "address" , "postal_code" ]
+                status =
+                    js (Stripe.checkoutSessionStatus sess)
+                paymentStatus =
+                    js (Stripe.checkoutSessionPaymentStatus sess)
             in
-                case Decode.decodeString baseDecoder json of
-                    Ok ( status , paymentStatus ) ->
+                if status == "complete" && paymentStatus == "paid" then
+                    let
+                        _ =
+                            println
+                                ("[STRIPE] Payment verified for cart: " ++ cartId)
+                        customerDetails =
+                            Stripe.checkoutSessionCustomerDetails sess
+                        custName =
+                            Stripe.checkoutSessionCustomerDetailsName customerDetails
+                        custEmail =
+                            Stripe.checkoutSessionCustomerDetailsEmail customerDetails
+                        custPhone =
+                            Stripe.checkoutSessionCustomerDetailsPhone customerDetails
+                        collectedInfo =
+                            Stripe.checkoutSessionCollectedInformation sess
+                        shippingDetails =
+                            Stripe.checkoutSessionCollectedInformationShippingDetails
+                                collectedInfo
+                        shippingName =
+                            Stripe.checkoutSessionCollectedInformationShippingDetailsName
+                                shippingDetails
+                        shippingAddr =
+                            Stripe.checkoutSessionCollectedInformationShippingDetailsAddress
+                                shippingDetails
+                    in
                         Ok
                             { status = status
                             , paymentStatus = paymentStatus
                             , customerName =
-                                if customerName != "" then
-                                    customerName
+                                if custName != "" then
+                                    custName
                                 else
                                     shippingName
-                            , customerEmail = customerEmail
-                            , customerPhone = customerPhone
-                            , shippingLine1 = shippingLine1
-                            , shippingLine2 = shippingLine2
-                            , shippingCity = shippingCity
-                            , shippingCountry = shippingCountry
-                            , shippingPostalCode = shippingPostalCode
+                            , customerEmail = custEmail
+                            , customerPhone = custPhone
+                            , shippingLine1 = Stripe.addressLine1 shippingAddr
+                            , shippingLine2 = Stripe.addressLine2 shippingAddr
+                            , shippingCity = Stripe.addressCity shippingAddr
+                            , shippingCountry = Stripe.addressCountry shippingAddr
+                            , shippingPostalCode =
+                                Stripe.addressPostalCode shippingAddr
                             }
+                else
+                    Err
+                        ("Payment not complete. Status: " ++ status ++
+                        ", Payment: " ++ paymentStatus)
 
-                    Err e ->
-                        Err e
+        Err e ->
+            Err ("Failed to retrieve checkout session: " ++ errorToString e)
+
 
 -- ══════════════════════════════════════════════════════
 -- STOCK MANAGEMENT
 -- ══════════════════════════════════════════════════════
+
 deductStock orderId =
     let
-        -- Try order_items first (new flow), fall back to cart_items (legacy)
         orderItems =
             Result.withDefault []
                 (Db.queryWhere "order_items" "order_id" "==" orderId)
@@ -481,6 +356,6 @@ deductItemStock item =
                             ()
                     else
                         ()
-            
+
             _ ->
                 ()

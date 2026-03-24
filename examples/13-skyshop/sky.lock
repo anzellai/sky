@@ -16,7 +16,6 @@ go:
   google.golang.org/api/option: latest
   io: latest
   net/http: latest
-  net/url: latest
   os: latest
   strconv: latest
   strings: latest

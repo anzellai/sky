@@ -144,6 +144,9 @@ export function installGoPackage(pkgName: string, version: string): string {
           fs.writeFileSync(path.join(cacheDir, "bindings.skyi"), result.skyiContent);
           console.log(`Generated bindings for ${pkgName} at ${cacheDir}/bindings.skyi`);
       }
+      if (result.bindingIndex) {
+          fs.writeFileSync(path.join(cacheDir, "bindings.idx"), JSON.stringify(result.bindingIndex));
+      }
   }).catch(e => console.error("Binding generation failed", e));
 
   return version;
