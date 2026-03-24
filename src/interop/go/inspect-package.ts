@@ -72,6 +72,23 @@ export function inspectPackage(pkgName: string): InspectResult {
     if (cached) return cached;
 
     const projectDir = process.cwd();
+
+    // Check disk cache: .skycache/go/{pkgPath}/inspect.json
+    // Invalidated by go.sum changes (dependency version updates)
+    const safePkgDir = path.join(projectDir, ".skycache", "go", pkgName);
+    const diskCachePath = path.join(safePkgDir, "inspect.json");
+    const goSumPath = path.join(projectDir, ".skycache", "gomod", "go.sum");
+    if (fs.existsSync(diskCachePath)) {
+        const cacheValid = !fs.existsSync(goSumPath) ||
+            fs.statSync(diskCachePath).mtimeMs > fs.statSync(goSumPath).mtimeMs;
+        if (cacheValid) {
+            try {
+                const diskResult: InspectResult = JSON.parse(fs.readFileSync(diskCachePath, "utf8"));
+                inspectCache.set(pkgName, diskResult);
+                return diskResult;
+            } catch (_) { /* corrupted cache, re-inspect */ }
+        }
+    }
     const inspectorDir = path.join(projectDir, ".skycache", "inspector");
     fs.mkdirSync(inspectorDir, { recursive: true });
 
@@ -362,5 +379,12 @@ func extractParams(tuple *types.Tuple, variadic bool) []Param {
     }).toString();
     const result: InspectResult = JSON.parse(out);
     inspectCache.set(pkgName, result);
+
+    // Write to disk cache for subsequent builds
+    try {
+        fs.mkdirSync(safePkgDir, { recursive: true });
+        fs.writeFileSync(diskCachePath, out);
+    } catch (_) { /* non-fatal: disk cache is optional */ }
+
     return result;
 }

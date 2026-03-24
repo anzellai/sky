@@ -132,6 +132,14 @@ const stdlibPaths: Record<string, string> = {
     "hex": "encoding/hex"
 };
 
+// Symbols collected during lowering — accumulated across all modules by the compiler.
+// Contains all Sky_* wrapper symbols actually referenced by lowered Go code.
+let _collectedWrapperSymbols: Set<string> | null = null;
+
+export function setWrapperSymbolCollector(collector: Set<string>) {
+    _collectedWrapperSymbols = collector;
+}
+
 export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, Map<string, Scheme>>, foreignModules?: Set<string>, importedModules?: Set<string>, importedConstructors?: Map<string, { adtName: string; tagIndex: number; arity: number }>): GoIR.GoPackage {
   const pkg: GoIR.GoPackage = {
     name: makeSafeGoPkgName(module.name[module.name.length - 1], module.name.join(".")),
@@ -579,11 +587,13 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                   return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: "CmdNone" };
               }
               const wrapperName = "Sky_" + safePkg + "_" + goName;
+              if (_collectedWrapperSymbols) _collectedWrapperSymbols.add(wrapperName);
               return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName };
           }
 
           // For foreign Go FFI modules, reference the wrapper directly
           const wrapperName2 = "Sky_" + safePkg + "_" + goName;
+          if (_collectedWrapperSymbols) _collectedWrapperSymbols.add(wrapperName2);
           return { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: "sky_wrappers" }, sel: wrapperName2 };
       }
       

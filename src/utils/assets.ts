@@ -4238,6 +4238,21 @@ const LiveJS = \`(function() {
   var sid = root.getAttribute('sky-root');
   var cfg = { inputMode: 'debounce', pollInterval: 0 };
 
+  // ── Loading Overlay ────────────────────────────────────
+  var skyLoader = document.getElementById('sky-loader');
+  var loaderTimer = null;
+  function showLoader() {
+    if (!skyLoader) return;
+    clearTimeout(loaderTimer);
+    // Small delay avoids flicker on fast responses
+    loaderTimer = setTimeout(function() { skyLoader.classList.add('sky-loading'); }, 80);
+  }
+  function hideLoader() {
+    if (!skyLoader) return;
+    clearTimeout(loaderTimer);
+    skyLoader.classList.remove('sky-loading');
+  }
+
   // Load server config (input mode, poll interval)
   fetch('/_sky/config').then(function(r) { return r.json(); }).then(function(c) {
     cfg = c;
@@ -4263,18 +4278,18 @@ const LiveJS = \`(function() {
         send(el.getAttribute('sky-dblclick'), jsonArgs(el));
       });
     });
-    // Input — mode depends on config
+    // Input — mode depends on config (no loading overlay for typing)
     root.querySelectorAll('[sky-input]').forEach(function(el) {
       if (el._skyBound) return;
       el._skyBound = true;
       if (cfg.inputMode === 'blur') {
         // Blur mode: only send on blur/enter, keep input client-side
         el.addEventListener('blur', function(e) {
-          send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
+          send(el.getAttribute('sky-input'), [_skyInputVal(e.target)], { noLoader: true });
         });
         el.addEventListener('keydown', function(e) {
           if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') {
-            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
+            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)], { noLoader: true });
           }
         });
       } else {
@@ -4283,7 +4298,7 @@ const LiveJS = \`(function() {
         el.addEventListener('input', function(e) {
           clearTimeout(timer);
           timer = setTimeout(function() {
-            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
+            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)], { noLoader: true });
           }, 150);
         });
       }
@@ -4421,13 +4436,15 @@ const LiveJS = \`(function() {
   var pending = false;
   var queue = [];
 
-  function send(msg, args) {
+  function send(msg, args, opts) {
     if (!sid) return;
     if (pending) {
-      queue.push([msg, args]);
+      queue.push([msg, args, opts]);
       return;
     }
     pending = true;
+    var noLoader = opts && opts.noLoader;
+    if (!noLoader) showLoader();
     fetch('/_sky/event', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -4440,6 +4457,7 @@ const LiveJS = \`(function() {
     })
     .then(function(data) {
       pending = false;
+      hideLoader();
       if (data) {
         applyPatches(data.patches || []);
         if (data.url) history.pushState({}, '', data.url);
@@ -4448,10 +4466,10 @@ const LiveJS = \`(function() {
       // Process queued events
       if (queue.length > 0) {
         var next = queue.shift();
-        send(next[0], next[1]);
+        send(next[0], next[1], next[2]);
       }
     })
-    .catch(function() { pending = false; });
+    .catch(function() { pending = false; hideLoader(); });
   }
 
   // ── DOM Patching ─────────────────────────────────────
@@ -4518,6 +4536,7 @@ const LiveJS = \`(function() {
     es.onmessage = function(e) {
       try {
         var data = JSON.parse(e.data);
+        hideLoader();
         applyPatches(data.patches || []);
         if (data.url) history.pushState({}, '', data.url);
         if (data.title) document.title = data.title;
@@ -4544,6 +4563,7 @@ const LiveJS = \`(function() {
       })
       .then(function(data) {
         if (data) {
+          hideLoader();
           applyPatches(data.patches || []);
           if (data.url) history.pushState({}, '', data.url);
           if (data.title) document.title = data.title;
@@ -4556,7 +4576,7 @@ const LiveJS = \`(function() {
   // ── Public API ──────────────────────────────────────
   // Expose send() so custom client-side JS (e.g. Firebase Auth)
   // can dispatch Sky.Live events programmatically.
-  window.__sky_send = function(msg, args) { send(msg, args || []); };
+  window.__sky_send = function(msg, args, opts) { send(msg, args || [], opts); };
 
   // ── Init ─────────────────────────────────────────────
   bind();
@@ -5142,10 +5162,10 @@ func StartServer(config LiveConfig, app LiveApp) {
 	}
 	mux := http.NewServeMux()
 
-	// Serve the JS client
+	// Serve the JS client (no-cache ensures browser always gets latest version)
 	mux.HandleFunc("GET /_sky/live.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write([]byte(LiveJS))
 	})
 
@@ -5236,6 +5256,17 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 				sess.Model = app.FixModel(sess.Model)
 			}
 			model = sess.Model
+
+			// Clear ephemeral redirect URL from restored session.
+			// checkoutUrl is only valid for one render cycle (to trigger
+			// data-sky-redirect). On any subsequent page load (back button,
+			// Stripe success return, refresh), it must be cleared to prevent
+			// an infinite redirect loop.
+			if m, ok := model.(map[string]any); ok {
+				if cu, exists := m["checkoutUrl"]; exists && cu != "" {
+					m["checkoutUrl"] = ""
+				}
+			}
 
 			// If navigating to a different route on refresh, send Navigate msg
 			currentPage := getPageFromModel(model)
@@ -7146,7 +7177,16 @@ func RenderFullPage(bodyContent *VNode, title string, sid string) string {
 	sb.WriteString(escapeHTML(title))
 	sb.WriteString("</title>\\n")
 	sb.WriteString("<script src='/_sky/live.js' defer></script>\\n")
-	sb.WriteString("</head>\\n<body>\\n")
+	// Loading overlay: shown during server round-trips, hidden on response/SSE.
+	// Users can override styles by targeting #sky-loader and #sky-loader .sky-spinner.
+	sb.WriteString(\`<style>
+#sky-loader{position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(255,255,255,0.15);backdrop-filter:blur(1px);pointer-events:all;transition:opacity .15s}
+#sky-loader.sky-loading{display:flex}
+#sky-loader .sky-spinner{width:28px;height:28px;border:3px solid rgba(0,0,0,0.1);border-top-color:#666;border-radius:50%;animation:sky-spin .6s linear infinite}
+@keyframes sky-spin{to{transform:rotate(360deg)}}
+</style>\`)
+	sb.WriteString("\\n</head>\\n<body>\\n")
+	sb.WriteString("<div id='sky-loader'><div class='sky-spinner'></div></div>\\n")
 	sb.WriteString("<div sky-root='")
 	sb.WriteString(sid)
 	sb.WriteString("'>\\n")

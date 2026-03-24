@@ -526,13 +526,14 @@ handleVerifyPayment orderId model =
                                     orderItems =
                                         Cart.getOrderItems orderId
                                 in
-                                    ( { base
-                                      | order = updatedOrder
-                                      , orderItems = orderItems
-                                      , page = OrderPage orderId
-                                      , notification = Tr.t model.lang "order.success"
-                                      , notificationType = "success"
-                                      }
+                                    ( refreshCart
+                                        { base
+                                          | order = updatedOrder
+                                          , orderItems = orderItems
+                                          , page = OrderPage orderId
+                                          , notification = Tr.t model.lang "order.success"
+                                          , notificationType = "success"
+                                        }
                                     , Cmd.none
                                     )
 

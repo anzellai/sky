@@ -314,10 +314,10 @@ func StartServer(config LiveConfig, app LiveApp) {
 	}
 	mux := http.NewServeMux()
 
-	// Serve the JS client
+	// Serve the JS client (no-cache ensures browser always gets latest version)
 	mux.HandleFunc("GET /_sky/live.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript")
-		w.Header().Set("Cache-Control", "public, max-age=3600")
+		w.Header().Set("Cache-Control", "no-cache")
 		w.Write([]byte(LiveJS))
 	})
 
@@ -408,6 +408,17 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 				sess.Model = app.FixModel(sess.Model)
 			}
 			model = sess.Model
+
+			// Clear ephemeral redirect URL from restored session.
+			// checkoutUrl is only valid for one render cycle (to trigger
+			// data-sky-redirect). On any subsequent page load (back button,
+			// Stripe success return, refresh), it must be cleared to prevent
+			// an infinite redirect loop.
+			if m, ok := model.(map[string]any); ok {
+				if cu, exists := m["checkoutUrl"]; exists && cu != "" {
+					m["checkoutUrl"] = ""
+				}
+			}
 
 			// If navigating to a different route on refresh, send Navigate msg
 			currentPage := getPageFromModel(model)

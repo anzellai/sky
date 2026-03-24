@@ -10,6 +10,21 @@ const LiveJS = `(function() {
   var sid = root.getAttribute('sky-root');
   var cfg = { inputMode: 'debounce', pollInterval: 0 };
 
+  // ── Loading Overlay ────────────────────────────────────
+  var skyLoader = document.getElementById('sky-loader');
+  var loaderTimer = null;
+  function showLoader() {
+    if (!skyLoader) return;
+    clearTimeout(loaderTimer);
+    // Small delay avoids flicker on fast responses
+    loaderTimer = setTimeout(function() { skyLoader.classList.add('sky-loading'); }, 80);
+  }
+  function hideLoader() {
+    if (!skyLoader) return;
+    clearTimeout(loaderTimer);
+    skyLoader.classList.remove('sky-loading');
+  }
+
   // Load server config (input mode, poll interval)
   fetch('/_sky/config').then(function(r) { return r.json(); }).then(function(c) {
     cfg = c;
@@ -35,18 +50,18 @@ const LiveJS = `(function() {
         send(el.getAttribute('sky-dblclick'), jsonArgs(el));
       });
     });
-    // Input — mode depends on config
+    // Input — mode depends on config (no loading overlay for typing)
     root.querySelectorAll('[sky-input]').forEach(function(el) {
       if (el._skyBound) return;
       el._skyBound = true;
       if (cfg.inputMode === 'blur') {
         // Blur mode: only send on blur/enter, keep input client-side
         el.addEventListener('blur', function(e) {
-          send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
+          send(el.getAttribute('sky-input'), [_skyInputVal(e.target)], { noLoader: true });
         });
         el.addEventListener('keydown', function(e) {
           if (e.key === 'Enter' && el.tagName !== 'TEXTAREA') {
-            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
+            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)], { noLoader: true });
           }
         });
       } else {
@@ -55,7 +70,7 @@ const LiveJS = `(function() {
         el.addEventListener('input', function(e) {
           clearTimeout(timer);
           timer = setTimeout(function() {
-            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)]);
+            send(el.getAttribute('sky-input'), [_skyInputVal(e.target)], { noLoader: true });
           }, 150);
         });
       }
@@ -193,13 +208,15 @@ const LiveJS = `(function() {
   var pending = false;
   var queue = [];
 
-  function send(msg, args) {
+  function send(msg, args, opts) {
     if (!sid) return;
     if (pending) {
-      queue.push([msg, args]);
+      queue.push([msg, args, opts]);
       return;
     }
     pending = true;
+    var noLoader = opts && opts.noLoader;
+    if (!noLoader) showLoader();
     fetch('/_sky/event', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -212,6 +229,7 @@ const LiveJS = `(function() {
     })
     .then(function(data) {
       pending = false;
+      hideLoader();
       if (data) {
         applyPatches(data.patches || []);
         if (data.url) history.pushState({}, '', data.url);
@@ -220,10 +238,10 @@ const LiveJS = `(function() {
       // Process queued events
       if (queue.length > 0) {
         var next = queue.shift();
-        send(next[0], next[1]);
+        send(next[0], next[1], next[2]);
       }
     })
-    .catch(function() { pending = false; });
+    .catch(function() { pending = false; hideLoader(); });
   }
 
   // ── DOM Patching ─────────────────────────────────────
@@ -290,6 +308,7 @@ const LiveJS = `(function() {
     es.onmessage = function(e) {
       try {
         var data = JSON.parse(e.data);
+        hideLoader();
         applyPatches(data.patches || []);
         if (data.url) history.pushState({}, '', data.url);
         if (data.title) document.title = data.title;
@@ -316,6 +335,7 @@ const LiveJS = `(function() {
       })
       .then(function(data) {
         if (data) {
+          hideLoader();
           applyPatches(data.patches || []);
           if (data.url) history.pushState({}, '', data.url);
           if (data.title) document.title = data.title;
@@ -328,7 +348,7 @@ const LiveJS = `(function() {
   // ── Public API ──────────────────────────────────────
   // Expose send() so custom client-side JS (e.g. Firebase Auth)
   // can dispatch Sky.Live events programmatically.
-  window.__sky_send = function(msg, args) { send(msg, args || []); };
+  window.__sky_send = function(msg, args, opts) { send(msg, args || [], opts); };
 
   // ── Init ─────────────────────────────────────────────
   bind();

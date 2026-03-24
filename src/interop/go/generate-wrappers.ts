@@ -7,8 +7,56 @@ function makeSafeGoName(pkgName: string) {
     return pkgName.replace(/[\/\.-]/g, "_");
 }
 
+/**
+ * Pre-filter an InspectResult to only include symbols whose wrapper names
+ * are in the usedSymbols set. Reduces iteration from potentially 40K+ to
+ * only the symbols actually referenced by compiled Sky code.
+ */
+function filterInspectResult(pkg: InspectResult, safePkg: string, usedSymbols: Set<string>): InspectResult {
+    const isUsed = (skyName: string): boolean => {
+        const pascal = skyName.charAt(0).toUpperCase() + skyName.slice(1);
+        const wrapperName = `Sky_${safePkg}_${pascal}`;
+        const setterName = `Sky_${safePkg}_Set${pascal}`;
+        return usedSymbols.has(wrapperName) || usedSymbols.has(setterName);
+    };
+
+    const isTypeUsed = (typeName: string, methods: any[], fields: any[]): boolean => {
+        // A type is used if any of its methods or fields are used
+        for (const m of methods || []) {
+            if (isUsed(lowerCamelCase(typeName + m.name))) return true;
+        }
+        for (const f of fields || []) {
+            if (isUsed(lowerCamelCase(typeName + f.name))) return true;
+        }
+        // Also check pattern wrappers (ToMaps, ExecResult, QueryToMaps)
+        if (isUsed(lowerCamelCase(typeName + "ToMaps"))) return true;
+        if (isUsed(lowerCamelCase(typeName + "ExecResult"))) return true;
+        if (isUsed(lowerCamelCase(typeName + "QueryToMaps"))) return true;
+        return false;
+    };
+
+    return {
+        name: pkg.name,
+        path: pkg.path,
+        funcs: (pkg.funcs || []).filter(f => isUsed(lowerCamelCase(f.name))),
+        vars: (pkg.vars || []).filter(v => {
+            const skyName = lowerCamelCase(v.name);
+            return isUsed(skyName);
+        }),
+        consts: (pkg.consts || []).filter(c => isUsed(lowerCamelCase(c.name))),
+        types: (pkg.types || []).filter(t => t.name && isTypeUsed(t.name, t.methods, t.fields)),
+    };
+}
+
 export function generateWrappers(pkgName: string, pkg: InspectResult, usedSymbols?: Set<string>) {
     const safePkg = makeSafeGoName(pkgName);
+
+    // Pre-filter: when usedSymbols is known, strip the InspectResult down to only
+    // the symbols actually referenced. For large packages (e.g., Stripe SDK with 40K+
+    // symbols), this reduces wrapper generation from seconds to milliseconds.
+    if (usedSymbols && usedSymbols.size > 0) {
+        pkg = filterInspectResult(pkg, safePkg, usedSymbols);
+    }
     
     const wrapperDir = path.join(".skycache", "go", "wrappers");
     fs.mkdirSync(wrapperDir, { recursive: true });

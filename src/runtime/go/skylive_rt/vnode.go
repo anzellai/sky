@@ -150,7 +150,16 @@ func RenderFullPage(bodyContent *VNode, title string, sid string) string {
 	sb.WriteString(escapeHTML(title))
 	sb.WriteString("</title>\n")
 	sb.WriteString("<script src='/_sky/live.js' defer></script>\n")
-	sb.WriteString("</head>\n<body>\n")
+	// Loading overlay: shown during server round-trips, hidden on response/SSE.
+	// Users can override styles by targeting #sky-loader and #sky-loader .sky-spinner.
+	sb.WriteString(`<style>
+#sky-loader{position:fixed;top:0;left:0;width:100%;height:100%;z-index:99999;display:none;align-items:center;justify-content:center;background:rgba(255,255,255,0.15);backdrop-filter:blur(1px);pointer-events:all;transition:opacity .15s}
+#sky-loader.sky-loading{display:flex}
+#sky-loader .sky-spinner{width:28px;height:28px;border:3px solid rgba(0,0,0,0.1);border-top-color:#666;border-radius:50%;animation:sky-spin .6s linear infinite}
+@keyframes sky-spin{to{transform:rotate(360deg)}}
+</style>`)
+	sb.WriteString("\n</head>\n<body>\n")
+	sb.WriteString("<div id='sky-loader'><div class='sky-spinner'></div></div>\n")
 	sb.WriteString("<div sky-root='")
 	sb.WriteString(sid)
 	sb.WriteString("'>\n")
