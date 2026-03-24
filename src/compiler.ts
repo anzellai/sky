@@ -18,7 +18,7 @@ import { collectForeignImports } from "./interop/go/collect-foreign.js";
 import * as CoreIR from "./core-ir/core-ir.js";
 import * as GoIR from "./go-ir/go-ir.js";
 import * as AST from "./ast/ast.js";
-import { Scheme, Type } from "./types/types.js";
+import { Scheme, Type, mono } from "./types/types.js";
 import { analyzeUsage } from "./lower/passes/usage-analysis.js";
 import { eliminateDeadBindings } from "./lower/passes/dead-bindings.js";
 import { execSync } from "child_process";
@@ -541,6 +541,38 @@ export async function compileProject(entryFile: string, outDir: string) {
           }
         }
       }
+      // For Go FFI modules with binding index: resolve symbols lazily from index.
+      // This avoids loading 40K+ symbols into the type environment — only resolve
+      // the symbols that the importing module actually uses.
+      if (!depExports || depExports.size === 0) {
+          const depModule = graph.modules.find((m: any) => {
+              const n = m.moduleAst.name.join(".");
+              return n === depName || depName.endsWith("." + n);
+          });
+          if (depModule && (depModule.moduleAst as any)._bindingIndex) {
+              const idx = (depModule.moduleAst as any)._bindingIndex;
+              // Create exports from index — register ALL type names as constructors
+              const idxExports = new Map<string, Scheme>();
+              for (const typeName of idx.types || []) {
+                  const tc: Type = { kind: "TypeConstant", name: typeName };
+                  idxExports.set(typeName, mono(tc));
+              }
+              // Register all symbols with their parsed types
+              for (const [symName, entry] of Object.entries(idx.symbols)) {
+                  const e = entry as any;
+                  const type = parseForeignTypeForIndex(e.type);
+                  idxExports.set(symName, mono(type));
+              }
+              depExports = idxExports;
+              moduleExports.set(depName, idxExports);
+              // Also register under the module's declared name
+              const declaredName = depModule.moduleAst.name.join(".");
+              if (declaredName !== depName) {
+                  moduleExports.set(declaredName, idxExports);
+              }
+          }
+      }
+
       if (depExports) {
         const exposedNames = new Set<string>();
         if (imp.exposing?.kind === "ExposingClause" && !imp.exposing.open) {
@@ -634,12 +666,12 @@ export async function compileProject(entryFile: string, outDir: string) {
 
     for (const b of foreignResult.bindings) {
         allForeignPackages.add(b.packageName);
-        // When foreign import "sky_wrappers" exposing (Sky_xxx), the symbol name
-        // encodes the underlying Go package. Track these for later derivation.
-        if (b.packageName === "sky_wrappers") {
+        // When foreign import "sky_wrappers" exposing (Sky_xxx) in USER code (not .skyi),
+        // track for package derivation. Skip .skyi modules — they contain ALL symbols
+        // which would defeat tree-shaking.
+        if (b.packageName === "sky_wrappers" && !loaded.filePath.endsWith(".skyi")) {
             for (const v of b.values) {
                 if (v.skyName.startsWith("Sky_")) {
-                    // Will be resolved against go.mod/sky.toml in the post-compile phase
                     usedSkyWrapperSymbols.add(v.skyName);
                 }
             }
@@ -1632,4 +1664,47 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
     declarations,
     typeDeclarations
   };
+}
+
+/**
+ * Parse a type string from binding index into a Type.
+ * Handles: "String", "Int -> String", "Result Error Unit", "(List Any) -> Int", etc.
+ */
+function parseForeignTypeForIndex(typeStr: string): Type {
+    // Split on top-level " -> " (respecting parens)
+    const parts: string[] = [];
+    let depth = 0, current = "";
+    for (let i = 0; i < typeStr.length; i++) {
+        const ch = typeStr[i];
+        if (ch === "(") depth++;
+        else if (ch === ")") depth--;
+        else if (depth === 0 && typeStr.slice(i, i + 4) === " -> ") {
+            parts.push(current.trim());
+            current = "";
+            i += 3;
+            continue;
+        }
+        current += ch;
+    }
+    parts.push(current.trim());
+
+    const parseOne = (s: string): Type => {
+        s = s.trim();
+        if (s.startsWith("(") && s.endsWith(")")) return parseForeignTypeForIndex(s.slice(1, -1));
+        if (/^[a-z]/.test(s)) return { kind: "TypeConstant", name: "Foreign" }; // type variable → Foreign
+        const tokens = s.split(/\s+/);
+        if (tokens.length === 1) return { kind: "TypeConstant", name: tokens[0] };
+        return {
+            kind: "TypeApplication",
+            constructor: { kind: "TypeConstant", name: tokens[0] },
+            arguments: tokens.slice(1).map(t => parseOne(t))
+        };
+    };
+
+    if (parts.length === 1) return parseOne(parts[0]);
+    let result = parseOne(parts[parts.length - 1]);
+    for (let i = parts.length - 2; i >= 0; i--) {
+        result = { kind: "TypeFunction", from: parseOne(parts[i]), to: result };
+    }
+    return result;
 }

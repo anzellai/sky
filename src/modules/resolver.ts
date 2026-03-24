@@ -32,55 +32,20 @@ function buildAstFromIndex(idx: BindingIndex): AST.Module {
         } as any);
     }
 
-    // For each symbol: type annotation + foreign import + function declaration
-    for (const [skyName, entry] of Object.entries(idx.symbols)) {
-        // Type annotation: skyName : Type
-        declarations.push({
-            kind: "TypeAnnotation",
-            name: skyName,
-            type: parseTypeString(entry.type),
-            span
-        } as any);
-
-        // Foreign import declaration
-        declarations.push({
-            kind: "ForeignImportDeclaration",
-            name: entry.wrapper,
-            sourceModule: entry.source,
-            span
-        } as any);
-
-        // Function declaration: skyName args = wrapper args
-        const arity = countArgsFromType(entry.type);
-        const params = arity > 0
-            ? Array.from({ length: arity }, (_, i) => `arg${i}`)
-            : ["arg0"];
-        declarations.push({
-            kind: "FunctionDeclaration",
-            name: skyName,
-            parameters: params.map(p => ({
-                kind: "Parameter",
-                pattern: { kind: "VariablePattern", name: p, span },
-                span
-            })),
-            body: {
-                kind: "CallExpression",
-                callee: { kind: "IdentifierExpression", name: entry.wrapper, span },
-                arguments: params.map(p => ({ kind: "IdentifierExpression", name: p, span })),
-                span
-            },
-            span
-        } as any);
-    }
-
-    return {
+    // Build the minimal module AST with index attached for lazy resolution
+    const module = {
         kind: "Module",
         name: idx.module.split("."),
         exposing: { kind: "ExposingClause", open: true, items: [], span },
         imports: [],
         declarations,
-        span
+        span,
+        // Store the full index for lazy symbol resolution during compilation.
+        // The compiler resolves individual symbols from this index when
+        // other modules reference them, instead of loading all 40K+ at once.
+        _bindingIndex: idx
     } as any;
+    return module;
 }
 
 /** Parse a simple type string like "String -> Int -> Result Error Unit" into an AST TypeExpression */

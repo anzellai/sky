@@ -526,6 +526,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
           // Heuristic for Go FFI wrappers
           let safePkg = pkgName.toLowerCase().replace(/\./g, "_");
+          let fullPkgName = pkgName;
           
           if (pkgName === "Http" || pkgName === "Net.Http") safePkg = "net_http";
           else if (pkgName === "Sha256" || pkgName === "Crypto.Sha256") safePkg = "crypto_sha256";
@@ -539,7 +540,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           else {
               // Resolve short module names to full names for wrapper lookup.
               // E.g., "Schema" → "Github.Com.KandaCo.KsSchema.Pkg.Schema"
-              let fullPkgName = pkgName;
+              fullPkgName = pkgName;
               if (moduleExports) {
                   for (const full of moduleExports.keys()) {
                       const lastPart = full.split(".").pop();
@@ -560,7 +561,8 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
           // the Std.* FFI shortcut so that real Sky modules like Std.Html take priority.
           // Exclude thin FFI wrapper modules that only re-export foreign imports.
           const ffiWrappers = new Set(["Std.Log", "Std.Cmd", "Std.Task", "Std.Program", "Cmd", "Log"]);
-          if (moduleExports && moduleExports.has(pkgName) && !ffiWrappers.has(pkgName) && (!foreignModules || !foreignModules.has(pkgName))) {
+          const isForeignModule = foreignModules && (foreignModules.has(pkgName) || foreignModules.has(fullPkgName));
+          if (moduleExports && moduleExports.has(pkgName) && !ffiWrappers.has(pkgName) && !isForeignModule) {
               // It's a non-foreign Sky module! Lower to direct Go package call.
               const goPkg = makeSafeGoPkgName(moduleParts[moduleParts.length - 1], pkgName);
               const selectorExpr: GoIR.GoExpr = { kind: "GoSelectorExpr", expr: { kind: "GoIdent", name: goPkg }, sel: goName };
