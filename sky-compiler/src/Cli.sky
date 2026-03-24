@@ -1,0 +1,228 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Args as Args
+import Sky.Core.Process as Process
+import Sky.Core.File as File
+import Std.Log exposing (println)
+import Compiler.Pipeline as Pipeline
+import Compiler.Lexer as Lexer
+import Compiler.Parser as Parser
+import Compiler.Checker as Checker
+import Compiler.Resolver as Resolver
+import Lsp.Server as LspServer
+
+
+-- ══════════════════════════════════════════════════════
+-- SKY CLI
+-- ══════════════════════════════════════════════════════
+
+main =
+    let
+        args =
+            Args.getArgs ()
+        command =
+            case Args.getArg 1 of
+                Just cmd ->
+                    cmd
+
+                Nothing ->
+                    "help"
+    in
+        runCommand command args
+
+
+runCommand : String -> List String -> ()
+runCommand command args =
+    if command == "build" then
+        cmdBuild args
+    else if command == "run" then
+        cmdRun args
+    else if command == "check" then
+        cmdCheck args
+    else if command == "lsp" then
+        cmdLsp args
+    else if command == "version" || command == "--version" then
+        println "sky v0.4.0 (self-hosted)"
+    else
+        cmdHelp ()
+
+
+-- ══════════════════════════════════════════════════════
+-- BUILD COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdBuild : List String -> ()
+cmdBuild args =
+    let
+        entryFile =
+            case Args.getArg 2 of
+                Just f ->
+                    f
+
+                Nothing ->
+                    "src/Main.sky"
+        outDir =
+            "sky-out"
+    in
+        case Pipeline.compile entryFile outDir of
+            Err e ->
+                let
+                    _ =
+                        println ("Error: " ++ e)
+                in
+                    Process.exit 1
+
+            Ok code ->
+                let
+                    _ =
+                        File.writeFile (outDir ++ "/go.mod") "module sky-app\n\ngo 1.21.0\n"
+                    _ =
+                        println "Compiled Sky to Go."
+                    buildResult =
+                        Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app" ]
+                in
+                    case buildResult of
+                        Ok buildOutput ->
+                            let
+                                _ =
+                                    buildOutput
+                            in
+                                println ("Build complete: " ++ outDir ++ "/app")
+
+                        Err e ->
+                            let
+                                _ =
+                                    println ("go build failed: " ++ errorToString e)
+                            in
+                                Process.exit 1
+
+
+-- ══════════════════════════════════════════════════════
+-- RUN COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdRun : List String -> ()
+cmdRun args =
+    let
+        _ =
+            cmdBuild args
+        runResult =
+            Process.run "./dist/app" []
+    in
+        case runResult of
+            Ok output ->
+                println output
+
+            Err e ->
+                let
+                    _ =
+                        println (errorToString e)
+                in
+                    Process.exit 1
+
+
+-- ══════════════════════════════════════════════════════
+-- CHECK COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdCheck : List String -> ()
+cmdCheck args =
+    let
+        entryFile =
+            case Args.getArg 2 of
+                Just f ->
+                    f
+
+                Nothing ->
+                    "src/Main.sky"
+    in
+        case File.readFile entryFile of
+            Err readErr ->
+                let
+                    _ =
+                        println ("Cannot read: " ++ entryFile ++ " (" ++ readErr ++ ")")
+                in
+                    Process.exit 1
+
+            Ok source ->
+                let
+                    lexResult =
+                        Lexer.lex source
+                in
+                    case Parser.parse lexResult.tokens of
+                        Err e ->
+                            let
+                                _ =
+                                    println ("Parse error: " ++ e)
+                            in
+                                Process.exit 1
+
+                        Ok mod ->
+                            let
+                                stdlibEnv =
+                                    Resolver.buildStdlibEnv
+                                checkResult =
+                                    Checker.checkModule mod (Just stdlibEnv)
+                            in
+                                case checkResult of
+                                    Ok result ->
+                                        let
+                                            _ =
+                                                List.map (\d -> println ("  " ++ d.name ++ " : " ++ d.prettyType)) result.declarations
+                                            _ =
+                                                List.map (\d -> println ("  warning: " ++ d)) result.diagnostics
+                                        in
+                                            if List.isEmpty result.diagnostics then
+                                                println ("Type check passed: " ++ entryFile)
+                                            else
+                                                println ("Type check passed with " ++ String.fromInt (List.length result.diagnostics) ++ " warnings: " ++ entryFile)
+
+                                    Err e ->
+                                        let
+                                            _ =
+                                                println ("Type error: " ++ e)
+                                        in
+                                            Process.exit 1
+
+
+-- ══════════════════════════════════════════════════════
+-- LSP COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdLsp : List String -> ()
+cmdLsp args =
+    LspServer.startServer ()
+
+
+-- ══════════════════════════════════════════════════════
+-- HELP COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdHelp : () -> ()
+cmdHelp _ =
+    let
+        _ =
+            println "Sky Programming Language v0.4.0 (self-hosted)"
+        _ =
+            println ""
+        _ =
+            println "Usage: sky <command> [args]"
+        _ =
+            println ""
+        _ =
+            println "Commands:"
+        _ =
+            println "  build [file]    Compile to Go binary (default: src/Main.sky)"
+        _ =
+            println "  run [file]      Build and run"
+        _ =
+            println "  check [file]    Type-check without compiling"
+        _ =
+            println "  lsp             Start Language Server"
+        _ =
+            println "  version         Show version"
+    in
+        ()

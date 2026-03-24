@@ -1,0 +1,256 @@
+module Compiler.Emitter exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.File as File
+-- No Std.Log import — avoid polluting namespace for CLI
+import Compiler.Ast as Ast exposing (..)
+import Compiler.Token exposing (..)
+import Compiler.GoIr exposing (..)
+import Compiler.Emit as Emit
+import Compiler.Lower as Lower
+import Compiler.Adt as Adt
+import Compiler.Checker as Checker
+import Compiler.Lexer as Lexer
+import Compiler.Parser as Parser
+import Compiler.Resolver as Resolver
+
+
+-- ══════════════════════════════════════════════════════
+-- MULTI-MODULE PROJECT EMITTER
+-- ══════════════════════════════════════════════════════
+
+-- Compiles a Sky project to a complete Go project.
+-- Each Sky module becomes a Go package.
+-- The runtime package provides shared helpers.
+
+type alias ProjectConfig =
+    { entryFile : String
+    , outDir : String
+    , moduleName : String
+    }
+
+
+emitProject : ProjectConfig -> Result String String
+emitProject config =
+    case Pipeline.compile config.entryFile config.outDir of
+        Err e ->
+            Err e
+
+        Ok code ->
+            let
+                -- Write go.mod for the output
+                goModContent =
+                    "module sky-app\n\ngo 1.21.0\n"
+                _ =
+                    File.writeFile (config.outDir ++ "/go.mod") goModContent
+            in
+                Ok code
+
+
+emitSingleModule : ProjectConfig -> Module -> String -> Result String String
+emitSingleModule config mod source =
+    let
+        -- Type check
+        stdlibEnv =
+            Resolver.buildStdlibEnv
+        checkResult =
+            Checker.checkModule mod (Just stdlibEnv)
+        registry =
+            case checkResult of
+                Ok result ->
+                    result.registry
+
+                Err _ ->
+                    Adt.emptyRegistry
+
+        -- Lower to Go IR with runtime imports
+        goPackage =
+            lowerModuleForProject registry mod config.moduleName
+
+        -- Emit Go
+        goCode =
+            Emit.emitPackage goPackage
+
+        -- Write files
+        _ =
+            File.mkdirAll config.outDir
+        mainPath =
+            config.outDir ++ "/main.go"
+        _ =
+            File.writeFile mainPath goCode
+
+        -- Write go.mod
+        goModContent =
+            "module " ++ config.moduleName ++ "\n\ngo 1.21.0\n"
+        _ =
+            File.writeFile (config.outDir ++ "/go.mod") goModContent
+
+        -- Copy runtime
+        _ =
+            copyRuntime config.outDir config.moduleName
+    in
+        Ok goCode
+
+
+-- ══════════════════════════════════════════════════════
+-- LOWER WITH RUNTIME IMPORTS
+-- ══════════════════════════════════════════════════════
+
+lowerModuleForProject : Adt.AdtRegistry -> Module -> String -> GoPackage
+lowerModuleForProject registry mod moduleName =
+    let
+        baseCtx =
+            Lower.emptyCtx
+        ctx =
+            { baseCtx
+                | registry = registry
+                , localFunctions = Lower.collectLocalFunctions mod.declarations
+                , importedConstructors = Lower.buildConstructorMap registry
+            }
+        goDecls =
+            Lower.lowerDeclarations ctx mod.declarations
+        ctorDecls =
+            Lower.generateConstructorDecls registry mod.declarations
+        runtimeImport =
+            { path = moduleName ++ "/runtime" , alias_ = "rt" }
+        imports =
+            [ { path = "fmt" , alias_ = "" }
+            , runtimeImport
+            ]
+    in
+        { name = "main"
+        , imports = imports
+        , declarations = List.append ctorDecls goDecls
+        }
+
+
+-- ══════════════════════════════════════════════════════
+-- RUNTIME COPY
+-- ══════════════════════════════════════════════════════
+
+copyRuntime : String -> String -> Result String ()
+copyRuntime outDir moduleName =
+    let
+        runtimeDir =
+            outDir ++ "/runtime"
+        _ =
+            File.mkdirAll runtimeDir
+        -- Generate the runtime.go file inline
+        runtimeCode =
+            generateRuntimeGo
+        _ =
+            File.writeFile (runtimeDir ++ "/runtime.go") runtimeCode
+    in
+        Ok ()
+
+
+generateRuntimeGo : String
+generateRuntimeGo =
+    -- Minimal runtime for standalone compilation
+    String.join "\n"
+        [ "package runtime"
+        , ""
+        , "import ("
+        , "\t\"bufio\""
+        , "\t\"fmt\""
+        , "\t\"os\""
+        , "\t\"strconv\""
+        , "\t\"strings\""
+        , ")"
+        , ""
+        , "type Tuple2 struct{ V0, V1 any }"
+        , "type Tuple3 struct{ V0, V1, V2 any }"
+        , "type SkyResult struct { Tag int; SkyName string; OkValue, ErrValue any }"
+        , "type SkyMaybe struct { Tag int; SkyName string; JustValue any }"
+        , "type SkyRef struct{ Value any }"
+        , ""
+        , "func SkyOk(v any) SkyResult { return SkyResult{Tag: 0, SkyName: \"Ok\", OkValue: v} }"
+        , "func SkyErr(v any) SkyResult { return SkyResult{Tag: 1, SkyName: \"Err\", ErrValue: v} }"
+        , "func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, SkyName: \"Just\", JustValue: v} }"
+        , "func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
+        , ""
+        , "func AsInt(v any) int { switch x := v.(type) { case int: return x; case float64: return int(x); default: return 0 } }"
+        , "func AsFloat(v any) float64 { switch x := v.(type) { case float64: return x; case int: return float64(x); default: return 0 } }"
+        , "func AsString(v any) string { if s, ok := v.(string); ok { return s }; return fmt.Sprintf(\"%v\", v) }"
+        , "func AsBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"
+        , "func AsList(v any) []any { if l, ok := v.([]any); ok { return l }; return nil }"
+        , "func AsMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return nil }"
+        , "func Equal(a, b any) bool { return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
+        , ""
+        , "func Println(v any) any { fmt.Println(AsString(v)); return struct{}{} }"
+        , "func StringFromInt(v any) any { return strconv.Itoa(AsInt(v)) }"
+        , "func StringFromFloat(v any) any { return strconv.FormatFloat(AsFloat(v), 'f', -1, 64) }"
+        , "func StringToUpper(v any) any { return strings.ToUpper(AsString(v)) }"
+        , "func StringToLower(v any) any { return strings.ToLower(AsString(v)) }"
+        , "func StringLength(v any) any { return len(AsString(v)) }"
+        , "func StringTrim(v any) any { return strings.TrimSpace(AsString(v)) }"
+        , "func StringIsEmpty(v any) any { return AsString(v) == \"\" }"
+        , "func StringContains(sub any) any { return func(s any) any { return strings.Contains(AsString(s), AsString(sub)) } }"
+        , "func StringJoin(sep any) any { return func(list any) any { parts := AsList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = AsString(p) }; return strings.Join(ss, AsString(sep)) } }"
+        , "func StringSlice(start any) any { return func(end any) any { return func(s any) any { str := AsString(s); a, b := AsInt(start), AsInt(end); if a < 0 { a = 0 }; if b > len(str) { b = len(str) }; if a > b { return \"\" }; return str[a:b] } } }"
+        , "func StringReplace(old any) any { return func(new_ any) any { return func(s any) any { return strings.ReplaceAll(AsString(s), AsString(old), AsString(new_)) } } }"
+        , "func StringStartsWith(prefix any) any { return func(s any) any { return strings.HasPrefix(AsString(s), AsString(prefix)) } }"
+        , "func StringToInt(s any) any { n, err := strconv.Atoi(strings.TrimSpace(AsString(s))); if err != nil { return SkyNothing() }; return SkyJust(n) }"
+        , ""
+        , "func ListMap(fn any) any { return func(list any) any { items := AsList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(item) }; return result } }"
+        , "func ListFilter(fn any) any { return func(list any) any { items := AsList(list); var result []any; for _, item := range items { if AsBool(fn.(func(any) any)(item)) { result = append(result, item) } }; if result == nil { return []any{} }; return result } }"
+        , "func ListFoldl(fn any) any { return func(init any) any { return func(list any) any { acc := init; for _, item := range AsList(list) { acc = fn.(func(any) any)(item).(func(any) any)(acc) }; return acc } } }"
+        , "func ListLength(list any) any { return len(AsList(list)) }"
+        , "func ListHead(list any) any { items := AsList(list); if len(items) > 0 { return SkyJust(items[0]) }; return SkyNothing() }"
+        , "func ListReverse(list any) any { items := AsList(list); result := make([]any, len(items)); for i, item := range items { result[len(items)-1-i] = item }; return result }"
+        , "func ListAppend(a any) any { return func(b any) any { return append(AsList(a), AsList(b)...) } }"
+        , "func ListConcat(lists any) any { var result []any; for _, l := range AsList(lists) { result = append(result, AsList(l)...) }; if result == nil { return []any{} }; return result }"
+        , "func ListDrop(n any) any { return func(list any) any { items := AsList(list); c := AsInt(n); if c >= len(items) { return []any{} }; return items[c:] } }"
+        , "func ListIndexedMap(fn any) any { return func(list any) any { items := AsList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(i).(func(any) any)(item) }; return result } }"
+        , "func ListFilterMap(fn any) any { return func(list any) any { var result []any; for _, item := range AsList(list) { r := fn.(func(any) any)(item); if m, ok := r.(SkyMaybe); ok && m.Tag == 0 { result = append(result, m.JustValue) } }; if result == nil { return []any{} }; return result } }"
+        , "func ListConcatMap(fn any) any { return func(list any) any { var result []any; for _, item := range AsList(list) { result = append(result, AsList(fn.(func(any) any)(item))...) }; if result == nil { return []any{} }; return result } }"
+        , ""
+        , "func DictEmpty() any { return map[string]any{} }"
+        , "func DictInsert(k any) any { return func(v any) any { return func(d any) any { m := AsMap(d); result := make(map[string]any, len(m)+1); for key, val := range m { result[key] = val }; result[AsString(k)] = v; return result } } }"
+        , "func DictGet(k any) any { return func(d any) any { m := AsMap(d); if v, ok := m[AsString(k)]; ok { return SkyJust(v) }; return SkyNothing() } }"
+        , "func DictRemove(k any) any { return func(d any) any { m := AsMap(d); result := make(map[string]any, len(m)); key := AsString(k); for k2, v := range m { if k2 != key { result[k2] = v } }; return result } }"
+        , "func DictKeys(d any) any { m := AsMap(d); keys := make([]any, 0, len(m)); for k := range m { keys = append(keys, k) }; return keys }"
+        , "func DictValues(d any) any { m := AsMap(d); vals := make([]any, 0, len(m)); for _, v := range m { vals = append(vals, v) }; return vals }"
+        , "func DictToList(d any) any { m := AsMap(d); pairs := make([]any, 0, len(m)); for k, v := range m { pairs = append(pairs, Tuple2{k, v}) }; return pairs }"
+        , "func DictFromList(list any) any { result := make(map[string]any); for _, item := range AsList(list) { t := item.(Tuple2); result[AsString(t.V0)] = t.V1 }; return result }"
+        , "func DictMap(fn any) any { return func(d any) any { m := AsMap(d); result := make(map[string]any, len(m)); for k, v := range m { result[k] = fn.(func(any) any)(k).(func(any) any)(v) }; return result } }"
+        , "func DictFoldl(fn any) any { return func(init any) any { return func(d any) any { acc := init; for k, v := range AsMap(d) { acc = fn.(func(any) any)(k).(func(any) any)(v).(func(any) any)(acc) }; return acc } } }"
+        , "func DictUnion(a any) any { return func(b any) any { ma, mb := AsMap(a), AsMap(b); result := make(map[string]any, len(ma)+len(mb)); for k, v := range mb { result[k] = v }; for k, v := range ma { result[k] = v }; return result } }"
+        , ""
+        , "func SetEmpty() any { return map[string]bool{} }"
+        , "func SetSingleton(v any) any { return map[string]bool{AsString(v): true} }"
+        , "func SetInsert(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)+1); for k := range m { result[k] = true }; result[AsString(v)] = true; return result } }"
+        , "func SetMember(v any) any { return func(s any) any { return s.(map[string]bool)[AsString(v)] } }"
+        , "func SetUnion(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool, len(ma)+len(mb)); for k := range mb { result[k] = true }; for k := range ma { result[k] = true }; return result } }"
+        , "func SetDiff(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool); for k := range ma { if !mb[k] { result[k] = true } }; return result } }"
+        , "func SetToList(s any) any { m := s.(map[string]bool); result := make([]any, 0, len(m)); for k := range m { result = append(result, k) }; return result }"
+        , "func SetFromList(list any) any { result := make(map[string]bool); for _, item := range AsList(list) { result[AsString(item)] = true }; return result }"
+        , "func SetIsEmpty(s any) any { return len(s.(map[string]bool)) == 0 }"
+        , ""
+        , "func RefNew(v any) any { return &SkyRef{Value: v} }"
+        , "func RefGet(r any) any { return r.(*SkyRef).Value }"
+        , "func RefSet(v any) any { return func(r any) any { r.(*SkyRef).Value = v; return struct{}{} } }"
+        , ""
+        , "func RecordUpdate(base any, updates any) any { m := AsMap(base); result := make(map[string]any, len(m)); for k, v := range m { result[k] = v }; for k, v := range AsMap(updates) { result[k] = v }; return result }"
+        , ""
+        , "func FileRead(path any) any { data, err := os.ReadFile(AsString(path)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(data)) }"
+        , "func FileWrite(path any) any { return func(content any) any { err := os.WriteFile(AsString(path), []byte(AsString(content)), 0644); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
+        , "func FileMkdirAll(path any) any { err := os.MkdirAll(AsString(path), 0755); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) }"
+        , ""
+        , "func ProcessExit(code any) any { os.Exit(AsInt(code)); return struct{}{} }"
+        , "func ProcessGetArgs() any { args := make([]any, len(os.Args)); for i, a := range os.Args { args[i] = a }; return args }"
+        , "func ProcessGetArg(n any) any { idx := AsInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"
+        , ""
+        , "var stdinReader *bufio.Reader"
+        , "func ReadLine() any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; line, err := stdinReader.ReadString('\\n'); if err != nil && len(line) == 0 { return SkyNothing() }; return SkyJust(strings.TrimRight(line, \"\\r\\n\")) }"
+        , "func ReadBytes(n any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; count := AsInt(n); buf := make([]byte, count); total := 0; for total < count { nr, err := stdinReader.Read(buf[total:]); total += nr; if err != nil { break } }; if total == 0 { return SkyNothing() }; return SkyJust(string(buf[:total])) }"
+        , "func WriteStdout(s any) any { fmt.Print(AsString(s)); return struct{}{} }"
+        , "func WriteStderr(s any) any { fmt.Fprint(os.Stderr, AsString(s)); return struct{}{} }"
+        , ""
+        , "var _ = strings.Contains"
+        , "var _ = strconv.Itoa"
+        , "var _ = os.Exit"
+        ]
