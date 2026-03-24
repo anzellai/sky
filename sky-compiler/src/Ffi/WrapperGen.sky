@@ -1,0 +1,210 @@
+module Ffi.WrapperGen exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Lsp.JsonRpc as Json
+import Ffi.TypeMapper as TypeMapper
+
+
+-- ══════════════════════════════════════════════════════
+-- WRAPPER GENERATION
+-- ══════════════════════════════════════════════════════
+
+-- Generates Go wrapper functions for a Go package.
+-- Input: JSON inspection result from the Go inspector.
+-- Output: .go file with Sky_pkg_Symbol adapter functions.
+
+generateWrappers : String -> String -> String -> Result String String
+generateWrappers pkgName inspectJson outDir =
+    let
+        safePkg =
+            String.replace "/" "_" (String.replace "." "_" pkgName)
+        wrapperDir =
+            outDir ++ "/sky_wrappers"
+        _ =
+            File.mkdirAll wrapperDir
+
+        -- Parse functions from JSON
+        funcs =
+            extractFunctions inspectJson
+        methods =
+            extractMethods inspectJson
+
+        -- Generate wrapper code
+        wrapperCode =
+            generateWrapperFile safePkg pkgName funcs methods
+        _ =
+            File.writeFile (wrapperDir ++ "/" ++ safePkg ++ ".go") wrapperCode
+    in
+        Ok wrapperCode
+
+
+-- ══════════════════════════════════════════════════════
+-- GENERATE WRAPPER FILE
+-- ══════════════════════════════════════════════════════
+
+generateWrapperFile : String -> String -> List FuncEntry -> List MethodEntry -> String
+generateWrapperFile safePkg pkgName funcs methods =
+    String.join "\n"
+        [ "package sky_wrappers"
+        , ""
+        , "import ("
+        , "\t\"" ++ pkgName ++ "\""
+        , ")"
+        , ""
+        , String.join "\n\n" (List.map (generateFuncWrapper safePkg pkgName) funcs)
+        , ""
+        , String.join "\n\n" (List.map (generateMethodWrapper safePkg pkgName) methods)
+        ]
+
+
+-- ══════════════════════════════════════════════════════
+-- FUNCTION WRAPPERS
+-- ══════════════════════════════════════════════════════
+
+type alias FuncEntry =
+    { name : String
+    , params : List ( String , String )
+    , results : List String
+    , variadic : Bool
+    }
+
+
+type alias MethodEntry =
+    { typeName : String
+    , name : String
+    , params : List ( String , String )
+    , results : List String
+    , variadic : Bool
+    }
+
+
+generateFuncWrapper : String -> String -> FuncEntry -> String
+generateFuncWrapper safePkg pkgName func =
+    let
+        wrapperName =
+            "Sky_" ++ safePkg ++ "_" ++ func.name
+        paramList =
+            List.indexedMap (\i p -> "arg" ++ String.fromInt i ++ " any") func.params
+        paramStr =
+            String.join ", " paramList
+
+        -- Generate argument casts
+        argCasts =
+            List.indexedMap (generateArgCast) func.params
+        castStr =
+            String.join "\n\t" argCasts
+
+        -- Generate the Go call
+        argNames =
+            List.indexedMap (\i p -> "_arg" ++ String.fromInt i) func.params
+        goCall =
+            shortPkgName pkgName ++ "." ++ func.name ++ "(" ++ String.join ", " argNames ++ ")"
+
+        -- Generate return wrapping
+        returnCode =
+            wrapReturn func.results goCall
+    in
+        "func " ++ wrapperName ++ "(" ++ paramStr ++ ") any {\n\t" ++
+        castStr ++ "\n\t" ++
+        returnCode ++ "\n}"
+
+
+generateMethodWrapper : String -> String -> MethodEntry -> String
+generateMethodWrapper safePkg pkgName method =
+    let
+        wrapperName =
+            "Sky_" ++ safePkg ++ "_" ++ method.typeName ++ method.name
+        paramList =
+            "receiver any" :: List.indexedMap (\i p -> "arg" ++ String.fromInt i ++ " any") method.params
+        paramStr =
+            String.join ", " paramList
+
+        receiverCast =
+            "_receiver := receiver.(*" ++ shortPkgName pkgName ++ "." ++ method.typeName ++ ")"
+        argCasts =
+            List.indexedMap (generateArgCast) method.params
+        castStr =
+            String.join "\n\t" (receiverCast :: argCasts)
+
+        argNames =
+            List.indexedMap (\i p -> "_arg" ++ String.fromInt i) method.params
+        goCall =
+            "_receiver." ++ method.name ++ "(" ++ String.join ", " argNames ++ ")"
+
+        returnCode =
+            wrapReturn method.results goCall
+    in
+        "func " ++ wrapperName ++ "(" ++ paramStr ++ ") any {\n\t" ++
+        castStr ++ "\n\t" ++
+        returnCode ++ "\n}"
+
+
+generateArgCast : Int -> ( String , String ) -> String
+generateArgCast idx param =
+    let
+        goType =
+            snd param
+        assertion =
+            TypeMapper.goTypeToAssertion goType
+    in
+        if String.isEmpty assertion then
+            "_arg" ++ String.fromInt idx ++ " := arg" ++ String.fromInt idx
+        else
+            "_arg" ++ String.fromInt idx ++ " := " ++ assertion ++ "(arg" ++ String.fromInt idx ++ ")"
+
+
+wrapReturn : List String -> String -> String
+wrapReturn results goCall =
+    case results of
+        [] ->
+            goCall ++ "\n\treturn struct{}{}"
+
+        [ single ] ->
+            if single == "error" then
+                "result, err := " ++ goCall ++ "\n\tif err != nil { return SkyErr(err.Error()) }\n\treturn SkyOk(result)"
+            else
+                "return " ++ goCall
+
+        _ ->
+            -- Multi-return: check if last is error
+            let
+                lastResult =
+                    case List.reverse results of
+                        last :: _ ->
+                            last
+
+                        [] ->
+                            ""
+            in
+                if lastResult == "error" then
+                    "result, err := " ++ goCall ++ "\n\tif err != nil { return SkyErr(err.Error()) }\n\treturn SkyOk(result)"
+                else
+                    "return " ++ goCall
+
+
+shortPkgName : String -> String
+shortPkgName pkgPath =
+    case List.reverse (String.split "/" pkgPath) of
+        last :: _ ->
+            last
+
+        [] ->
+            pkgPath
+
+
+-- ══════════════════════════════════════════════════════
+-- JSON PARSING (extract from inspect result)
+-- ══════════════════════════════════════════════════════
+
+extractFunctions : String -> List FuncEntry
+extractFunctions json =
+    -- Simple extraction: find "funcs" array and parse each entry
+    []
+
+
+extractMethods : String -> List MethodEntry
+extractMethods json =
+    []

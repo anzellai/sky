@@ -1,0 +1,117 @@
+module Ffi.BindingGen exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Ffi.Inspector as Inspector
+import Ffi.TypeMapper as TypeMapper
+import Ffi.WrapperGen as WrapperGen
+import Lsp.JsonRpc as Json
+
+
+-- ══════════════════════════════════════════════════════
+-- BINDING GENERATION
+-- ══════════════════════════════════════════════════════
+
+-- Generate Sky bindings (.skyi) for a Go package.
+-- This is the main entry point for `sky add <go-package>`.
+
+generateBindings : String -> String -> Result String String
+generateBindings pkgName outDir =
+    case Inspector.inspectPackage pkgName of
+        Err e ->
+            Err e
+
+        Ok inspectJson ->
+            let
+                -- Generate .skyi binding file
+                skyiContent =
+                    generateSkyiFile pkgName inspectJson
+                skyiPath =
+                    outDir ++ "/bindings.skyi"
+                _ =
+                    File.mkdirAll outDir
+                _ =
+                    File.writeFile skyiPath skyiContent
+
+                -- Generate Go wrappers
+                wrapperResult =
+                    WrapperGen.generateWrappers pkgName inspectJson outDir
+            in
+                case wrapperResult of
+                    Ok _ ->
+                        Ok skyiContent
+
+                    Err e ->
+                        Err e
+
+
+-- ══════════════════════════════════════════════════════
+-- .skyi FILE GENERATION
+-- ══════════════════════════════════════════════════════
+
+generateSkyiFile : String -> String -> String
+generateSkyiFile pkgName inspectJson =
+    let
+        moduleName =
+            pkgToModuleName pkgName
+
+        -- Extract functions from JSON
+        funcLines =
+            extractFuncBindings pkgName inspectJson
+
+        -- Extract type names
+        typeLines =
+            extractTypeBindings inspectJson
+    in
+        String.join "\n"
+            [ "module " ++ moduleName ++ " exposing (..)"
+            , ""
+            , "foreign import \"" ++ pkgName ++ "\" exposing (..)"
+            , ""
+            , String.join "\n\n" funcLines
+            , ""
+            , String.join "\n\n" typeLines
+            ]
+
+
+-- Convert Go package path to Sky module name
+-- e.g. "net/http" → "Net.Http"
+--      "github.com/google/uuid" → "Github.Com.Google.Uuid"
+
+pkgToModuleName : String -> String
+pkgToModuleName pkgPath =
+    let
+        parts =
+            String.split "/" pkgPath
+        capitalized =
+            List.map capitalizeFirst parts
+    in
+        String.join "." capitalized
+
+
+capitalizeFirst : String -> String
+capitalizeFirst s =
+    if String.isEmpty s then
+        ""
+    else
+        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+
+
+-- Extract function bindings from JSON
+
+extractFuncBindings : String -> String -> List String
+extractFuncBindings pkgName json =
+    -- Parse "funcs" array from JSON and generate Sky type signatures
+    let
+        funcsJson =
+            Json.jsonGetObject "funcs" json
+    in
+        -- For now, return empty - will implement JSON array parsing
+        []
+
+
+extractTypeBindings : String -> List String
+extractTypeBindings json =
+    []

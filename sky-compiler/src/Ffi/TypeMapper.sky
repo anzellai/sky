@@ -1,0 +1,98 @@
+module Ffi.TypeMapper exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Char as Char
+
+
+-- ══════════════════════════════════════════════════════
+-- GO TYPE → SKY TYPE MAPPING
+-- ══════════════════════════════════════════════════════
+
+mapGoTypeToSky : String -> String
+mapGoTypeToSky goType =
+    if goType == "string" then
+        "String"
+    else if goType == "bool" then
+        "Bool"
+    else if goType == "int" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" then
+        "Int"
+    else if goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" then
+        "Int"
+    else if goType == "float32" || goType == "float64" then
+        "Float"
+    else if goType == "[]byte" then
+        "Bytes"
+    else if goType == "error" then
+        "Error"
+    else if goType == "interface{}" || goType == "any" then
+        "Any"
+    else if goType == "rune" then
+        "Char"
+    else if String.startsWith "*" goType then
+        let
+            inner =
+                String.slice 1 (String.length goType) goType
+        in
+            if isGoPrimitive inner then
+                "Maybe " ++ mapGoTypeToSky inner
+            else
+                mapGoTypeToSky inner
+    else if String.startsWith "[]" goType then
+        let
+            elem =
+                String.slice 2 (String.length goType) goType
+        in
+            "List " ++ mapGoTypeToSky elem
+    else if String.startsWith "map[" goType then
+        "Any"
+    else if String.contains "." goType then
+        -- Package-qualified type: extract type name
+        let
+            parts =
+                String.split "." goType
+        in
+            case List.reverse parts of
+                last :: _ ->
+                    last
+
+                [] ->
+                    goType
+    else
+        goType
+
+
+isGoPrimitive : String -> Bool
+isGoPrimitive t =
+    t == "string" || t == "int" || t == "int8" || t == "int16" || t == "int32" || t == "int64" ||
+    t == "uint" || t == "uint8" || t == "uint16" || t == "uint32" || t == "uint64" ||
+    t == "float32" || t == "float64" || t == "bool" || t == "rune"
+
+
+-- Map Go type to safe assertion function name
+
+goTypeToAssertion : String -> String
+goTypeToAssertion goType =
+    if goType == "string" then
+        "sky_asString"
+    else if goType == "int" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" then
+        "sky_asInt"
+    else if goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" then
+        "sky_asInt"
+    else if goType == "float32" || goType == "float64" then
+        "sky_asFloat"
+    else if goType == "bool" then
+        "sky_asBool"
+    else
+        ""
+
+
+-- Convert Go PascalCase to Sky camelCase
+
+lowerCamelCase : String -> String
+lowerCamelCase s =
+    if String.isEmpty s then
+        ""
+    else
+        String.toLower (String.slice 0 1 s) ++ String.slice 1 (String.length s) s

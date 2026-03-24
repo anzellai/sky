@@ -14,6 +14,8 @@ import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
 import Lsp.Server as LspServer
 import Formatter.Format as Format
+import Ffi.Inspector as Inspector
+import Ffi.BindingGen as BindingGen
 
 
 -- ══════════════════════════════════════════════════════
@@ -47,8 +49,10 @@ runCommand command args =
         cmdFmt args
     else if command == "lsp" then
         cmdLsp args
+    else if command == "inspect" then
+        cmdInspect args
     else if command == "version" || command == "--version" then
-        println "sky v0.4.0 (self-hosted)"
+        println "sky v0.4.2 (self-hosted)"
     else
         cmdHelp ()
 
@@ -249,6 +253,36 @@ cmdFmt args =
                                             File.writeFile filePath formatted
                                     in
                                         println ("Formatted " ++ filePath)
+
+
+-- ══════════════════════════════════════════════════════
+-- INSPECT COMMAND (Go FFI)
+-- ══════════════════════════════════════════════════════
+
+cmdInspect : List String -> ()
+cmdInspect args =
+    let
+        pkgName =
+            case Args.getArg 2 of
+                Just p ->
+                    p
+
+                Nothing ->
+                    ""
+    in
+        if String.isEmpty pkgName then
+            println "Usage: sky inspect <go-package>"
+        else
+            case Inspector.inspectPackage pkgName of
+                Err e ->
+                    let
+                        _ =
+                            println ("Error: " ++ e)
+                    in
+                        Process.exit 1
+
+                Ok result ->
+                    println result
 
 
 -- ══════════════════════════════════════════════════════

@@ -1,0 +1,325 @@
+module Ffi.Inspector exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Sky.Core.Process as Process
+import Lsp.JsonRpc as Json
+
+
+-- ══════════════════════════════════════════════════════
+-- GO PACKAGE INSPECTION
+-- ══════════════════════════════════════════════════════
+
+-- Inspects a Go package by generating and running a Go inspector program.
+-- Returns JSON with all exported types, functions, variables, and constants.
+
+type alias InspectResult =
+    { name : String
+    , path : String
+    , types : List TypeInfo
+    , funcs : List FuncInfo
+    , vars : List VarInfo
+    , consts : List ConstInfo
+    }
+
+
+type alias TypeInfo =
+    { name : String
+    , kind : String
+    , fields : List FieldInfo
+    , methods : List MethodInfo
+    }
+
+
+type alias FieldInfo =
+    { name : String
+    , fieldType : String
+    }
+
+
+type alias MethodInfo =
+    { name : String
+    , params : List ParamInfo
+    , results : List ParamInfo
+    , variadic : Bool
+    }
+
+
+type alias FuncInfo =
+    { name : String
+    , params : List ParamInfo
+    , results : List ParamInfo
+    , variadic : Bool
+    }
+
+
+type alias ParamInfo =
+    { name : String
+    , paramType : String
+    }
+
+
+type alias VarInfo =
+    { name : String
+    , varType : String
+    }
+
+
+type alias ConstInfo =
+    { name : String
+    , constType : String
+    , value : String
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- INSPECT
+-- ══════════════════════════════════════════════════════
+
+-- Inspect a Go package and return its exported API.
+
+inspectPackage : String -> Result String String
+inspectPackage pkgName =
+    let
+        cacheDir =
+            ".skycache/go/" ++ safePkgName pkgName
+        cachePath =
+            cacheDir ++ "/inspect.json"
+    in
+        -- Check cache first
+        case File.readFile cachePath of
+            Ok cached ->
+                Ok cached
+
+            Err _ ->
+                -- Generate and run inspector
+                runInspector pkgName cacheDir cachePath
+
+
+runInspector : String -> String -> String -> Result String String
+runInspector pkgName cacheDir cachePath =
+    let
+        inspectorDir =
+            ".skycache/inspector"
+        _ =
+            File.mkdirAll inspectorDir
+        _ =
+            File.mkdirAll cacheDir
+
+        -- Write the inspector Go program
+        _ =
+            File.writeFile (inspectorDir ++ "/main.go") inspectorGoCode
+        _ =
+            File.writeFile (inspectorDir ++ "/go.mod") "module sky-inspector\n\ngo 1.24.0\n\nrequire golang.org/x/tools v0.30.0\n"
+
+        -- Build the inspector
+        buildResult =
+            Process.run "sh" [ "-c" , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -o inspector . 2>&1" ]
+    in
+        case buildResult of
+            Err e ->
+                Err ("Failed to build Go inspector: " ++ errorToString e)
+
+            Ok _ ->
+                -- Run the inspector
+                case Process.run (inspectorDir ++ "/inspector") [ pkgName ] of
+                    Err e ->
+                        Err ("Failed to inspect package " ++ pkgName ++ ": " ++ errorToString e)
+
+                    Ok output ->
+                        let
+                            _ =
+                                File.writeFile cachePath output
+                        in
+                            Ok output
+
+
+safePkgName : String -> String
+safePkgName name =
+    String.replace "/" "_" (String.replace "." "_" name)
+
+
+-- ══════════════════════════════════════════════════════
+-- GO INSPECTOR SOURCE CODE
+-- ══════════════════════════════════════════════════════
+
+inspectorGoCode : String
+inspectorGoCode =
+    String.join "\n"
+        [ "package main"
+        , ""
+        , "import ("
+        , "\t\"encoding/json\""
+        , "\t\"fmt\""
+        , "\t\"go/types\""
+        , "\t\"os\""
+        , "\t_ \"strings\""
+        , "\t\"golang.org/x/tools/go/packages\""
+        , ")"
+        , ""
+        , "type Output struct {"
+        , "\tName   string     `json:\"name\"`"
+        , "\tPath   string     `json:\"path\"`"
+        , "\tTypes  []TypeDecl `json:\"types\"`"
+        , "\tFuncs  []FuncDecl `json:\"funcs\"`"
+        , "\tVars   []VarDecl  `json:\"vars\"`"
+        , "\tConsts []ConstDecl `json:\"consts\"`"
+        , "}"
+        , ""
+        , "type TypeDecl struct {"
+        , "\tName    string      `json:\"name\"`"
+        , "\tKind    string      `json:\"kind\"`"
+        , "\tFields  []FieldDecl `json:\"fields,omitempty\"`"
+        , "\tMethods []MethodDecl `json:\"methods,omitempty\"`"
+        , "}"
+        , ""
+        , "type FieldDecl struct {"
+        , "\tName string `json:\"name\"`"
+        , "\tType string `json:\"type\"`"
+        , "}"
+        , ""
+        , "type MethodDecl struct {"
+        , "\tName     string      `json:\"name\"`"
+        , "\tParams   []ParamDecl `json:\"params\"`"
+        , "\tResults  []ParamDecl `json:\"results\"`"
+        , "\tVariadic bool        `json:\"variadic,omitempty\"`"
+        , "}"
+        , ""
+        , "type FuncDecl struct {"
+        , "\tName     string      `json:\"name\"`"
+        , "\tParams   []ParamDecl `json:\"params\"`"
+        , "\tResults  []ParamDecl `json:\"results\"`"
+        , "\tVariadic bool        `json:\"variadic,omitempty\"`"
+        , "}"
+        , ""
+        , "type ParamDecl struct {"
+        , "\tName string `json:\"name\"`"
+        , "\tType string `json:\"type\"`"
+        , "}"
+        , ""
+        , "type VarDecl struct {"
+        , "\tName string `json:\"name\"`"
+        , "\tType string `json:\"type\"`"
+        , "}"
+        , ""
+        , "type ConstDecl struct {"
+        , "\tName  string `json:\"name\"`"
+        , "\tType  string `json:\"type\"`"
+        , "\tValue string `json:\"value,omitempty\"`"
+        , "}"
+        , ""
+        , "func typeStr(t types.Type) string {"
+        , "\tswitch u := t.(type) {"
+        , "\tcase *types.Named:"
+        , "\t\tobj := u.Obj()"
+        , "\t\tpkg := obj.Pkg()"
+        , "\t\tif pkg != nil {"
+        , "\t\t\treturn pkg.Path() + \".\" + obj.Name()"
+        , "\t\t}"
+        , "\t\treturn obj.Name()"
+        , "\tcase *types.Pointer:"
+        , "\t\treturn \"*\" + typeStr(u.Elem())"
+        , "\tcase *types.Slice:"
+        , "\t\treturn \"[]\" + typeStr(u.Elem())"
+        , "\tcase *types.Map:"
+        , "\t\treturn \"map[\" + typeStr(u.Key()) + \"]\" + typeStr(u.Elem())"
+        , "\tcase *types.Interface:"
+        , "\t\tif u.Empty() { return \"interface{}\" }"
+        , "\t\treturn \"interface{}\""
+        , "\tdefault:"
+        , "\t\treturn t.String()"
+        , "\t}"
+        , "}"
+        , ""
+        , "func main() {"
+        , "\tif len(os.Args) < 2 {"
+        , "\t\tfmt.Fprintln(os.Stderr, \"usage: inspector <package>\")"
+        , "\t\tos.Exit(1)"
+        , "\t}"
+        , "\tpkgPath := os.Args[1]"
+        , ""
+        , "\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedImports | packages.NeedDeps}"
+        , "\tpkgs, err := packages.Load(cfg, pkgPath)"
+        , "\tif err != nil {"
+        , "\t\tfmt.Fprintf(os.Stderr, \"load error: %v\\n\", err)"
+        , "\t\tos.Exit(1)"
+        , "\t}"
+        , "\tif len(pkgs) == 0 || pkgs[0].Types == nil {"
+        , "\t\tfmt.Fprintln(os.Stderr, \"no types found\")"
+        , "\t\tos.Exit(1)"
+        , "\t}"
+        , ""
+        , "\tpkg := pkgs[0]"
+        , "\tscope := pkg.Types.Scope()"
+        , "\tout := Output{Name: pkg.Types.Name(), Path: pkg.Types.Path()}"
+        , ""
+        , "\tfor _, name := range scope.Names() {"
+        , "\t\tobj := scope.Lookup(name)"
+        , "\t\tif !obj.Exported() { continue }"
+        , "\t\tswitch o := obj.(type) {"
+        , "\t\tcase *types.TypeName:"
+        , "\t\t\tnamed, ok := o.Type().(*types.Named)"
+        , "\t\t\tif !ok { continue }"
+        , "\t\t\ttd := TypeDecl{Name: name}"
+        , "\t\t\tswitch u := named.Underlying().(type) {"
+        , "\t\t\tcase *types.Struct:"
+        , "\t\t\t\ttd.Kind = \"struct\""
+        , "\t\t\t\tfor i := 0; i < u.NumFields(); i++ {"
+        , "\t\t\t\t\tf := u.Field(i)"
+        , "\t\t\t\t\tif f.Exported() {"
+        , "\t\t\t\t\t\ttd.Fields = append(td.Fields, FieldDecl{Name: f.Name(), Type: typeStr(f.Type())})"
+        , "\t\t\t\t\t}"
+        , "\t\t\t\t}"
+        , "\t\t\tcase *types.Interface:"
+        , "\t\t\t\ttd.Kind = \"interface\""
+        , "\t\t\tdefault:"
+        , "\t\t\t\ttd.Kind = \"other\""
+        , "\t\t\t}"
+        , "\t\t\t// Methods"
+        , "\t\t\tmset := types.NewMethodSet(types.NewPointer(named))"
+        , "\t\t\tfor i := 0; i < mset.Len(); i++ {"
+        , "\t\t\t\tm := mset.At(i)"
+        , "\t\t\t\tfn, ok := m.Obj().(*types.Func)"
+        , "\t\t\t\tif !ok || !fn.Exported() { continue }"
+        , "\t\t\t\tsig := fn.Type().(*types.Signature)"
+        , "\t\t\t\tmd := MethodDecl{Name: fn.Name(), Variadic: sig.Variadic()}"
+        , "\t\t\t\tfor j := 0; j < sig.Params().Len(); j++ {"
+        , "\t\t\t\t\tp := sig.Params().At(j)"
+        , "\t\t\t\t\tmd.Params = append(md.Params, ParamDecl{Name: p.Name(), Type: typeStr(p.Type())})"
+        , "\t\t\t\t}"
+        , "\t\t\t\tfor j := 0; j < sig.Results().Len(); j++ {"
+        , "\t\t\t\t\tr := sig.Results().At(j)"
+        , "\t\t\t\t\tmd.Results = append(md.Results, ParamDecl{Name: r.Name(), Type: typeStr(r.Type())})"
+        , "\t\t\t\t}"
+        , "\t\t\t\ttd.Methods = append(td.Methods, md)"
+        , "\t\t\t}"
+        , "\t\t\tout.Types = append(out.Types, td)"
+        , "\t\tcase *types.Func:"
+        , "\t\t\tsig := o.Type().(*types.Signature)"
+        , "\t\t\tfd := FuncDecl{Name: name, Variadic: sig.Variadic()}"
+        , "\t\t\tfor i := 0; i < sig.Params().Len(); i++ {"
+        , "\t\t\t\tp := sig.Params().At(i)"
+        , "\t\t\t\tfd.Params = append(fd.Params, ParamDecl{Name: p.Name(), Type: typeStr(p.Type())})"
+        , "\t\t\t}"
+        , "\t\t\tfor i := 0; i < sig.Results().Len(); i++ {"
+        , "\t\t\t\tr := sig.Results().At(i)"
+        , "\t\t\t\tfd.Results = append(fd.Results, ParamDecl{Name: r.Name(), Type: typeStr(r.Type())})"
+        , "\t\t\t}"
+        , "\t\t\tout.Funcs = append(out.Funcs, fd)"
+        , "\t\tcase *types.Var:"
+        , "\t\t\tout.Vars = append(out.Vars, VarDecl{Name: name, Type: typeStr(o.Type())})"
+        , "\t\tcase *types.Const:"
+        , "\t\t\tout.Consts = append(out.Consts, ConstDecl{Name: name, Type: typeStr(o.Type()), Value: o.Val().String()})"
+        , "\t\t}"
+        , "\t}"
+        , ""
+        , "\tenc := json.NewEncoder(os.Stdout)"
+        , "\tenc.SetIndent(\"\", \"  \")"
+        , "\tif err := enc.Encode(out); err != nil {"
+        , "\t\tfmt.Fprintf(os.Stderr, \"encode error: %v\\n\", err)"
+        , "\t\tos.Exit(1)"
+        , "\t}"
+        , "}"
+        ]
