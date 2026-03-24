@@ -55,7 +55,7 @@ viewAdminProducts model =
                         ]
                         [ text ("+ " ++ Tr.t lang "admin.newProduct") ]
                     ]
-                , div [ Layout.card ]
+                , div [ Layout.card , style "overflow-x:auto" ]
                     (
                     if List.isEmpty products then
                         [ div [ tw [ p8 , textCenter ] ]
@@ -73,7 +73,7 @@ viewAdminProducts model =
                         [ div
                             [ Layout.tableHeader_
                             , style
-                                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center"
+                                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center;min-width:600px"
                             ]
                             [ text "Product"
                             , span [ tw [ hidden_ , md block ] ]
@@ -119,7 +119,7 @@ viewAdminProductRow model product =
             , attribute "sky-nav" ""
             , Layout.adminRow
             , style
-                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center"
+                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr .5fr;align-items:center;min-width:600px"
             ]
             [ div [ tw [ flex , itemsCenter , gap3 ] ]
                 [ if thumb != "" then
@@ -458,7 +458,7 @@ viewAdminOrders model =
                         ]
                     ]
                 , viewOrderFilter model
-                , div [ Layout.card ]
+                , div [ Layout.card , style "overflow-x:auto" ]
                     (
                     if List.isEmpty model.adminOrders then
                         [ div [ tw [ p8 , textCenter ] ]
@@ -470,7 +470,7 @@ viewAdminOrders model =
                         [ div
                             [ Layout.tableHeader_
                             , style
-                                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center"
+                                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center;min-width:500px"
                             ]
                             [ text "Customer"
                             , span [ tw [ hidden_ , md block ] ]
@@ -559,7 +559,7 @@ viewAdminOrderRow model order =
             , attribute "sky-nav" ""
             , Layout.adminRow
             , style
-                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center"
+                "display:grid;grid-template-columns:2fr 1fr 1fr 1fr;align-items:center;min-width:500px"
             ]
             [ div []
                 [ div [ tw [ fontMedium , textSm , textGray900 ] ]

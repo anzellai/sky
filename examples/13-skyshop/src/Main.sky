@@ -731,7 +731,7 @@ handleUpdateOrderState orderId newState model =
                 updatedModel =
                     refreshAdminOrders model
                 ( order , items ) =
-                    Cart.getCartWithItems orderId
+                    Cart.getOrderWithItems orderId
             in
                 ( { updatedModel
                   | order = order
