@@ -1,0 +1,500 @@
+module Compiler.Lexer exposing (lex)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Char as Char
+import Sky.Core.List as List
+import Compiler.Token exposing (..)
+
+-- Sky lexer: tokenizes source code into a list of tokens.
+-- Uses functional state-passing style.
+
+
+type alias LexerState =
+    { source : String
+    , offset : Int
+    , line : Int
+    , column : Int
+    , tokens : List Token
+    , indentStack : List Int
+    }
+
+
+lex : String -> { tokens : List Token, diagnostics : List Diagnostic }
+lex source =
+    let
+        initial =
+            { source = source
+            , offset = 0
+            , line = 1
+            , column = 1
+            , tokens = []
+            , indentStack = [ 0 ]
+            }
+        final =
+            lexLoop initial
+        eofToken =
+            { kind = TkEOF
+            , lexeme = ""
+            , span = makeSpan final
+            }
+    in
+        { tokens = List.reverse (eofToken :: final.tokens)
+        , diagnostics = []
+        }
+
+
+lexLoop : LexerState -> LexerState
+lexLoop state =
+    if state.offset >= String.length state.source then
+        state
+    else
+        let
+            ch =
+                charAt state.source state.offset
+        in
+            if ch == '\n' then
+                lexLoop (handleNewline state)
+            else if ch == ' ' || ch == '\t' then
+                lexLoop (skipWhitespace state)
+            else if ch == '-' && peekChar state.source (state.offset + 1) == '-' then
+                lexLoop (skipLineComment state)
+            else if ch == '"' then
+                lexLoop (lexString state)
+            else if ch == '\'' then
+                lexLoop (lexChar state)
+            else if Char.isDigit ch then
+                lexLoop (lexNumber state)
+            else if Char.isAlpha ch || ch == '_' then
+                lexLoop (lexIdentifier state)
+            else
+                lexLoop (lexOperatorOrPunctuation state)
+
+
+-- ══════════════════════════════════════════════════════
+-- WHITESPACE & COMMENTS
+-- ══════════════════════════════════════════════════════
+
+handleNewline : LexerState -> LexerState
+handleNewline state =
+    let
+        newState =
+            { state
+              | offset = state.offset + 1
+              , line = state.line + 1
+              , column = 1
+            }
+        -- Count indentation on the next line
+        indent =
+            countIndent newState.source newState.offset
+        newOffset =
+            newState.offset + indent
+        nlToken =
+            { kind = TkNewline
+            , lexeme = "\\n"
+            , span = makeSpan state
+            }
+    in
+        { newState
+          | offset = newOffset
+          , column = indent + 1
+          , tokens = nlToken :: state.tokens
+        }
+
+
+countIndent : String -> Int -> Int
+countIndent source offset =
+    if offset >= String.length source then
+        0
+    else
+        let
+            ch =
+                charAt source offset
+        in
+            if ch == ' ' then
+                1 + countIndent source (offset + 1)
+            else if ch == '\t' then
+                4 + countIndent source (offset + 1)
+            else
+                0
+
+
+skipWhitespace : LexerState -> LexerState
+skipWhitespace state =
+    if state.offset >= String.length state.source then
+        state
+    else
+        let
+            ch =
+                charAt state.source state.offset
+        in
+            if ch == ' ' || ch == '\t' then
+                skipWhitespace
+                    { state
+                      | offset = state.offset + 1
+                      , column = state.column + 1
+                    }
+            else
+                state
+
+
+skipLineComment : LexerState -> LexerState
+skipLineComment state =
+    if state.offset >= String.length state.source then
+        state
+    else
+        let
+            ch =
+                charAt state.source state.offset
+        in
+            if ch == '\n' then
+                state
+            else
+                skipLineComment
+                    { state
+                      | offset = state.offset + 1
+                      , column = state.column + 1
+                    }
+
+
+-- ══════════════════════════════════════════════════════
+-- STRING & CHAR LITERALS
+-- ══════════════════════════════════════════════════════
+
+lexString : LexerState -> LexerState
+lexString state =
+    let
+        startOffset =
+            state.offset
+        startCol =
+            state.column
+        -- Skip opening quote
+        s1 =
+            { state
+              | offset = state.offset + 1
+              , column = state.column + 1
+            }
+        s2 =
+            lexStringBody s1
+        -- Skip closing quote
+        s3 =
+            { s2
+              | offset = s2.offset + 1
+              , column = s2.column + 1
+            }
+        lexeme =
+            String.slice startOffset s3.offset state.source
+        token =
+            { kind = TkString
+            , lexeme = lexeme
+            , span =
+                { start = { offset = startOffset , line = state.line , column = startCol }
+                , end = { offset = s3.offset , line = s3.line , column = s3.column }
+                }
+            }
+    in
+        { s3 | tokens = token :: s3.tokens }
+
+
+lexStringBody : LexerState -> LexerState
+lexStringBody state =
+    if state.offset >= String.length state.source then
+        state
+    else
+        let
+            ch =
+                charAt state.source state.offset
+        in
+            if ch == '"' then
+                state
+            else if ch == '\\' then
+                lexStringBody
+                    { state
+                      | offset = state.offset + 2
+                      , column = state.column + 2
+                    }
+            else
+                lexStringBody
+                    { state
+                      | offset = state.offset + 1
+                      , column = state.column + 1
+                    }
+
+
+lexChar : LexerState -> LexerState
+lexChar state =
+    let
+        startOffset =
+            state.offset
+        startCol =
+            state.column
+        s1 =
+            { state
+              | offset = state.offset + 1
+              , column = state.column + 1
+            }
+        s2 =
+            if charAt s1.source s1.offset == '\\' then
+                { s1
+                  | offset = s1.offset + 2
+                  , column = s1.column + 2
+                }
+            else
+                { s1
+                  | offset = s1.offset + 1
+                  , column = s1.column + 1
+                }
+        -- Skip closing quote
+        s3 =
+            { s2
+              | offset = s2.offset + 1
+              , column = s2.column + 1
+            }
+        lexeme =
+            String.slice startOffset s3.offset state.source
+        token =
+            { kind = TkChar
+            , lexeme = lexeme
+            , span =
+                { start = { offset = startOffset , line = state.line , column = startCol }
+                , end = { offset = s3.offset , line = s3.line , column = s3.column }
+                }
+            }
+    in
+        { s3 | tokens = token :: s3.tokens }
+
+
+-- ══════════════════════════════════════════════════════
+-- NUMBERS
+-- ══════════════════════════════════════════════════════
+
+lexNumber : LexerState -> LexerState
+lexNumber state =
+    let
+        startOffset =
+            state.offset
+        startCol =
+            state.column
+        s1 =
+            consumeDigits state
+        -- Check for decimal point
+        result =
+            if s1.offset < String.length s1.source && charAt s1.source s1.offset == '.' then
+                let
+                    s2 =
+                        consumeDigits
+                            { s1
+                              | offset = s1.offset + 1
+                              , column = s1.column + 1
+                            }
+                in
+                    ( s2 , TkFloat )
+            else
+                ( s1 , TkInteger )
+        finalState =
+            fst result
+        kind =
+            snd result
+        lexeme =
+            String.slice startOffset finalState.offset state.source
+        token =
+            { kind = kind
+            , lexeme = lexeme
+            , span =
+                { start = { offset = startOffset , line = state.line , column = startCol }
+                , end = { offset = finalState.offset , line = finalState.line , column = finalState.column }
+                }
+            }
+    in
+        { finalState | tokens = token :: finalState.tokens }
+
+
+consumeDigits : LexerState -> LexerState
+consumeDigits state =
+    if state.offset >= String.length state.source then
+        state
+    else if Char.isDigit (charAt state.source state.offset) then
+        consumeDigits
+            { state
+              | offset = state.offset + 1
+              , column = state.column + 1
+            }
+    else
+        state
+
+
+-- ══════════════════════════════════════════════════════
+-- IDENTIFIERS & KEYWORDS
+-- ══════════════════════════════════════════════════════
+
+lexIdentifier : LexerState -> LexerState
+lexIdentifier state =
+    let
+        startOffset =
+            state.offset
+        startCol =
+            state.column
+        s1 =
+            consumeIdentChars state
+        lexeme =
+            String.slice startOffset s1.offset state.source
+        kind =
+            if isKeyword lexeme then
+                TkKeyword
+            else if Char.isUpper (charAt state.source startOffset) then
+                TkUpperIdentifier
+            else
+                TkIdentifier
+        token =
+            { kind = kind
+            , lexeme = lexeme
+            , span =
+                { start = { offset = startOffset , line = state.line , column = startCol }
+                , end = { offset = s1.offset , line = s1.line , column = s1.column }
+                }
+            }
+    in
+        { s1 | tokens = token :: s1.tokens }
+
+
+consumeIdentChars : LexerState -> LexerState
+consumeIdentChars state =
+    if state.offset >= String.length state.source then
+        state
+    else
+        let
+            ch =
+                charAt state.source state.offset
+        in
+            if Char.isAlphaNum ch || ch == '_' then
+                consumeIdentChars
+                    { state
+                      | offset = state.offset + 1
+                      , column = state.column + 1
+                    }
+            else
+                state
+
+
+-- ══════════════════════════════════════════════════════
+-- OPERATORS & PUNCTUATION
+-- ══════════════════════════════════════════════════════
+
+lexOperatorOrPunctuation : LexerState -> LexerState
+lexOperatorOrPunctuation state =
+    let
+        ch =
+            charAt state.source state.offset
+        next =
+            peekChar state.source (state.offset + 1)
+        startOffset =
+            state.offset
+        startCol =
+            state.column
+        ( kind , len ) =
+            if ch == '(' then
+                ( TkLParen , 1 )
+            else if ch == ')' then
+                ( TkRParen , 1 )
+            else if ch == '[' then
+                ( TkLBracket , 1 )
+            else if ch == ']' then
+                ( TkRBracket , 1 )
+            else if ch == '{' then
+                ( TkLBrace , 1 )
+            else if ch == '}' then
+                ( TkRBrace , 1 )
+            else if ch == ',' then
+                ( TkComma , 1 )
+            else if ch == '\\' then
+                ( TkBackslash , 1 )
+            else if ch == '.' then
+                ( TkDot , 1 )
+            else if ch == ':' && next /= ':' then
+                ( TkColon , 1 )
+            else if ch == '=' && next /= '=' then
+                ( TkEquals , 1 )
+            else if ch == '|' && next /= '>' && next /= '|' then
+                ( TkPipe , 1 )
+            else if ch == '-' && next == '>' then
+                ( TkArrow , 2 )
+            else
+                -- Multi-char operators
+                let
+                    opLen =
+                        consumeOperator state.source state.offset
+                in
+                    ( TkOperator , opLen )
+        s1 =
+            { state
+              | offset = state.offset + len
+              , column = state.column + len
+            }
+        lexeme =
+            String.slice startOffset s1.offset state.source
+        token =
+            { kind = kind
+            , lexeme = lexeme
+            , span =
+                { start = { offset = startOffset , line = state.line , column = startCol }
+                , end = { offset = s1.offset , line = s1.line , column = s1.column }
+                }
+            }
+    in
+        { s1 | tokens = token :: s1.tokens }
+
+
+consumeOperator : String -> Int -> Int
+consumeOperator source offset =
+    if offset >= String.length source then
+        0
+    else
+        let
+            ch =
+                charAt source offset
+        in
+            if isOperatorChar ch then
+                1 + consumeOperator source (offset + 1)
+            else if 0 == 0 then
+                -- Minimum 1 character
+                1
+            else
+                0
+
+
+isOperatorChar : Char -> Bool
+isOperatorChar ch =
+    ch == '+' || ch == '-' || ch == '*' || ch == '/' ||
+    ch == '=' || ch == '<' || ch == '>' || ch == '!' ||
+    ch == '&' || ch == '|' || ch == ':' || ch == '%' ||
+    ch == '^' || ch == '~'
+
+
+-- ══════════════════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════════════════
+
+-- Get character at index as a single-character string
+charAt : String -> Int -> Char
+charAt s i =
+    let
+        c =
+            String.slice i (i + 1) s
+    in
+        if c == "" then
+            ' '
+        else
+            js c
+
+
+peekChar : String -> Int -> Char
+peekChar s i =
+    charAt s i
+
+
+makeSpan : LexerState -> SourceSpan
+makeSpan state =
+    { start = { offset = state.offset , line = state.line , column = state.column }
+    , end = { offset = state.offset , line = state.line , column = state.column }
+    }

@@ -1,0 +1,126 @@
+module Compiler.Pipeline exposing (compile)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.File as File
+import Std.Log exposing (println)
+import Compiler.Token as Token
+import Compiler.Lexer as Lexer
+import Compiler.GoIr exposing (..)
+import Compiler.Emit as Emit
+
+-- Token kind checks (use pattern matching to avoid ADT equality issues)
+
+isIdentToken : Token.Token -> Bool
+isIdentToken t =
+    case t.kind of
+        Token.TkIdentifier ->
+            True
+
+        _ ->
+            False
+
+
+isKeywordToken : Token.Token -> Bool
+isKeywordToken t =
+    case t.kind of
+        Token.TkKeyword ->
+            True
+
+        _ ->
+            False
+
+
+isStringToken : Token.Token -> Bool
+isStringToken t =
+    case t.kind of
+        Token.TkString ->
+            True
+
+        _ ->
+            False
+
+
+-- Compiler pipeline: read source -> lex -> emit Go.
+-- Phase 1: Direct compilation of simple programs.
+-- Demonstrates the lexer and emitter working together.
+
+
+compile : String -> String -> Result String String
+compile filePath outDir =
+    case File.readFile filePath of
+        Err e ->
+            Err ("Cannot read file: " ++ filePath)
+
+        Ok source ->
+            let
+                _ =
+                    println ("Compiling " ++ filePath ++ "...")
+                lexResult =
+                    Lexer.lex source
+                _ =
+                    println ("  Lexed " ++ String.fromInt (List.length lexResult.tokens) ++ " tokens")
+                -- For now, generate a simple Go main that prints token count
+                goPackage =
+                    generateTestOutput lexResult.tokens source
+                goCode =
+                    Emit.emitPackage goPackage
+                outPath =
+                    outDir ++ "/main.go"
+                _ =
+                    File.mkdirAll outDir
+                _ =
+                    File.writeFile outPath goCode
+                _ =
+                    println ("  Wrote " ++ outPath)
+            in
+                Ok goCode
+
+
+generateTestOutput : List Token.Token -> String -> GoPackage
+generateTestOutput tokens source =
+    let
+        tokenCount =
+            String.fromInt (List.length tokens)
+        -- Count by kind (use string comparison via lexeme patterns)
+        identCount =
+            String.fromInt (List.length (List.filter isIdentToken tokens))
+        kwCount =
+            String.fromInt (List.length (List.filter isKeywordToken tokens))
+        strCount =
+            String.fromInt (List.length (List.filter isStringToken tokens))
+    in
+        { name = "main"
+        , imports =
+            [ { path = "fmt" , alias_ = "" } ]
+        , declarations =
+            [ GoDeclFunc
+                { name = "main"
+                , params = []
+                , returnType = ""
+                , body =
+                    [ GoExprStmt
+                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
+                            [ GoStringLit ("Sky Compiler v0.1 - Lexer Output") ]
+                        )
+                    , GoExprStmt
+                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
+                            [ GoStringLit ("Tokens: " ++ tokenCount) ]
+                        )
+                    , GoExprStmt
+                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
+                            [ GoStringLit ("  Identifiers: " ++ identCount) ]
+                        )
+                    , GoExprStmt
+                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
+                            [ GoStringLit ("  Keywords: " ++ kwCount) ]
+                        )
+                    , GoExprStmt
+                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
+                            [ GoStringLit ("  Strings: " ++ strCount) ]
+                        )
+                    ]
+                }
+            ]
+        }

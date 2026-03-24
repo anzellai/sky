@@ -1,0 +1,31 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Args as Args
+import Sky.Core.Process as Process
+import Std.Log exposing (println)
+import Compiler.Pipeline as Pipeline
+
+-- Sky Compiler written in Sky.
+-- Phase 1: Lexer + Go emitter demonstration.
+
+main =
+    let
+        args =
+            Args.getArgs ()
+    in
+        case Args.getArg 1 of
+            Nothing ->
+                println "Usage: sky-compiler <file.sky>"
+
+            Just filePath ->
+                case Pipeline.compile filePath "sky-out" of
+                    Ok _ ->
+                        println "Compilation successful."
+
+                    Err msg ->
+                        let
+                            _ =
+                                println ("Error: " ++ msg)
+                        in
+                            Process.exit 1

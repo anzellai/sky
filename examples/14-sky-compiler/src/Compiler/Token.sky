@@ -1,0 +1,76 @@
+module Compiler.Token exposing (..)
+
+-- Token types for the Sky lexer.
+-- Each token carries its kind, source text, and source location.
+
+
+type TokenKind
+    = TkIdentifier
+    | TkUpperIdentifier
+    | TkInteger
+    | TkFloat
+    | TkString
+    | TkChar
+    | TkKeyword
+    | TkOperator
+    | TkEquals
+    | TkColon
+    | TkComma
+    | TkDot
+    | TkPipe
+    | TkArrow
+    | TkBackslash
+    | TkLParen
+    | TkRParen
+    | TkLBracket
+    | TkRBracket
+    | TkLBrace
+    | TkRBrace
+    | TkNewline
+    | TkIndent
+    | TkDedent
+    | TkEOF
+
+
+type alias SourcePosition =
+    { offset : Int
+    , line : Int
+    , column : Int
+    }
+
+
+type alias SourceSpan =
+    { start : SourcePosition
+    , end : SourcePosition
+    }
+
+
+type alias Token =
+    { kind : TokenKind
+    , lexeme : String
+    , span : SourceSpan
+    }
+
+
+type alias Diagnostic =
+    { severity : String
+    , message : String
+    , span : SourceSpan
+    , hint : String
+    }
+
+
+emptySpan : SourceSpan
+emptySpan =
+    { start = { offset = 0 , line = 0 , column = 0 }
+    , end = { offset = 0 , line = 0 , column = 0 }
+    }
+
+
+isKeyword : String -> Bool
+isKeyword word =
+    word == "module" || word == "exposing" || word == "import" ||
+    word == "as" || word == "type" || word == "alias" ||
+    word == "let" || word == "in" || word == "if" ||
+    word == "then" || word == "else" || word == "case" ||
+    word == "of" || word == "foreign" || word == "port"

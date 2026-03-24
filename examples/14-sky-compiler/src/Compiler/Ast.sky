@@ -1,0 +1,129 @@
+module Compiler.Ast exposing (..)
+
+import Compiler.Token exposing (SourceSpan)
+
+-- Sky AST node types.
+-- Each constructor carries its data fields plus a SourceSpan for diagnostics.
+
+
+-- ══════════════════════════════════════════════════════
+-- EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+type Expression
+    = IdentifierExpr String SourceSpan
+    | QualifiedExpr (List String) SourceSpan
+    | IntLitExpr Int String SourceSpan
+    | FloatLitExpr Float String SourceSpan
+    | StringLitExpr String SourceSpan
+    | CharLitExpr String SourceSpan
+    | BoolLitExpr Bool SourceSpan
+    | UnitExpr SourceSpan
+    | TupleExpr (List Expression) SourceSpan
+    | ListExpr (List Expression) SourceSpan
+    | RecordExpr (List ( String, Expression )) SourceSpan
+    | RecordUpdateExpr Expression (List ( String, Expression )) SourceSpan
+    | FieldAccessExpr Expression String SourceSpan
+    | CallExpr Expression (List Expression) SourceSpan
+    | LambdaExpr (List Pattern) Expression SourceSpan
+    | IfExpr Expression Expression Expression SourceSpan
+    | LetExpr (List LetBinding) Expression SourceSpan
+    | CaseExpr Expression (List CaseBranch) SourceSpan
+    | BinaryExpr String Expression Expression SourceSpan
+    | NegateExpr Expression SourceSpan
+    | ParenExpr Expression SourceSpan
+
+
+-- ══════════════════════════════════════════════════════
+-- PATTERNS
+-- ══════════════════════════════════════════════════════
+
+type Pattern
+    = PWildcard SourceSpan
+    | PVariable String SourceSpan
+    | PConstructor (List String) (List Pattern) SourceSpan
+    | PLiteral LiteralValue SourceSpan
+    | PTuple (List Pattern) SourceSpan
+    | PList (List Pattern) SourceSpan
+    | PCons Pattern Pattern SourceSpan
+    | PAs Pattern String SourceSpan
+    | PRecord (List String) SourceSpan
+
+
+type LiteralValue
+    = LitInt Int
+    | LitFloat Float
+    | LitString String
+    | LitChar String
+    | LitBool Bool
+
+
+-- ══════════════════════════════════════════════════════
+-- TYPES
+-- ══════════════════════════════════════════════════════
+
+type TypeExpr
+    = TypeRef (List String) (List TypeExpr) SourceSpan
+    | TypeVar String SourceSpan
+    | FunType TypeExpr TypeExpr SourceSpan
+    | RecordTypeExpr (List ( String, TypeExpr )) SourceSpan
+    | TupleTypeExpr (List TypeExpr) SourceSpan
+    | UnitTypeExpr SourceSpan
+
+
+-- ══════════════════════════════════════════════════════
+-- DECLARATIONS
+-- ══════════════════════════════════════════════════════
+
+type Declaration
+    = FunDecl String (List Pattern) Expression SourceSpan
+    | TypeAnnotDecl String TypeExpr SourceSpan
+    | TypeDecl String (List String) (List TypeVariant) SourceSpan
+    | TypeAliasDecl String (List String) TypeExpr SourceSpan
+    | ForeignImportDecl String String String SourceSpan
+
+
+type alias TypeVariant =
+    { name : String
+    , fields : List TypeExpr
+    , span : SourceSpan
+    }
+
+
+type alias LetBinding =
+    { pattern : Pattern
+    , value : Expression
+    }
+
+
+type alias CaseBranch =
+    { pattern : Pattern
+    , body : Expression
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- MODULE
+-- ══════════════════════════════════════════════════════
+
+type alias Module =
+    { name : List String
+    , exposing_ : ExposingClause
+    , imports : List ImportDecl
+    , declarations : List Declaration
+    , span : SourceSpan
+    }
+
+
+type ExposingClause
+    = ExposeAll
+    | ExposeList (List String)
+    | ExposeNone
+
+
+type alias ImportDecl =
+    { moduleName : List String
+    , alias_ : String
+    , exposing_ : ExposingClause
+    , span : SourceSpan
+    }
