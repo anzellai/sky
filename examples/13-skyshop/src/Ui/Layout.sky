@@ -531,10 +531,10 @@ adminPage model content =
                     , viewHeader model
                     , viewNotification model
                     , div
-                        [ tw [ flex1 , maxW7xl , mxAuto , wFull , px4 , py8 ] ]
-                        [ div [ tw [ flex , flexCol , md flexRow , gap8 ] ]
+                        [ tw [ flex1 , wFull , px4 , py8 ] ]
+                        [ div [ tw [ flex , flexCol , lg flexRow , gap6 , maxW7xl , mxAuto ] ]
                             [ adminSidebar model
-                            , div [ tw [ flex1 ] ] [ content ]
+                            , div [ tw [ flex1 , minW0 ] ] [ content ]
                             ]
                         ]
                     , viewFooter model
@@ -833,12 +833,12 @@ adminSidebar model =
         lang =
             model.lang
     in
-        div [ tw [ wFull , md w48 , shrink0 , pt2 ] ]
+        div [ tw [ wFull , lg w48 , shrink0 , pt2 ] ]
             [ div [ tw [ px3 , py2 , mb2 ] ]
                 [ span [ tw [ textXs , uppercase , fontBold , textGray400 ] ]
                     [ text (Tr.t lang "nav.admin") ]
                 ]
-            , div [ tw [ flex , flexRow , md flexCol , gap1 , flexWrap ] ]
+            , div [ tw [ flex , flexRow , lg flexCol , gap1 , flexWrap ] ]
                 [ adminSidebarLink "/admin/products" "admin.products" model
                 , adminSidebarLink "/admin/orders" "admin.orders" model
                 ]
