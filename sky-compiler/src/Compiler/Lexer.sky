@@ -456,9 +456,6 @@ consumeOperator source offset =
         in
             if isOperatorChar ch then
                 1 + consumeOperator source (offset + 1)
-            else if 0 == 0 then
-                -- Minimum 1 character
-                1
             else
                 0
 

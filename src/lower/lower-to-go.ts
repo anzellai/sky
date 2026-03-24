@@ -1610,7 +1610,17 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
                   env.set(argPat.name, { kind: "TypeConstant", name: "Any" });
                   const fieldName = wellKnownFields[pat.name] || (pat.name + "Value" + (j > 0 ? j : ""));
-                  if (isWellKnownAdtType(outerAdtType)) {
+                  if (pat.name.startsWith("Tuple")) {
+                      // Tuple types: use Sky_AsTuple struct access
+                      const tupleArity = pat.args.length;
+                      const assertFn = tupleArity <= 2 ? "sky_wrappers.Sky_AsTuple2" : "sky_wrappers.Sky_AsTuple3";
+                      stmts.push({
+                          kind: "GoAssignStmt",
+                          define: true,
+                          left: [{ kind: "GoIdent", name: sanitizeGoIdent(argPat.name) }],
+                          right: { kind: "GoRawExpr", code: `${assertFn}(${emitGoExprForLower(subj)}).V${j}` } as any
+                      });
+                  } else if (isWellKnownAdtType(outerAdtType)) {
                       // Well-known types: struct-based field access
                       let s: GoIR.GoExpr = subj;
                       s = { kind: "GoTypeAssertExpr", expr: s, type: { kind: "GoIdentType", name: outerAdtType! } } as any;

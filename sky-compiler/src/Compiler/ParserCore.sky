@@ -162,12 +162,12 @@ parseQualifiedParts parts state =
             ( unusedDot , s1 ) =
                 advance state
         in
-            if matchKind TkUpperIdentifier s1 then
+            if matchKind TkUpperIdentifier s1 || matchKind TkIdentifier s1 then
                 let
                     ( tok , s2 ) =
                         advance s1
                 in
-                    parseQualifiedParts (parts ++ [ tok.lexeme ]) s2
+                    parseQualifiedParts (List.append parts [ tok.lexeme ]) s2
             else
                 ( parts , state )
     else

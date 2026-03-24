@@ -41,27 +41,33 @@ parseExprLoop minPrec left state =
                 Nothing ->
                     Ok ( left , state )
 
-                Just ( prec , assoc ) ->
-                    if prec < minPrec then
-                        Ok ( left , state )
-                    else
-                        let
-                            ( _ , s1 ) =
-                                advance state
-                            nextMin =
-                                if assoc == "left" then
-                                    prec + 1
-                                else
-                                    prec
-                        in
-                            case parseExpr nextMin s1 of
-                                Err e ->
-                                    Err e
+                Just pair ->
+                    let
+                        prec =
+                            fst pair
+                        assoc =
+                            snd pair
+                    in
+                        if prec < minPrec then
+                            Ok ( left , state )
+                        else
+                            let
+                                ( advTok , s1 ) =
+                                    advance state
+                                nextMin =
+                                    if assoc == "left" then
+                                        prec + 1
+                                    else
+                                        prec
+                            in
+                                case parseExpr nextMin s1 of
+                                    Err e ->
+                                        Err e
 
-                                Ok ( right , s2 ) ->
-                                    parseExprLoop minPrec
-                                        (BinaryExpr opToken.lexeme left right emptySpan)
-                                        s2
+                                    Ok ( right , s2 ) ->
+                                        parseExprLoop minPrec
+                                            (BinaryExpr opToken.lexeme left right emptySpan)
+                                            s2
     else
         Ok ( left , state )
 

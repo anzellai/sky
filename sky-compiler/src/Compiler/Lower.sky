@@ -56,11 +56,18 @@ lowerModule registry mod =
 
         -- Collect needed imports
         imports =
-            [ { path = "fmt" , alias_ = "" } ]
+            [ { path = "fmt" , alias_ = "" }
+            , { path = "strconv" , alias_ = "" }
+            , { path = "strings" , alias_ = "" }
+            , { path = "os" , alias_ = "" }
+            ]
+        -- Generate inline helper functions
+        helperDecls =
+            generateHelperDecls
     in
         { name = "main"
         , imports = imports
-        , declarations = ctorDecls ++ goDecls
+        , declarations = List.concat [ helperDecls , ctorDecls , goDecls ]
         }
 
 -- ══════════════════════════════════════════════════════
@@ -173,7 +180,7 @@ lowerExpr ctx expr =
             in
                 if n == 2 then
                     GoRawExpr
-                        ("sky_wrappers.Tuple2{V0: "
+                        ("SkyTuple2{V0: "
                             ++ emitGoExprInline (listGet 0 goItems)
                             ++ ", V1: "
                             ++ emitGoExprInline (listGet 1 goItems)
@@ -182,7 +189,7 @@ lowerExpr ctx expr =
                 else
                     if n == 3 then
                         GoRawExpr
-                            ("sky_wrappers.Tuple3{V0: "
+                            ("SkyTuple3{V0: "
                                 ++ emitGoExprInline (listGet 0 goItems)
                                 ++ ", V1: "
                                 ++ emitGoExprInline (listGet 1 goItems)
@@ -287,6 +294,8 @@ lowerIdentifier ctx name =
                             else
                                 if name == "False" then
                                     GoIdent "false"
+                                else if name == "println" then
+                                    GoIdent "sky_println"
                                 else
                                     GoIdent (sanitizeGoIdent name)
 
@@ -301,32 +310,75 @@ lowerConstructorValue name info =
 
 lowerQualified : LowerCtx -> List String -> GoExpr
 lowerQualified ctx parts =
-    if List.length parts == 2 then
-        let
-            modPart =
-                case List.head parts of
-                    Just p ->
-                        p
+    let
+        qualName =
+            String.join "." parts
+    in
+        -- Map well-known stdlib functions to Go runtime calls
+        if qualName == "String.fromInt" then
+            GoIdent "sky_stringFromInt"
+        else if qualName == "String.fromFloat" then
+            GoIdent "sky_stringFromFloat"
+        else if qualName == "String.toUpper" then
+            GoIdent "sky_stringToUpper"
+        else if qualName == "String.toLower" then
+            GoIdent "sky_stringToLower"
+        else if qualName == "String.length" then
+            GoIdent "sky_stringLength"
+        else if qualName == "String.join" then
+            GoIdent "sky_stringJoin"
+        else if qualName == "String.contains" then
+            GoIdent "sky_stringContains"
+        else if qualName == "String.trim" then
+            GoIdent "sky_stringTrim"
+        else if qualName == "String.isEmpty" then
+            GoIdent "sky_stringIsEmpty"
+        else if qualName == "String.slice" then
+            GoIdent "sky_stringSlice"
+        else if qualName == "List.map" then
+            GoIdent "sky_listMap"
+        else if qualName == "List.filter" then
+            GoIdent "sky_listFilter"
+        else if qualName == "List.foldl" then
+            GoIdent "sky_listFoldl"
+        else if qualName == "List.foldr" then
+            GoIdent "sky_listFoldr"
+        else if qualName == "List.length" then
+            GoIdent "sky_listLength"
+        else if qualName == "List.head" then
+            GoIdent "sky_listHead"
+        else if qualName == "List.reverse" then
+            GoIdent "sky_listReverse"
+        else if qualName == "List.isEmpty" then
+            GoIdent "sky_listIsEmpty"
+        else if qualName == "List.append" then
+            GoIdent "sky_listAppend"
+        else if qualName == "Log.println" then
+            GoIdent "sky_println"
+        else if qualName == "Process.exit" then
+            GoSelectorExpr (GoIdent "os") "Exit"
+        else if List.length parts == 2 then
+            let
+                modPart =
+                    case List.head parts of
+                        Just p ->
+                            p
 
-                    Nothing ->
-                        ""
-            funcPart =
-                case List.head (List.drop 1 parts) of
-                    Just p ->
-                        p
+                        Nothing ->
+                            ""
+                funcPart =
+                    case List.head (List.drop 1 parts) of
+                        Just p ->
+                            p
 
-                    Nothing ->
-                        ""
-            goMod =
-                String.toLower modPart
-        in
-            GoSelectorExpr (GoIdent goMod) funcPart
-    else
-        let
-            name =
-                String.join "." parts
-        in
-            GoIdent (sanitizeGoIdent name)
+                        Nothing ->
+                            ""
+                goMod =
+                    String.toLower modPart
+            in
+                GoSelectorExpr (GoIdent goMod) funcPart
+        else
+            GoIdent (sanitizeGoIdent qualName)
 
 -- ══════════════════════════════════════════════════════
 -- CALL LOWERING
@@ -334,14 +386,29 @@ lowerQualified ctx parts =
 lowerCall : LowerCtx -> Expression -> List Expression -> GoExpr
 lowerCall ctx callee args =
     let
+        -- Flatten curried calls: f a b c → f(a, b, c) instead of f(a)(b)(c)
+        flatResult =
+            flattenCall callee args
+        flatCallee =
+            fst flatResult
+        flatArgs =
+            snd flatResult
         goCallee =
-            lowerExpr ctx callee
+            lowerExpr ctx flatCallee
         goArgs =
-            List.map (lowerExpr ctx) args
+            List.map (lowerExpr ctx) flatArgs
     in
-
-        -- Check if callee is a known curried function and flatten
         GoCallExpr goCallee goArgs
+
+
+flattenCall : Expression -> List Expression -> ( Expression , List Expression )
+flattenCall callee args =
+    case callee of
+        CallExpr innerCallee innerArgs _ ->
+            flattenCall innerCallee (List.append innerArgs args)
+
+        _ ->
+            ( callee , args )
 
 -- ══════════════════════════════════════════════════════
 -- LAMBDA LOWERING
@@ -361,44 +428,42 @@ lowerLambda ctx params body =
 -- ══════════════════════════════════════════════════════
 lowerIf : LowerCtx -> Expression -> Expression -> Expression -> GoExpr
 lowerIf ctx condition thenBranch elseBranch =
-
-    -- Go doesn't have if-expressions, so wrap in IIFE
-    GoCallExpr
-        (
-        GoFuncLit [] (GoRawExpr (ifGoCode ctx condition thenBranch elseBranch))
+    GoRawExpr
+        ("func() any { if sky_asBool("
+            ++ exprToGoString ctx condition
+            ++ ") { return "
+            ++ exprToGoString ctx thenBranch
+            ++ " }; return "
+            ++ exprToGoString ctx elseBranch
+            ++ " }()"
         )
-        []
-
-ifGoCode : LowerCtx -> Expression -> Expression -> Expression -> String
-ifGoCode ctx condition thenBranch elseBranch =
-    "func() any { if sky_asBool(" ++
-    exprToGoString ctx condition ++
-    ") { return " ++
-    exprToGoString ctx thenBranch ++
-    " }; return " ++ exprToGoString ctx elseBranch ++ " }()"
 
 -- ══════════════════════════════════════════════════════
 -- LET LOWERING
 -- ══════════════════════════════════════════════════════
 lowerLet : LowerCtx -> List LetBinding -> Expression -> GoExpr
 lowerLet ctx bindings body =
-
-    -- Wrap in IIFE: func() any { var1 := val1; ...; return body }()
     let
         stmts =
             List.concatMap (lowerLetBinding ctx) bindings
         returnStmt =
             [ GoReturn (lowerExpr ctx body) ]
+        allStmts =
+            List.append stmts returnStmt
     in
-        GoCallExpr
-            (GoFuncLit [] (GoRawExpr (stmtsToGoString (List.append stmts returnStmt))))
-            []
+        GoRawExpr ("func() any { " ++ stmtsToGoString allStmts ++ " }()")
 
 lowerLetBinding : LowerCtx -> LetBinding -> List GoStmt
 lowerLetBinding ctx binding =
     case binding.pattern of
         PVariable name _ ->
-            [ GoShortDecl (sanitizeGoIdent name) (lowerExpr ctx binding.value) ]
+            let
+                goName =
+                    sanitizeGoIdent name
+            in
+                [ GoShortDecl goName (lowerExpr ctx binding.value)
+                , GoExprStmt (GoRawExpr ("_ = " ++ goName))
+                ]
         
         PWildcard _ ->
             [ GoExprStmt (lowerExpr ctx binding.value) ]
@@ -715,30 +780,38 @@ lowerBinary ctx op left right =
                         ]
                 else
                     if op == "++" then
-
-            -- String concatenation or list append
-                        GoBinaryExpr "+" goLeft goRight
+                        -- String concatenation
+                        GoRawExpr
+                            ("sky_asString(" ++ emitGoExprInline goLeft ++ ") + sky_asString(" ++ emitGoExprInline goRight ++ ")")
+                    else if op == "+" || op == "-" || op == "*" || op == "%" then
+                        -- Arithmetic: use sky_asInt for integer ops
+                        GoRawExpr
+                            ("sky_asInt(" ++ emitGoExprInline goLeft ++ ") " ++ op ++ " sky_asInt(" ++ emitGoExprInline goRight ++ ")")
+                    else if op == "/" then
+                        GoRawExpr
+                            ("sky_asFloat(" ++ emitGoExprInline goLeft ++ ") / sky_asFloat(" ++ emitGoExprInline goRight ++ ")")
+                    else if op == "//" then
+                        GoRawExpr
+                            ("sky_asInt(" ++ emitGoExprInline goLeft ++ ") / sky_asInt(" ++ emitGoExprInline goRight ++ ")")
+                    else if op == "/=" then
+                        GoRawExpr
+                            ("!sky_equal(" ++ emitGoExprInline goLeft ++ ", " ++ emitGoExprInline goRight ++ ")")
+                    else if op == "==" then
+                        GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ]
+                    else if op == "!=" then
+                        GoUnaryExpr "!"
+                            (GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ])
+                    else if op == "<" || op == "<=" || op == ">" || op == ">=" then
+                        GoRawExpr
+                            ("sky_asInt(" ++ emitGoExprInline goLeft ++ ") " ++ op ++ " sky_asInt(" ++ emitGoExprInline goRight ++ ")")
+                    else if op == "&&" then
+                        GoRawExpr
+                            ("sky_asBool(" ++ emitGoExprInline goLeft ++ ") && sky_asBool(" ++ emitGoExprInline goRight ++ ")")
+                    else if op == "||" then
+                        GoRawExpr
+                            ("sky_asBool(" ++ emitGoExprInline goLeft ++ ") || sky_asBool(" ++ emitGoExprInline goRight ++ ")")
                     else
-                        if op == "/=" then
-                            GoBinaryExpr "!=" goLeft goRight
-                        else
-                            if op == "//" then
-                                GoBinaryExpr "/" goLeft goRight
-                            else
-                                if op == "==" then
-
-            -- Need runtime equality check for any types
-                                    GoCallExpr (GoIdent "sky_equal")
-                                        [ goLeft , goRight ]
-                                else
-                                    if op == "!=" then
-                                        GoUnaryExpr "!"
-                                            (
-                                            GoCallExpr (GoIdent "sky_equal")
-                                                [ goLeft , goRight ]
-                                            )
-                                    else
-                                        GoBinaryExpr op goLeft goRight
+                        GoBinaryExpr op goLeft goRight
 
 -- ══════════════════════════════════════════════════════
 -- RECORD UPDATE LOWERING
@@ -837,6 +910,53 @@ generateCtorFunc typeName tagIndex variant =
 -- ══════════════════════════════════════════════════════
 -- HELPERS
 -- ══════════════════════════════════════════════════════
+-- INLINE RUNTIME HELPERS
+-- ══════════════════════════════════════════════════════
+
+generateHelperDecls : List GoDecl
+generateHelperDecls =
+    [ GoDeclRaw "type SkyTuple2 struct { V0, V1 any }"
+    , GoDeclRaw "type SkyTuple3 struct { V0, V1, V2 any }"
+    , GoDeclRaw "type SkyResult struct { Tag int; SkyName string; OkValue, ErrValue any }"
+    , GoDeclRaw "type SkyMaybe struct { Tag int; SkyName string; JustValue any }"
+    , GoDeclRaw "func SkyOk(v any) SkyResult { return SkyResult{Tag: 0, SkyName: \"Ok\", OkValue: v} }"
+    , GoDeclRaw "func SkyErr(v any) SkyResult { return SkyResult{Tag: 1, SkyName: \"Err\", ErrValue: v} }"
+    , GoDeclRaw "func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, SkyName: \"Just\", JustValue: v} }"
+    , GoDeclRaw "func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
+    , GoDeclRaw "func sky_asInt(v any) int { switch x := v.(type) { case int: return x; case float64: return int(x); default: return 0 } }"
+    , GoDeclRaw "func sky_asFloat(v any) float64 { switch x := v.(type) { case float64: return x; case int: return float64(x); default: return 0 } }"
+    , GoDeclRaw "func sky_asString(v any) string { if s, ok := v.(string); ok { return s }; return fmt.Sprintf(\"%v\", v) }"
+    , GoDeclRaw "func sky_asBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"
+    , GoDeclRaw "func sky_asList(v any) []any { if l, ok := v.([]any); ok { return l }; return nil }"
+    , GoDeclRaw "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return nil }"
+    , GoDeclRaw "func sky_equal(a, b any) bool { return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
+    , GoDeclRaw "func sky_stringFromInt(v any) any { return strconv.Itoa(sky_asInt(v)) }"
+    , GoDeclRaw "func sky_stringFromFloat(v any) any { return strconv.FormatFloat(sky_asFloat(v), 'f', -1, 64) }"
+    , GoDeclRaw "func sky_stringToUpper(v any) any { return strings.ToUpper(sky_asString(v)) }"
+    , GoDeclRaw "func sky_stringToLower(v any) any { return strings.ToLower(sky_asString(v)) }"
+    , GoDeclRaw "func sky_stringLength(v any) any { return len(sky_asString(v)) }"
+    , GoDeclRaw "func sky_stringTrim(v any) any { return strings.TrimSpace(sky_asString(v)) }"
+    , GoDeclRaw "func sky_stringContains(sub any) any { return func(s any) any { return strings.Contains(sky_asString(s), sky_asString(sub)) } }"
+    , GoDeclRaw "func sky_stringIsEmpty(v any) any { return sky_asString(v) == \"\" }"
+    , GoDeclRaw "func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); return str[sky_asInt(start):sky_asInt(end)] } } }"
+    , GoDeclRaw "func sky_stringJoin(sep any) any { return func(list any) any { parts := sky_asList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = sky_asString(p) }; return strings.Join(ss, sky_asString(sep)) } }"
+    , GoDeclRaw "func sky_listMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(item) }; return result } }"
+    , GoDeclRaw "func sky_listFilter(fn any) any { return func(list any) any { items := sky_asList(list); var result []any; for _, item := range items { if sky_asBool(fn.(func(any) any)(item)) { result = append(result, item) } }; return result } }"
+    , GoDeclRaw "func sky_listFoldl(fn any) any { return func(init any) any { return func(list any) any { acc := init; for _, item := range sky_asList(list) { acc = fn.(func(any) any)(item).(func(any) any)(acc) }; return acc } } }"
+    , GoDeclRaw "func sky_listLength(list any) any { return len(sky_asList(list)) }"
+    , GoDeclRaw "func sky_listHead(list any) any { items := sky_asList(list); if len(items) > 0 { return SkyJust(items[0]) }; return SkyNothing() }"
+    , GoDeclRaw "func sky_listReverse(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[len(items)-1-i] = item }; return result }"
+    , GoDeclRaw "func sky_listIsEmpty(list any) any { return len(sky_asList(list)) == 0 }"
+    , GoDeclRaw "func sky_listAppend(a any) any { return func(b any) any { return append(sky_asList(a), sky_asList(b)...) } }"
+    , GoDeclRaw "func sky_recordUpdate(base any, updates any) any { m := sky_asMap(base); result := make(map[string]any); for k, v := range m { result[k] = v }; for k, v := range sky_asMap(updates) { result[k] = v }; return result }"
+    , GoDeclRaw "func sky_println(v any) any { fmt.Println(sky_asString(v)); return struct{}{} }"
+    , GoDeclRaw "func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
+    , GoDeclRaw "var _ = strings.Contains"
+    , GoDeclRaw "var _ = strconv.Itoa"
+    , GoDeclRaw "var _ = os.Exit"
+    ]
+
+
 collectLocalFunctions : List Declaration -> Set.Set String
 collectLocalFunctions decls =
     List.foldl
