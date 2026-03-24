@@ -221,6 +221,7 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     latestModuleAst = graph.modules[graph.modules.length - 1].moduleAst;
   }
 
+
   for (let _modIdx = 0; _modIdx < graph.modules.length; _modIdx++) {
     // Yield to the event loop between modules so the LSP can respond to
     // pending requests (hover, completion) while type checking continues.
@@ -504,6 +505,8 @@ export async function compileProject(entryFile: string, outDir: string) {
   const allForeignModules = new Set<string>();
   const usedSkyWrapperSymbols = new Set<string>(); // Sky_* symbols from foreign import "sky_wrappers"
 
+
+
   // Collect wrapper symbols during lowering (replaces post-compile file scanning)
   const collectedWrapperSymbols = new Set<string>();
   setWrapperSymbolCollector(collectedWrapperSymbols);
@@ -551,25 +554,50 @@ export async function compileProject(entryFile: string, outDir: string) {
           });
           if (depModule && (depModule.moduleAst as any)._bindingIndex) {
               const idx = (depModule.moduleAst as any)._bindingIndex;
-              // Create exports from index — register ALL type names as constructors
-              const idxExports = new Map<string, Scheme>();
-              for (const typeName of idx.types || []) {
-                  const tc: Type = { kind: "TypeConstant", name: typeName };
-                  idxExports.set(typeName, mono(tc));
+              // Only materialize symbols that this module actually references.
+              // Scan the importing module's source for qualified references (Alias.symbol)
+              // to avoid parsing 40K+ type strings when only ~25 are used.
+              let idxExports = moduleExports.get(depName);
+              if (!idxExports) {
+                  idxExports = new Map<string, Scheme>();
+                  // Always add type names
+                  for (const typeName of idx.types || []) {
+                      const tc: Type = { kind: "TypeConstant", name: typeName };
+                      idxExports.set(typeName, mono(tc));
+                  }
+                  moduleExports.set(depName, idxExports);
+                  const declaredName = depModule.moduleAst.name.join(".");
+                  if (declaredName !== depName) moduleExports.set(declaredName, idxExports);
               }
-              // Register all symbols with their parsed types
-              for (const [symName, entry] of Object.entries(idx.symbols)) {
-                  const e = entry as any;
-                  const type = parseForeignTypeForIndex(e.type);
-                  idxExports.set(symName, mono(type));
+              // Determine which symbols this module uses via the alias
+              const alias = imp.alias?.name || imp.moduleName[imp.moduleName.length - 1];
+              const usedSymNames = new Set<string>();
+              // Scan source AST for Alias.symbol references
+              const scanExpr = (node: any) => {
+                  if (!node || typeof node !== "object") return;
+                  if (node.kind === "ModuleAccess" || node.kind === "QualifiedExpression") {
+                      if (node.module === alias || node.qualifier === alias) {
+                          usedSymNames.add(node.name || node.member);
+                      }
+                  }
+                  for (const v of Object.values(node)) {
+                      if (Array.isArray(v)) v.forEach(scanExpr);
+                      else if (v && typeof v === "object" && (v as any).kind) scanExpr(v);
+                  }
+              };
+              for (const d of loaded.moduleAst.declarations) scanExpr(d);
+              // Also catch unqualified exposed names
+              if (imp.exposing?.kind === "ExposingClause") {
+                  for (const item of imp.exposing.items) usedSymNames.add((item as any).name);
+              }
+              // Materialize only used symbols from the index
+              for (const symName of usedSymNames) {
+                  if (!idxExports.has(symName) && idx.symbols[symName]) {
+                      const e = idx.symbols[symName] as any;
+                      idxExports.set(symName, mono(parseForeignTypeForIndex(e.type)));
+                  }
               }
               depExports = idxExports;
-              moduleExports.set(depName, idxExports);
-              // Also register under the module's declared name
-              const declaredName = depModule.moduleAst.name.join(".");
-              if (declaredName !== depName) {
-                  moduleExports.set(declaredName, idxExports);
-              }
           }
       }
 
@@ -607,13 +635,24 @@ export async function compileProject(entryFile: string, outDir: string) {
       }
     }
 
+
+
+    // Skip full type-checking for .skydeps and stdlib modules in Pass 2 — they were
+    // already checked in Pass 1 and their exports are cached. This avoids re-inferring
+    // large modules like Tailwind CSS (13s → 0ms).
+    const isLibModule = loaded.filePath.includes(".skydeps/") || loaded.filePath.includes("/stdlib/");
+
     const foreignResult = await collectForeignImports(loaded.moduleAst, loaded.filePath);
     const isBindingsModule2 = loaded.filePath.endsWith(".skyi");
     const typeCheck = checkModule(loaded.moduleAst, {
         imports: importsMap,
         foreignBindings: foreignResult.bindings,
         importedTypeAliases: importedTypeAliases2,
-        bindingsOnly: isBindingsModule2
+        // Use bindingsOnly mode for .skyi files AND for .skydeps library modules.
+        // Library modules were already fully type-checked in Pass 1. In Pass 2,
+        // we only need their declarations registered (not re-inferred) to lower them.
+        // This avoids re-inferring Tailwind CSS (13s → <100ms).
+        bindingsOnly: isBindingsModule2 || isLibModule
     });
 
     const myExports = new Map<string, Scheme>();
@@ -878,6 +917,8 @@ export async function compileProject(entryFile: string, outDir: string) {
       writeRuntimeFiles(outDir);
     }
   }
+
+
 
   // Go FFI: Generate wrappers for all unique Go packages used.
   // Wrapper symbols are collected during lowering (collectedWrapperSymbols) — no file scanning needed.
