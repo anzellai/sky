@@ -1,0 +1,29 @@
+module Sky.Core.Args exposing (getArgs, getArg)
+
+{-| Command-line argument access backed by Go's os.Args.
+
+    args = Args.getArgs ()     -- ["sky", "build", "src/Main.sky"]
+    first = Args.getArg 0      -- Just "sky"
+    second = Args.getArg 1     -- Just "build"
+    missing = Args.getArg 99   -- Nothing
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+
+foreign import "sky_wrappers" exposing (Sky_args_GetArgs)
+
+
+getArgs : () -> List String
+getArgs _ =
+    Sky_args_GetArgs ()
+
+
+getArg : Int -> Maybe String
+getArg index =
+    let
+        args =
+            getArgs ()
+    in
+        List.head (List.drop index args)

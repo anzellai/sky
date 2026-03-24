@@ -70,6 +70,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
@@ -1911,6 +1912,92 @@ func Sky_process_LoadEnv(filePath any) any {
 		return SkyResult{Tag: 1, ErrValue: err}
 	}
 	return SkyResult{Tag: 0, OkValue: struct{}{}}
+}
+
+// ============= Ref (Mutable Reference) =============
+
+type SkyRef struct {
+	Value any
+}
+
+func Sky_ref_New(val any) any {
+	return &SkyRef{Value: val}
+}
+
+func Sky_ref_Get(ref any) any {
+	r := ref.(*SkyRef)
+	return r.Value
+}
+
+func Sky_ref_Set(val any, ref any) any {
+	r := ref.(*SkyRef)
+	r.Value = val
+	return struct{}{}
+}
+
+func Sky_ref_Modify(fn any, ref any) any {
+	r := ref.(*SkyRef)
+	f := sky_asFunc(fn)
+	r.Value = f(r.Value)
+	return struct{}{}
+}
+
+// ============= Path Operations =============
+
+func Sky_path_Join(parts any) any {
+	lst := sky_asList(parts)
+	strs := make([]string, len(lst))
+	for i, p := range lst {
+		strs[i] = sky_asString(p)
+	}
+	return filepath.Join(strs...)
+}
+
+func Sky_path_Dir(path any) any {
+	return filepath.Dir(sky_asString(path))
+}
+
+func Sky_path_Base(path any) any {
+	return filepath.Base(sky_asString(path))
+}
+
+func Sky_path_Ext(path any) any {
+	return filepath.Ext(sky_asString(path))
+}
+
+func Sky_path_IsAbs(path any) any {
+	return filepath.IsAbs(sky_asString(path))
+}
+
+func Sky_path_Resolve(path any) any {
+	abs, err := filepath.Abs(sky_asString(path))
+	if err != nil {
+		return sky_asString(path)
+	}
+	return abs
+}
+
+func Sky_path_RelativeTo(base any, target any) any {
+	rel, err := filepath.Rel(sky_asString(base), sky_asString(target))
+	if err != nil {
+		return SkyResult{Tag: 1, ErrValue: err}
+	}
+	return SkyResult{Tag: 0, OkValue: rel}
+}
+
+func Sky_path_Separator() any {
+	return string(filepath.Separator)
+}
+
+// ============= Args Operations =============
+
+func Sky_args_GetArgs() any {
+	args := os.Args
+	result := make([]any, len(args))
+	for i, a := range args {
+		result[i] = a
+	}
+	return result
 }
 `;
       // Only write helper file if content changed (avoids triggering Go recompilation)

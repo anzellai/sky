@@ -31,7 +31,8 @@ src/
   runtime/             -- Sky.Live Go runtime files
   lsp/                 -- Language Server (completion, definition, hover, signature, formatter)
   stdlib/              -- Core/Std library .sky files (Prelude, Maybe, String, Cmd, Task, Sub, Log,
-                          Html, Css, Live, Char, Tuple, Bitwise, Set, Array, File, Process, etc.)
+                          Html, Css, Live, Char, Tuple, Bitwise, Set, Array, File, Path, Process,
+                          Ref, Args, Json.Decode, Json.Encode, Platform, Debug, etc.)
   cli/                 -- CLI commands (init, add, remove, install, update, build, run, dev, fmt, check, clean, upgrade)
   bin/                 -- Entry points: sky.ts, sky-lsp.ts, build-binary.js
   utils/               -- Helpers (assets.ts, path.ts)

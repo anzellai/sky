@@ -199,11 +199,17 @@ function getImportCompletions(
     const stdlibModules = [
         "Sky.Core.Prelude", "Sky.Core.Maybe", "Sky.Core.String",
         "Sky.Core.List", "Sky.Core.Result", "Sky.Core.Dict",
+        "Sky.Core.Set", "Sky.Core.Array", "Sky.Core.Tuple",
+        "Sky.Core.Char", "Sky.Core.Bitwise",
+        "Sky.Core.File", "Sky.Core.Path", "Sky.Core.Process",
+        "Sky.Core.Ref", "Sky.Core.Args",
         "Sky.Core.Json", "Sky.Core.Json.Encode", "Sky.Core.Json.Decode",
         "Sky.Core.Json.Decode.Pipeline", "Sky.Core.Json.Pipeline",
-        "Sky.Core.Debug",
+        "Sky.Core.Platform", "Sky.Core.Debug",
         "Sky.Interop", "Std.Channel", "Std.Log",
         "Std.Cmd", "Std.Sub", "Std.Task", "Std.Program",
+        "Std.Html", "Std.Html.Attributes", "Std.Css",
+        "Std.Live", "Std.Live.Events", "Std.Time",
     ];
     for (const m of stdlibModules) {
         knownModules.add(m);

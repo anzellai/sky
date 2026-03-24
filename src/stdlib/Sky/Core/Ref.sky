@@ -1,0 +1,46 @@
+module Sky.Core.Ref exposing (Ref, new, get, set, modify)
+
+{-| Mutable reference cell backed by Go pointer.
+
+Used for stateful operations like fresh type variable counters.
+All operations are O(1).
+
+    counter = Ref.new 0
+    id = Ref.get counter          -- 0
+    _ = Ref.set 1 counter
+    id2 = Ref.get counter         -- 1
+    _ = Ref.modify (\n -> n + 1) counter
+    id3 = Ref.get counter         -- 2
+-}
+
+foreign import "sky_wrappers" exposing (Sky_ref_New)
+
+foreign import "sky_wrappers" exposing (Sky_ref_Get)
+
+foreign import "sky_wrappers" exposing (Sky_ref_Set)
+
+foreign import "sky_wrappers" exposing (Sky_ref_Modify)
+
+
+type Ref a
+    = Ref
+
+
+new : a -> Ref a
+new val =
+    Sky_ref_New val
+
+
+get : Ref a -> a
+get ref =
+    Sky_ref_Get ref
+
+
+set : a -> Ref a -> ()
+set val ref =
+    Sky_ref_Set val ref
+
+
+modify : (a -> a) -> Ref a -> ()
+modify fn ref =
+    Sky_ref_Modify fn ref

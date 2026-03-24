@@ -4,6 +4,36 @@
 export const SKY_VERSION = "0.1.0-dev";
 
 export const VIRTUAL_ASSETS: Record<string, string> = {
+  "stdlib/Sky/Core/Args.sky": `module Sky.Core.Args exposing (getArgs, getArg)
+
+{-| Command-line argument access backed by Go's os.Args.
+
+    args = Args.getArgs ()     -- ["sky", "build", "src/Main.sky"]
+    first = Args.getArg 0      -- Just "sky"
+    second = Args.getArg 1     -- Just "build"
+    missing = Args.getArg 99   -- Nothing
+-}
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+
+foreign import "sky_wrappers" exposing (Sky_args_GetArgs)
+
+
+getArgs : () -> List String
+getArgs _ =
+    Sky_args_GetArgs ()
+
+
+getArg : Int -> Maybe String
+getArg index =
+    let
+        args =
+            getArgs ()
+    in
+        List.head (List.drop index args)
+`,
   "stdlib/Sky/Core/Array.sky": `module Sky.Core.Array exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_array_Empty, Sky_array_FromList, Sky_array_ToList, Sky_array_Get, Sky_array_Set, Sky_array_Push, Sky_array_Length, Sky_array_Slice, Sky_array_Map, Sky_array_Foldl, Sky_array_Foldr, Sky_array_Append, Sky_array_IndexedMap)
@@ -638,6 +668,76 @@ map3 f ma mb mc =
                         Nothing -> Nothing
                         Just c -> Just (f a b c)
 `,
+  "stdlib/Sky/Core/Path.sky": `module Sky.Core.Path exposing (join, dir, base, ext, isAbsolute, resolve, relativeTo, separator)
+
+{-| File path manipulation backed by Go's path/filepath.
+
+    Path.join [ "src", "Main.sky" ]    -- "src/Main.sky"
+    Path.dir "src/Main.sky"            -- "src"
+    Path.base "src/Main.sky"           -- "Main.sky"
+    Path.ext "Main.sky"                -- ".sky"
+    Path.isAbsolute "/usr/bin"         -- True
+    Path.resolve "."                   -- "/Users/you/project"
+    Path.relativeTo "/a/b" "/a/b/c/d" -- Ok "c/d"
+    Path.separator                     -- "/"
+-}
+
+foreign import "sky_wrappers" exposing (Sky_path_Join)
+
+foreign import "sky_wrappers" exposing (Sky_path_Dir)
+
+foreign import "sky_wrappers" exposing (Sky_path_Base)
+
+foreign import "sky_wrappers" exposing (Sky_path_Ext)
+
+foreign import "sky_wrappers" exposing (Sky_path_IsAbs)
+
+foreign import "sky_wrappers" exposing (Sky_path_Resolve)
+
+foreign import "sky_wrappers" exposing (Sky_path_RelativeTo)
+
+foreign import "sky_wrappers" exposing (Sky_path_Separator)
+
+
+join : List String -> String
+join parts =
+    Sky_path_Join parts
+
+
+dir : String -> String
+dir path =
+    Sky_path_Dir path
+
+
+base : String -> String
+base path =
+    Sky_path_Base path
+
+
+ext : String -> String
+ext path =
+    Sky_path_Ext path
+
+
+isAbsolute : String -> Bool
+isAbsolute path =
+    Sky_path_IsAbs path
+
+
+resolve : String -> String
+resolve path =
+    Sky_path_Resolve path
+
+
+relativeTo : String -> String -> Result Error String
+relativeTo basePath targetPath =
+    Sky_path_RelativeTo basePath targetPath
+
+
+separator : String
+separator =
+    Sky_path_Separator ()
+`,
   "stdlib/Sky/Core/Platform.sky": `module Sky.Core.Platform exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_os_GetArgs)
@@ -729,6 +829,53 @@ getCwd =
 loadEnv : String -> Result Error Unit
 loadEnv filePath =
     Sky_process_LoadEnv filePath
+`,
+  "stdlib/Sky/Core/Ref.sky": `module Sky.Core.Ref exposing (Ref, new, get, set, modify)
+
+{-| Mutable reference cell backed by Go pointer.
+
+Used for stateful operations like fresh type variable counters.
+All operations are O(1).
+
+    counter = Ref.new 0
+    id = Ref.get counter          -- 0
+    _ = Ref.set 1 counter
+    id2 = Ref.get counter         -- 1
+    _ = Ref.modify (\\n -> n + 1) counter
+    id3 = Ref.get counter         -- 2
+-}
+
+foreign import "sky_wrappers" exposing (Sky_ref_New)
+
+foreign import "sky_wrappers" exposing (Sky_ref_Get)
+
+foreign import "sky_wrappers" exposing (Sky_ref_Set)
+
+foreign import "sky_wrappers" exposing (Sky_ref_Modify)
+
+
+type Ref a
+    = Ref
+
+
+new : a -> Ref a
+new val =
+    Sky_ref_New val
+
+
+get : Ref a -> a
+get ref =
+    Sky_ref_Get ref
+
+
+set : a -> Ref a -> ()
+set val ref =
+    Sky_ref_Set val ref
+
+
+modify : (a -> a) -> Ref a -> ()
+modify fn ref =
+    Sky_ref_Modify fn ref
 `,
   "stdlib/Sky/Core/Result.sky": `module Sky.Core.Result exposing (..)
 
@@ -3543,7 +3690,7 @@ sky add database/sql               # Go stdlib
 sky install                        # install all from sky.toml
 \`\`\`
 
-This auto-generates \`.skycache/go/<package>/bindings.skyi\` with type-safe wrappers. **Never write FFI code manually** — the compiler generates everything.
+This auto-generates \`.skycache/go/<package>/bindings.skyi\` and \`bindings.idx\` with type-safe wrappers. **Never write FFI code manually** — the compiler generates everything. Large packages (e.g., Stripe SDK with 40K+ symbols) use lazy binding resolution via the index for fast compilation.
 
 ### Import Path Mapping
 
@@ -3563,6 +3710,8 @@ Go package paths map to PascalCase Sky module names:
 | \`github.com/gorilla/mux\` | \`import Github.Com.Gorilla.Mux as Mux\` |
 | \`modernc.org/sqlite\` | \`import Modernc.Org.Sqlite as _\` |
 | \`fyne.io/fyne/v2\` | \`import Fyne.Io.Fyne.V2 as Fyne\` |
+| \`github.com/stripe/stripe-go/v84\` | \`import Github.Com.Stripe.StripeGo.V84 as Stripe\` |
+| \`github.com/stripe/stripe-go/v84/checkout/session\` | \`import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session\` |
 
 ### Calling Conventions
 
@@ -3581,8 +3730,12 @@ Http.responseWriterHeader w                   -- w.Header()
 Http.requestBody req         -- req.Body
 Http.requestUrl req          -- req.URL
 
--- Go constants: accessed as values (no parens needed for most)
+-- Go constants: accessed as values
 Http.statusOK                -- http.StatusOK
+
+-- Go package variables: getter + setter
+key = Stripe.key ()          -- stripe.Key (getter, returns current value)
+Stripe.setKey "sk_test_..."  -- stripe.Key = "sk_test_..." (setter)
 
 -- Variadic args: pass as List
 Exec.command "sh" ["-c", "echo hello"]   -- exec.Command("sh", "-c", "echo hello")

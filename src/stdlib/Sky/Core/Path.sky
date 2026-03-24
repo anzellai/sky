@@ -1,0 +1,69 @@
+module Sky.Core.Path exposing (join, dir, base, ext, isAbsolute, resolve, relativeTo, separator)
+
+{-| File path manipulation backed by Go's path/filepath.
+
+    Path.join [ "src", "Main.sky" ]    -- "src/Main.sky"
+    Path.dir "src/Main.sky"            -- "src"
+    Path.base "src/Main.sky"           -- "Main.sky"
+    Path.ext "Main.sky"                -- ".sky"
+    Path.isAbsolute "/usr/bin"         -- True
+    Path.resolve "."                   -- "/Users/you/project"
+    Path.relativeTo "/a/b" "/a/b/c/d" -- Ok "c/d"
+    Path.separator                     -- "/"
+-}
+
+foreign import "sky_wrappers" exposing (Sky_path_Join)
+
+foreign import "sky_wrappers" exposing (Sky_path_Dir)
+
+foreign import "sky_wrappers" exposing (Sky_path_Base)
+
+foreign import "sky_wrappers" exposing (Sky_path_Ext)
+
+foreign import "sky_wrappers" exposing (Sky_path_IsAbs)
+
+foreign import "sky_wrappers" exposing (Sky_path_Resolve)
+
+foreign import "sky_wrappers" exposing (Sky_path_RelativeTo)
+
+foreign import "sky_wrappers" exposing (Sky_path_Separator)
+
+
+join : List String -> String
+join parts =
+    Sky_path_Join parts
+
+
+dir : String -> String
+dir path =
+    Sky_path_Dir path
+
+
+base : String -> String
+base path =
+    Sky_path_Base path
+
+
+ext : String -> String
+ext path =
+    Sky_path_Ext path
+
+
+isAbsolute : String -> Bool
+isAbsolute path =
+    Sky_path_IsAbs path
+
+
+resolve : String -> String
+resolve path =
+    Sky_path_Resolve path
+
+
+relativeTo : String -> String -> Result Error String
+relativeTo basePath targetPath =
+    Sky_path_RelativeTo basePath targetPath
+
+
+separator : String
+separator =
+    Sky_path_Separator ()
