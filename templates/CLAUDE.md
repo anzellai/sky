@@ -802,7 +802,7 @@ sky add database/sql               # Go stdlib
 sky install                        # install all from sky.toml
 ```
 
-This auto-generates `.skycache/go/<package>/bindings.skyi` with type-safe wrappers. **Never write FFI code manually** — the compiler generates everything.
+This auto-generates `.skycache/go/<package>/bindings.skyi` and `bindings.idx` with type-safe wrappers. **Never write FFI code manually** — the compiler generates everything. Large packages (e.g., Stripe SDK with 40K+ symbols) use lazy binding resolution via the index for fast compilation.
 
 ### Import Path Mapping
 
@@ -822,6 +822,8 @@ Go package paths map to PascalCase Sky module names:
 | `github.com/gorilla/mux` | `import Github.Com.Gorilla.Mux as Mux` |
 | `modernc.org/sqlite` | `import Modernc.Org.Sqlite as _` |
 | `fyne.io/fyne/v2` | `import Fyne.Io.Fyne.V2 as Fyne` |
+| `github.com/stripe/stripe-go/v84` | `import Github.Com.Stripe.StripeGo.V84 as Stripe` |
+| `github.com/stripe/stripe-go/v84/checkout/session` | `import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session` |
 
 ### Calling Conventions
 
@@ -840,8 +842,12 @@ Http.responseWriterHeader w                   -- w.Header()
 Http.requestBody req         -- req.Body
 Http.requestUrl req          -- req.URL
 
--- Go constants: accessed as values (no parens needed for most)
+-- Go constants: accessed as values
 Http.statusOK                -- http.StatusOK
+
+-- Go package variables: getter + setter
+key = Stripe.key ()          -- stripe.Key (getter, returns current value)
+Stripe.setKey "sk_test_..."  -- stripe.Key = "sk_test_..." (setter)
 
 -- Variadic args: pass as List
 Exec.command "sh" ["-c", "echo hello"]   -- exec.Command("sh", "-c", "echo hello")

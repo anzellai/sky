@@ -8,6 +8,8 @@ Sky is an experimental programming language inspired by **Elm**, compiling to **
 
 ```
 source -> lexer -> layout filtering -> parser -> AST -> module graph -> type checker -> Go emitter
+                                                                         ↑ binding index (.idx)
+                                                                         ↑ lazy symbol resolution
 ```
 
 ```
@@ -59,7 +61,7 @@ sky --version                  # Show embedded version (e.g. "sky v0.2.3")
 3. **Formatter (Elm-style)** -- 4-space indent, leading commas, `let`/`in` always multiline, 80-char line width. **Always run `sky fmt` on `.sky` and `.skyi` files after any changes** (`sky fmt <file>.sky` or `sky fmt <file>.skyi`).
 4. **Universal unifiers** -- `JsValue`, `Foreign`, and variants are universal unifiers for interop. Do not remove. Named Go FFI types (e.g., `Db`, `Rows`, `Response`) are **opaque and strict** -- they must match exactly by name during unification and cannot be used interchangeably. This guarantees type safety at the Go boundary.
 5. **Prelude** -- `Sky.Core.Prelude` is implicitly imported everywhere. Provides `Result`, `Maybe`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`, `js`.
-6. **Go FFI** -- Wrappers accept `any` params with safe assertion helpers (`sky_asInt`, `sky_asString`, `sky_asFunc`, etc.) that return zero values instead of panicking. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`). Auto-generated bindings: struct methods become `{Type}{Method}` (e.g., `db.Query` → `dbQuery`), fields become `{Type}{Field}`, constants/vars become zero-arg functions.
+6. **Go FFI** -- Wrappers accept `any` params with safe assertion helpers (`sky_asInt`, `sky_asString`, `sky_asFunc`, etc.) that return zero values instead of panicking. Always overwrite `00_sky_helpers.go`. Emitted packages prefixed `sky_` (except `main`). Auto-generated bindings: struct methods become `{Type}{Method}` (e.g., `db.Query` → `dbQuery`), fields become `{Type}{Field}`, constants/vars become zero-arg functions (getters), exported vars also get setters (`setVarName`). Generic Go functions (with type parameters) are automatically excluded from bindings. Binding index (`bindings.idx`) enables lazy symbol resolution — only referenced symbols are loaded, making massive packages like Stripe SDK (40K+ symbols) compile in seconds.
 6a. **Type constraints** -- `comparable`, `number`, and `appendable` are enforced type constraints. `comparable` allows `Int`, `Float`, `String`, `Bool`, `Char`, and tuples/lists thereof. `number` allows `Int` and `Float`. `appendable` allows `String` and `List`. These are checked during unification.
 7. **Pointer safety** -- Go `*primitive` types (`*string`, `*int`, etc.) map to `Maybe T` in Sky. Opaque struct pointers (`*sql.DB`) stay as their type name (`Db`). Go `(T, bool)` comma-ok returns map to `Maybe T`. Go `(T1, T2, ..., error)` multi-return maps to `Result Error (TupleN T1 T2 ...)`.
 8. **AST lowering** -- Uppercase identifiers = Constructors unless declared as `foreign import` (then lower as Variable). Don't inject `GoTypeAssertExpr` on FFI return values. ADT constructors generate Go constructor functions for cross-module use. `Result` and `Maybe` use named runtime types (`SkyResult`/`SkyMaybe` in `sky_wrappers`) — never emit anonymous struct literals for these. Well-known constructors (`Ok`/`Err`/`Just`/`Nothing`) always use `SkyOk`/`SkyErr`/`SkyJust`/`SkyNothing` wrapper functions.
@@ -71,7 +73,21 @@ sky --version                  # Show embedded version (e.g. "sky v0.2.3")
 14. **Distribution** -- Release binaries via `git tag v0.x.0 && git push --tags`. CI builds for macOS (arm64/x64), Linux (arm64/x64), Windows (x64) with `SKY_VERSION` embedded from the git tag. Users install via `curl -fsSL .../install.sh | sh`, Docker, or `sky upgrade`. The CLI checks for updates (once per 24h) after `sky add/install/build` and shows a notice if a newer release is available.
 15. **Unicode safety** -- Never use `JSON.stringify` to quote Sky string/char literals in the formatter or emitter. `JSON.stringify` escapes non-ASCII characters to `\uXXXX`, which the lexer then misparses as literal `u{XXXX}` text. Use the formatter's `quoteString()`/`quoteChar()` helpers instead, which preserve unicode as-is. The esbuild config must include `charset: "utf8"` and `build-binary.js` must use backtick template literals (not `JSON.stringify`) when embedding assets.
 16. **Session concurrency** -- Sky.Live uses two layers of concurrency control: (1) per-session in-process mutex (`SessionLocker`) prevents races between event handling and SSE ticks within a single server, (2) optimistic concurrency via `Session.Version` field prevents races across multiple server instances sharing a database. All `SessionStore.Set` calls use `WHERE version = N` semantics and callers retry up to 3 times on conflict.
-17. **Security** -- Sky.Live enforces session cookie validation (SID in request must match HttpOnly cookie), request body size limits (10MB), per-IP rate limiting (30 req/s), and security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy) on all API endpoints. The optional `guard` function in the `app` config provides declarative message authorization: `guard : Msg -> Model -> Result String ()`. Rejected messages are silently dropped (empty patch response). Always define a `guard` for apps with admin or auth-gated operations — View-level checks alone are not sufficient since `__sky_send` is a public API.
+18. **Loading overlay** -- Sky.Live renders a `#sky-loader` overlay during server round-trips. Shown automatically for all events except `onInput` (typing). Hidden on response, SSE push, or poll. Users can restyle via `#sky-loader` and `.sky-spinner` CSS selectors. The overlay has an 80ms delay to avoid flicker on fast responses.
+19. **Client-side eval** -- `data-sky-eval` attribute executes arbitrary JavaScript on the client after DOM patching (e.g., `skySignOut()` for Firebase sign-out). The element is removed after execution. Use sparingly — only for client-side side effects that can't be expressed as Sky messages.
+20. **Ephemeral redirect** -- `checkoutUrl` in the model is cleared on session restoration to prevent infinite redirect loops. The `data-sky-redirect` mechanism is single-use per render cycle.
+21. **Security** -- Sky.Live enforces session cookie validation (SID in request must match HttpOnly cookie), request body size limits (10MB), per-IP rate limiting (30 req/s), and security headers (X-Content-Type-Options, X-Frame-Options, Referrer-Policy) on all API endpoints. The optional `guard` function in the `app` config provides declarative message authorization: `guard : Msg -> Model -> Result String ()`. Rejected messages are silently dropped (empty patch response). Always define a `guard` for apps with admin or auth-gated operations — View-level checks alone are not sufficient since `__sky_send` is a public API.
+
+## Compiler Performance & FFI Pipeline
+
+The compiler uses several optimizations for fast builds even with massive Go dependencies:
+
+1. **Binding index** (`bindings.idx`) -- JSON index generated alongside `.skyi` during `sky install`. The resolver loads the index instead of parsing 200K+ line `.skyi` files. Only referenced symbols are materialized into the type environment (lazy resolution).
+2. **O(N) type environment** -- `TypeEnvironment.addMut()` for mutable batch insertion of declarations. Eliminates O(N²) clone-on-extend that caused hangs with large Go packages.
+3. **bindingsOnly mode** -- `.skyi` and `.skydeps` modules skip full HM type inference in Pass 2. Type annotations are parsed directly without running the inference algorithm.
+4. **Wrapper tree-shaking** -- Symbols collected during GoIR lowering (not post-compile file scanning). `InspectResult` pre-filtered to only needed symbols before wrapper generation. For Stripe SDK: 40K+ symbols → ~25 used → 380 lines of wrapper code.
+5. **Inspection cache** -- `inspect.json` cached to disk per Go package. Invalidated by `go.sum` changes. Subsequent builds skip the expensive Go inspector process.
+6. **FFI constant auto-call** -- The lowerer detects non-function FFI types from `moduleExports` and automatically wraps constant/variable references in `GoCallExpr` (zero-arg Go wrapper functions must be called).
 
 ## Package Management
 
@@ -146,7 +162,7 @@ Located in `examples/` with numbered directories:
 - `10-live-component` -- Sky.Live component protocol with auto-wiring
 - `11-fyne-stopwatch` -- Desktop GUI with Fyne toolkit
 - `12-skyvote` -- Full Sky.Live app with SQLite, auth, voting, SSE auto-refresh
-- `13-skyshop` -- Full e-commerce Sky.Live app: products, cart, Stripe checkout, admin panel, i18n, image uploads, order management
+- `13-skyshop` -- Full e-commerce Sky.Live app: products, cart, Stripe Go SDK checkout, admin panel, i18n, image uploads, order management, Firebase Auth
 
 ## Language Syntax (Elm-like)
 
