@@ -19,6 +19,7 @@ type alias LowerCtx =
     , importedConstructors : Dict.Dict String CtorInfo
     , localFunctions : Set.Set String
     , collectedImports : Set.Set String
+    , importAliases : Dict.Dict String String
     }
 
 type alias CtorInfo =
@@ -31,7 +32,12 @@ emptyCtx =
     , importedConstructors = Dict.empty
     , localFunctions = Set.empty
     , collectedImports = Set.empty
+    , importAliases = Dict.empty
     }
+
+
+-- importAliases maps alias -> qualified module name
+-- e.g. "Utils" -> "Lib.Utils" so that Utils.add → Lib_Utils_Add
 
 -- ══════════════════════════════════════════════════════
 -- MODULE LOWERING
@@ -373,10 +379,20 @@ lowerQualified ctx parts =
 
                         Nothing ->
                             ""
-                goMod =
-                    String.toLower modPart
             in
-                GoSelectorExpr (GoIdent goMod) funcPart
+                -- Check if this is a local module import
+                case Dict.get modPart ctx.importAliases of
+                    Just qualModName ->
+                        -- Local module: generate namespaced function name
+                        let
+                            prefix =
+                                String.replace "." "_" qualModName
+                        in
+                            GoIdent (prefix ++ "_" ++ capitalizeFirst funcPart)
+
+                    Nothing ->
+                        -- Unknown module: try as Go package selector
+                        GoSelectorExpr (GoIdent (String.toLower modPart)) funcPart
         else
             GoIdent (sanitizeGoIdent qualName)
 
@@ -952,7 +968,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_listIsEmpty(list any) any { return len(sky_asList(list)) == 0 }"
     , GoDeclRaw "func sky_listAppend(a any) any { return func(b any) any { return append(sky_asList(a), sky_asList(b)...) } }"
     , GoDeclRaw "func sky_recordUpdate(base any, updates any) any { m := sky_asMap(base); result := make(map[string]any); for k, v := range m { result[k] = v }; for k, v := range sky_asMap(updates) { result[k] = v }; return result }"
-    , GoDeclRaw "func sky_println(v any) any { fmt.Println(sky_asString(v)); return struct{}{} }"
+    , GoDeclRaw "func sky_println(args ...any) any { ss := make([]any, len(args)); for i, a := range args { ss[i] = sky_asString(a) }; fmt.Println(ss...); return struct{}{} }"
     , GoDeclRaw "func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
     , GoDeclRaw "var _ = strings.Contains"
     , GoDeclRaw "var _ = strconv.Itoa"
@@ -1049,6 +1065,14 @@ isGoKeyword name =
     name == "import" ||
     name == "const" ||
     name == "defer" || name == "fallthrough" || name == "goto"
+
+capitalizeFirst : String -> String
+capitalizeFirst s =
+    if String.isEmpty s then
+        ""
+    else
+        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+
 
 lastPartOf : List String -> String
 lastPartOf parts =

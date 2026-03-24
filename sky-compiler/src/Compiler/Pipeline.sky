@@ -1,8 +1,9 @@
-module Compiler.Pipeline exposing (compile)
+module Compiler.Pipeline exposing (compile, compileProject)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
+import Sky.Core.Dict as Dict
 import Sky.Core.File as File
 import Sky.Core.Ref as Ref
 import Std.Log exposing (println)
@@ -36,7 +37,7 @@ compile filePath outDir =
         _ =
             println ("╔══════════════════════════════════════════════════╗")
         _ =
-            println ("║  Sky Self-Hosted Compiler v0.1.0                ║")
+            println ("║  Sky Self-Hosted Compiler v0.4.2                ║")
         _ =
             println ("╚══════════════════════════════════════════════════╝")
         _ =
@@ -45,9 +46,245 @@ compile filePath outDir =
         case File.readFile filePath of
             Err readErr ->
                 Err ("Cannot read file: " ++ filePath ++ " (" ++ readErr ++ ")")
-            
+
             Ok source ->
-                compileSource filePath outDir source
+                let
+                    lexResult =
+                        Lexer.lex source
+                in
+                    case Parser.parse lexResult.tokens of
+                        Err parseErr ->
+                            Err ("Parse error: " ++ parseErr)
+
+                        Ok mod ->
+                            let
+                                srcRoot =
+                                    inferSrcRoot filePath mod.name
+                                hasLocalImports =
+                                    List.foldl (\imp acc -> acc || not (Resolver.isStdlib (String.join "." imp.moduleName))) False mod.imports
+                            in
+                                if hasLocalImports then
+                                    compileMultiModule filePath outDir srcRoot mod
+                                else
+                                    compileSource filePath outDir source
+
+-- ══════════════════════════════════════════════════════
+-- MULTI-MODULE COMPILATION
+-- ══════════════════════════════════════════════════════
+
+compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
+compileMultiModule entryPath outDir srcRoot entryMod =
+    let
+        _ =
+            println ("── Multi-module compilation (src: " ++ srcRoot ++ ")")
+
+        -- Resolve all local imports
+        localImports =
+            List.filter (\imp -> not (Resolver.isStdlib (String.join "." imp.moduleName))) entryMod.imports
+        _ =
+            println ("   " ++ String.fromInt (List.length localImports) ++ " local imports to resolve")
+
+        -- Load and parse each local module
+        loadedModules =
+            loadLocalModules srcRoot localImports []
+        _ =
+            println ("   Loaded " ++ String.fromInt (List.length loadedModules) ++ " modules")
+
+        -- Build import alias map from the entry module
+        aliasMap =
+            buildAliasMap entryMod.imports
+
+        -- Type check all modules with stdlib env
+        stdlibEnv =
+            Resolver.buildStdlibEnv
+
+        -- Compile dependency modules first
+        depDecls =
+            List.concatMap (compileDependencyModule stdlibEnv) loadedModules
+
+        -- Compile entry module with alias awareness
+        entryCheckResult =
+            Checker.checkModule entryMod (Just stdlibEnv)
+        entryRegistry =
+            case entryCheckResult of
+                Ok result ->
+                    result.registry
+
+                Err _ ->
+                    Adt.emptyRegistry
+        baseCtx =
+            Lower.emptyCtx
+        entryCtx =
+            { baseCtx
+                | registry = entryRegistry
+                , localFunctions = Lower.collectLocalFunctions entryMod.declarations
+                , importedConstructors = Lower.buildConstructorMap entryRegistry
+                , importAliases = aliasMap
+            }
+        entryGoDecls =
+            Lower.lowerDeclarations entryCtx entryMod.declarations
+        entryCtorDecls =
+            Lower.generateConstructorDecls entryRegistry entryMod.declarations
+
+        -- Merge all declarations into one package
+        helperDecls =
+            Lower.generateHelperDecls
+        allDecls =
+            List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls ]
+        goPackage =
+            { name = "main"
+            , imports =
+                [ { path = "fmt" , alias_ = "" }
+                , { path = "strconv" , alias_ = "" }
+                , { path = "strings" , alias_ = "" }
+                , { path = "os" , alias_ = "" }
+                ]
+            , declarations = allDecls
+            }
+        goCode =
+            Emit.emitPackage goPackage
+        outPath =
+            outDir ++ "/main.go"
+        _ =
+            File.mkdirAll outDir
+        _ =
+            File.writeFile outPath goCode
+        _ =
+            println ("   Wrote " ++ outPath)
+        _ =
+            println ("   " ++ String.fromInt (List.length allDecls) ++ " total Go declarations")
+        _ =
+            println ""
+        _ =
+            println ("✓ Compilation successful")
+    in
+        Ok goCode
+
+
+-- Load and parse local module files
+
+loadLocalModules : String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+loadLocalModules srcRoot imports acc =
+    case imports of
+        [] ->
+            List.reverse acc
+
+        imp :: rest ->
+            let
+                modName =
+                    String.join "." imp.moduleName
+                filePath =
+                    Resolver.resolveModulePath srcRoot imp.moduleName
+            in
+                case File.readFile filePath of
+                    Err _ ->
+                        loadLocalModules srcRoot rest acc
+
+                    Ok source ->
+                        let
+                            lexResult =
+                                Lexer.lex source
+                        in
+                            case Parser.parse lexResult.tokens of
+                                Err _ ->
+                                    loadLocalModules srcRoot rest acc
+
+                                Ok mod ->
+                                    loadLocalModules srcRoot rest (( modName , mod ) :: acc)
+
+
+-- Build alias → qualified module name map
+
+buildAliasMap : List Ast.ImportDecl -> Dict.Dict String String
+buildAliasMap imports =
+    List.foldl
+        (\imp acc ->
+            let
+                modName =
+                    String.join "." imp.moduleName
+            in
+                if Resolver.isStdlib modName then
+                    acc
+                else
+                    let
+                        alias_ =
+                            if String.isEmpty imp.alias_ then
+                                -- Use last part as default alias
+                                case List.reverse imp.moduleName of
+                                    last :: _ ->
+                                        last
+
+                                    [] ->
+                                        ""
+                            else
+                                imp.alias_
+                    in
+                        Dict.insert alias_ modName acc
+        )
+        Dict.empty
+        imports
+
+
+-- Compile a dependency module into Go declarations with namespaced names
+
+compileDependencyModule : Env.TypeEnv -> ( String , Ast.Module ) -> List GoDecl
+compileDependencyModule stdlibEnv pair =
+    let
+        modName =
+            fst pair
+        mod =
+            snd pair
+        prefix =
+            String.replace "." "_" modName
+        checkResult =
+            Checker.checkModule mod (Just stdlibEnv)
+        registry =
+            case checkResult of
+                Ok result ->
+                    result.registry
+
+                Err _ ->
+                    Adt.emptyRegistry
+        depBaseCtx =
+            Lower.emptyCtx
+        ctx =
+            { depBaseCtx
+                | registry = registry
+                , localFunctions = Lower.collectLocalFunctions mod.declarations
+                , importedConstructors = Lower.buildConstructorMap registry
+            }
+        goDecls =
+            Lower.lowerDeclarations ctx mod.declarations
+        ctorDecls =
+            Lower.generateConstructorDecls registry mod.declarations
+    in
+        -- Prefix all function names with module name and capitalize
+        List.map (prefixDecl prefix) (List.append ctorDecls goDecls)
+
+
+capitalizeFirst : String -> String
+capitalizeFirst s =
+    if String.isEmpty s then
+        ""
+    else
+        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+
+
+prefixDecl : String -> GoDecl -> GoDecl
+prefixDecl prefix decl =
+    case decl of
+        GoDeclFunc funcDecl ->
+            if funcDecl.name == "main" then
+                decl
+            else
+                GoDeclFunc { funcDecl | name = prefix ++ "_" ++ capitalizeFirst funcDecl.name }
+
+        GoDeclVar name expr ->
+            GoDeclVar (prefix ++ "_" ++ capitalizeFirst name) expr
+
+        GoDeclRaw code ->
+            decl
+
 
 compileSource : String -> String -> String -> Result String String
 compileSource filePath outDir source =
