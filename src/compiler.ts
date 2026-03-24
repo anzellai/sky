@@ -298,6 +298,20 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
           }
         }
       }
+
+      // Lazy binding index resolution for Go FFI modules.
+      // When a module is loaded via binding index (bindings.idx), the synthetic AST
+      // has no function declarations. Resolve symbols from the index on demand.
+      if (!depExports || depExports.size === 0) {
+          const depModule = graph.modules.find((m: any) => {
+              const n = m.moduleAst.name.join(".");
+              return n === depName || depName.endsWith("." + n);
+          });
+          if (depModule && (depModule.moduleAst as any)._bindingIndex) {
+              depExports = resolveBindingIndex(depModule, depName, imp, loaded, moduleExports);
+          }
+      }
+
       if (depExports) {
         // Collect specifically exposed names for selective import
         const exposedNames = new Set<string>();
@@ -380,6 +394,15 @@ export async function typeCheckProject(entryFile: string, virtualFile?: { path: 
     allDiagnostics.push(...typeCheck.diagnostics);
 
     const myExports = new Map<string, Scheme>();
+
+    // For binding index modules, exports are populated lazily via resolveBindingIndex
+    // when other modules import from them. Skip the AST-based export building.
+    if ((loaded.moduleAst as any)._bindingIndex) {
+        // Register empty exports — will be populated on demand
+        moduleExports.set(moduleNameStr, myExports);
+        continue;
+    }
+
     const isFullyExposed = loaded.moduleAst.exposing?.kind === "ExposingClause" && loaded.moduleAst.exposing.open;
 
     for (const decl of loaded.moduleAst.declarations) {
@@ -544,60 +567,14 @@ export async function compileProject(entryFile: string, outDir: string) {
           }
         }
       }
-      // For Go FFI modules with binding index: resolve symbols lazily from index.
-      // This avoids loading 40K+ symbols into the type environment — only resolve
-      // the symbols that the importing module actually uses.
+      // Lazy binding index resolution for Go FFI modules (same as Pass 1)
       if (!depExports || depExports.size === 0) {
           const depModule = graph.modules.find((m: any) => {
               const n = m.moduleAst.name.join(".");
               return n === depName || depName.endsWith("." + n);
           });
           if (depModule && (depModule.moduleAst as any)._bindingIndex) {
-              const idx = (depModule.moduleAst as any)._bindingIndex;
-              // Only materialize symbols that this module actually references.
-              // Scan the importing module's source for qualified references (Alias.symbol)
-              // to avoid parsing 40K+ type strings when only ~25 are used.
-              let idxExports = moduleExports.get(depName);
-              if (!idxExports) {
-                  idxExports = new Map<string, Scheme>();
-                  // Always add type names
-                  for (const typeName of idx.types || []) {
-                      const tc: Type = { kind: "TypeConstant", name: typeName };
-                      idxExports.set(typeName, mono(tc));
-                  }
-                  moduleExports.set(depName, idxExports);
-                  const declaredName = depModule.moduleAst.name.join(".");
-                  if (declaredName !== depName) moduleExports.set(declaredName, idxExports);
-              }
-              // Determine which symbols this module uses via the alias
-              const alias = imp.alias?.name || imp.moduleName[imp.moduleName.length - 1];
-              const usedSymNames = new Set<string>();
-              // Scan source AST for Alias.symbol references
-              const scanExpr = (node: any) => {
-                  if (!node || typeof node !== "object") return;
-                  if (node.kind === "ModuleAccess" || node.kind === "QualifiedExpression") {
-                      if (node.module === alias || node.qualifier === alias) {
-                          usedSymNames.add(node.name || node.member);
-                      }
-                  }
-                  for (const v of Object.values(node)) {
-                      if (Array.isArray(v)) v.forEach(scanExpr);
-                      else if (v && typeof v === "object" && (v as any).kind) scanExpr(v);
-                  }
-              };
-              for (const d of loaded.moduleAst.declarations) scanExpr(d);
-              // Also catch unqualified exposed names
-              if (imp.exposing?.kind === "ExposingClause") {
-                  for (const item of imp.exposing.items) usedSymNames.add((item as any).name);
-              }
-              // Materialize only used symbols from the index
-              for (const symName of usedSymNames) {
-                  if (!idxExports.has(symName) && idx.symbols[symName]) {
-                      const e = idx.symbols[symName] as any;
-                      idxExports.set(symName, mono(parseForeignTypeForIndex(e.type)));
-                  }
-              }
-              depExports = idxExports;
+              depExports = resolveBindingIndex(depModule, depName, imp, loaded, moduleExports);
           }
       }
 
@@ -1133,6 +1110,63 @@ function mergeLiveMain(existingMain: string, liveMain: string): string {
   merged += liveFuncs.join("\n");
 
   return merged;
+}
+
+/**
+ * Resolve symbols from a binding index (bindings.idx) for a Go FFI module.
+ * Used by both typeCheckProject (LSP) and compileProject (build) to lazily
+ * materialize only the symbols that the importing module actually references.
+ */
+function resolveBindingIndex(
+    depModule: any,
+    depName: string,
+    imp: any,
+    loaded: any,
+    moduleExports: Map<string, Map<string, Scheme>>
+): Map<string, Scheme> {
+    const idx = (depModule.moduleAst as any)._bindingIndex;
+    let idxExports = moduleExports.get(depName);
+    if (!idxExports) {
+        idxExports = new Map<string, Scheme>();
+        for (const typeName of idx.types || []) {
+            const tc: Type = { kind: "TypeConstant", name: typeName };
+            idxExports.set(typeName, mono(tc));
+        }
+        moduleExports.set(depName, idxExports);
+        const declaredName = depModule.moduleAst.name.join(".");
+        if (declaredName !== depName) moduleExports.set(declaredName, idxExports);
+    }
+    // Determine which symbols this module uses via the alias
+    const alias = imp.alias?.name || imp.moduleName[imp.moduleName.length - 1];
+    const usedSymNames = new Set<string>();
+    // Scan source AST for qualified references (Alias.symbol)
+    const scanExpr = (node: any) => {
+        if (!node || typeof node !== "object") return;
+        // QualifiedIdentifierExpression: { name: { parts: ["Stripe", "setKey"] } }
+        if (node.kind === "QualifiedIdentifierExpression" && node.name?.parts) {
+            const parts = node.name.parts;
+            if (parts.length >= 2 && parts[0] === alias) {
+                usedSymNames.add(parts[parts.length - 1]);
+            }
+        }
+        for (const v of Object.values(node)) {
+            if (Array.isArray(v)) v.forEach(scanExpr);
+            else if (v && typeof v === "object" && (v as any).kind) scanExpr(v);
+        }
+    };
+    for (const d of loaded.moduleAst.declarations) scanExpr(d);
+    // Also catch unqualified exposed names
+    if (imp.exposing?.kind === "ExposingClause") {
+        for (const item of imp.exposing.items) usedSymNames.add((item as any).name);
+    }
+    // Materialize only used symbols from the index
+    for (const symName of usedSymNames) {
+        if (!idxExports.has(symName) && idx.symbols[symName]) {
+            const e = idx.symbols[symName] as any;
+            idxExports.set(symName, mono(parseForeignTypeForIndex(e.type)));
+        }
+    }
+    return idxExports;
 }
 
 function computeOutputFile(moduleName: readonly string[], outDir: string): string {
