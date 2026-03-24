@@ -21,8 +21,8 @@ type Expression
     | UnitExpr SourceSpan
     | TupleExpr (List Expression) SourceSpan
     | ListExpr (List Expression) SourceSpan
-    | RecordExpr (List ( String, Expression )) SourceSpan
-    | RecordUpdateExpr Expression (List ( String, Expression )) SourceSpan
+    | RecordExpr (List NamedExpr) SourceSpan
+    | RecordUpdateExpr Expression (List NamedExpr) SourceSpan
     | FieldAccessExpr Expression String SourceSpan
     | CallExpr Expression (List Expression) SourceSpan
     | LambdaExpr (List Pattern) Expression SourceSpan
@@ -66,9 +66,21 @@ type TypeExpr
     = TypeRef (List String) (List TypeExpr) SourceSpan
     | TypeVar String SourceSpan
     | FunType TypeExpr TypeExpr SourceSpan
-    | RecordTypeExpr (List ( String, TypeExpr )) SourceSpan
+    | RecordTypeExpr (List NamedType) SourceSpan
     | TupleTypeExpr (List TypeExpr) SourceSpan
     | UnitTypeExpr SourceSpan
+
+
+type alias NamedType =
+    { name : String
+    , type_ : TypeExpr
+    }
+
+
+type alias NamedExpr =
+    { name : String
+    , value : Expression
+    }
 
 
 -- ══════════════════════════════════════════════════════

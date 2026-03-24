@@ -788,6 +788,15 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
 
       // Well-known Prelude constructors applied as functions: Ok value, Err value, Just value
       if (flat.fn.kind === "Constructor") {
+          // Tuple constructors → sky_wrappers.Tuple2{V0: a, V1: b}
+          if (flat.fn.name.startsWith("Tuple") && /^Tuple\d+$/.test(flat.fn.name)) {
+              const argExprs = flat.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
+              return {
+                  kind: "GoCompositeLit",
+                  type: { kind: "GoSelectorType", pkg: "sky_wrappers", name: flat.fn.name },
+                  elements: argExprs
+              } as any;
+          }
           const wellKnownAppCtors: Record<string, { wrapper: string; tag: number; field: string }> = {
               "Ok":   { wrapper: "sky_wrappers.SkyOk",  tag: 0, field: "OkValue" },
               "Err":  { wrapper: "sky_wrappers.SkyErr",  tag: 1, field: "ErrValue" },

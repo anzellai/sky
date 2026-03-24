@@ -7,44 +7,10 @@ import Sky.Core.File as File
 import Std.Log exposing (println)
 import Compiler.Token as Token
 import Compiler.Lexer as Lexer
+import Compiler.Ast as Ast
+import Compiler.Parser as Parser
 import Compiler.GoIr exposing (..)
 import Compiler.Emit as Emit
-
--- Token kind checks (use pattern matching to avoid ADT equality issues)
-
-isIdentToken : Token.Token -> Bool
-isIdentToken t =
-    case t.kind of
-        Token.TkIdentifier ->
-            True
-
-        _ ->
-            False
-
-
-isKeywordToken : Token.Token -> Bool
-isKeywordToken t =
-    case t.kind of
-        Token.TkKeyword ->
-            True
-
-        _ ->
-            False
-
-
-isStringToken : Token.Token -> Bool
-isStringToken t =
-    case t.kind of
-        Token.TkString ->
-            True
-
-        _ ->
-            False
-
-
--- Compiler pipeline: read source -> lex -> emit Go.
--- Phase 1: Direct compilation of simple programs.
--- Demonstrates the lexer and emitter working together.
 
 
 compile : String -> String -> Result String String
@@ -61,66 +27,189 @@ compile filePath outDir =
                     Lexer.lex source
                 _ =
                     println ("  Lexed " ++ String.fromInt (List.length lexResult.tokens) ++ " tokens")
-                -- For now, generate a simple Go main that prints token count
-                goPackage =
-                    generateTestOutput lexResult.tokens source
-                goCode =
-                    Emit.emitPackage goPackage
-                outPath =
-                    outDir ++ "/main.go"
-                _ =
-                    File.mkdirAll outDir
-                _ =
-                    File.writeFile outPath goCode
-                _ =
-                    println ("  Wrote " ++ outPath)
             in
-                Ok goCode
+                case Parser.parse lexResult.tokens of
+                    Err parseErr ->
+                        Err ("Parse error: " ++ parseErr)
+
+                    Ok mod ->
+                        let
+                            _ =
+                                println ("  Parsed module: " ++ String.join "." mod.name)
+                            _ =
+                                println ("  Declarations: " ++ String.fromInt (List.length mod.declarations))
+                            _ =
+                                println ("  Imports: " ++ String.fromInt (List.length mod.imports))
+                            goPackage =
+                                compileModule mod
+                            goCode =
+                                Emit.emitPackage goPackage
+                            outPath =
+                                outDir ++ "/main.go"
+                            _ =
+                                File.mkdirAll outDir
+                            _ =
+                                File.writeFile outPath goCode
+                            _ =
+                                println ("  Wrote " ++ outPath)
+                        in
+                            Ok goCode
 
 
-generateTestOutput : List Token.Token -> String -> GoPackage
-generateTestOutput tokens source =
+compileModule : Ast.Module -> GoPackage
+compileModule mod =
     let
-        tokenCount =
-            String.fromInt (List.length tokens)
-        -- Count by kind (use string comparison via lexeme patterns)
-        identCount =
-            String.fromInt (List.length (List.filter isIdentToken tokens))
-        kwCount =
-            String.fromInt (List.length (List.filter isKeywordToken tokens))
-        strCount =
-            String.fromInt (List.length (List.filter isStringToken tokens))
+        decls =
+            List.filterMap compileDeclToGo mod.declarations
     in
         { name = "main"
-        , imports =
-            [ { path = "fmt" , alias_ = "" } ]
-        , declarations =
-            [ GoDeclFunc
-                { name = "main"
-                , params = []
-                , returnType = ""
-                , body =
-                    [ GoExprStmt
-                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
-                            [ GoStringLit ("Sky Compiler v0.1 - Lexer Output") ]
-                        )
-                    , GoExprStmt
-                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
-                            [ GoStringLit ("Tokens: " ++ tokenCount) ]
-                        )
-                    , GoExprStmt
-                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
-                            [ GoStringLit ("  Identifiers: " ++ identCount) ]
-                        )
-                    , GoExprStmt
-                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
-                            [ GoStringLit ("  Keywords: " ++ kwCount) ]
-                        )
-                    , GoExprStmt
-                        (GoCallExpr (GoSelectorExpr (GoIdent "fmt") "Println")
-                            [ GoStringLit ("  Strings: " ++ strCount) ]
-                        )
-                    ]
-                }
-            ]
+        , imports = [ { path = "fmt" , alias_ = "" } ]
+        , declarations = decls
         }
+
+
+compileDeclToGo : Ast.Declaration -> Maybe GoDecl
+compileDeclToGo decl =
+    case decl of
+        Ast.FunDecl name params body _ ->
+            if name == "main" then
+                Just
+                    (GoDeclFunc
+                        { name = "main"
+                        , params = []
+                        , returnType = ""
+                        , body = [ GoExprStmt (compileExpr body) ]
+                        }
+                    )
+            else
+                Just
+                    (GoDeclFunc
+                        { name = capitalizeFirst name
+                        , params =
+                            List.map
+                                (\p -> { name = patternName p , type_ = "any" })
+                                params
+                        , returnType = "any"
+                        , body = [ GoReturn (compileExpr body) ]
+                        }
+                    )
+
+        _ ->
+            Nothing
+
+
+compileExpr : Ast.Expression -> GoExpr
+compileExpr expr =
+    case expr of
+        Ast.StringLitExpr value _ ->
+            GoStringLit value
+
+        Ast.IntLitExpr _ raw _ ->
+            GoBasicLit raw
+
+        Ast.FloatLitExpr _ raw _ ->
+            GoBasicLit raw
+
+        Ast.BoolLitExpr b _ ->
+            if b then
+                GoIdent "true"
+            else
+                GoIdent "false"
+
+        Ast.IdentifierExpr name _ ->
+            GoIdent name
+
+        Ast.QualifiedExpr parts _ ->
+            case parts of
+                [ modName , funcName ] ->
+                    GoCallExpr
+                        (GoSelectorExpr (GoIdent (String.toLower modName)) funcName)
+                        []
+
+                _ ->
+                    GoIdent (String.join "." parts)
+
+        Ast.CallExpr fn args _ ->
+            let
+                goFn =
+                    compileExpr fn
+                goArgs =
+                    List.map compileExpr args
+            in
+                GoCallExpr goFn goArgs
+
+        Ast.BinaryExpr op left right _ ->
+            GoBinaryExpr op (compileExpr left) (compileExpr right)
+
+        Ast.IfExpr cond thenExpr elseExpr _ ->
+            GoRawExpr
+                ("func() any { if " ++ Emit.emitExpr (compileExpr cond) ++
+                " == true { return " ++ Emit.emitExpr (compileExpr thenExpr) ++
+                " }; return " ++ Emit.emitExpr (compileExpr elseExpr) ++ " }()")
+
+        Ast.LetExpr bindings body _ ->
+            compileLetExpr bindings body
+
+        Ast.ParenExpr inner _ ->
+            compileExpr inner
+
+        Ast.ListExpr items _ ->
+            GoSliceLit (List.map compileExpr items)
+
+        Ast.TupleExpr items _ ->
+            GoSliceLit (List.map compileExpr items)
+
+        Ast.UnitExpr _ ->
+            GoRawExpr "struct{}{}"
+
+        Ast.LambdaExpr params body _ ->
+            GoFuncLit
+                (List.map (\p -> { name = patternName p , type_ = "any" }) params)
+                (compileExpr body)
+
+        _ ->
+            GoRawExpr "nil /* uncompiled */"
+
+
+compileLetExpr : List Ast.LetBinding -> Ast.Expression -> GoExpr
+compileLetExpr bindings body =
+    let
+        stmts =
+            List.map
+                (\b ->
+                    let
+                        name =
+                            patternName b.pattern
+                    in
+                        name ++ " := " ++ Emit.emitExpr (compileExpr b.value)
+                )
+                bindings
+        bodyCode =
+            Emit.emitExpr (compileExpr body)
+        allCode =
+            String.join "; " stmts ++ "; return " ++ bodyCode
+    in
+        GoRawExpr ("func() any { " ++ allCode ++ " }()")
+
+
+patternName : Ast.Pattern -> String
+patternName pat =
+    case pat of
+        Ast.PVariable name _ ->
+            name
+
+        Ast.PWildcard _ ->
+            "_"
+
+        _ ->
+            "_"
+
+
+capitalizeFirst : String -> String
+capitalizeFirst s =
+    case String.slice 0 1 s of
+        "" ->
+            ""
+
+        first ->
+            String.toUpper first ++ String.slice 1 (String.length s) s
