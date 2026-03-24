@@ -26,19 +26,13 @@ parseExpr minPrec state =
 
 parseExprLoop : Int -> Expression -> ParserState -> Result String ( Expression, ParserState )
 parseExprLoop minPrec left state =
-    let
-        curCol =
-            (peek state).span.start.column
-        prevCol =
-            (previous state).span.start.column
-    in
     if matchKind TkEquals state then
         Ok ( left , state )
-    else if curCol <= 1 then
+    else if (peek state).span.start.column <= 1 then
         Ok ( left , state )
     else if matchKind TkPipe state then
         Ok ( left , state )
-    else if curCol < prevCol && matchKind TkUpperIdentifier state then
+    else if False then
         -- Column decreased and token is a constructor — likely next case branch
         Ok ( left , state )
     else if matchKind TkOperator state then
@@ -135,14 +129,11 @@ parseApplicationArgs fn state =
             -- Stop at column 1 (new declaration boundary)
             if t.span.start.column <= 1 then
                 Ok ( fn , state )
-            -- Stop before `name =` pattern (next declaration)
-            else if tokenKindEq t1.kind TkEquals then
+            -- Stop before `name =` pattern (next let binding or declaration)
+            else if matchKind TkIdentifier state && tokenKindEq t1.kind TkEquals then
                 Ok ( fn , state )
             -- Stop at pipe `|` (next case branch separator)
             else if matchKind TkPipe state then
-                Ok ( fn , state )
-            -- Stop when column decreases from previous token (scope boundary)
-            else if t.span.start.column < (previous state).span.start.column then
                 Ok ( fn , state )
             else
                 case parsePrimary state of

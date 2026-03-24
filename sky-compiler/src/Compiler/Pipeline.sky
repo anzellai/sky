@@ -76,34 +76,23 @@ compile filePath outDir =
 compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
 compileMultiModule entryPath outDir srcRoot entryMod =
     let
-        _ =
-            println ("── Multi-module compilation (src: " ++ srcRoot ++ ")")
-
-        -- Resolve all local imports
         localImports =
             List.filter (\imp -> not (Resolver.isStdlib (String.join "." imp.moduleName))) entryMod.imports
-        _ =
-            println ("   " ++ String.fromInt (List.length localImports) ++ " local imports to resolve")
-
-        -- Load and parse each local module
         loadedModules =
             loadLocalModules srcRoot localImports []
-        _ =
-            println ("   Loaded " ++ String.fromInt (List.length loadedModules) ++ " modules")
-
-        -- Build import alias map from the entry module
         aliasMap =
             buildAliasMap entryMod.imports
-
-        -- Type check all modules with stdlib env
         stdlibEnv =
             Resolver.buildStdlibEnv
-
-        -- Compile dependency modules first
         depDecls =
             List.concatMap (compileDependencyModule stdlibEnv) loadedModules
+    in
+        compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls
 
-        -- Compile entry module with alias awareness
+
+compileMultiModuleEntry : String -> Ast.Module -> Dict.Dict String String -> Env.TypeEnv -> List GoDecl -> Result String String
+compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls =
+    let
         entryCheckResult =
             Checker.checkModule entryMod (Just stdlibEnv)
         entryRegistry =
@@ -113,6 +102,13 @@ compileMultiModule entryPath outDir srcRoot entryMod =
 
                 Err _ ->
                     Adt.emptyRegistry
+    in
+        emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls
+
+
+emitMultiModuleGo : String -> Ast.Module -> Adt.AdtRegistry -> Dict.Dict String String -> List GoDecl -> Result String String
+emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls =
+    let
         baseCtx =
             Lower.emptyCtx
         entryCtx =
@@ -126,38 +122,19 @@ compileMultiModule entryPath outDir srcRoot entryMod =
             Lower.lowerDeclarations entryCtx entryMod.declarations
         entryCtorDecls =
             Lower.generateConstructorDecls entryRegistry entryMod.declarations
-
-        -- Merge all declarations into one package
         helperDecls =
             Lower.generateHelperDecls
         allDecls =
             List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls ]
-        -- Check if any stdlib modules need wrappers
-        needsWrappers =
-            List.foldl (\imp acc -> acc || needsStdlibWrapper (String.join "." imp.moduleName)) False entryMod.imports
-        stdlibImports =
-            if needsWrappers then
-                buildStdlibGoImports entryMod.imports
-            else
-                []
+    in
+        writeMultiModuleOutput outDir allDecls
+
+
+writeMultiModuleOutput : String -> List GoDecl -> Result String String
+writeMultiModuleOutput outDir allDecls =
+    let
         goPackage =
-            { name = "main"
-            , imports =
-                List.append
-                    [ { path = "fmt" , alias_ = "" }
-                    , { path = "strconv" , alias_ = "" }
-                    , { path = "strings" , alias_ = "" }
-                    , { path = "os" , alias_ = "" }
-                    ]
-                    stdlibImports
-            , declarations = allDecls
-            }
-        -- Copy stdlib Go packages if needed
-        _ =
-            if needsWrappers then
-                copyStdlibGo outDir
-            else
-                Ok ()
+            makeGoPackage allDecls
         goCode =
             Emit.emitPackage goPackage
         outPath =
@@ -176,6 +153,14 @@ compileMultiModule entryPath outDir srcRoot entryMod =
             println ("✓ Compilation successful")
     in
         Ok goCode
+
+
+makeGoPackage : List GoDecl -> GoPackage
+makeGoPackage decls =
+    { name = "main"
+    , imports = [ { path = "fmt" , alias_ = "" } , { path = "strconv" , alias_ = "" } , { path = "strings" , alias_ = "" } , { path = "os" , alias_ = "" } ]
+    , declarations = decls
+    }
 
 
 -- Load and parse local module files
@@ -214,32 +199,32 @@ loadLocalModules srcRoot imports acc =
 
 buildAliasMap : List Ast.ImportDecl -> Dict.Dict String String
 buildAliasMap imports =
-    List.foldl
-        (\imp acc ->
-            let
-                modName =
-                    String.join "." imp.moduleName
-            in
-                if Resolver.isStdlib modName then
-                    acc
-                else
-                    let
-                        alias_ =
-                            if String.isEmpty imp.alias_ then
-                                -- Use last part as default alias
-                                case List.reverse imp.moduleName of
-                                    last :: _ ->
-                                        last
+    List.foldl addImportAlias Dict.empty imports
 
-                                    [] ->
-                                        ""
-                            else
-                                imp.alias_
-                    in
-                        Dict.insert alias_ modName acc
-        )
-        Dict.empty
-        imports
+
+addImportAlias : Ast.ImportDecl -> Dict.Dict String String -> Dict.Dict String String
+addImportAlias imp acc =
+    let
+        modName =
+            String.join "." imp.moduleName
+    in
+        if Resolver.isStdlib modName then
+            acc
+        else
+            Dict.insert (importAlias imp) modName acc
+
+
+importAlias : Ast.ImportDecl -> String
+importAlias imp =
+    if String.isEmpty imp.alias_ then
+        case List.reverse imp.moduleName of
+            last :: _ ->
+                last
+
+            [] ->
+                ""
+    else
+        imp.alias_
 
 
 -- Compile a dependency module into Go declarations with namespaced names
@@ -341,26 +326,21 @@ buildStdlibGoImports : List Ast.ImportDecl -> List GoImport
 buildStdlibGoImports imports =
     let
         stdImports =
-            List.filterMap
-                (\imp ->
-                    let
-                        modName =
-                            String.join "." imp.moduleName
-                    in
-                        if Resolver.isStdlib modName then
-                            let
-                                goPath =
-                                    "sky-out/" ++ String.join "/" imp.moduleName
-                                goAlias =
-                                    "sky_" ++ String.toLower (String.replace "." "_" modName)
-                            in
-                                Just { path = goPath , alias_ = goAlias }
-                        else
-                            Nothing
-                )
-                imports
+            List.filterMap importToGoImport imports
     in
         { path = "sky-out/sky_wrappers" , alias_ = "sky_wrappers" } :: stdImports
+
+
+importToGoImport : Ast.ImportDecl -> Maybe GoImport
+importToGoImport imp =
+    let
+        modName =
+            String.join "." imp.moduleName
+    in
+        if Resolver.isStdlib modName then
+            Just { path = "sky-out/" ++ String.join "/" imp.moduleName , alias_ = "sky_" ++ String.toLower (String.replace "." "_" modName) }
+        else
+            Nothing
 
 
 -- Copy pre-built stdlib Go packages to output directory
