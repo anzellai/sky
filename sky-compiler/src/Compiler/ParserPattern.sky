@@ -1,0 +1,194 @@
+module Compiler.ParserPattern exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Compiler.Token exposing (..)
+import Compiler.Ast exposing (..)
+import Compiler.ParserCore exposing (..)
+
+
+parsePatternExpr : ParserState -> Result String ( Pattern, ParserState )
+parsePatternExpr state =
+    case parsePrimaryPattern state of
+        Err e ->
+            Err e
+
+        Ok ( pat , s1 ) ->
+            if matchKind TkOperator s1 && (peek s1).lexeme == "::" then
+                let
+                    ( _ , s2 ) =
+                        advance s1
+                in
+                    case parsePatternExpr s2 of
+                        Err e ->
+                            Err e
+
+                        Ok ( tail , s3 ) ->
+                            Ok ( PCons pat tail emptySpan , s3 )
+            else if matchKindLex TkKeyword "as" s1 then
+                let
+                    ( _ , s2 ) =
+                        advance s1
+                    ( name , s3 ) =
+                        advance s2
+                in
+                    Ok ( PAs pat name.lexeme emptySpan , s3 )
+            else
+                Ok ( pat , s1 )
+
+
+parsePrimaryPattern : ParserState -> Result String ( Pattern, ParserState )
+parsePrimaryPattern state =
+    if matchKind TkUpperIdentifier state then
+        let
+            ( id , s1 ) =
+                advance state
+            ( parts , s2 ) =
+                parseQualifiedParts [ id.lexeme ] s1
+            ( args , s3 ) =
+                parsePatternArgs s2
+        in
+            Ok ( PConstructor parts args emptySpan , s3 )
+    else if matchKind TkIdentifier state then
+        let
+            ( id , s1 ) =
+                advance state
+        in
+            if id.lexeme == "_" then
+                Ok ( PWildcard emptySpan , s1 )
+            else
+                Ok ( PVariable id.lexeme emptySpan , s1 )
+    else if matchKind TkInteger state then
+        let
+            ( tok , s1 ) =
+                advance state
+        in
+            case String.toInt tok.lexeme of
+                Just n ->
+                    Ok ( PLiteral (LitInt n) emptySpan , s1 )
+
+                Nothing ->
+                    Ok ( PLiteral (LitInt 0) emptySpan , s1 )
+    else if matchKind TkString state then
+        let
+            ( tok , s1 ) =
+                advance state
+        in
+            Ok ( PLiteral (LitString tok.lexeme) emptySpan , s1 )
+    else if matchKind TkLParen state then
+        let
+            ( _ , s1 ) =
+                advance state
+        in
+            if matchKind TkRParen s1 then
+                let
+                    ( _ , s2 ) =
+                        advance s1
+                in
+                    Ok ( PLiteral (LitString "()") emptySpan , s2 )
+            else
+                case parsePatternExpr s1 of
+                    Err e ->
+                        Err e
+
+                    Ok ( first , s2 ) ->
+                        if matchKind TkComma s2 then
+                            parseTuplePatternRest [ first ] s2
+                        else
+                            case consume TkRParen s2 of
+                                Err e ->
+                                    Err e
+
+                                Ok ( _ , s3 ) ->
+                                    Ok ( first , s3 )
+    else if matchKind TkLBracket state then
+        let
+            ( _ , s1 ) =
+                advance state
+        in
+            if matchKind TkRBracket s1 then
+                let
+                    ( _ , s2 ) =
+                        advance s1
+                in
+                    Ok ( PList [] emptySpan , s2 )
+            else
+                let
+                    ( items , s2 ) =
+                        parsePatternList s1
+                in
+                    case consume TkRBracket s2 of
+                        Err e ->
+                            Err e
+
+                        Ok ( _ , s3 ) ->
+                            Ok ( PList items emptySpan , s3 )
+    else
+        Err ("Unexpected token in pattern: " ++ (peek state).lexeme)
+
+
+parsePatternArgs : ParserState -> ( List Pattern, ParserState )
+parsePatternArgs state =
+    let
+        t =
+            peek state
+    in
+        if matchKind TkIdentifier state || matchKind TkUpperIdentifier state || matchKind TkLParen state then
+            if matchKind TkArrow state || t.span.start.column <= 1 then
+                ( [] , state )
+            else
+                case parsePrimaryPattern state of
+                    Ok ( pat , s1 ) ->
+                        let
+                            ( rest , s2 ) =
+                                parsePatternArgs s1
+                        in
+                            ( pat :: rest , s2 )
+
+                    Err _ ->
+                        ( [] , state )
+        else
+            ( [] , state )
+
+
+parseTuplePatternRest : List Pattern -> ParserState -> Result String ( Pattern, ParserState )
+parseTuplePatternRest items state =
+    if matchKind TkComma state then
+        let
+            ( _ , s1 ) =
+                advance state
+        in
+            case parsePatternExpr s1 of
+                Err e ->
+                    Err e
+
+                Ok ( item , s2 ) ->
+                    parseTuplePatternRest (items ++ [ item ]) s2
+    else
+        case consume TkRParen state of
+            Err e ->
+                Err e
+
+            Ok ( _ , s1 ) ->
+                Ok ( PTuple items emptySpan , s1 )
+
+
+parsePatternList : ParserState -> ( List Pattern, ParserState )
+parsePatternList state =
+    case parsePatternExpr state of
+        Err _ ->
+            ( [] , state )
+
+        Ok ( item , s1 ) ->
+            if matchKind TkComma s1 then
+                let
+                    ( _ , s2 ) =
+                        advance s1
+                    ( rest , s3 ) =
+                        parsePatternList s2
+                in
+                    ( item :: rest , s3 )
+            else
+                ( [ item ] , s1 )

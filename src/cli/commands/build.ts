@@ -98,7 +98,7 @@ export async function handleBuild(entryFile?: string) {
     const binRel = path.relative(path.resolve(outDir), binAbs);
     // Ensure output directory exists
     fs.mkdirSync(path.dirname(binAbs), { recursive: true });
-    execSync(`cd ${outDir} && go build -o "${binRel}"`, { stdio: "inherit" });
+    execSync(`cd ${outDir} && go build -gcflags="all=-l" -o "${binRel}"`, { stdio: "inherit" });
     console.log(`Build complete: ${binPath}`);
   } catch (e) {
     console.error("go build failed", e);

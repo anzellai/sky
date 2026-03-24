@@ -39,7 +39,14 @@ function emitGoExprForLower(expr: any): string {
             return `[]any{${elems}}`;
         }
         case "GoCompositeLit": {
-            const typeName = expr.type ? (expr.type.name || "struct {  }") : "struct {  }";
+            let typeName = "struct {  }";
+            if (expr.type) {
+                if (expr.type.kind === "GoSelectorType" && expr.type.pkg) {
+                    typeName = `${expr.type.pkg}.${expr.type.name}`;
+                } else {
+                    typeName = expr.type.name || "struct {  }";
+                }
+            }
             if (expr.elements && expr.elements.length > 0) {
                 const elems = expr.elements.map((e: any) => emitGoExprForLower(e)).join(", ");
                 return `${typeName}{${elems}}`;
@@ -96,7 +103,8 @@ function emitGoExprForLower(expr: any): string {
             let body = "";
             for (const stmt of (expr.body || [])) {
                 if (stmt.kind === "GoAssignStmt") {
-                    const op = stmt.define ? ":=" : "=";
+                    const allBlank = stmt.left.every((l: any) => l.kind === "GoIdent" && l.name === "_");
+                    const op = (stmt.define && !allBlank) ? ":=" : "=";
                     body += `${stmt.left.map((l: any) => emitGoExprForLower(l)).join(", ")} ${op} ${emitGoExprForLower(stmt.right)}; `;
                 } else if (stmt.kind === "GoReturnStmt") {
                     body += `return ${emitGoExprForLower(stmt.expr)}`;

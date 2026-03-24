@@ -1,0 +1,1049 @@
+module Compiler.Lower exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Set as Set
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Compiler.Ast as Ast exposing (..)
+import Compiler.GoIr exposing (..)
+import Compiler.Adt as Adt exposing (AdtRegistry)
+import Compiler.Types as Types
+
+-- ══════════════════════════════════════════════════════
+-- LOWERING CONTEXT
+-- ══════════════════════════════════════════════════════
+type alias LowerCtx =
+    { registry : AdtRegistry
+    , moduleExports : Dict.Dict String (Set.Set String)
+    , importedConstructors : Dict.Dict String CtorInfo
+    , localFunctions : Set.Set String
+    , collectedImports : Set.Set String
+    }
+
+type alias CtorInfo =
+    { adtName : String , tagIndex : Int , arity : Int }
+
+emptyCtx : LowerCtx
+emptyCtx =
+    { registry = Adt.emptyRegistry
+    , moduleExports = Dict.empty
+    , importedConstructors = Dict.empty
+    , localFunctions = Set.empty
+    , collectedImports = Set.empty
+    }
+
+-- ══════════════════════════════════════════════════════
+-- MODULE LOWERING
+-- ══════════════════════════════════════════════════════
+lowerModule : AdtRegistry -> Module -> GoPackage
+lowerModule registry mod =
+    let
+        ctx =
+            { emptyCtx
+            | registry = registry
+            , localFunctions = collectLocalFunctions mod.declarations
+            , importedConstructors = buildConstructorMap registry
+            }
+
+        -- Lower declarations
+        goDecls =
+            lowerDeclarations ctx mod.declarations
+
+        -- Generate ADT constructor functions
+        ctorDecls =
+            generateConstructorDecls registry mod.declarations
+
+        -- Collect needed imports
+        imports =
+            [ { path = "fmt" , alias_ = "" } ]
+    in
+        { name = "main"
+        , imports = imports
+        , declarations = ctorDecls ++ goDecls
+        }
+
+-- ══════════════════════════════════════════════════════
+-- DECLARATION LOWERING
+-- ══════════════════════════════════════════════════════
+lowerDeclarations : LowerCtx -> List Declaration -> List GoDecl
+lowerDeclarations ctx decls =
+    List.filterMap (lowerDecl ctx) decls
+
+lowerDecl : LowerCtx -> Declaration -> Maybe GoDecl
+lowerDecl ctx decl =
+    case decl of
+        FunDecl name params body _ ->
+            Just (lowerFunction ctx name params body)
+        
+        _ ->
+            Nothing
+
+lowerFunction : LowerCtx -> String -> List Pattern -> Expression -> GoDecl
+lowerFunction ctx name params body =
+    let
+        isMain =
+            name == "main"
+        goName =
+            if isMain then
+                "main"
+            else
+                sanitizeGoIdent name
+        goParams =
+            List.map lowerParam params
+        returnType =
+            if isMain then
+                ""
+            else
+                "any"
+        goBody =
+            if isMain then
+
+-- ══════════════════════════════════════════════════════
+-- EXPRESSION LOWERING
+-- ══════════════════════════════════════════════════════
+                lowerExprToStmts ctx body
+            else
+                [ GoReturn (lowerExpr ctx body) ]
+    in
+        GoDeclFunc
+            { name = goName
+            , params = goParams
+            , returnType = returnType
+            , body = goBody
+            }
+
+lowerParam : Pattern -> GoParam
+lowerParam pat =
+    case pat of
+        PVariable name _ ->
+            { name = sanitizeGoIdent name , type_ = "any" }
+        
+        PWildcard _ ->
+            { name = "_" , type_ = "any" }
+        
+        _ ->
+            { name = "_p" , type_ = "any" }
+
+lowerExpr : LowerCtx -> Expression -> GoExpr
+lowerExpr ctx expr =
+    case expr of
+
+        -- Literals
+        IntLitExpr _ raw _ ->
+            GoBasicLit raw
+        
+        FloatLitExpr _ raw _ ->
+            GoBasicLit raw
+        
+        StringLitExpr s _ ->
+            GoStringLit s
+        
+        CharLitExpr s _ ->
+
+            -- Char literals in Sky are like 'c', emit as Go rune
+            GoCallExpr (GoIdent "string")
+                [ GoBasicLit
+                    ("'" ++ String.slice 1 (String.length s - 1) s ++ "'")
+                ]
+        
+        BoolLitExpr b _ ->
+            if b then
+                GoIdent "true"
+            else
+                GoIdent "false"
+        
+        UnitExpr _ ->
+            GoRawExpr "struct{}{}"
+        
+        -- Variables
+        IdentifierExpr name _ ->
+            lowerIdentifier ctx name
+        
+        QualifiedExpr parts _ ->
+            lowerQualified ctx parts
+        
+        -- Tuple: use sky_wrappers Tuple struct or []any
+        TupleExpr items _ ->
+            let
+                goItems =
+                    List.map (lowerExpr ctx) items
+                n =
+                    List.length items
+            in
+                if n == 2 then
+                    GoRawExpr
+                        ("sky_wrappers.Tuple2{V0: "
+                            ++ emitGoExprInline (listGet 0 goItems)
+                            ++ ", V1: "
+                            ++ emitGoExprInline (listGet 1 goItems)
+                            ++ "}"
+                        )
+                else
+                    if n == 3 then
+                        GoRawExpr
+                            ("sky_wrappers.Tuple3{V0: "
+                                ++ emitGoExprInline (listGet 0 goItems)
+                                ++ ", V1: "
+                                ++ emitGoExprInline (listGet 1 goItems)
+                                ++ ", V2: "
+                                ++ emitGoExprInline (listGet 2 goItems)
+                                ++ "}"
+                            )
+                    else
+                        GoSliceLit goItems
+        
+        -- List
+        ListExpr items _ ->
+            GoSliceLit (List.map (lowerExpr ctx) items)
+        
+        -- Record: map[string]any
+        RecordExpr fields _ ->
+            GoMapLit
+                (
+                List.map (\f -> ( GoStringLit f.name , lowerExpr ctx f.value ))
+                    fields
+                )
+        
+        -- Record update
+        RecordUpdateExpr base fields _ ->
+            lowerRecordUpdate ctx base fields
+        
+        -- Field access
+        FieldAccessExpr target fieldName _ ->
+
+            -- records are map[string]any, so use index
+            GoIndexExpr
+                (GoCallExpr (GoIdent "sky_asMap") [ lowerExpr ctx target ])
+                (GoStringLit fieldName)
+        
+        -- Function call
+        CallExpr callee args _ ->
+            lowerCall ctx callee args
+        
+        -- Lambda
+        LambdaExpr params body _ ->
+            lowerLambda ctx params body
+        
+        -- If/then/else
+        IfExpr condition thenBranch elseBranch _ ->
+            lowerIf ctx condition thenBranch elseBranch
+        
+        -- Let/in
+        LetExpr bindings body _ ->
+            lowerLet ctx bindings body
+        
+        -- Case/of
+        CaseExpr subject branches _ ->
+            lowerCase ctx subject branches
+        
+        -- Binary operators
+        BinaryExpr op left right _ ->
+            lowerBinary ctx op left right
+        
+        -- Negation
+        NegateExpr inner _ ->
+            GoUnaryExpr "-" (lowerExpr ctx inner)
+        
+        -- Parenthesized
+        ParenExpr inner _ ->
+            lowerExpr ctx inner
+
+-- ══════════════════════════════════════════════════════
+-- IDENTIFIER LOWERING
+-- ══════════════════════════════════════════════════════
+lowerIdentifier : LowerCtx -> String -> GoExpr
+lowerIdentifier ctx name =
+
+    -- Check if it's a constructor
+    case Dict.get name ctx.importedConstructors of
+        Just info ->
+            if info.arity == 0 then
+
+                -- Zero-arg constructor: emit as value
+                lowerConstructorValue name info
+            else
+
+                -- Multi-arg constructor: reference the constructor function
+                GoIdent (sanitizeGoIdent name)
+        
+        Nothing ->
+
+            -- Check if it's a well-known constructor
+            if name == "Ok" then
+                GoIdent "SkyOk"
+            else
+                if name == "Err" then
+                    GoIdent "SkyErr"
+                else
+                    if name == "Just" then
+                        GoIdent "SkyJust"
+                    else
+                        if name == "Nothing" then
+                            GoCallExpr (GoIdent "SkyNothing") []
+                        else
+                            if name == "True" then
+                                GoIdent "true"
+                            else
+                                if name == "False" then
+                                    GoIdent "false"
+                                else
+                                    GoIdent (sanitizeGoIdent name)
+
+lowerConstructorValue : String -> CtorInfo -> GoExpr
+lowerConstructorValue name info =
+
+    -- Zero-arg constructor: map[string]any{"Tag": idx, "SkyName": "Name"}
+    GoMapLit
+        [ ( GoStringLit "Tag" , GoBasicLit (String.fromInt info.tagIndex) )
+        , ( GoStringLit "SkyName" , GoStringLit name )
+        ]
+
+lowerQualified : LowerCtx -> List String -> GoExpr
+lowerQualified ctx parts =
+    if List.length parts == 2 then
+        let
+            modPart =
+                case List.head parts of
+                    Just p ->
+                        p
+
+                    Nothing ->
+                        ""
+            funcPart =
+                case List.head (List.drop 1 parts) of
+                    Just p ->
+                        p
+
+                    Nothing ->
+                        ""
+            goMod =
+                String.toLower modPart
+        in
+            GoSelectorExpr (GoIdent goMod) funcPart
+    else
+        let
+            name =
+                String.join "." parts
+        in
+            GoIdent (sanitizeGoIdent name)
+
+-- ══════════════════════════════════════════════════════
+-- CALL LOWERING
+-- ══════════════════════════════════════════════════════
+lowerCall : LowerCtx -> Expression -> List Expression -> GoExpr
+lowerCall ctx callee args =
+    let
+        goCallee =
+            lowerExpr ctx callee
+        goArgs =
+            List.map (lowerExpr ctx) args
+    in
+
+        -- Check if callee is a known curried function and flatten
+        GoCallExpr goCallee goArgs
+
+-- ══════════════════════════════════════════════════════
+-- LAMBDA LOWERING
+-- ══════════════════════════════════════════════════════
+lowerLambda : LowerCtx -> List Pattern -> Expression -> GoExpr
+lowerLambda ctx params body =
+    let
+        goParams =
+            List.map lowerParam params
+        goBody =
+            lowerExpr ctx body
+    in
+        GoFuncLit goParams goBody
+
+-- ══════════════════════════════════════════════════════
+-- IF LOWERING
+-- ══════════════════════════════════════════════════════
+lowerIf : LowerCtx -> Expression -> Expression -> Expression -> GoExpr
+lowerIf ctx condition thenBranch elseBranch =
+
+    -- Go doesn't have if-expressions, so wrap in IIFE
+    GoCallExpr
+        (
+        GoFuncLit [] (GoRawExpr (ifGoCode ctx condition thenBranch elseBranch))
+        )
+        []
+
+ifGoCode : LowerCtx -> Expression -> Expression -> Expression -> String
+ifGoCode ctx condition thenBranch elseBranch =
+    "func() any { if sky_asBool(" ++
+    exprToGoString ctx condition ++
+    ") { return " ++
+    exprToGoString ctx thenBranch ++
+    " }; return " ++ exprToGoString ctx elseBranch ++ " }()"
+
+-- ══════════════════════════════════════════════════════
+-- LET LOWERING
+-- ══════════════════════════════════════════════════════
+lowerLet : LowerCtx -> List LetBinding -> Expression -> GoExpr
+lowerLet ctx bindings body =
+
+    -- Wrap in IIFE: func() any { var1 := val1; ...; return body }()
+    let
+        stmts =
+            List.concatMap (lowerLetBinding ctx) bindings
+        returnStmt =
+            [ GoReturn (lowerExpr ctx body) ]
+    in
+        GoCallExpr
+            (GoFuncLit [] (GoRawExpr (stmtsToGoString (List.append stmts returnStmt))))
+            []
+
+lowerLetBinding : LowerCtx -> LetBinding -> List GoStmt
+lowerLetBinding ctx binding =
+    case binding.pattern of
+        PVariable name _ ->
+            [ GoShortDecl (sanitizeGoIdent name) (lowerExpr ctx binding.value) ]
+        
+        PWildcard _ ->
+            [ GoExprStmt (lowerExpr ctx binding.value) ]
+        
+        PTuple items _ ->
+
+            -- Destructure tuple
+            let
+                tmpName =
+                    "__let_tmp"
+                tmpDecl =
+                    GoShortDecl tmpName (lowerExpr ctx binding.value)
+                extracts =
+                    extractTupleBindings tmpName items 0
+            in
+                tmpDecl :: extracts
+        
+        _ ->
+            [ GoShortDecl "_" (lowerExpr ctx binding.value) ]
+
+extractTupleBindings : String -> List Pattern -> Int -> List GoStmt
+extractTupleBindings tmpName items idx =
+    case items of
+        [] ->
+            []
+        
+        pat :: rest ->
+            let
+                fieldName =
+                    "V" ++ String.fromInt idx
+                extract =
+                    case pat of
+                        PVariable name _ ->
+                            [ GoShortDecl (sanitizeGoIdent name)
+                                (
+                                GoSelectorExpr
+                                    (
+                                    GoCallExpr (GoIdent "sky_asTuple2")
+                                        [ GoIdent tmpName ]
+                                    )
+                                    fieldName
+                                )
+                            ]
+                        
+                        _ ->
+                            []
+            in
+                extract ++ extractTupleBindings tmpName rest (idx + 1)
+
+-- ══════════════════════════════════════════════════════
+-- CASE LOWERING
+-- ══════════════════════════════════════════════════════
+lowerCase : LowerCtx -> Expression -> List CaseBranch -> GoExpr
+lowerCase ctx subject branches =
+
+    -- case expr of ... -> switch on Tag for ADTs, type switch otherwise
+    let
+        subjectExpr =
+            lowerExpr ctx subject
+        switchCode =
+            lowerCaseToSwitch ctx subjectExpr branches
+    in
+
+        -- Wrap in IIFE
+        GoCallExpr (GoFuncLit [] (GoRawExpr switchCode)) []
+
+lowerCaseToSwitch : LowerCtx -> GoExpr -> List CaseBranch -> String
+lowerCaseToSwitch ctx subjectExpr branches =
+    let
+        subjectCode =
+            emitGoExprInline subjectExpr
+    in
+        "func() any { __subject := " ++
+        subjectCode ++
+        "; " ++
+        String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) ++
+        " return nil }()"
+
+emitBranchCode : LowerCtx -> ( Int, CaseBranch ) -> String
+emitBranchCode ctx ( _idx, branch ) =
+    let
+        condition =
+
+-- Generate Go condition for matching a pattern
+            patternToCondition ctx "__subject" branch.pattern
+        bindings =
+
+-- Generate Go bindings for pattern variables
+            patternToBindings ctx "__subject" branch.pattern
+        bodyCode =
+            exprToGoString ctx branch.body
+    in
+        "if " ++
+        condition ++ " { " ++ bindings ++ "return " ++ bodyCode ++ " }; "
+
+patternToCondition : LowerCtx -> String -> Pattern -> String
+patternToCondition ctx varName pat =
+    case pat of
+        PWildcard _ ->
+            "true"
+        
+        PVariable _ _ ->
+            "true"
+        
+        PLiteral lit _ ->
+            case lit of
+                LitInt n ->
+                    "sky_asInt(" ++ varName ++ ") == " ++ String.fromInt n
+                
+                LitFloat f ->
+                    "sky_asFloat(" ++ varName ++ ") == " ++ String.fromFloat f
+                
+                LitString s ->
+                    "sky_asString(" ++ varName ++ ") == \"" ++ s ++ "\""
+                
+                LitBool b ->
+                    if b then
+                        "sky_asBool(" ++ varName ++ ") == true"
+                    else
+                        "sky_asBool(" ++ varName ++ ") == false"
+                
+                LitChar c ->
+                    "sky_asString(" ++ varName ++ ") == \"" ++ c ++ "\""
+        
+        PConstructor parts _ _ ->
+            let
+                ctorName =
+                    lastPartOf parts
+            in
+                if ctorName == "Ok" || ctorName == "Err" then
+                    "sky_asSkyResult(" ++
+                    varName ++ ").SkyName == \"" ++ ctorName ++ "\""
+                else
+                    if ctorName == "Just" || ctorName == "Nothing" then
+                        "sky_asSkyMaybe(" ++
+                        varName ++ ").SkyName == \"" ++ ctorName ++ "\""
+                    else
+                        if ctorName == "True" then
+                            "sky_asBool(" ++ varName ++ ") == true"
+                        else
+                            if ctorName == "False" then
+                                "sky_asBool(" ++ varName ++ ") == false"
+                            else
+                                "sky_asMap(" ++
+                                varName ++
+                                ")[\"SkyName\"] == \"" ++ ctorName ++ "\""
+        
+        PTuple _ _ ->
+            "true"
+        
+        PList items _ ->
+            "len(sky_asList(" ++
+            varName ++ ")) == " ++ String.fromInt (List.length items)
+        
+        PCons _ _ _ ->
+            "len(sky_asList(" ++ varName ++ ")) > 0"
+        
+        PAs inner _ _ ->
+            patternToCondition ctx varName inner
+        
+        PRecord _ _ ->
+            "true"
+
+patternToBindings : LowerCtx -> String -> Pattern -> String
+patternToBindings ctx varName pat =
+    case pat of
+        PWildcard _ ->
+            ""
+        
+        PVariable name _ ->
+            sanitizeGoIdent name ++ " := " ++ varName ++ "; "
+        
+        PConstructor parts argPats _ ->
+            let
+                ctorName =
+                    lastPartOf parts
+            in
+                if ctorName == "Ok" then
+                    bindConstructorArgs ctx varName "sky_asSkyResult" "OkValue"
+                        argPats
+                else
+                    if ctorName == "Err" then
+                        bindConstructorArgs ctx varName "sky_asSkyResult"
+                            "ErrValue"
+                            argPats
+                    else
+                        if ctorName == "Just" then
+                            bindConstructorArgs ctx varName "sky_asSkyMaybe"
+                                "JustValue"
+                                argPats
+                        else
+                            bindAdtConstructorArgs ctx varName argPats 0
+        
+        PTuple items _ ->
+            bindTupleArgs ctx varName items 0
+        
+        PList items _ ->
+            bindListArgs ctx varName items 0
+        
+        PCons headPat tailPat _ ->
+            let
+                headBinding =
+                    patternToBindings ctx ("sky_asList(" ++ varName ++ ")[0]")
+                        headPat
+                tailBinding =
+                    patternToBindings ctx ("sky_asList(" ++ varName ++ ")[1:]")
+                        tailPat
+            in
+                headBinding ++ tailBinding
+        
+        PAs inner name _ ->
+            sanitizeGoIdent name ++
+            " := " ++ varName ++ "; " ++ patternToBindings ctx varName inner
+        
+        PRecord fields _ ->
+            List.foldl
+                (
+                \f acc ->
+                    acc ++
+                    sanitizeGoIdent f ++
+                    " := sky_asMap(" ++ varName ++ ")[\"" ++ f ++ "\"]; "
+                )
+                ""
+                fields
+
+bindConstructorArgs : LowerCtx -> String -> String -> String -> List Pattern -> String
+bindConstructorArgs ctx varName wrapperFn fieldName argPats =
+    case argPats of
+        onePat :: [] ->
+            patternToBindings ctx
+                (wrapperFn ++ "(" ++ varName ++ ")." ++ fieldName)
+                onePat
+
+        _ ->
+            ""
+
+bindAdtConstructorArgs : LowerCtx -> String -> List Pattern -> Int -> String
+bindAdtConstructorArgs ctx varName argPats idx =
+    case argPats of
+        [] ->
+            ""
+        
+        pat :: rest ->
+            let
+                fieldAccess =
+                    "sky_asMap(" ++
+                    varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
+                binding =
+                    patternToBindings ctx fieldAccess pat
+            in
+                binding ++ bindAdtConstructorArgs ctx varName rest (idx + 1)
+
+bindTupleArgs : LowerCtx -> String -> List Pattern -> Int -> String
+bindTupleArgs ctx varName items idx =
+    case items of
+        [] ->
+            ""
+        
+        pat :: rest ->
+            let
+                fieldAccess =
+                    "sky_asTuple2(" ++ varName ++ ").V" ++ String.fromInt idx
+                binding =
+                    patternToBindings ctx fieldAccess pat
+            in
+                binding ++ bindTupleArgs ctx varName rest (idx + 1)
+
+bindListArgs : LowerCtx -> String -> List Pattern -> Int -> String
+bindListArgs ctx varName items idx =
+    case items of
+        [] ->
+            ""
+        
+        pat :: rest ->
+            let
+                elemAccess =
+                    "sky_asList(" ++
+                    varName ++ ")[" ++ String.fromInt idx ++ "]"
+                binding =
+                    patternToBindings ctx elemAccess pat
+            in
+                binding ++ bindListArgs ctx varName rest (idx + 1)
+
+-- ══════════════════════════════════════════════════════
+-- BINARY OPERATOR LOWERING
+-- ══════════════════════════════════════════════════════
+lowerBinary : LowerCtx -> String -> Expression -> Expression -> GoExpr
+lowerBinary ctx op left right =
+    let
+        goLeft =
+            lowerExpr ctx left
+        goRight =
+            lowerExpr ctx right
+    in
+        if op == "|>" then
+
+            -- x |> f = f(x)
+            GoCallExpr goRight [ goLeft ]
+        else
+            if op == "<|" then
+
+            -- f <| x = f(x)
+                GoCallExpr goLeft [ goRight ]
+            else
+                if op == "::" then
+
+            -- x :: xs = append([]any{x}, xs...)
+                    GoCallExpr (GoIdent "append")
+                        [ GoSliceLit [ goLeft ]
+                        , GoRawExpr
+                            (
+                            "sky_asList(" ++ emitGoExprInline goRight ++ ")..."
+                            )
+                        ]
+                else
+                    if op == "++" then
+
+            -- String concatenation or list append
+                        GoBinaryExpr "+" goLeft goRight
+                    else
+                        if op == "/=" then
+                            GoBinaryExpr "!=" goLeft goRight
+                        else
+                            if op == "//" then
+                                GoBinaryExpr "/" goLeft goRight
+                            else
+                                if op == "==" then
+
+            -- Need runtime equality check for any types
+                                    GoCallExpr (GoIdent "sky_equal")
+                                        [ goLeft , goRight ]
+                                else
+                                    if op == "!=" then
+                                        GoUnaryExpr "!"
+                                            (
+                                            GoCallExpr (GoIdent "sky_equal")
+                                                [ goLeft , goRight ]
+                                            )
+                                    else
+                                        GoBinaryExpr op goLeft goRight
+
+-- ══════════════════════════════════════════════════════
+-- RECORD UPDATE LOWERING
+-- ══════════════════════════════════════════════════════
+lowerRecordUpdate : LowerCtx -> Expression -> List NamedExpr -> GoExpr
+lowerRecordUpdate ctx base fields =
+
+    -- sky_recordUpdate(baseMap, updatedFields)
+    let
+        goBase =
+            lowerExpr ctx base
+        goFields =
+            GoMapLit
+                (
+                List.map (\f -> ( GoStringLit f.name , lowerExpr ctx f.value ))
+                    fields
+                )
+    in
+        GoCallExpr (GoIdent "sky_recordUpdate") [ goBase , goFields ]
+
+-- ══════════════════════════════════════════════════════
+-- CONSTRUCTOR GENERATION
+-- ══════════════════════════════════════════════════════
+-- Generate Go constructor functions for custom ADTs.
+generateConstructorDecls : AdtRegistry -> List Declaration -> List GoDecl
+generateConstructorDecls registry decls =
+    List.concatMap (generateCtorsForDecl registry) decls
+
+generateCtorsForDecl : AdtRegistry -> Declaration -> List GoDecl
+generateCtorsForDecl registry decl =
+    case decl of
+        TypeDecl typeName _ variants _ ->
+            List.indexedMap (generateCtorFunc typeName) variants
+        
+        _ ->
+            []
+
+generateCtorFunc : String -> Int -> TypeVariant -> GoDecl
+generateCtorFunc typeName tagIndex variant =
+    let
+        arity =
+            List.length variant.fields
+    in
+        if arity == 0 then
+
+            -- Zero-arg constructor: var CtorName = map[string]any{...}
+            GoDeclVar (sanitizeGoIdent variant.name)
+                (
+                GoMapLit
+                    [ ( GoStringLit "Tag"
+                    , GoBasicLit (String.fromInt tagIndex)
+                    )
+                    , ( GoStringLit "SkyName" , GoStringLit variant.name )
+                    ]
+                )
+        else
+
+            -- Multi-arg constructor: func CtorName(args) map[string]any{...}
+            let
+                params =
+                    List.indexedMap
+                        (
+                        \i _ ->
+                            { name = "v" ++ String.fromInt i , type_ = "any" }
+                        )
+                        variant.fields
+                fields =
+                    [ ( "Tag" , GoBasicLit (String.fromInt tagIndex) )
+                    , ( "SkyName" , GoStringLit variant.name )
+                    ] ++
+                    List.indexedMap
+                        (
+                        \i _ ->
+                            ( "V" ++ String.fromInt i
+                            , GoIdent ("v" ++ String.fromInt i)
+                            )
+                        )
+                        variant.fields
+            in
+                GoDeclFunc
+                    { name = sanitizeGoIdent variant.name
+                    , params = params
+                    , returnType = "any"
+                    , body =
+                        [ GoReturn
+                            (
+                            GoMapLit
+                                (
+                                List.map (\( k, v ) -> ( GoStringLit k , v ))
+                                    fields
+                                )
+                            )
+                        ]
+                    }
+
+-- ══════════════════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════════════════
+collectLocalFunctions : List Declaration -> Set.Set String
+collectLocalFunctions decls =
+    List.foldl
+        (
+        \d acc ->
+            case d of
+                FunDecl name _ _ _ ->
+                    Set.insert name acc
+                
+                _ ->
+                    acc
+        )
+        Set.empty
+        decls
+
+buildConstructorMap : AdtRegistry -> Dict.Dict String CtorInfo
+buildConstructorMap registry =
+    Dict.foldl
+        (
+        \typeName adt acc ->
+            let
+                ctorNames =
+                    Dict.keys adt.constructors
+            in
+                addCtorsToMap typeName ctorNames 0 acc
+        )
+        Dict.empty
+        registry
+
+addCtorsToMap : String -> List String -> Int -> Dict.Dict String CtorInfo -> Dict.Dict String CtorInfo
+addCtorsToMap typeName ctorNames idx acc =
+    case ctorNames of
+        [] ->
+            acc
+        
+        name :: rest ->
+            Dict.insert name { adtName = typeName , tagIndex = idx , arity = 0 }
+                (addCtorsToMap typeName rest (idx + 1) acc)
+
+sanitizeGoIdent : String -> String
+sanitizeGoIdent name =
+    if isGoKeyword name then
+        name ++ "_"
+    else
+        name
+
+isGoKeyword : String -> Bool
+isGoKeyword name =
+    name == "go" ||
+    name == "type" ||
+    name == "func" ||
+    name == "var" ||
+    name == "return" ||
+    name == "if" ||
+    name == "else" ||
+    name == "for" ||
+    name == "range" ||
+    name == "switch" ||
+    name == "case" ||
+    name == "default" ||
+    name == "break" ||
+    name == "continue" ||
+    name == "select" ||
+    name == "chan" ||
+    name == "map" ||
+    name == "struct" ||
+    name == "interface" ||
+    name == "package" ||
+    name == "import" ||
+    name == "const" ||
+    name == "defer" || name == "fallthrough" || name == "goto"
+
+lastPartOf : List String -> String
+lastPartOf parts =
+    case List.reverse parts of
+        last :: _ ->
+            last
+        
+        [] ->
+            ""
+
+            -- This should never happen if called correctly
+listGet : Int -> List a -> a
+listGet idx items =
+    case List.head (List.drop idx items) of
+        Just x ->
+            x
+        
+        Nothing ->
+            listGet 0 items
+
+zipIndex : List a -> List (( Int, a ))
+zipIndex items =
+    zipIndexLoop 0 items
+
+zipIndexLoop : Int -> List a -> List (( Int, a ))
+zipIndexLoop idx items =
+    case items of
+        [] ->
+            []
+        
+        x :: rest ->
+            ( idx , x ) :: zipIndexLoop (idx + 1) rest
+
+-- ══════════════════════════════════════════════════════
+-- INLINE GO CODE EMISSION (for embedding in strings)
+-- ══════════════════════════════════════════════════════
+-- These produce Go code strings for embedding in IIFE bodies.
+-- They duplicate some Emit.sky logic but operate on expressions directly.
+emitGoExprInline : GoExpr -> String
+emitGoExprInline expr =
+    case expr of
+        GoIdent name ->
+            name
+        
+        GoBasicLit val ->
+            val
+        
+        GoStringLit s ->
+            "\"" ++ s ++ "\""
+        
+        GoCallExpr fn args ->
+            emitGoExprInline fn ++
+            "(" ++ String.join ", " (List.map emitGoExprInline args) ++ ")"
+        
+        GoSelectorExpr target sel ->
+            emitGoExprInline target ++ "." ++ sel
+        
+        GoSliceLit items ->
+            "[]any{" ++
+            String.join ", " (List.map emitGoExprInline items) ++ "}"
+        
+        GoMapLit entries ->
+            "map[string]any{" ++
+            String.join ", " (List.map emitMapEntry entries) ++ "}"
+        
+        GoFuncLit params body ->
+            "func(" ++
+            String.join ", " (List.map emitInlineParam params) ++
+            ") any { return " ++ emitGoExprInline body ++ " }"
+        
+        GoRawExpr code ->
+            code
+        
+        GoCompositeLit typeName fields ->
+            typeName ++
+            "{" ++
+            String.join ", "
+                (List.map (\( k, v ) -> k ++ ": " ++ emitGoExprInline v) fields) ++
+            "}"
+        
+        GoBinaryExpr op left right ->
+            emitGoExprInline left ++ " " ++ op ++ " " ++ emitGoExprInline right
+        
+        GoUnaryExpr op operand ->
+            op ++ emitGoExprInline operand
+        
+        GoIndexExpr target index ->
+            emitGoExprInline target ++ "[" ++ emitGoExprInline index ++ "]"
+        
+        GoNilExpr ->
+            "nil"
+
+emitMapEntry : ( GoExpr, GoExpr ) -> String
+emitMapEntry ( key, val ) =
+    emitGoExprInline key ++ ": " ++ emitGoExprInline val
+
+emitInlineParam : GoParam -> String
+emitInlineParam p =
+    p.name ++ " " ++ p.type_
+
+exprToGoString : LowerCtx -> Expression -> String
+exprToGoString ctx expr =
+    emitGoExprInline (lowerExpr ctx expr)
+
+lowerExprToStmts : LowerCtx -> Expression -> List GoStmt
+lowerExprToStmts ctx expr =
+    [ GoExprStmt (lowerExpr ctx expr) ]
+
+stmtsToGoString : List GoStmt -> String
+stmtsToGoString stmts =
+    String.join "; " (List.map stmtToGoString stmts)
+
+stmtToGoString : GoStmt -> String
+stmtToGoString stmt =
+    case stmt of
+        GoExprStmt expr ->
+            emitGoExprInline expr
+        
+        GoAssign name expr ->
+            name ++ " = " ++ emitGoExprInline expr
+        
+        GoShortDecl name expr ->
+            name ++ " := " ++ emitGoExprInline expr
+        
+        GoReturn expr ->
+            "return " ++ emitGoExprInline expr
+        
+        GoReturnVoid ->
+            "return"
+        
+        GoIf cond thenBody elseBody ->
+            "if " ++
+            emitGoExprInline cond ++
+            " { " ++
+            stmtsToGoString thenBody ++
+            " } else { " ++ stmtsToGoString elseBody ++ " }"
+        
+        GoBlock body ->
+            stmtsToGoString body

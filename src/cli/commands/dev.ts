@@ -75,7 +75,7 @@ async function buildProject(entryFile: string): Promise<boolean> {
     const binAbs = path.resolve(binPath);
     const binRel = path.relative(path.resolve(outDir), binAbs);
     fs.mkdirSync(path.dirname(binAbs), { recursive: true });
-    execSync(`cd ${outDir} && go build -o "${binRel}"`, { stdio: "inherit" });
+    execSync(`cd ${outDir} && go build -gcflags="all=-l" -o "${binRel}"`, { stdio: "inherit" });
 
     return true;
   } catch (e) {
