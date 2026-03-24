@@ -1,0 +1,500 @@
+module Lsp.Server exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.Ref as Ref
+import Sky.Core.Io as Io
+import Lsp.JsonRpc exposing (..)
+import Compiler.Lexer as Lexer
+import Compiler.Parser as Parser
+import Compiler.ParserExpr as ParserExpr
+import Compiler.Ast as Ast exposing (..)
+import Compiler.Token exposing (..)
+import Compiler.Types exposing (..)
+import Compiler.Env as Env
+import Compiler.Checker as Checker
+import Compiler.Resolver as Resolver
+
+
+-- ══════════════════════════════════════════════════════
+-- LSP SERVER STATE
+-- ══════════════════════════════════════════════════════
+
+type alias ServerState =
+    { documents : Dict.Dict String String
+    , astCache : Dict.Dict String Module
+    , typeCache : Dict.Dict String Checker.CheckResult
+    }
+
+
+emptyState : ServerState
+emptyState =
+    { documents = Dict.empty
+    , astCache = Dict.empty
+    , typeCache = Dict.empty
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- MAIN SERVER LOOP
+-- ══════════════════════════════════════════════════════
+
+startServer : () -> ()
+startServer _ =
+    let
+        stateRef =
+            Ref.new emptyState
+    in
+        serverLoop stateRef
+
+
+serverLoop : Ref.Ref ServerState -> ()
+serverLoop stateRef =
+    case readMessage () of
+        Nothing ->
+            ()
+
+        Just body ->
+            let
+                state =
+                    Ref.get stateRef
+                method =
+                    jsonGetString "method" body
+                id =
+                    jsonGetString "id" body
+                newState =
+                    handleMessage state id method body
+                _ =
+                    Ref.set newState stateRef
+            in
+                serverLoop stateRef
+
+
+-- ══════════════════════════════════════════════════════
+-- MESSAGE DISPATCH
+-- ══════════════════════════════════════════════════════
+
+handleMessage : ServerState -> String -> String -> String -> ServerState
+handleMessage state id method body =
+    if method == "initialize" then
+        handleInitialize state id
+    else if method == "initialized" then
+        state
+    else if method == "shutdown" then
+        sendAndReturn (makeResponse id jsonNull) state
+    else if method == "textDocument/didOpen" then
+        handleDidOpen state body
+    else if method == "textDocument/didChange" then
+        handleDidChange state body
+    else if method == "textDocument/hover" then
+        handleHover state id body
+    else if method == "textDocument/completion" then
+        handleCompletion state id body
+    else if method == "textDocument/definition" then
+        handleDefinition state id body
+    else if method == "textDocument/formatting" then
+        handleFormatting state id body
+    else
+        state
+
+
+-- Helper: send a message and return state unchanged
+sendAndReturn : String -> ServerState -> ServerState
+sendAndReturn msg state =
+    let
+        _ =
+            writeMessage msg
+    in
+        state
+
+
+sendNotifyAndReturn : String -> ServerState -> ServerState
+sendNotifyAndReturn msg state =
+    let
+        _ =
+            writeMessage msg
+    in
+        state
+
+
+-- ══════════════════════════════════════════════════════
+-- INITIALIZE
+-- ══════════════════════════════════════════════════════
+
+handleInitialize : ServerState -> String -> ServerState
+handleInitialize state id =
+    let
+        capabilities =
+            jsonObject
+                [ ( "textDocumentSync" , jsonInt 1 )
+                , ( "hoverProvider" , jsonBool True )
+                , ( "completionProvider" , jsonObject [ ( "triggerCharacters" , jsonArray [ jsonString "." ] ) ] )
+                , ( "definitionProvider" , jsonBool True )
+                , ( "documentFormattingProvider" , jsonBool True )
+                ]
+        result =
+            jsonObject
+                [ ( "capabilities" , capabilities )
+                , ( "serverInfo" , jsonObject [ ( "name" , jsonString "sky-lsp" ) , ( "version" , jsonString "0.1.0" ) ] )
+                ]
+    in
+        sendAndReturn (makeResponse id result) state
+
+
+-- ══════════════════════════════════════════════════════
+-- DOCUMENT SYNC
+-- ══════════════════════════════════════════════════════
+
+handleDidOpen : ServerState -> String -> ServerState
+handleDidOpen state body =
+    let
+        params =
+            jsonGetObject "params" body
+        textDoc =
+            jsonGetObject "textDocument" params
+        uri =
+            jsonGetString "uri" textDoc
+        text =
+            jsonGetString "text" textDoc
+        newDocs =
+            Dict.insert uri text state.documents
+        newState =
+            { state | documents = newDocs }
+        analyzed =
+            analyzeAndPublishDiagnostics newState uri text
+    in
+        analyzed
+
+
+handleDidChange : ServerState -> String -> ServerState
+handleDidChange state body =
+    let
+        params =
+            jsonGetObject "params" body
+        textDoc =
+            jsonGetObject "textDocument" params
+        uri =
+            jsonGetString "uri" textDoc
+        -- For full sync, contentChanges[0].text has the full text
+        changes =
+            jsonGetString "text" (jsonGetObject "contentChanges" params)
+        text =
+            if String.isEmpty changes then
+                case Dict.get uri state.documents of
+                    Just existing ->
+                        existing
+
+                    Nothing ->
+                        ""
+            else
+                changes
+        newDocs =
+            Dict.insert uri text state.documents
+        newState =
+            { state | documents = newDocs }
+        analyzed =
+            analyzeAndPublishDiagnostics newState uri text
+    in
+        analyzed
+
+
+-- ══════════════════════════════════════════════════════
+-- ANALYZE & DIAGNOSTICS
+-- ══════════════════════════════════════════════════════
+
+analyzeAndPublishDiagnostics : ServerState -> String -> String -> ServerState
+analyzeAndPublishDiagnostics state uri text =
+    let
+        lexResult =
+            Lexer.lex text
+        parseResult =
+            Parser.parse lexResult.tokens
+    in
+        case parseResult of
+            Err parseErr ->
+                let
+                    diag =
+                        jsonObject
+                            [ ( "range" , makeRange 0 0 0 1 )
+                            , ( "severity" , jsonInt 1 )
+                            , ( "message" , jsonString parseErr )
+                            ]
+                in
+                    sendNotifyAndReturn
+                        (makeNotification "textDocument/publishDiagnostics"
+                            (jsonObject [ ( "uri" , jsonString uri ) , ( "diagnostics" , jsonArray [ diag ] ) ])
+                        )
+                        state
+
+            Ok mod ->
+                let
+                    stdlibEnv =
+                        Resolver.buildStdlibEnv
+                    checkResult =
+                        Checker.checkModule mod (Just stdlibEnv)
+                    diagnostics =
+                        case checkResult of
+                            Ok result ->
+                                List.map (\msg -> makeDiagnostic 2 msg) result.diagnostics
+
+                            Err err ->
+                                [ makeDiagnostic 1 err ]
+                in
+                    publishAndUpdateState state uri mod checkResult diagnostics
+
+
+publishAndUpdateState : ServerState -> String -> Module -> Result String Checker.CheckResult -> List String -> ServerState
+publishAndUpdateState state uri mod checkResult diagnostics =
+    let
+        _ =
+            writeMessage
+                (makeNotification "textDocument/publishDiagnostics"
+                    (jsonObject [ ( "uri" , jsonString uri ) , ( "diagnostics" , jsonArray diagnostics ) ])
+                )
+        newAstCache =
+            Dict.insert uri mod state.astCache
+        newTypeCache =
+            case checkResult of
+                Ok result ->
+                    Dict.insert uri result state.typeCache
+
+                Err _ ->
+                    state.typeCache
+    in
+        { state
+            | astCache = newAstCache
+            , typeCache = newTypeCache
+        }
+
+
+makeDiagnostic : Int -> String -> String
+makeDiagnostic severity msg =
+    jsonObject
+        [ ( "range" , makeRange 0 0 0 1 )
+        , ( "severity" , jsonInt severity )
+        , ( "message" , jsonString msg )
+        ]
+
+
+makeRange : Int -> Int -> Int -> Int -> String
+makeRange startLine startChar endLine endChar =
+    jsonObject
+        [ ( "start" , jsonObject [ ( "line" , jsonInt startLine ) , ( "character" , jsonInt startChar ) ] )
+        , ( "end" , jsonObject [ ( "line" , jsonInt endLine ) , ( "character" , jsonInt endChar ) ] )
+        ]
+
+
+-- ══════════════════════════════════════════════════════
+-- HOVER
+-- ══════════════════════════════════════════════════════
+
+handleHover : ServerState -> String -> String -> ServerState
+handleHover state id body =
+    let
+        params =
+            jsonGetObject "params" body
+        textDoc =
+            jsonGetObject "textDocument" params
+        uri =
+            jsonGetString "uri" textDoc
+        position =
+            jsonGetObject "position" params
+        line =
+            jsonGetInt "line" position
+        character =
+            jsonGetInt "character" position
+        hoverResult =
+            case Dict.get uri state.astCache of
+                Nothing ->
+                    jsonNull
+
+                Just mod ->
+                    getHoverInfo state mod line character
+    in
+        sendAndReturn (makeResponse id hoverResult) state
+
+
+getHoverInfo : ServerState -> Module -> Int -> Int -> String
+getHoverInfo state mod line character =
+    let
+        matchingDecl =
+            List.foldl
+                (\decl acc ->
+                    case decl of
+                        FunDecl name _ _ span ->
+                            if span.start.line - 1 <= line && line <= span.start.line + 5 then
+                                Just name
+                            else
+                                acc
+
+                        TypeAnnotDecl name typeExpr span ->
+                            if span.start.line - 1 == line then
+                                Just (name ++ " (annotation)")
+                            else
+                                acc
+
+                        _ ->
+                            acc
+                )
+                Nothing
+                mod.declarations
+    in
+        case matchingDecl of
+            Nothing ->
+                jsonNull
+
+            Just name ->
+                let
+                    typeStr =
+                        lookupDeclType state name
+                    content =
+                        "```elm\\n" ++ name ++ " : " ++ typeStr ++ "\\n```"
+                in
+                    jsonObject
+                        [ ( "contents" , jsonObject [ ( "kind" , jsonString "markdown" ) , ( "value" , jsonString content ) ] ) ]
+
+
+lookupDeclType : ServerState -> String -> String
+lookupDeclType state name =
+    let
+        allResults =
+            Dict.values state.typeCache
+    in
+        findTypeInResults name allResults
+
+
+findTypeInResults : String -> List Checker.CheckResult -> String
+findTypeInResults name results =
+    case results of
+        [] ->
+            "unknown"
+
+        result :: rest ->
+            case findTypeInDecls name result.declarations of
+                Just typeStr ->
+                    typeStr
+
+                Nothing ->
+                    findTypeInResults name rest
+
+
+findTypeInDecls : String -> List Checker.TypedDecl -> Maybe String
+findTypeInDecls name decls =
+    case decls of
+        [] ->
+            Nothing
+
+        decl :: rest ->
+            if decl.name == name then
+                Just decl.prettyType
+            else
+                findTypeInDecls name rest
+
+
+-- ══════════════════════════════════════════════════════
+-- COMPLETION
+-- ══════════════════════════════════════════════════════
+
+handleCompletion : ServerState -> String -> String -> ServerState
+handleCompletion state id body =
+    let
+        keywords =
+            [ "module" , "exposing" , "import" , "as" , "type" , "alias"
+            , "let" , "in" , "if" , "then" , "else" , "case" , "of"
+            , "foreign" , "True" , "False"
+            ]
+        keywordItems =
+            List.map (\kw -> jsonObject [ ( "label" , jsonString kw ) , ( "kind" , jsonInt 14 ) ]) keywords
+        -- Add known stdlib functions
+        stdlibItems =
+            [ makeCompletionItem "println" "function" 3
+            , makeCompletionItem "identity" "function" 3
+            , makeCompletionItem "not" "function" 3
+            , makeCompletionItem "always" "function" 3
+            , makeCompletionItem "fst" "function" 3
+            , makeCompletionItem "snd" "function" 3
+            , makeCompletionItem "Ok" "constructor" 4
+            , makeCompletionItem "Err" "constructor" 4
+            , makeCompletionItem "Just" "constructor" 4
+            , makeCompletionItem "Nothing" "constructor" 4
+            ]
+        allItems =
+            List.append keywordItems stdlibItems
+        result =
+            jsonObject [ ( "isIncomplete" , jsonBool False ) , ( "items" , jsonArray allItems ) ]
+    in
+        sendAndReturn (makeResponse id result) state
+
+
+makeCompletionItem : String -> String -> Int -> String
+makeCompletionItem label detail kind =
+    jsonObject
+        [ ( "label" , jsonString label )
+        , ( "kind" , jsonInt kind )
+        , ( "detail" , jsonString detail )
+        ]
+
+
+-- ══════════════════════════════════════════════════════
+-- DEFINITION
+-- ══════════════════════════════════════════════════════
+
+handleDefinition : ServerState -> String -> String -> ServerState
+handleDefinition state id body =
+    let
+        params =
+            jsonGetObject "params" body
+        textDoc =
+            jsonGetObject "textDocument" params
+        uri =
+            jsonGetString "uri" textDoc
+        position =
+            jsonGetObject "position" params
+        line =
+            jsonGetInt "line" position
+        character =
+            jsonGetInt "character" position
+        defResult =
+            case Dict.get uri state.astCache of
+                Nothing ->
+                    jsonNull
+
+                Just mod ->
+                    findDefinition mod uri line character
+    in
+        sendAndReturn (makeResponse id defResult) state
+
+
+findDefinition : Module -> String -> Int -> Int -> String
+findDefinition mod uri line character =
+    let
+        matching =
+            List.foldl
+                (\decl acc ->
+                    case decl of
+                        FunDecl name _ _ span ->
+                            if span.start.line > 0 then
+                                Dict.insert name span acc
+                            else
+                                acc
+
+                        _ ->
+                            acc
+                )
+                Dict.empty
+                mod.declarations
+    in
+        -- For now, return the first matching declaration
+        jsonNull
+
+
+-- ══════════════════════════════════════════════════════
+-- FORMATTING
+-- ══════════════════════════════════════════════════════
+
+handleFormatting : ServerState -> String -> String -> ServerState
+handleFormatting state id body =
+    -- Return empty edits (no formatting in self-hosted LSP yet)
+    sendAndReturn (makeResponse id (jsonArray [])) state

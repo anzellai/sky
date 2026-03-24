@@ -1,0 +1,31 @@
+module Sky.Core.Io exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_io_ReadLine)
+
+foreign import "sky_wrappers" exposing (Sky_io_ReadBytes)
+
+foreign import "sky_wrappers" exposing (Sky_io_WriteStdout)
+
+foreign import "sky_wrappers" exposing (Sky_io_WriteStderr)
+
+
+readLine : () -> Maybe String
+readLine _ =
+    Sky_io_ReadLine ()
+
+
+readBytes : Int -> Maybe String
+readBytes n =
+    Sky_io_ReadBytes n
+
+
+writeStdout : String -> ()
+writeStdout s =
+    Sky_io_WriteStdout s
+
+
+writeStderr : String -> ()
+writeStderr s =
+    Sky_io_WriteStderr s

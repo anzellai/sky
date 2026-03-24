@@ -1,0 +1,345 @@
+module Lsp.JsonRpc exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Io as Io
+
+
+-- ══════════════════════════════════════════════════════
+-- JSON-RPC MESSAGE TYPES
+-- ══════════════════════════════════════════════════════
+
+type alias Request =
+    { id : String
+    , method : String
+    , params : String
+    }
+
+
+type alias Response =
+    { id : String
+    , resultJson : String
+    }
+
+
+type alias Notification =
+    { method : String
+    , params : String
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- READ / WRITE LSP MESSAGES
+-- ══════════════════════════════════════════════════════
+
+-- Read a single LSP message from stdin.
+-- Format: Content-Length: N\r\n\r\n{json body}
+
+readMessage : () -> Maybe String
+readMessage _ =
+    case Io.readLine () of
+        Nothing ->
+            Nothing
+
+        Just headerLine ->
+            let
+                contentLength =
+                    parseContentLength headerLine
+            in
+                if contentLength <= 0 then
+                    Nothing
+                else
+                    readMessageBody contentLength
+
+
+readMessageBody : Int -> Maybe String
+readMessageBody len =
+    case Io.readLine () of
+        Nothing ->
+            Nothing
+
+        Just _ ->
+            Io.readBytes len
+
+
+parseContentLength : String -> Int
+parseContentLength header =
+    if String.startsWith "Content-Length: " header then
+        let
+            raw =
+                String.slice 16 (String.length header) header
+            numStr =
+                String.replace "\r" "" (String.trim raw)
+        in
+            case String.toInt numStr of
+                Just n ->
+                    n
+
+                Nothing ->
+                    0
+    else
+        0
+
+
+-- Write a JSON-RPC response to stdout.
+
+writeMessage : String -> ()
+writeMessage json =
+    let
+        len =
+            String.length json
+        header =
+            "Content-Length: " ++ String.fromInt len ++ "\r\n\r\n"
+    in
+        Io.writeStdout (header ++ json)
+
+
+-- ══════════════════════════════════════════════════════
+-- MINIMAL JSON CONSTRUCTION
+-- ══════════════════════════════════════════════════════
+
+-- Build JSON-RPC response string
+
+makeResponse : String -> String -> String
+makeResponse id resultJson =
+    "{\"jsonrpc\":\"2.0\",\"id\":" ++ id ++ ",\"result\":" ++ resultJson ++ "}"
+
+
+makeNotification : String -> String -> String
+makeNotification method paramsJson =
+    "{\"jsonrpc\":\"2.0\",\"method\":\"" ++ method ++ "\",\"params\":" ++ paramsJson ++ "}"
+
+
+-- JSON helpers
+
+jsonString : String -> String
+jsonString s =
+    "\"" ++ escapeJson s ++ "\""
+
+
+jsonInt : Int -> String
+jsonInt n =
+    String.fromInt n
+
+
+jsonBool : Bool -> String
+jsonBool b =
+    if b then
+        "true"
+    else
+        "false"
+
+
+jsonNull : String
+jsonNull =
+    "null"
+
+
+jsonObject : List ( String , String ) -> String
+jsonObject fields =
+    "{" ++ String.join "," (List.map formatField fields) ++ "}"
+
+
+formatField : ( String , String ) -> String
+formatField pair =
+    jsonString (fst pair) ++ ":" ++ snd pair
+
+
+jsonArray : List String -> String
+jsonArray items =
+    "[" ++ String.join "," items ++ "]"
+
+
+escapeJson : String -> String
+escapeJson s =
+    s
+        |> String.replace "\\" "\\\\"
+        |> String.replace "\"" "\\\""
+        |> String.replace "\n" "\\n"
+        |> String.replace "\r" "\\r"
+        |> String.replace "\t" "\\t"
+
+
+-- ══════════════════════════════════════════════════════
+-- MINIMAL JSON PARSING
+-- ══════════════════════════════════════════════════════
+
+-- Extract a string value from a JSON object by key.
+
+jsonGetString : String -> String -> String
+jsonGetString key json =
+    let
+        searchKey =
+            "\"" ++ key ++ "\""
+        keyIdx =
+            findInString searchKey json 0
+    in
+        if keyIdx < 0 then
+            ""
+        else
+            let
+                afterKey =
+                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                colonIdx =
+                    findInString ":" afterKey 0
+            in
+                if colonIdx < 0 then
+                    ""
+                else
+                    let
+                        afterColon =
+                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                    in
+                        if String.startsWith "\"" afterColon then
+                            extractQuotedString (String.slice 1 (String.length afterColon) afterColon) ""
+                        else
+                            -- For non-string values (numbers, booleans), take until comma/brace
+                            takeUntilDelimiter afterColon ""
+
+
+jsonGetInt : String -> String -> Int
+jsonGetInt key json =
+    let
+        searchKey =
+            "\"" ++ key ++ "\""
+        keyIdx =
+            findInString searchKey json 0
+    in
+        if keyIdx < 0 then
+            0
+        else
+            let
+                afterKey =
+                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                colonIdx =
+                    findInString ":" afterKey 0
+            in
+                if colonIdx < 0 then
+                    0
+                else
+                    let
+                        afterColon =
+                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                        numStr =
+                            takeWhileDigit afterColon ""
+                    in
+                        case String.toInt numStr of
+                            Just n ->
+                                n
+
+                            Nothing ->
+                                0
+
+
+jsonGetObject : String -> String -> String
+jsonGetObject key json =
+    let
+        searchKey =
+            "\"" ++ key ++ "\""
+        keyIdx =
+            findInString searchKey json 0
+    in
+        if keyIdx < 0 then
+            "{}"
+        else
+            let
+                afterKey =
+                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                colonIdx =
+                    findInString ":" afterKey 0
+            in
+                if colonIdx < 0 then
+                    "{}"
+                else
+                    let
+                        afterColon =
+                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                    in
+                        if String.startsWith "{" afterColon then
+                            extractBraced afterColon 0 0
+                        else
+                            "{}"
+
+
+-- ══════════════════════════════════════════════════════
+-- STRING HELPERS
+-- ══════════════════════════════════════════════════════
+
+findInString : String -> String -> Int -> Int
+findInString needle haystack idx =
+    if idx + String.length needle > String.length haystack then
+        -1
+    else if String.slice idx (idx + String.length needle) haystack == needle then
+        idx
+    else
+        findInString needle haystack (idx + 1)
+
+
+extractQuotedString : String -> String -> String
+extractQuotedString remaining acc =
+    if String.isEmpty remaining then
+        acc
+    else
+        let
+            ch =
+                String.slice 0 1 remaining
+            rest =
+                String.slice 1 (String.length remaining) remaining
+        in
+            if ch == "\"" then
+                acc
+            else if ch == "\\" then
+                extractQuotedString (String.slice 1 (String.length rest) rest) (acc ++ String.slice 0 1 rest)
+            else
+                extractQuotedString rest (acc ++ ch)
+
+
+takeWhileDigit : String -> String -> String
+takeWhileDigit remaining acc =
+    if String.isEmpty remaining then
+        acc
+    else
+        let
+            ch =
+                String.slice 0 1 remaining
+        in
+            if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" then
+                takeWhileDigit (String.slice 1 (String.length remaining) remaining) (acc ++ ch)
+            else
+                acc
+
+
+takeUntilDelimiter : String -> String -> String
+takeUntilDelimiter remaining acc =
+    if String.isEmpty remaining then
+        acc
+    else
+        let
+            ch =
+                String.slice 0 1 remaining
+        in
+            if ch == "," || ch == "}" || ch == "]" || ch == " " || ch == "\n" || ch == "\r" then
+                acc
+            else
+                takeUntilDelimiter (String.slice 1 (String.length remaining) remaining) (acc ++ ch)
+
+
+extractBraced : String -> Int -> Int -> String
+extractBraced remaining depth idx =
+    if idx >= String.length remaining then
+        remaining
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) remaining
+        in
+            if ch == "{" then
+                extractBraced remaining (depth + 1) (idx + 1)
+            else if ch == "}" then
+                if depth <= 1 then
+                    String.slice 0 (idx + 1) remaining
+                else
+                    extractBraced remaining (depth - 1) (idx + 1)
+            else
+                extractBraced remaining depth (idx + 1)

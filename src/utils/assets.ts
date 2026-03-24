@@ -268,6 +268,38 @@ isDir : String -> Bool
 isDir path =
     Sky_file_IsDir path
 `,
+  "stdlib/Sky/Core/Io.sky": `module Sky.Core.Io exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+foreign import "sky_wrappers" exposing (Sky_io_ReadLine)
+
+foreign import "sky_wrappers" exposing (Sky_io_ReadBytes)
+
+foreign import "sky_wrappers" exposing (Sky_io_WriteStdout)
+
+foreign import "sky_wrappers" exposing (Sky_io_WriteStderr)
+
+
+readLine : () -> Maybe String
+readLine _ =
+    Sky_io_ReadLine ()
+
+
+readBytes : Int -> Maybe String
+readBytes n =
+    Sky_io_ReadBytes n
+
+
+writeStdout : String -> ()
+writeStdout s =
+    Sky_io_WriteStdout s
+
+
+writeStderr : String -> ()
+writeStderr s =
+    Sky_io_WriteStderr s
+`,
   "stdlib/Sky/Core/Json/Decode/Pipeline.sky": `module Sky.Core.Json.Decode.Pipeline exposing (..)
 
 import Sky.Core.Prelude exposing (..)
@@ -2888,7 +2920,7 @@ foreign import "@sky/runtime/program-react"
 `,
   "templates/CLAUDE.md": `# CLAUDE.md — Sky Language Project
 
-This is a [Sky](https://github.com/anzellai/sky) project. Sky is an Elm-inspired programming language that compiles to Go.
+This is a [Sky](https://github.com/anzellai/sky) project. Sky is an Elm-inspired programming language that compiles to Go. Sky has a self-hosted compiler written in Sky itself (\`sky-compiler/\`).
 
 ## Quick Reference
 
@@ -2899,6 +2931,7 @@ sky dev src/Main.sky      # Watch mode: auto-rebuild on changes
 sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
 sky add <package>         # Add dependency (auto-detects Sky vs Go package)
 sky install               # Install all dependencies from sky.toml
+sky check src/Main.sky    # Type-check without compiling
 sky clean                 # Remove dist/, .skycache/, .skydeps/
 sky upgrade               # Self-update to latest release
 sky --version             # Show version

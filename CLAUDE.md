@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Sky is an experimental programming language inspired by **Elm**, compiling to **Go**. The repo contains a compiler, CLI, formatter, LSP, and Helix editor integration -- all written in **TypeScript**.
+Sky is an experimental programming language inspired by **Elm**, compiling to **Go**. The repo contains a compiler, CLI, formatter, LSP, and Helix editor integration -- the bootstrap compiler is written in **TypeScript**, and a **self-hosted compiler is written in Sky itself** (`sky-compiler/`).
 
 ## Architecture & Pipeline
 
@@ -37,6 +37,52 @@ src/
   bin/                 -- Entry points: sky.ts, sky-lsp.ts, build-binary.js
   utils/               -- Helpers (assets.ts, path.ts)
 ```
+
+### Self-Hosted Compiler (`sky-compiler/`)
+
+The Sky compiler rewritten in Sky itself. Compiles all 15 examples successfully.
+
+```
+sky-compiler/
+  sky.toml                       -- Project manifest
+  src/
+    Main.sky                     -- Entry point (CLI arg handling)
+    Compiler/
+      Token.sky                  -- Token types and source positions
+      Lexer.sky                  -- Indentation-aware tokenizer
+      ParserCore.sky             -- Shared parser state, helpers, layout filtering
+      Parser.sky                 -- Module/import/declaration/type parsing
+      ParserExpr.sky             -- Expression parsing (Pratt-style precedence)
+      ParserPattern.sky          -- Pattern parsing
+      Ast.sky                    -- AST node definitions (Expression, Pattern, Type, Declaration)
+      GoIr.sky                   -- Go Intermediate Representation types
+      Emit.sky                   -- Go source code emitter
+      Types.sky                  -- HM type system core (Type, Scheme, Substitution)
+      Env.sky                    -- Type environment with lexical scoping
+      Unify.sky                  -- Robinson unification with occurs check
+      Adt.sky                    -- ADT registration and constructor scheme generation
+      PatternCheck.sky           -- Pattern type checking and binding extraction
+      Infer.sky                  -- Algorithm W type inference
+      Exhaustive.sky             -- Exhaustiveness checking for case expressions
+      Checker.sky                -- Module-level type checking orchestration
+      Lower.sky                  -- AST → GoIR lowering (constructors, case, operators)
+      Resolver.sky               -- Module resolution and stdlib type environment
+      Pipeline.sky               -- Full compilation pipeline orchestration
+```
+
+**Building the self-hosted compiler:**
+```bash
+sky build sky-compiler/src/Main.sky   # Compile the compiler
+./dist/app input.sky                  # Use it to compile Sky files
+```
+
+**Key design decisions:**
+- Generates standalone Go (inline runtime helpers, no `sky_wrappers` dependency)
+- Avoids tuple patterns in constructor case branches (TS compiler codegen limitation)
+- Uses `fst`/`snd` instead of tuple destructuring in `Just`/`Ok` patterns
+- Parser split across 4 modules to avoid Go 1.26 inlining OOM on deeply nested IIFEs
+- `consumeOperator` returns exact operator length (no trailing char consumption)
+- Column-based scope boundaries in expression parser (stops at column ≤ previous token)
 
 ## Build & Test
 

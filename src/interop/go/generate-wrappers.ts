@@ -698,15 +698,15 @@ func Sky_string_FromFloat(f any) any {
 func Sky_string_ToInt(s any) any {
 	var n int
 	_, err := fmt.Sscanf(sky_asString(s), "%d", &n)
-	if err != nil { return SkyErr(err.Error()) }
-	return SkyOk(n)
+	if err != nil { return SkyNothing() }
+	return SkyJust(n)
 }
 
 func Sky_string_ToFloat(s any) any {
 	var f float64
 	_, err := fmt.Sscanf(sky_asString(s), "%g", &f)
-	if err != nil { return SkyErr(err.Error()) }
-	return SkyOk(f)
+	if err != nil { return SkyNothing() }
+	return SkyJust(f)
 }
 
 func Sky_string_Lines(s any) any {
@@ -1912,6 +1912,53 @@ func Sky_process_LoadEnv(filePath any) any {
 		return SkyResult{Tag: 1, ErrValue: err}
 	}
 	return SkyResult{Tag: 0, OkValue: struct{}{}}
+}
+
+// ============= Stdin/Stdout I/O =============
+
+func Sky_io_ReadLine() any {
+	if Sky_stdin_reader == nil {
+		Sky_stdin_reader = bufio.NewReader(os.Stdin)
+	}
+	line, err := Sky_stdin_reader.ReadString('\\n')
+	if err != nil && len(line) == 0 {
+		return SkyNothing()
+	}
+	// Strip trailing \\n and \\r
+	line = strings.TrimRight(line, "\\r\\n")
+	return SkyJust(line)
+}
+
+var Sky_stdin_reader *bufio.Reader
+
+func Sky_io_ReadBytes(n any) any {
+	if Sky_stdin_reader == nil {
+		Sky_stdin_reader = bufio.NewReader(os.Stdin)
+	}
+	count := sky_asInt(n)
+	buf := make([]byte, count)
+	totalRead := 0
+	for totalRead < count {
+		nRead, err := Sky_stdin_reader.Read(buf[totalRead:])
+		totalRead += nRead
+		if err != nil {
+			break
+		}
+	}
+	if totalRead == 0 {
+		return SkyNothing()
+	}
+	return SkyJust(string(buf[:totalRead]))
+}
+
+func Sky_io_WriteStdout(s any) any {
+	fmt.Print(sky_asString(s))
+	return struct{}{}
+}
+
+func Sky_io_WriteStderr(s any) any {
+	fmt.Fprint(os.Stderr, sky_asString(s))
+	return struct{}{}
 }
 
 // ============= Ref (Mutable Reference) =============
