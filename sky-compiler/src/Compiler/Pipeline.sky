@@ -85,13 +85,13 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         stdlibEnv =
             Resolver.buildStdlibEnv
         depDecls =
-            List.concatMap (compileDependencyModule stdlibEnv) loadedModules
+            List.concatMap (compileDependencyModule stdlibEnv loadedModules) loadedModules
     in
-        compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls
+        compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls loadedModules
 
 
-compileMultiModuleEntry : String -> Ast.Module -> Dict.Dict String String -> Env.TypeEnv -> List GoDecl -> Result String String
-compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls =
+compileMultiModuleEntry : String -> Ast.Module -> Dict.Dict String String -> Env.TypeEnv -> List GoDecl -> List ( String , Ast.Module ) -> Result String String
+compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls loadedModules =
     let
         entryCheckResult =
             Checker.checkModule entryMod (Just stdlibEnv)
@@ -103,11 +103,11 @@ compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls =
                 Err _ ->
                     Adt.emptyRegistry
     in
-        emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls
+        emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules
 
 
-emitMultiModuleGo : String -> Ast.Module -> Adt.AdtRegistry -> Dict.Dict String String -> List GoDecl -> Result String String
-emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls =
+emitMultiModuleGo : String -> Ast.Module -> Adt.AdtRegistry -> Dict.Dict String String -> List GoDecl -> List ( String , Ast.Module ) -> Result String String
+emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules =
     let
         baseCtx =
             Lower.emptyCtx
@@ -211,6 +211,49 @@ buildAliasMap imports =
     List.foldl addImportAlias Dict.empty imports
 
 
+-- Generate aliases for ADT constructors only (capitalized names that are
+-- likely constructor functions, not regular functions)
+generatePrefixAliases : String -> List GoDecl -> List GoDecl
+generatePrefixAliases prefix decls =
+    List.filterMap (makePrefixAlias prefix) decls
+
+
+makePrefixAlias : String -> GoDecl -> Maybe GoDecl
+makePrefixAlias prefix decl =
+    let
+        fullName =
+            getDeclName decl
+    in
+        if String.isEmpty fullName then
+            Nothing
+        else if not (String.startsWith prefix fullName) then
+            Nothing
+        else
+            let
+                unprefixed =
+                    String.slice (String.length prefix + 1) (String.length fullName) fullName
+                firstChar =
+                    String.slice 0 1 unprefixed
+            in
+                -- Only alias names that start with uppercase (ADT constructors)
+                -- and are not common function names
+                if String.isEmpty unprefixed then
+                    Nothing
+                else if firstChar == String.toUpper firstChar && not (isCommonName unprefixed) then
+                    Just (GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName))
+                else
+                    Nothing
+
+
+isCommonName : String -> Bool
+isCommonName name =
+    name == "Main" || name == "Compile" || name == "Parse" || name == "Check" ||
+    name == "Format" || name == "Emit" || name == "Lower" || name == "Resolve" ||
+    name == "Build" || name == "Run" || name == "Start" || name == "Init" ||
+    name == "CapitalizeFirst" || name == "CurTok" || name == "Advance" ||
+    name == "FormatField" || name == "FormatModule"
+
+
 deduplicateDecls : List GoDecl -> List GoDecl
 deduplicateDecls decls =
     deduplicateDeclsLoop decls Dict.empty []
@@ -251,6 +294,108 @@ getDeclName decl =
             ""
 
 
+-- Generate var aliases for names imported via exposing(..) from local modules
+-- e.g. import Compiler.GoIr exposing (..) → var GoReturn = Compiler_GoIr_GoReturn
+
+generateImportAliases : List Ast.ImportDecl -> List ( String , Ast.Module ) -> List GoDecl
+generateImportAliases imports allModules =
+    List.concatMap (generateAliasesForImport allModules) imports
+
+
+generateAliasesForImport : List ( String , Ast.Module ) -> Ast.ImportDecl -> List GoDecl
+generateAliasesForImport allModules imp =
+    let
+        modName =
+            String.join "." imp.moduleName
+    in
+        if Resolver.isStdlib modName then
+            []
+        else
+            -- Generate aliases for ALL exports of imported local modules
+            generateAliasesFromModule modName allModules
+
+
+generateAliasesFromModule : String -> List ( String , Ast.Module ) -> List GoDecl
+generateAliasesFromModule modName allModules =
+    case findModule modName allModules of
+        Nothing ->
+            []
+
+        Just mod ->
+            let
+                prefix =
+                    String.replace "." "_" modName
+                declNames =
+                    extractExportedNames mod
+            in
+                List.filterMap (\name -> if String.isEmpty name then Nothing else Just (GoDeclRaw ("var " ++ name ++ " = " ++ prefix ++ "_" ++ capitalizeFirst name))) declNames
+
+
+-- Check exposing clause without ADT pattern matching (avoids TS compiler tag issues)
+-- ExposeAll has Tag=0, ExposeList has Tag=1, ExposeNone has Tag=2
+
+isExposingAll : Ast.ExposingClause -> Bool
+isExposingAll clause =
+    not (isExposingNone clause) && List.isEmpty (getExposeNames clause)
+
+
+isExposingNone : Ast.ExposingClause -> Bool
+isExposingNone clause =
+    case clause of
+        Ast.ExposeNone ->
+            True
+
+        _ ->
+            False
+
+
+getExposeNames : Ast.ExposingClause -> List String
+getExposeNames clause =
+    case clause of
+        Ast.ExposeList names ->
+            names
+
+        _ ->
+            []
+
+
+findModule : String -> List ( String , Ast.Module ) -> Maybe Ast.Module
+findModule modName modules =
+    case modules of
+        [] ->
+            Nothing
+
+        pair :: rest ->
+            if fst pair == modName then
+                Just (snd pair)
+            else
+                findModule modName rest
+
+
+extractExportedNames : Ast.Module -> List String
+extractExportedNames mod =
+    List.concatMap extractDeclNames mod.declarations
+
+
+extractDeclNames : Ast.Declaration -> List String
+extractDeclNames decl =
+    case decl of
+        Ast.FunDecl name _ _ _ ->
+            [ name ]
+
+        Ast.TypeDecl name _ variants _ ->
+            name :: List.map (\v -> v.name) variants
+
+        Ast.TypeAliasDecl name _ _ _ ->
+            [ name ]
+
+        Ast.TypeAnnotDecl _ _ _ ->
+            []
+
+        Ast.ForeignImportDecl name _ _ _ ->
+            [ name ]
+
+
 isModuleLoaded : String -> List ( String , Ast.Module ) -> Bool
 isModuleLoaded modName loaded =
     List.foldl (\pair acc -> acc || fst pair == modName) False loaded
@@ -283,8 +428,8 @@ importAlias imp =
 
 -- Compile a dependency module into Go declarations with namespaced names
 
-compileDependencyModule : Env.TypeEnv -> ( String , Ast.Module ) -> List GoDecl
-compileDependencyModule stdlibEnv pair =
+compileDependencyModule : Env.TypeEnv -> List ( String , Ast.Module ) -> ( String , Ast.Module ) -> List GoDecl
+compileDependencyModule stdlibEnv allModules pair =
     let
         modName =
             fst pair
@@ -322,8 +467,11 @@ compileDependencyModule stdlibEnv pair =
             List.filter isExportableDecl (List.append ctorDecls goDecls)
         prefixed =
             List.map (prefixDecl prefix) filtered
+        -- Generate aliases: for each prefixed declaration, create an unprefixed alias
+        aliases =
+            generatePrefixAliases prefix prefixed
     in
-        deduplicateDecls prefixed
+        deduplicateDecls (List.append aliases prefixed)
 
 
 isExportableDecl : GoDecl -> Bool
