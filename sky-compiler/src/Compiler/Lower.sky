@@ -576,7 +576,7 @@ lowerCall ctx callee args =
                     goCallee =
                         lowerExpr ctx flatCallee
                     goArgs =
-                        List.map (lowerExpr ctx) flatArgs
+                        List.map (lowerArgExpr ctx) flatArgs
                 in
                     -- Handle curried calls with sky_call wrapper
                     case goCallee of
@@ -650,23 +650,36 @@ generatePartialClosure partial providedArgs providedCount =
     let
         remainingCount =
             partial.totalArity - providedCount
-        -- Build parameter names for remaining args
+
         remainingParams =
             List.map (\i -> "__pa" ++ String.fromInt i) (listRange 0 (remainingCount - 1))
-        -- Build full arg list: provided args + remaining params
+
         providedArgStrs =
             List.map emitGoExprInline providedArgs
+
         allArgStrs =
             List.append providedArgStrs remainingParams
-        -- Build closure
-        paramList =
-            String.join ", " (List.map (\p -> p ++ " any") remainingParams)
+
         argList =
             String.join ", " allArgStrs
+
+        innerCall =
+            partial.goFuncName ++ "(" ++ argList ++ ")"
+
         closureCode =
-            "func(" ++ paramList ++ ") any { return " ++ partial.goFuncName ++ "(" ++ argList ++ ") }"
+            buildCurriedClosure remainingParams innerCall
     in
         GoRawExpr closureCode
+
+
+buildCurriedClosure : List String -> String -> String
+buildCurriedClosure params innerCall =
+    case params of
+        [] ->
+            innerCall
+
+        p :: rest ->
+            "func(" ++ p ++ " any) any { return " ++ buildCurriedClosure rest innerCall ++ " }"
 
 
 listRange : Int -> Int -> List Int
@@ -1585,6 +1598,29 @@ isParamOrBuiltin name =
     name == "colonIdx" || name == "afterColon" || name == "numStr" || name == "raw"
 
 
+lowerArgExpr : LowerCtx -> Expression -> GoExpr
+lowerArgExpr ctx expr =
+    case expr of
+        IdentifierExpr name _ ->
+            if not (String.isEmpty ctx.modulePrefix) && listContains name ctx.localFunctions then
+                let
+                    goName =
+                        ctx.modulePrefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
+
+                    fnArity =
+                        getFnArity name ctx
+                in
+                    if fnArity > 1 then
+                        makeCurryWrapper goName fnArity
+                    else
+                        lowerExpr ctx expr
+            else
+                lowerExpr ctx expr
+
+        _ ->
+            lowerExpr ctx expr
+
+
 isZeroArityFn : String -> LowerCtx -> Bool
 isZeroArityFn name ctx =
     case Dict.get name ctx.localFunctionArity of
@@ -1593,6 +1629,28 @@ isZeroArityFn name ctx =
 
         Nothing ->
             False
+
+
+getFnArity : String -> LowerCtx -> Int
+getFnArity name ctx =
+    case Dict.get name ctx.localFunctionArity of
+        Just arity ->
+            arity
+
+        Nothing ->
+            1
+
+
+makeCurryWrapper : String -> Int -> GoExpr
+makeCurryWrapper goName arity =
+    if arity == 2 then
+        GoRawExpr ("func(__ca0 any) any { return func(__ca1 any) any { return " ++ goName ++ "(__ca0, __ca1) } }")
+    else if arity == 3 then
+        GoRawExpr ("func(__ca0 any) any { return func(__ca1 any) any { return func(__ca2 any) any { return " ++ goName ++ "(__ca0, __ca1, __ca2) } } }")
+    else if arity == 4 then
+        GoRawExpr ("func(__ca0 any) any { return func(__ca1 any) any { return func(__ca2 any) any { return func(__ca3 any) any { return " ++ goName ++ "(__ca0, __ca1, __ca2, __ca3) } } } }")
+    else
+        GoIdent goName
 
 
 listContains : String -> List String -> Bool
