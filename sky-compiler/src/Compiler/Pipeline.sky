@@ -536,9 +536,6 @@ extractDeclNameForFn d =
         Ast.FunDecl name _ _ _ ->
             Just name
 
-        Ast.TypeAnnotDecl name _ _ ->
-            Just name
-
         _ ->
             Nothing
 

@@ -119,7 +119,7 @@ emitExpr expr =
             value
 
         GoStringLit value ->
-            "\"" ++ value ++ "\""
+            goQuote value
 
         GoCallExpr fn args ->
             emitExpr fn ++ "(" ++ String.join ", " (List.map emitExpr args) ++ ")"
@@ -167,3 +167,6 @@ emitExpr expr =
             "nil"
 
 
+goQuote : String -> String
+goQuote s =
+    "\"" ++ s ++ "\""

@@ -905,25 +905,8 @@ patternToCondition ctx varName pat =
             "true"
         
         PLiteral lit _ ->
-            case lit of
-                LitInt n ->
-                    "sky_asInt(" ++ varName ++ ") == " ++ String.fromInt n
-                
-                LitFloat f ->
-                    "sky_asFloat(" ++ varName ++ ") == " ++ String.fromFloat f
-                
-                LitString s ->
-                    "sky_asString(" ++ varName ++ ") == " ++ goQuote s
-                
-                LitBool b ->
-                    if b then
-                        "sky_asBool(" ++ varName ++ ") == true"
-                    else
-                        "sky_asBool(" ++ varName ++ ") == false"
-                
-                LitChar c ->
-                    "sky_asString(" ++ varName ++ ") == \"" ++ c ++ "\""
-        
+            literalCondition varName lit
+
         PConstructor parts _ _ ->
             let
                 ctorName =
@@ -962,6 +945,34 @@ patternToCondition ctx varName pat =
         
         PRecord _ _ ->
             "true"
+
+        _ ->
+            "true"
+
+
+literalCondition varName lit =
+    case lit of
+        LitInt n ->
+            "sky_asInt(" ++ varName ++ ") == " ++ String.fromInt n
+
+        LitFloat f ->
+            "sky_asFloat(" ++ varName ++ ") == " ++ String.fromFloat f
+
+        LitString s ->
+            "sky_asString(" ++ varName ++ ") == " ++ goQuote s
+
+        LitBool b ->
+            if b then
+                "sky_asBool(" ++ varName ++ ") == true"
+            else
+                "sky_asBool(" ++ varName ++ ") == false"
+
+        LitChar c ->
+            "sky_asString(" ++ varName ++ ") == \"" ++ c ++ "\""
+
+        _ ->
+            "true"
+
 
 patternToBindings : LowerCtx -> String -> Pattern -> String
 patternToBindings ctx varName pat =
@@ -1031,6 +1042,10 @@ patternToBindings ctx varName pat =
                 )
                 ""
                 fields
+
+        _ ->
+            ""
+
 
 bindConstructorArgs : LowerCtx -> String -> String -> String -> List Pattern -> String
 bindConstructorArgs ctx varName wrapperFn fieldName argPats =
@@ -1367,6 +1382,7 @@ generateHelperDecls =
     , GoDeclRaw "var _ = exec.Command"
     , GoDeclRaw "var _ = bufio.NewReader"
     , GoDeclRaw "func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }"
+    , GoDeclRaw "func sky_goQuote(s any) any { return strconv.Quote(sky_asString(s)) }"
     , GoDeclRaw "func sky_fst(t any) any { return sky_asTuple2(t).V0 }"
     , GoDeclRaw "func sky_snd(t any) any { return sky_asTuple2(t).V1 }"
     , GoDeclRaw "func sky_errorToString(e any) any { return sky_asString(e) }"
