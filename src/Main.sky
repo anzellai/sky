@@ -38,8 +38,12 @@ runCommand command =
         cmdRun ()
     else if command == "check" then
         cmdCheck ()
+    else if command == "fmt" then
+        cmdFmt ()
     else if command == "clean" then
         cmdClean ()
+    else if command == "add" || command == "install" || command == "remove" || command == "update" then
+        println ("Command '" ++ command ++ "' requires the legacy bootstrap compiler (ts-compiler/).\nRun: node ts-compiler/bin/build-binary.js && bin/sky-legacy " ++ command)
     else if command == "version" || command == "--version" || command == "-v" then
         println "sky v0.6.0"
     else
@@ -170,6 +174,20 @@ cmdCheck _ =
                                             Process.exit 1
 
 
+cmdFmt : () -> ()
+cmdFmt _ =
+    let
+        filePath =
+            case Args.getArg 2 of
+                Just f ->
+                    f
+
+                Nothing ->
+                    "src/Main.sky"
+    in
+        println ("fmt: not yet implemented for " ++ filePath)
+
+
 cmdClean : () -> ()
 cmdClean _ =
     let
@@ -200,6 +218,8 @@ cmdHelp _ =
             println "  run [file]      Build and run"
         _ =
             println "  check [file]    Type-check only"
+        _ =
+            println "  fmt [file]      Format Sky source code"
         _ =
             println "  clean           Remove build artifacts"
         _ =

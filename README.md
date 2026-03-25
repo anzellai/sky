@@ -425,123 +425,76 @@ See [Pattern Matching](#pattern-matching).
 
 ### Go Interop (FFI)
 
-Sky can import and use any Go package -- both standard library and third-party. The FFI layer automatically generates type-safe wrappers with safe assertion helpers that prevent runtime panics.
+Sky can import any Go package. The compiler auto-generates type-safe, **Task-wrapped** bindings with panic recovery. Users never write FFI code.
 
-Go types are **opaque** in Sky -- each Go type (e.g., `Db`, `Rows`, `Response`) is a distinct type that cannot be confused with another. Passing a `Rows` where a `Db` is expected is a compile-time error, not a runtime crash. This strict type matching, combined with safe assertion helpers in the generated Go code, ensures that correctly-typed Sky programs cannot panic at the Go boundary.
+**Principle**: all Go interop returns `Task String T` — effects are explicit, panics are caught, nil is handled.
 
 #### Importing Go Packages
 
-Go packages are mapped to PascalCase module names:
-
-| Go Package               | Sky Import               |
-| ------------------------ | ------------------------ |
-| `net/http`               | `Net.Http`               |
-| `crypto/sha256`          | `Crypto.Sha256`          |
-| `time`                   | `Time`                   |
-| `os`                     | `Os`                     |
-| `github.com/google/uuid` | `Github.Com.Google.Uuid` |
-| `github.com/gorilla/mux` | `Github.Com.Gorilla.Mux` |
-
 ```elm
-import Net.Http as Http
-import Time
+import Sky.Core.Task as Task
+
+-- Go packages auto-generate Task-wrapped Sky bindings
 import Github.Com.Google.Uuid as Uuid
 
 main =
-    let
-        now = Time.now ()
-        uuid = Uuid.newString ()
-        resp = Http.get "https://example.com"
-    in
-    case resp of
-        Ok r -> println "Status:" (Http.responseStatusCode r)
-        Err e -> println "Error:" (errorToString e)
+    Uuid.newString ()
+        |> Task.map (\id -> "Generated: " ++ id)
+        |> Task.perform
+```
+
+#### Return Type Mapping (Go → Sky)
+
+| Go Return | Sky Return | Notes |
+|-----------|-----------|-------|
+| `T` (pure) | `T` | No wrapping for pure functions |
+| `(T, error)` | `Task String T` | Error becomes `Err` in Task |
+| `error` | `Task String ()` | Effectful, may fail |
+| `void` (side effect) | `Task String ()` | Wrapped in lazy thunk |
+| `*string`, `*int` | `Maybe String`, `Maybe Int` | Nil-safe |
+| `*sql.DB` | `Db` (opaque handle) | Pointer is transparent |
+| `[]string` | `List String` | Slice → List |
+| `map[string]int` | `Dict String Int` | Map → Dict |
+
+#### Panic Safety
+
+Every Go call is wrapped with `defer recover()`. Panics become `Err`:
+
+```elm
+-- If the Go function panics, you get Err "panic: ..."
+case Task.perform (riskyGoCall args) of
+    Ok result -> use result
+    Err msg -> handleError msg
 ```
 
 #### Pointer Safety
 
-Go pointer types are handled pragmatically at the FFI boundary:
-
-- **Primitive pointers** (`*string`, `*int`, `*bool`, `*float64`) map to `Maybe T` -- `Just value` when non-nil, `Nothing` when nil
-- **Opaque struct pointers** (`*sql.DB`, `*http.Request`) stay as their Sky type (`Db`, `Request`) -- these are reference handles, the pointer is an implementation detail
-
-This means Go APIs with optional primitive values are naturally expressed in Sky:
+- **Primitive pointers** (`*string`, `*int`) → `Maybe T`
+- **Opaque struct pointers** (`*sql.DB`) → `Db` (type name, pointer hidden)
 
 ```elm
--- A Go function returning *string becomes Maybe String in Sky
 case getName user of
     Just name -> println name
     Nothing -> println "anonymous"
 ```
 
-#### Error Handling
-
-Go's `error` type maps to `Error` in Sky. Use `errorToString` (from Prelude) to convert:
-
-```elm
-case Http.listenAndServe ":8080" handler of
-    Ok _ -> println "Server started"
-    Err e -> println "Failed:" (errorToString e)
-```
-
-#### Foreign Import Declarations
-
-For low-level control, use `foreign import`:
-
-```elm
-foreign import "fmt" exposing (Sprintf, println)
-foreign import "sky_wrappers" exposing (Sky_list_Map, Sky_list_Filter)
-```
-
-#### Side-Effect Imports
-
-Some Go packages need to be imported for side effects only (e.g., database drivers):
-
-```elm
-import Drivers.Sqlite as _ exposing (..)
-```
-
-The `as _` syntax generates a Go blank import (`import _ "package"`).
-
 #### Auto-Generated Bindings
 
-When you `import` a Go package, Sky **introspects it at build time** using Go's type system and automatically generates type-safe wrapper functions. You never write binding code manually.
+Go's `Package.Method` becomes `packageMethod` in Sky (lowerCamelCase):
 
-**Naming convention**: Go's `Package.Method` becomes `packageMethod` in Sky (lowerCamelCase). Struct methods are prefixed with the type name:
+| Go | Sky |
+|----|-----|
+| `uuid.NewString()` | `Uuid.newString ()` |
+| `db.Query(q)` | `Sql.dbQuery db q` |
+| `rows.Close()` | `Sql.rowsClose rows` |
+| `http.StatusOK` | `Http.statusOK ()` |
 
-| Go                              | Sky                           | Notes                                   |
-| ------------------------------- | ----------------------------- | --------------------------------------- |
-| `uuid.NewString()`             | `Uuid.newString ()`           | Package function                        |
-| `mux.NewRouter()`              | `Mux.newRouter ()`            | Package function                        |
-| `router.HandleFunc(p, h)`      | `Mux.routerHandleFunc r p h`  | Method: `{Type}{Method}`                |
-| `db.Query(q, args...)`         | `Sql.dbQuery db q args`       | Method on `*sql.DB`                     |
-| `rows.Close()`                 | `Sql.rowsClose rows`          | Method on `*sql.Rows`                   |
-| `req.URL`                      | `Http.requestUrl req`         | Field accessor: `{Type}{Field}`         |
-| `http.StatusOK` (const)        | `Http.statusOK ()`            | Constants become zero-arg functions     |
-| `os.Stdin` (var)               | `Os.stdin ()`                 | Variables become zero-arg functions      |
+#### Callback Bridging
 
-**Return type mapping**:
-
-| Go Return                       | Sky Return                    |
-| -------------------------------- | ----------------------------- |
-| `(T, error)`                    | `Result Error T`              |
-| `error`                         | `Result Error Unit`           |
-| `*string`, `*int`              | `Maybe String`, `Maybe Int`   |
-| `*sql.DB`                       | `Db` (opaque handle)          |
-| `[]string`                      | `List String`                 |
-| `map[string]int`                | `Map String Int`              |
-
-**Convenience wrappers** are auto-generated for common patterns:
-
-- Types with `Next()`, `Scan()`, `Columns()`, `Close()` methods (like `sql.Rows`) get a `rowsToMaps` helper that returns `Result Error (List (Dict String String))`
-- Types with `Exec()` and `Query()` methods (like `sql.DB`, `sql.Tx`) get `dbExecResult` and `dbQueryToMaps` helpers
-
-**Callback bridging**: Go functions that accept callbacks (e.g., `http.HandleFunc`) are automatically bridged. Sky's curried functions (`func(any) any`) are wrapped into the concrete Go signature:
+Go callbacks are automatically bridged:
 
 ```elm
--- Sky: pass a curried function
 Mux.routerHandleFunc router "/api" myHandler
-
 -- Generated Go: bridges func(any) any → func(http.ResponseWriter, *http.Request)
 ```
 
