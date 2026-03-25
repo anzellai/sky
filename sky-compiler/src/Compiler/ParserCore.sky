@@ -70,12 +70,12 @@ advance state =
 
 matchKind : TokenKind -> ParserState -> Bool
 matchKind kind state =
-    tokenKindEq (peek state).kind kind
+    tokenKindEq (peekKind state) kind
 
 
 matchLexeme : String -> ParserState -> Bool
 matchLexeme lex state =
-    (peek state).lexeme == lex
+    peekLexeme state == lex
 
 
 matchKindLex : TokenKind -> String -> ParserState -> Bool
@@ -176,22 +176,38 @@ parseQualifiedParts parts state =
 
 peekLexeme : ParserState -> String
 peekLexeme state =
-    (peek state).lexeme
+    let
+        t =
+            peek state
+    in
+        t.lexeme
 
 
 peekColumn : ParserState -> Int
 peekColumn state =
-    (peek state).span.start.column
+    let
+        t =
+            peek state
+    in
+        t.span.start.column
 
 
 peekKind : ParserState -> TokenKind
 peekKind state =
-    (peek state).kind
+    let
+        t =
+            peek state
+    in
+        t.kind
 
 
 peekAt1Kind : ParserState -> TokenKind
 peekAt1Kind state =
-    (peekAt 1 state).kind
+    let
+        t =
+            peekAt 1 state
+    in
+        t.kind
 
 
 filterLayout : List Token -> List Token

@@ -32,6 +32,11 @@ type alias TypedDecl =
     }
 
 
+makeTypedDecl : String -> Scheme -> Type -> TypedDecl
+makeTypedDecl n s t =
+    { name = n , scheme = s , prettyType = formatType t }
+
+
 -- ══════════════════════════════════════════════════════
 -- MODULE TYPE CHECKING
 -- ══════════════════════════════════════════════════════
@@ -148,18 +153,23 @@ preRegisterFunctions counter decls env =
             env
 
         decl :: rest ->
-            case decl of
-                FunDecl name _ _ _ ->
-                    let
-                        tv =
-                            freshVar counter Nothing
-                        newEnv =
-                            Env.extend name (mono tv) env
-                    in
-                        preRegisterFunctions counter rest newEnv
+            preRegisterOneFunction counter decl rest env
 
-                _ ->
-                    preRegisterFunctions counter rest env
+
+preRegisterOneFunction counter decl rest env =
+    case decl of
+        FunDecl name _ _ _ ->
+            let
+                tv =
+                    freshVar counter Nothing
+
+                newEnv =
+                    Env.extend name (mono tv) env
+            in
+                preRegisterFunctions counter rest newEnv
+
+        _ ->
+            preRegisterFunctions counter rest env
 
 
 -- ══════════════════════════════════════════════════════
@@ -178,30 +188,29 @@ inferDeclsLoop counter registry env decls annotations typedDecls diagnostics =
             ( List.reverse typedDecls , env , diagnostics )
 
         decl :: rest ->
-            case decl of
-                FunDecl name _ _ _ ->
-                    let
-                        annotation =
-                            Dict.get name annotations
-                    in
-                        case Infer.inferDeclaration counter registry env decl annotation of
-                            Ok result ->
-                                let
-                                    newEnv =
-                                        Env.extend result.name result.scheme env
-                                    typed =
-                                        { name = result.name
-                                        , scheme = result.scheme
-                                        , prettyType = formatType result.scheme.type_
-                                        }
-                                in
-                                    inferDeclsLoop counter registry newEnv rest annotations (typed :: typedDecls) (List.append diagnostics result.diagnostics)
+            inferOneDecl counter registry env decl rest annotations typedDecls diagnostics
 
-                            Err e ->
-                                inferDeclsLoop counter registry env rest annotations typedDecls (List.append diagnostics [ e ])
 
-                _ ->
-                    inferDeclsLoop counter registry env rest annotations typedDecls diagnostics
+inferOneDecl counter registry env decl rest annotations typedDecls diagnostics =
+    case decl of
+        FunDecl name _ _ _ ->
+            inferOneFunDecl counter registry env name decl rest annotations typedDecls diagnostics
+
+        _ ->
+            inferDeclsLoop counter registry env rest annotations typedDecls diagnostics
+
+
+inferOneFunDecl counter registry env fnName decl rest annotations typedDecls diagnostics =
+    let
+        annotation =
+            Dict.get fnName annotations
+    in
+        case Infer.inferDeclaration counter registry env decl annotation of
+            Ok inferResult ->
+                inferDeclsLoop counter registry (Env.extend inferResult.name inferResult.scheme env) rest annotations (makeTypedDecl inferResult.name inferResult.scheme inferResult.scheme.type_ :: typedDecls) (List.append diagnostics inferResult.diagnostics)
+
+            Err e ->
+                inferDeclsLoop counter registry env rest annotations typedDecls (List.append diagnostics [ e ])
 
 
 -- ══════════════════════════════════════════════════════

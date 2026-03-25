@@ -21,7 +21,7 @@ dispatchDeclaration first second state =
         parseTypeAlias state
     else if first == "type" then
         parseTypeDecl state
-    else if matchKind TkIdentifier state && tokenKindEq (peekAt 1 state).kind TkColon then
+    else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkColon then
         parseTypeAnnot state
     else if matchKind TkIdentifier state then
         parseFunDecl state

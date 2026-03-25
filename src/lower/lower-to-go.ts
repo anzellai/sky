@@ -225,7 +225,7 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
       const kvPairs: string[] = [`"Tag": ${i}`, `"SkyName": "${c.name}"`];
       const goParams: string[] = [];
       for (let j = 0; j < c.types.length; j++) {
-        const fieldName = c.name + "Value" + (j > 0 ? j : "");
+        const fieldName = `V${j}`;
         const paramName = `arg${j}`;
         goParams.push(`${paramName} any`);
         kvPairs.push(`"${fieldName}": ${paramName}`);
@@ -834,7 +834,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               // Use map[string]any for custom ADT constructors
               const kvPairs: string[] = [`"Tag": ${localCtorInfo.tagIndex}`, `"SkyName": "${flat.fn.name}"`];
               for (let j = 0; j < flat.args.length; j++) {
-                  const fieldName = flat.fn.name + "Value" + (j > 0 ? j : "");
+                  const fieldName = `V${j}`;
                   kvPairs.push(`"${fieldName}": ${emitGoExprForLower(argExprs[j])}`);
               }
               return {
@@ -1616,8 +1616,8 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
               const argPat = pat.args[j];
               if (argPat.kind === "VariablePattern" && argPat.name !== "_") {
                   env.set(argPat.name, { kind: "TypeConstant", name: "Any" });
-                  const fieldName = wellKnownFields[pat.name] || (pat.name + "Value" + (j > 0 ? j : ""));
-                  if (pat.name.startsWith("Tuple")) {
+                  const fieldName = wellKnownFields[pat.name] || `V${j}`;
+                  if (/^Tuple\d+$/.test(pat.name)) {
                       // Tuple types: use Sky_AsTuple struct access
                       const tupleArity = pat.args.length;
                       const assertFn = tupleArity <= 2 ? "sky_wrappers.Sky_AsTuple2" : "sky_wrappers.Sky_AsTuple3";
@@ -1692,7 +1692,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
                const outerStmts: GoIR.GoStmt[] = [];
 
                // Extract the outer field value into a temp variable
-               const outerFieldName = wellKnownFields[c.pattern.name] || (c.pattern.name + "Value");
+               const outerFieldName = wellKnownFields[c.pattern.name] || "V0";
                const innerTmpName = `__inner_${Math.floor(Math.random() * 100000)}`;
 
                outerStmts.push({
@@ -1948,7 +1948,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
             const argExprs = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
             const kvPairs: string[] = [`"Tag": ${ctorInfo.tagIndex}`, `"SkyName": "${expr.name}"`];
             for (let j = 0; j < expr.args.length; j++) {
-                const fieldName = expr.name + "Value" + (j > 0 ? j : "");
+                const fieldName = `V${j}`;
                 kvPairs.push(`"${fieldName}": ${emitGoExprForLower(argExprs[j])}`);
             }
             return {
@@ -2008,7 +2008,7 @@ function lowerExpr(expr: CoreIR.Expr, moduleExports?: Map<string, Map<string, Sc
         const argExprs2 = expr.args.map(a => lowerExpr(a, moduleExports, localEnv, foreignModules, constructorMap));
         const kvPairs2: string[] = [`"Tag": 0`, `"SkyName": "${expr.name}"`];
         for (let j = 0; j < argExprs2.length; j++) {
-            const fieldName = expr.name + "Value" + (j > 0 ? j : "");
+            const fieldName = `V${j}`;
             kvPairs2.push(`"${fieldName}": ${emitGoExprForLower(argExprs2[j])}`);
         }
         return {

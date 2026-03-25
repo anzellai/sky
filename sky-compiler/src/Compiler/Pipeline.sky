@@ -522,6 +522,47 @@ extractDeclNames decl =
             [ name ]
 
 
+-- Collect function names from both FunDecl and TypeAnnotDecl
+-- TypeAnnotDecl names mark functions that might have been dropped by the parser
+-- (the parser successfully parses annotations but sometimes drops the function body)
+collectAllFunctionNames : List Ast.Declaration -> List String
+collectAllFunctionNames decls =
+    deduplicateStringList (List.filterMap extractDeclNameForFn decls)
+
+
+extractDeclNameForFn : Ast.Declaration -> Maybe String
+extractDeclNameForFn d =
+    case d of
+        Ast.FunDecl name _ _ _ ->
+            Just name
+
+        Ast.TypeAnnotDecl name _ _ ->
+            Just name
+
+        _ ->
+            Nothing
+
+
+deduplicateStringList : List String -> List String
+deduplicateStringList items =
+    deduplicateStringsLoop items Dict.empty []
+
+
+deduplicateStringsLoop : List String -> Dict.Dict String String -> List String -> List String
+deduplicateStringsLoop items seen acc =
+    case items of
+        [] ->
+            List.reverse acc
+
+        item :: rest ->
+            case Dict.get item seen of
+                Just _ ->
+                    deduplicateStringsLoop rest seen acc
+
+                Nothing ->
+                    deduplicateStringsLoop rest (Dict.insert item "1" seen) (item :: acc)
+
+
 isModuleLoaded : String -> List ( String , Ast.Module ) -> Bool
 isModuleLoaded modName loaded =
     List.foldl (\pair acc -> acc || fst pair == modName) False loaded
@@ -576,12 +617,12 @@ compileDependencyModule stdlibEnv allModules pair =
             Lower.emptyCtx
         depAliasMap =
             buildAliasMap mod.imports
+        -- Collect ALL names: FunDecls + TypeAnnotDecls (annotations mark functions
+        -- that might have been dropped by the parser)
         localFns =
-            Lower.collectLocalFunctions mod.declarations
-        totalDecls =
-            List.length mod.declarations
+            collectAllFunctionNames mod.declarations
         _ =
-            println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " functions, " ++ String.fromInt totalDecls ++ " total decls: " ++ String.join "," localFns)
+            println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " fns: " ++ String.join "," localFns)
         ctx =
             { depBaseCtx
                 | registry = registry
@@ -607,6 +648,8 @@ compileDependencyModule stdlibEnv allModules pair =
         deduplicateDecls (List.append aliases prefixed)
 
 
+-- Generate aliases for ALL functions from dependency modules
+-- (constructors + shared values used via exposing(..))
 generateConstructorAliases : String -> List GoDecl -> List GoDecl
 generateConstructorAliases prefix decls =
     List.filterMap (makeConstructorAlias prefix) decls

@@ -1100,9 +1100,9 @@ lowerBinary ctx op left right =
                         ]
                 else
                     if op == "++" then
-                        -- String concatenation
+                        -- String or List concatenation (runtime dispatch)
                         GoRawExpr
-                            ("sky_asString(" ++ emitGoExprInline goLeft ++ ") + sky_asString(" ++ emitGoExprInline goRight ++ ")")
+                            ("sky_concat(" ++ emitGoExprInline goLeft ++ ", " ++ emitGoExprInline goRight ++ ")")
                     else if op == "+" || op == "-" || op == "*" || op == "%" then
                         -- Arithmetic: use sky_asInt for integer ops
                         GoRawExpr
@@ -1250,6 +1250,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_asList(v any) []any { if l, ok := v.([]any); ok { return l }; return nil }"
     , GoDeclRaw "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return nil }"
     , GoDeclRaw "func sky_equal(a, b any) bool { return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
+    , GoDeclRaw "func sky_concat(a, b any) any { if la, ok := a.([]any); ok { if lb, ok := b.([]any); ok { return append(la, lb...) } }; return sky_asString(a) + sky_asString(b) }"
     , GoDeclRaw "func sky_stringFromInt(v any) any { return strconv.Itoa(sky_asInt(v)) }"
     , GoDeclRaw "func sky_stringFromFloat(v any) any { return strconv.FormatFloat(sky_asFloat(v), 'f', -1, 64) }"
     , GoDeclRaw "func sky_stringToUpper(v any) any { return strings.ToUpper(sky_asString(v)) }"
@@ -1270,6 +1271,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_listMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(item) }; return result } }"
     , GoDeclRaw "func sky_listFilter(fn any) any { return func(list any) any { items := sky_asList(list); var result []any; for _, item := range items { if sky_asBool(fn.(func(any) any)(item)) { result = append(result, item) } }; return result } }"
     , GoDeclRaw "func sky_listFoldl(fn any) any { return func(init any) any { return func(list any) any { acc := init; for _, item := range sky_asList(list) { acc = fn.(func(any) any)(item).(func(any) any)(acc) }; return acc } } }"
+    , GoDeclRaw "func sky_listFoldr(fn any) any { return func(init any) any { return func(list any) any { items := sky_asList(list); acc := init; for i := len(items) - 1; i >= 0; i-- { acc = fn.(func(any) any)(items[i]).(func(any) any)(acc) }; return acc } } }"
     , GoDeclRaw "func sky_listLength(list any) any { return len(sky_asList(list)) }"
     , GoDeclRaw "func sky_listHead(list any) any { items := sky_asList(list); if len(items) > 0 { return SkyJust(items[0]) }; return SkyNothing() }"
     , GoDeclRaw "func sky_listReverse(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[len(items)-1-i] = item }; return result }"
@@ -1299,7 +1301,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
     , GoDeclRaw "func sky_processGetArgs(u any) any { args := make([]any, len(os.Args)); for i, a := range os.Args { args[i] = a }; return args }"
     , GoDeclRaw "func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"
-    , GoDeclRaw "func sky_refNew(v any) any { type SkyRef struct { Value any }; return &SkyRef{Value: v} }"
+    , GoDeclRaw "func sky_refNew(v any) any { return &SkyRef{Value: v} }"
     , GoDeclRaw "type SkyRef struct { Value any }"
     , GoDeclRaw "func sky_refGet(r any) any { return r.(*SkyRef).Value }"
     , GoDeclRaw "func sky_refSet(v any) any { return func(r any) any { r.(*SkyRef).Value = v; return struct{}{} } }"
@@ -1601,7 +1603,7 @@ goQuote : String -> String
 goQuote s =
     let
         escaped =
-            s |> String.replace "\\" "\\\\" |> String.replace "\"" "\\\""
+            String.replace "\"" "\\\"" (String.replace "\\" "\\\\" s)
     in
         "\"" ++ escaped ++ "\""
 
@@ -1745,50 +1747,8 @@ stmtsToGoString stmts =
         fixCurriedCalls raw
 
 
--- Post-process Go code to add .(func(any) any) for chained function calls
--- Matches patterns like sky_xxx(...)( and adds the assertion
 fixCurriedCalls : String -> String
 fixCurriedCalls code =
-    code
-        |> String.replace "sky_listMap(" "sky_listMap("
-        |> addFuncAssertion "sky_listFilterMap"
-        |> addFuncAssertion "sky_listConcatMap"
-        |> addFuncAssertion "sky_listFoldl"
-        |> addFuncAssertion "sky_listFoldr"
-        |> addFuncAssertion "sky_listFilter"
-        |> addFuncAssertion "sky_listMap"
-        |> addFuncAssertion "sky_listIndexedMap"
-        |> addFuncAssertion "sky_listDrop"
-        |> addFuncAssertion "sky_listMember"
-        |> addFuncAssertion "sky_listAppend"
-        |> addFuncAssertion "sky_dictInsert"
-        |> addFuncAssertion "sky_dictGet"
-        |> addFuncAssertion "sky_dictMap"
-        |> addFuncAssertion "sky_dictFoldl"
-        |> addFuncAssertion "sky_dictUnion"
-        |> addFuncAssertion "sky_dictRemove"
-        |> addFuncAssertion "sky_dictMember"
-        |> addFuncAssertion "sky_setInsert"
-        |> addFuncAssertion "sky_setMember"
-        |> addFuncAssertion "sky_setUnion"
-        |> addFuncAssertion "sky_setDiff"
-        |> addFuncAssertion "sky_setRemove"
-        |> addFuncAssertion "sky_stringStartsWith"
-        |> addFuncAssertion "sky_stringEndsWith"
-        |> addFuncAssertion "sky_stringContains"
-        |> addFuncAssertion "sky_stringSplit"
-        |> addFuncAssertion "sky_stringReplace"
-        |> addFuncAssertion "sky_stringSlice"
-        |> addFuncAssertion "sky_stringJoin"
-        |> addFuncAssertion "sky_stringAppend"
-        |> addFuncAssertion "sky_fileWrite"
-        |> addFuncAssertion "sky_processRun"
-        |> addFuncAssertion "sky_refSet"
-
-
-addFuncAssertion : String -> String -> String
-addFuncAssertion funcName code =
-    -- No-op for now — handled by sky_call helper
     code
 
 stmtToGoString : GoStmt -> String

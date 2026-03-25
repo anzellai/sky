@@ -133,7 +133,7 @@ emitExpr expr =
         GoMapLit entries ->
             let
                 pairs =
-                    List.map (\( k , v ) -> emitExpr k ++ ": " ++ emitExpr v) entries
+                    List.map (\pair -> emitExpr (fst pair) ++ ": " ++ emitExpr (snd pair)) entries
             in
                 "map[string]any{" ++ String.join ", " pairs ++ "}"
 
@@ -150,7 +150,7 @@ emitExpr expr =
         GoCompositeLit typeName fields ->
             let
                 fs =
-                    List.map (\( k , v ) -> k ++ ": " ++ emitExpr v) fields
+                    List.map (\pair -> fst pair ++ ": " ++ emitExpr (snd pair)) fields
             in
                 typeName ++ "{" ++ String.join ", " fs ++ "}"
 
@@ -169,8 +169,14 @@ emitExpr expr =
 
 escapeGoString : String -> String
 escapeGoString s =
-    s
-        |> String.replace "\\" "\\\\"
-        |> String.replace "\"" "\\\""
-        |> String.replace "\n" "\\n"
-        |> String.replace "\t" "\\t"
+    let
+        s1 =
+            String.replace "\\" "\\\\" s
+
+        s2 =
+            String.replace "\"" "\\\"" s1
+
+        s3 =
+            String.replace "\n" "\\n" s2
+    in
+        String.replace "\t" "\\t" s3

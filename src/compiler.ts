@@ -1235,7 +1235,7 @@ function astToCore(ast: AST.Module, typeCheck: TypeCheckResult, foreignResult: a
       case "ConstructorPattern":
         return {
           kind: "ConstructorPattern",
-          name: pattern.constructorName.parts.join("."),
+          name: pattern.constructorName.parts[pattern.constructorName.parts.length - 1],
           args: pattern.arguments.map((a: AST.Pattern) => convertPattern(a)),
         };
       case "LiteralPattern":

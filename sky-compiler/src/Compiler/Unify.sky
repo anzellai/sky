@@ -172,7 +172,7 @@ bindVar id t =
             if id == otherId then
                 Ok emptySub
             else
-                Ok (Dict.singleton id t)
+                Ok (Dict.insert id t Dict.empty)
 
         _ ->
             if Set.member id (freeVars t) then
@@ -183,7 +183,7 @@ bindVar id t =
                         ++ formatType t
                     )
             else
-                Ok (Dict.singleton id t)
+                Ok (Dict.insert id t Dict.empty)
 
 
 isUniversalUnifier : String -> Bool

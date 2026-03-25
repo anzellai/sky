@@ -293,7 +293,7 @@ inferLambdaParams counter registry env params body paramTypes =
                         let
                             newEnv =
                                 List.foldl
-                                    (\( name , t ) acc -> Env.extend name (mono t) acc)
+                                    (\pair acc -> Env.extend (fst pair) (mono (snd pair)) acc)
                                     env
                                     patResult.bindings
                             boundParamType =
@@ -414,7 +414,7 @@ inferLetBindings counter registry env bindings body =
                                                 composeSubs patResult.substitution sub
                                             newEnv =
                                                 List.foldl
-                                                    (\( name , t ) acc -> Env.extend name (mono t) acc)
+                                                    (\pair acc -> Env.extend (fst pair) (mono (snd pair)) acc)
                                                     (applySubToEnv combinedSub env)
                                                     patResult.bindings
                                         in
@@ -465,7 +465,7 @@ inferCaseBranches counter registry env subjectType sub branches resultType =
                                 composeSubs patResult.substitution sub
                             branchEnv =
                                 List.foldl
-                                    (\( name , t ) acc -> Env.extend name (mono (applySub patSub t)) acc)
+                                    (\pair acc -> Env.extend (fst pair) (mono (applySub patSub (snd pair))) acc)
                                     (applySubToEnv patSub env)
                                     patResult.bindings
                         in
@@ -809,7 +809,7 @@ bindParamsLoop counter registry env params types sub =
                                     composeSubs patResult.substitution sub
                                 newEnv =
                                     List.foldl
-                                        (\( name , bt ) acc -> Env.extend name (mono (applySub combinedSub bt)) acc)
+                                        (\pair acc -> Env.extend (fst pair) (mono (applySub combinedSub (snd pair))) acc)
                                         env
                                         patResult.bindings
                             in
