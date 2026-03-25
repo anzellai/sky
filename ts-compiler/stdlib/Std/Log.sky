@@ -1,5 +1,11 @@
 module Std.Log exposing (println, printf)
 
+{-| Logging functions wrapped in Task for purity.
+
+    println "Hello"
+        |> Task.perform
+-}
+
 foreign import "fmt" exposing (println)
 
 foreign import "fmt" exposing (printf)

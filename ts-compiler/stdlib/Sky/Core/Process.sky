@@ -3,31 +3,32 @@ module Sky.Core.Process exposing (..)
 import Sky.Core.Prelude exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_process_Run)
-
 foreign import "sky_wrappers" exposing (Sky_process_Exit)
-
 foreign import "sky_wrappers" exposing (Sky_process_GetEnv)
-
 foreign import "sky_wrappers" exposing (Sky_process_GetCwd)
-
 foreign import "sky_wrappers" exposing (Sky_process_LoadEnv)
 
-run : String -> List String -> Result Error String
+
+run : String -> List String -> Task String String
 run command args =
     Sky_process_Run command args
 
-exit : Int -> Unit
+
+exit : Int -> Task String ()
 exit code =
     Sky_process_Exit code
+
 
 getEnv : String -> Maybe String
 getEnv key =
     Sky_process_GetEnv key
 
-getCwd : Result Error String
+
+getCwd : Task String String
 getCwd =
     Sky_process_GetCwd ()
 
-loadEnv : String -> Result Error Unit
+
+loadEnv : String -> Task String ()
 loadEnv filePath =
     Sky_process_LoadEnv filePath

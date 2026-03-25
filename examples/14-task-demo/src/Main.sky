@@ -2,64 +2,47 @@ module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Sky.Core.String as String
 import Std.Log exposing (println)
 
 
+-- Sky's Task effect boundary demo.
+-- All side effects flow through Task. Pure at the surface.
+
 main =
     let
-        -- Test 1: succeed + map + andThen
-        test1 =
+        -- Build a Task pipeline
+        pipeline =
             Task.succeed "Sky"
                 |> Task.andThen (\name ->
                     Task.succeed ("Hello, " ++ name ++ "!")
                 )
-                |> Task.map (\greeting ->
-                    greeting ++ " Tasks work."
+                |> Task.andThen (\greeting ->
+                    Task.succeed (greeting ++ " Task is the effect boundary.")
                 )
 
-        r1 =
-            Task.perform test1
+        -- Execute the pipeline — this is the ONLY place effects happen
+        result =
+            Task.perform pipeline
 
         _ =
-            case r1 of
+            case result of
                 Ok value ->
-                    println ("Test 1 (succeed chain): " ++ value)
+                    println value
 
                 Err _ ->
-                    println "Test 1 FAILED"
+                    println "Pipeline failed"
 
-        -- Test 2: fail + andThen (should short-circuit)
-        test2 =
-            Task.fail "oops"
-                |> Task.andThen (\_ ->
-                    Task.succeed "should not reach"
-                )
+        -- Test fail short-circuits
+        failPipeline =
+            Task.fail "intentional"
+                |> Task.andThen (\_ -> Task.succeed "unreachable")
 
         r2 =
-            Task.perform test2
-
-        _ =
-            case r2 of
-                Ok _ ->
-                    println "Test 2 FAILED (should have failed)"
-
-                Err e ->
-                    println ("Test 2 (fail short-circuit): Err " ++ e)
-
-        -- Test 3: succeed then fail
-        test3 =
-            Task.succeed "initial"
-                |> Task.andThen (\_ ->
-                    Task.fail "intentional error"
-                )
-
-        r3 =
-            Task.perform test3
+            Task.perform failPipeline
     in
-        case r3 of
+        case r2 of
             Ok _ ->
-                println "Test 3 FAILED"
+                println "ERROR: should have failed"
 
             Err e ->
-                println ("Test 3 (andThen to fail): Err " ++ e)
+                println ("Error caught: " ++ e)

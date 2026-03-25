@@ -238,33 +238,60 @@ foldr f acc dict =
 `,
   "stdlib/Sky/Core/File.sky": `module Sky.Core.File exposing (..)
 
-foreign import "sky_wrappers" exposing (Sky_file_ReadFile, Sky_file_WriteFile, Sky_file_Exists, Sky_file_Remove, Sky_file_MkdirAll, Sky_file_ReadDir, Sky_file_IsDir)
+{-| File system operations wrapped in Task for purity.
 
-readFile : String -> Result Error String
+All operations return Task String a — lazy until performed.
+
+    File.readFile "config.json"
+        |> Task.andThen (\\content ->
+            File.writeFile "backup.json" content
+        )
+        |> Task.perform
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_file_ReadFile
+        , Sky_file_WriteFile
+        , Sky_file_Exists
+        , Sky_file_Remove
+        , Sky_file_MkdirAll
+        , Sky_file_ReadDir
+        , Sky_file_IsDir
+        )
+
+
+readFile : String -> Task String String
 readFile path =
     Sky_file_ReadFile path
 
-writeFile : String -> String -> Result Error Unit
+
+writeFile : String -> String -> Task String ()
 writeFile path content =
     Sky_file_WriteFile path content
 
-exists : String -> Bool
+
+exists : String -> Task String Bool
 exists path =
     Sky_file_Exists path
 
-remove : String -> Result Error Unit
+
+remove : String -> Task String ()
 remove path =
     Sky_file_Remove path
 
-mkdirAll : String -> Result Error Unit
+
+mkdirAll : String -> Task String ()
 mkdirAll path =
     Sky_file_MkdirAll path
 
-readDir : String -> Result Error (List String)
+
+readDir : String -> Task String (List String)
 readDir path =
     Sky_file_ReadDir path
 
-isDir : String -> Bool
+
+isDir : String -> Task String Bool
 isDir path =
     Sky_file_IsDir path
 `,
@@ -273,30 +300,27 @@ isDir path =
 import Sky.Core.Prelude exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_io_ReadLine)
-
 foreign import "sky_wrappers" exposing (Sky_io_ReadBytes)
-
 foreign import "sky_wrappers" exposing (Sky_io_WriteStdout)
-
 foreign import "sky_wrappers" exposing (Sky_io_WriteStderr)
 
 
-readLine : () -> Maybe String
+readLine : () -> Task String (Maybe String)
 readLine _ =
     Sky_io_ReadLine ()
 
 
-readBytes : Int -> Maybe String
+readBytes : Int -> Task String (Maybe String)
 readBytes n =
     Sky_io_ReadBytes n
 
 
-writeStdout : String -> ()
+writeStdout : String -> Task String ()
 writeStdout s =
     Sky_io_WriteStdout s
 
 
-writeStderr : String -> ()
+writeStderr : String -> Task String ()
 writeStderr s =
     Sky_io_WriteStderr s
 `,
@@ -827,38 +851,40 @@ modBy divisor n =
 
 js : String -> String
 js s =
-    Sky_JS s`,
+    Sky_JS s
+`,
   "stdlib/Sky/Core/Process.sky": `module Sky.Core.Process exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 
 foreign import "sky_wrappers" exposing (Sky_process_Run)
-
 foreign import "sky_wrappers" exposing (Sky_process_Exit)
-
 foreign import "sky_wrappers" exposing (Sky_process_GetEnv)
-
 foreign import "sky_wrappers" exposing (Sky_process_GetCwd)
-
 foreign import "sky_wrappers" exposing (Sky_process_LoadEnv)
 
-run : String -> List String -> Result Error String
+
+run : String -> List String -> Task String String
 run command args =
     Sky_process_Run command args
 
-exit : Int -> Unit
+
+exit : Int -> Task String ()
 exit code =
     Sky_process_Exit code
+
 
 getEnv : String -> Maybe String
 getEnv key =
     Sky_process_GetEnv key
 
-getCwd : Result Error String
+
+getCwd : Task String String
 getCwd =
     Sky_process_GetCwd ()
 
-loadEnv : String -> Result Error Unit
+
+loadEnv : String -> Task String ()
 loadEnv filePath =
     Sky_process_LoadEnv filePath
 `,
@@ -1107,6 +1133,92 @@ concat strs =
 fromChar : Char -> String
 fromChar c =
     c
+`,
+  "stdlib/Sky/Core/Task.sky": `module Sky.Core.Task exposing
+    ( Task
+    , succeed
+    , fail
+    , map
+    , mapError
+    , andThen
+    , attempt
+    , sequence
+    , perform
+    )
+
+
+-- Task represents a deferred computation that may fail.
+-- At the Go level, a Task is a thunk: func() any that returns a SkyResult.
+-- Tasks are lazy — they only execute when \`perform\` is called.
+-- All IO, FFI calls, and side effects go through Task.
+
+type Task err value
+    = Task Foreign
+
+
+-- Create a Task that immediately succeeds with a value.
+
+succeed : a -> Task err a
+succeed value =
+    -- At Go level: func() any { return SkyOk(value) }
+    value
+
+
+-- Create a Task that immediately fails with an error.
+
+fail : err -> Task err a
+fail error =
+    -- At Go level: func() any { return SkyErr(error) }
+    error
+
+
+-- Transform the success value of a Task.
+
+map : (a -> b) -> Task err a -> Task err b
+map fn task =
+    andThen (\\a -> succeed (fn a)) task
+
+
+-- Transform the error value of a Task.
+
+mapError : (err1 -> err2) -> Task err1 a -> Task err2 a
+mapError fn task =
+    -- At Go level: run task, if Err then apply fn to error
+    task
+
+
+-- Chain two Tasks: if the first succeeds, feed its value to a function
+-- that produces the next Task.
+
+andThen : (a -> Task err b) -> Task err a -> Task err b
+andThen fn task =
+    -- At Go level: func() any { r := task(); if ok { return fn(r.value)() } else { return r } }
+    task
+
+
+-- Convert a Task into a Task that always succeeds with a Result.
+-- Useful at the boundary where you need to handle errors.
+
+attempt : Task err a -> Task never (Result err a)
+attempt task =
+    task
+
+
+-- Run a list of Tasks in sequence, collecting results.
+
+sequence : List (Task err a) -> Task err (List a)
+sequence tasks =
+    tasks
+
+
+-- Execute a Task. This is the effect boundary.
+-- Only called by the runtime (for main) or explicitly by the user.
+-- After perform, the thunk chain executes and produces a concrete Result.
+
+perform : Task err a -> Result err a
+perform task =
+    -- At Go level: task() — call the thunk and return the SkyResult
+    Ok task
 `,
   "stdlib/Sky/Core/Tuple.sky": `module Sky.Core.Tuple exposing (..)
 
@@ -2820,6 +2932,12 @@ app config =
     config
 `,
   "stdlib/Std/Log.sky": `module Std.Log exposing (println, printf)
+
+{-| Logging functions wrapped in Task for purity.
+
+    println "Hello"
+        |> Task.perform
+-}
 
 foreign import "fmt" exposing (println)
 

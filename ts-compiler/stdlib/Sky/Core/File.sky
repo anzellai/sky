@@ -1,31 +1,58 @@
 module Sky.Core.File exposing (..)
 
-foreign import "sky_wrappers" exposing (Sky_file_ReadFile, Sky_file_WriteFile, Sky_file_Exists, Sky_file_Remove, Sky_file_MkdirAll, Sky_file_ReadDir, Sky_file_IsDir)
+{-| File system operations wrapped in Task for purity.
 
-readFile : String -> Result Error String
+All operations return Task String a — lazy until performed.
+
+    File.readFile "config.json"
+        |> Task.andThen (\content ->
+            File.writeFile "backup.json" content
+        )
+        |> Task.perform
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_file_ReadFile
+        , Sky_file_WriteFile
+        , Sky_file_Exists
+        , Sky_file_Remove
+        , Sky_file_MkdirAll
+        , Sky_file_ReadDir
+        , Sky_file_IsDir
+        )
+
+
+readFile : String -> Task String String
 readFile path =
     Sky_file_ReadFile path
 
-writeFile : String -> String -> Result Error Unit
+
+writeFile : String -> String -> Task String ()
 writeFile path content =
     Sky_file_WriteFile path content
 
-exists : String -> Bool
+
+exists : String -> Task String Bool
 exists path =
     Sky_file_Exists path
 
-remove : String -> Result Error Unit
+
+remove : String -> Task String ()
 remove path =
     Sky_file_Remove path
 
-mkdirAll : String -> Result Error Unit
+
+mkdirAll : String -> Task String ()
 mkdirAll path =
     Sky_file_MkdirAll path
 
-readDir : String -> Result Error (List String)
+
+readDir : String -> Task String (List String)
 readDir path =
     Sky_file_ReadDir path
 
-isDir : String -> Bool
+
+isDir : String -> Task String Bool
 isDir path =
     Sky_file_IsDir path
