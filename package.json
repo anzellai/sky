@@ -9,8 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
-    "bundle": "node src/bin/build-binary.js",
-    "dev": "tsx src/cli.ts",
+    "bundle": "node ts-compiler/bin/build-binary.js",
+    "dev": "tsx ts-compiler/cli.ts",
     "tokens": "node dist/cli.js tokens",
     "ast": "node dist/cli.js ast",
     "compile": "node dist/cli.js build",
