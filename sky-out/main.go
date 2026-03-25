@@ -113,10 +113,6 @@ func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }
 
 var _ = strings.Contains
 
-var _ = strconv.Itoa
-
-var _ = os.Exit
-
 func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }
 
 func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: "Nothing"} }
@@ -221,10 +217,6 @@ func sky_stringFromChar(c any) any { return sky_asString(c) }
 
 func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }
 
-var _ = exec.Command
-
-var _ = bufio.NewReader
-
 func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }
 
 func sky_goQuote(s any) any { return strconv.Quote(sky_asString(s)) }
@@ -264,5 +256,29 @@ func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func(
 func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }
 
 func main() {
-	sky_runMainTask(sky_println("Hello from Sky!"))
+	sky_runMainTask(Sky_Http_Server_Listen(8080, []any{Sky_Http_Server_Get("/", handleHome), Sky_Http_Server_Get("/hello/:name", handleHello), Sky_Http_Server_Get("/api/status", handleStatus), Sky_Http_Server_Post("/api/echo", handleEcho), Sky_Http_Server_Get("/cookie-demo", handleCookieDemo), Sky_Http_Server_Get("/redirect", handleRedirect)}))
+}
+
+func handleHome(req any) any {
+	return sky_taskSucceed(Sky_Http_Server_Html(sky_call(sky_stringJoin(""), []any{"<h1>Sky HTTP Server</h1>", "<ul>", "<li><a href='/hello/world'>Hello World</a></li>", "<li><a href='/api/status'>API Status</a></li>", "<li><a href='/cookie-demo'>Cookie Demo</a></li>", "<li><a href='/redirect'>Redirect</a></li>", "</ul>"})))
+}
+
+func handleHello(req any) any {
+	return func() any { name := func() any { return func() any { __subject := Sky_Http_Server_Param("name", req); if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return n };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "stranger" };  return nil }() }(); _ = name; return sky_taskSucceed(Sky_Http_Server_Text(sky_concat("Hello, ", sky_concat(name, "!")))) }()
+}
+
+func handleStatus(req any) any {
+	return sky_taskSucceed(Sky_Http_Server_Json("{\"status\":\"ok\",\"server\":\"Sky\"}"))
+}
+
+func handleEcho(req any) any {
+	return sky_taskSucceed(Sky_Http_Server_WithHeader("X-Echo", "true")(Sky_Http_Server_Json(sky_asMap(req)["body"])))
+}
+
+func handleCookieDemo(req any) any {
+	return func() any { visitCount := func() any { return func() any { __subject := Sky_Http_Server_GetCookie("visits", req); if sky_asSkyMaybe(__subject).SkyName == "Just" { v := sky_asSkyMaybe(__subject).JustValue; _ = v; return func() any { return func() any { __subject := sky_stringToInt(v); if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return sky_asInt(n) + sky_asInt(1) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return 1 };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return 1 };  return nil }() }() };  return nil }() }(); _ = visitCount; visitCookie := Sky_Http_Server_Cookie("visits", sky_stringFromInt(visitCount)); _ = visitCookie; return sky_taskSucceed(Sky_Http_Server_WithCookie(visitCookie).(func(any) any)(Sky_Http_Server_Html(sky_concat("<h1>Visit #", sky_concat(sky_stringFromInt(visitCount), "</h1><p>Refresh to increment!</p>"))))) }()
+}
+
+func handleRedirect(req any) any {
+	return sky_taskSucceed(Sky_Http_Server_Redirect("/hello/redirected"))
 }

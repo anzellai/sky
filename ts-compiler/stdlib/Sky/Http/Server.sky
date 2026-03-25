@@ -1,0 +1,353 @@
+module Sky.Http.Server exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| HTTP server with routing, middleware, and composable responses.
+
+    main =
+        Server.listen 8080
+            [ Server.use Server.logger
+            , Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
+            , Server.get "/users/:id" getUser
+            , Server.post "/api/data" handlePost
+            ]
+
+All handlers return Task String Response — effects are explicit.
+Middleware is function composition: Handler -> Handler.
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_http_server_Listen
+        , Sky_http_server_ListenTLS
+        )
+
+
+-- ══════════════════════════════════════════════════════
+-- TYPES
+-- ══════════════════════════════════════════════════════
+
+type alias Request =
+    { method : String
+    , path : String
+    , body : String
+    , headers : List ( String , String )
+    , params : List ( String , String )
+    , query : List ( String , String )
+    , cookies : List ( String , String )
+    , remoteAddr : String
+    , host : String
+    , protocol : String
+    }
+
+
+type alias Response =
+    { status : Int
+    , body : String
+    , headers : List ( String , String )
+    , cookies : List Cookie
+    }
+
+
+type alias Cookie =
+    { name : String
+    , value : String
+    , path : String
+    , maxAge : Int
+    , httpOnly : Bool
+    , secure : Bool
+    , sameSite : String
+    }
+
+
+type Route
+    = RouteEntry String String Foreign
+    | RouteGroup String (List Route)
+    | RouteMiddleware Foreign
+    | RouteStatic String String
+
+
+-- ══════════════════════════════════════════════════════
+-- RESPONSE BUILDERS
+-- ══════════════════════════════════════════════════════
+
+text : String -> Response
+text body =
+    { status = 200
+    , body = body
+    , headers = [ ( "Content-Type" , "text/plain; charset=utf-8" ) ]
+    , cookies = []
+    }
+
+
+json : String -> Response
+json body =
+    { status = 200
+    , body = body
+    , headers = [ ( "Content-Type" , "application/json" ) ]
+    , cookies = []
+    }
+
+
+html : String -> Response
+html body =
+    { status = 200
+    , body = body
+    , headers = [ ( "Content-Type" , "text/html; charset=utf-8" ) ]
+    , cookies = []
+    }
+
+
+emptyResponse : Response
+emptyResponse =
+    { status = 204, body = "", headers = [], cookies = [] }
+
+
+-- ══════════════════════════════════════════════════════
+-- RESPONSE MODIFIERS
+-- ══════════════════════════════════════════════════════
+
+withStatus : Int -> Response -> Response
+withStatus code resp =
+    { resp | status = code }
+
+
+withHeader : String -> String -> Response -> Response
+withHeader key value resp =
+    { resp | headers = ( key , value ) :: resp.headers }
+
+
+withCookie : Cookie -> Response -> Response
+withCookie c resp =
+    { resp | cookies = c :: resp.cookies }
+
+
+deleteCookie : String -> Response -> Response
+deleteCookie name resp =
+    let
+        c =
+            { name = name
+            , value = ""
+            , path = "/"
+            , maxAge = -1
+            , httpOnly = True
+            , secure = False
+            , sameSite = "Lax"
+            }
+    in
+        { resp | cookies = c :: resp.cookies }
+
+
+-- ══════════════════════════════════════════════════════
+-- COOKIE BUILDER
+-- ══════════════════════════════════════════════════════
+
+cookie : String -> String -> Cookie
+cookie name value =
+    { name = name
+    , value = value
+    , path = "/"
+    , maxAge = 0
+    , httpOnly = True
+    , secure = False
+    , sameSite = "Lax"
+    }
+
+
+secureCookie : String -> String -> Cookie
+secureCookie name value =
+    { name = name
+    , value = value
+    , path = "/"
+    , maxAge = 0
+    , httpOnly = True
+    , secure = True
+    , sameSite = "Strict"
+    }
+
+
+sessionCookie : String -> String -> Int -> Cookie
+sessionCookie name value maxAgeSecs =
+    { name = name
+    , value = value
+    , path = "/"
+    , maxAge = maxAgeSecs
+    , httpOnly = True
+    , secure = True
+    , sameSite = "Lax"
+    }
+
+
+-- ══════════════════════════════════════════════════════
+-- SHORTCUT RESPONSES
+-- ══════════════════════════════════════════════════════
+
+redirect : String -> Response
+redirect url =
+    { status = 302
+    , body = ""
+    , headers = [ ( "Location" , url ) ]
+    , cookies = []
+    }
+
+
+redirectPermanent : String -> Response
+redirectPermanent url =
+    { status = 301
+    , body = ""
+    , headers = [ ( "Location" , url ) ]
+    , cookies = []
+    }
+
+
+notFound : String -> Response
+notFound msg =
+    text msg |> withStatus 404
+
+
+badRequest : String -> Response
+badRequest msg =
+    text msg |> withStatus 400
+
+
+unauthorized : String -> Response
+unauthorized msg =
+    text msg |> withStatus 401
+
+
+forbidden : String -> Response
+forbidden msg =
+    text msg |> withStatus 403
+
+
+serverError : String -> Response
+serverError msg =
+    text msg |> withStatus 500
+
+
+-- ══════════════════════════════════════════════════════
+-- REQUEST HELPERS
+-- ══════════════════════════════════════════════════════
+
+param : String -> Request -> Maybe String
+param key req =
+    lookupPair key req.params
+
+
+queryParam : String -> Request -> Maybe String
+queryParam key req =
+    lookupPair key req.query
+
+
+header : String -> Request -> Maybe String
+header key req =
+    lookupPair key req.headers
+
+
+getCookie : String -> Request -> Maybe String
+getCookie key req =
+    lookupPair key req.cookies
+
+
+bearerToken : Request -> Maybe String
+bearerToken req =
+    case header "Authorization" req of
+        Just auth ->
+            if startsWith "Bearer " auth then
+                Just (sliceFrom 7 auth)
+            else
+                Nothing
+
+        Nothing ->
+            Nothing
+
+
+lookupPair : String -> List ( String , String ) -> Maybe String
+lookupPair key pairs =
+    case pairs of
+        [] ->
+            Nothing
+
+        pair :: rest ->
+            if fst pair == key then
+                Just (snd pair)
+            else
+                lookupPair key rest
+
+
+startsWith : String -> String -> Bool
+startsWith prefix str =
+    prefix == str
+
+
+sliceFrom : Int -> String -> String
+sliceFrom n str =
+    str
+
+
+-- ══════════════════════════════════════════════════════
+-- ROUTING
+-- ══════════════════════════════════════════════════════
+
+get : String -> (Request -> Task String Response) -> Route
+get path handler =
+    RouteEntry "GET" path handler
+
+
+post : String -> (Request -> Task String Response) -> Route
+post path handler =
+    RouteEntry "POST" path handler
+
+
+put : String -> (Request -> Task String Response) -> Route
+put path handler =
+    RouteEntry "PUT" path handler
+
+
+patch : String -> (Request -> Task String Response) -> Route
+patch path handler =
+    RouteEntry "PATCH" path handler
+
+
+delete : String -> (Request -> Task String Response) -> Route
+delete path handler =
+    RouteEntry "DELETE" path handler
+
+
+options : String -> (Request -> Task String Response) -> Route
+options path handler =
+    RouteEntry "OPTIONS" path handler
+
+
+any : String -> (Request -> Task String Response) -> Route
+any path handler =
+    RouteEntry "*" path handler
+
+
+group : String -> List Route -> Route
+group prefix routes =
+    RouteGroup prefix routes
+
+
+static : String -> String -> Route
+static urlPrefix dirPath =
+    RouteStatic urlPrefix dirPath
+
+
+use : (( Request -> Task String Response ) -> Request -> Task String Response) -> Route
+use middleware =
+    RouteMiddleware middleware
+
+
+-- ══════════════════════════════════════════════════════
+-- SERVER
+-- ══════════════════════════════════════════════════════
+
+listen : Int -> List Route -> Task String ()
+listen portNum routes =
+    Sky_http_server_Listen portNum routes
+
+
+listenTLS : Int -> String -> String -> List Route -> Task String ()
+listenTLS portNum certFile keyFile routes =
+    Sky_http_server_ListenTLS portNum certFile keyFile routes

@@ -1,0 +1,93 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Sky.Core.String as String
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
+
+
+main =
+    Server.listen 8080
+        [ Server.get "/" handleHome
+        , Server.get "/hello/:name" handleHello
+        , Server.get "/api/status" handleStatus
+        , Server.post "/api/echo" handleEcho
+        , Server.get "/cookie-demo" handleCookieDemo
+        , Server.get "/redirect" handleRedirect
+        ]
+
+
+handleHome : Request -> Task String Response
+handleHome req =
+    Task.succeed
+        (Server.html
+            (String.join ""
+                [ "<h1>Sky HTTP Server</h1>"
+                , "<ul>"
+                , "<li><a href='/hello/world'>Hello World</a></li>"
+                , "<li><a href='/api/status'>API Status</a></li>"
+                , "<li><a href='/cookie-demo'>Cookie Demo</a></li>"
+                , "<li><a href='/redirect'>Redirect</a></li>"
+                , "</ul>"
+                ]
+            )
+        )
+
+
+handleHello : Request -> Task String Response
+handleHello req =
+    let
+        name =
+            case Server.param "name" req of
+                Just n ->
+                    n
+
+                Nothing ->
+                    "stranger"
+    in
+        Task.succeed (Server.text ("Hello, " ++ name ++ "!"))
+
+
+handleStatus : Request -> Task String Response
+handleStatus req =
+    Task.succeed
+        (Server.json "{\"status\":\"ok\",\"server\":\"Sky\"}")
+
+
+handleEcho : Request -> Task String Response
+handleEcho req =
+    Task.succeed
+        (Server.json req.body
+            |> Server.withHeader "X-Echo" "true"
+        )
+
+
+handleCookieDemo : Request -> Task String Response
+handleCookieDemo req =
+    let
+        visitCount =
+            case Server.getCookie "visits" req of
+                Just v ->
+                    case String.toInt v of
+                        Just n ->
+                            n + 1
+
+                        Nothing ->
+                            1
+
+                Nothing ->
+                    1
+
+        visitCookie =
+            Server.cookie "visits" (String.fromInt visitCount)
+    in
+        Task.succeed
+            (Server.html ("<h1>Visit #" ++ String.fromInt visitCount ++ "</h1><p>Refresh to increment!</p>")
+                |> Server.withCookie visitCookie
+            )
+
+
+handleRedirect : Request -> Task String Response
+handleRedirect req =
+    Task.succeed (Server.redirect "/hello/redirected")

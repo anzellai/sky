@@ -381,6 +381,10 @@ export function lowerModule(module: CoreIR.Module, moduleExports?: Map<string, M
   if (foreignModulesDetected.has("sky_wrappers") || localModulesDetected.has("sky_wrappers")) {
       pkg.imports.push({ path: "sky-out/sky_wrappers", alias: "sky_wrappers" });
   }
+
+  // Always include io and net/http for self-hosted compiler runtime helpers
+  pkg.imports.push({ path: "io", alias: "" });
+  pkg.imports.push({ path: "net/http", alias: "skyhttp" });
   
   for (const mod of foreignModulesDetected) {
       if (mod === "sky_wrappers") continue;
