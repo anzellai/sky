@@ -1,0 +1,46 @@
+module Sky.Core.Random exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Random number generation (effectful — uses system entropy).
+
+    Random.int 1 100
+        |> Task.andThen (\n -> Task.succeed (String.fromInt n))
+        |> Task.perform
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_random_Int
+        , Sky_random_Float
+        , Sky_random_Choice
+        , Sky_random_Shuffle
+        )
+
+
+-- Generate a random integer in [min, max] (inclusive).
+
+int : Int -> Int -> Task String Int
+int lo hi =
+    Sky_random_Int lo hi
+
+
+-- Generate a random float in [0.0, 1.0).
+
+float : () -> Task String Float
+float _ =
+    Sky_random_Float ()
+
+
+-- Pick a random element from a list.
+
+choice : List a -> Task String (Maybe a)
+choice items =
+    Sky_random_Choice items
+
+
+-- Shuffle a list randomly.
+
+shuffle : List a -> Task String (List a)
+shuffle items =
+    Sky_random_Shuffle items

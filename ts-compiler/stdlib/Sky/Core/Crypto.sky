@@ -1,0 +1,42 @@
+module Sky.Core.Crypto exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Cryptographic hashing and HMAC.
+
+All hash functions are pure (deterministic).
+
+    Crypto.sha256 "hello"
+    -- "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    Crypto.hmacSha256 "secret" "message"
+    -- HMAC signature as hex string
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_crypto_Sha256
+        , Sky_crypto_Sha512
+        , Sky_crypto_Md5
+        , Sky_crypto_HmacSha256
+        )
+
+
+sha256 : String -> String
+sha256 input =
+    Sky_crypto_Sha256 input
+
+
+sha512 : String -> String
+sha512 input =
+    Sky_crypto_Sha512 input
+
+
+md5 : String -> String
+md5 input =
+    Sky_crypto_Md5 input
+
+
+hmacSha256 : String -> String -> String
+hmacSha256 key message =
+    Sky_crypto_HmacSha256 key message

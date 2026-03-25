@@ -1,0 +1,122 @@
+module Sky.Core.Time exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Time operations. Pure reads and Task-wrapped effects.
+
+    Time.now ()
+        |> Task.andThen (\t ->
+            Task.succeed (Time.format "2006-01-02" t)
+        )
+        |> Task.perform
+
+Note: Go's reference time format is "Mon Jan 2 15:04:05 MST 2006"
+or equivalently "2006-01-02T15:04:05Z07:00" for RFC 3339.
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_time_Now
+        , Sky_time_Format
+        , Sky_time_Parse
+        , Sky_time_UnixSeconds
+        , Sky_time_UnixMillis
+        , Sky_time_Sleep
+        , Sky_time_Since
+        , Sky_time_Year
+        , Sky_time_Month
+        , Sky_time_Day
+        , Sky_time_Hour
+        , Sky_time_Minute
+        , Sky_time_Second
+        )
+
+
+-- Get current time (effectful — returns a Task).
+
+now : () -> Task String Int
+now _ =
+    Sky_time_Now ()
+
+
+-- Format a Unix timestamp (milliseconds) as a string.
+-- Uses Go time format layout (reference: "2006-01-02 15:04:05").
+
+format : String -> Int -> String
+format layout millis =
+    Sky_time_Format layout millis
+
+
+-- Parse a time string into Unix milliseconds.
+-- Uses Go time format layout.
+
+parse : String -> String -> Result String Int
+parse layout timeStr =
+    Sky_time_Parse layout timeStr
+
+
+-- Convert to Unix seconds.
+
+toSeconds : Int -> Int
+toSeconds millis =
+    millis // 1000
+
+
+-- Convert from Unix seconds.
+
+fromSeconds : Int -> Int
+fromSeconds secs =
+    secs * 1000
+
+
+-- Get Unix seconds from current time.
+
+unixSeconds : () -> Task String Int
+unixSeconds _ =
+    Sky_time_UnixSeconds ()
+
+
+-- Get Unix milliseconds from current time.
+
+unixMillis : () -> Task String Int
+unixMillis _ =
+    Sky_time_UnixMillis ()
+
+
+-- Sleep for a number of milliseconds (effectful).
+
+sleep : Int -> Task String ()
+sleep millis =
+    Sky_time_Sleep millis
+
+
+-- Time components (pure, from Unix millis)
+
+year : Int -> Int
+year millis =
+    Sky_time_Year millis
+
+
+month : Int -> Int
+month millis =
+    Sky_time_Month millis
+
+
+day : Int -> Int
+day millis =
+    Sky_time_Day millis
+
+
+hour : Int -> Int
+hour millis =
+    Sky_time_Hour millis
+
+
+minute : Int -> Int
+minute millis =
+    Sky_time_Minute millis
+
+
+second : Int -> Int
+second millis =
+    Sky_time_Second millis

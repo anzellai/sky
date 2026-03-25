@@ -1,0 +1,59 @@
+module Sky.Core.Encoding exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Encoding and decoding utilities.
+
+    Encoding.base64Encode "Hello"    -- "SGVsbG8="
+    Encoding.base64Decode "SGVsbG8="  -- Ok "Hello"
+    Encoding.urlEncode "hello world"  -- "hello+world"
+    Encoding.urlDecode "hello+world"  -- Ok "hello world"
+    Encoding.hexEncode "Hi"           -- "4869"
+    Encoding.hexDecode "4869"         -- Ok "Hi"
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_encoding_Base64Encode
+        , Sky_encoding_Base64Decode
+        , Sky_encoding_UrlEncode
+        , Sky_encoding_UrlDecode
+        , Sky_encoding_HexEncode
+        , Sky_encoding_HexDecode
+        )
+
+
+-- Base64
+
+base64Encode : String -> String
+base64Encode s =
+    Sky_encoding_Base64Encode s
+
+
+base64Decode : String -> Result String String
+base64Decode s =
+    Sky_encoding_Base64Decode s
+
+
+-- URL encoding
+
+urlEncode : String -> String
+urlEncode s =
+    Sky_encoding_UrlEncode s
+
+
+urlDecode : String -> Result String String
+urlDecode s =
+    Sky_encoding_UrlDecode s
+
+
+-- Hex encoding
+
+hexEncode : String -> String
+hexEncode s =
+    Sky_encoding_HexEncode s
+
+
+hexDecode : String -> Result String String
+hexDecode s =
+    Sky_encoding_HexDecode s

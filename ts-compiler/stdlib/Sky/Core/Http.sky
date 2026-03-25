@@ -1,0 +1,55 @@
+module Sky.Core.Http exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| HTTP client. All requests return Task (may fail with network/HTTP errors).
+
+    Http.get "https://api.example.com/data"
+        |> Task.andThen (\response ->
+            case Json.Decode.decodeString decoder response.body of
+                Ok data -> Task.succeed data
+                Err e -> Task.fail e
+        )
+        |> Task.perform
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_http_Get
+        , Sky_http_Post
+        , Sky_http_Request
+        )
+
+
+type alias Response =
+    { status : Int
+    , body : String
+    , headers : List ( String , String )
+    }
+
+
+-- Simple GET request.
+
+get : String -> Task String Response
+get url =
+    Sky_http_Get url
+
+
+-- POST request with body.
+
+post : String -> String -> Task String Response
+post url body =
+    Sky_http_Post url body
+
+
+-- Full HTTP request with method, URL, headers, and body.
+
+request :
+    { method : String
+    , url : String
+    , headers : List ( String , String )
+    , body : String
+    }
+    -> Task String Response
+request opts =
+    Sky_http_Request opts

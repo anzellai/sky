@@ -1,0 +1,173 @@
+module Sky.Core.Math exposing (..)
+
+{-| Mathematical functions and constants.
+
+All functions are pure — no Task wrapping needed.
+
+    Math.sqrt 16.0       -- 4.0
+    Math.abs -5           -- 5
+    Math.max 3 7          -- 7
+    Math.pi               -- 3.141592653589793
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_math_Sqrt
+        , Sky_math_Pow
+        , Sky_math_Log
+        , Sky_math_Exp
+        , Sky_math_Sin
+        , Sky_math_Cos
+        , Sky_math_Tan
+        , Sky_math_Asin
+        , Sky_math_Acos
+        , Sky_math_Atan
+        , Sky_math_Atan2
+        , Sky_math_Floor
+        , Sky_math_Ceil
+        , Sky_math_Round
+        , Sky_math_Abs
+        , Sky_math_MaxFloat
+        , Sky_math_MinFloat
+        , Sky_math_Pi
+        , Sky_math_E
+        , Sky_math_Inf
+        , Sky_math_IsNaN
+        , Sky_math_IsInf
+        )
+
+
+-- Constants
+
+pi : Float
+pi =
+    Sky_math_Pi ()
+
+
+e : Float
+e =
+    Sky_math_E ()
+
+
+infinity : Float
+infinity =
+    Sky_math_Inf ()
+
+
+-- Arithmetic
+
+sqrt : Float -> Float
+sqrt x =
+    Sky_math_Sqrt x
+
+
+pow : Float -> Float -> Float
+pow base exponent =
+    Sky_math_Pow base exponent
+
+
+log : Float -> Float
+log x =
+    Sky_math_Log x
+
+
+exp : Float -> Float
+exp x =
+    Sky_math_Exp x
+
+
+abs : number -> number
+abs n =
+    if n < 0 then
+        0 - n
+    else
+        n
+
+
+negate : number -> number
+negate n =
+    0 - n
+
+
+-- Rounding
+
+floor : Float -> Int
+floor x =
+    Sky_math_Floor x
+
+
+ceil : Float -> Int
+ceil x =
+    Sky_math_Ceil x
+
+
+round : Float -> Int
+round x =
+    Sky_math_Round x
+
+
+-- Comparison
+
+max : comparable -> comparable -> comparable
+max a b =
+    if a > b then
+        a
+    else
+        b
+
+
+min : comparable -> comparable -> comparable
+min a b =
+    if a < b then
+        a
+    else
+        b
+
+
+-- Trigonometry
+
+sin : Float -> Float
+sin x =
+    Sky_math_Sin x
+
+
+cos : Float -> Float
+cos x =
+    Sky_math_Cos x
+
+
+tan : Float -> Float
+tan x =
+    Sky_math_Tan x
+
+
+asin : Float -> Float
+asin x =
+    Sky_math_Asin x
+
+
+acos : Float -> Float
+acos x =
+    Sky_math_Acos x
+
+
+atan : Float -> Float
+atan x =
+    Sky_math_Atan x
+
+
+atan2 : Float -> Float -> Float
+atan2 y x =
+    Sky_math_Atan2 y x
+
+
+-- Testing
+
+isNaN : Float -> Bool
+isNaN x =
+    Sky_math_IsNaN x
+
+
+isInfinite : Float -> Bool
+isInfinite x =
+    Sky_math_IsInf x

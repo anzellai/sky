@@ -1,0 +1,57 @@
+module Sky.Core.Regex exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Regular expression operations (backed by Go regexp).
+
+All operations are pure — regex compilation happens at call time.
+
+    Regex.match "[0-9]+" "abc123def"        -- True
+    Regex.find "[0-9]+" "abc123def456"       -- ["123", "456"]
+    Regex.replace "[0-9]+" "#" "abc123def"   -- "abc#def"
+    Regex.split "[,;]" "a,b;c"              -- ["a", "b", "c"]
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_regex_Match
+        , Sky_regex_Find
+        , Sky_regex_FindAll
+        , Sky_regex_Replace
+        , Sky_regex_Split
+        )
+
+
+-- Test if a string matches a pattern.
+
+match : String -> String -> Bool
+match pattern input =
+    Sky_regex_Match pattern input
+
+
+-- Find the first match.
+
+find : String -> String -> Maybe String
+find pattern input =
+    Sky_regex_Find pattern input
+
+
+-- Find all matches.
+
+findAll : String -> String -> List String
+findAll pattern input =
+    Sky_regex_FindAll pattern input
+
+
+-- Replace all matches with a replacement string.
+
+replace : String -> String -> String -> String
+replace pattern replacement input =
+    Sky_regex_Replace pattern replacement input
+
+
+-- Split a string by a regex pattern.
+
+split : String -> String -> List String
+split pattern input =
+    Sky_regex_Split pattern input

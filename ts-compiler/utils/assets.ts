@@ -149,6 +149,49 @@ fromCode : Int -> Char
 fromCode n =
     Sky_char_FromCode n
 `,
+  "stdlib/Sky/Core/Crypto.sky": `module Sky.Core.Crypto exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Cryptographic hashing and HMAC.
+
+All hash functions are pure (deterministic).
+
+    Crypto.sha256 "hello"
+    -- "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+
+    Crypto.hmacSha256 "secret" "message"
+    -- HMAC signature as hex string
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_crypto_Sha256
+        , Sky_crypto_Sha512
+        , Sky_crypto_Md5
+        , Sky_crypto_HmacSha256
+        )
+
+
+sha256 : String -> String
+sha256 input =
+    Sky_crypto_Sha256 input
+
+
+sha512 : String -> String
+sha512 input =
+    Sky_crypto_Sha512 input
+
+
+md5 : String -> String
+md5 input =
+    Sky_crypto_Md5 input
+
+
+hmacSha256 : String -> String -> String
+hmacSha256 key message =
+    Sky_crypto_HmacSha256 key message
+`,
   "stdlib/Sky/Core/Debug.sky": `
 module Sky.Core.Debug exposing (log, toString)
 
@@ -236,6 +279,66 @@ foldr : (k -> v -> b -> b) -> b -> Dict k v -> b
 foldr f acc dict =
     foldl f acc dict
 `,
+  "stdlib/Sky/Core/Encoding.sky": `module Sky.Core.Encoding exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Encoding and decoding utilities.
+
+    Encoding.base64Encode "Hello"    -- "SGVsbG8="
+    Encoding.base64Decode "SGVsbG8="  -- Ok "Hello"
+    Encoding.urlEncode "hello world"  -- "hello+world"
+    Encoding.urlDecode "hello+world"  -- Ok "hello world"
+    Encoding.hexEncode "Hi"           -- "4869"
+    Encoding.hexDecode "4869"         -- Ok "Hi"
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_encoding_Base64Encode
+        , Sky_encoding_Base64Decode
+        , Sky_encoding_UrlEncode
+        , Sky_encoding_UrlDecode
+        , Sky_encoding_HexEncode
+        , Sky_encoding_HexDecode
+        )
+
+
+-- Base64
+
+base64Encode : String -> String
+base64Encode s =
+    Sky_encoding_Base64Encode s
+
+
+base64Decode : String -> Result String String
+base64Decode s =
+    Sky_encoding_Base64Decode s
+
+
+-- URL encoding
+
+urlEncode : String -> String
+urlEncode s =
+    Sky_encoding_UrlEncode s
+
+
+urlDecode : String -> Result String String
+urlDecode s =
+    Sky_encoding_UrlDecode s
+
+
+-- Hex encoding
+
+hexEncode : String -> String
+hexEncode s =
+    Sky_encoding_HexEncode s
+
+
+hexDecode : String -> Result String String
+hexDecode s =
+    Sky_encoding_HexDecode s
+`,
   "stdlib/Sky/Core/File.sky": `module Sky.Core.File exposing (..)
 
 {-| File system operations wrapped in Task for purity.
@@ -294,6 +397,62 @@ readDir path =
 isDir : String -> Task String Bool
 isDir path =
     Sky_file_IsDir path
+`,
+  "stdlib/Sky/Core/Http.sky": `module Sky.Core.Http exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| HTTP client. All requests return Task (may fail with network/HTTP errors).
+
+    Http.get "https://api.example.com/data"
+        |> Task.andThen (\\response ->
+            case Json.Decode.decodeString decoder response.body of
+                Ok data -> Task.succeed data
+                Err e -> Task.fail e
+        )
+        |> Task.perform
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_http_Get
+        , Sky_http_Post
+        , Sky_http_Request
+        )
+
+
+type alias Response =
+    { status : Int
+    , body : String
+    , headers : List ( String , String )
+    }
+
+
+-- Simple GET request.
+
+get : String -> Task String Response
+get url =
+    Sky_http_Get url
+
+
+-- POST request with body.
+
+post : String -> String -> Task String Response
+post url body =
+    Sky_http_Post url body
+
+
+-- Full HTTP request with method, URL, headers, and body.
+
+request :
+    { method : String
+    , url : String
+    , headers : List ( String , String )
+    , body : String
+    }
+    -> Task String Response
+request opts =
+    Sky_http_Request opts
 `,
   "stdlib/Sky/Core/Io.sky": `module Sky.Core.Io exposing (..)
 
@@ -682,6 +841,180 @@ map2 : (a -> b -> c) -> List a -> List b -> List c
 map2 f listA listB =
     Sky_list_Map2 f listA listB
 `,
+  "stdlib/Sky/Core/Math.sky": `module Sky.Core.Math exposing (..)
+
+{-| Mathematical functions and constants.
+
+All functions are pure — no Task wrapping needed.
+
+    Math.sqrt 16.0       -- 4.0
+    Math.abs -5           -- 5
+    Math.max 3 7          -- 7
+    Math.pi               -- 3.141592653589793
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_math_Sqrt
+        , Sky_math_Pow
+        , Sky_math_Log
+        , Sky_math_Exp
+        , Sky_math_Sin
+        , Sky_math_Cos
+        , Sky_math_Tan
+        , Sky_math_Asin
+        , Sky_math_Acos
+        , Sky_math_Atan
+        , Sky_math_Atan2
+        , Sky_math_Floor
+        , Sky_math_Ceil
+        , Sky_math_Round
+        , Sky_math_Abs
+        , Sky_math_MaxFloat
+        , Sky_math_MinFloat
+        , Sky_math_Pi
+        , Sky_math_E
+        , Sky_math_Inf
+        , Sky_math_IsNaN
+        , Sky_math_IsInf
+        )
+
+
+-- Constants
+
+pi : Float
+pi =
+    Sky_math_Pi ()
+
+
+e : Float
+e =
+    Sky_math_E ()
+
+
+infinity : Float
+infinity =
+    Sky_math_Inf ()
+
+
+-- Arithmetic
+
+sqrt : Float -> Float
+sqrt x =
+    Sky_math_Sqrt x
+
+
+pow : Float -> Float -> Float
+pow base exponent =
+    Sky_math_Pow base exponent
+
+
+log : Float -> Float
+log x =
+    Sky_math_Log x
+
+
+exp : Float -> Float
+exp x =
+    Sky_math_Exp x
+
+
+abs : number -> number
+abs n =
+    if n < 0 then
+        0 - n
+    else
+        n
+
+
+negate : number -> number
+negate n =
+    0 - n
+
+
+-- Rounding
+
+floor : Float -> Int
+floor x =
+    Sky_math_Floor x
+
+
+ceil : Float -> Int
+ceil x =
+    Sky_math_Ceil x
+
+
+round : Float -> Int
+round x =
+    Sky_math_Round x
+
+
+-- Comparison
+
+max : comparable -> comparable -> comparable
+max a b =
+    if a > b then
+        a
+    else
+        b
+
+
+min : comparable -> comparable -> comparable
+min a b =
+    if a < b then
+        a
+    else
+        b
+
+
+-- Trigonometry
+
+sin : Float -> Float
+sin x =
+    Sky_math_Sin x
+
+
+cos : Float -> Float
+cos x =
+    Sky_math_Cos x
+
+
+tan : Float -> Float
+tan x =
+    Sky_math_Tan x
+
+
+asin : Float -> Float
+asin x =
+    Sky_math_Asin x
+
+
+acos : Float -> Float
+acos x =
+    Sky_math_Acos x
+
+
+atan : Float -> Float
+atan x =
+    Sky_math_Atan x
+
+
+atan2 : Float -> Float -> Float
+atan2 y x =
+    Sky_math_Atan2 y x
+
+
+-- Testing
+
+isNaN : Float -> Bool
+isNaN x =
+    Sky_math_IsNaN x
+
+
+isInfinite : Float -> Bool
+isInfinite x =
+    Sky_math_IsInf x
+`,
   "stdlib/Sky/Core/Maybe.sky": `
 module Sky.Core.Maybe exposing (..)
 
@@ -888,6 +1221,53 @@ loadEnv : String -> Task String ()
 loadEnv filePath =
     Sky_process_LoadEnv filePath
 `,
+  "stdlib/Sky/Core/Random.sky": `module Sky.Core.Random exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Random number generation (effectful — uses system entropy).
+
+    Random.int 1 100
+        |> Task.andThen (\\n -> Task.succeed (String.fromInt n))
+        |> Task.perform
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_random_Int
+        , Sky_random_Float
+        , Sky_random_Choice
+        , Sky_random_Shuffle
+        )
+
+
+-- Generate a random integer in [min, max] (inclusive).
+
+int : Int -> Int -> Task String Int
+int lo hi =
+    Sky_random_Int lo hi
+
+
+-- Generate a random float in [0.0, 1.0).
+
+float : () -> Task String Float
+float _ =
+    Sky_random_Float ()
+
+
+-- Pick a random element from a list.
+
+choice : List a -> Task String (Maybe a)
+choice items =
+    Sky_random_Choice items
+
+
+-- Shuffle a list randomly.
+
+shuffle : List a -> Task String (List a)
+shuffle items =
+    Sky_random_Shuffle items
+`,
   "stdlib/Sky/Core/Ref.sky": `module Sky.Core.Ref exposing (Ref, new, get, set, modify)
 
 {-| Mutable reference cell backed by Go pointer.
@@ -934,6 +1314,64 @@ set val ref =
 modify : (a -> a) -> Ref a -> ()
 modify fn ref =
     Sky_ref_Modify fn ref
+`,
+  "stdlib/Sky/Core/Regex.sky": `module Sky.Core.Regex exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Regular expression operations (backed by Go regexp).
+
+All operations are pure — regex compilation happens at call time.
+
+    Regex.match "[0-9]+" "abc123def"        -- True
+    Regex.find "[0-9]+" "abc123def456"       -- ["123", "456"]
+    Regex.replace "[0-9]+" "#" "abc123def"   -- "abc#def"
+    Regex.split "[,;]" "a,b;c"              -- ["a", "b", "c"]
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_regex_Match
+        , Sky_regex_Find
+        , Sky_regex_FindAll
+        , Sky_regex_Replace
+        , Sky_regex_Split
+        )
+
+
+-- Test if a string matches a pattern.
+
+match : String -> String -> Bool
+match pattern input =
+    Sky_regex_Match pattern input
+
+
+-- Find the first match.
+
+find : String -> String -> Maybe String
+find pattern input =
+    Sky_regex_Find pattern input
+
+
+-- Find all matches.
+
+findAll : String -> String -> List String
+findAll pattern input =
+    Sky_regex_FindAll pattern input
+
+
+-- Replace all matches with a replacement string.
+
+replace : String -> String -> String -> String
+replace pattern replacement input =
+    Sky_regex_Replace pattern replacement input
+
+
+-- Split a string by a regex pattern.
+
+split : String -> String -> List String
+split pattern input =
+    Sky_regex_Split pattern input
 `,
   "stdlib/Sky/Core/Result.sky": `module Sky.Core.Result exposing (..)
 
@@ -1219,6 +1657,129 @@ perform : Task err a -> Result err a
 perform task =
     -- At Go level: task() — call the thunk and return the SkyResult
     Ok task
+`,
+  "stdlib/Sky/Core/Time.sky": `module Sky.Core.Time exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+{-| Time operations. Pure reads and Task-wrapped effects.
+
+    Time.now ()
+        |> Task.andThen (\\t ->
+            Task.succeed (Time.format "2006-01-02" t)
+        )
+        |> Task.perform
+
+Note: Go's reference time format is "Mon Jan 2 15:04:05 MST 2006"
+or equivalently "2006-01-02T15:04:05Z07:00" for RFC 3339.
+-}
+
+foreign import "sky_wrappers"
+    exposing
+        ( Sky_time_Now
+        , Sky_time_Format
+        , Sky_time_Parse
+        , Sky_time_UnixSeconds
+        , Sky_time_UnixMillis
+        , Sky_time_Sleep
+        , Sky_time_Since
+        , Sky_time_Year
+        , Sky_time_Month
+        , Sky_time_Day
+        , Sky_time_Hour
+        , Sky_time_Minute
+        , Sky_time_Second
+        )
+
+
+-- Get current time (effectful — returns a Task).
+
+now : () -> Task String Int
+now _ =
+    Sky_time_Now ()
+
+
+-- Format a Unix timestamp (milliseconds) as a string.
+-- Uses Go time format layout (reference: "2006-01-02 15:04:05").
+
+format : String -> Int -> String
+format layout millis =
+    Sky_time_Format layout millis
+
+
+-- Parse a time string into Unix milliseconds.
+-- Uses Go time format layout.
+
+parse : String -> String -> Result String Int
+parse layout timeStr =
+    Sky_time_Parse layout timeStr
+
+
+-- Convert to Unix seconds.
+
+toSeconds : Int -> Int
+toSeconds millis =
+    millis // 1000
+
+
+-- Convert from Unix seconds.
+
+fromSeconds : Int -> Int
+fromSeconds secs =
+    secs * 1000
+
+
+-- Get Unix seconds from current time.
+
+unixSeconds : () -> Task String Int
+unixSeconds _ =
+    Sky_time_UnixSeconds ()
+
+
+-- Get Unix milliseconds from current time.
+
+unixMillis : () -> Task String Int
+unixMillis _ =
+    Sky_time_UnixMillis ()
+
+
+-- Sleep for a number of milliseconds (effectful).
+
+sleep : Int -> Task String ()
+sleep millis =
+    Sky_time_Sleep millis
+
+
+-- Time components (pure, from Unix millis)
+
+year : Int -> Int
+year millis =
+    Sky_time_Year millis
+
+
+month : Int -> Int
+month millis =
+    Sky_time_Month millis
+
+
+day : Int -> Int
+day millis =
+    Sky_time_Day millis
+
+
+hour : Int -> Int
+hour millis =
+    Sky_time_Hour millis
+
+
+minute : Int -> Int
+minute millis =
+    Sky_time_Minute millis
+
+
+second : Int -> Int
+second millis =
+    Sky_time_Second millis
 `,
   "stdlib/Sky/Core/Tuple.sky": `module Sky.Core.Tuple exposing (..)
 
