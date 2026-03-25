@@ -235,14 +235,12 @@ makePrefixAlias prefix decl =
                 firstChar =
                     String.slice 0 1 unprefixed
             in
-                -- Only alias names that start with uppercase (ADT constructors)
-                -- and are not common function names
                 if String.isEmpty unprefixed then
                     Nothing
-                else if firstChar == String.toUpper firstChar && not (isCommonName unprefixed) then
-                    Just (GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName))
-                else
+                else if isCommonName unprefixed then
                     Nothing
+                else
+                    Just (GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName))
 
 
 isCommonName : String -> Bool
@@ -251,7 +249,23 @@ isCommonName name =
     name == "Format" || name == "Emit" || name == "Lower" || name == "Resolve" ||
     name == "Build" || name == "Run" || name == "Start" || name == "Init" ||
     name == "CapitalizeFirst" || name == "CurTok" || name == "Advance" ||
-    name == "FormatField" || name == "FormatModule"
+    name == "FormatField" || name == "FormatModule" ||
+    name == "emptyResult" || name == "emptyCtx" ||
+    name == "emptyRegistry" || name == "empty" || name == "parse" ||
+    name == "compile" || name == "main" || name == "formatModule" ||
+    name == "capitalizeFirst" || name == "curTok" || name == "advance" ||
+    name == "formatField" || name == "sanitizeGoIdent" || name == "isGoKeyword" ||
+    name == "lastPartOf" || name == "goQuote" || name == "isStdlibCallee" ||
+    name == "lowerParam" || name == "peek" || name == "previous" || name == "peekAt" ||
+    name == "matchKind" || name == "matchLexeme" || name == "matchKindLex" ||
+    name == "consume" || name == "consumeLex" || name == "tokenKindEq" ||
+    name == "tokenKindStr" || name == "filterLayout" || name == "initState" ||
+    name == "isKeyword" || name == "render" || name == "text" || name == "line" ||
+    name == "hardline" || name == "softline" || name == "concat" || name == "indent" ||
+    name == "group" || name == "align" || name == "joinDocs" ||
+    name == "formatModule" || name == "formatExpr" || name == "formatPattern" ||
+    name == "formatDeclaration" || name == "formatTypeExpr" || name == "formatLiteral" ||
+    name == "parseQualifiedParts"
 
 
 deduplicateDecls : List GoDecl -> List GoDecl
@@ -457,6 +471,7 @@ compileDependencyModule stdlibEnv allModules pair =
                 , importedConstructors = Lower.buildConstructorMap registry
                 , modulePrefix = prefix
                 , importAliases = depAliasMap
+                , localFunctionArity = Lower.collectLocalFunctionArities mod.declarations
             }
         goDecls =
             Lower.lowerDeclarations ctx mod.declarations
@@ -465,13 +480,34 @@ compileDependencyModule stdlibEnv allModules pair =
         -- Filter out side-effect-only declarations and deduplicate
         filtered =
             List.filter isExportableDecl (List.append ctorDecls goDecls)
+        -- Generate aliases BEFORE prefixing (preserves original case)
+        aliases =
+            generateOriginalAliases prefix filtered
         prefixed =
             List.map (prefixDecl prefix) filtered
-        -- Generate aliases: for each prefixed declaration, create an unprefixed alias
-        aliases =
-            generatePrefixAliases prefix prefixed
     in
         deduplicateDecls (List.append aliases prefixed)
+
+
+generateOriginalAliases : String -> List GoDecl -> List GoDecl
+generateOriginalAliases prefix decls =
+    List.filterMap (makeOriginalAlias prefix) decls
+
+
+makeOriginalAlias : String -> GoDecl -> Maybe GoDecl
+makeOriginalAlias prefix decl =
+    let
+        name =
+            getDeclName decl
+    in
+        if String.isEmpty name || name == "_" || name == "main" || isCommonName name then
+            Nothing
+        else
+            let
+                prefixedName =
+                    prefix ++ "_" ++ capitalizeFirst name
+            in
+                Just (GoDeclRaw ("var " ++ name ++ " = " ++ prefixedName))
 
 
 isExportableDecl : GoDecl -> Bool

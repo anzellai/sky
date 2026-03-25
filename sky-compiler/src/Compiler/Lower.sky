@@ -21,6 +21,7 @@ type alias LowerCtx =
     , collectedImports : Set.Set String
     , importAliases : Dict.Dict String String
     , modulePrefix : String
+    , localFunctionArity : Dict.Dict String Int
     }
 
 type alias CtorInfo =
@@ -35,6 +36,7 @@ emptyCtx =
     , collectedImports = Set.empty
     , importAliases = Dict.empty
     , modulePrefix = ""
+    , localFunctionArity = Dict.empty
     }
 
 
@@ -516,28 +518,131 @@ lowerQualified ctx parts =
 lowerCall : LowerCtx -> Expression -> List Expression -> GoExpr
 lowerCall ctx callee args =
     let
-        -- Flatten curried calls: f a b c → f(a, b, c) instead of f(a)(b)(c)
         flatResult =
             flattenCall callee args
         flatCallee =
             fst flatResult
         flatArgs =
             snd flatResult
-        goCallee =
-            lowerExpr ctx flatCallee
-        goArgs =
-            List.map (lowerExpr ctx) flatArgs
+        argCount =
+            List.length flatArgs
+        -- Check for partial application of prefixed local functions
+        partialResult =
+            checkPartialApplication ctx flatCallee argCount
     in
-        -- Merge nested zero-arg calls: f()(arg) → f(arg)
-        case goCallee of
-            GoCallExpr innerFn innerArgs ->
-                if List.isEmpty innerArgs then
-                    GoCallExpr innerFn goArgs
-                else
-                    GoCallExpr goCallee goArgs
+        case partialResult of
+            Just closure ->
+                -- Partial application: generate closure with provided args
+                let
+                    goArgs =
+                        List.map (lowerExpr ctx) flatArgs
+                in
+                    generatePartialClosure closure goArgs argCount
+
+            Nothing ->
+                let
+                    goCallee =
+                        lowerExpr ctx flatCallee
+                    goArgs =
+                        List.map (lowerExpr ctx) flatArgs
+                in
+                    -- Handle curried calls with sky_call wrapper
+                    case goCallee of
+                        GoCallExpr innerFn innerArgs ->
+                            if List.isEmpty innerArgs then
+                                GoCallExpr innerFn goArgs
+                            else
+                                -- Curried call: f(a)(b) → sky_call(f(a), b)
+                                -- Curried call: use sky_call for type assertion
+                                if List.length goArgs == 1 then
+                                    GoCallExpr (GoIdent "sky_call") (List.append [ goCallee ] goArgs)
+                                else if List.length goArgs == 2 then
+                                    GoCallExpr (GoIdent "sky_call2") (List.append [ goCallee ] goArgs)
+                                else if List.length goArgs == 3 then
+                                    GoCallExpr (GoIdent "sky_call3") (List.append [ goCallee ] goArgs)
+                                else
+                                    GoCallExpr (GoIdent "sky_call") (List.append [ goCallee ] goArgs)
+
+                        GoRawExpr code ->
+                            if String.endsWith "()" code then
+                                -- Zero-arg cross-module call: f()(arg) → sky_call(f(), arg)
+                                case goArgs of
+                                    singleArg :: [] ->
+                                        GoCallExpr (GoIdent "sky_call") [ goCallee , singleArg ]
+
+                                    _ ->
+                                        GoCallExpr goCallee goArgs
+                            else
+                                GoCallExpr goCallee goArgs
+
+                        _ ->
+                            GoCallExpr goCallee goArgs
+
+
+-- Check if a call expression is a partial application of a prefixed local function
+-- Returns Just (goFuncName, totalArity) if partial, Nothing otherwise
+
+type alias PartialApp =
+    { goFuncName : String
+    , totalArity : Int
+    }
+
+
+checkPartialApplication : LowerCtx -> Expression -> Int -> Maybe PartialApp
+checkPartialApplication ctx callee argCount =
+    if String.isEmpty ctx.modulePrefix then
+        Nothing
+    else
+        case callee of
+            IdentifierExpr name _ ->
+                case Dict.get name ctx.localFunctionArity of
+                    Just arity ->
+                        if argCount < arity then
+                            Just { goFuncName = ctx.modulePrefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name) , totalArity = arity }
+                        else
+                            Nothing
+
+                    Nothing ->
+                        Nothing
 
             _ ->
-                GoCallExpr goCallee goArgs
+                Nothing
+
+
+-- Generate a Go closure for partial application
+-- e.g. partialApply(Compiler_Lower_LowerDecl, [ctx]) with arity 2
+-- → func(arg1 any) any { return Compiler_Lower_LowerDecl(ctx, arg1) }
+
+generatePartialClosure : PartialApp -> List GoExpr -> Int -> GoExpr
+generatePartialClosure partial providedArgs providedCount =
+    let
+        remainingCount =
+            partial.totalArity - providedCount
+        -- Build parameter names for remaining args
+        remainingParams =
+            List.map (\i -> "__pa" ++ String.fromInt i) (listRange 0 (remainingCount - 1))
+        -- Build full arg list: provided args + remaining params
+        providedArgStrs =
+            List.map emitGoExprInline providedArgs
+        allArgStrs =
+            List.append providedArgStrs remainingParams
+        -- Build closure
+        paramList =
+            String.join ", " (List.map (\p -> p ++ " any") remainingParams)
+        argList =
+            String.join ", " allArgStrs
+        closureCode =
+            "func(" ++ paramList ++ ") any { return " ++ partial.goFuncName ++ "(" ++ argList ++ ") }"
+    in
+        GoRawExpr closureCode
+
+
+listRange : Int -> Int -> List Int
+listRange start end =
+    if start > end then
+        []
+    else
+        start :: listRange (start + 1) end
 
 
 flattenCall : Expression -> List Expression -> ( Expression , List Expression )
@@ -619,24 +724,31 @@ lowerLetBinding ctx binding =
                     "__let_tmp"
                 tmpDecl =
                     GoShortDecl tmpName (lowerExpr ctx binding.value)
+                tupleSize =
+                    List.length items
                 extracts =
-                    extractTupleBindings tmpName items 0
+                    extractTupleBindings tmpName items 0 tupleSize
             in
                 tmpDecl :: extracts
         
         _ ->
             [ GoShortDecl "_" (lowerExpr ctx binding.value) ]
 
-extractTupleBindings : String -> List Pattern -> Int -> List GoStmt
-extractTupleBindings tmpName items idx =
+extractTupleBindings : String -> List Pattern -> Int -> Int -> List GoStmt
+extractTupleBindings tmpName items idx tupleSize =
     case items of
         [] ->
             []
-        
+
         pat :: rest ->
             let
                 fieldName =
                     "V" ++ String.fromInt idx
+                assertFn =
+                    if tupleSize >= 3 then
+                        "sky_asTuple3"
+                    else
+                        "sky_asTuple2"
                 extract =
                     case pat of
                         PVariable name _ ->
@@ -644,7 +756,7 @@ extractTupleBindings tmpName items idx =
                                 (
                                 GoSelectorExpr
                                     (
-                                    GoCallExpr (GoIdent "sky_asTuple2")
+                                    GoCallExpr (GoIdent assertFn)
                                         [ GoIdent tmpName ]
                                     )
                                     fieldName
@@ -654,7 +766,7 @@ extractTupleBindings tmpName items idx =
                         _ ->
                             []
             in
-                extract ++ extractTupleBindings tmpName rest (idx + 1)
+                List.append extract (extractTupleBindings tmpName rest (idx + 1) tupleSize)
 
 -- ══════════════════════════════════════════════════════
 -- CASE LOWERING
@@ -686,7 +798,11 @@ lowerCaseToSwitch ctx subjectExpr branches =
         " return nil }()"
 
 emitBranchCode : LowerCtx -> ( Int, CaseBranch ) -> String
-emitBranchCode ctx ( _idx, branch ) =
+emitBranchCode ctx pair =
+    let
+        branch =
+            snd pair
+    in
     let
         condition =
 
@@ -1046,7 +1162,7 @@ generateCtorFunc typeName tagIndex variant =
                             (
                             GoMapLit
                                 (
-                                List.map (\( k, v ) -> ( GoStringLit k , v ))
+                                List.map (\pair -> ( GoStringLit (fst pair) , snd pair ))
                                     fields
                                 )
                             )
@@ -1116,6 +1232,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }"
     , GoDeclRaw "func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
     , GoDeclRaw "func sky_asTuple2(v any) SkyTuple2 { if t, ok := v.(SkyTuple2); ok { return t }; return SkyTuple2{} }"
+    , GoDeclRaw "func sky_asTuple3(v any) SkyTuple3 { if t, ok := v.(SkyTuple3); ok { return t }; return SkyTuple3{} }"
     , GoDeclRaw "func sky_not(v any) any { return !sky_asBool(v) }"
     , GoDeclRaw "func sky_fileRead(path any) any { data, err := os.ReadFile(sky_asString(path)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(data)) }"
     , GoDeclRaw "func sky_fileWrite(path any) any { return func(content any) any { err := os.WriteFile(sky_asString(path), []byte(sky_asString(content)), 0644); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
@@ -1161,6 +1278,9 @@ generateHelperDecls =
     , GoDeclRaw "func sky_snd(t any) any { return sky_asTuple2(t).V1 }"
     , GoDeclRaw "func sky_errorToString(e any) any { return sky_asString(e) }"
     , GoDeclRaw "func sky_identity(v any) any { return v }"
+    , GoDeclRaw "func sky_call(f any, arg any) any { return f.(func(any) any)(arg) }"
+    , GoDeclRaw "func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any) any)(b) }"
+    , GoDeclRaw "func sky_call3(f any, a any, b any, c any) any { return f.(func(any) any)(a).(func(any) any)(b).(func(any) any)(c) }"
     ]
 
 
@@ -1172,11 +1292,26 @@ collectLocalFunctions decls =
             case d of
                 FunDecl name _ _ _ ->
                     Set.insert name acc
-                
+
                 _ ->
                     acc
         )
         Set.empty
+        decls
+
+
+collectLocalFunctionArities : List Declaration -> Dict.Dict String Int
+collectLocalFunctionArities decls =
+    List.foldl
+        (\d acc ->
+            case d of
+                FunDecl name params _ _ ->
+                    Dict.insert name (List.length params) acc
+
+                _ ->
+                    acc
+        )
+        Dict.empty
         decls
 
 buildConstructorMap : AdtRegistry -> Dict.Dict String CtorInfo
@@ -1348,16 +1483,9 @@ emitGoExprInline expr =
             let
                 fnStr =
                     emitGoExprInline fn
-                -- If callee is another call (curried), add type assertion
-                needsAssertion =
-                    case fn of
-                        GoCallExpr _ _ ->
-                            True
-
-                        _ ->
-                            False
+                -- Add .(func(any) any) assertion if callee ends with ) — it's a function call
                 calleeStr =
-                    if needsAssertion then
+                    if String.endsWith ")" fnStr then
                         fnStr ++ ".(func(any) any)"
                     else
                         fnStr
@@ -1387,7 +1515,7 @@ emitGoExprInline expr =
             typeName ++
             "{" ++
             String.join ", "
-                (List.map (\( k, v ) -> k ++ ": " ++ emitGoExprInline v) fields) ++
+                (List.map (\pair -> fst pair ++ ": " ++ emitGoExprInline (snd pair)) fields) ++
             "}"
         
         GoBinaryExpr op left right ->
@@ -1403,7 +1531,13 @@ emitGoExprInline expr =
             "nil"
 
 emitMapEntry : ( GoExpr, GoExpr ) -> String
-emitMapEntry ( key, val ) =
+emitMapEntry pair =
+    let
+        key =
+            fst pair
+        val =
+            snd pair
+    in
     emitGoExprInline key ++ ": " ++ emitGoExprInline val
 
 emitInlineParam : GoParam -> String
@@ -1420,7 +1554,58 @@ lowerExprToStmts ctx expr =
 
 stmtsToGoString : List GoStmt -> String
 stmtsToGoString stmts =
-    String.join "; " (List.map stmtToGoString stmts)
+    let
+        raw =
+            String.join "; " (List.map stmtToGoString stmts)
+    in
+        fixCurriedCalls raw
+
+
+-- Post-process Go code to add .(func(any) any) for chained function calls
+-- Matches patterns like sky_xxx(...)( and adds the assertion
+fixCurriedCalls : String -> String
+fixCurriedCalls code =
+    code
+        |> String.replace "sky_listMap(" "sky_listMap("
+        |> addFuncAssertion "sky_listFilterMap"
+        |> addFuncAssertion "sky_listConcatMap"
+        |> addFuncAssertion "sky_listFoldl"
+        |> addFuncAssertion "sky_listFoldr"
+        |> addFuncAssertion "sky_listFilter"
+        |> addFuncAssertion "sky_listMap"
+        |> addFuncAssertion "sky_listIndexedMap"
+        |> addFuncAssertion "sky_listDrop"
+        |> addFuncAssertion "sky_listMember"
+        |> addFuncAssertion "sky_listAppend"
+        |> addFuncAssertion "sky_dictInsert"
+        |> addFuncAssertion "sky_dictGet"
+        |> addFuncAssertion "sky_dictMap"
+        |> addFuncAssertion "sky_dictFoldl"
+        |> addFuncAssertion "sky_dictUnion"
+        |> addFuncAssertion "sky_dictRemove"
+        |> addFuncAssertion "sky_dictMember"
+        |> addFuncAssertion "sky_setInsert"
+        |> addFuncAssertion "sky_setMember"
+        |> addFuncAssertion "sky_setUnion"
+        |> addFuncAssertion "sky_setDiff"
+        |> addFuncAssertion "sky_setRemove"
+        |> addFuncAssertion "sky_stringStartsWith"
+        |> addFuncAssertion "sky_stringEndsWith"
+        |> addFuncAssertion "sky_stringContains"
+        |> addFuncAssertion "sky_stringSplit"
+        |> addFuncAssertion "sky_stringReplace"
+        |> addFuncAssertion "sky_stringSlice"
+        |> addFuncAssertion "sky_stringJoin"
+        |> addFuncAssertion "sky_stringAppend"
+        |> addFuncAssertion "sky_fileWrite"
+        |> addFuncAssertion "sky_processRun"
+        |> addFuncAssertion "sky_refSet"
+
+
+addFuncAssertion : String -> String -> String
+addFuncAssertion funcName code =
+    -- No-op for now — handled by sky_call helper
+    code
 
 stmtToGoString : GoStmt -> String
 stmtToGoString stmt =

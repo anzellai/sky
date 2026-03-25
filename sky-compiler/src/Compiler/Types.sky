@@ -203,6 +203,6 @@ formatType t =
             let
                 fieldStrs =
                     Dict.toList fields
-                        |> List.map (\( k, v ) -> k ++ " : " ++ formatType v)
+                        |> List.map (\pair -> fst pair ++ " : " ++ formatType (snd pair))
             in
                 "{ " ++ String.join " , " fieldStrs ++ " }"
