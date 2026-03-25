@@ -159,7 +159,7 @@ parseQualifiedParts : List String -> ParserState -> ( List String , ParserState 
 parseQualifiedParts parts state =
     if matchKind TkDot state then
         let
-            ( unusedDot , s1 ) =
+            ( dotTok , s1 ) =
                 advance state
         in
             if matchKind TkUpperIdentifier s1 || matchKind TkIdentifier s1 then

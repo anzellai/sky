@@ -105,7 +105,14 @@ function emitGoExprForLower(expr: any): string {
                 if (stmt.kind === "GoAssignStmt") {
                     const allBlank = stmt.left.every((l: any) => l.kind === "GoIdent" && l.name === "_");
                     const op = (stmt.define && !allBlank) ? ":=" : "=";
-                    body += `${stmt.left.map((l: any) => emitGoExprForLower(l)).join(", ")} ${op} ${emitGoExprForLower(stmt.right)}; `;
+                    const leftNames = stmt.left.map((l: any) => emitGoExprForLower(l));
+                    body += `${leftNames.join(", ")} ${op} ${emitGoExprForLower(stmt.right)}; `;
+                    // Suppress "declared and not used" for case-bound variables
+                    if (stmt.define && !allBlank) {
+                        for (const n of leftNames) {
+                            if (n !== "_") body += `_ = ${n}; `;
+                        }
+                    }
                 } else if (stmt.kind === "GoReturnStmt") {
                     body += `return ${emitGoExprForLower(stmt.expr)}`;
                 } else if (stmt.kind === "GoExprStmt") {

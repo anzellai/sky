@@ -752,16 +752,21 @@ extractTupleBindings tmpName items idx tupleSize =
                 extract =
                     case pat of
                         PVariable name _ ->
-                            [ GoShortDecl (sanitizeGoIdent name)
-                                (
-                                GoSelectorExpr
+                            let
+                                goName =
+                                    sanitizeGoIdent name
+                            in
+                                [ GoShortDecl goName
                                     (
-                                    GoCallExpr (GoIdent assertFn)
-                                        [ GoIdent tmpName ]
+                                    GoSelectorExpr
+                                        (
+                                        GoCallExpr (GoIdent assertFn)
+                                            [ GoIdent tmpName ]
+                                        )
+                                        fieldName
                                     )
-                                    fieldName
-                                )
-                            ]
+                                , GoExprStmt (GoRawExpr ("_ = " ++ goName))
+                                ]
                         
                         _ ->
                             []
@@ -893,7 +898,11 @@ patternToBindings ctx varName pat =
             ""
 
         PVariable name _ ->
-            sanitizeGoIdent name ++ " := " ++ varName ++ "; "
+            let
+                goName =
+                    sanitizeGoIdent name
+            in
+                goName ++ " := " ++ varName ++ "; _ = " ++ goName ++ "; "
 
         PLiteral _ _ ->
             ""
@@ -1350,7 +1359,7 @@ addCtorsFromList typeName entries idx acc =
 countFunArgs : Type -> Int
 countFunArgs t =
     case t of
-        TFun fromT toT ->
+        TFun argT toT ->
             1 + countFunArgs toT
 
         _ ->

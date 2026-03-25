@@ -115,7 +115,15 @@ function emitGoStmt(stmt: GoIR.GoStmt, indent: number): string {
     case "GoAssignStmt": {
       const allBlank = stmt.left.every(l => l.kind === "GoIdent" && l.name === "_");
       const op = (stmt.define && !allBlank) ? ":=" : "=";
-      return `${tabs}${stmt.left.map(emitGoExpr).join(", ")} ${op} ${emitGoExpr(stmt.right)}`;
+      const leftNames = stmt.left.map(emitGoExpr);
+      let result = `${tabs}${leftNames.join(", ")} ${op} ${emitGoExpr(stmt.right)}`;
+      // Suppress "declared and not used" for all defined variables
+      if (stmt.define && !allBlank) {
+        for (const n of leftNames) {
+          if (n !== "_") result += `\n${tabs}_ = ${n}`;
+        }
+      }
+      return result;
     }
     case "GoReturnStmt": {
       if (stmt.expr) {
