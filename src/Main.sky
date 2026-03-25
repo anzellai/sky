@@ -182,6 +182,24 @@ cmdCheck _ =
 -- ADD COMMAND
 -- ══════════════════════════════════════════════════════
 
+-- Go stdlib root packages — these don't need go get
+isGoStdlib : String -> Bool
+isGoStdlib name =
+    name == "archive" || name == "bufio" || name == "bytes" ||
+    name == "compress" || name == "container" || name == "context" ||
+    name == "crypto" || name == "database" || name == "debug" ||
+    name == "embed" || name == "encoding" || name == "errors" ||
+    name == "flag" || name == "fmt" || name == "go" ||
+    name == "hash" || name == "html" || name == "image" ||
+    name == "io" || name == "log" || name == "math" ||
+    name == "mime" || name == "net" || name == "os" ||
+    name == "path" || name == "reflect" || name == "regexp" ||
+    name == "runtime" || name == "sort" || name == "strconv" ||
+    name == "strings" || name == "sync" || name == "syscall" ||
+    name == "testing" || name == "text" || name == "time" ||
+    name == "unicode" || name == "unsafe"
+
+
 cmdAdd : () -> ()
 cmdAdd _ =
     case Args.getArg 2 of
@@ -190,59 +208,96 @@ cmdAdd _ =
 
         Just pkg ->
             let
-                isGoPkg =
-                    not (String.contains "sky" pkg)
                 _ =
                     println ("Adding " ++ pkg ++ "...")
+                firstPart =
+                    case String.split "/" pkg of
+                        first :: _ ->
+                            first
+
+                        [] ->
+                            pkg
             in
-                if isGoPkg then
-                    addGoPackage pkg
+                if isGoStdlib firstPart then
+                    println ("Go stdlib package: " ++ pkg ++ " (available by default, no install needed)")
+                else if String.contains "." firstPart then
+                    detectAndInstall pkg
+                else if isGoStdlib pkg then
+                    println ("Go stdlib package: " ++ pkg ++ " (available by default, no install needed)")
                 else
-                    addSkyPackage pkg
+                    println ("Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format.")
 
 
-addGoPackage : String -> ()
-addGoPackage pkg =
+detectAndInstall : String -> ()
+detectAndInstall pkg =
     let
+        tmpDir =
+            ".skycache/detect_" ++ String.replace "/" "_" pkg
         _ =
-            File.mkdirAll ".skycache/gomod"
-        goModPath =
-            ".skycache/gomod/go.mod"
-        _ =
-            case File.readFile goModPath of
-                Ok _ ->
-                    ()
-
-                Err _ ->
-                    File.writeFile goModPath "module skycache\n\ngo 1.21.0\n"
-        getResult =
-            Process.run "sh" [ "-c" , "cd .skycache/gomod && go get " ++ pkg ]
+            File.mkdirAll ".skycache"
+        cloneResult =
+            Process.run "git" [ "clone" , "--depth" , "1" , "https://" ++ pkg , tmpDir ]
     in
-        case getResult of
+        case cloneResult of
             Ok _ ->
-                println ("Added Go package: " ++ pkg)
-
-            Err e ->
                 let
-                    _ =
-                        println ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
+                    hasSkyToml =
+                        case File.readFile (tmpDir ++ "/sky.toml") of
+                            Ok _ ->
+                                True
+
+                            Err _ ->
+                                False
                 in
-                    Process.exit 1
+                    if hasSkyToml then
+                        installAsSkyPackage pkg tmpDir
+                    else
+                        installAsGoPackage pkg tmpDir
+
+            Err _ ->
+                installAsGoPackage pkg ""
 
 
-addSkyPackage : String -> ()
-addSkyPackage pkg =
+installAsSkyPackage : String -> String -> ()
+installAsSkyPackage pkg tmpDir =
     let
         targetDir =
             ".skydeps/" ++ pkg
         _ =
             File.mkdirAll ".skydeps"
-        cloneResult =
-            Process.run "git" [ "clone" , "https://" ++ pkg , targetDir ]
+        _ =
+            Process.run "rm" [ "-rf" , targetDir ]
+        _ =
+            Process.run "mv" [ tmpDir , targetDir ]
     in
-        case cloneResult of
+        println ("Added Sky package: " ++ pkg)
+
+
+installAsGoPackage : String -> String -> ()
+installAsGoPackage pkg tmpDir =
+    let
+        _ =
+            if String.isEmpty tmpDir then
+                ()
+            else
+                Process.run "rm" [ "-rf" , tmpDir ]
+        _ =
+            ensureGoModDir ()
+        getResult =
+            Process.run "sh" [ "-c" , "cd .skycache/gomod && go get " ++ pkg ++ "@latest" ]
+    in
+        case getResult of
             Ok _ ->
-                println ("Added Sky package: " ++ pkg)
+                let
+                    _ =
+                        println ("Added Go package: " ++ pkg)
+                    -- Generate bindings
+                    cacheDir =
+                        ".skycache/go/" ++ String.toLower pkg
+                    _ =
+                        File.mkdirAll cacheDir
+                in
+                    generateGoBindings pkg cacheDir
 
             Err e ->
                 let
@@ -250,6 +305,40 @@ addSkyPackage pkg =
                         println ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
                 in
                     Process.exit 1
+
+
+generateGoBindings : String -> String -> ()
+generateGoBindings pkg cacheDir =
+    let
+        inspectResult =
+            Process.run "sh" [ "-c" , "cd .skycache/gomod && go doc -all " ++ pkg ]
+    in
+        case inspectResult of
+            Ok output ->
+                let
+                    _ =
+                        File.writeFile (cacheDir ++ "/inspect.txt") output
+                in
+                    println ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+
+            Err _ ->
+                println ("Warning: could not inspect " ++ pkg ++ " (bindings skipped)")
+
+
+ensureGoModDir : () -> ()
+ensureGoModDir _ =
+    let
+        _ =
+            File.mkdirAll ".skycache/gomod"
+        goModPath =
+            ".skycache/gomod/go.mod"
+    in
+        case File.readFile goModPath of
+            Ok _ ->
+                ()
+
+            Err _ ->
+                File.writeFile goModPath "module skycache\n\ngo 1.21.0\n"
 
 
 -- ══════════════════════════════════════════════════════
@@ -262,16 +351,7 @@ cmdInstall _ =
         _ =
             println "Installing dependencies..."
         _ =
-            File.mkdirAll ".skycache/gomod"
-        goModPath =
-            ".skycache/gomod/go.mod"
-        _ =
-            case File.readFile goModPath of
-                Ok _ ->
-                    ()
-
-                Err _ ->
-                    File.writeFile goModPath "module skycache\n\ngo 1.21.0\n"
+            ensureGoModDir ()
         tidyResult =
             Process.run "sh" [ "-c" , "cd .skycache/gomod && go mod tidy" ]
     in
@@ -297,10 +377,14 @@ cmdRemove _ =
             let
                 _ =
                     println ("Removing " ++ pkg ++ "...")
-                depDir =
+                skyDepDir =
                     ".skydeps/" ++ pkg
+                goDepDir =
+                    ".skycache/go/" ++ String.toLower pkg
                 _ =
-                    Process.run "rm" [ "-rf" , depDir ]
+                    Process.run "rm" [ "-rf" , skyDepDir ]
+                _ =
+                    Process.run "rm" [ "-rf" , goDepDir ]
             in
                 println ("Removed: " ++ pkg)
 
