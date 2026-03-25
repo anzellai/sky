@@ -1,68 +1,33 @@
 # ─────────────────────────────────────────────────────────────
-# Sky Language — Multi-stage Dockerfile
+# Sky Language — Dockerfile (pure Go, no Node.js)
 #
-# Builds the sky & sky-lsp binaries and produces a slim image
-# with Node.js + Go ready for compiling and running Sky projects.
+# Builds the sky compiler from Go source and produces a slim
+# image with Go ready for compiling and running Sky projects.
 #
 # Usage:
-#   # Build the image
 #   docker build -t sky .
-#
-#   # Run Sky commands
 #   docker run --rm -v $(pwd)/my-app:/app -w /app sky sky build src/Main.sky
-#   docker run --rm -v $(pwd)/my-app:/app -w /app sky sky run src/Main.sky
-#
-#   # Use as CI/CD base image
-#   FROM sky:latest
-#   COPY . /app
-#   WORKDIR /app
-#   RUN sky build src/Main.sky
-#   CMD ["./dist/app"]
 # ─────────────────────────────────────────────────────────────
 
 # ── Stage 1: Build the Sky compiler ─────────────────────────
-FROM node:22-bookworm AS builder
+FROM golang:1.22-bookworm AS builder
 
 WORKDIR /sky
+COPY sky-out/ ./sky-out/
 
-# Install dependencies first (layer cache)
-COPY package.json package-lock.json* ./
-RUN npm ci --ignore-scripts
-
-# Copy source and templates
-COPY src/ src/
-COPY templates/ templates/
-COPY tsconfig.json ./
-
-# Build TypeScript and bundle (embeds stdlib + templates into binary)
-RUN npm install
-RUN npm run bundle
+RUN cd sky-out && go build -ldflags="-s -w" -o /usr/local/bin/sky main.go
 
 # ── Stage 2: Runtime image ──────────────────────────────────
-# Node.js for running the Sky compiler + Go for compiling output
-FROM node:22-bookworm-slim
+FROM golang:1.22-bookworm
 
-# Install Go
-ENV GO_VERSION=1.24.3
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git && \
-    curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-$(dpkg --print-architecture).tar.gz" | \
-    tar -C /usr/local -xzf - && \
+    ca-certificates git && \
     rm -rf /var/lib/apt/lists/*
 
-ENV PATH="/usr/local/go/bin:${PATH}"
-ENV GOPATH="/root/go"
-ENV PATH="${GOPATH}/bin:${PATH}:/usr/local/bin"
+COPY --from=builder /usr/local/bin/sky /usr/local/bin/sky
 
-# Copy the bundled Sky compiler
-COPY --from=builder /sky/bin/sky /usr/local/bin/sky
-COPY --from=builder /sky/bin/sky-lsp /usr/local/bin/sky-lsp
+RUN sky --version
 
-# Verify installation
-RUN sky --help
-RUN go version
-
-# Default working directory for user projects
 WORKDIR /app
 
 ENTRYPOINT []

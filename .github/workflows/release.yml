@@ -14,52 +14,48 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: node18-linux-x64
+            goos: linux
+            goarch: amd64
             artifact: sky-linux-x64
-            lsp_artifact: sky-lsp-linux-x64
           - os: ubuntu-24.04-arm
-            target: node18-linux-arm64
+            goos: linux
+            goarch: arm64
             artifact: sky-linux-arm64
-            lsp_artifact: sky-lsp-linux-arm64
           - os: macos-15
-            target: node18-macos-x64
+            goos: darwin
+            goarch: amd64
             artifact: sky-darwin-x64
-            lsp_artifact: sky-lsp-darwin-x64
           - os: macos-latest
-            target: node18-macos-arm64
+            goos: darwin
+            goarch: arm64
             artifact: sky-darwin-arm64
-            lsp_artifact: sky-lsp-darwin-arm64
           - os: windows-latest
-            target: node18-win-x64
+            goos: windows
+            goarch: amd64
             artifact: sky-windows-x64.exe
-            lsp_artifact: sky-lsp-windows-x64.exe
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-go@v5
         with:
-          node-version: 22
-          cache: npm
+          go-version: '1.22'
 
-      - run: npm ci
-
-      - name: Build and package
-        run: node src/bin/build-binary.js
-        env:
-          SKY_VERSION: ${{ github.ref_name }}
-          SKY_BUILD_TARGET: ${{ matrix.target }}
-          SKY_BUILD_OUTPUT: ${{ matrix.artifact }}
-          SKY_LSP_BUILD_OUTPUT: ${{ matrix.lsp_artifact }}
+      # Bootstrap: use the checked-in bin/sky to compile itself
+      # On the CI runner's OS, we cross-compile for the target
+      - name: Build Sky compiler (Go binary)
+        run: |
+          # The sky-out/ directory has the pre-compiled Go source
+          cd sky-out
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o ../${{ matrix.artifact }} main.go
+        shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: |
-            ${{ matrix.artifact }}
-            ${{ matrix.lsp_artifact }}
+          path: ${{ matrix.artifact }}
 
   release:
     needs: build
