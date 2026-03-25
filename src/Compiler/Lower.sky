@@ -70,10 +70,8 @@ lowerModule registry mod =
         imports =
             [ { path = "fmt" , alias_ = "" }
             , { path = "bufio" , alias_ = "" }
-            , { path = "io" , alias_ = "" }
             , { path = "os" , alias_ = "" }
             , { path = "os/exec" , alias_ = "exec" }
-            , { path = "net/http" , alias_ = "skyhttp" }
             , { path = "strconv" , alias_ = "" }
             , { path = "strings" , alias_ = "" }
             ]
@@ -510,54 +508,6 @@ lowerQualified ctx parts =
             GoIdent "sky_writeStdout"
         else if qualName == "Io.writeStderr" then
             GoIdent "sky_writeStderr"
-        else if qualName == "Server.listen" then
-            GoIdent "sky_serverListen"
-        else if qualName == "Server.get" then
-            GoIdent "sky_serverRoute"
-        else if qualName == "Server.post" then
-            GoIdent "sky_serverRoute"
-        else if qualName == "Server.put" then
-            GoIdent "sky_serverRoute"
-        else if qualName == "Server.delete" then
-            GoIdent "sky_serverRoute"
-        else if qualName == "Server.any" then
-            GoIdent "sky_serverRoute"
-        else if qualName == "Server.group" then
-            GoIdent "sky_serverGroup"
-        else if qualName == "Server.static" then
-            GoIdent "sky_serverStatic"
-        else if qualName == "Server.text" then
-            GoIdent "sky_serverText"
-        else if qualName == "Server.json" then
-            GoIdent "sky_serverJson"
-        else if qualName == "Server.html" then
-            GoIdent "sky_serverHtml"
-        else if qualName == "Server.withStatus" then
-            GoIdent "sky_serverWithStatus"
-        else if qualName == "Server.withHeader" then
-            GoIdent "sky_serverWithHeader"
-        else if qualName == "Server.withCookie" then
-            GoIdent "sky_serverWithCookie"
-        else if qualName == "Server.redirect" then
-            GoIdent "sky_serverRedirect"
-        else if qualName == "Server.param" then
-            GoIdent "sky_serverParam"
-        else if qualName == "Server.queryParam" then
-            GoIdent "sky_serverQueryParam"
-        else if qualName == "Server.header" then
-            GoIdent "sky_serverHeader"
-        else if qualName == "Server.getCookie" then
-            GoIdent "sky_serverGetCookie"
-        else if qualName == "Server.cookie" then
-            GoIdent "sky_serverCookie"
-        else if qualName == "Server.notFound" then
-            GoIdent "sky_serverNotFound"
-        else if qualName == "Server.badRequest" then
-            GoIdent "sky_serverBadRequest"
-        else if qualName == "Server.unauthorized" then
-            GoIdent "sky_serverUnauthorized"
-        else if qualName == "Server.serverError" then
-            GoIdent "sky_serverServerError"
         else if qualName == "Task.succeed" then
             GoIdent "sky_taskSucceed"
         else if qualName == "Task.fail" then
@@ -1462,32 +1412,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"
     , GoDeclRaw "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
     , GoDeclRaw "func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"
-    , GoDeclRaw "var _ = skyhttp.ListenAndServe"
-    , GoDeclRaw "var _ = io.ReadAll"
-    , GoDeclRaw "func sky_serverListen(portNum any, routes any) any { return func() any { mux := sky_buildMux(sky_asList(routes), \"\"); addr := fmt.Sprintf(\":%d\", sky_asInt(portNum)); fmt.Fprintf(os.Stderr, \"Sky server listening on %s\\n\", addr); err := skyhttp.ListenAndServe(addr, mux); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
-    , GoDeclRaw "func sky_serverRoute(method any, pattern any, handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": method, \"V1\": pattern, \"V2\": handler} }"
-    , GoDeclRaw "func sky_serverGroup(prefix any, routes any) any { return map[string]any{\"SkyName\": \"RouteGroup\", \"V0\": prefix, \"V1\": routes} }"
-    , GoDeclRaw "func sky_serverStatic(urlPrefix any, dirPath any) any { return map[string]any{\"SkyName\": \"RouteStatic\", \"V0\": urlPrefix, \"V1\": dirPath} }"
-    , GoDeclRaw "func sky_serverText(body any) any { return map[string]any{\"status\": 200, \"body\": sky_asString(body), \"headers\": []any{SkyTuple2{\"Content-Type\", \"text/plain; charset=utf-8\"}}, \"cookies\": []any{}} }"
-    , GoDeclRaw "func sky_serverJson(body any) any { return map[string]any{\"status\": 200, \"body\": sky_asString(body), \"headers\": []any{SkyTuple2{\"Content-Type\", \"application/json\"}}, \"cookies\": []any{}} }"
-    , GoDeclRaw "func sky_serverHtml(body any) any { return map[string]any{\"status\": 200, \"body\": sky_asString(body), \"headers\": []any{SkyTuple2{\"Content-Type\", \"text/html; charset=utf-8\"}}, \"cookies\": []any{}} }"
-    , GoDeclRaw "func sky_serverWithStatus(code any, resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; result[\"status\"] = sky_asInt(code); return result }"
-    , GoDeclRaw "func sky_serverWithHeader(key any, val any, resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; headers := append([]any{SkyTuple2{sky_asString(key), sky_asString(val)}}, sky_asList(m[\"headers\"])...); result[\"headers\"] = headers; return result }"
-    , GoDeclRaw "func sky_serverWithCookie(c any, resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; result[\"cookies\"] = append([]any{c}, sky_asList(m[\"cookies\"])...); return result }"
-    , GoDeclRaw "func sky_serverRedirect(url any) any { return map[string]any{\"status\": 302, \"body\": \"\", \"headers\": []any{SkyTuple2{\"Location\", sky_asString(url)}}, \"cookies\": []any{}} }"
-    , GoDeclRaw "func sky_serverParam(key any, req any) any { return sky_lookupPair(sky_asString(key), sky_asList(sky_asMap(req)[\"params\"])) }"
-    , GoDeclRaw "func sky_serverQueryParam(key any, req any) any { return sky_lookupPair(sky_asString(key), sky_asList(sky_asMap(req)[\"query\"])) }"
-    , GoDeclRaw "func sky_serverHeader(key any, req any) any { return sky_lookupPair(sky_asString(key), sky_asList(sky_asMap(req)[\"headers\"])) }"
-    , GoDeclRaw "func sky_serverGetCookie(key any, req any) any { return sky_lookupPair(sky_asString(key), sky_asList(sky_asMap(req)[\"cookies\"])) }"
-    , GoDeclRaw "func sky_serverCookie(name any, value any) any { return map[string]any{\"name\": sky_asString(name), \"value\": sky_asString(value), \"path\": \"/\", \"maxAge\": 0, \"httpOnly\": true, \"secure\": false, \"sameSite\": \"Lax\"} }"
-    , GoDeclRaw "func sky_serverNotFound(msg any) any { return sky_serverWithStatus(404, sky_serverText(msg)) }"
-    , GoDeclRaw "func sky_serverBadRequest(msg any) any { return sky_serverWithStatus(400, sky_serverText(msg)) }"
-    , GoDeclRaw "func sky_serverUnauthorized(msg any) any { return sky_serverWithStatus(401, sky_serverText(msg)) }"
-    , GoDeclRaw "func sky_serverServerError(msg any) any { return sky_serverWithStatus(500, sky_serverText(msg)) }"
-    , GoDeclRaw "func sky_lookupPair(key string, pairs []any) any { for _, p := range pairs { t := sky_asTuple2(p); if sky_asString(t.V0) == key { return SkyJust(t.V1) } }; return SkyNothing() }"
-    , GoDeclRaw "func sky_buildMux(routes []any, prefix string) *skyhttp.ServeMux { mux := skyhttp.NewServeMux(); for _, r := range routes { rm := sky_asMap(r); if rm == nil { continue }; sn, _ := rm[\"SkyName\"].(string); switch sn { case \"RouteEntry\": method := sky_asString(rm[\"V0\"]); pattern := prefix + sky_asString(rm[\"V1\"]); handler := rm[\"V2\"]; mp := pattern; if method != \"*\" { mp = method + \" \" + pattern }; mux.HandleFunc(mp, sky_makeHandler(handler)); case \"RouteGroup\": gp := prefix + sky_asString(rm[\"V0\"]); gr := sky_asList(rm[\"V1\"]); sm := sky_buildMux(gr, gp); mux.Handle(gp+\"/\", sm); case \"RouteStatic\": up := prefix + sky_asString(rm[\"V0\"]); dp := sky_asString(rm[\"V1\"]); fs := skyhttp.FileServer(skyhttp.Dir(dp)); mux.Handle(up+\"/\", skyhttp.StripPrefix(up, fs)) } }; return mux }"
-    , GoDeclRaw "func sky_makeHandler(handler any) func(skyhttp.ResponseWriter, *skyhttp.Request) { return func(w skyhttp.ResponseWriter, r *skyhttp.Request) { defer func() { if rec := recover(); rec != nil { skyhttp.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500) } }(); _ = r.ParseForm(); body, _ := io.ReadAll(r.Body); headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; proto := \"http\"; if r.TLS != nil { proto = \"https\" }; req := map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": []any{}, \"query\": query, \"cookies\": cookies, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": proto}; fn := handler.(func(any) any); taskResult := fn(req); var resp any; if thunk, ok := taskResult.(func() any); ok { resp = thunk() } else if result, ok := taskResult.(SkyResult); ok { resp = result } else { resp = SkyOk(taskResult) }; if result, ok := resp.(SkyResult); ok { if result.Tag == 1 { skyhttp.Error(w, sky_asString(result.ErrValue), 500); return }; rm := sky_asMap(result.OkValue); if rm != nil { sky_writeResponse(w, rm); return } }; rm := sky_asMap(resp); if rm != nil { sky_writeResponse(w, rm) } else { w.WriteHeader(200) } } }"
-    , GoDeclRaw "func sky_writeResponse(w skyhttp.ResponseWriter, resp map[string]any) { if cs, ok := resp[\"cookies\"].([]any); ok { for _, c := range cs { cm := sky_asMap(c); if cm != nil { skyhttp.SetCookie(w, &skyhttp.Cookie{Name: sky_asString(cm[\"name\"]), Value: sky_asString(cm[\"value\"]), Path: sky_asString(cm[\"path\"]), MaxAge: sky_asInt(cm[\"maxAge\"]), HttpOnly: sky_asBool(cm[\"httpOnly\"])}) } } }; if hs, ok := resp[\"headers\"].([]any); ok { for _, h := range hs { t := sky_asTuple2(h); w.Header().Set(sky_asString(t.V0), sky_asString(t.V1)) } }; status := sky_asInt(resp[\"status\"]); if status == 0 { status = 200 }; w.WriteHeader(status); fmt.Fprint(w, sky_asString(resp[\"body\"])) }"
     ]
 
 

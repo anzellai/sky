@@ -19,7 +19,7 @@ import Ffi.BindingGen as BindingGen
 
 
 -- ══════════════════════════════════════════════════════
--- SKY CLI
+-- SKY CLI — Pure Sky, no Node/TypeScript
 -- ══════════════════════════════════════════════════════
 
 main =
@@ -51,8 +51,10 @@ runCommand command args =
         cmdLsp args
     else if command == "inspect" then
         cmdInspect args
-    else if command == "version" || command == "--version" then
-        println "sky v0.4.2 (self-hosted)"
+    else if command == "clean" then
+        cmdClean args
+    else if command == "version" || command == "--version" || command == "-v" then
+        println "sky v0.6.0"
     else
         cmdHelp ()
 
@@ -72,7 +74,7 @@ cmdBuild args =
                 Nothing ->
                     "src/Main.sky"
         outDir =
-            "sky-out"
+            "dist"
     in
         case Pipeline.compile entryFile outDir of
             Err e ->
@@ -84,20 +86,25 @@ cmdBuild args =
 
             Ok code ->
                 let
+                    -- Write go.mod if it doesn't exist
+                    goModPath =
+                        outDir ++ "/go.mod"
                     _ =
-                        File.writeFile (outDir ++ "/go.mod") "module sky-app\n\ngo 1.21.0\n"
+                        case File.readFile goModPath of
+                            Ok _ ->
+                                ()
+
+                            Err _ ->
+                                File.writeFile goModPath "module sky-app\n\ngo 1.21.0\n"
+                    -- Run go build
                     _ =
-                        println "Compiled Sky to Go."
+                        println "Running go build..."
                     buildResult =
                         Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app" ]
                 in
                     case buildResult of
                         Ok buildOutput ->
-                            let
-                                _ =
-                                    buildOutput
-                            in
-                                println ("Build complete: " ++ outDir ++ "/app")
+                            println ("Build complete: " ++ outDir ++ "/app")
 
                         Err e ->
                             let
@@ -117,7 +124,7 @@ cmdRun args =
         _ =
             cmdBuild args
         runResult =
-            Process.run "./dist/app" []
+            Process.run "sh" [ "-c" , "./dist/app" ]
     in
         case runResult of
             Ok output ->
@@ -286,6 +293,25 @@ cmdInspect args =
 
 
 -- ══════════════════════════════════════════════════════
+-- CLEAN COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdClean : List String -> ()
+cmdClean args =
+    let
+        _ =
+            Process.run "rm" [ "-rf" , "dist" ]
+        _ =
+            Process.run "rm" [ "-rf" , "sky-out" ]
+        _ =
+            Process.run "rm" [ "-rf" , ".skycache" ]
+        _ =
+            Process.run "rm" [ "-rf" , ".skydeps" ]
+    in
+        println "Cleaned: dist/ sky-out/ .skycache/ .skydeps/"
+
+
+-- ══════════════════════════════════════════════════════
 -- HELP COMMAND
 -- ══════════════════════════════════════════════════════
 
@@ -293,7 +319,7 @@ cmdHelp : () -> ()
 cmdHelp _ =
     let
         _ =
-            println "Sky Programming Language v0.4.0 (self-hosted)"
+            println "Sky Programming Language v0.6.0"
         _ =
             println ""
         _ =
@@ -312,6 +338,10 @@ cmdHelp _ =
             println "  fmt [file]      Format Sky source code"
         _ =
             println "  lsp             Start Language Server"
+        _ =
+            println "  inspect [pkg]   Inspect Go package for FFI bindings"
+        _ =
+            println "  clean           Remove build artifacts"
         _ =
             println "  version         Show version"
     in

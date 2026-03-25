@@ -1,31 +1,208 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
 import Sky.Core.Args as Args
 import Sky.Core.Process as Process
+import Sky.Core.File as File
 import Std.Log exposing (println)
 import Compiler.Pipeline as Pipeline
+import Compiler.Lexer as Lexer
+import Compiler.Parser as Parser
+import Compiler.Checker as Checker
+import Compiler.Resolver as Resolver
 
--- Sky Compiler written in Sky.
--- Phase 1: Lexer + Go emitter demonstration.
+
+-- Sky Programming Language v0.6.0
+-- Pure Sky compiler. No Node. No TypeScript. Just Go.
 
 main =
     let
-        args =
-            Args.getArgs ()
+        command =
+            case Args.getArg 1 of
+                Just cmd ->
+                    cmd
+
+                Nothing ->
+                    "help"
     in
-        case Args.getArg 1 of
-            Nothing ->
-                println "Usage: sky-compiler <file.sky>"
+        runCommand command
 
-            Just filePath ->
-                case Pipeline.compile filePath "sky-out" of
-                    Ok _ ->
-                        println "Compilation successful."
 
-                    Err msg ->
-                        let
-                            _ =
-                                println ("Error: " ++ msg)
-                        in
-                            Process.exit 1
+runCommand : String -> ()
+runCommand command =
+    if command == "build" then
+        cmdBuild ()
+    else if command == "run" then
+        cmdRun ()
+    else if command == "check" then
+        cmdCheck ()
+    else if command == "clean" then
+        cmdClean ()
+    else if command == "version" || command == "--version" || command == "-v" then
+        println "sky v0.6.0"
+    else
+        cmdHelp ()
+
+
+cmdBuild : () -> ()
+cmdBuild _ =
+    let
+        entryFile =
+            case Args.getArg 2 of
+                Just f ->
+                    f
+
+                Nothing ->
+                    "src/Main.sky"
+        outDir =
+            "sky-out"
+    in
+        case Pipeline.compile entryFile outDir of
+            Err e ->
+                let
+                    _ =
+                        println ("Error: " ++ e)
+                in
+                    Process.exit 1
+
+            Ok code ->
+                let
+                    goModPath =
+                        outDir ++ "/go.mod"
+                    _ =
+                        case File.readFile goModPath of
+                            Ok _ ->
+                                ()
+
+                            Err _ ->
+                                File.writeFile goModPath "module sky-app\n\ngo 1.21.0\n"
+                    _ =
+                        println "Running go build..."
+                    buildResult =
+                        Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app" ]
+                in
+                    case buildResult of
+                        Ok _ ->
+                            println ("Build complete: " ++ outDir ++ "/app")
+
+                        Err e ->
+                            let
+                                _ =
+                                    println ("go build failed: " ++ errorToString e)
+                            in
+                                Process.exit 1
+
+
+cmdRun : () -> ()
+cmdRun _ =
+    let
+        _ =
+            cmdBuild ()
+        runResult =
+            Process.run "sh" [ "-c" , "./sky-out/app" ]
+    in
+        case runResult of
+            Ok output ->
+                println output
+
+            Err e ->
+                let
+                    _ =
+                        println (errorToString e)
+                in
+                    Process.exit 1
+
+
+cmdCheck : () -> ()
+cmdCheck _ =
+    let
+        entryFile =
+            case Args.getArg 2 of
+                Just f ->
+                    f
+
+                Nothing ->
+                    "src/Main.sky"
+    in
+        case File.readFile entryFile of
+            Err readErr ->
+                let
+                    _ =
+                        println ("Cannot read: " ++ entryFile)
+                in
+                    Process.exit 1
+
+            Ok source ->
+                let
+                    lexResult =
+                        Lexer.lex source
+                in
+                    case Parser.parse lexResult.tokens of
+                        Err e ->
+                            let
+                                _ =
+                                    println ("Parse error: " ++ e)
+                            in
+                                Process.exit 1
+
+                        Ok mod ->
+                            let
+                                stdlibEnv =
+                                    Resolver.buildStdlibEnv
+                                checkResult =
+                                    Checker.checkModule mod (Just stdlibEnv)
+                            in
+                                case checkResult of
+                                    Ok result ->
+                                        let
+                                            _ =
+                                                List.map (\d -> println ("  " ++ d.name ++ " : " ++ d.prettyType)) result.declarations
+                                        in
+                                            println ("Type check passed: " ++ entryFile)
+
+                                    Err e ->
+                                        let
+                                            _ =
+                                                println ("Type error: " ++ e)
+                                        in
+                                            Process.exit 1
+
+
+cmdClean : () -> ()
+cmdClean _ =
+    let
+        _ =
+            Process.run "rm" [ "-rf" , "dist" ]
+        _ =
+            Process.run "rm" [ "-rf" , "sky-out" ]
+    in
+        println "Cleaned."
+
+
+cmdHelp : () -> ()
+cmdHelp _ =
+    let
+        _ =
+            println "Sky Programming Language v0.6.0"
+        _ =
+            println ""
+        _ =
+            println "Usage: sky <command> [args]"
+        _ =
+            println ""
+        _ =
+            println "Commands:"
+        _ =
+            println "  build [file]    Compile to Go binary"
+        _ =
+            println "  run [file]      Build and run"
+        _ =
+            println "  check [file]    Type-check only"
+        _ =
+            println "  clean           Remove build artifacts"
+        _ =
+            println "  version         Show version"
+    in
+        ()
