@@ -571,10 +571,14 @@ compileDependencyModule stdlibEnv allModules pair =
             Lower.emptyCtx
         depAliasMap =
             buildAliasMap mod.imports
+        localFns =
+            Lower.collectLocalFunctions mod.declarations
+        _ =
+            println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " functions: " ++ String.join "," localFns)
         ctx =
             { depBaseCtx
                 | registry = registry
-                , localFunctions = Lower.collectLocalFunctions mod.declarations
+                , localFunctions = localFns
                 , importedConstructors = Lower.buildConstructorMap registry
                 , modulePrefix = prefix
                 , importAliases = depAliasMap

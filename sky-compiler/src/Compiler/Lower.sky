@@ -685,13 +685,40 @@ flattenCall callee args =
 -- ══════════════════════════════════════════════════════
 lowerLambda : LowerCtx -> List Pattern -> Expression -> GoExpr
 lowerLambda ctx params body =
-    let
-        goParams =
-            List.map lowerParam params
-        goBody =
-            lowerExpr ctx body
-    in
-        GoFuncLit goParams goBody
+    if List.isEmpty params then
+        lowerExpr ctx body
+    else if List.length params == 1 then
+        let
+            singleParam =
+                case List.head params of
+                    Just p ->
+                        p
+
+                    Nothing ->
+                        PWildcard emptySpan
+            paramStr =
+                emitInlineParam (lowerParam singleParam)
+            bodyStr =
+                emitGoExprInline (lowerExpr ctx body)
+        in
+            GoRawExpr ("func(" ++ paramStr ++ ") any { return " ++ bodyStr ++ " }")
+    else
+        let
+            firstParam =
+                case List.head params of
+                    Just p ->
+                        p
+
+                    Nothing ->
+                        PWildcard emptySpan
+            restParams =
+                List.drop 1 params
+            paramStr =
+                emitInlineParam (lowerParam firstParam)
+            innerStr =
+                emitGoExprInline (lowerLambda ctx restParams body)
+        in
+            GoRawExpr ("func(" ++ paramStr ++ ") any { return " ++ innerStr ++ " }")
 
 -- ══════════════════════════════════════════════════════
 -- IF LOWERING
