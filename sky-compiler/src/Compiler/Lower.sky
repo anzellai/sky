@@ -5,6 +5,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Set as Set
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Compiler.Token exposing (emptySpan)
 import Compiler.Ast as Ast exposing (..)
 import Compiler.GoIr exposing (..)
 import Compiler.Adt as Adt exposing (AdtRegistry)

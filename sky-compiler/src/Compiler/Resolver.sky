@@ -64,11 +64,17 @@ resolveProject entryPath srcRoot =
                                 }
 
                             -- Resolve imports
-                            ( allModules, diags ) =
+                            resolveResult =
                                 resolveImports srcRoot entryMod.imports
                                     [ entryLoaded ]
                                     Set.empty
-                                    (List.reverse [])
+                                    []
+
+                            allModules =
+                                fst resolveResult
+
+                            diags =
+                                snd resolveResult
 
                             -- Topological order: dependencies first, entry last
                             order =
@@ -83,14 +89,9 @@ resolveProject entryPath srcRoot =
 -- ══════════════════════════════════════════════════════
 -- IMPORT RESOLUTION
 -- ══════════════════════════════════════════════════════
-resolveImports : String -> List ImportDecl -> List LoadedModule -> Set.Set String -> List String -> ( List LoadedModule, List String )
-
-                                -- Module not found — might be stdlib or .skydeps
 resolveImports srcRoot imports loaded visited diagnostics =
     case imports of
         [] ->
-
-                                                -- Recursively resolve this module's imports
             ( loaded , diagnostics )
         
         imp :: rest ->
@@ -103,12 +104,6 @@ resolveImports srcRoot imports loaded visited diagnostics =
                 else
                     let
                         filePath =
-
--- ══════════════════════════════════════════════════════
--- PATH RESOLUTION
--- ══════════════════════════════════════════════════════
--- Convert module name to file path.
--- ["Compiler", "Lexer"] with srcRoot "src" -> "src/Compiler/Lexer.sky"
                             resolveModulePath srcRoot imp.moduleName
                     in
                         case File.readFile filePath of
@@ -150,7 +145,7 @@ resolveImports srcRoot imports loaded visited diagnostics =
                                                     }
                                                 newVisited =
                                                     Set.insert modName visited
-                                                ( withDeps, depDiags ) =
+                                                depResult =
                                                     resolveImports srcRoot
                                                         modAst.imports
                                                         (newLoaded :: loaded)
@@ -158,9 +153,9 @@ resolveImports srcRoot imports loaded visited diagnostics =
                                                         diagnostics
                                             in
                                                 resolveImports srcRoot rest
-                                                    withDeps
+                                                    (fst depResult)
                                                     newVisited
-                                                    depDiags
+                                                    (snd depResult)
 
 resolveModulePath : String -> List String -> String
 resolveModulePath srcRoot parts =
@@ -182,8 +177,14 @@ isStdlib modName =
 checkAllModules : ModuleGraph -> Result String ModuleGraph
 checkAllModules graph =
     let
-        ( checkedModules, diagnostics ) =
+        checkResult =
             checkModulesLoop graph.modules Env.empty []
+
+        checkedModules =
+            fst checkResult
+
+        diagnostics =
+            snd checkResult
     in
         Ok
             { graph
@@ -191,7 +192,6 @@ checkAllModules graph =
             , diagnostics = List.append graph.diagnostics diagnostics
             }
 
-checkModulesLoop : List LoadedModule -> Env.TypeEnv -> List String -> ( List LoadedModule, List String )
 checkModulesLoop modules importedEnv diagnostics =
     case modules of
         [] ->

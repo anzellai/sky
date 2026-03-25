@@ -238,7 +238,7 @@ parseImports state =
     else
         ( [] , state )
 
-parseImport : ParserState -> Result String ImportDecl
+parseImport : ParserState -> Result String ( ImportDecl, ParserState )
 parseImport state =
     case consumeLex TkKeyword "import" state of
         Err e ->

@@ -57,6 +57,10 @@ async function main() {
       return;
     case "lsp":
       // Helix sometimes passes "-" to mean stdin, but LSP is already stdio based.
+      // Ensure --stdio flag is present for vscode-languageserver transport detection.
+      if (!process.argv.includes("--stdio")) {
+        process.argv.push("--stdio");
+      }
       startServer();
       return;
     case "--version":

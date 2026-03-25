@@ -113,10 +113,6 @@ func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }
 
 var _ = strings.Contains
 
-var _ = strconv.Itoa
-
-var _ = os.Exit
-
 func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }
 
 func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: "Nothing"} }
@@ -221,10 +217,6 @@ func sky_stringFromChar(c any) any { return sky_asString(c) }
 
 func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }
 
-var _ = exec.Command
-
-var _ = bufio.NewReader
-
 func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }
 
 func sky_goQuote(s any) any { return strconv.Quote(sky_asString(s)) }
@@ -248,5 +240,5 @@ func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any)
 func sky_call3(f any, a any, b any, c any) any { return f.(func(any) any)(a).(func(any) any)(b).(func(any) any)(c) }
 
 func main() {
-	sky_println("Hello from Sky!")
+	func() any { resp := Net_Http_Get("http://localhost:3000"); _ = resp; return func() any { return func() any { __subject := resp; if sky_asSkyResult(__subject).SkyName == "Ok" { r := sky_asSkyResult(__subject).OkValue; _ = r; return func() any { status := Net_Http_ResponseStatus(r); _ = status; return sky_println("OK", status) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { err := sky_asSkyResult(__subject).ErrValue; _ = err; return sky_println("Error", err) };  return nil }() }() }()
 }

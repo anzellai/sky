@@ -47,6 +47,20 @@ export async function handleBuild(entryFile?: string) {
     process.exit(1);
   }
 
+  // Auto-install dependencies if sky.toml exists but .skycache is missing
+  const manifest = readManifest();
+  const hasDeps = manifest?.dependencies || manifest?.go?.dependencies;
+  const needsInstall = hasDeps && !fs.existsSync(".skycache/go");
+  if (needsInstall) {
+    console.log("Dependencies detected — running sky install...");
+    try {
+      const { handleInstall } = await import("./install.js");
+      await handleInstall();
+    } catch (e) {
+      // Install is best-effort; build may still succeed without it
+    }
+  }
+
   console.log(`Compiling ${resolved}...`);
 
   const outDir = "dist";
