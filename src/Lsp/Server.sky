@@ -306,54 +306,9 @@ handleHover state id body =
         character =
             jsonGetInt "character" position
         hoverResult =
-            case Dict.get uri state.astCache of
-                Nothing ->
-                    jsonNull
-
-                Just mod ->
-                    getHoverInfo state mod line character
+            jsonNull
     in
         sendAndReturn (makeResponse id hoverResult) state
-
-
-getHoverInfo : ServerState -> Module -> Int -> Int -> String
-getHoverInfo state mod line character =
-    let
-        matchingDecl =
-            List.foldl
-                (\decl acc ->
-                    case decl of
-                        FunDecl name _ _ span ->
-                            if span.start.line - 1 <= line && line <= span.start.line + 5 then
-                                Just name
-                            else
-                                acc
-
-                        TypeAnnotDecl name typeExpr span ->
-                            if span.start.line - 1 == line then
-                                Just (name ++ " (annotation)")
-                            else
-                                acc
-
-                        _ ->
-                            acc
-                )
-                Nothing
-                mod.declarations
-    in
-        case matchingDecl of
-            Nothing ->
-                jsonNull
-
-            Just name ->
-                let
-                    typeStr =
-                        lookupDeclType state name
-                    content =
-                        "```elm\\n" ++ name ++ " : " ++ typeStr ++ "\\n```"
-                in
-                    jsonObject
-                        [ ( "contents" , jsonObject [ ( "kind" , jsonString "markdown" ) , ( "value" , jsonString content ) ] ) ]
 
 
 lookupDeclType : ServerState -> String -> String
@@ -457,37 +412,9 @@ handleDefinition state id body =
         character =
             jsonGetInt "character" position
         defResult =
-            case Dict.get uri state.astCache of
-                Nothing ->
-                    jsonNull
-
-                Just mod ->
-                    findDefinition mod uri line character
+            jsonNull
     in
         sendAndReturn (makeResponse id defResult) state
-
-
-findDefinition : Module -> String -> Int -> Int -> String
-findDefinition mod uri line character =
-    let
-        matching =
-            List.foldl
-                (\decl acc ->
-                    case decl of
-                        FunDecl name _ _ span ->
-                            if span.start.line > 0 then
-                                Dict.insert name span acc
-                            else
-                                acc
-
-                        _ ->
-                            acc
-                )
-                Dict.empty
-                mod.declarations
-    in
-        -- For now, return the first matching declaration
-        jsonNull
 
 
 -- ══════════════════════════════════════════════════════

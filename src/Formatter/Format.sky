@@ -571,9 +571,17 @@ formatNamedType field =
 
 quoteString : String -> String
 quoteString s =
-    s
-        |> String.replace "\\" "\\\\"
-        |> String.replace "\"" "\\\""
-        |> String.replace "\n" "\\n"
-        |> String.replace "\r" "\\r"
-        |> String.replace "\t" "\\t"
+    let
+        s1 =
+            String.replace "\\" "\\\\" s
+
+        s2 =
+            String.replace "\"" "\\\"" s1
+
+        s3 =
+            String.replace "\n" "\\n" s2
+
+        s4 =
+            String.replace "\r" "\\r" s3
+    in
+        String.replace "\t" "\\t" s4

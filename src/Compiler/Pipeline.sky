@@ -144,8 +144,11 @@ emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules 
             Lower.generateConstructorDecls entryRegistry entryMod.declarations
         helperDecls =
             Lower.generateHelperDecls
+        -- Generate aliases for functions imported via exposing(..) in entry module
+        entryImportAliases =
+            generateImportAliases entryMod.imports loadedModules
         allDecls =
-            deduplicateDecls (List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls ])
+            deduplicateDecls (List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls , entryImportAliases ])
     in
         writeMultiModuleOutput outDir allDecls
 
@@ -454,7 +457,21 @@ generateAliasesFromModule modName allModules =
                 declNames =
                     extractExportedNames mod
             in
-                List.filterMap (\name -> if String.isEmpty name then Nothing else Just (GoDeclRaw ("var " ++ name ++ " = " ++ prefix ++ "_" ++ capitalizeFirst name))) declNames
+                List.concatMap (\name ->
+                    if String.isEmpty name then
+                        []
+                    else
+                        let
+                            prefixedName =
+                                prefix ++ "_" ++ capitalizeFirst name
+                        in
+                            -- Generate both original case and capitalized aliases
+                            -- e.g. var readMessage = Lsp_JsonRpc_ReadMessage
+                            --      var ReadMessage = Lsp_JsonRpc_ReadMessage
+                            [ GoDeclRaw ("var " ++ name ++ " = " ++ prefixedName)
+                            , GoDeclRaw ("var " ++ capitalizeFirst name ++ " = " ++ prefixedName)
+                            ]
+                ) declNames
 
 
 -- Check exposing clause without ADT pattern matching (avoids TS compiler tag issues)
@@ -510,10 +527,13 @@ extractDeclNames decl =
             [ name ]
 
         Ast.TypeDecl name _ variants _ ->
-            name :: List.map (\v -> v.name) variants
+            -- Only export variant constructors (they become Go functions)
+            -- The type name itself (e.g. "Expression") is not a Go value
+            List.map (\v -> v.name) variants
 
         Ast.TypeAliasDecl name _ _ _ ->
-            [ name ]
+            -- Type aliases don't generate Go values
+            []
 
         Ast.TypeAnnotDecl _ _ _ ->
             []
@@ -641,8 +661,11 @@ compileDependencyModule stdlibEnv allModules pair =
         -- Generate aliases for constructors and shared values from prefixed declarations
         aliases =
             generateConstructorAliases prefix prefixed
+        -- Generate import aliases for exposing(..) imports within this dependency
+        depImportAliases =
+            generateImportAliases mod.imports allModules
     in
-        deduplicateDecls (List.append aliases prefixed)
+        deduplicateDecls (List.concat [ aliases , depImportAliases , prefixed ])
 
 
 -- Generate aliases for ALL functions from dependency modules
