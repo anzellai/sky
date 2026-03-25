@@ -96,12 +96,19 @@ consume kind state =
         if tokenKindEq t.kind kind then
             Ok ( t , { state | pos = state.pos + 1 } )
         else
-            Err
-                ("Expected " ++ tokenKindStr kind ++
-                " but got " ++ tokenKindStr t.kind ++
-                " '" ++ t.lexeme ++ "' at " ++
-                String.fromInt t.span.start.line ++ ":" ++
-                String.fromInt t.span.start.column)
+            let
+                sp =
+                    t.span
+
+                st =
+                    sp.start
+            in
+                Err
+                    ("Expected " ++ tokenKindStr kind ++
+                    " but got " ++ tokenKindStr t.kind ++
+                    " '" ++ t.lexeme ++ "' at " ++
+                    String.fromInt st.line ++ ":" ++
+                    String.fromInt st.column)
 
 
 consumeLex : TokenKind -> String -> ParserState -> Result String ( Token , ParserState )
@@ -113,11 +120,18 @@ consumeLex kind lex state =
         if tokenKindEq t.kind kind && t.lexeme == lex then
             Ok ( t , { state | pos = state.pos + 1 } )
         else
-            Err
-                ("Expected " ++ lex ++
-                " but got '" ++ t.lexeme ++ "' at " ++
-                String.fromInt t.span.start.line ++ ":" ++
-                String.fromInt t.span.start.column)
+            let
+                sp =
+                    t.span
+
+                st =
+                    sp.start
+            in
+                Err
+                    ("Expected " ++ lex ++
+                    " but got '" ++ t.lexeme ++ "' at " ++
+                    String.fromInt st.line ++ ":" ++
+                    String.fromInt st.column)
 
 
 tokenKindEq : TokenKind -> TokenKind -> Bool
@@ -188,8 +202,14 @@ peekColumn state =
     let
         t =
             peek state
+
+        sp =
+            t.span
+
+        st =
+            sp.start
     in
-        t.span.start.column
+        st.column
 
 
 peekKind : ParserState -> TokenKind
@@ -210,7 +230,6 @@ peekAt1Kind state =
         t.kind
 
 
-unescapeString : String -> String
 unescapeString s =
     let
         s1 =

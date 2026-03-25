@@ -119,7 +119,7 @@ emitExpr expr =
             value
 
         GoStringLit value ->
-            "\"" ++ escapeGoString value ++ "\""
+            "\"" ++ value ++ "\""
 
         GoCallExpr fn args ->
             emitExpr fn ++ "(" ++ String.join ", " (List.map emitExpr args) ++ ")"
@@ -167,16 +167,3 @@ emitExpr expr =
             "nil"
 
 
-escapeGoString : String -> String
-escapeGoString s =
-    let
-        s1 =
-            String.replace "\\" "\\\\" s
-
-        s2 =
-            String.replace "\"" "\\\"" s1
-
-        s3 =
-            String.replace "\n" "\\n" s2
-    in
-        String.replace "\t" "\\t" s3

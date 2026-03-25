@@ -1353,6 +1353,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }"
     , GoDeclRaw "var _ = exec.Command"
     , GoDeclRaw "var _ = bufio.NewReader"
+    , GoDeclRaw "func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }"
     , GoDeclRaw "func sky_fst(t any) any { return sky_asTuple2(t).V0 }"
     , GoDeclRaw "func sky_snd(t any) any { return sky_asTuple2(t).V1 }"
     , GoDeclRaw "func sky_errorToString(e any) any { return sky_asString(e) }"
