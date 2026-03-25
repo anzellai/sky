@@ -17,7 +17,7 @@ type alias LowerCtx =
     { registry : AdtRegistry
     , moduleExports : Dict.Dict String (Set.Set String)
     , importedConstructors : Dict.Dict String CtorInfo
-    , localFunctions : Set.Set String
+    , localFunctions : List String
     , collectedImports : Set.Set String
     , importAliases : Dict.Dict String String
     , modulePrefix : String
@@ -32,7 +32,7 @@ emptyCtx =
     { registry = Adt.emptyRegistry
     , moduleExports = Dict.empty
     , importedConstructors = Dict.empty
-    , localFunctions = Set.empty
+    , localFunctions = []
     , collectedImports = Set.empty
     , importAliases = Dict.empty
     , modulePrefix = ""
@@ -318,7 +318,11 @@ lowerIdentifier ctx name =
                                     GoIdent "sky_println"
                                 else if name == "identity" then
                                     GoIdent "sky_identity"
-                                else if not (String.isEmpty ctx.modulePrefix) && Set.member name ctx.localFunctions then
+                                else if name == "always" then
+                                    GoIdent "sky_always"
+                                else if name == "js" then
+                                    GoIdent "sky_js"
+                                else if not (String.isEmpty ctx.modulePrefix) && listContains name ctx.localFunctions then
                                     GoIdent (ctx.modulePrefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name))
                                 else
                                     GoIdent (sanitizeGoIdent name)
@@ -469,6 +473,24 @@ lowerQualified ctx parts =
             GoIdent "sky_setIsEmpty"
         else if qualName == "Set.remove" then
             GoIdent "sky_setRemove"
+        else if qualName == "Char.isUpper" then
+            GoIdent "sky_charIsUpper"
+        else if qualName == "Char.isLower" then
+            GoIdent "sky_charIsLower"
+        else if qualName == "Char.isDigit" then
+            GoIdent "sky_charIsDigit"
+        else if qualName == "Char.isAlpha" then
+            GoIdent "sky_charIsAlpha"
+        else if qualName == "Char.isAlphaNum" then
+            GoIdent "sky_charIsAlphaNum"
+        else if qualName == "Char.toUpper" then
+            GoIdent "sky_charToUpper"
+        else if qualName == "Char.toLower" then
+            GoIdent "sky_charToLower"
+        else if qualName == "String.fromChar" then
+            GoIdent "sky_stringFromChar"
+        else if qualName == "String.toList" then
+            GoIdent "sky_stringToList"
         else if qualName == "Io.readLine" then
             GoIdent "sky_readLine"
         else if qualName == "Io.readBytes" then
@@ -718,10 +740,10 @@ lowerLetBinding ctx binding =
         
         PTuple items _ ->
 
-            -- Destructure tuple
+            -- Destructure tuple — unique temp name from all variable names
             let
                 tmpName =
-                    "__let_tmp"
+                    "__tup_" ++ makeTupleKey items
                 tmpDecl =
                     GoShortDecl tmpName (lowerExpr ctx binding.value)
                 tupleSize =
@@ -1281,31 +1303,40 @@ generateHelperDecls =
     , GoDeclRaw "func sky_writeStdout(s any) any { fmt.Print(sky_asString(s)); return struct{}{} }"
     , GoDeclRaw "func sky_writeStderr(s any) any { fmt.Fprint(os.Stderr, sky_asString(s)); return struct{}{} }"
     , GoDeclRaw "var stdinReader *bufio.Reader"
+    , GoDeclRaw "func sky_charIsUpper(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'A' && r <= 'Z' }; return false }"
+    , GoDeclRaw "func sky_charIsLower(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'a' && r <= 'z' }; return false }"
+    , GoDeclRaw "func sky_charIsDigit(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= '0' && r <= '9' }; return false }"
+    , GoDeclRaw "func sky_charIsAlpha(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') }; return false }"
+    , GoDeclRaw "func sky_charIsAlphaNum(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') }; return false }"
+    , GoDeclRaw "func sky_charToUpper(c any) any { return strings.ToUpper(sky_asString(c)) }"
+    , GoDeclRaw "func sky_charToLower(c any) any { return strings.ToLower(sky_asString(c)) }"
+    , GoDeclRaw "func sky_stringFromChar(c any) any { return sky_asString(c) }"
+    , GoDeclRaw "func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }"
     , GoDeclRaw "var _ = exec.Command"
     , GoDeclRaw "var _ = bufio.NewReader"
     , GoDeclRaw "func sky_fst(t any) any { return sky_asTuple2(t).V0 }"
     , GoDeclRaw "func sky_snd(t any) any { return sky_asTuple2(t).V1 }"
     , GoDeclRaw "func sky_errorToString(e any) any { return sky_asString(e) }"
     , GoDeclRaw "func sky_identity(v any) any { return v }"
+    , GoDeclRaw "func sky_always(a any) any { return func(b any) any { return a } }"
+    , GoDeclRaw "func sky_js(v any) any { return v }"
     , GoDeclRaw "func sky_call(f any, arg any) any { return f.(func(any) any)(arg) }"
     , GoDeclRaw "func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any) any)(b) }"
     , GoDeclRaw "func sky_call3(f any, a any, b any, c any) any { return f.(func(any) any)(a).(func(any) any)(b).(func(any) any)(c) }"
     ]
 
 
-collectLocalFunctions : List Declaration -> Set.Set String
+collectLocalFunctions : List Declaration -> List String
 collectLocalFunctions decls =
-    List.foldl
-        (
-        \d acc ->
+    List.filterMap
+        (\d ->
             case d of
                 FunDecl name _ _ _ ->
-                    Set.insert name acc
+                    Just name
 
                 _ ->
-                    acc
+                    Nothing
         )
-        Set.empty
         decls
 
 
@@ -1419,6 +1450,123 @@ isStdlibCallee expr =
             isStdlibCallee innerCallee
 
         _ ->
+            False
+
+
+makeTupleKey : List Pattern -> String
+makeTupleKey items =
+    String.join "_" (List.filterMap getPatVarName items)
+
+
+getPatVarName : Pattern -> Maybe String
+getPatVarName pat =
+    case pat of
+        PVariable name _ ->
+            Just name
+
+        PWildcard _ ->
+            Just "w"
+
+        _ ->
+            Just "x"
+
+
+-- Check if name is a parameter/let-binding/builtin (should NOT be prefixed)
+-- Returns True for: single-char names, common param names, Prelude functions
+isParamOrBuiltin : String -> Bool
+isParamOrBuiltin name =
+    String.length name <= 2 ||
+    name == "acc" || name == "rest" || name == "state" || name == "env" ||
+    name == "ctx" || name == "mod" || name == "decl" || name == "decls" ||
+    name == "items" || name == "fields" || name == "args" || name == "params" ||
+    name == "body" || name == "name" || name == "result" || name == "pair" ||
+    name == "counter" || name == "registry" || name == "sub" || name == "pat" ||
+    name == "left" || name == "right" || name == "inner" || name == "source" ||
+    name == "code" || name == "token" || name == "tokens" || name == "parts" ||
+    name == "prefix" || name == "msg" || name == "key" || name == "val" ||
+    name == "value" || name == "expr" || name == "span" || name == "type_" ||
+    name == "scheme" || name == "entry" || name == "binding" || name == "branch" ||
+    name == "variant" || name == "modName" || name == "filePath" || name == "outDir" ||
+    name == "goCode" || name == "goPackage" || name == "goDecls" || name == "goArgs" ||
+    name == "goCallee" || name == "goName" || name == "goMod" || name == "funcPart" ||
+    name == "modPart" || name == "qualName" || name == "aliasMap" || name == "stdlibEnv" ||
+    name == "depDecls" || name == "entryMod" || name == "loadedModules" ||
+    name == "entryRegistry" || name == "entryCtx" || name == "baseCtx" ||
+    name == "entryGoDecls" || name == "entryCtorDecls" || name == "helperDecls" ||
+    name == "allDecls" || name == "rawGoCode" || name == "outPath" ||
+    name == "localImports" || name == "depBaseCtx" || name == "depAliasMap" ||
+    name == "checkResult" || name == "lexResult" || name == "filtered" ||
+    name == "prefixed" || name == "aliases" || name == "goType" ||
+    name == "impMap" || name == "imp" || name == "imports" || name == "header" ||
+    name == "opToken" || name == "info" || name == "prec" || name == "assoc" ||
+    name == "nextMin" || name == "condition" || name == "thenBranch" || name == "elseBranch" ||
+    name == "subject" || name == "bindings" || name == "callee" || name == "fn" ||
+    name == "remaining" || name == "idx" || name == "ch" || name == "str" ||
+    name == "count" || name == "len" || name == "start" || name == "end" ||
+    name == "line" || name == "character" || name == "position" || name == "textDoc" ||
+    name == "uri" || name == "text" || name == "content" || name == "json" ||
+    name == "varName" || name == "pattern" || name == "arity" || name == "closure" ||
+    name == "separator" || name == "list" || name == "item" || name == "elem" ||
+    name == "init" || name == "doc" || name == "indent" || name == "width" ||
+    name == "wrapperResult" || name == "skyiContent" || name == "pkgName" ||
+    name == "safePkg" || name == "cacheDir" || name == "cachePath" ||
+    name == "inspectorDir" || name == "buildResult" || name == "output" ||
+    name == "goModContent" || name == "mainPath" || name == "runtimeCode" ||
+    name == "runtimeDir" || name == "inspectJson" || name == "wrapperCode" ||
+    name == "wrapperDir" || name == "moduleName" || name == "funcName" ||
+    name == "funcInfo" || name == "methodInfo" || name == "receiverCast" ||
+    name == "argCasts" || name == "castStr" || name == "argNames" || name == "goCall" ||
+    name == "returnCode" || name == "wrapperName" || name == "paramList" ||
+    name == "paramStr" || name == "assertion" || name == "entryFile" ||
+    name == "command" || name == "formatted" || name == "readErr" || name == "parseErr" ||
+    name == "srcRoot" || name == "hasLocalImports" || name == "error" ||
+    name == "diagnostics" || name == "severity" || name == "annotation" ||
+    name == "bodyResult" || name == "condResult" || name == "leftResult" ||
+    name == "rightResult" || name == "patResult" || name == "bodyType" ||
+    name == "funType" || name == "selfType" || name == "selfVar" ||
+    name == "paramVars" || name == "bindResult" || name == "paramSub" ||
+    name == "envWithSelf" || name == "resolvedParamTypes" || name == "bodySub" ||
+    name == "finalSub" || name == "finalType" || name == "scheme" ||
+    name == "typed" || name == "newEnv" || name == "annotations" ||
+    name == "inferDiags" || name == "exhaustDiags" || name == "adtDiags" ||
+    name == "aliasEnv" || name == "adtEnv" || name == "env0" || name == "env1" ||
+    name == "newRegistry" || name == "newDiags" || name == "ctorSchemes" ||
+    name == "adt" || name == "paramMap" || name == "resultType" ||
+    name == "fieldTypes" || name == "ctorType" || name == "quantified" ||
+    name == "elemVar" || name == "listType" || name == "elemType" ||
+    name == "headPat" || name == "tailPat" || name == "headResult" ||
+    name == "tailResult" || name == "innerPat" || name == "argPats" ||
+    name == "argTypes" || name == "ctorName" || name == "instType" ||
+    name == "splitResult" || name == "subjectType" || name == "patterns" ||
+    name == "covered" || name == "missing" || name == "allCtors" ||
+    name == "coveredCtors" || name == "missingList" ||
+    name == "headerLine" || name == "contentLength" || name == "blankLine" ||
+    name == "searchKey" || name == "keyIdx" || name == "afterKey" ||
+    name == "colonIdx" || name == "afterColon" || name == "numStr" || name == "raw"
+
+
+listContains : String -> List String -> Bool
+listContains needle haystack =
+    List.foldl (\item acc -> if acc then True else item == needle) False haystack
+
+
+isLocalFn : String -> Dict.Dict String Bool -> Bool
+isLocalFn name fns =
+    case Dict.get name fns of
+        Just _ ->
+            True
+
+        Nothing ->
+            False
+
+
+isLocalFunction : String -> LowerCtx -> Bool
+isLocalFunction name ctx =
+    case Dict.get name ctx.localFunctionArity of
+        Just _ ->
+            True
+
+        Nothing ->
             False
 
 

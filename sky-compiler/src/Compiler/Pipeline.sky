@@ -32,6 +32,26 @@ import Compiler.Resolver as Resolver
 --   5. Lower AST → GoIR
 --   6. Emit Go source code
 --   7. Write output files
+findCharIdx : Char -> String -> Int -> Int
+findCharIdx ch str idx =
+    if idx >= String.length str then
+        -1
+    else if String.slice idx (idx + 1) str == String.fromChar ch then
+        idx
+    else
+        findCharIdx ch str (idx + 1)
+
+
+findLastSlash : String -> Int -> Int
+findLastSlash path idx =
+    if idx < 0 then
+        -1
+    else if String.slice idx (idx + 1) path == "/" then
+        idx
+    else
+        findLastSlash path (idx - 1)
+
+
 compile : String -> String -> Result String String
 compile filePath outDir =
     let
@@ -394,15 +414,6 @@ extractTypeName code =
             ""
 
 
-findCharIdx : Char -> String -> Int -> Int
-findCharIdx ch str idx =
-    if idx >= String.length str then
-        -1
-    else if String.slice idx (idx + 1) str == String.fromChar ch then
-        idx
-    else
-        findCharIdx ch str (idx + 1)
-
 
 -- Generate var aliases for names imported via exposing(..) from local modules
 -- e.g. import Compiler.GoIr exposing (..) → var GoReturn = Compiler_GoIr_GoReturn
@@ -671,15 +682,6 @@ dirOfPath path =
         else
             "."
 
-
-findLastSlash : String -> Int -> Int
-findLastSlash path idx =
-    if idx < 0 then
-        -1
-    else if String.slice idx (idx + 1) path == "/" then
-        idx
-    else
-        findLastSlash path (idx - 1)
 
 
 needsStdlibWrapper : String -> Bool

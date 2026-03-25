@@ -1,5 +1,12 @@
 # CLAUDE.md
 
+## Core Principles
+
+1. **If it compiles, it works.** Sky lang, Sky.Live, Go FFI/interop, type validations & inference must be 100% correct and reliable. No workarounds, no exceptions.
+2. **Dev experience is top priority.** The compiler, LSP, formatter, and CLI must provide an excellent developer experience. Errors must be clear, diagnostics precise, and tooling fast.
+3. **Root-cause fixes only.** When we find an issue, we dive deep to the root cause and solve it at the Sky language level. No exception-swallowing, no workarounds, no hacks that paper over bugs.
+4. **Production-grade architecture.** Sky lang & Sky.Live must support building scalable, maintainable, production-grade global applications. If a decision cannot fulfil that, we get to the bottom of it and fix/come up with solutions that can.
+
 ## Project Overview
 
 Sky is an experimental programming language inspired by **Elm**, compiling to **Go**. The repo contains a compiler, CLI, formatter, LSP, and Helix editor integration -- the bootstrap compiler is written in **TypeScript**, and a **self-hosted compiler is written in Sky itself** (`sky-compiler/`).

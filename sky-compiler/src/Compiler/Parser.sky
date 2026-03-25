@@ -246,24 +246,18 @@ parseDeclarations state =
 
 parseDeclaration : ParserState -> Result String ( Declaration, ParserState )
 parseDeclaration state =
-    let
-        curTok =
-            peek state
-        t1 =
-            peekAt 1 state
-    in
-        if curTok.lexeme == "foreign" && t1.lexeme == "import" then
-            parseForeignImport state
-        else if curTok.lexeme == "type" && t1.lexeme == "alias" then
-            parseTypeAlias state
-        else if curTok.lexeme == "type" then
-            parseTypeDecl state
-        else if matchKind TkIdentifier state && tokenKindEq t1.kind TkColon then
-            parseTypeAnnot state
-        else if matchKind TkIdentifier state then
-            parseFunDecl state
-        else
-            Err ("Unexpected token: " ++ curTok.lexeme)
+    if (peek state).lexeme == "foreign" && (peekAt 1 state).lexeme == "import" then
+        parseForeignImport state
+    else if (peek state).lexeme == "type" && (peekAt 1 state).lexeme == "alias" then
+        parseTypeAlias state
+    else if (peek state).lexeme == "type" then
+        parseTypeDecl state
+    else if matchKind TkIdentifier state && tokenKindEq (peekAt 1 state).kind TkColon then
+        parseTypeAnnot state
+    else if matchKind TkIdentifier state then
+        parseFunDecl state
+    else
+        Err ("Unexpected token: " ++ (peek state).lexeme)
 
 
 -- ══════════════════════════════════════════════════════
