@@ -21,7 +21,7 @@ main =
 
 Sky compiles to Go. You get a single binary that runs your fullstack app -- API server, database access, and server-rendered interactive UI -- all from one codebase, one language, one deployment artifact.
 
-The compiler, CLI, formatter, LSP, and tree-sitter grammar are all written in TypeScript.
+The compiler, CLI, formatter, and LSP are all **self-hosted** — written in Sky itself, compiled to a ~4MB native Go binary. Zero Node.js/TypeScript/npm dependencies. The compiler bootstraps through 3+ generations of self-compilation.
 
 ### Why Sky exists
 
@@ -1200,43 +1200,35 @@ sky run examples/01-hello-world/src/Main.sky
 source.sky -> lexer -> layout filtering -> parser -> AST -> module graph -> type checker -> Go emitter -> go build
 ```
 
-### Source Layout
+### Source Layout (Self-Hosted Sky Compiler)
 
 ```
-src/
-  compiler.ts            -- Core compilation pipeline
-  ast/ast.ts             -- AST node definitions
-  lexer/lexer.ts         -- Indentation-aware lexer
-  parser/                -- Pratt-style parser with layout filtering
-  modules/resolver.ts    -- Module resolution & dependency graph
-  types/                 -- HM type system (infer, unify, checker, adt, exhaustiveness, constraints)
-  core-ir/core-ir.ts     -- Core Intermediate Representation
-  go-ir/go-ir.ts         -- Go Intermediate Representation
-  lower/                 -- AST -> CoreIR -> GoIR lowering
-  emit/go-emitter.ts     -- Go code generation
-  interop/go/            -- Go FFI (bindings, wrappers, package inspection)
-  pkg/                   -- Package manager (manifest, installer, resolver, lockfile, registry)
-  live/                  -- Sky.Live compiler support
-  runtime/               -- Sky.Live Go runtime files
-  lsp/                   -- Language Server (completion, definition, hover, signature)
-  stdlib/                -- Standard library .sky files
-  cli/                   -- CLI commands
-  bin/                   -- Entry points (sky.ts, sky-lsp.ts, build-binary.js)
-  utils/                 -- Helpers (assets, paths)
+src/                              -- Sky compiler (written in Sky, compiles to Go)
+  Main.sky                        -- CLI entry point (build/check/run/fmt/lsp/clean)
+  Compiler/                       -- 21 modules: lexer, parser, type checker, lowerer, emitter
+    Lexer.sky, Parser.sky, ParserExpr.sky, ParserPattern.sky
+    Ast.sky, GoIr.sky, Types.sky, Env.sky
+    Infer.sky, Unify.sky, Checker.sky, Exhaustive.sky
+    Lower.sky, Emit.sky, Pipeline.sky, Resolver.sky
+  Ffi/                            -- Go FFI: inspector, type mapper, binding/wrapper generator
+  Formatter/                      -- Elm-style formatter (Doc algebra + Format)
+  Lsp/                            -- Language Server (JSON-RPC + hover/diagnostics/completion)
+
+ts-compiler/                      -- Legacy TypeScript bootstrap (reference only)
+stdlib-go/                        -- Go runtime implementations for stdlib modules
+examples/                         -- 15 example projects
 ```
 
 ### Key Design Decisions
 
+- **Self-hosted** -- the compiler compiles itself through 3+ generations (bootstrapping verified)
+- **Task effect boundary** -- all IO goes through `Task`, panics caught, nil handled
 - **Indentation-sensitive parsing** -- like Elm/Haskell, whitespace determines block structure
 - **Hindley-Milner type inference** -- full inference with unification, explicit annotations optional
 - **Go as backend** -- compiles to readable Go code, leverages Go's toolchain and ecosystem
-- **Auto-generated FFI** -- Go packages are introspected at build time; type-safe wrappers are generated automatically
-- **Pointer safety** -- Go `*primitive` types map to `Maybe T`, opaque struct pointers are transparent handles
-- **Direct VNode emission** -- Html functions produce VNode records directly, avoiding HTML string parsing on every render
-- **Runtime-carrying Sub** -- subscription values carry their configuration data for the Go runtime to inspect
-- **Universal unifiers** -- `JsValue`, `Foreign` types bridge Sky and Go type systems
-- **Prelude auto-import** -- `Sky.Core.Prelude` available everywhere without explicit import
-- **Virtual assets** -- stdlib files are bundled into the binary via `build-binary.js`
+- **Auto-generated FFI** -- Go packages introspected at build time; type-safe Task-wrapped wrappers generated automatically
+- **Pointer safety** -- Go `*primitive` → `Maybe T`, opaque struct pointers are transparent handles
+- **~4MB native binary** -- no Node.js, no npm, no TypeScript runtime. Just Go
 
 ---
 

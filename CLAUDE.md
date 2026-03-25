@@ -7,26 +7,33 @@
 3. **Root-cause fixes only.** Never patch over bugs. Fix at the correct abstraction layer (lexer, parser, type system, lowering, or interop generator).
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must support real backend systems. Must remain maintainable.
 
-## Effect Boundary: Task (Result E A)
+## Effect Boundary: Task
 
-ALL Go interop and effectful operations MUST be exposed as `Task (Result E A)`. This is the fundamental guarantee that makes Sky pure and reliable.
+ALL effectful operations flow through `Task`. This is the fundamental guarantee that makes Sky pure and reliable.
 
-- **Pure functions** (`String.length`, `List.map`) — no wrapping needed
+- **Pure functions** (`String.length`, `List.map`, `Math.sqrt`) — no wrapping needed
 - **Fallible functions** (`String.toInt`, `Dict.get`) — `Result` or `Maybe`
-- **Effectful functions** (`File.readFile`, `Process.run`, `println`) — `Task (Result E A)`
-- **Platform entry** (`main`) — returns `Task`, the runtime executes it
+- **Effectful functions** (`File.readFile`, `Http.get`, `println`) — `Task String a`
+- **Platform entry** (`main`) — may return `Task`; the runtime auto-executes it
 
-### Error mapping rules:
-- `(T, error)` → `Result E T`
-- `error` → `Result E ()`
-- All panics → `Result PanicError`
-- nil → `Result NilError` or `Maybe` (explicit only)
+```elm
+-- Task composition with pipeline operators
+main =
+    Task.succeed "Sky"
+        |> Task.andThen (\name -> Task.succeed ("Hello, " ++ name ++ "!"))
+        |> Task.map (\msg -> msg ++ " Pure and reliable.")
+        |> Task.perform
+```
 
-No silent fallback values. No effect leakage. No goroutines/channels/mutation exposed to Sky surface.
+### Error mapping at FFI boundary:
+- Go `(T, error)` → `Result String T`
+- Go `error` → `Result String ()`
+- Go panics → caught by `sky_runTask`, converted to `Err`
+- Go nil → `Maybe` or `Result`
 
 ## Project Overview
 
-Sky is a pure functional language inspired by Elm, compiling to Go. The compiler, CLI, formatter, LSP, and FFI generator are all written in Sky itself (self-hosted). A legacy TypeScript bootstrap compiler is preserved in `ts-compiler/` for reference only.
+Sky is a pure functional language inspired by Elm, compiling to Go. The compiler, CLI, formatter, LSP, and FFI generator are all self-hosted — written in Sky itself, compiled to a ~4MB native Go binary. Zero Node.js/TypeScript/npm dependencies.
 
 ## Architecture
 
@@ -37,131 +44,182 @@ source → lexer → layout filtering → parser → AST → module graph → ty
 ```
 
 ```
-src/                              -- Sky compiler (self-hosted)
-  Main.sky                        -- Entry point (CLI arg handling)
-  Cli.sky                         -- CLI command dispatch
-  Compiler/
-    Token.sky                     -- Token types and source positions
-    Lexer.sky                     -- Indentation-aware tokenizer
-    ParserCore.sky                -- Shared parser state, helpers, layout filtering
-    Parser.sky                    -- Module/import/declaration/type parsing
-    ParserExpr.sky                -- Expression parsing (Pratt-style precedence)
-    ParserPattern.sky             -- Pattern parsing
-    Ast.sky                       -- AST node definitions
-    GoIr.sky                      -- Go Intermediate Representation types
-    Emit.sky                      -- Go source code emitter
-    Types.sky                     -- HM type system core (Type, Scheme, Substitution)
-    Env.sky                       -- Type environment with lexical scoping
-    Unify.sky                     -- Robinson unification with occurs check
-    Adt.sky                       -- ADT registration and constructor scheme generation
-    PatternCheck.sky              -- Pattern type checking and binding extraction
-    Infer.sky                     -- Algorithm W type inference
-    Exhaustive.sky                -- Exhaustiveness checking for case expressions
-    Checker.sky                   -- Module-level type checking orchestration
-    Lower.sky                     -- AST → GoIR lowering
-    Resolver.sky                  -- Module resolution and stdlib type environment
-    Pipeline.sky                  -- Full compilation pipeline orchestration
-  Ffi/
-    Inspector.sky                 -- Go package inspection (calls go/packages subprocess)
-    TypeMapper.sky                -- Go type → Sky type mapping
-    BindingGen.sky                -- .skyi binding file generation
-    WrapperGen.sky                -- Go wrapper code generation (panic-safe, nil-safe)
-  Formatter/
-    Doc.sky                       -- Pretty-printer document algebra
-    Format.sky                    -- Elm-style formatter
-  Lsp/
-    JsonRpc.sky                   -- JSON-RPC framing and JSON construction/parsing
-    Server.sky                    -- LSP message dispatch and feature handlers
-  LspMain.sky                    -- LSP entry point
+src/                              -- Sky compiler (self-hosted, 34 modules)
+  Main.sky                        -- CLI entry point (build/check/run/fmt/lsp/clean)
+  Cli.sky                         -- Full CLI with all commands
+  Compiler/                       -- 21 modules: lexer, parser, type checker, lowerer, emitter
+  Ffi/                            -- 4 modules: Go package inspector, binding/wrapper generator
+  Formatter/                      -- 2 modules: pretty-printer + Elm-style formatter
+  Lsp/                            -- 2 modules: JSON-RPC + LSP server
 
-ts-compiler/                     -- Legacy TypeScript bootstrap compiler (reference only)
-examples/                        -- Example projects (01-hello-world through 13-skyshop)
+ts-compiler/                      -- Legacy TypeScript bootstrap (reference only, not used)
+stdlib-go/                        -- Go runtime implementations for stdlib modules
+examples/                         -- 15 example projects
 ```
 
-## Build
+## Build & Test
 
 ```bash
-# Self-compile: the Sky compiler compiles itself
-sky build src/Main.sky            # Produces dist/sky
-./dist/sky build src/Main.sky     # Self-compiled compiler compiles itself again
-
-# Format
-sky fmt src/Main.sky              # Format .sky files (Elm-style)
-
-# Type check
+sky build src/Main.sky            # Compile Sky → Go binary (sky-out/app)
+sky build examples/01-hello-world/src/Main.sky   # Compile any project
 sky check src/Main.sky            # Type-check without compiling
-
-# Clean
-sky clean                         # Remove dist/, .skycache/, .skydeps/
+sky fmt src/Main.sky              # Format (Elm-style: 4-space, leading commas)
+sky lsp                           # Start Language Server (JSON-RPC over stdio)
+sky clean                         # Remove sky-out/ dist/
+sky --version                     # sky v0.6.0
 ```
 
-## Critical Rules
+## Standard Library
 
-1. **Sky only** — The compiler, LSP, formatter, and FFI generator are written in Sky. No TypeScript/JavaScript in the compilation pipeline.
-2. **Indentation parser** — Column of first token = minimum indentation reference. Do not tighten rules that break slightly unaligned input.
-3. **Formatter (Elm-style)** — 4-space indent, leading commas, `let`/`in` always multiline, 80-char line width.
-4. **Prelude** — `Sky.Core.Prelude` implicitly imported everywhere. Provides `Result`, `Maybe`, `Task`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`.
-5. **Go FFI** — All Go interop wrapped in `Task (Result E A)`. Compiler generates panic-safe, nil-safe wrappers. Binding index enables lazy resolution for massive packages. Users never write FFI code.
-6. **Type constraints** — `comparable`, `number`, `appendable` enforced during unification.
-7. **Pointer safety** — `*primitive` → `Maybe T`. Opaque struct pointers stay as type name. `(T, bool)` → `Maybe T`. `(T, error)` → `Result Error T`.
-8. **Pipeline operators** — `|>` and `<|` (Elm-style). `::` (cons). `/=` (not-equal). `//` (integer division).
-9. **Task execution** — `main` returns `Task`. The compiler generates the Go executor. All IO goes through `Task`.
-10. **Go reserved words** — `sanitizeGoIdent` appends `_` to clashing identifiers.
+### Pure Functions (no Task)
+| Module | Key Functions |
+|--------|--------------|
+| `Sky.Core.String` | split, join, replace, trim, contains, startsWith, toInt, fromInt, slice, length |
+| `Sky.Core.List` | map, filter, foldl, foldr, head, take, drop, sort, zip, concat, filterMap |
+| `Sky.Core.Dict` | empty, insert, get, remove, keys, values, map, foldl, union, member |
+| `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList |
+| `Sky.Core.Maybe` | withDefault, map, andThen |
+| `Sky.Core.Result` | withDefault, map, andThen, mapError |
+| `Sky.Core.Math` | sqrt, pow, abs, floor, ceil, round, sin, cos, pi, min, max |
+| `Sky.Core.Regex` | match, find, findAll, replace, split |
+| `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256 |
+| `Sky.Core.Encoding` | base64Encode/Decode, urlEncode/Decode, hexEncode/Decode |
+| `Sky.Core.Char` | isUpper, isLower, isDigit, isAlpha, toUpper, toLower |
+| `Sky.Core.Path` | join, dir, base, ext, isAbsolute |
+| `Sky.Core.Json.Decode` | decodeString, string, int, float, bool, list, field, map, andThen |
+| `Sky.Core.Json.Encode` | encode, string, int, float, bool, list, object |
 
-## Interop Model
+### Task-Wrapped Effects
+| Module | Key Functions | Returns |
+|--------|--------------|---------|
+| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence | Task err a |
+| `Sky.Core.File` | readFile, writeFile, mkdirAll, readDir, exists | Task String a |
+| `Sky.Core.Process` | run, exit, getCwd, loadEnv | Task String a |
+| `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task String a |
+| `Sky.Core.Time` | now, unixMillis, sleep | Task String Int |
+| `Sky.Core.Http` | get, post, request | Task String Response |
+| `Sky.Core.Random` | int, float, choice, shuffle | Task String a |
+| `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task String () |
 
-### Golden Rule: ALL Go interop → Task (Result E A)
+### Prelude (implicitly imported everywhere)
+`Result (Ok/Err)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
 
-The compiler owns the entire boundary layer:
+## Go FFI / Interop Model
 
-1. **Inspect** — `go/packages` + `go/types` via Go subprocess
-2. **Classify** — pure / fallible / effectful
-3. **Generate Sky API** — always `Task (Result E A)` for effectful
-4. **Generate Go wrapper** — panic-safe (`recover`), nil-safe, type-safe
+### Golden Rule: Users never write FFI code
 
-### Forbidden:
-- Raw Go types exposed to Sky surface (`[]T`, `map`, pointers, interfaces)
-- Functions returning plain values if they are effectful
-- Silent fallback values
-- Runtime-only fixes for compile-time problems
-- Escape hatches that bypass the type system
+The compiler owns the entire boundary:
+1. `sky add github.com/some/package` — auto-detect Go vs Sky package
+2. Inspector subprocess runs `go/packages` + `go/types` to extract API
+3. Compiler classifies each function: pure / fallible / effectful
+4. Generates `.skyi` binding file + Go wrapper with panic recovery
+5. Binding index enables lazy symbol resolution (40K+ symbols in seconds)
 
-## Package Management
+### Type Mapping
+| Go | Sky |
+|----|-----|
+| `string` | `String` |
+| `int`, `int64` | `Int` |
+| `float64` | `Float` |
+| `bool` | `Bool` |
+| `error` | `Result String a` |
+| `(T, error)` | `Result String T` |
+| `(T, bool)` | `Maybe T` |
+| `*string`, `*int` | `Maybe String`, `Maybe Int` |
+| `*sql.DB` | `Db` (opaque) |
+| `[]T` | `List T` |
 
-### sky.toml
-```toml
-name = "my-project"
-version = "0.1.0"
-entry = "src/Main.sky"
-bin = "dist/app"
+## Sky.Live
 
-[source]
-root = "src"
+Server-driven UI framework with Elm TEA architecture:
 
-[dependencies]
-"github.com/someone/sky-utils" = "latest"
-
-[go.dependencies]
-"github.com/google/uuid" = "latest"
+```elm
+main =
+    Live.app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" HomePage, route "/about" AboutPage ]
+        , notFound = HomePage
+        }
 ```
 
-## Language Syntax (Elm-like)
+- **HTTP-first** — full HTML on first load, patches on events
+- **SSE subscriptions** — real-time updates via `Time.every`
+- **Session stores** — memory, SQLite, Redis, PostgreSQL, Firestore
+- **Type-safe events** — `onClick Increment`, `onInput SetName`
+- **Automatic VNode diffing** — only changed attributes/text sent as patches
+- **Security** — cookie validation, rate limiting, body size limits, CORS
+
+### Sky.Http.Server (Sky.Live foundation)
+
+```elm
+main =
+    Server.listen 8080
+        [ Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
+        , Server.get "/api/users/:id" getUser
+        , Server.post "/api/data" handlePost
+        , Server.static "/assets" "./public"
+        ]
+```
+
+- Composable routes with `get/post/put/delete/any`
+- Route groups with shared prefix
+- Cookie support (HttpOnly, Secure, SameSite)
+- Request extractors: `param`, `queryParam`, `header`, `getCookie`
+- Response builders: `text`, `json`, `html`, `withStatus`, `redirect`
+- Middleware: `Handler -> Handler` function composition
+
+## Language Syntax (Elm-compatible)
 
 ```elm
 module Main exposing (main)
 
+import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
-import Sky.Core.File as File
 import Std.Log exposing (println)
 
-main : Task (Result String ())
+type Msg = Increment | Decrement
+
+update : Msg -> Int -> Int
+update msg count =
+    case msg of
+        Increment -> count + 1
+        Decrement -> count - 1
+
 main =
-    File.readFile "hello.txt"
-        |> Task.andThen (\content ->
-            println content
-        )
+    let
+        result = update Increment 0
+    in
+    println (String.fromInt result)
 ```
 
-## Sky.Live
+### Key Syntax
+- `|>` `<|` pipeline operators
+- `::` cons (patterns + expressions)
+- `\x -> x + 1` lambdas
+- `let ... in ...` local bindings
+- `case x of ...` pattern matching with exhaustiveness checking
+- `{ record | field = value }` record update
+- `module M exposing (..)` / `import M as Alias exposing (func)`
 
-Sky.Live is the server-driven UI framework. HTTP-first with SSE/polling for live updates. Session stores: memory, SQLite, Redis, PostgreSQL, Firestore. Config via `sky.toml [live]` section, overridable by env vars.
+## Examples
+
+| # | Name | Description |
+|---|------|-------------|
+| 01 | hello-world | Basic println |
+| 02 | go-stdlib | Go stdlib usage (crypto, encoding, time, http) |
+| 03 | tea-external | TEA with external packages (UUID, godotenv) |
+| 04 | local-pkg | Multi-module project with local imports |
+| 05 | mux-server | HTTP server with gorilla/mux |
+| 06 | json | JSON encoding/decoding (Elm-compatible API) |
+| 07 | todo-cli | SQLite CLI todo app |
+| 08 | notes-app | Full CRUD web app with database |
+| 09 | live-counter | Sky.Live counter with SSE subscriptions |
+| 10 | live-component | Sky.Live component protocol |
+| 11 | fyne-stopwatch | Desktop GUI with Fyne toolkit |
+| 12 | skyvote | Full Sky.Live voting app with auth |
+| 13 | skyshop | E-commerce: Stripe, Firebase, i18n |
+| 14 | task-demo | Task effect boundary demonstration |
+| 15 | http-server | Sky.Http.Server with routing + cookies |

@@ -1,6 +1,6 @@
 {
   "name": "sky-compiler",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "description": "Sky programming language compiler",
   "type": "module",
   "bin": {
