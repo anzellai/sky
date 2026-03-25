@@ -88,6 +88,7 @@ jobs:
   docker:
     needs: release
     runs-on: ubuntu-latest
+    continue-on-error: true  # Docker Hub outages shouldn't fail the release
     steps:
       - uses: actions/checkout@v4
 
