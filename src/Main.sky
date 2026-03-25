@@ -42,8 +42,12 @@ runCommand command =
         cmdFmt ()
     else if command == "clean" then
         cmdClean ()
-    else if command == "add" || command == "install" || command == "remove" || command == "update" then
-        println ("Command '" ++ command ++ "' requires the legacy bootstrap compiler (ts-compiler/).\nRun: node ts-compiler/bin/build-binary.js && bin/sky-legacy " ++ command)
+    else if command == "add" then
+        cmdAdd ()
+    else if command == "install" then
+        cmdInstall ()
+    else if command == "remove" then
+        cmdRemove ()
     else if command == "version" || command == "--version" || command == "-v" then
         println "sky v0.6.0"
     else
@@ -174,6 +178,133 @@ cmdCheck _ =
                                             Process.exit 1
 
 
+-- ══════════════════════════════════════════════════════
+-- ADD COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdAdd : () -> ()
+cmdAdd _ =
+    case Args.getArg 2 of
+        Nothing ->
+            println "Usage: sky add <package>"
+
+        Just pkg ->
+            let
+                isGoPkg =
+                    not (String.contains "sky" pkg)
+                _ =
+                    println ("Adding " ++ pkg ++ "...")
+            in
+                if isGoPkg then
+                    addGoPackage pkg
+                else
+                    addSkyPackage pkg
+
+
+addGoPackage : String -> ()
+addGoPackage pkg =
+    let
+        _ =
+            File.mkdirAll ".skycache/gomod"
+        goModPath =
+            ".skycache/gomod/go.mod"
+        _ =
+            case File.readFile goModPath of
+                Ok _ ->
+                    ()
+
+                Err _ ->
+                    File.writeFile goModPath "module skycache\n\ngo 1.21.0\n"
+        getResult =
+            Process.run "sh" [ "-c" , "cd .skycache/gomod && go get " ++ pkg ]
+    in
+        case getResult of
+            Ok _ ->
+                println ("Added Go package: " ++ pkg)
+
+            Err e ->
+                let
+                    _ =
+                        println ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
+                in
+                    Process.exit 1
+
+
+addSkyPackage : String -> ()
+addSkyPackage pkg =
+    let
+        targetDir =
+            ".skydeps/" ++ pkg
+        _ =
+            File.mkdirAll ".skydeps"
+        cloneResult =
+            Process.run "git" [ "clone" , "https://" ++ pkg , targetDir ]
+    in
+        case cloneResult of
+            Ok _ ->
+                println ("Added Sky package: " ++ pkg)
+
+            Err e ->
+                let
+                    _ =
+                        println ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
+                in
+                    Process.exit 1
+
+
+-- ══════════════════════════════════════════════════════
+-- INSTALL COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdInstall : () -> ()
+cmdInstall _ =
+    let
+        _ =
+            println "Installing dependencies..."
+        _ =
+            File.mkdirAll ".skycache/gomod"
+        goModPath =
+            ".skycache/gomod/go.mod"
+        _ =
+            case File.readFile goModPath of
+                Ok _ ->
+                    ()
+
+                Err _ ->
+                    File.writeFile goModPath "module skycache\n\ngo 1.21.0\n"
+        tidyResult =
+            Process.run "sh" [ "-c" , "cd .skycache/gomod && go mod tidy" ]
+    in
+        case tidyResult of
+            Ok _ ->
+                println "Install complete."
+
+            Err e ->
+                println ("Install warning: " ++ errorToString e)
+
+
+-- ══════════════════════════════════════════════════════
+-- REMOVE COMMAND
+-- ══════════════════════════════════════════════════════
+
+cmdRemove : () -> ()
+cmdRemove _ =
+    case Args.getArg 2 of
+        Nothing ->
+            println "Usage: sky remove <package>"
+
+        Just pkg ->
+            let
+                _ =
+                    println ("Removing " ++ pkg ++ "...")
+                depDir =
+                    ".skydeps/" ++ pkg
+                _ =
+                    Process.run "rm" [ "-rf" , depDir ]
+            in
+                println ("Removed: " ++ pkg)
+
+
 cmdFmt : () -> ()
 cmdFmt _ =
     let
@@ -220,6 +351,12 @@ cmdHelp _ =
             println "  check [file]    Type-check only"
         _ =
             println "  fmt [file]      Format Sky source code"
+        _ =
+            println "  add <package>   Add Go or Sky dependency"
+        _ =
+            println "  install         Install all dependencies"
+        _ =
+            println "  remove <pkg>    Remove a dependency"
         _ =
             println "  clean           Remove build artifacts"
         _ =
