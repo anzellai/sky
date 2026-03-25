@@ -174,6 +174,26 @@ parseQualifiedParts parts state =
         ( parts , state )
 
 
+peekLexeme : ParserState -> String
+peekLexeme state =
+    (peek state).lexeme
+
+
+peekColumn : ParserState -> Int
+peekColumn state =
+    (peek state).span.start.column
+
+
+peekKind : ParserState -> TokenKind
+peekKind state =
+    (peek state).kind
+
+
+peekAt1Kind : ParserState -> TokenKind
+peekAt1Kind state =
+    (peekAt 1 state).kind
+
+
 filterLayout : List Token -> List Token
 filterLayout tokens =
     List.filter

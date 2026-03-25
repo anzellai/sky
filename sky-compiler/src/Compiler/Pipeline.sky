@@ -294,6 +294,11 @@ isSharedValue name =
     name == "peekAt" || name == "previous" || name == "tokenKindEq" ||
     name == "tokenKindStr" || name == "parseQualifiedParts" ||
     name == "isKeyword" ||
+    name == "peekLexeme" || name == "peekColumn" || name == "peekKind" ||
+    name == "peekAt1Kind" || name == "getLexemeAt1" || name == "dispatchDeclaration" ||
+    name == "parseDeclsHelper" || name == "addDeclAndContinue" || name == "prependToResult" ||
+    name == "buildVariant" || name == "finishVariant" || name == "prependVariant" ||
+    name == "applyTypeArgs" || name == "resolveTypeApp" ||
     name == "parseVariantFields" || name == "parseTypeParams" ||
     name == "parseTypeVariants" || name == "parseTypeExpr" ||
     name == "parseTypeApp" || name == "parseTypeArgs" ||
@@ -573,8 +578,10 @@ compileDependencyModule stdlibEnv allModules pair =
             buildAliasMap mod.imports
         localFns =
             Lower.collectLocalFunctions mod.declarations
+        totalDecls =
+            List.length mod.declarations
         _ =
-            println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " functions: " ++ String.join "," localFns)
+            println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " functions, " ++ String.fromInt totalDecls ++ " total decls: " ++ String.join "," localFns)
         ctx =
             { depBaseCtx
                 | registry = registry

@@ -26,7 +26,7 @@ parseExprLoop minPrec left state =
     if matchKind TkEquals state then
         Ok ( left , state )
     else
-        if (peek state).span.start.column <= 1 then
+        if peekColumn state <= 1 then
             Ok ( left , state )
         else
             if matchKind TkPipe state then
@@ -125,7 +125,7 @@ parseApplication : ParserState -> Result String (( Expression, ParserState ))
 parseApplication state =
     let
         fnCol =
-            (peek state).span.start.column
+            peekColumn state
     in
         case parsePrimary state of
             Err e ->
@@ -137,17 +137,17 @@ parseApplication state =
 parseApplicationArgs : Int -> Expression -> ParserState -> Result String (( Expression, ParserState ))
 parseApplicationArgs fnCol fn state =
     if isStartOfPrimary state then
-        if (peek state).span.start.column <= 1 then
+        if peekColumn state <= 1 then
             Ok ( fn , state )
         else
-            if (peek state).span.start.column < fnCol then
+            if peekColumn state < fnCol then
                 Ok ( fn , state )
             else
                 if matchKind TkIdentifier state &&
-                tokenKindEq (peekAt 1 state).kind TkEquals then
+                tokenKindEq (peekAt1Kind state) TkEquals then
                     Ok ( fn , state )
                 else
-                    if tokenKindEq (peekAt 1 state).kind TkArrow then
+                    if tokenKindEq (peekAt1Kind state) TkArrow then
                         Ok ( fn , state )
                     else
                         if matchKind TkPipe state then
@@ -196,7 +196,7 @@ parsePrimary state =
                 if matchKind TkBackslash state then
                     parseLambdaExpr state
                 else
-                    if matchKind TkOperator state && (peek state).lexeme == "-" then
+                    if matchKind TkOperator state && peekLexeme state == "-" then
 
         -- Unary minus: -expr
                         let
@@ -388,7 +388,7 @@ parseCaseBranches state =
     if matchKind TkEOF state then
         ( [] , state )
     else
-        if (peek state).span.start.column <= 1 then
+        if peekColumn state <= 1 then
             ( [] , state )
         else
             let

@@ -13,6 +13,67 @@ import Compiler.ParserPattern as ParserPattern
 -- ══════════════════════════════════════════════════════
 -- MODULE PARSING
 -- ══════════════════════════════════════════════════════
+dispatchDeclaration : String -> String -> ParserState -> Result String (( Declaration, ParserState ))
+dispatchDeclaration first second state =
+    if first == "foreign" && second == "import" then
+        parseForeignImport state
+    else if first == "type" && second == "alias" then
+        parseTypeAlias state
+    else if first == "type" then
+        parseTypeDecl state
+    else if matchKind TkIdentifier state && tokenKindEq (peekAt 1 state).kind TkColon then
+        parseTypeAnnot state
+    else if matchKind TkIdentifier state then
+        parseFunDecl state
+    else
+        Err ("Unexpected token: " ++ first)
+
+
+parseVariantFields : ParserState -> ( List TypeExpr, ParserState )
+parseVariantFields state =
+    if matchKind TkUpperIdentifier state ||
+    matchKind TkIdentifier state ||
+    matchKind TkLParen state || matchKind TkLBrace state then
+        if peekColumn state == 1 || matchKind TkPipe state then
+            ( [] , state )
+        else
+            case parseTypePrimary state of
+                Ok ( te, s1 ) ->
+                    let
+                        ( rest, s2 ) =
+                            parseVariantFields s1
+                    in
+                        ( te :: rest , s2 )
+                
+                Err _ ->
+                    ( [] , state )
+    else
+        ( [] , state )
+
+
+parseTypeArgs : ParserState -> ( List TypeExpr, ParserState )
+parseTypeArgs state =
+    if matchKind TkUpperIdentifier state ||
+    matchKind TkIdentifier state ||
+    matchKind TkLParen state || matchKind TkLBrace state then
+        if peekColumn state == 1 ||
+        matchKind TkEquals state || matchKind TkPipe state then
+            ( [] , state )
+        else
+            case parseTypePrimary state of
+                Ok ( te, s1 ) ->
+                    let
+                        ( rest, s2 ) =
+                            parseTypeArgs s1
+                    in
+                        ( te :: rest , s2 )
+                
+                Err _ ->
+                    ( [] , state )
+    else
+        ( [] , state )
+
+
 parse : List Token -> Result String Module
 parse tokens =
     let
@@ -213,25 +274,15 @@ parseImport state =
                             , s4
                             )
 
+getLexemeAt1 : ParserState -> String
+getLexemeAt1 state =
+    (peekAt 1 state).lexeme
+
+
 parseDeclaration : ParserState -> Result String (( Declaration, ParserState ))
 parseDeclaration state =
-    dispatchDeclaration (peek state).lexeme (peekAt 1 state).lexeme state
+    dispatchDeclaration (peekLexeme state) (getLexemeAt1 state) state
 
-
-dispatchDeclaration : String -> String -> ParserState -> Result String (( Declaration, ParserState ))
-dispatchDeclaration first second state =
-    if first == "foreign" && second == "import" then
-        parseForeignImport state
-    else if first == "type" && second == "alias" then
-        parseTypeAlias state
-    else if first == "type" then
-        parseTypeDecl state
-    else if matchKind TkIdentifier state && tokenKindEq (peekAt 1 state).kind TkColon then
-        parseTypeAnnot state
-    else if matchKind TkIdentifier state then
-        parseFunDecl state
-    else
-        Err ("Unexpected token: " ++ first)
 
 parseDeclarations : ParserState -> ( List Declaration, ParserState )
 parseDeclarations state =
@@ -378,27 +429,6 @@ parseTypeParams state =
     else
         ( [] , state )
 
-parseVariantFields : ParserState -> ( List TypeExpr, ParserState )
-parseVariantFields state =
-    if matchKind TkUpperIdentifier state ||
-    matchKind TkIdentifier state ||
-    matchKind TkLParen state || matchKind TkLBrace state then
-        if (peek state).span.start.column == 1 || matchKind TkPipe state then
-            ( [] , state )
-        else
-            case parseTypePrimary state of
-                Ok ( te, s1 ) ->
-                    let
-                        ( rest, s2 ) =
-                            parseVariantFields s1
-                    in
-                        ( te :: rest , s2 )
-                
-                Err _ ->
-                    ( [] , state )
-    else
-        ( [] , state )
-
 parseTypeVariants : ParserState -> ( List TypeVariant, ParserState )
 parseTypeVariants state =
     case consume TkUpperIdentifier state of
@@ -448,28 +478,6 @@ parseTypeExpr state =
                             Ok ( FunType left right emptySpan , s3 )
             else
                 Ok ( left , s1 )
-
-parseTypeArgs : ParserState -> ( List TypeExpr, ParserState )
-parseTypeArgs state =
-    if matchKind TkUpperIdentifier state ||
-    matchKind TkIdentifier state ||
-    matchKind TkLParen state || matchKind TkLBrace state then
-        if (peek state).span.start.column == 1 ||
-        matchKind TkEquals state || matchKind TkPipe state then
-            ( [] , state )
-        else
-            case parseTypePrimary state of
-                Ok ( te, s1 ) ->
-                    let
-                        ( rest, s2 ) =
-                            parseTypeArgs s1
-                    in
-                        ( te :: rest , s2 )
-                
-                Err _ ->
-                    ( [] , state )
-    else
-        ( [] , state )
 
 parseTypeApp : ParserState -> Result String (( TypeExpr, ParserState ))
 parseTypeApp state =
@@ -544,7 +552,7 @@ parseTypePrimary state =
                 if matchKind TkLBrace state then
                     parseRecordType state
                 else
-                    Err ("Unexpected token in type: " ++ (peek state).lexeme)
+                    Err ("Unexpected token in type: " ++ peekLexeme state)
 
 parseTupleTypeRest : List TypeExpr -> ParserState -> Result String (( TypeExpr, ParserState ))
 parseTupleTypeRest items state =
