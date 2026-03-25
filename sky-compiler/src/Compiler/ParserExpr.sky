@@ -17,10 +17,9 @@ parseExpr minPrec state =
     case parseApplication state of
         Err e ->
             Err e
-        
-        -- Column decreased and token is a constructor — likely next case branch
-        Ok ( left, s1 ) ->
-            parseExprLoop minPrec left s1
+
+        Ok pair ->
+            parseExprLoop minPrec (fst pair) (snd pair)
 
 parseExprLoop : Int -> Expression -> ParserState -> Result String (( Expression, ParserState ))
 parseExprLoop minPrec left state =
