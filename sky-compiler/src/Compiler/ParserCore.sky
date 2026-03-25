@@ -210,6 +210,21 @@ peekAt1Kind state =
         t.kind
 
 
+unescapeString : String -> String
+unescapeString s =
+    let
+        s1 =
+            String.replace "\\\\" "\\" s
+
+        s2 =
+            String.replace "\\\"" "\"" s1
+
+        s3 =
+            String.replace "\\n" "\n" s2
+    in
+        String.replace "\\t" "\t" s3
+
+
 filterLayout : List Token -> List Token
 filterLayout tokens =
     List.filter

@@ -71,6 +71,10 @@ applySub sub t =
         TRecord fields ->
             TRecord (Dict.map (\kk v -> applySub sub v) fields)
 
+        _ ->
+            t
+
+
 applySubToScheme : Substitution -> Scheme -> Scheme
 applySubToScheme sub scheme =
     let
@@ -113,6 +117,10 @@ freeVars t =
         
         TRecord fields ->
             Dict.foldl (\kk v acc -> Set.union (freeVars v) acc) Set.empty fields
+
+        _ ->
+            Set.empty
+
 
 freeVarsInScheme : Scheme -> Set.Set Int
 freeVarsInScheme scheme =
@@ -202,7 +210,10 @@ formatType t =
         TRecord fields ->
             let
                 fieldStrs =
-                    Dict.toList fields
-                        |> List.map (\pair -> fst pair ++ " : " ++ formatType (snd pair))
+                    List.map (\pair -> fst pair ++ " : " ++ formatType (snd pair))
+                        (Dict.toList fields)
             in
                 "{ " ++ String.join " , " fieldStrs ++ " }"
+
+        _ ->
+            "?"

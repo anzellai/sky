@@ -9,6 +9,7 @@ import Compiler.Ast as Ast exposing (..)
 import Compiler.GoIr exposing (..)
 import Compiler.Adt as Adt exposing (AdtRegistry)
 import Compiler.Types exposing (Type, TFun, TConst, TVar, TApp, TTuple, TRecord, Scheme)
+import Compiler.ParserCore as ParserCore
 
 -- ══════════════════════════════════════════════════════
 -- LOWERING CONTEXT
@@ -323,7 +324,16 @@ lowerIdentifier ctx name =
                                 else if name == "js" then
                                     GoIdent "sky_js"
                                 else if not (String.isEmpty ctx.modulePrefix) && listContains name ctx.localFunctions then
-                                    GoIdent (ctx.modulePrefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name))
+                                    let
+                                        goName =
+                                            ctx.modulePrefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
+                                    in
+                                        if isZeroArityFn name ctx then
+                                            GoCallExpr (GoIdent goName) []
+                                        else
+                                            GoIdent goName
+                                else if isZeroArityFn name ctx then
+                                    GoCallExpr (GoIdent (sanitizeGoIdent name)) []
                                 else
                                     GoIdent (sanitizeGoIdent name)
 
@@ -430,7 +440,7 @@ lowerQualified ctx parts =
         else if qualName == "Ref.set" then
             GoIdent "sky_refSet"
         else if qualName == "Dict.empty" then
-            GoIdent "sky_dictEmpty"
+            GoCallExpr (GoIdent "sky_dictEmpty") []
         else if qualName == "Dict.insert" then
             GoIdent "sky_dictInsert"
         else if qualName == "Dict.get" then
@@ -454,7 +464,7 @@ lowerQualified ctx parts =
         else if qualName == "Dict.member" then
             GoIdent "sky_dictMember"
         else if qualName == "Set.empty" then
-            GoIdent "sky_setEmpty"
+            GoCallExpr (GoIdent "sky_setEmpty") []
         else if qualName == "Set.singleton" then
             GoIdent "sky_setSingleton"
         else if qualName == "Set.insert" then
@@ -1572,6 +1582,16 @@ isParamOrBuiltin name =
     name == "headerLine" || name == "contentLength" || name == "blankLine" ||
     name == "searchKey" || name == "keyIdx" || name == "afterKey" ||
     name == "colonIdx" || name == "afterColon" || name == "numStr" || name == "raw"
+
+
+isZeroArityFn : String -> LowerCtx -> Bool
+isZeroArityFn name ctx =
+    case Dict.get name ctx.localFunctionArity of
+        Just arity ->
+            arity == 0
+
+        Nothing ->
+            False
 
 
 listContains : String -> List String -> Bool
