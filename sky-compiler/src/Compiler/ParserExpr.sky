@@ -109,16 +109,20 @@ getOperatorInfo op =
 
 parseApplication : ParserState -> Result String ( Expression, ParserState )
 parseApplication state =
-    case parsePrimary state of
-        Err e ->
-            Err e
+    let
+        fnCol =
+            (peek state).span.start.column
+    in
+        case parsePrimary state of
+            Err e ->
+                Err e
 
-        Ok ( fn , s1 ) ->
-            parseApplicationArgs fn s1
+            Ok ( fn , s1 ) ->
+                parseApplicationArgs fnCol fn s1
 
 
-parseApplicationArgs : Expression -> ParserState -> Result String ( Expression, ParserState )
-parseApplicationArgs fn state =
+parseApplicationArgs : Int -> Expression -> ParserState -> Result String ( Expression, ParserState )
+parseApplicationArgs fnCol fn state =
     if isStartOfPrimary state then
         let
             t =
@@ -129,8 +133,14 @@ parseApplicationArgs fn state =
             -- Stop at column 1 (new declaration boundary)
             if t.span.start.column <= 1 then
                 Ok ( fn , state )
+            -- Stop when column < function column (next binding at outer scope)
+            else if t.span.start.column < fnCol then
+                Ok ( fn , state )
             -- Stop before `name =` pattern (next let binding or declaration)
             else if matchKind TkIdentifier state && tokenKindEq t1.kind TkEquals then
+                Ok ( fn , state )
+            -- Stop before `pattern ->` (next case branch)
+            else if tokenKindEq t1.kind TkArrow then
                 Ok ( fn , state )
             -- Stop at pipe `|` (next case branch separator)
             else if matchKind TkPipe state then
@@ -141,7 +151,7 @@ parseApplicationArgs fn state =
                         Ok ( fn , state )
 
                     Ok ( arg , s1 ) ->
-                        parseApplicationArgs
+                        parseApplicationArgs fnCol
                             (CallExpr fn [ arg ] emptySpan)
                             s1
     else
@@ -282,7 +292,7 @@ parseCaseBranches state =
             t =
                 peek state
         in
-            if t.span.start.column <= 1 && not (matchKind TkPipe state) && not (matchKind TkUpperIdentifier state) && not (matchKind TkIdentifier state) then
+            if t.span.start.column <= 1 then
                 ( [] , state )
             else
                 let

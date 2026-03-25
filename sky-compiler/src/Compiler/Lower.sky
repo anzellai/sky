@@ -593,7 +593,7 @@ patternToCondition ctx varName pat =
                     "sky_asFloat(" ++ varName ++ ") == " ++ String.fromFloat f
                 
                 LitString s ->
-                    "sky_asString(" ++ varName ++ ") == \"" ++ s ++ "\""
+                    "sky_asString(" ++ varName ++ ") == " ++ goQuote s
                 
                 LitBool b ->
                     if b then
@@ -1065,6 +1065,15 @@ isGoKeyword name =
     name == "import" ||
     name == "const" ||
     name == "defer" || name == "fallthrough" || name == "goto"
+
+goQuote : String -> String
+goQuote s =
+    let
+        escaped =
+            s |> String.replace "\\" "\\\\" |> String.replace "\"" "\\\""
+    in
+        "\"" ++ escaped ++ "\""
+
 
 capitalizeFirst : String -> String
 capitalizeFirst s =
