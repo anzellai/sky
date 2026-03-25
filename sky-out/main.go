@@ -3817,6 +3817,8 @@ var FindHoverInDecls = Lsp_Server_FindHoverInDecls
 
 var MatchDeclAtLine = Lsp_Server_MatchDeclAtLine
 
+var MatchSpanToName = Lsp_Server_MatchSpanToName
+
 var LookupDeclType = Lsp_Server_LookupDeclType
 
 var FindTypeInResults = Lsp_Server_FindTypeInResults
@@ -3832,6 +3834,8 @@ var HandleDefinition = Lsp_Server_HandleDefinition
 var FindDefinitionForPosition = Lsp_Server_FindDefinitionForPosition
 
 var FindDeclDefinition = Lsp_Server_FindDeclDefinition
+
+var MakeDeclLocation = Lsp_Server_MakeDeclLocation
 
 var HandleFormatting = Lsp_Server_HandleFormatting
 
@@ -3900,7 +3904,11 @@ func Lsp_Server_FindHoverInDecls(state any, decls any, line any) any {
 }
 
 func Lsp_Server_MatchDeclAtLine(decl any, line any) any {
-	return func() any { return func() any { __subject := decl;  return nil }() }(FunDecl, name, _, _)
+	return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "FunDecl" { name := sky_asMap(__subject)["V0"]; _ = name; span := sky_asMap(__subject)["V3"]; _ = span; return Lsp_Server_MatchSpanToName(span, line, name, 10) };  if sky_asMap(__subject)["SkyName"] == "TypeAnnotDecl" { name := sky_asMap(__subject)["V0"]; _ = name; span := sky_asMap(__subject)["V2"]; _ = span; return Lsp_Server_MatchSpanToName(span, line, name, 0) };  if sky_asMap(__subject)["SkyName"] == "TypeDecl" { name := sky_asMap(__subject)["V0"]; _ = name; span := sky_asMap(__subject)["V3"]; _ = span; return Lsp_Server_MatchSpanToName(span, line, name, 0) };  if true { return SkyNothing() };  return nil }() }()
+}
+
+func Lsp_Server_MatchSpanToName(span any, line any, name any, range_ any) any {
+	return func() any { sp := sky_asMap(span)["start"]; _ = sp; startLine := sky_asMap(sp)["line"]; _ = startLine; return func() any { if sky_asBool(sky_asBool(sky_asInt(sky_asInt(startLine) - sky_asInt(1)) <= sky_asInt(line)) && sky_asBool(sky_asInt(line) <= sky_asInt(sky_asInt(startLine) + sky_asInt(range_)))) { return SkyJust(name) }; return SkyNothing() }() }()
 }
 
 func Lsp_Server_LookupDeclType(state any, name any) any {
@@ -3932,7 +3940,11 @@ func Lsp_Server_FindDefinitionForPosition(state any, uri any, line any, characte
 }
 
 func Lsp_Server_FindDeclDefinition(decls any, uri any, line any) any {
-	return func() any { return func() any { __subject := decls; if len(sky_asList(__subject)) == 0 { return jsonNull };  if len(sky_asList(__subject)) > 0 { decl := sky_asList(__subject)[0]; _ = decl; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { return func() any { __subject := decl;  return nil }() }(FunDecl, name, _, _) };  return nil }() }()
+	return func() any { return func() any { __subject := decls; if len(sky_asList(__subject)) == 0 { return jsonNull };  if len(sky_asList(__subject)) > 0 { decl := sky_asList(__subject)[0]; _ = decl; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { matched := Lsp_Server_MatchDeclAtLine(decl, line); _ = matched; return func() any { return func() any { __subject := matched; if sky_asSkyMaybe(__subject).SkyName == "Just" { declName := sky_asSkyMaybe(__subject).JustValue; _ = declName; return Lsp_Server_MakeDeclLocation(uri, decl) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return Lsp_Server_FindDeclDefinition(rest, uri, line) };  return nil }() }() }() };  return nil }() }()
+}
+
+func Lsp_Server_MakeDeclLocation(uri any, decl any) any {
+	return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "FunDecl" { name := sky_asMap(__subject)["V0"]; _ = name; span := sky_asMap(__subject)["V3"]; _ = span; return func() any { sp := sky_asMap(span)["start"]; _ = sp; ln := sky_asInt(sky_asMap(sp)["line"]) - sky_asInt(1); _ = ln; return jsonObject([]any{SkyTuple2{V0: "uri", V1: jsonString(uri)}, SkyTuple2{V0: "range", V1: Lsp_Server_MakeRange(ln, 0, ln, 0)}}) }() };  if true { return jsonNull };  return nil }() }()
 }
 
 func Lsp_Server_HandleFormatting(state any, id any, body any) any {
@@ -4352,15 +4364,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 7, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 3, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -4462,7 +4474,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 0, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return func() any { if sky_asBool(Ffi_WrapperGen_IsEffectfulName(funcName)) { return map[string]any{"Tag": 0, "SkyName": "Effectful"} }; return map[string]any{"Tag": 1, "SkyName": "Pure"} }() }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return func() any { if sky_asBool(Ffi_WrapperGen_IsEffectfulName(funcName)) { return map[string]any{"Tag": 2, "SkyName": "Effectful"} }; return map[string]any{"Tag": 0, "SkyName": "Pure"} }() }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -4705,6 +4717,8 @@ var findHoverInDecls = Lsp_Server_FindHoverInDecls
 
 var matchDeclAtLine = Lsp_Server_MatchDeclAtLine
 
+var matchSpanToName = Lsp_Server_MatchSpanToName
+
 var lookupDeclType = Lsp_Server_LookupDeclType
 
 var findTypeInResults = Lsp_Server_FindTypeInResults
@@ -4720,6 +4734,8 @@ var handleDefinition = Lsp_Server_HandleDefinition
 var findDefinitionForPosition = Lsp_Server_FindDefinitionForPosition
 
 var findDeclDefinition = Lsp_Server_FindDeclDefinition
+
+var makeDeclLocation = Lsp_Server_MakeDeclLocation
 
 var handleFormatting = Lsp_Server_HandleFormatting
 

@@ -351,24 +351,29 @@ matchDeclAtLine : Declaration -> Int -> Maybe String
 matchDeclAtLine decl line =
     case decl of
         FunDecl name _ _ span ->
-            if span.start.line - 1 <= line && line <= span.start.line + 10 then
-                Just name
-            else
-                Nothing
+            matchSpanToName span line name 10
 
         TypeAnnotDecl name _ span ->
-            if span.start.line - 1 == line then
-                Just name
-            else
-                Nothing
+            matchSpanToName span line name 0
 
         TypeDecl name _ _ span ->
-            if span.start.line - 1 == line then
-                Just name
-            else
-                Nothing
+            matchSpanToName span line name 0
 
         _ ->
+            Nothing
+
+
+matchSpanToName span line name range =
+    let
+        sp =
+            span.start
+
+        startLine =
+            sp.line
+    in
+        if startLine - 1 <= line && line <= startLine + range then
+            Just name
+        else
             Nothing
 
 
@@ -495,18 +500,36 @@ findDeclDefinition decls uri line =
             jsonNull
 
         decl :: rest ->
-            case decl of
-                FunDecl name _ _ span ->
-                    if span.start.line - 1 <= line && line <= span.start.line + 10 then
-                        jsonObject
-                            [ ( "uri" , jsonString uri )
-                            , ( "range" , makeRange (span.start.line - 1) 0 (span.start.line - 1) 0 )
-                            ]
-                    else
+            let
+                matched =
+                    matchDeclAtLine decl line
+            in
+                case matched of
+                    Just declName ->
+                        makeDeclLocation uri decl
+
+                    Nothing ->
                         findDeclDefinition rest uri line
 
-                _ ->
-                    findDeclDefinition rest uri line
+
+makeDeclLocation : String -> Declaration -> String
+makeDeclLocation uri decl =
+    case decl of
+        FunDecl name _ _ span ->
+            let
+                sp =
+                    span.start
+
+                ln =
+                    sp.line - 1
+            in
+                jsonObject
+                    [ ( "uri" , jsonString uri )
+                    , ( "range" , makeRange ln 0 ln 0 )
+                    ]
+
+        _ ->
+            jsonNull
 
 
 -- ══════════════════════════════════════════════════════
