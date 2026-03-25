@@ -1,0 +1,85 @@
+module Sky.Core.Task exposing
+    ( Task
+    , succeed
+    , fail
+    , map
+    , mapError
+    , andThen
+    , attempt
+    , sequence
+    , perform
+    )
+
+
+-- Task represents a deferred computation that may fail.
+-- At the Go level, a Task is a thunk: func() any that returns a SkyResult.
+-- Tasks are lazy — they only execute when `perform` is called.
+-- All IO, FFI calls, and side effects go through Task.
+
+type Task err value
+    = Task Foreign
+
+
+-- Create a Task that immediately succeeds with a value.
+
+succeed : a -> Task err a
+succeed value =
+    -- At Go level: func() any { return SkyOk(value) }
+    value
+
+
+-- Create a Task that immediately fails with an error.
+
+fail : err -> Task err a
+fail error =
+    -- At Go level: func() any { return SkyErr(error) }
+    error
+
+
+-- Transform the success value of a Task.
+
+map : (a -> b) -> Task err a -> Task err b
+map fn task =
+    andThen (\a -> succeed (fn a)) task
+
+
+-- Transform the error value of a Task.
+
+mapError : (err1 -> err2) -> Task err1 a -> Task err2 a
+mapError fn task =
+    -- At Go level: run task, if Err then apply fn to error
+    task
+
+
+-- Chain two Tasks: if the first succeeds, feed its value to a function
+-- that produces the next Task.
+
+andThen : (a -> Task err b) -> Task err a -> Task err b
+andThen fn task =
+    -- At Go level: func() any { r := task(); if ok { return fn(r.value)() } else { return r } }
+    task
+
+
+-- Convert a Task into a Task that always succeeds with a Result.
+-- Useful at the boundary where you need to handle errors.
+
+attempt : Task err a -> Task never (Result err a)
+attempt task =
+    task
+
+
+-- Run a list of Tasks in sequence, collecting results.
+
+sequence : List (Task err a) -> Task err (List a)
+sequence tasks =
+    tasks
+
+
+-- Execute a Task. This is the effect boundary.
+-- Only called by the runtime (for main) or explicitly by the user.
+-- After perform, the thunk chain executes and produces a concrete Result.
+
+perform : Task err a -> Result err a
+perform task =
+    -- At Go level: task() — call the thunk and return the SkyResult
+    Ok task

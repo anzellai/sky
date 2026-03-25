@@ -247,6 +247,20 @@ func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any)
 
 func sky_call3(f any, a any, b any, c any) any { return f.(func(any) any)(a).(func(any) any)(b).(func(any) any)(c) }
 
+func sky_taskSucceed(value any) any { return func() any { return SkyOk(value) } }
+
+func sky_taskFail(err any) any { return func() any { return SkyErr(err) } }
+
+func sky_taskMap(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { return SkyOk(fn.(func(any) any)(sky_asSkyResult(r).OkValue)) }; return r } } }
+
+func sky_taskAndThen(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { next := fn.(func(any) any)(sky_asSkyResult(r).OkValue); return sky_runTask(next) }; return r } } }
+
+func sky_taskPerform(task any) any { return sky_runTask(task) }
+
+func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }
+
+func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }
+
 func main() {
-	sky_println("Hello from Sky!")
+	func() any { test1 := sky_taskMap(func(greeting any) any { return sky_concat(greeting, " Tasks work.") }).(func(any) any)(sky_taskAndThen(func(name any) any { return sky_taskSucceed(sky_concat("Hello, ", sky_concat(name, "!"))) }).(func(any) any)(sky_taskSucceed("Sky"))); _ = test1; r1 := sky_taskPerform(test1); _ = r1; func() any { return func() any { __subject := r1; if sky_asSkyResult(__subject).SkyName == "Ok" { value := sky_asSkyResult(__subject).OkValue; _ = value; return sky_println(sky_concat("Test 1 (succeed chain): ", value)) };  if sky_asSkyResult(__subject).SkyName == "Err" { return sky_println("Test 1 FAILED") };  return nil }() }(); test2 := sky_taskAndThen(func(_ any) any { return sky_taskSucceed("should not reach") }).(func(any) any)(sky_taskFail("oops")); _ = test2; r2 := sky_taskPerform(test2); _ = r2; func() any { return func() any { __subject := r2; if sky_asSkyResult(__subject).SkyName == "Ok" { return sky_println("Test 2 FAILED (should have failed)") };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return sky_println(sky_concat("Test 2 (fail short-circuit): Err ", e)) };  return nil }() }(); test3 := sky_taskAndThen(func(_ any) any { return sky_taskFail("intentional error") }).(func(any) any)(sky_taskSucceed("initial")); _ = test3; r3 := sky_taskPerform(test3); _ = r3; return func() any { return func() any { __subject := r3; if sky_asSkyResult(__subject).SkyName == "Ok" { return sky_println("Test 3 FAILED") };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return sky_println(sky_concat("Test 3 (andThen to fail): Err ", e)) };  return nil }() }() }()
 }

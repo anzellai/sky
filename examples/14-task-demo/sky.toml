@@ -1,0 +1,6 @@
+name = "task-demo"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"

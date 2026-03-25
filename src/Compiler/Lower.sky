@@ -510,6 +510,18 @@ lowerQualified ctx parts =
             GoIdent "sky_writeStdout"
         else if qualName == "Io.writeStderr" then
             GoIdent "sky_writeStderr"
+        else if qualName == "Task.succeed" then
+            GoIdent "sky_taskSucceed"
+        else if qualName == "Task.fail" then
+            GoIdent "sky_taskFail"
+        else if qualName == "Task.andThen" then
+            GoIdent "sky_taskAndThen"
+        else if qualName == "Task.map" then
+            GoIdent "sky_taskMap"
+        else if qualName == "Task.perform" then
+            GoIdent "sky_taskPerform"
+        else if qualName == "Task.sequence" then
+            GoIdent "sky_taskSequence"
         else if List.length parts == 2 then
             let
                 modPart =
@@ -1393,6 +1405,14 @@ generateHelperDecls =
     , GoDeclRaw "func sky_call(f any, arg any) any { return f.(func(any) any)(arg) }"
     , GoDeclRaw "func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any) any)(b) }"
     , GoDeclRaw "func sky_call3(f any, a any, b any, c any) any { return f.(func(any) any)(a).(func(any) any)(b).(func(any) any)(c) }"
+    -- Task runtime helpers (effect boundary)
+    , GoDeclRaw "func sky_taskSucceed(value any) any { return func() any { return SkyOk(value) } }"
+    , GoDeclRaw "func sky_taskFail(err any) any { return func() any { return SkyErr(err) } }"
+    , GoDeclRaw "func sky_taskMap(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { return SkyOk(fn.(func(any) any)(sky_asSkyResult(r).OkValue)) }; return r } } }"
+    , GoDeclRaw "func sky_taskAndThen(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { next := fn.(func(any) any)(sky_asSkyResult(r).OkValue); return sky_runTask(next) }; return r } } }"
+    , GoDeclRaw "func sky_taskPerform(task any) any { return sky_runTask(task) }"
+    , GoDeclRaw "func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"
+    , GoDeclRaw "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
     ]
 
 

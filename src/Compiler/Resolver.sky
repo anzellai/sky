@@ -547,6 +547,61 @@ buildStdlibEnv =
                           )
                   }
                 )
+                -- Task module (effect boundary)
+                , ( "Task.succeed"
+                , { quantified = [ 0 , 1 ]
+                  , type_ =
+                      TFun (TVar 0 (Just "a"))
+                          (TApp (TConst "Task") [ TVar 1 (Just "err") , TVar 0 (Just "a") ])
+                  }
+                )
+                , ( "Task.fail"
+                , { quantified = [ 0 , 1 ]
+                  , type_ =
+                      TFun (TVar 0 (Just "err"))
+                          (TApp (TConst "Task") [ TVar 0 (Just "err") , TVar 1 (Just "a") ])
+                  }
+                )
+                , ( "Task.andThen"
+                , { quantified = [ 0 , 1 , 2 ]
+                  , type_ =
+                      TFun
+                          (TFun (TVar 0 (Just "a"))
+                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 1 (Just "b") ])
+                          )
+                          (TFun
+                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 0 (Just "a") ])
+                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 1 (Just "b") ])
+                          )
+                  }
+                )
+                , ( "Task.map"
+                , { quantified = [ 0 , 1 , 2 ]
+                  , type_ =
+                      TFun
+                          (TFun (TVar 0 (Just "a")) (TVar 1 (Just "b")))
+                          (TFun
+                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 0 (Just "a") ])
+                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 1 (Just "b") ])
+                          )
+                  }
+                )
+                , ( "Task.perform"
+                , { quantified = [ 0 , 1 ]
+                  , type_ =
+                      TFun
+                          (TApp (TConst "Task") [ TVar 0 (Just "err") , TVar 1 (Just "a") ])
+                          (TApp (TConst "Result") [ TVar 0 (Just "err") , TVar 1 (Just "a") ])
+                  }
+                )
+                , ( "Task.sequence"
+                , { quantified = [ 0 , 1 ]
+                  , type_ =
+                      TFun
+                          (TApp (TConst "List") [ TApp (TConst "Task") [ TVar 0 (Just "err") , TVar 1 (Just "a") ] ])
+                          (TApp (TConst "Task") [ TVar 0 (Just "err") , TApp (TConst "List") [ TVar 1 (Just "a") ] ])
+                  }
+                )
                 ]
     in
         Env.union stdFunctions prelude
