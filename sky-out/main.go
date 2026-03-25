@@ -261,6 +261,8 @@ func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(t
 
 func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }
 
+func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }
+
 func main() {
-	sky_println("Hello from Sky!")
+	sky_runMainTask(sky_println("Hello from Sky!"))
 }

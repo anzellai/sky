@@ -119,11 +119,9 @@ lowerFunction ctx name params body =
                 "any"
         goBody =
             if isMain then
-
--- ══════════════════════════════════════════════════════
--- EXPRESSION LOWERING
--- ══════════════════════════════════════════════════════
-                lowerExprToStmts ctx body
+                -- Main function: execute the body.
+                -- If the result is a Task (thunk), run it via sky_runTask.
+                [ GoExprStmt (GoRawExpr ("sky_runMainTask(" ++ emitGoExprInline (lowerExpr ctx body) ++ ")")) ]
             else
                 [ GoReturn (lowerExpr ctx body) ]
     in
@@ -1413,6 +1411,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_taskPerform(task any) any { return sky_runTask(task) }"
     , GoDeclRaw "func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"
     , GoDeclRaw "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
+    , GoDeclRaw "func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"
     ]
 
 

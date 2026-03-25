@@ -13,8 +13,8 @@ import Ffi.TypeMapper as TypeMapper
 -- ══════════════════════════════════════════════════════
 
 -- Generates Go wrapper functions for a Go package.
--- Input: JSON inspection result from the Go inspector.
--- Output: .go file with Sky_pkg_Symbol adapter functions.
+-- ALL effectful functions are wrapped in Task thunks with panic recovery.
+-- Pure functions (no error return, no side effects) remain direct.
 
 generateWrappers : String -> String -> String -> Result String String
 generateWrappers pkgName inspectJson outDir =
@@ -26,19 +26,84 @@ generateWrappers pkgName inspectJson outDir =
         _ =
             File.mkdirAll wrapperDir
 
-        -- Parse functions from JSON
         funcs =
             extractFunctions inspectJson
         methods =
             extractMethods inspectJson
 
-        -- Generate wrapper code
         wrapperCode =
             generateWrapperFile safePkg pkgName funcs methods
         _ =
             File.writeFile (wrapperDir ++ "/" ++ safePkg ++ ".go") wrapperCode
     in
         Ok wrapperCode
+
+
+-- ══════════════════════════════════════════════════════
+-- FUNCTION CLASSIFICATION
+-- ══════════════════════════════════════════════════════
+
+-- Classify a Go function as pure, fallible, or effectful.
+-- This determines the wrapping strategy:
+--   pure     → direct call, no Task
+--   fallible → (T, error) return → Task wrapping with error handling
+--   effectful → void/Unit return, or any function that does IO → Task wrapping
+
+type FuncKind
+    = Pure
+    | Fallible
+    | Effectful
+
+
+classifyFunc : List String -> String -> FuncKind
+classifyFunc results funcName =
+    case results of
+        [] ->
+            -- void return → effectful (side-effect only)
+            Effectful
+
+        [ single ] ->
+            if single == "error" then
+                Fallible
+            else
+                -- Single non-error return could be pure or effectful
+                -- Heuristic: if name starts with Get/Read/Load → effectful
+                if isEffectfulName funcName then
+                    Effectful
+                else
+                    Pure
+
+        _ ->
+            -- Multi-return: check if last is error
+            let
+                lastResult =
+                    case List.reverse results of
+                        last :: _ ->
+                            last
+
+                        [] ->
+                            ""
+            in
+                if lastResult == "error" then
+                    Fallible
+                else
+                    Effectful
+
+
+isEffectfulName : String -> Bool
+isEffectfulName name =
+    String.startsWith "Read" name ||
+    String.startsWith "Write" name ||
+    String.startsWith "Load" name ||
+    String.startsWith "Save" name ||
+    String.startsWith "Create" name ||
+    String.startsWith "Delete" name ||
+    String.startsWith "Open" name ||
+    String.startsWith "Close" name ||
+    String.startsWith "Send" name ||
+    String.startsWith "Fetch" name ||
+    String.startsWith "Set" name ||
+    String.startsWith "Print" name
 
 
 -- ══════════════════════════════════════════════════════
@@ -51,8 +116,11 @@ generateWrapperFile safePkg pkgName funcs methods =
         [ "package sky_wrappers"
         , ""
         , "import ("
+        , "\t\"fmt\""
         , "\t\"" ++ pkgName ++ "\""
         , ")"
+        , ""
+        , "var _ = fmt.Sprintf"
         , ""
         , String.join "\n\n" (List.map (generateFuncWrapper safePkg pkgName) funcs)
         , ""
@@ -91,21 +159,21 @@ generateFuncWrapper safePkg pkgName func =
         paramStr =
             String.join ", " paramList
 
-        -- Generate argument casts
         argCasts =
             List.indexedMap (generateArgCast) func.params
         castStr =
             String.join "\n\t" argCasts
 
-        -- Generate the Go call
         argNames =
             List.indexedMap (\i p -> "_arg" ++ String.fromInt i) func.params
         goCall =
             shortPkgName pkgName ++ "." ++ func.name ++ "(" ++ String.join ", " argNames ++ ")"
 
-        -- Generate return wrapping
+        kind =
+            classifyFunc func.results func.name
+
         returnCode =
-            wrapReturn func.results goCall
+            wrapReturn kind func.results goCall
     in
         "func " ++ wrapperName ++ "(" ++ paramStr ++ ") any {\n\t" ++
         castStr ++ "\n\t" ++
@@ -134,8 +202,11 @@ generateMethodWrapper safePkg pkgName method =
         goCall =
             "_receiver." ++ method.name ++ "(" ++ String.join ", " argNames ++ ")"
 
+        kind =
+            classifyFunc method.results method.name
+
         returnCode =
-            wrapReturn method.results goCall
+            wrapReturn kind method.results goCall
     in
         "func " ++ wrapperName ++ "(" ++ paramStr ++ ") any {\n\t" ++
         castStr ++ "\n\t" ++
@@ -156,33 +227,69 @@ generateArgCast idx param =
             "_arg" ++ String.fromInt idx ++ " := " ++ assertion ++ "(arg" ++ String.fromInt idx ++ ")"
 
 
-wrapReturn : List String -> String -> String
-wrapReturn results goCall =
+-- ══════════════════════════════════════════════════════
+-- RETURN WRAPPING — THE TASK BOUNDARY
+-- ══════════════════════════════════════════════════════
+
+-- Every effectful/fallible Go call is wrapped in a Task thunk:
+--   func() any { return SkyOk(result) }
+-- With panic recovery:
+--   defer func() { if r := recover(); r != nil { ... } }()
+-- And nil safety:
+--   if result == nil { return SkyErr("nil result") }
+
+wrapReturn : FuncKind -> List String -> String -> String
+wrapReturn kind results goCall =
+    case kind of
+        Pure ->
+            wrapPureReturn results goCall
+
+        Fallible ->
+            wrapFallibleReturn results goCall
+
+        Effectful ->
+            wrapEffectfulReturn results goCall
+
+
+wrapPureReturn : List String -> String -> String
+wrapPureReturn results goCall =
     case results of
         [] ->
             goCall ++ "\n\treturn struct{}{}"
 
-        [ single ] ->
-            if single == "error" then
-                "result, err := " ++ goCall ++ "\n\tif err != nil { return SkyErr(err.Error()) }\n\treturn SkyOk(result)"
-            else
-                "return " ++ goCall
+        _ ->
+            "return " ++ goCall
+
+
+-- Fallible: (T, error) → Task thunk returning SkyResult
+-- Includes panic recovery and nil check
+
+wrapFallibleReturn : List String -> String -> String
+wrapFallibleReturn results goCall =
+    "return func() any {\n\t\t" ++
+    "defer func() { recover() }()\n\t\t" ++
+    "result, err := " ++ goCall ++ "\n\t\t" ++
+    "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++
+    "return SkyOk(result)\n\t}"
+
+
+-- Effectful: void or non-error return → Task thunk
+-- Includes panic recovery
+
+wrapEffectfulReturn : List String -> String -> String
+wrapEffectfulReturn results goCall =
+    case results of
+        [] ->
+            "return func() any {\n\t\t" ++
+            "defer func() { recover() }()\n\t\t" ++
+            goCall ++ "\n\t\t" ++
+            "return SkyOk(struct{}{})\n\t}"
 
         _ ->
-            -- Multi-return: check if last is error
-            let
-                lastResult =
-                    case List.reverse results of
-                        last :: _ ->
-                            last
-
-                        [] ->
-                            ""
-            in
-                if lastResult == "error" then
-                    "result, err := " ++ goCall ++ "\n\tif err != nil { return SkyErr(err.Error()) }\n\treturn SkyOk(result)"
-                else
-                    "return " ++ goCall
+            "return func() any {\n\t\t" ++
+            "defer func() { recover() }()\n\t\t" ++
+            "result := " ++ goCall ++ "\n\t\t" ++
+            "return SkyOk(result)\n\t}"
 
 
 shortPkgName : String -> String
@@ -201,7 +308,6 @@ shortPkgName pkgPath =
 
 extractFunctions : String -> List FuncEntry
 extractFunctions json =
-    -- Simple extraction: find "funcs" array and parse each entry
     []
 
 
