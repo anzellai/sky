@@ -464,12 +464,12 @@ generateAliasesFromModule modName allModules =
                         let
                             prefixedName =
                                 prefix ++ "_" ++ capitalizeFirst name
+
+                            callSuffix =
+                                if isZeroArityInModule name mod then "()" else ""
                         in
-                            -- Generate both original case and capitalized aliases
-                            -- e.g. var readMessage = Lsp_JsonRpc_ReadMessage
-                            --      var ReadMessage = Lsp_JsonRpc_ReadMessage
-                            [ GoDeclRaw ("var " ++ name ++ " = " ++ prefixedName)
-                            , GoDeclRaw ("var " ++ capitalizeFirst name ++ " = " ++ prefixedName)
+                            [ GoDeclRaw ("var " ++ name ++ " = " ++ prefixedName ++ callSuffix)
+                            , GoDeclRaw ("var " ++ capitalizeFirst name ++ " = " ++ prefixedName ++ callSuffix)
                             ]
                 ) declNames
 
@@ -500,6 +500,24 @@ getExposeNames clause =
 
         _ ->
             []
+
+
+isZeroArityInModule : String -> Ast.Module -> Bool
+isZeroArityInModule name mod =
+    List.foldl
+        (\decl acc ->
+            case decl of
+                Ast.FunDecl dName params _ _ ->
+                    if dName == name then
+                        List.isEmpty params
+                    else
+                        acc
+
+                _ ->
+                    acc
+        )
+        False
+        mod.declarations
 
 
 findModule : String -> List ( String , Ast.Module ) -> Maybe Ast.Module

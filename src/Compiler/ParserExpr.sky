@@ -32,7 +32,7 @@ parseExprLoop minPrec left state =
             if matchKind TkPipe state then
                 Ok ( left , state )
             else
-                if False then
+                if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkColon then
                     Ok ( left , state )
                 else
                     if matchKind TkOperator state then
@@ -147,20 +147,28 @@ parseApplicationArgs fnCol fn state =
                 tokenKindEq (peekAt1Kind state) TkEquals then
                     Ok ( fn , state )
                 else
-                    if tokenKindEq (peekAt1Kind state) TkArrow then
+                    if matchKind TkIdentifier state &&
+                    peekColumn state <= 1 then
                         Ok ( fn , state )
                     else
-                        if matchKind TkPipe state then
+                        if tokenKindEq (peekAt1Kind state) TkArrow then
                             Ok ( fn , state )
                         else
-                            case parsePrimary state of
-                                Err _ ->
+                            if matchKind TkPipe state then
+                                Ok ( fn , state )
+                            else
+                                if matchKind TkIdentifier state &&
+                                tokenKindEq (peekAt1Kind state) TkColon then
                                     Ok ( fn , state )
-                                
-                                Ok ( arg, s1 ) ->
-                                    parseApplicationArgs fnCol
-                                        (CallExpr fn [ arg ] emptySpan)
-                                        s1
+                                else
+                                    case parsePrimary state of
+                                        Err _ ->
+                                            Ok ( fn , state )
+
+                                        Ok ( arg, s1 ) ->
+                                            parseApplicationArgs fnCol
+                                                (CallExpr fn [ arg ] emptySpan)
+                                                s1
     else
         Ok ( fn , state )
 

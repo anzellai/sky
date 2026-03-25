@@ -306,9 +306,70 @@ handleHover state id body =
         character =
             jsonGetInt "character" position
         hoverResult =
-            jsonNull
+            getHoverForPosition state uri line character
     in
         sendAndReturn (makeResponse id hoverResult) state
+
+
+getHoverForPosition : ServerState -> String -> Int -> Int -> String
+getHoverForPosition state uri line character =
+    case Dict.get uri state.astCache of
+        Nothing ->
+            jsonNull
+
+        Just mod ->
+            findHoverInDecls state mod.declarations line
+
+
+findHoverInDecls : ServerState -> List Declaration -> Int -> String
+findHoverInDecls state decls line =
+    case decls of
+        [] ->
+            jsonNull
+
+        decl :: rest ->
+            case matchDeclAtLine decl line of
+                Just declName ->
+                    let
+                        typeStr =
+                            lookupDeclType state declName
+                    in
+                        jsonObject
+                            [ ( "contents"
+                              , jsonObject
+                                    [ ( "kind" , jsonString "markdown" )
+                                    , ( "value" , jsonString (declName ++ " : " ++ typeStr) )
+                                    ]
+                              )
+                            ]
+
+                Nothing ->
+                    findHoverInDecls state rest line
+
+
+matchDeclAtLine : Declaration -> Int -> Maybe String
+matchDeclAtLine decl line =
+    case decl of
+        FunDecl name _ _ span ->
+            if span.start.line - 1 <= line && line <= span.start.line + 10 then
+                Just name
+            else
+                Nothing
+
+        TypeAnnotDecl name _ span ->
+            if span.start.line - 1 == line then
+                Just name
+            else
+                Nothing
+
+        TypeDecl name _ _ span ->
+            if span.start.line - 1 == line then
+                Just name
+            else
+                Nothing
+
+        _ ->
+            Nothing
 
 
 lookupDeclType : ServerState -> String -> String
@@ -412,9 +473,40 @@ handleDefinition state id body =
         character =
             jsonGetInt "character" position
         defResult =
-            jsonNull
+            findDefinitionForPosition state uri line character
     in
         sendAndReturn (makeResponse id defResult) state
+
+
+findDefinitionForPosition : ServerState -> String -> Int -> Int -> String
+findDefinitionForPosition state uri line character =
+    case Dict.get uri state.astCache of
+        Nothing ->
+            jsonNull
+
+        Just mod ->
+            findDeclDefinition mod.declarations uri line
+
+
+findDeclDefinition : List Declaration -> String -> Int -> String
+findDeclDefinition decls uri line =
+    case decls of
+        [] ->
+            jsonNull
+
+        decl :: rest ->
+            case decl of
+                FunDecl name _ _ span ->
+                    if span.start.line - 1 <= line && line <= span.start.line + 10 then
+                        jsonObject
+                            [ ( "uri" , jsonString uri )
+                            , ( "range" , makeRange (span.start.line - 1) 0 (span.start.line - 1) 0 )
+                            ]
+                    else
+                        findDeclDefinition rest uri line
+
+                _ ->
+                    findDeclDefinition rest uri line
 
 
 -- ══════════════════════════════════════════════════════
@@ -423,5 +515,4 @@ handleDefinition state id body =
 
 handleFormatting : ServerState -> String -> String -> ServerState
 handleFormatting state id body =
-    -- Return empty edits (no formatting in self-hosted LSP yet)
     sendAndReturn (makeResponse id (jsonArray [])) state
