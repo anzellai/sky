@@ -247,23 +247,23 @@ parseDeclarations state =
 parseDeclaration : ParserState -> Result String ( Declaration, ParserState )
 parseDeclaration state =
     let
-        t =
+        curTok =
             peek state
         t1 =
             peekAt 1 state
     in
-        if t.lexeme == "foreign" && t1.lexeme == "import" then
+        if curTok.lexeme == "foreign" && t1.lexeme == "import" then
             parseForeignImport state
-        else if t.lexeme == "type" && t1.lexeme == "alias" then
+        else if curTok.lexeme == "type" && t1.lexeme == "alias" then
             parseTypeAlias state
-        else if t.lexeme == "type" then
+        else if curTok.lexeme == "type" then
             parseTypeDecl state
         else if matchKind TkIdentifier state && tokenKindEq t1.kind TkColon then
             parseTypeAnnot state
         else if matchKind TkIdentifier state then
             parseFunDecl state
         else
-            Err ("Unexpected token: " ++ t.lexeme)
+            Err ("Unexpected token: " ++ curTok.lexeme)
 
 
 -- ══════════════════════════════════════════════════════
@@ -412,11 +412,11 @@ parseTypeVariants state =
 parseVariantFields : ParserState -> ( List TypeExpr, ParserState )
 parseVariantFields state =
     let
-        t =
+        curTok =
             peek state
     in
         if matchKind TkUpperIdentifier state || matchKind TkIdentifier state || matchKind TkLParen state || matchKind TkLBrace state then
-            if t.span.start.column == 1 || matchKind TkPipe state then
+            if curTok.span.start.column == 1 || matchKind TkPipe state then
                 ( [] , state )
             else
                 case parseTypePrimary state of
@@ -484,11 +484,11 @@ parseTypeApp state =
 parseTypeArgs : ParserState -> ( List TypeExpr, ParserState )
 parseTypeArgs state =
     let
-        t =
+        curTok =
             peek state
     in
         if matchKind TkUpperIdentifier state || matchKind TkIdentifier state || matchKind TkLParen state || matchKind TkLBrace state then
-            if t.span.start.column == 1 || matchKind TkEquals state || matchKind TkPipe state then
+            if curTok.span.start.column == 1 || matchKind TkEquals state || matchKind TkPipe state then
                 ( [] , state )
             else
                 case parseTypePrimary state of

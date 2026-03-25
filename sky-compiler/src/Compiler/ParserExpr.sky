@@ -125,16 +125,16 @@ parseApplicationArgs : Int -> Expression -> ParserState -> Result String ( Expre
 parseApplicationArgs fnCol fn state =
     if isStartOfPrimary state then
         let
-            t =
+            curTok =
                 peek state
             t1 =
                 peekAt 1 state
         in
             -- Stop at column 1 (new declaration boundary)
-            if t.span.start.column <= 1 then
+            if curTok.span.start.column <= 1 then
                 Ok ( fn , state )
             -- Stop when column < function column (next binding at outer scope)
-            else if t.span.start.column < fnCol then
+            else if curTok.span.start.column < fnCol then
                 Ok ( fn , state )
             -- Stop before `name =` pattern (next let binding or declaration)
             else if matchKind TkIdentifier state && tokenKindEq t1.kind TkEquals then
@@ -182,7 +182,7 @@ isStartOfPrimary state =
 parsePrimary : ParserState -> Result String ( Expression, ParserState )
 parsePrimary state =
     let
-        t =
+        curTok =
             peek state
     in
         if matchKindLex TkKeyword "case" state then
@@ -250,9 +250,9 @@ parsePrimary state =
             in
                 Ok ( BoolLitExpr False tok.span , s1 )
         else
-            Err ("Unexpected token: " ++ t.lexeme ++ " at " ++
-                String.fromInt t.span.start.line ++ ":" ++
-                String.fromInt t.span.start.column)
+            Err ("Unexpected token: " ++ curTok.lexeme ++ " at " ++
+                String.fromInt curTok.span.start.line ++ ":" ++
+                String.fromInt curTok.span.start.column)
 
 
 -- ══════════════════════════════════════════════════════
@@ -289,10 +289,10 @@ parseCaseBranches state =
         ( [] , state )
     else
         let
-            t =
+            curTok =
                 peek state
         in
-            if t.span.start.column <= 1 then
+            if curTok.span.start.column <= 1 then
                 ( [] , state )
             else
                 let
@@ -638,7 +638,7 @@ parseFieldAccess base state =
             advance s1
     in
         Ok
-            ( QualifiedExpr [ base.lexeme , field.lexeme ] emptySpan
+            ( FieldAccessExpr (IdentifierExpr base.lexeme base.span) field.lexeme emptySpan
             , s2
             )
 

@@ -20,6 +20,7 @@ type alias LowerCtx =
     , localFunctions : Set.Set String
     , collectedImports : Set.Set String
     , importAliases : Dict.Dict String String
+    , modulePrefix : String
     }
 
 type alias CtorInfo =
@@ -33,6 +34,7 @@ emptyCtx =
     , localFunctions = Set.empty
     , collectedImports = Set.empty
     , importAliases = Dict.empty
+    , modulePrefix = ""
     }
 
 
@@ -63,9 +65,11 @@ lowerModule registry mod =
         -- Collect needed imports
         imports =
             [ { path = "fmt" , alias_ = "" }
+            , { path = "bufio" , alias_ = "" }
+            , { path = "os" , alias_ = "" }
+            , { path = "os/exec" , alias_ = "exec" }
             , { path = "strconv" , alias_ = "" }
             , { path = "strings" , alias_ = "" }
-            , { path = "os" , alias_ = "" }
             ]
         -- Generate inline helper functions
         helperDecls =
@@ -300,8 +304,20 @@ lowerIdentifier ctx name =
                             else
                                 if name == "False" then
                                     GoIdent "false"
+                                else if name == "not" then
+                                    GoIdent "sky_not"
+                                else if name == "fst" then
+                                    GoIdent "sky_fst"
+                                else if name == "snd" then
+                                    GoIdent "sky_snd"
+                                else if name == "errorToString" then
+                                    GoIdent "sky_errorToString"
                                 else if name == "println" then
                                     GoIdent "sky_println"
+                                else if name == "identity" then
+                                    GoIdent "sky_identity"
+                                else if not (String.isEmpty ctx.modulePrefix) && Set.member name ctx.localFunctions then
+                                    GoIdent (ctx.modulePrefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name))
                                 else
                                     GoIdent (sanitizeGoIdent name)
 
@@ -339,6 +355,20 @@ lowerQualified ctx parts =
             GoIdent "sky_stringTrim"
         else if qualName == "String.isEmpty" then
             GoIdent "sky_stringIsEmpty"
+        else if qualName == "String.startsWith" then
+            GoIdent "sky_stringStartsWith"
+        else if qualName == "String.endsWith" then
+            GoIdent "sky_stringEndsWith"
+        else if qualName == "String.split" then
+            GoIdent "sky_stringSplit"
+        else if qualName == "String.replace" then
+            GoIdent "sky_stringReplace"
+        else if qualName == "String.toInt" then
+            GoIdent "sky_stringToInt"
+        else if qualName == "String.toFloat" then
+            GoIdent "sky_stringToFloat"
+        else if qualName == "String.append" then
+            GoIdent "sky_stringAppend"
         else if qualName == "String.slice" then
             GoIdent "sky_stringSlice"
         else if qualName == "List.map" then
@@ -359,10 +389,92 @@ lowerQualified ctx parts =
             GoIdent "sky_listIsEmpty"
         else if qualName == "List.append" then
             GoIdent "sky_listAppend"
+        else if qualName == "List.concatMap" then
+            GoIdent "sky_listConcatMap"
+        else if qualName == "List.filterMap" then
+            GoIdent "sky_listFilterMap"
+        else if qualName == "List.indexedMap" then
+            GoIdent "sky_listIndexedMap"
+        else if qualName == "List.concat" then
+            GoIdent "sky_listConcat"
+        else if qualName == "List.drop" then
+            GoIdent "sky_listDrop"
+        else if qualName == "List.member" then
+            GoIdent "sky_listMember"
         else if qualName == "Log.println" then
             GoIdent "sky_println"
+        else if qualName == "File.readFile" then
+            GoIdent "sky_fileRead"
+        else if qualName == "File.writeFile" then
+            GoIdent "sky_fileWrite"
+        else if qualName == "File.mkdirAll" then
+            GoIdent "sky_fileMkdirAll"
         else if qualName == "Process.exit" then
-            GoSelectorExpr (GoIdent "os") "Exit"
+            GoIdent "sky_processExit"
+        else if qualName == "Process.run" then
+            GoIdent "sky_processRun"
+        else if qualName == "Args.getArgs" then
+            GoIdent "sky_processGetArgs"
+        else if qualName == "Args.getArg" then
+            GoIdent "sky_processGetArg"
+        else if qualName == "Ref.new" then
+            GoIdent "sky_refNew"
+        else if qualName == "Ref.get" then
+            GoIdent "sky_refGet"
+        else if qualName == "Ref.set" then
+            GoIdent "sky_refSet"
+        else if qualName == "Dict.empty" then
+            GoIdent "sky_dictEmpty"
+        else if qualName == "Dict.insert" then
+            GoIdent "sky_dictInsert"
+        else if qualName == "Dict.get" then
+            GoIdent "sky_dictGet"
+        else if qualName == "Dict.keys" then
+            GoIdent "sky_dictKeys"
+        else if qualName == "Dict.values" then
+            GoIdent "sky_dictValues"
+        else if qualName == "Dict.toList" then
+            GoIdent "sky_dictToList"
+        else if qualName == "Dict.fromList" then
+            GoIdent "sky_dictFromList"
+        else if qualName == "Dict.map" then
+            GoIdent "sky_dictMap"
+        else if qualName == "Dict.foldl" then
+            GoIdent "sky_dictFoldl"
+        else if qualName == "Dict.union" then
+            GoIdent "sky_dictUnion"
+        else if qualName == "Dict.remove" then
+            GoIdent "sky_dictRemove"
+        else if qualName == "Dict.member" then
+            GoIdent "sky_dictMember"
+        else if qualName == "Set.empty" then
+            GoIdent "sky_setEmpty"
+        else if qualName == "Set.singleton" then
+            GoIdent "sky_setSingleton"
+        else if qualName == "Set.insert" then
+            GoIdent "sky_setInsert"
+        else if qualName == "Set.member" then
+            GoIdent "sky_setMember"
+        else if qualName == "Set.union" then
+            GoIdent "sky_setUnion"
+        else if qualName == "Set.diff" then
+            GoIdent "sky_setDiff"
+        else if qualName == "Set.toList" then
+            GoIdent "sky_setToList"
+        else if qualName == "Set.fromList" then
+            GoIdent "sky_setFromList"
+        else if qualName == "Set.isEmpty" then
+            GoIdent "sky_setIsEmpty"
+        else if qualName == "Set.remove" then
+            GoIdent "sky_setRemove"
+        else if qualName == "Io.readLine" then
+            GoIdent "sky_readLine"
+        else if qualName == "Io.readBytes" then
+            GoIdent "sky_readBytes"
+        else if qualName == "Io.writeStdout" then
+            GoIdent "sky_writeStdout"
+        else if qualName == "Io.writeStderr" then
+            GoIdent "sky_writeStderr"
         else if List.length parts == 2 then
             let
                 modPart =
@@ -383,12 +495,14 @@ lowerQualified ctx parts =
                 -- Check if this is a local module import
                 case Dict.get modPart ctx.importAliases of
                     Just qualModName ->
-                        -- Local module: generate namespaced function name
+                        -- Local module: namespaced function call (Go zero-arg fn needs ())
                         let
                             prefix =
                                 String.replace "." "_" qualModName
+                            goName =
+                                prefix ++ "_" ++ capitalizeFirst funcPart
                         in
-                            GoIdent (prefix ++ "_" ++ capitalizeFirst funcPart)
+                            GoCallExpr (GoIdent goName) []
 
                     Nothing ->
                         -- Unknown module: try as Go package selector
@@ -414,14 +528,27 @@ lowerCall ctx callee args =
         goArgs =
             List.map (lowerExpr ctx) flatArgs
     in
-        GoCallExpr goCallee goArgs
+        -- Merge nested zero-arg calls: f()(arg) → f(arg)
+        case goCallee of
+            GoCallExpr innerFn innerArgs ->
+                if List.isEmpty innerArgs then
+                    GoCallExpr innerFn goArgs
+                else
+                    GoCallExpr goCallee goArgs
+
+            _ ->
+                GoCallExpr goCallee goArgs
 
 
 flattenCall : Expression -> List Expression -> ( Expression , List Expression )
 flattenCall callee args =
     case callee of
         CallExpr innerCallee innerArgs _ ->
-            flattenCall innerCallee (List.append innerArgs args)
+            -- Don't flatten if callee is a stdlib function (curried in Go)
+            if isStdlibCallee innerCallee then
+                ( callee , args )
+            else
+                flattenCall innerCallee (List.append innerArgs args)
 
         _ ->
             ( callee , args )
@@ -956,6 +1083,13 @@ generateHelperDecls =
     , GoDeclRaw "func sky_stringLength(v any) any { return len(sky_asString(v)) }"
     , GoDeclRaw "func sky_stringTrim(v any) any { return strings.TrimSpace(sky_asString(v)) }"
     , GoDeclRaw "func sky_stringContains(sub any) any { return func(s any) any { return strings.Contains(sky_asString(s), sky_asString(sub)) } }"
+    , GoDeclRaw "func sky_stringStartsWith(prefix any) any { return func(s any) any { return strings.HasPrefix(sky_asString(s), sky_asString(prefix)) } }"
+    , GoDeclRaw "func sky_stringEndsWith(suffix any) any { return func(s any) any { return strings.HasSuffix(sky_asString(s), sky_asString(suffix)) } }"
+    , GoDeclRaw "func sky_stringSplit(sep any) any { return func(s any) any { parts := strings.Split(sky_asString(s), sky_asString(sep)); result := make([]any, len(parts)); for i, p := range parts { result[i] = p }; return result } }"
+    , GoDeclRaw "func sky_stringReplace(old any) any { return func(new_ any) any { return func(s any) any { return strings.ReplaceAll(sky_asString(s), sky_asString(old), sky_asString(new_)) } } }"
+    , GoDeclRaw "func sky_stringToInt(s any) any { n, err := strconv.Atoi(strings.TrimSpace(sky_asString(s))); if err != nil { return SkyNothing() }; return SkyJust(n) }"
+    , GoDeclRaw "func sky_stringToFloat(s any) any { f, err := strconv.ParseFloat(strings.TrimSpace(sky_asString(s)), 64); if err != nil { return SkyNothing() }; return SkyJust(f) }"
+    , GoDeclRaw "func sky_stringAppend(a any) any { return func(b any) any { return sky_asString(a) + sky_asString(b) } }"
     , GoDeclRaw "func sky_stringIsEmpty(v any) any { return sky_asString(v) == \"\" }"
     , GoDeclRaw "func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); return str[sky_asInt(start):sky_asInt(end)] } } }"
     , GoDeclRaw "func sky_stringJoin(sep any) any { return func(list any) any { parts := sky_asList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = sky_asString(p) }; return strings.Join(ss, sky_asString(sep)) } }"
@@ -967,12 +1101,66 @@ generateHelperDecls =
     , GoDeclRaw "func sky_listReverse(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[len(items)-1-i] = item }; return result }"
     , GoDeclRaw "func sky_listIsEmpty(list any) any { return len(sky_asList(list)) == 0 }"
     , GoDeclRaw "func sky_listAppend(a any) any { return func(b any) any { return append(sky_asList(a), sky_asList(b)...) } }"
+    , GoDeclRaw "func sky_listConcatMap(fn any) any { return func(list any) any { var result []any; for _, item := range sky_asList(list) { result = append(result, sky_asList(fn.(func(any) any)(item))...) }; if result == nil { return []any{} }; return result } }"
+    , GoDeclRaw "func sky_listConcat(lists any) any { var result []any; for _, l := range sky_asList(lists) { result = append(result, sky_asList(l)...) }; if result == nil { return []any{} }; return result }"
+    , GoDeclRaw "func sky_listFilterMap(fn any) any { return func(list any) any { var result []any; for _, item := range sky_asList(list) { r := fn.(func(any) any)(item); if m, ok := r.(SkyMaybe); ok && m.Tag == 0 { result = append(result, m.JustValue) } }; if result == nil { return []any{} }; return result } }"
+    , GoDeclRaw "func sky_listIndexedMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(i).(func(any) any)(item) }; return result } }"
+    , GoDeclRaw "func sky_listDrop(n any) any { return func(list any) any { items := sky_asList(list); c := sky_asInt(n); if c >= len(items) { return []any{} }; return items[c:] } }"
+    , GoDeclRaw "func sky_listMember(item any) any { return func(list any) any { for _, x := range sky_asList(list) { if sky_equal(x, item) { return true } }; return false } }"
     , GoDeclRaw "func sky_recordUpdate(base any, updates any) any { m := sky_asMap(base); result := make(map[string]any); for k, v := range m { result[k] = v }; for k, v := range sky_asMap(updates) { result[k] = v }; return result }"
     , GoDeclRaw "func sky_println(args ...any) any { ss := make([]any, len(args)); for i, a := range args { ss[i] = sky_asString(a) }; fmt.Println(ss...); return struct{}{} }"
     , GoDeclRaw "func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
     , GoDeclRaw "var _ = strings.Contains"
     , GoDeclRaw "var _ = strconv.Itoa"
     , GoDeclRaw "var _ = os.Exit"
+    , GoDeclRaw "func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }"
+    , GoDeclRaw "func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
+    , GoDeclRaw "func sky_asTuple2(v any) SkyTuple2 { if t, ok := v.(SkyTuple2); ok { return t }; return SkyTuple2{} }"
+    , GoDeclRaw "func sky_not(v any) any { return !sky_asBool(v) }"
+    , GoDeclRaw "func sky_fileRead(path any) any { data, err := os.ReadFile(sky_asString(path)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(data)) }"
+    , GoDeclRaw "func sky_fileWrite(path any) any { return func(content any) any { err := os.WriteFile(sky_asString(path), []byte(sky_asString(content)), 0644); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
+    , GoDeclRaw "func sky_fileMkdirAll(path any) any { err := os.MkdirAll(sky_asString(path), 0755); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) }"
+    , GoDeclRaw "func sky_processRun(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; out, err := exec.Command(sky_asString(cmd), cmdArgs...).CombinedOutput(); if err != nil { return SkyErr(err.Error() + \": \" + string(out)) }; return SkyOk(string(out)) } }"
+    , GoDeclRaw "func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
+    , GoDeclRaw "func sky_processGetArgs(u any) any { args := make([]any, len(os.Args)); for i, a := range os.Args { args[i] = a }; return args }"
+    , GoDeclRaw "func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"
+    , GoDeclRaw "func sky_refNew(v any) any { type SkyRef struct { Value any }; return &SkyRef{Value: v} }"
+    , GoDeclRaw "type SkyRef struct { Value any }"
+    , GoDeclRaw "func sky_refGet(r any) any { return r.(*SkyRef).Value }"
+    , GoDeclRaw "func sky_refSet(v any) any { return func(r any) any { r.(*SkyRef).Value = v; return struct{}{} } }"
+    , GoDeclRaw "func sky_dictEmpty() any { return map[string]any{} }"
+    , GoDeclRaw "func sky_dictInsert(k any) any { return func(v any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)+1); for key, val := range m { result[key] = val }; result[sky_asString(k)] = v; return result } } }"
+    , GoDeclRaw "func sky_dictGet(k any) any { return func(d any) any { m := sky_asMap(d); if v, ok := m[sky_asString(k)]; ok { return SkyJust(v) }; return SkyNothing() } }"
+    , GoDeclRaw "func sky_dictKeys(d any) any { m := sky_asMap(d); keys := make([]any, 0, len(m)); for k := range m { keys = append(keys, k) }; return keys }"
+    , GoDeclRaw "func sky_dictValues(d any) any { m := sky_asMap(d); vals := make([]any, 0, len(m)); for _, v := range m { vals = append(vals, v) }; return vals }"
+    , GoDeclRaw "func sky_dictToList(d any) any { m := sky_asMap(d); pairs := make([]any, 0, len(m)); for k, v := range m { pairs = append(pairs, SkyTuple2{k, v}) }; return pairs }"
+    , GoDeclRaw "func sky_dictFromList(list any) any { result := make(map[string]any); for _, item := range sky_asList(list) { t := sky_asTuple2(item); result[sky_asString(t.V0)] = t.V1 }; return result }"
+    , GoDeclRaw "func sky_dictMap(fn any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)); for k, v := range m { result[k] = fn.(func(any) any)(k).(func(any) any)(v) }; return result } }"
+    , GoDeclRaw "func sky_dictFoldl(fn any) any { return func(init any) any { return func(d any) any { acc := init; for k, v := range sky_asMap(d) { acc = fn.(func(any) any)(k).(func(any) any)(v).(func(any) any)(acc) }; return acc } } }"
+    , GoDeclRaw "func sky_dictUnion(a any) any { return func(b any) any { ma, mb := sky_asMap(a), sky_asMap(b); result := make(map[string]any, len(ma)+len(mb)); for k, v := range mb { result[k] = v }; for k, v := range ma { result[k] = v }; return result } }"
+    , GoDeclRaw "func sky_dictRemove(k any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)); key := sky_asString(k); for k2, v := range m { if k2 != key { result[k2] = v } }; return result } }"
+    , GoDeclRaw "func sky_dictMember(k any) any { return func(d any) any { _, ok := sky_asMap(d)[sky_asString(k)]; return ok } }"
+    , GoDeclRaw "func sky_setEmpty() any { return map[string]bool{} }"
+    , GoDeclRaw "func sky_setSingleton(v any) any { return map[string]bool{sky_asString(v): true} }"
+    , GoDeclRaw "func sky_setInsert(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)+1); for k := range m { result[k] = true }; result[sky_asString(v)] = true; return result } }"
+    , GoDeclRaw "func sky_setMember(v any) any { return func(s any) any { return s.(map[string]bool)[sky_asString(v)] } }"
+    , GoDeclRaw "func sky_setUnion(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool, len(ma)+len(mb)); for k := range mb { result[k] = true }; for k := range ma { result[k] = true }; return result } }"
+    , GoDeclRaw "func sky_setDiff(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool); for k := range ma { if !mb[k] { result[k] = true } }; return result } }"
+    , GoDeclRaw "func sky_setToList(s any) any { m := s.(map[string]bool); result := make([]any, 0, len(m)); for k := range m { result = append(result, k) }; return result }"
+    , GoDeclRaw "func sky_setFromList(list any) any { result := make(map[string]bool); for _, item := range sky_asList(list) { result[sky_asString(item)] = true }; return result }"
+    , GoDeclRaw "func sky_setIsEmpty(s any) any { return len(s.(map[string]bool)) == 0 }"
+    , GoDeclRaw "func sky_setRemove(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)); key := sky_asString(v); for k := range m { if k != key { result[k] = true } }; return result } }"
+    , GoDeclRaw "func sky_readLine(u any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; line, err := stdinReader.ReadString('\\n'); if err != nil && len(line) == 0 { return SkyNothing() }; return SkyJust(strings.TrimRight(line, \"\\r\\n\")) }"
+    , GoDeclRaw "func sky_readBytes(n any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; count := sky_asInt(n); buf := make([]byte, count); total := 0; for total < count { nr, err := stdinReader.Read(buf[total:]); total += nr; if err != nil { break } }; if total == 0 { return SkyNothing() }; return SkyJust(string(buf[:total])) }"
+    , GoDeclRaw "func sky_writeStdout(s any) any { fmt.Print(sky_asString(s)); return struct{}{} }"
+    , GoDeclRaw "func sky_writeStderr(s any) any { fmt.Fprint(os.Stderr, sky_asString(s)); return struct{}{} }"
+    , GoDeclRaw "var stdinReader *bufio.Reader"
+    , GoDeclRaw "var _ = exec.Command"
+    , GoDeclRaw "var _ = bufio.NewReader"
+    , GoDeclRaw "func sky_fst(t any) any { return sky_asTuple2(t).V0 }"
+    , GoDeclRaw "func sky_snd(t any) any { return sky_asTuple2(t).V1 }"
+    , GoDeclRaw "func sky_errorToString(e any) any { return sky_asString(e) }"
+    , GoDeclRaw "func sky_identity(v any) any { return v }"
     ]
 
 
@@ -1066,6 +1254,30 @@ isGoKeyword name =
     name == "const" ||
     name == "defer" || name == "fallthrough" || name == "goto"
 
+isStdlibCallee : Expression -> Bool
+isStdlibCallee expr =
+    case expr of
+        QualifiedExpr parts _ ->
+            case List.head parts of
+                Just first ->
+                    first == "String" || first == "List" || first == "Dict" ||
+                    first == "Set" || first == "File" || first == "Process" ||
+                    first == "Ref" || first == "Io" || first == "Args" ||
+                    first == "Log"
+
+                Nothing ->
+                    False
+
+        IdentifierExpr name _ ->
+            String.startsWith "sky_" name
+
+        CallExpr innerCallee _ _ ->
+            isStdlibCallee innerCallee
+
+        _ ->
+            False
+
+
 goQuote : String -> String
 goQuote s =
     let
@@ -1133,8 +1345,24 @@ emitGoExprInline expr =
             "\"" ++ s ++ "\""
         
         GoCallExpr fn args ->
-            emitGoExprInline fn ++
-            "(" ++ String.join ", " (List.map emitGoExprInline args) ++ ")"
+            let
+                fnStr =
+                    emitGoExprInline fn
+                -- If callee is another call (curried), add type assertion
+                needsAssertion =
+                    case fn of
+                        GoCallExpr _ _ ->
+                            True
+
+                        _ ->
+                            False
+                calleeStr =
+                    if needsAssertion then
+                        fnStr ++ ".(func(any) any)"
+                    else
+                        fnStr
+            in
+                calleeStr ++ "(" ++ String.join ", " (List.map emitGoExprInline args) ++ ")"
         
         GoSelectorExpr target sel ->
             emitGoExprInline target ++ "." ++ sel

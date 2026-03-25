@@ -158,7 +158,7 @@ writeMultiModuleOutput outDir allDecls =
 makeGoPackage : List GoDecl -> GoPackage
 makeGoPackage decls =
     { name = "main"
-    , imports = [ { path = "fmt" , alias_ = "" } , { path = "strconv" , alias_ = "" } , { path = "strings" , alias_ = "" } , { path = "os" , alias_ = "" } ]
+    , imports = [ { path = "fmt" , alias_ = "" } , { path = "bufio" , alias_ = "" } , { path = "os" , alias_ = "" } , { path = "os/exec" , alias_ = "exec" } , { path = "strconv" , alias_ = "" } , { path = "strings" , alias_ = "" } ]
     , declarations = decls
     }
 
@@ -178,7 +178,10 @@ loadLocalModules srcRoot imports acc =
                 filePath =
                     Resolver.resolveModulePath srcRoot imp.moduleName
             in
-                case File.readFile filePath of
+                if Resolver.isStdlib modName || isModuleLoaded modName acc then
+                    loadLocalModules srcRoot rest acc
+                else
+                    case File.readFile filePath of
                     Err _ ->
                         loadLocalModules srcRoot rest acc
 
@@ -192,7 +195,13 @@ loadLocalModules srcRoot imports acc =
                                     loadLocalModules srcRoot rest acc
 
                                 Ok mod ->
-                                    loadLocalModules srcRoot rest (( modName , mod ) :: acc)
+                                    let
+                                        transImports =
+                                            List.filter (\i -> not (Resolver.isStdlib (String.join "." i.moduleName))) mod.imports
+                                        withTransitive =
+                                            loadLocalModules srcRoot transImports (( modName , mod ) :: acc)
+                                    in
+                                        loadLocalModules srcRoot rest withTransitive
 
 
 -- Build alias → qualified module name map
@@ -200,6 +209,51 @@ loadLocalModules srcRoot imports acc =
 buildAliasMap : List Ast.ImportDecl -> Dict.Dict String String
 buildAliasMap imports =
     List.foldl addImportAlias Dict.empty imports
+
+
+deduplicateDecls : List GoDecl -> List GoDecl
+deduplicateDecls decls =
+    deduplicateDeclsLoop decls Dict.empty []
+
+
+deduplicateDeclsLoop : List GoDecl -> Dict.Dict String String -> List GoDecl -> List GoDecl
+deduplicateDeclsLoop decls seen acc =
+    case decls of
+        [] ->
+            List.reverse acc
+
+        decl :: rest ->
+            let
+                name =
+                    getDeclName decl
+            in
+                if String.isEmpty name then
+                    deduplicateDeclsLoop rest seen (decl :: acc)
+                else
+                    case Dict.get name seen of
+                        Just _ ->
+                            deduplicateDeclsLoop rest seen acc
+
+                        Nothing ->
+                            deduplicateDeclsLoop rest (Dict.insert name "1" seen) (decl :: acc)
+
+
+getDeclName : GoDecl -> String
+getDeclName decl =
+    case decl of
+        GoDeclFunc funcDecl ->
+            funcDecl.name
+
+        GoDeclVar name _ ->
+            name
+
+        GoDeclRaw _ ->
+            ""
+
+
+isModuleLoaded : String -> List ( String , Ast.Module ) -> Bool
+isModuleLoaded modName loaded =
+    List.foldl (\pair acc -> acc || fst pair == modName) False loaded
 
 
 addImportAlias : Ast.ImportDecl -> Dict.Dict String String -> Dict.Dict String String
@@ -249,21 +303,27 @@ compileDependencyModule stdlibEnv pair =
                     Adt.emptyRegistry
         depBaseCtx =
             Lower.emptyCtx
+        depAliasMap =
+            buildAliasMap mod.imports
         ctx =
             { depBaseCtx
                 | registry = registry
                 , localFunctions = Lower.collectLocalFunctions mod.declarations
                 , importedConstructors = Lower.buildConstructorMap registry
+                , modulePrefix = prefix
+                , importAliases = depAliasMap
             }
         goDecls =
             Lower.lowerDeclarations ctx mod.declarations
         ctorDecls =
             Lower.generateConstructorDecls registry mod.declarations
-        -- Filter out side-effect-only declarations (named _) then prefix
+        -- Filter out side-effect-only declarations and deduplicate
         filtered =
             List.filter isExportableDecl (List.append ctorDecls goDecls)
+        prefixed =
+            List.map (prefixDecl prefix) filtered
     in
-        List.map (prefixDecl prefix) filtered
+        deduplicateDecls prefixed
 
 
 isExportableDecl : GoDecl -> Bool
