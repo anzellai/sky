@@ -823,11 +823,11 @@ Sky.Live config values from `sky.toml` are embedded at compile time, but can be 
 
 ```bash
 # Override via env var
-SKY_LIVE_PORT=8000 ./dist/app
+SKY_LIVE_PORT=8000 ./sky-out/app
 
 # Or via .env file in the working directory
 echo "SKY_LIVE_PORT=8000" > .env
-./dist/app
+./sky-out/app
 ```
 
 See the [design docs](docs/design/) for the full architecture:
@@ -1014,32 +1014,32 @@ A library can also have Go dependencies. When someone installs your Sky package,
 ## CLI Reference
 
 ```bash
-sky init [name]              # Create a new project
-sky add <package>            # Add a dependency (auto-detects Sky vs Go)
-sky remove <package>         # Remove a dependency
-sky install                  # Install all dependencies from sky.toml
-sky update                   # Update lockfile
-sky build [file.sky]         # Compile to Go and build binary
-sky run [file.sky]           # Build and run (detects Sky.Live apps)
-sky dev [file.sky]           # Watch mode: auto-rebuild + restart on changes
+sky build [file.sky]         # Compile to Go and build binary (sky-out/app)
+sky run [file.sky]           # Build and run
 sky check [file.sky]         # Type-check without compiling (reports all diagnostics)
-sky fmt <file-or-dir>        # Format code (Elm-style)
-sky clean                    # Remove dist/, .skycache/, .skydeps/
-sky upgrade                  # Self-update to latest GitHub release
+sky fmt <file-or-dir>        # Format code (Elm-style: 4-space, leading commas)
+sky add <package>            # Add a Go or Sky dependency + auto-generate bindings
+sky install                  # Install all deps + auto-generate missing bindings from source
+sky remove <package>         # Remove a dependency
+sky update                   # Update sky.toml dependencies to latest versions
+sky upgrade                  # Self-upgrade to latest GitHub release
+sky clean                    # Remove sky-out/ dist/
 sky lsp                      # Start LSP server for editor integration
 sky --version                # Show version
 ```
 
-If `file.sky` is omitted, the CLI reads `entry` from `sky.toml`.
+If `file.sky` is omitted, defaults to `src/Main.sky`.
 
 ### Build Pipeline
 
 `sky build` performs:
 
-1. Compile Sky source to Go (`dist/`)
-2. Copy Go wrappers and helpers
-3. Run `go mod init` + `go mod tidy`
-4. Run `go build` -> output binary at `bin` path (default `dist/app`)
+1. Lex, parse, type-check all Sky modules (entry + local imports + FFI bindings)
+2. Lower AST to Go IR, emit Go source (`sky-out/main.go`)
+3. Copy FFI wrapper files from `.skycache/go/` to `sky-out/`
+4. Dead code elimination: strip unused wrapper functions
+5. Run `go mod init` + `go mod tidy` (if FFI wrappers present)
+6. Run `go build` -> output binary at `sky-out/app`
 
 ### Type Checker
 
@@ -1089,9 +1089,7 @@ Sky ships with a Language Server that provides:
 Start the LSP:
 
 ```bash
-node dist/bin/sky-lsp.js
-# or if built as binary:
-sky-lsp
+sky lsp
 ```
 
 ### Helix
@@ -1109,8 +1107,8 @@ language-servers = ["sky-lsp"]
 indent = { tab-width = 4, unit = " " }
 
 [language-server.sky-lsp]
-command = "sky-lsp"
-args = ["--stdio"]
+command = "sky"
+args = ["lsp"]
 
 [[grammar]]
 name = "sky"
@@ -1136,6 +1134,8 @@ source = { git = "https://github.com/anzellai/tree-sitter-sky", rev = "main" }
 | `11-fyne-stopwatch` | Desktop GUI                | Fyne toolkit, timers, data binding                             |
 | `12-skyvote`        | Full Sky.Live app          | SQLite, auth, voting, SSE auto-refresh                         |
 | `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n, image uploads |
+| `14-task-demo`      | Task effect boundary       | Task composition, error handling, sequencing                   |
+| `15-http-server`    | Sky.Http.Server            | Routing, cookies, middleware, request/response builders        |
 
 Run any example:
 
@@ -1156,16 +1156,20 @@ source.sky -> lexer -> layout filtering -> parser -> AST -> module graph -> type
 ### Source Layout (Self-Hosted Sky Compiler)
 
 ```
-src/                              -- Sky compiler (written in Sky, compiles to Go)
-  Main.sky                        -- CLI entry point (build/check/run/fmt/lsp/clean)
+src/                              -- Sky compiler (self-hosted, 34 modules, ~4MB binary)
+  Main.sky                        -- CLI entry (build/run/check/fmt/add/install/update/upgrade/lsp/clean)
   Compiler/                       -- 21 modules: lexer, parser, type checker, lowerer, emitter
     Lexer.sky, Parser.sky, ParserExpr.sky, ParserPattern.sky
     Ast.sky, GoIr.sky, Types.sky, Env.sky
     Infer.sky, Unify.sky, Checker.sky, Exhaustive.sky
     Lower.sky, Emit.sky, Pipeline.sky, Resolver.sky
-  Ffi/                            -- Go FFI: inspector, type mapper, binding/wrapper generator
+  Ffi/                            -- 4 modules: Go package inspector, type mapper, binding/wrapper gen
+    Inspector.sky                 -- Runs go/packages to extract Go API metadata
+    BindingGen.sky                -- Generates .skyi binding files (Sky type signatures)
+    WrapperGen.sky                -- Generates Go wrapper functions with panic recovery
+    TypeMapper.sky                -- Maps Go types to Sky types
   Formatter/                      -- Elm-style formatter (Doc algebra + Format)
-  Lsp/                            -- Language Server (JSON-RPC + hover/diagnostics/completion)
+  Lsp/                            -- Language Server (JSON-RPC + hover/definition/completion)
 
 ts-compiler/                      -- Legacy TypeScript bootstrap (reference only)
 stdlib-go/                        -- Go runtime implementations for stdlib modules

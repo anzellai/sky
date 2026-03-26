@@ -93,7 +93,7 @@ resolveImports srcRoot imports loaded visited diagnostics =
     case imports of
         [] ->
             ( loaded , diagnostics )
-        
+
         imp :: rest ->
             let
                 modName =
@@ -101,6 +101,12 @@ resolveImports srcRoot imports loaded visited diagnostics =
             in
                 if Set.member modName visited || isStdlib modName then
                     resolveImports srcRoot rest loaded visited diagnostics
+                else if imp.alias_ == "_" then
+                    -- Blank import: side-effect only (e.g., import Modernc.Org.Sqlite as _)
+                    -- Don't load any module, just mark as visited
+                    resolveImports srcRoot rest loaded
+                        (Set.insert modName visited)
+                        diagnostics
                 else
                     let
                         filePath =
@@ -108,14 +114,44 @@ resolveImports srcRoot imports loaded visited diagnostics =
                     in
                         case File.readFile filePath of
                             Err _ ->
-                                resolveImports srcRoot rest loaded
-                                    (Set.insert modName visited)
-                                    (
-                                    diagnostics ++
-                                    [ "Module not found: " ++
-                                    modName ++ " (looked at " ++ filePath ++ ")"
-                                    ]
-                                    )
+                                -- Try loading from .skycache (Go FFI bindings)
+                                let
+                                    skyiPath =
+                                        resolveBindingPath modName
+                                in
+                                    case File.readFile skyiPath of
+                                        Ok skyiSource ->
+                                            -- Found binding file, parse and load
+                                            let
+                                                skyiLexResult =
+                                                    Lexer.lex skyiSource
+                                            in
+                                                case Parser.parse skyiLexResult.tokens of
+                                                    Ok skyiMod ->
+                                                        let
+                                                            loaded2 =
+                                                                { name = modName
+                                                                , qualifiedName = imp.moduleName
+                                                                , filePath = skyiPath
+                                                                , ast = skyiMod
+                                                                , checkResult = Nothing
+                                                                }
+                                                        in
+                                                            resolveImports srcRoot rest
+                                                                (loaded2 :: loaded)
+                                                                (Set.insert modName visited)
+                                                                diagnostics
+
+                                                    Err e ->
+                                                        resolveImports srcRoot rest loaded
+                                                            (Set.insert modName visited)
+                                                            (diagnostics ++ [ "Parse error in binding " ++ modName ++ ": " ++ e ])
+
+                                        Err _ ->
+                                            -- Neither local file nor binding found
+                                            resolveImports srcRoot rest loaded
+                                                (Set.insert modName visited)
+                                                (diagnostics ++ [ "Module not found: " ++ modName ++ " (looked at " ++ filePath ++ " and " ++ skyiPath ++ ")" ])
                             
                             Ok source ->
                                 let
@@ -162,13 +198,140 @@ resolveModulePath srcRoot parts =
     srcRoot ++ "/" ++ String.join "/" parts ++ ".sky"
 
 -- ══════════════════════════════════════════════════════
+-- FFI BINDING PATH RESOLUTION
+-- ══════════════════════════════════════════════════════
+
+-- Convert a module name to the binding .skyi file path
+-- e.g. "Net.Http" → ".skycache/go/net_http/bindings.skyi"
+--      "Github.Com.Google.Uuid" → ".skycache/go/github_com_google_uuid/bindings.skyi"
+resolveBindingPath : String -> String
+resolveBindingPath modName =
+    let
+        -- Convert module name back to safe cache path
+        -- Handle camelCase: StripeGo → stripe_go
+        pkgParts =
+            String.split "." modName
+        safeParts =
+            List.map camelToUnderscore pkgParts
+        safeName =
+            String.join "_" safeParts
+    in
+        ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+
+
+-- Convert camelCase to underscore_separated lowercase
+-- "StripeGo" → "stripe_go", "Http" → "http", "V84" → "v84"
+camelToUnderscore : String -> String
+camelToUnderscore s =
+    String.toLower (camelInsertUnderscores s 0 "")
+
+
+camelInsertUnderscores : String -> Int -> String -> String
+camelInsertUnderscores s idx acc =
+    if idx >= String.length s then
+        acc
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) s
+            isUp =
+                ch == "A" || ch == "B" || ch == "C" || ch == "D" || ch == "E" ||
+                ch == "F" || ch == "G" || ch == "H" || ch == "I" || ch == "J" ||
+                ch == "K" || ch == "L" || ch == "M" || ch == "N" || ch == "O" ||
+                ch == "P" || ch == "Q" || ch == "R" || ch == "S" || ch == "T" ||
+                ch == "U" || ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z"
+        in
+            if isUp && idx > 0 then
+                camelInsertUnderscores s (idx + 1) (acc ++ "_" ++ ch)
+            else
+                camelInsertUnderscores s (idx + 1) (acc ++ ch)
+
+
+-- ══════════════════════════════════════════════════════
 -- STDLIB DETECTION
 -- ══════════════════════════════════════════════════════
 isStdlib : String -> Bool
 isStdlib modName =
     String.startsWith "Sky.Core." modName ||
+    String.startsWith "Sky.Http." modName ||
     String.startsWith "Std." modName ||
     modName == "Sky.Core.Prelude" || modName == "Sky.Interop"
+
+-- ══════════════════════════════════════════════════════
+-- STDLIB EXPORTS
+-- ══════════════════════════════════════════════════════
+-- Returns known exported names for a stdlib module.
+-- When adding new functions to stdlib .sky files, update this list.
+-- The lowerer uses module-level conventions — NOT per-name mapping.
+
+getStdlibExports : String -> List String
+getStdlibExports modName =
+    if modName == "Std.Html" then
+        [ "text" , "raw" , "node" , "voidNode" , "styleNode"
+        , "render" , "toString" , "escapeHtml" , "escapeAttr" , "attrToString"
+        , "div" , "span" , "p" , "h1" , "h2" , "h3" , "h4" , "h5" , "h6"
+        , "a" , "button" , "form" , "label" , "textarea" , "select" , "option"
+        , "ul" , "ol" , "li" , "table" , "thead" , "tbody" , "tfoot" , "tr" , "th" , "td"
+        , "nav" , "headerNode" , "footerNode" , "section" , "article" , "aside" , "mainNode"
+        , "strong" , "em" , "small" , "pre" , "codeNode" , "blockquote"
+        , "input" , "br" , "hr" , "img" , "meta" , "linkNode" , "script"
+        , "fieldset" , "legend" , "body" , "doctype" , "htmlNode" , "headNode" , "titleNode"
+        ]
+    else if modName == "Std.Html.Attributes" then
+        [ "attribute" , "boolAttribute"
+        , "class" , "id" , "style" , "title" , "hidden" , "tabindex" , "lang" , "dir" , "role"
+        , "href" , "target" , "rel" , "download"
+        , "type_" , "name" , "value" , "placeholder" , "action" , "method" , "for" , "enctype"
+        , "required" , "disabled" , "checked" , "readonly" , "autofocus" , "multiple" , "selected"
+        , "novalidate" , "autocomplete" , "minlength" , "maxlength" , "min" , "max" , "step" , "pattern"
+        , "rows" , "cols" , "src" , "alt" , "width" , "height"
+        , "charset" , "content" , "httpEquiv" , "colspan" , "rowspan" , "scope"
+        , "ariaLabel" , "ariaHidden" , "ariaDescribedby" , "ariaExpanded" , "dataAttribute"
+        ]
+    else if modName == "Std.Live.Events" then
+        [ "onClick" , "onInput" , "onSubmit" , "onDblClick" , "onChange"
+        , "onFocus" , "onBlur" , "onImage" , "onFile"
+        , "fileMaxSize" , "fileMaxWidth" , "fileMaxHeight"
+        ]
+    else if modName == "Std.Css" then
+        [ "styles" , "rule" , "media" , "keyframes" , "frame" , "stylesheet" , "property"
+        , "px" , "rem" , "em" , "pct" , "vh" , "vw" , "ch" , "fr" , "sec" , "ms" , "deg"
+        , "zero" , "auto" , "none" , "inherit"
+        , "hex" , "rgb" , "rgba" , "hsl" , "hsla" , "transparent" , "cssVar" , "cssVarOr"
+        , "display" , "position" , "top" , "right_" , "bottom" , "left" , "zIndex"
+        , "overflow" , "overflowX" , "overflowY" , "float" , "clear" , "visibility"
+        , "flexDirection" , "flexWrap" , "justifyContent" , "alignItems" , "alignContent"
+        , "alignSelf" , "flex" , "flexGrow" , "flexShrink" , "flexBasis" , "order"
+        , "gap" , "rowGap" , "columnGap"
+        , "gridTemplateColumns" , "gridTemplateRows" , "gridColumn" , "gridRow" , "gridArea"
+        , "repeat" , "minmax"
+        , "margin" , "margin2" , "margin4" , "marginTop" , "marginRight" , "marginBottom" , "marginLeft"
+        , "padding" , "padding2" , "padding4" , "paddingTop" , "paddingRight" , "paddingBottom" , "paddingLeft"
+        , "width" , "height" , "minWidth" , "maxWidth" , "minHeight" , "maxHeight"
+        , "fontFamily" , "fontSize" , "fontWeight" , "fontStyle" , "lineHeight" , "letterSpacing"
+        , "textAlign" , "textDecoration" , "textTransform" , "textOverflow" , "whiteSpace" , "wordBreak"
+        , "color" , "backgroundColor" , "background" , "backgroundImage" , "backgroundSize" , "backgroundPosition" , "backgroundRepeat"
+        , "opacity" , "linearGradient"
+        , "border" , "borderTop" , "borderRight" , "borderBottom" , "borderLeft"
+        , "borderColor" , "borderWidth" , "borderStyle" , "borderRadius" , "borderRadius4" , "borderCollapse"
+        , "outline" , "outlineOffset"
+        , "boxShadow" , "shadow" , "shadows" , "textShadow"
+        , "transform" , "translateX" , "translateY" , "scale" , "rotate"
+        , "transition" , "transitionProp" , "animation"
+        , "cursor" , "pointerEvents" , "userSelect" , "filter" , "backdropFilter"
+        , "calc" , "important" , "defineVar" , "systemFont" , "monoFont" , "boxSizingBorderBox"
+        ]
+    else if modName == "Std.Live" then
+        [ "app" , "route" ]
+    else if modName == "Std.Cmd" then
+        [ "none" , "batch" , "perform" ]
+    else if modName == "Std.Sub" then
+        [ "none" , "batch" ]
+    else if modName == "Std.Time" then
+        [ "every" ]
+    else
+        []
+
 
 -- ══════════════════════════════════════════════════════
 -- MULTI-MODULE TYPE CHECKING
@@ -605,3 +768,148 @@ buildStdlibEnv =
                 ]
     in
         Env.union stdFunctions prelude
+
+
+-- ══════════════════════════════════════════════════════
+-- FFI PACKAGE DETECTION
+-- ══════════════════════════════════════════════════════
+
+-- Check if a module was resolved from a .skyi binding file
+isFfiBinding : String -> Bool
+isFfiBinding modName =
+    let
+        skyiPath =
+            resolveBindingPath modName
+    in
+        case File.readFile skyiPath of
+            Ok _ ->
+                True
+
+            Err _ ->
+                False
+
+
+-- Convert a Sky module name to a Go import path
+-- e.g. "Database.Sql" → "database/sql"
+--      "Github.Com.Google.Uuid" → "github.com/google/uuid"
+--      "Modernc.Org.Sqlite" → "modernc.org/sqlite"
+moduleNameToGoPath : String -> String
+moduleNameToGoPath modName =
+    let
+        parts =
+            String.split "." modName
+        lowerParts =
+            List.map String.toLower parts
+    in
+        String.join "/" lowerParts
+
+
+-- Convert a Sky module name to the safe (underscore-joined) name used in .skycache
+-- e.g. "Github.Com.Google.Uuid" → "github_com_google_uuid"
+moduleNameToSafeName : String -> String
+moduleNameToSafeName modName =
+    let
+        parts =
+            String.split "." modName
+        lowerParts =
+            List.map String.toLower parts
+    in
+        String.join "_" lowerParts
+
+
+-- Get the path to the Go wrapper file for a given module
+-- e.g. "Github.Com.Google.Uuid" → ".skycache/go/github_com_google_uuid/sky_wrappers/github_com_google_uuid.go"
+resolveWrapperPath : String -> String
+resolveWrapperPath modName =
+    let
+        safeName =
+            moduleNameToSafeName modName
+    in
+        ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
+
+
+-- Collect all foreign Go packages from a list of imports
+-- Returns a list of ( moduleName, goImportPath, isBlankImport )
+collectForeignImports : List Ast.ImportDecl -> List ( String , String , Bool )
+collectForeignImports imports =
+    List.filterMap
+        (\imp ->
+            let
+                modName =
+                    String.join "." imp.moduleName
+            in
+                if isStdlib modName then
+                    Nothing
+                else if imp.alias_ == "_" then
+                    -- Blank import for side effects
+                    Just ( modName , moduleNameToGoPath modName , True )
+                else if isFfiBinding modName then
+                    -- Regular FFI import
+                    Just ( modName , moduleNameToGoPath modName , False )
+                else
+                    Nothing
+        )
+        imports
+
+
+-- Recursively collect foreign imports from all loaded modules
+collectAllForeignImports : List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , String , Bool )
+collectAllForeignImports entryImports loadedModules =
+    let
+        entryForeign =
+            collectForeignImports entryImports
+        depForeign =
+            List.concatMap
+                (\pair ->
+                    let
+                        mod =
+                            snd pair
+                    in
+                        collectForeignImports mod.imports
+                )
+                loadedModules
+    in
+        deduplicateForeignImports (List.append entryForeign depForeign)
+
+
+deduplicateForeignImports : List ( String , String , Bool ) -> List ( String , String , Bool )
+deduplicateForeignImports imports =
+    deduplicateForeignLoop imports Set.empty []
+
+
+deduplicateForeignLoop : List ( String , String , Bool ) -> Set.Set String -> List ( String , String , Bool ) -> List ( String , String , Bool )
+deduplicateForeignLoop imports seen acc =
+    case imports of
+        [] ->
+            List.reverse acc
+
+        item :: rest ->
+            let
+                modName =
+                    tripleFirst item
+            in
+                if Set.member modName seen then
+                    deduplicateForeignLoop rest seen acc
+                else
+                    deduplicateForeignLoop rest (Set.insert modName seen) (item :: acc)
+
+
+tripleFirst : ( String , String , Bool ) -> String
+tripleFirst triple =
+    case triple of
+        ( a , _ , _ ) ->
+            a
+
+
+tripleSecond : ( String , String , Bool ) -> String
+tripleSecond triple =
+    case triple of
+        ( _ , b , _ ) ->
+            b
+
+
+tripleThird : ( String , String , Bool ) -> Bool
+tripleThird triple =
+    case triple of
+        ( _ , _ , c ) ->
+            c

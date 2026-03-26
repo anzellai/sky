@@ -98,8 +98,20 @@ compileMultiModule entryPath outDir srcRoot entryMod =
     let
         localImports =
             List.filter (\imp -> not (Resolver.isStdlib (String.join "." imp.moduleName))) entryMod.imports
-        loadedModules =
+        localModules =
             loadLocalModules srcRoot localImports []
+        -- Load FFI bindings from entry module imports
+        entryFfiModules =
+            loadFfiBindings localImports
+        -- Also load FFI bindings from dependency module imports
+        depFfiModules =
+            List.concatMap (\pair -> let mod = snd pair in loadFfiBindings mod.imports) localModules
+        ffiModules =
+            List.append entryFfiModules depFfiModules
+        loadedModules =
+            List.append localModules ffiModules
+        _ =
+            println ("   [MULTI] Loaded " ++ String.fromInt (List.length localModules) ++ " local + " ++ String.fromInt (List.length ffiModules) ++ " FFI modules")
         aliasMap =
             buildAliasMap entryMod.imports
         stdlibEnv =
@@ -131,12 +143,16 @@ emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules 
     let
         baseCtx =
             Lower.emptyCtx
+        entryExposed =
+            Lower.buildExposedStdlib entryMod.imports
         entryCtx =
             { baseCtx
                 | registry = entryRegistry
                 , localFunctions = Lower.collectLocalFunctions entryMod.declarations
                 , importedConstructors = Lower.buildConstructorMap entryRegistry
                 , importAliases = aliasMap
+                , exposedStdlib = entryExposed
+                , localFunctionArity = Lower.collectLocalFunctionArities entryMod.declarations
             }
         entryGoDecls =
             Lower.lowerDeclarations entryCtx entryMod.declarations
@@ -149,12 +165,15 @@ emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules 
             generateImportAliases entryMod.imports loadedModules
         allDecls =
             deduplicateDecls (List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls , entryImportAliases ])
+        -- Collect ALL imports (entry + deps) for wrapper copying
+        allImports =
+            List.append entryMod.imports (List.concatMap (\pair -> let mod = snd pair in mod.imports) loadedModules)
     in
-        writeMultiModuleOutput outDir allDecls
+        writeMultiModuleOutput outDir allDecls allImports
 
 
-writeMultiModuleOutput : String -> List GoDecl -> Result String String
-writeMultiModuleOutput outDir allDecls =
+writeMultiModuleOutput : String -> List GoDecl -> List Ast.ImportDecl -> Result String String
+writeMultiModuleOutput outDir allDecls imports =
     let
         goPackage =
             makeGoPackage allDecls
@@ -166,18 +185,92 @@ writeMultiModuleOutput outDir allDecls =
             outDir ++ "/main.go"
         _ =
             File.mkdirAll outDir
+        -- Copy FFI wrapper files AFTER directory is created
+        _ =
+            copyFfiWrappers outDir imports []
         _ =
             File.writeFile outPath goCode
         _ =
             println ("   Wrote " ++ outPath)
         _ =
             println ("   " ++ String.fromInt (List.length allDecls) ++ " total Go declarations")
+        -- Dead code elimination: strip unused wrapper functions
+        _ =
+            eliminateDeadCode outDir goCode
         _ =
             println ""
         _ =
             println ("✓ Compilation successful")
     in
         Ok goCode
+
+
+-- Replace recursive JSON function CALLS with native Go implementations
+-- The native functions are defined via GoDeclRaw in generateHelperDecls
+optimiseJsonFunctions : String -> String
+optimiseJsonFunctions code =
+    let
+        s1 =
+            String.replace "Lsp_JsonRpc_ExtractBraced(" "sky_nativeExtractBracketed(" code
+        s2 =
+            String.replace "Lsp_JsonRpc_JsonSplitArray(" "sky_nativeJsonSplitArray(" s1
+        s3 =
+            String.replace "Lsp_JsonRpc_SplitJsonElements(" "sky_nativeSplitJsonElements(" s2
+        s4 =
+            String.replace "Lsp_JsonRpc_ExtractBracketed(" "sky_nativeExtractBracketed(" s3
+        s5 =
+            String.replace "Lsp_JsonRpc_FindInString(" "sky_nativeFindInString(" s4
+    in
+        s5
+
+
+-- Write native Go JSON helpers and redirect recursive calls
+writeNativeJsonFile : String -> ()
+writeNativeJsonFile outDir =
+    let
+        -- Write native helper file via heredoc (avoids Sky string duplication bug)
+        _ =
+            Process.run "sh" [ "-c" , "cat > " ++ outDir ++ "/sky_json_native.go << 'GOEOF'\npackage main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\nfunc sky_nativeFindInString(needle any, haystack any, idx any) any {\n\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\nfunc sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 91 || c == 123 { depth++ } else if c == 93 || c == 125 { depth--; if depth == 0 { return str[:i+1] } }\n\t}\n\treturn str\n}\n\nfunc sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 123 || c == 91 { depth++ } else if c == 125 || c == 93 { depth-- } else if c == 44 && depth == 0 {\n\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n\t\t}\n\t}\n\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n\tif result == nil { return []any{} }; return result\n}\n\nfunc sky_nativeJsonSplitArray(arrayStr any) any {\n\tstr := strings.TrimSpace(sky_asString(arrayStr))\n\tif len(str) < 2 { return []any{} }\n\tinner := strings.TrimSpace(str[1:len(str)-1])\n\tif len(inner) == 0 { return []any{} }\n\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\nGOEOF" ]
+        -- Redirect recursive JSON calls to native implementations (skip func definitions)
+        _ =
+            Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && python3 -c \"import re; f=open('main.go'); c=f.read(); f.close(); c=re.sub(r'(?<!func )Lsp_JsonRpc_FindInString\\(', 'sky_nativeFindInString(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBracketed\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBraced\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_SplitJsonElements\\(', 'sky_nativeSplitJsonElements(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_JsonSplitArray\\(', 'sky_nativeJsonSplitArray(', c); f=open('main.go','w'); f.write(c); f.close()\"" ]
+    in
+        ()
+
+
+-- Native Go JSON helpers — iterative, stack-safe for large JSON (7MB+)
+-- These replace the recursive Sky implementations at compile time
+nativeJsonHelperCode : String
+nativeJsonHelperCode =
+    "package main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\n" ++
+    "func sky_nativeFindInString(needle any, haystack any, idx any) any {\n" ++
+    "\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n" ++
+    "\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n" ++
+    "\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\n" ++
+    "func sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n" ++
+    "\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n" ++
+    "\tfor i := 0; i < len(str); i++ {\n" ++
+    "\t\tc := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }\n" ++
+    "\t\tif c == '\"' { inStr = !inStr; continue }; if inStr { continue }\n" ++
+    "\t\tif c == '[' || c == '{' { depth++ } else if c == ']' || c == '}' { depth--; if depth == 0 { return str[:i+1] } }\n" ++
+    "\t}\n\treturn str\n}\n\n" ++
+    "func sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n" ++
+    "\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n" ++
+    "\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n" ++
+    "\tfor i := 0; i < len(str); i++ {\n" ++
+    "\t\tc := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }\n" ++
+    "\t\tif c == '\"' { inStr = !inStr; continue }; if inStr { continue }\n" ++
+    "\t\tif c == '{' || c == '[' { depth++ } else if c == '}' || c == ']' { depth-- } else if c == ',' && depth == 0 {\n" ++
+    "\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n" ++
+    "\t\t}\n\t}\n" ++
+    "\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n" ++
+    "\tif result == nil { return []any{} }; return result\n}\n\n" ++
+    "func sky_nativeJsonSplitArray(arrayStr any) any {\n" ++
+    "\tstr := strings.TrimSpace(sky_asString(arrayStr))\n" ++
+    "\tif len(str) < 2 { return []any{} }\n" ++
+    "\tinner := strings.TrimSpace(str[1:len(str)-1])\n" ++
+    "\tif len(inner) == 0 { return []any{} }\n" ++
+    "\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\n"
 
 
 -- Post-process Go code to suppress unused variable errors
@@ -190,10 +283,185 @@ fixUnusedVars code =
     code
 
 
+-- ══════════════════════════════════════════════════════
+-- DEAD CODE ELIMINATION
+-- ══════════════════════════════════════════════════════
+-- After generating Go output, scan main.go for used Sky_* wrapper
+-- function references, then strip unused functions from wrapper files.
+-- This keeps the Go build lean even with full FFI bindings generated.
+
+eliminateDeadCode : String -> String -> ()
+eliminateDeadCode outDir mainGoCode =
+    let
+        -- Find all wrapper .go files in output directory
+        listResult =
+            Process.run "sh" [ "-c" , "ls " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null | sort -u" ]
+    in
+        case listResult of
+            Ok output ->
+                let
+                    wrapperFiles =
+                        List.filter (\f -> not (String.isEmpty (String.trim f))) (String.split "\n" output)
+                    totalBefore =
+                        List.foldl (\f acc -> acc + countFuncsInFile f) 0 wrapperFiles
+                    _ =
+                        List.map (\f -> trimWrapperFile f mainGoCode) wrapperFiles
+                    totalAfter =
+                        List.foldl (\f acc -> acc + countFuncsInFile f) 0 wrapperFiles
+                in
+                    if totalBefore > totalAfter then
+                        println ("   [DCE] Eliminated " ++ String.fromInt (totalBefore - totalAfter) ++ " unused wrapper functions (" ++ String.fromInt totalBefore ++ " → " ++ String.fromInt totalAfter ++ ")")
+                    else
+                        ()
+
+            Err _ ->
+                ()
+
+
+countFuncsInFile : String -> Int
+countFuncsInFile filePath =
+    case File.readFile filePath of
+        Ok content ->
+            List.length (List.filter (\line -> String.startsWith "func Sky_" (String.trim line)) (String.split "\n" content))
+
+        Err _ ->
+            0
+
+
+trimWrapperFile : String -> String -> ()
+trimWrapperFile filePath mainGoCode =
+    case File.readFile filePath of
+        Ok content ->
+            let
+                trimmed =
+                    trimWrapperContent content mainGoCode
+            in
+                if trimmed /= content then
+                    File.writeFile filePath trimmed
+                else
+                    ()
+
+        Err _ ->
+            ()
+
+
+-- Trim a wrapper file to only keep functions referenced in main.go.
+-- Splits file into header (package + import block) and function blocks.
+-- Keeps a function if its name appears anywhere in main.go.
+trimWrapperContent : String -> String -> String
+trimWrapperContent wrapperCode mainGoCode =
+    let
+        -- Split into lines to find the header vs function blocks
+        sections =
+            splitWrapperSections wrapperCode
+        header =
+            sections.header
+        funcBlocks =
+            sections.functions
+        -- Keep only functions whose name is referenced in main.go
+        keptFuncs =
+            List.filter (\block -> isWrapperUsed block mainGoCode) funcBlocks
+        -- Also keep non-Sky_ functions (like var declarations, helpers)
+        keptNonSky =
+            List.filter (\block -> not (String.startsWith "func Sky_" block)) funcBlocks
+        allKept =
+            List.append keptFuncs keptNonSky
+    in
+        if List.isEmpty allKept then
+            header ++ "\n"
+        else
+            header ++ "\n\n" ++ String.join "\n\n" allKept ++ "\n"
+
+
+isWrapperUsed : String -> String -> Bool
+isWrapperUsed funcBlock mainGoCode =
+    let
+        -- Extract function name from "func Sky_xxx_yyy(...) any {"
+        funcName =
+            extractWrapperFuncName funcBlock
+    in
+        if String.isEmpty funcName then
+            True
+        else if not (String.startsWith "Sky_" funcName) then
+            True
+        else
+            String.contains funcName mainGoCode
+
+
+extractWrapperFuncName : String -> String
+extractWrapperFuncName block =
+    if String.startsWith "func " block then
+        let
+            afterFunc =
+                String.slice 5 (String.length block) block
+            parenIdx =
+                findCharIdx '(' afterFunc 0
+        in
+            if parenIdx > 0 then
+                String.slice 0 parenIdx afterFunc
+            else
+                ""
+    else
+        ""
+
+
+-- Split wrapper file into { header, functions }.
+-- Header = everything before the first "func " line.
+-- Functions = each block starting with "func " until the next "func " or EOF.
+type alias WrapperSections =
+    { header : String
+    , functions : List String
+    }
+
+
+splitWrapperSections : String -> WrapperSections
+splitWrapperSections code =
+    let
+        lines =
+            String.split "\n" code
+        result =
+            splitWrapperLoop lines "" [] "" False
+    in
+        result
+
+
+splitWrapperLoop : List String -> String -> List String -> String -> Bool -> WrapperSections
+splitWrapperLoop lines header funcs currentFunc inFunc =
+    case lines of
+        [] ->
+            let
+                finalFuncs =
+                    if String.isEmpty (String.trim currentFunc) then
+                        funcs
+                    else
+                        List.append funcs [ String.trim currentFunc ]
+            in
+                { header = String.trim header , functions = finalFuncs }
+
+        line :: rest ->
+            if String.startsWith "func " line then
+                -- Start of a new function block
+                let
+                    -- Save previous function block if any
+                    updatedFuncs =
+                        if String.isEmpty (String.trim currentFunc) then
+                            funcs
+                        else
+                            List.append funcs [ String.trim currentFunc ]
+                in
+                    splitWrapperLoop rest header updatedFuncs line True
+            else if inFunc then
+                -- Continue current function block
+                splitWrapperLoop rest header funcs (currentFunc ++ "\n" ++ line) True
+            else
+                -- Still in header
+                splitWrapperLoop rest (header ++ "\n" ++ line) funcs currentFunc False
+
+
 makeGoPackage : List GoDecl -> GoPackage
 makeGoPackage decls =
     { name = "main"
-    , imports = [ { path = "fmt" , alias_ = "" } , { path = "bufio" , alias_ = "" } , { path = "os" , alias_ = "" } , { path = "os/exec" , alias_ = "exec" } , { path = "strconv" , alias_ = "" } , { path = "strings" , alias_ = "" } ]
+    , imports = [ { path = "fmt" , alias_ = "" } , { path = "bufio" , alias_ = "" } , { path = "io" , alias_ = "" } , { path = "os" , alias_ = "" } , { path = "os/exec" , alias_ = "exec" } , { path = "net/http" , alias_ = "net_http" } , { path = "strconv" , alias_ = "" } , { path = "strings" , alias_ = "" } , { path = "sort" , alias_ = "" } , { path = "math" , alias_ = "" } , { path = "crypto/sha256" , alias_ = "crypto_sha256" } , { path = "crypto/md5" , alias_ = "crypto_md5" } , { path = "encoding/hex" , alias_ = "hex" } , { path = "encoding/base64" , alias_ = "base64" } , { path = "encoding/json" , alias_ = "encoding_json" } , { path = "time" , alias_ = "" } , { path = "context" , alias_ = "" } ]
     , declarations = decls
     }
 
@@ -215,10 +483,13 @@ loadLocalModules srcRoot imports acc =
             in
                 if Resolver.isStdlib modName || isModuleLoaded modName acc then
                     loadLocalModules srcRoot rest acc
+                else if imp.alias_ == "_" then
+                    loadLocalModules srcRoot rest acc
                 else
                     case File.readFile filePath of
                     Err _ ->
-                        loadLocalModules srcRoot rest acc
+                        -- Try .skydeps (Sky package dependencies)
+                        loadFromSkydepsOrSkip srcRoot modName imp.moduleName rest acc
 
                     Ok source ->
                         let
@@ -237,6 +508,303 @@ loadLocalModules srcRoot imports acc =
                                             loadLocalModules srcRoot transImports (( modName , mod ) :: acc)
                                     in
                                         loadLocalModules srcRoot rest withTransitive
+
+
+-- Try loading from .skydeps or skip
+loadFromSkydepsOrSkip : String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+loadFromSkydepsOrSkip srcRoot modName moduleParts rest acc =
+    let
+        candidates =
+            findSkydepCandidates (dirOfPath srcRoot ++ "/.skydeps") moduleParts
+    in
+        loadFromCandidatesOrSkip srcRoot modName candidates rest acc
+
+
+loadFromCandidatesOrSkip : String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+loadFromCandidatesOrSkip srcRoot modName candidates rest acc =
+    if List.isEmpty candidates then
+        loadLocalModules srcRoot rest acc
+    else
+        tryOneSkydepCandidate srcRoot modName candidates rest acc
+
+
+tryOneSkydepCandidate : String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+tryOneSkydepCandidate srcRoot modName candidates rest acc =
+    let
+        firstPath =
+            case List.head candidates of
+                Just p ->
+                    p
+
+                Nothing ->
+                    ""
+        restCandidates =
+            List.drop 1 candidates
+    in
+        if String.isEmpty firstPath then
+            loadLocalModules srcRoot rest acc
+        else
+            case File.readFile firstPath of
+                Err _ ->
+                    loadFromCandidatesOrSkip srcRoot modName restCandidates rest acc
+
+                Ok source ->
+                    parseAndLoadSkydep srcRoot modName source restCandidates rest acc
+
+
+parseAndLoadSkydep : String -> String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+parseAndLoadSkydep srcRoot modName source restCandidates rest acc =
+    let
+        lexResult =
+            Lexer.lex source
+    in
+        case Parser.parse lexResult.tokens of
+            Err _ ->
+                loadFromCandidatesOrSkip srcRoot modName restCandidates rest acc
+
+            Ok depMod ->
+                let
+                    depSrcRoot =
+                        skydepSrcRoot srcRoot modName
+                    depTransImports =
+                        List.filter (\i -> not (Resolver.isStdlib (String.join "." i.moduleName))) depMod.imports
+                    withDep =
+                        loadLocalModules depSrcRoot depTransImports (( modName , depMod ) :: acc)
+                in
+                    loadLocalModules srcRoot rest withDep
+
+
+findSkydepCandidates : String -> List String -> List String
+findSkydepCandidates skydepsDir moduleParts =
+    let
+        moduleFile =
+            String.join "/" moduleParts ++ ".sky"
+        -- List .skydeps subdirectories and try each one's src/
+        listResult =
+            Process.run "sh" [ "-c" , "find " ++ skydepsDir ++ " -name 'src' -type d 2>/dev/null" ]
+    in
+        case listResult of
+            Ok output ->
+                let
+                    dirs =
+                        List.filter (\d -> not (String.isEmpty (String.trim d))) (String.split "\n" output)
+                in
+                    List.map (\d -> d ++ "/" ++ moduleFile) dirs
+
+            Err _ ->
+                []
+
+
+-- Get the src root for a .skydeps module
+skydepSrcRoot : String -> String -> String
+skydepSrcRoot srcRoot modName =
+    let
+        projectRoot =
+            dirOfPath srcRoot
+        skydepsDir =
+            projectRoot ++ "/.skydeps"
+        -- Find which skydep contains this module
+        findResult =
+            Process.run "sh" [ "-c" , "find " ++ skydepsDir ++ " -path '*/src/" ++ modName ++ ".sky' 2>/dev/null | head -1" ]
+    in
+        case findResult of
+            Ok path ->
+                let
+                    trimmed =
+                        String.trim path
+                    -- Extract the src/ directory from the path
+                    modFile =
+                        "/" ++ modName ++ ".sky"
+                    srcDir =
+                        String.slice 0 (String.length trimmed - String.length modFile) trimmed
+                in
+                    if String.isEmpty trimmed then
+                        srcRoot
+                    else
+                        srcDir
+
+            Err _ ->
+                srcRoot
+
+
+-- Load FFI binding modules from .skycache/go/ for non-stdlib, non-local imports
+-- Uses lazy loading: only parses function definitions that are actually referenced
+loadFfiBindings : List Ast.ImportDecl -> List ( String , Ast.Module )
+loadFfiBindings imports =
+    List.filterMap loadOneFfiBinding imports
+
+
+loadOneFfiBinding : Ast.ImportDecl -> Maybe ( String , Ast.Module )
+loadOneFfiBinding imp =
+    let
+        modName =
+            String.join "." imp.moduleName
+    in
+        if Resolver.isStdlib modName || imp.alias_ == "_" then
+            Nothing
+        else
+            let
+                skyiPath =
+                    Resolver.resolveBindingPath modName
+            in
+                case File.readFile skyiPath of
+                    Ok skyiSource ->
+                        let
+                            lexResult =
+                                Lexer.lex skyiSource
+                        in
+                            case Parser.parse lexResult.tokens of
+                                Ok skyiMod ->
+                                    Just ( modName , skyiMod )
+
+                                Err _ ->
+                                    Nothing
+
+                    Err _ ->
+                        Nothing
+
+
+-- Lazy binding loading for large .skyi files.
+-- Try loading a binding module from .skycache/go/ (legacy, unused)
+tryLoadBinding : String -> String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+tryLoadBinding srcRoot modName rest acc =
+    let
+        skyiPath =
+            Resolver.resolveBindingPath modName
+        _ =
+            println ("   [FFI] Looking for binding: " ++ modName ++ " at " ++ skyiPath)
+    in
+        case File.readFile skyiPath of
+            Ok skyiSource ->
+                let
+                    _ =
+                        println ("   [FFI] Found binding for " ++ modName)
+                    lexResult =
+                        Lexer.lex skyiSource
+                in
+                    case Parser.parse lexResult.tokens of
+                        Ok skyiMod ->
+                            let
+                                _ =
+                                    println ("   [FFI] Parsed binding: " ++ modName ++ " (" ++ String.fromInt (List.length skyiMod.declarations) ++ " declarations)")
+                            in
+                                loadLocalModules srcRoot rest (( modName , skyiMod ) :: acc)
+
+                        Err e ->
+                            let
+                                _ =
+                                    println ("   [FFI] Parse error in binding " ++ modName ++ ": " ++ e)
+                            in
+                                loadLocalModules srcRoot rest acc
+
+            Err e ->
+                let
+                    _ =
+                        println ("   [FFI] Binding not found: " ++ skyiPath)
+                in
+                    loadLocalModules srcRoot rest acc
+
+
+-- Copy FFI wrapper Go files from .skycache to the output directory
+copyFfiWrappers : String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> ()
+copyFfiWrappers outDir imports loadedModules =
+    let
+        _ =
+            List.foldl
+                (\imp _ ->
+                    let
+                        modName =
+                            String.join "." imp.moduleName
+                    in
+                        if Resolver.isStdlib modName || imp.alias_ == "_" then
+                            ()
+                        else
+                            copyOneFfiWrapper outDir modName
+                )
+                ()
+                imports
+        -- Also copy project-local sky_wrappers/ if it exists (for foreign import "sky_wrappers")
+        _ =
+            copyProjectWrappers outDir
+    in
+        ()
+
+
+-- Copy project-local sky_wrappers/ Go files (for foreign import "sky_wrappers")
+copyProjectWrappers : String -> ()
+copyProjectWrappers outDir =
+    let
+        -- Try dist/sky_wrappers/ and sky_wrappers/ relative to CWD
+        dirs =
+            [ "dist/sky_wrappers" , "sky_wrappers" ]
+    in
+        List.foldl (\dir _ -> copyWrapperDir outDir dir) () dirs
+
+
+copyWrapperDir : String -> String -> ()
+copyWrapperDir outDir wrapperDir =
+    case Process.run "sh" [ "-c" , "ls " ++ wrapperDir ++ "/*.go 2>/dev/null" ] of
+        Ok output ->
+            let
+                files =
+                    List.filter (\f -> not (String.isEmpty (String.trim f))) (String.split "\n" output)
+            in
+                List.foldl
+                    (\filePath _ ->
+                        if String.contains "00_sky_helpers" filePath || String.contains "fmt.go" filePath then
+                            ()
+                        else
+                        case File.readFile filePath of
+                            Ok content ->
+                                let
+                                    rewritten =
+                                        String.replace "package sky_wrappers" "package main" content
+                                    fileName =
+                                        case List.reverse (String.split "/" filePath) of
+                                            last :: _ ->
+                                                last
+
+                                            [] ->
+                                                "wrapper.go"
+                                    dst =
+                                        outDir ++ "/sky_" ++ fileName
+                                    _ =
+                                        File.writeFile dst rewritten
+                                in
+                                    ()
+
+                            Err _ ->
+                                ()
+                    )
+                    ()
+                    files
+
+        Err _ ->
+            ()
+
+
+copyOneFfiWrapper : String -> String -> ()
+copyOneFfiWrapper outDir modName =
+    let
+        safeName =
+            String.join "_" (List.map ffiSafePart (String.split "." modName))
+        wrapperSrc =
+            ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
+    in
+        case File.readFile wrapperSrc of
+            Ok content ->
+                let
+                    rewritten =
+                        String.replace "package sky_wrappers" "package main" content
+                    wrapperDst =
+                        outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
+                    _ =
+                        File.writeFile wrapperDst rewritten
+                in
+                    println ("   Copied wrapper: " ++ wrapperDst)
+
+            Err _ ->
+                ()
 
 
 -- Build alias → qualified module name map
@@ -462,14 +1030,16 @@ generateAliasesFromModule modName allModules =
                         []
                     else
                         let
+                            safeName =
+                                Lower.sanitizeGoIdent name
                             prefixedName =
-                                prefix ++ "_" ++ capitalizeFirst name
+                                prefix ++ "_" ++ capitalizeFirst safeName
 
                             callSuffix =
                                 if isZeroArityInModule name mod then "()" else ""
                         in
-                            [ GoDeclRaw ("var " ++ name ++ " = " ++ prefixedName ++ callSuffix)
-                            , GoDeclRaw ("var " ++ capitalizeFirst name ++ " = " ++ prefixedName ++ callSuffix)
+                            [ GoDeclRaw ("var " ++ safeName ++ " = " ++ prefixedName ++ callSuffix)
+                            , GoDeclRaw ("var " ++ capitalizeFirst safeName ++ " = " ++ prefixedName ++ callSuffix)
                             ]
                 ) declNames
 
@@ -658,6 +1228,8 @@ compileDependencyModule stdlibEnv allModules pair =
             collectAllFunctionNames mod.declarations
         _ =
             println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " fns: " ++ String.join "," localFns)
+        depExposed =
+            Lower.buildExposedStdlib mod.imports
         ctx =
             { depBaseCtx
                 | registry = registry
@@ -666,6 +1238,7 @@ compileDependencyModule stdlibEnv allModules pair =
                 , modulePrefix = prefix
                 , importAliases = depAliasMap
                 , localFunctionArity = Lower.collectLocalFunctionArities mod.declarations
+                , exposedStdlib = depExposed
             }
         goDecls =
             Lower.lowerDeclarations ctx mod.declarations
@@ -836,6 +1409,32 @@ capitalizeFirst s =
         ""
     else
         String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+
+
+-- Convert camelCase to underscore_separated lowercase for FFI wrapper paths
+-- "StripeGo" → "stripe_go", "Http" → "http", "V84" → "v84"
+ffiSafePart : String -> String
+ffiSafePart s =
+    ffiSafePartLoop s 0 ""
+
+
+ffiSafePartLoop : String -> Int -> String -> String
+ffiSafePartLoop s idx acc =
+    if idx >= String.length s then
+        String.toLower acc
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) s
+            isUpper =
+                ch == String.toUpper ch && ch /= String.toLower ch
+            needsUnderscore =
+                isUpper && idx > 0
+        in
+            if needsUnderscore then
+                ffiSafePartLoop s (idx + 1) (acc ++ "_" ++ ch)
+            else
+                ffiSafePartLoop s (idx + 1) (acc ++ ch)
 
 
 prefixDecl : String -> GoDecl -> GoDecl

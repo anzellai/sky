@@ -24,12 +24,28 @@ mapGoTypeToSky goType =
         "Float"
     else if goType == "[]byte" then
         "Bytes"
+    else if String.startsWith "[" goType && String.endsWith "byte" goType then
+        "Bytes"
     else if goType == "error" then
         "Error"
     else if goType == "interface{}" || goType == "any" then
         "Any"
+    else if goType == "[]string" then
+        "List String"
+    else if goType == "[]int" then
+        "List Int"
+    else if goType == "[]float64" then
+        "List Float"
+    else if goType == "[]bool" then
+        "List Bool"
+    else if String.startsWith "[]" goType then
+        "List Any"
     else if goType == "rune" then
         "Char"
+    else if String.startsWith "map[" goType then
+        "Any"
+    else if String.startsWith "func(" goType then
+        "Any"
     else if String.startsWith "*" goType then
         let
             inner =
@@ -76,16 +92,117 @@ goTypeToAssertion : String -> String
 goTypeToAssertion goType =
     if goType == "string" then
         "sky_asString"
-    else if goType == "int" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" then
+    else if goType == "int" then
         "sky_asInt"
-    else if goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" then
+    else if goType == "int64" then
+        "sky_asInt64"
+    else if goType == "int8" || goType == "int16" || goType == "int32" then
         "sky_asInt"
-    else if goType == "float32" || goType == "float64" then
+    else if goType == "uint" then
+        "sky_asUint"
+    else if goType == "uint8" then
+        "sky_asUint8"
+    else if goType == "uint16" then
+        "sky_asUint16"
+    else if goType == "uint32" then
+        "sky_asUint32"
+    else if goType == "uint64" then
+        "sky_asUint64"
+    else if goType == "float64" then
         "sky_asFloat"
+    else if goType == "float32" then
+        "sky_asFloat32"
     else if goType == "bool" then
         "sky_asBool"
-    else
+    else if goType == "[]byte" then
+        "sky_asBytes"
+    else if goType == "context.Context" then
+        "sky_asContext"
+    else if goType == "[]string" then
+        "sky_asStringSlice"
+    else if goType == "error" then
+        "sky_asError"
+    else if goType == "interface{}" || goType == "any" then
         ""
+    else if String.startsWith "func(" goType && String.contains "ResponseWriter" goType then
+        "sky_asHttpHandler"
+    else if String.startsWith "func(" goType then
+        ""
+    else if goType == "map[string]string" then
+        "sky_asMapStringString"
+    else if goType == "map[string]interface{}" then
+        "sky_asMapStringAny"
+    else if String.startsWith "map[" goType then
+        ""
+    else if String.startsWith "[" goType && String.contains "]byte" goType then
+        -- Fixed-size byte array [N]byte: convert to []byte via slice
+        "sky_asFixedBytes"
+    else if String.startsWith "[]" goType then
+        "sky_asList"
+    else
+        -- Complex/opaque type: use Go type assertion
+        "sky_asType"
+
+
+-- Generate the Go cast expression for a parameter
+goTypeToCast : String -> String -> String
+goTypeToCast goType argName =
+    let
+        assertion =
+            goTypeToAssertion goType
+    in
+        if assertion == "" then
+            -- Pass through as any
+            argName
+        else if assertion == "sky_asType" then
+            -- Complex type assertion: arg.(Type)
+            -- Use short name for package-qualified types
+            argName ++ ".(" ++ shortTypeName goType ++ ")"
+        else
+            assertion ++ "(" ++ argName ++ ")"
+
+
+-- Convert fully-qualified Go type to short form
+-- "github.com/google/uuid.UUID" → "uuid.UUID"
+-- "hash.Hash" → "hash.Hash" (already short)
+-- "net/http.Request" → "http.Request"
+shortTypeName : String -> String
+shortTypeName goType =
+    if String.startsWith "*" goType then
+        "*" ++ shortTypeName (String.slice 1 (String.length goType) goType)
+    else if String.startsWith "[]" goType then
+        "[]" ++ shortTypeName (String.slice 2 (String.length goType) goType)
+    else if String.contains "." goType then
+        let
+            -- Split at last dot to get package.Type
+            lastDot =
+                findLastDot goType (String.length goType - 1)
+            pkgPath =
+                String.slice 0 lastDot goType
+            typeName =
+                String.slice (lastDot + 1) (String.length goType) goType
+            -- Get short package name (last path component)
+            shortPkg =
+                case List.reverse (String.split "/" pkgPath) of
+                    last :: _ ->
+                        last
+
+                    [] ->
+                        pkgPath
+        in
+            shortPkg ++ "." ++ typeName
+    else
+        goType
+
+
+findLastDot : String -> Int -> Int
+findLastDot s idx =
+    if idx < 0 then
+        0
+    else if String.slice idx (idx + 1) s == "." then
+        idx
+    else
+        findLastDot s (idx - 1)
 
 
 -- Convert Go PascalCase to Sky camelCase

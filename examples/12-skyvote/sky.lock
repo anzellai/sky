@@ -2,5 +2,4 @@ go:
   crypto/sha256: latest
   database/sql: latest
   encoding/hex: latest
-  github.com/google/uuid: latest
   modernc.org/sqlite: latest

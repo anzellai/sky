@@ -34,7 +34,7 @@ init _req =
         _ =
             Schema.initDb
         _ =
-            println "[APP] SkyVote initialized"
+            println "[APP] SkyVote initialised"
         ideas =
             Ideas.getIdeas "newest" "all" ""
     in

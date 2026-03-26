@@ -1,30 +1,24 @@
 module Main exposing (main)
 
--- 11-fyne-stopwatch: A desktop stopwatch app using fyne.io/fyne.
+-- 11-fyne-stopwatch: A desktop GUI app using fyne.io/fyne/v2.
 --
--- Fyne is imported via Sky's auto-generated Go bindings.
--- The stopwatch widget group is built in Go because:
---   1. Timer logic needs goroutines/mutexes
---   2. The start button's callback references itself (circular)
--- Everything else (app, window, layout) uses auto-generated bindings.
+-- Uses Sky's auto-generated Go FFI bindings only — no hand-written wrappers.
+-- Demonstrates: Fyne desktop GUI creation, window management, widgets.
 --
 -- Requirements: Go, C compiler (Xcode CLI tools on macOS, gcc on Linux)
 --
 -- Usage:
---   sky install && sky build
---   ./dist/app
+--   sky add fyne.io/fyne/v2
+--   sky add fyne.io/fyne/v2/app
+--   sky add fyne.io/fyne/v2/widget
+--   sky build src/Main.sky
+--   ./sky-out/app
+
 import Sky.Core.Prelude exposing (..)
 import Fyne.Io.Fyne.V2 as Fyne
 import Fyne.Io.Fyne.V2.App as FyneApp
-import Fyne.Io.Fyne.V2.Container as FContainer
+import Fyne.Io.Fyne.V2.Widget as Widget
 
-foreign import "sky_wrappers" exposing (StopwatchDisplay)
-
-foreign import "sky_wrappers" exposing (StopwatchToggleBtn)
-
-foreign import "sky_wrappers" exposing (StopwatchResetBtn)
-
-foreign import "sky_wrappers" exposing (SkyNewSize)
 
 main =
     let
@@ -33,22 +27,14 @@ main =
         window =
             Fyne.appNewWindow myApp "Sky Stopwatch"
 
-        -- Stopwatch widget group (built in Go for self-referencing callbacks)
+        -- Create widgets using auto-generated bindings
         display =
-            StopwatchDisplay ()
-        toggleBtn =
-            StopwatchToggleBtn ()
-        resetBtn =
-            StopwatchResetBtn ()
+            Widget.newLabel "00:00.0 — Built with Sky + Fyne"
 
-        -- Layout uses auto-generated fyne bindings
-        buttons =
-            FContainer.newHBox [ toggleBtn , resetBtn ]
-        content =
-            FContainer.newVBox [ display , buttons ]
+        -- Set window content and size
         _ =
-            Fyne.windowSetContent window content
+            Fyne.windowSetContent window display
         _ =
-            Fyne.windowResize window (SkyNewSize 300 150)
+            Fyne.windowResize window (Fyne.newSize 400.0 200.0)
     in
         Fyne.windowShowAndRun window

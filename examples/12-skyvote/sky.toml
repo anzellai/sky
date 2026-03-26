@@ -13,4 +13,3 @@ port = 4000
 "modernc.org/sqlite" = "latest"
 "crypto/sha256" = "latest"
 "encoding/hex" = "latest"
-"github.com/google/uuid" = "latest"

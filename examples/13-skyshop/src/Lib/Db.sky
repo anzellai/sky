@@ -49,29 +49,23 @@ snapshotToDict snapshot =
 mapToStringDict rawMap =
     Dict.map (\_ v -> anyToString v) rawMap
 
-foreign import "sky_wrappers" exposing (Sky_AsMap)
-
 dictToMap dict =
-    Sky_AsMap dict
+    dict
 
 -- Typed value wrappers for storing native types in Firestore Dicts.
--- These allow Dict values to carry proper Go types (int, bool, float)
--- instead of strings, so Firestore stores them with correct types.
--- Uses the identity function at runtime (Go any → any), but typed in
--- Sky to allow mixing types in a Dict destined for Firestore.
-foreign import "sky_wrappers" exposing (Sky_Identity)
+-- These pass values through as-is (identity at runtime).
 
 intVal : Int -> a
 intVal n =
-    Sky_Identity n
+    identity n
 
 boolVal : Bool -> a
 boolVal b =
-    Sky_Identity b
+    identity b
 
 floatVal : Float -> a
 floatVal f =
-    Sky_Identity f
+    identity f
 
 -- ══════════════════════════════════════════════════════
 -- CORE API
@@ -242,7 +236,7 @@ initDb =
         Ok _ ->
             let
                 _ =
-                    println "[DB] Firestore client initialized"
+                    println "[DB] Firestore client initialised"
             in
                 ()
         
@@ -251,7 +245,7 @@ initDb =
                 _ =
                     println
                         (
-                        "[DB] ERROR: Failed to initialize Firestore: " ++
+                        "[DB] ERROR: Failed to initialise Firestore: " ++
                         errorToString e
                         )
             in

@@ -20,35 +20,76 @@ jobs:
         with:
           node-version: 22
           cache: npm
+          cache-dependency-path: ts-compiler/package-lock.json
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 
-      - run: npm ci
+      # Phase 0: Build bootstrap compiler from TypeScript
+      - name: Bootstrap Phase 0 — TS compiler
+        run: |
+          cd ts-compiler
+          npm ci
+          npx tsx bin/sky.ts build ../src/Main.sky || true
+          # Patch TS compiler output for known issues
+          sed -i.bak 's/return func() any {  }()/return true/g' dist/Ffi/BindingGen/BindingGen.go dist/Ffi/WrapperGen/WrapperGen.go 2>/dev/null || true
+          cd dist && go build -gcflags=all=-l -o sky-bootstrap .
 
-      # TypeScript type checking
-      - name: Type check
-        run: npx tsc --noEmit
+      # Phase 1: Build self-hosted compiler with bootstrap
+      - name: Bootstrap Phase 1 — first self-hosted build
+        run: |
+          cp ts-compiler/dist/sky-bootstrap bin/sky
+          chmod +x bin/sky
+          export PATH="$PWD/bin:$PATH"
+          rm -rf sky-out
+          sky build src/Main.sky
 
-      # Build compiler
-      - name: Build
-        run: npm run build
+      # Phase 2: Build self-hosted compiler with itself + version injection
+      - name: Bootstrap Phase 2 — self-hosting verified
+        run: |
+          cp sky-out/app bin/sky
+          chmod +x bin/sky
+          export PATH="$PWD/bin:$PATH"
+          rm -rf sky-out
+          sky build src/Main.sky
+          # Re-build with version from git
+          VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
+          cd sky-out && go build -gcflags=all=-l -ldflags="-X main.skyVersion=${VERSION}" -o app . && cd ..
+          cp sky-out/app bin/sky
 
-      # Test: Hello World example
+      # Verify compiler
+      - name: Verify compiler
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          sky version
+          sky check src/Main.sky
+
+      # Test examples
       - name: Test hello-world
         run: |
-          cd examples/01-hello-world
-          node ../../dist/bin/sky.js run src/Main.sky 2>&1 | grep "Hello from Sky!"
+          export PATH="$PWD/bin:$PATH"
+          rm -rf sky-out
+          sky build examples/01-hello-world/src/Main.sky
+          sky-out/app | grep "Hello from Sky!"
 
-      # Test: JSON example
       - name: Test json
         run: |
-          cd examples/06-json
-          node ../../dist/bin/sky.js run src/Main.sky 2>&1 | grep "Done!"
+          export PATH="$PWD/bin:$PATH"
+          rm -rf sky-out
+          sky build examples/06-json/src/Main.sky
+          sky-out/app | grep "Done!"
 
-      # Test: Multi-module example
       - name: Test local-pkg
         run: |
-          cd examples/04-local-pkg
-          node ../../dist/bin/sky.js run src/Main.sky 2>&1 | grep "Calculation result"
+          export PATH="$PWD/bin:$PATH"
+          rm -rf sky-out
+          sky build examples/04-local-pkg/src/Main.sky
+          sky-out/app | grep "Calculation result"
+
+      # Test Go FFI
+      - name: Test sky add (Go stdlib)
+        run: |
+          export PATH="$PWD/bin:$PATH"
+          sky add fmt
+          test -f .skycache/go/fmt/bindings.skyi

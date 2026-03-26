@@ -12,6 +12,9 @@ import Compiler.Lexer as Lexer
 import Compiler.Parser as Parser
 import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
+import Formatter.Format as Format
+import Lsp.Server as LspServer
+import Ffi.BindingGen as BindingGen
 
 
 -- Sky Programming Language v0.6.0
@@ -42,14 +45,20 @@ runCommand command =
         cmdFmt ()
     else if command == "clean" then
         cmdClean ()
+    else if command == "lsp" then
+        LspServer.startServer ()
     else if command == "add" then
         cmdAdd ()
     else if command == "install" then
         cmdInstall ()
     else if command == "remove" then
         cmdRemove ()
+    else if command == "update" then
+        cmdUpdate ()
+    else if command == "upgrade" then
+        cmdUpgrade ()
     else if command == "version" || command == "--version" || command == "-v" then
-        println "sky v0.6.0"
+        println ("sky " ++ Args.skyVersion)
     else
         cmdHelp ()
 
@@ -80,16 +89,31 @@ cmdBuild _ =
                     goModPath =
                         outDir ++ "/go.mod"
                     _ =
-                        case File.readFile goModPath of
-                            Ok _ ->
-                                ()
+                        File.writeFile goModPath "module sky-app\n\ngo 1.21.0\n"
+                    -- Check if there are FFI wrapper files (need go mod tidy)
+                    hasFfiWrappers =
+                        case Process.run "sh" [ "-c" , "ls " ++ outDir ++ "/sky_*.go 2>/dev/null | head -1" ] of
+                            Ok output ->
+                                not (String.isEmpty (String.trim output))
 
                             Err _ ->
-                                File.writeFile goModPath "module sky-app\n\ngo 1.21.0\n"
+                                False
+                    _ =
+                        if hasFfiWrappers then
+                            let
+                                _ =
+                                    println "Running go mod tidy..."
+                                -- Extract Go package imports from wrapper files and fetch them
+                                _ =
+                                    Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && grep -h '\"' sky_*.go 2>/dev/null | grep -v '_ffi_\\|sky_wrappers\\|package\\|//' | sed 's/.*\"\\(.*\\)\".*/\\1/' | sort -u | while read pkg; do go get \"$pkg\" 2>/dev/null; done && go mod tidy 2>&1" ]
+                            in
+                                Ok ""
+                        else
+                            Ok ""
                     _ =
                         println "Running go build..."
                     buildResult =
-                        Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app" ]
+                        Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion=" ++ Args.skyVersion ++ "' -o app" ]
                 in
                     case buildResult of
                         Ok _ ->
@@ -218,12 +242,19 @@ cmdAdd _ =
                         [] ->
                             pkg
             in
-                if isGoStdlib firstPart then
-                    println ("Go stdlib package: " ++ pkg ++ " (available by default, no install needed)")
+                if isGoStdlib firstPart || isGoStdlib pkg then
+                    -- Go stdlib: generate bindings but don't run go get
+                    let
+                        cacheDir =
+                            ".skycache/go/" ++ String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkg))
+                        _ =
+                            File.mkdirAll cacheDir
+                        _ =
+                            ensureGoModDir ()
+                    in
+                        generateGoBindings pkg cacheDir
                 else if String.contains "." firstPart then
                     detectAndInstall pkg
-                else if isGoStdlib pkg then
-                    println ("Go stdlib package: " ++ pkg ++ " (available by default, no install needed)")
                 else
                     println ("Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format.")
 
@@ -293,7 +324,7 @@ installAsGoPackage pkg tmpDir =
                         println ("Added Go package: " ++ pkg)
                     -- Generate bindings
                     cacheDir =
-                        ".skycache/go/" ++ String.toLower pkg
+                        ".skycache/go/" ++ String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkg))
                     _ =
                         File.mkdirAll cacheDir
                 in
@@ -309,20 +340,12 @@ installAsGoPackage pkg tmpDir =
 
 generateGoBindings : String -> String -> ()
 generateGoBindings pkg cacheDir =
-    let
-        inspectResult =
-            Process.run "sh" [ "-c" , "cd .skycache/gomod && go doc -all " ++ pkg ]
-    in
-        case inspectResult of
-            Ok output ->
-                let
-                    _ =
-                        File.writeFile (cacheDir ++ "/inspect.txt") output
-                in
-                    println ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+    case BindingGen.generateBindings pkg cacheDir of
+        Ok content ->
+            println ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
 
-            Err _ ->
-                println ("Warning: could not inspect " ++ pkg ++ " (bindings skipped)")
+        Err e ->
+            println ("Warning: binding generation failed: " ++ e)
 
 
 ensureGoModDir : () -> ()
@@ -352,15 +375,358 @@ cmdInstall _ =
             println "Installing dependencies..."
         _ =
             ensureGoModDir ()
+        -- Scan source files for Go FFI imports and auto-generate bindings
+        _ =
+            autoGenerateBindings ()
         tidyResult =
             Process.run "sh" [ "-c" , "cd .skycache/gomod && go mod tidy" ]
-    in
-        case tidyResult of
-            Ok _ ->
-                println "Install complete."
+        _ =
+            case tidyResult of
+                Ok _ ->
+                    ()
 
-            Err e ->
-                println ("Install warning: " ++ errorToString e)
+                Err e ->
+                    println ("Install warning: " ++ errorToString e)
+        -- Check for newer Sky version
+        _ =
+            checkForUpdates ()
+    in
+        println "Install complete."
+
+
+-- Scan source files for Go FFI imports and auto-generate bindings
+autoGenerateBindings : () -> ()
+autoGenerateBindings _ =
+    let
+        -- Find all .sky files in src/ and scan for Go package imports
+        findResult =
+            Process.run "sh" [ "-c" , "find src/ -name '*.sky' 2>/dev/null | head -100" ]
+    in
+        case findResult of
+            Ok output ->
+                let
+                    files =
+                        List.filter (\f -> not (String.isEmpty (String.trim f))) (String.split "\n" output)
+                in
+                    List.foldl (\f _ -> scanFileForFfiImports f) () files
+
+            Err _ ->
+                ()
+
+
+-- Scan a single .sky file for Go FFI imports and generate bindings
+scanFileForFfiImports : String -> ()
+scanFileForFfiImports filePath =
+    case File.readFile filePath of
+        Err _ ->
+            ()
+
+        Ok source ->
+            let
+                lines =
+                    String.split "\n" source
+                importLines =
+                    List.filter (\l -> String.startsWith "import " l && not (String.contains "Sky.Core" l) && not (String.contains "Std." l) && not (String.contains "Compiler." l) && not (String.contains "Formatter." l) && not (String.contains "Lsp." l) && not (String.contains "Ffi." l)) lines
+            in
+                List.foldl (\l _ -> processImportLine l) () importLines
+
+
+-- Process a single import line and generate bindings if needed
+processImportLine : String -> ()
+processImportLine line =
+    let
+        -- Extract module name from "import Github.Com.Foo.Bar as Bar"
+        parts =
+            String.split " " (String.trim line)
+        modName =
+            case parts of
+                "import" :: name :: _ ->
+                    name
+
+                _ ->
+                    ""
+    in
+        if String.isEmpty modName || Resolver.isStdlib modName then
+            ()
+        else
+            let
+                -- Convert Sky module name to Go package path
+                goPath =
+                    Resolver.moduleNameToGoPath modName
+                -- Check if bindings already exist
+                safeName =
+                    String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" goPath))
+                bindingPath =
+                    ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+            in
+                case File.readFile bindingPath of
+                    Ok _ ->
+                        -- Bindings exist, skip
+                        ()
+
+                    Err _ ->
+                        -- Generate bindings
+                        let
+                            _ =
+                                println ("   Generating bindings for " ++ goPath ++ "...")
+                            firstPart =
+                                case String.split "/" goPath of
+                                    first :: _ ->
+                                        first
+
+                                    [] ->
+                                        ""
+                        in
+                            if isGoStdlib firstPart || isGoStdlib goPath then
+                                let
+                                    cacheDir =
+                                        ".skycache/go/" ++ safeName
+                                    _ =
+                                        File.mkdirAll cacheDir
+                                    _ =
+                                        ensureGoModDir ()
+                                in
+                                    generateGoBindings goPath cacheDir
+                            else if String.contains "." firstPart then
+                                detectAndInstall goPath
+                            else
+                                ()
+
+
+-- ══════════════════════════════════════════════════════
+-- UPDATE COMMAND
+-- ══════════════════════════════════════════════════════
+
+-- Update sky.toml dependencies to latest versions
+cmdUpdate : () -> ()
+cmdUpdate _ =
+    case File.readFile "sky.toml" of
+        Err _ ->
+            println "No sky.toml found. Nothing to update."
+
+        Ok content ->
+            let
+                _ =
+                    println "Updating dependencies..."
+                lines =
+                    String.split "\n" content
+                -- Find [dependencies] section and update each package
+                _ =
+                    updateDependencies lines
+            in
+                println "Update complete."
+
+
+updateDependencies : List String -> ()
+updateDependencies lines =
+    let
+        inDeps =
+            List.foldl (\line acc ->
+                let
+                    trimmed =
+                        String.trim line
+                    isInDeps =
+                        snd acc
+                in
+                    if trimmed == "[dependencies]" then
+                        ( fst acc , True )
+                    else if String.startsWith "[" trimmed && trimmed /= "[dependencies]" then
+                        ( fst acc , False )
+                    else if isInDeps && String.contains "=" trimmed then
+                        let
+                            pkgName =
+                                String.trim (case String.split "=" trimmed of
+                                    name :: _ ->
+                                        name
+
+                                    [] ->
+                                        "")
+                        in
+                            if not (String.isEmpty pkgName) then
+                                let
+                                    _ =
+                                        println ("   Updating " ++ pkgName ++ "...")
+                                    _ =
+                                        ensureGoModDir ()
+                                    _ =
+                                        Process.run "sh" [ "-c" , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null" ]
+                                in
+                                    ( fst acc , True )
+                            else
+                                ( fst acc , True )
+                    else
+                        acc
+            ) ( () , False ) lines
+    in
+        fst inDeps
+
+
+-- ══════════════════════════════════════════════════════
+-- UPGRADE COMMAND
+-- ══════════════════════════════════════════════════════
+
+-- Self-upgrade: download latest release binary for current platform
+cmdUpgrade : () -> ()
+cmdUpgrade _ =
+    let
+        _ =
+            println "Checking for latest Sky release..."
+        latestTag =
+            fetchLatestVersion True
+    in
+        if String.isEmpty latestTag then
+            println "Could not determine latest version."
+        else if latestTag == Args.skyVersion then
+            println ("Already at latest version: " ++ latestTag)
+        else
+            performUpgrade latestTag
+
+
+performUpgrade : String -> ()
+performUpgrade tag =
+    let
+        _ =
+            println ("Upgrading to " ++ tag ++ "...")
+        skyBin =
+            case Process.run "which" [ "sky" ] of
+                Ok path ->
+                    String.trim path
+
+                Err _ ->
+                    ""
+    in
+        if String.isEmpty skyBin then
+            println "Could not find sky binary path. Please upgrade manually."
+        else
+            let
+                -- Detect platform: sky-{os}-{arch}
+                artifact =
+                    detectPlatformArtifact ()
+                url =
+                    "https://github.com/anzellai/sky/releases/download/" ++ tag ++ "/" ++ artifact
+                _ =
+                    println ("   Downloading " ++ url)
+                downloadResult =
+                    Process.run "sh" [ "-c" , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade " ++ skyBin ]
+            in
+                case downloadResult of
+                    Ok _ ->
+                        println ("Upgraded to " ++ tag ++ " successfully!")
+
+                    Err e ->
+                        println ("Upgrade failed: " ++ errorToString e ++ "\nDownload manually from: https://github.com/anzellai/sky/releases")
+
+
+-- Detect the correct release artifact name for this platform
+detectPlatformArtifact : () -> String
+detectPlatformArtifact _ =
+    let
+        osResult =
+            Process.run "uname" [ "-s" ]
+        archResult =
+            Process.run "uname" [ "-m" ]
+        os =
+            case osResult of
+                Ok o ->
+                    String.toLower (String.trim o)
+
+                Err _ ->
+                    "linux"
+        arch =
+            case archResult of
+                Ok a ->
+                    String.trim a
+
+                Err _ ->
+                    "x86_64"
+        skyOs =
+            if os == "darwin" then "darwin"
+            else if os == "linux" then "linux"
+            else "linux"
+        skyArch =
+            if arch == "arm64" || arch == "aarch64" then "arm64"
+            else "x64"
+    in
+        "sky-" ++ skyOs ++ "-" ++ skyArch
+
+
+-- Fetch latest version tag from GitHub (with 24h cache)
+fetchLatestVersion : Bool -> String
+fetchLatestVersion forceRefresh =
+    let
+        cacheDir =
+            case Process.run "sh" [ "-c" , "echo $HOME" ] of
+                Ok home ->
+                    String.trim home ++ "/.sky"
+
+                Err _ ->
+                    "/tmp/.sky"
+        cachePath =
+            cacheDir ++ "/last-update-check.json"
+    in
+        if not forceRefresh then
+            -- Check cache first (valid for 24 hours)
+            case Process.run "sh" [ "-c" , "if [ -f " ++ cachePath ++ " ] && [ $(( $(date +%s) - $(stat -f %m " ++ cachePath ++ " 2>/dev/null || stat -c %Y " ++ cachePath ++ " 2>/dev/null || echo 0) )) -lt 86400 ]; then cat " ++ cachePath ++ "; fi" ] of
+                Ok cached ->
+                    let
+                        trimmed =
+                            String.trim cached
+                    in
+                        if not (String.isEmpty trimmed) then
+                            trimmed
+                        else
+                            fetchAndCacheVersion cacheDir cachePath
+
+                Err _ ->
+                    fetchAndCacheVersion cacheDir cachePath
+        else
+            fetchAndCacheVersion cacheDir cachePath
+
+
+fetchAndCacheVersion : String -> String -> String
+fetchAndCacheVersion cacheDir cachePath =
+    let
+        result =
+            Process.run "sh" [ "-c" , "curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"\\(v[^\"]*\\)\".*/\\1/'" ]
+    in
+        case result of
+            Ok output ->
+                let
+                    tag =
+                        String.trim output
+                    _ =
+                        if not (String.isEmpty tag) then
+                            let
+                                _ =
+                                    File.mkdirAll cacheDir
+                            in
+                                File.writeFile cachePath tag
+                        else
+                            ()
+                in
+                    tag
+
+            Err _ ->
+                ""
+
+
+-- Check for newer Sky version (non-blocking, cached for 24h)
+checkForUpdates : () -> ()
+checkForUpdates _ =
+    let
+        latestTag =
+            fetchLatestVersion False
+    in
+        if not (String.isEmpty latestTag) && latestTag /= Args.skyVersion then
+            let
+                _ =
+                    println ""
+                _ =
+                    println ("   A newer version of Sky is available: " ++ latestTag ++ " (current: " ++ Args.skyVersion ++ ")")
+            in
+                println "   Run 'sky upgrade' to update."
+        else
+            ()
 
 
 -- ══════════════════════════════════════════════════════
@@ -400,7 +766,35 @@ cmdFmt _ =
                 Nothing ->
                     "src/Main.sky"
     in
-        println ("fmt: not yet implemented for " ++ filePath)
+        case File.readFile filePath of
+            Err e ->
+                let
+                    _ =
+                        println ("Cannot read: " ++ filePath)
+                in
+                    Process.exit 1
+
+            Ok source ->
+                let
+                    lexResult =
+                        Lexer.lex source
+                in
+                    case Parser.parse lexResult.tokens of
+                        Err e ->
+                            let
+                                _ =
+                                    println ("Parse error: " ++ e)
+                            in
+                                Process.exit 1
+
+                        Ok mod ->
+                            let
+                                formatted =
+                                    Format.formatModule mod
+                                _ =
+                                    File.writeFile filePath formatted
+                            in
+                                println ("Formatted: " ++ filePath)
 
 
 cmdClean : () -> ()
@@ -418,7 +812,7 @@ cmdHelp : () -> ()
 cmdHelp _ =
     let
         _ =
-            println "Sky Programming Language v0.6.0"
+            println ("Sky Programming Language " ++ Args.skyVersion)
         _ =
             println ""
         _ =
@@ -438,9 +832,13 @@ cmdHelp _ =
         _ =
             println "  add <package>   Add Go or Sky dependency"
         _ =
-            println "  install         Install all dependencies"
+            println "  install         Install all dependencies + generate bindings"
         _ =
             println "  remove <pkg>    Remove a dependency"
+        _ =
+            println "  update          Update sky.toml dependencies to latest"
+        _ =
+            println "  upgrade         Upgrade Sky compiler to latest release"
         _ =
             println "  clean           Remove build artifacts"
         _ =

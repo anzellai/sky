@@ -6,13 +6,13 @@ import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Github.Com.Google.Uuid as Uuid
+import Sky.Core.Crypto as Crypto
 import Lib.Db as Db
 
 createIdea title description category authorId =
     let
         id =
-            Uuid.newString ()
+            String.slice 0 12 (Crypto.sha256 (title ++ ":" ++ authorId))
         result =
             Db.exec
                 "INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)"
@@ -106,7 +106,7 @@ toggleVote ideaId userId =
             Nothing ->
                 let
                     voteId =
-                        Uuid.newString ()
+                        String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ userId))
                     _ =
                         Db.exec
                             "INSERT INTO votes (id, idea_id, user_id) VALUES (?, ?, ?)"

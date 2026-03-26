@@ -14,7 +14,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// Shared stopwatch state, initialized once on first access.
+// Shared stopwatch state, initialised once on first access.
 var swOnce sync.Once
 var swDisplay *widget.Label
 var swToggleBtn *widget.Button

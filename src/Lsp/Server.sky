@@ -63,7 +63,7 @@ serverLoop stateRef =
                 method =
                     jsonGetString "method" body
                 id =
-                    jsonGetString "id" body
+                    jsonGetRaw "id" body
                 newState =
                     handleMessage state id method body
                 _ =
@@ -313,105 +313,200 @@ handleHover state id body =
 
 getHoverForPosition : ServerState -> String -> Int -> Int -> String
 getHoverForPosition state uri line character =
-    case Dict.get uri state.astCache of
+    case Dict.get uri state.documents of
         Nothing ->
             jsonNull
 
-        Just mod ->
-            findHoverInDecls state mod.declarations line
+        Just source ->
+            let
+                lineText =
+                    getLineAt line source
+                word =
+                    getWordAt character lineText
+                info =
+                    if String.isEmpty word then
+                        ""
+                    else
+                        findAnnotationInSource word source
+            in
+                if String.isEmpty info then
+                    jsonNull
+                else
+                    jsonObject
+                        [ ( "contents"
+                          , jsonObject
+                                [ ( "kind" , jsonString "markdown" )
+                                , ( "value" , jsonString info )
+                                ]
+                          )
+                        ]
 
 
-findHoverInDecls : ServerState -> List Declaration -> Int -> String
-findHoverInDecls state decls line =
-    case decls of
-        [] ->
-            jsonNull
-
-        decl :: rest ->
-            case matchDeclAtLine decl line of
-                Just declName ->
-                    let
-                        typeStr =
-                            lookupDeclType state declName
-                    in
-                        jsonObject
-                            [ ( "contents"
-                              , jsonObject
-                                    [ ( "kind" , jsonString "markdown" )
-                                    , ( "value" , jsonString (declName ++ " : " ++ typeStr) )
-                                    ]
-                              )
-                            ]
-
-                Nothing ->
-                    findHoverInDecls state rest line
+getLineAt : Int -> String -> String
+getLineAt lineNum source =
+    getLineAtLoop lineNum source 0 0
 
 
-matchDeclAtLine : Declaration -> Int -> Maybe String
-matchDeclAtLine decl line =
-    case decl of
-        FunDecl name _ _ span ->
-            matchSpanToName span line name 1
-
-        TypeAnnotDecl name _ span ->
-            matchSpanToName span line name 0
-
-        TypeDecl name _ _ span ->
-            matchSpanToName span line name 0
-
-        _ ->
-            Nothing
-
-
-matchSpanToName span line name range =
-    let
-        sp =
-            span.start
-
-        startLine =
-            sp.line
-    in
-        if startLine - 1 <= line && line <= startLine + range then
-            Just name
-        else
-            Nothing
-
-
-lookupDeclType : ServerState -> String -> String
-lookupDeclType state name =
-    let
-        allResults =
-            Dict.values state.typeCache
-    in
-        findTypeInResults name allResults
-
-
-findTypeInResults : String -> List Checker.CheckResult -> String
-findTypeInResults name results =
-    case results of
-        [] ->
-            "unknown"
-
-        result :: rest ->
-            case findTypeInDecls name result.declarations of
-                Just typeStr ->
-                    typeStr
-
-                Nothing ->
-                    findTypeInResults name rest
-
-
-findTypeInDecls : String -> List Checker.TypedDecl -> Maybe String
-findTypeInDecls name decls =
-    case decls of
-        [] ->
-            Nothing
-
-        decl :: rest ->
-            if decl.name == name then
-                Just decl.prettyType
+getLineAtLoop : Int -> String -> Int -> Int -> String
+getLineAtLoop target source currentLine idx =
+    if idx >= String.length source then
+        ""
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) source
+        in
+            if ch == "\n" then
+                if currentLine == target then
+                    String.slice (findLineStart currentLine source idx) idx source
+                else
+                    getLineAtLoop target source (currentLine + 1) (idx + 1)
+            else if idx == String.length source - 1 then
+                if currentLine == target then
+                    String.slice (findLineStart currentLine source idx) (idx + 1) source
+                else
+                    ""
             else
-                findTypeInDecls name rest
+                getLineAtLoop target source currentLine (idx + 1)
+
+
+findLineStart : Int -> String -> Int -> Int
+findLineStart lineNum source endIdx =
+    findLineStartLoop source (endIdx - 1)
+
+
+findLineStartLoop : String -> Int -> Int
+findLineStartLoop source idx =
+    if idx < 0 then
+        0
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) source
+        in
+            if ch == "\n" then
+                idx + 1
+            else
+                findLineStartLoop source (idx - 1)
+
+
+getWordAt : Int -> String -> String
+getWordAt col lineText =
+    if col >= String.length lineText then
+        ""
+    else
+        let
+            wordStart =
+                findWordStart lineText col
+            wordEnd =
+                findWordEnd lineText col
+        in
+            String.slice wordStart wordEnd lineText
+
+
+findWordStart : String -> Int -> Int
+findWordStart text idx =
+    if idx <= 0 then
+        0
+    else
+        let
+            ch =
+                String.slice (idx - 1) idx text
+        in
+            if isIdentChar ch then
+                findWordStart text (idx - 1)
+            else
+                idx
+
+
+findWordEnd : String -> Int -> Int
+findWordEnd text idx =
+    if idx >= String.length text then
+        idx
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) text
+        in
+            if isIdentChar ch then
+                findWordEnd text (idx + 1)
+            else
+                idx
+
+
+isIdentChar : String -> Bool
+isIdentChar ch =
+    ch == "_" || ch == "a" || ch == "b" || ch == "c" || ch == "d"
+        || ch == "e" || ch == "f" || ch == "g" || ch == "h" || ch == "i"
+        || ch == "j" || ch == "k" || ch == "l" || ch == "m" || ch == "n"
+        || ch == "o" || ch == "p" || ch == "q" || ch == "r" || ch == "s"
+        || ch == "t" || ch == "u" || ch == "v" || ch == "w" || ch == "x"
+        || ch == "y" || ch == "z" || ch == "A" || ch == "B" || ch == "C"
+        || ch == "D" || ch == "E" || ch == "F" || ch == "G" || ch == "H"
+        || ch == "I" || ch == "J" || ch == "K" || ch == "L" || ch == "M"
+        || ch == "N" || ch == "O" || ch == "P" || ch == "Q" || ch == "R"
+        || ch == "S" || ch == "T" || ch == "U" || ch == "V" || ch == "W"
+        || ch == "X" || ch == "Y" || ch == "Z" || ch == "0" || ch == "1"
+        || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6"
+        || ch == "7" || ch == "8" || ch == "9"
+
+
+-- Find type annotation for a name in source text
+-- Looks for patterns like "name : Type -> Type"
+findAnnotationInSource : String -> String -> String
+findAnnotationInSource name source =
+    findAnnotationLoop name source 0
+
+
+findAnnotationLoop : String -> String -> Int -> String
+findAnnotationLoop name source idx =
+    let
+        searchFor =
+            name ++ " : "
+        searchLen =
+            String.length searchFor
+    in
+        if idx + searchLen > String.length source then
+            ""
+        else
+            let
+                candidate =
+                    String.slice idx (idx + searchLen) source
+            in
+                if candidate == searchFor then
+                    -- Check it's at start of line (idx == 0 or preceded by newline)
+                    let
+                        atStart =
+                            if idx == 0 then
+                                True
+                            else
+                                String.slice (idx - 1) idx source == "\n"
+                    in
+                        if atStart then
+                            let
+                                restOfLine =
+                                    extractUntilNewline source (idx + searchLen)
+                            in
+                                name ++ " : " ++ restOfLine
+                        else
+                            findAnnotationLoop name source (idx + 1)
+                else
+                    findAnnotationLoop name source (idx + 1)
+
+
+extractUntilNewline : String -> Int -> String
+extractUntilNewline source idx =
+    if idx >= String.length source then
+        ""
+    else
+        let
+            ch =
+                String.slice idx (idx + 1) source
+        in
+            if ch == "\n" then
+                ""
+            else
+                ch ++ extractUntilNewline source (idx + 1)
 
 
 -- ══════════════════════════════════════════════════════
@@ -485,51 +580,99 @@ handleDefinition state id body =
 
 findDefinitionForPosition : ServerState -> String -> Int -> Int -> String
 findDefinitionForPosition state uri line character =
-    case Dict.get uri state.astCache of
+    case Dict.get uri state.documents of
         Nothing ->
             jsonNull
 
-        Just mod ->
-            findDeclDefinition mod.declarations uri line
-
-
-findDeclDefinition : List Declaration -> String -> Int -> String
-findDeclDefinition decls uri line =
-    case decls of
-        [] ->
-            jsonNull
-
-        decl :: rest ->
+        Just source ->
             let
-                matched =
-                    matchDeclAtLine decl line
+                lineText =
+                    getLineAt line source
+                word =
+                    getWordAt character lineText
             in
-                case matched of
-                    Just declName ->
-                        makeDeclLocation uri decl
-
-                    Nothing ->
-                        findDeclDefinition rest uri line
+                if String.isEmpty word then
+                    jsonNull
+                else
+                    findDefinitionInSource word source uri
 
 
-makeDeclLocation : String -> Declaration -> String
-makeDeclLocation uri decl =
-    case decl of
-        FunDecl name _ _ span ->
-            let
-                sp =
-                    span.start
-
-                ln =
-                    sp.line - 1
-            in
-                jsonObject
-                    [ ( "uri" , jsonString uri )
-                    , ( "range" , makeRange ln 0 ln 0 )
-                    ]
-
-        _ ->
+findDefinitionInSource : String -> String -> String -> String
+findDefinitionInSource name source uri =
+    -- Look for "name =" or "name " at start of line (function definition)
+    let
+        defLine =
+            findDefLineInSource name source 0 0
+    in
+        if defLine < 0 then
             jsonNull
+        else
+            jsonObject
+                [ ( "uri" , jsonString uri )
+                , ( "range" , makeRange defLine 0 defLine (String.length name) )
+                ]
+
+
+findDefLineInSource : String -> String -> Int -> Int -> Int
+findDefLineInSource name source lineNum idx =
+    if idx >= String.length source then
+        -1
+    else
+        let
+            -- Check if we're at start of line
+            atStart =
+                if idx == 0 then
+                    True
+                else
+                    String.slice (idx - 1) idx source == "\n"
+        in
+            if atStart then
+                let
+                    nameLen =
+                        String.length name
+                    candidate =
+                        String.slice idx (idx + nameLen) source
+                in
+                    if candidate == name then
+                        let
+                            afterName =
+                                String.slice (idx + nameLen) (idx + nameLen + 1) source
+                        in
+                            -- "name =" is a function definition (not annotation which has " :")
+                            if afterName == " " then
+                                let
+                                    afterSpace =
+                                        String.slice (idx + nameLen + 1) (idx + nameLen + 2) source
+                                in
+                                    if afterSpace == "=" || afterSpace == ":" then
+                                        -- For annotation, skip to find the actual def
+                                        if afterSpace == ":" then
+                                            findDefLineInSource name source lineNum (idx + 1)
+                                        else
+                                            lineNum
+                                    else
+                                        -- "name x y =" is also a function def with params
+                                        lineNum
+                            else
+                                findDefLineInSource name source lineNum (idx + 1)
+                    else
+                        let
+                            ch =
+                                String.slice idx (idx + 1) source
+                        in
+                            if ch == "\n" then
+                                findDefLineInSource name source (lineNum + 1) (idx + 1)
+                            else
+                                findDefLineInSource name source lineNum (idx + 1)
+            else
+                let
+                    ch =
+                        String.slice idx (idx + 1) source
+                in
+                    if ch == "\n" then
+                        findDefLineInSource name source (lineNum + 1) (idx + 1)
+                    else
+                        findDefLineInSource name source lineNum (idx + 1)
 
 
 -- ══════════════════════════════════════════════════════

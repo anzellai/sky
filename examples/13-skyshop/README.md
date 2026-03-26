@@ -4,7 +4,7 @@ A full-featured e-commerce application built with Sky.Live, demonstrating Fireba
 
 ## Features
 
-- Product catalog with categories, search, and filtering
+- Product catalogue with categories, search, and filtering
 - Shopping cart with quantity management
 - Stripe Checkout integration (hosted payment page)
 - Order management with status workflow (pending -> ordered -> shipped -> delivered)
@@ -122,7 +122,7 @@ DOMAIN=http://localhost:4000
 # Admin access (comma-separated emails that get admin privileges)
 ADMIN_EMAILS=your-email@gmail.com
 
-# Optional: customize port (default 4000)
+# Optional: customise port (default 4000)
 SKY_LIVE_PORT=4000
 
 # Optional: session persistence (default: memory, resets on restart)
@@ -225,7 +225,7 @@ SkyShop auto-creates these collections as data is written:
 | Collection | Description |
 |---|---|
 | `users` | User accounts (id, email, name, address, is_admin) |
-| `products` | Product catalog (title, price, stock, category, published) |
+| `products` | Product catalogue (title, price, stock, category, published) |
 | `product_images` | Base64-encoded product images |
 | `carts` | Shopping carts / orders (state, totals, Stripe reference) |
 | `cart_items` | Line items (product_id, quantity, denormalized price) |

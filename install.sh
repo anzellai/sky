@@ -124,16 +124,17 @@ main() {
     fi
 
     install_binary "sky-${PLATFORM}-${ARCH}${EXT}" "sky${EXT}"
-    install_binary "sky-lsp-${PLATFORM}-${ARCH}${EXT}" "sky-lsp${EXT}"
 
     echo ""
     check_go
 
     printf "\n${GREEN}${BOLD}Sky v${VERSION} installed successfully!${NC}\n\n"
     echo "  Get started:"
-    echo "    sky init my-project"
-    echo "    cd my-project"
+    echo "    mkdir my-project && cd my-project"
+    echo "    mkdir -p src"
     echo "    sky run src/Main.sky"
+    echo ""
+    echo "  The LSP is built-in: sky lsp"
     echo ""
 }
 

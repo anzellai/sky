@@ -8,7 +8,7 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 import Crypto.Sha256 as Sha256
 import Encoding.Hex as Hex
-import Github.Com.Google.Uuid as Uuid
+import Sky.Core.Crypto as Crypto
 import Lib.Db as Db
 
 hashPassword password =
@@ -26,7 +26,7 @@ verifyPassword password storedHash =
 createUser username email password =
     let
         id =
-            Uuid.newString ()
+            String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash =
             hashPassword password
         result =

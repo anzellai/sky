@@ -33,7 +33,7 @@ isAdmin user =
     Db.getBool "is_admin" user
 
 -- ══════════════════════════════════════════════════════
--- FIREBASE AUTH CLIENT (lazy — initialized on first use,
+-- FIREBASE AUTH CLIENT (lazy — initialised on first use,
 -- after .env has been loaded by the Sky.Live runtime)
 -- ══════════════════════════════════════════════════════
 getAuthClient _ =

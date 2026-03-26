@@ -9,7 +9,59 @@ permissions:
   contents: write
 
 jobs:
+  # First: bootstrap the self-hosted compiler on a native runner
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ts-compiler/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      # Phase 0: TS bootstrap
+      - name: Bootstrap Phase 0 — TS compiler
+        run: |
+          cd ts-compiler
+          npm ci
+          npx tsx bin/sky.ts build ../src/Main.sky || true
+          sed -i 's/return func() any {  }()/return true/g' dist/Ffi/BindingGen/BindingGen.go dist/Ffi/WrapperGen/WrapperGen.go 2>/dev/null || true
+          cd dist && go build -gcflags=all=-l -o sky-bootstrap .
+
+      # Phase 1 + 2: Self-hosted bootstrap
+      - name: Bootstrap Phase 1+2 — self-hosted
+        run: |
+          cp ts-compiler/dist/sky-bootstrap bin/sky
+          chmod +x bin/sky
+          export PATH="$PWD/bin:$PATH"
+
+          # Phase 1
+          rm -rf sky-out
+          sky build src/Main.sky
+          cp sky-out/app bin/sky
+
+          # Phase 2 (verify self-hosting)
+          rm -rf sky-out
+          sky build src/Main.sky
+
+      # Upload the bootstrapped Go source for cross-compilation
+      - name: Upload Go source
+        uses: actions/upload-artifact@v4
+        with:
+          name: sky-go-source
+          path: |
+            sky-out/main.go
+            sky-out/go.mod
+
+  # Then: cross-compile for all platforms from the bootstrapped Go source
   build:
+    needs: bootstrap
     strategy:
       matrix:
         include:
@@ -37,19 +89,21 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
-
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.24'
 
-      # Bootstrap: use the checked-in bin/sky to compile itself
-      # On the CI runner's OS, we cross-compile for the target
-      - name: Build Sky compiler (Go binary)
+      - name: Download Go source
+        uses: actions/download-artifact@v4
+        with:
+          name: sky-go-source
+          path: sky-out
+
+      - name: Build binary
         run: |
-          # The sky-out/ directory has the pre-compiled Go source
           cd sky-out
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w" -o ../${{ matrix.artifact }} main.go
+          VERSION="${GITHUB_REF_NAME}"
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w -X main.skyVersion=${VERSION}" -o ../${{ matrix.artifact }} main.go
         shell: bash
 
       - uses: actions/upload-artifact@v4
@@ -69,6 +123,8 @@ jobs:
         run: |
           mkdir -p release
           for dir in artifacts/*/; do
+            # Skip the go-source artifact
+            [[ "$dir" == *"sky-go-source"* ]] && continue
             cp "$dir"* release/ 2>/dev/null || true
           done
           ls -la release/
@@ -88,7 +144,7 @@ jobs:
   docker:
     needs: release
     runs-on: ubuntu-latest
-    continue-on-error: true  # Docker Hub outages shouldn't fail the release
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

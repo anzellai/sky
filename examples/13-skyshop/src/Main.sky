@@ -43,7 +43,7 @@ init req =
         _ =
             Db.initDb
         _ =
-            println "[APP] SkyShop initialized"
+            println "[APP] SkyShop initialised"
         products =
             Products.listProducts
 

@@ -684,7 +684,7 @@ The compiler determines:
 2. Only `h1` reads `model.count`
 3. Buttons are static
 
-Generated optimized patcher:
+Generated optimised patcher:
 
 ```go
 func patchIncrement(oldModel, newModel Model) []Patch {
@@ -749,7 +749,7 @@ Model is fully determined by the ordered sequence of Msg values.
 
 ### Compiler Optimizations
 
-**Snapshots** — every N messages, serialize Model:
+**Snapshots** — every N messages, serialise Model:
 
 ```
 Session s_abc123:
@@ -1144,8 +1144,8 @@ func main() {
                         │  • Msg codec per page         │
                         │  • Static analysis / sky-id   │
                         │  • Per-Msg patch functions    │
-                        │  • Model serializer           │
-                        │  • Replay optimizer            │
+                        │  • Model serialiser           │
+                        │  • Replay optimiser            │
                         │  • Session store driver        │
                         └──────────────┬──────────────┘
                                        │
@@ -1247,8 +1247,8 @@ sky.toml          — port + session store (~8 lines)
 
 - Go HTTP server with mux, middleware chain, static file serving
 - Per-page Msg encoder/decoder (strict, no reflection)
-- Per-page Model serializer (for snapshots)
-- Per-Msg optimized patch functions (static analysis)
+- Per-page Model serialiser (for snapshots)
+- Per-Msg optimised patch functions (static analysis)
 - sky-id assignment (dynamic nodes only)
 - Event log replay with compaction + snapshots
 - Session store implementation matching sky.toml config

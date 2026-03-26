@@ -13,10 +13,10 @@ close db =
     Sql.dBClose db
 
 exec db query args =
-    Sql.dBExecResult db query args
+    Sql.dBExec db query args
 
 queryRows db query args =
-    Sql.dBQueryToMaps db query args
+    Sql.dBQuery db query args
 
 getField field row =
     Maybe.withDefault "" (Dict.get field row)

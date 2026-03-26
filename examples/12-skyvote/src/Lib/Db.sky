@@ -13,7 +13,7 @@ db =
 exec query args =
     case db of
         Ok conn ->
-            Sql.dBExecResult conn query args
+            Sql.dBExec conn query args
         
         Err e ->
             Err e
@@ -21,7 +21,7 @@ exec query args =
 queryRows query args =
     case db of
         Ok conn ->
-            Sql.dBQueryToMaps conn query args
+            Sql.dBQuery conn query args
         
         Err e ->
             Err e

@@ -1,9 +1,15 @@
 # CLAUDE.md
 
+## Language Convention
+
+All documentation, comments, variable names, function names, and user-facing strings in the Sky project **must use British English spelling**. Examples: `optimise` not `optimize`, `behaviour` not `behavior`, `colour` not `color`, `initialise` not `initialize`, `serialise` not `serialize`, `catalogue` not `catalog`.
+
+Exceptions: protocol identifiers (LSP `initialize`), CSS/HTML property names (`color`, `text-align: center`), and Go standard library names which follow American conventions.
+
 ## Core Principles (Non-Negotiable)
 
 1. **If it compiles, it works.** No runtime surprises from FFI. No panic leakage. No nil leakage. No partial bindings. All edge cases represented in types.
-2. **Dev experience is top priority.** Clear errors, predictable behavior, no user-written FFI, no confusing hidden behavior.
+2. **Dev experience is top priority.** Clear errors, predictable behaviour, no user-written FFI, no confusing hidden behaviour.
 3. **Root-cause fixes only.** Never patch over bugs. Fix at the correct abstraction layer (lexer, parser, type system, lowering, or interop generator).
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must support real backend systems. Must remain maintainable.
 
@@ -45,10 +51,9 @@ source → lexer → layout filtering → parser → AST → module graph → ty
 
 ```
 src/                              -- Sky compiler (self-hosted, 34 modules)
-  Main.sky                        -- CLI entry point (build/check/run/fmt/lsp/clean)
-  Cli.sky                         -- Full CLI with all commands
+  Main.sky                        -- CLI entry point (build/run/check/fmt/add/install/update/upgrade/lsp/clean)
   Compiler/                       -- 21 modules: lexer, parser, type checker, lowerer, emitter
-  Ffi/                            -- 4 modules: Go package inspector, binding/wrapper generator
+  Ffi/                            -- 4 modules: Go package inspector, binding/wrapper generator, type mapper
   Formatter/                      -- 2 modules: pretty-printer + Elm-style formatter
   Lsp/                            -- 2 modules: JSON-RPC + LSP server
 
@@ -62,8 +67,13 @@ examples/                         -- 15 example projects
 ```bash
 sky build src/Main.sky            # Compile Sky → Go binary (sky-out/app)
 sky build examples/01-hello-world/src/Main.sky   # Compile any project
+sky run src/Main.sky              # Build and run
 sky check src/Main.sky            # Type-check without compiling
 sky fmt src/Main.sky              # Format (Elm-style: 4-space, leading commas)
+sky add github.com/some/package   # Add Go or Sky dependency + generate bindings
+sky install                       # Install all deps + auto-generate missing bindings
+sky update                        # Update sky.toml dependencies to latest
+sky upgrade                       # Self-upgrade to latest release
 sky lsp                           # Start Language Server (JSON-RPC over stdio)
 sky clean                         # Remove sky-out/ dist/
 sky --version                     # sky v0.6.0
@@ -110,10 +120,11 @@ sky --version                     # sky v0.6.0
 
 The compiler owns the entire boundary:
 1. `sky add github.com/some/package` — auto-detect Go vs Sky package
-2. Inspector subprocess runs `go/packages` + `go/types` to extract API
+2. Inspector subprocess runs `go/packages` + `go/types` to extract ALL exported types, fields, methods
 3. Compiler classifies each function: pure / fallible / effectful
 4. Generates `.skyi` binding file + Go wrapper with panic recovery
-5. Binding index enables lazy symbol resolution (40K+ symbols in seconds)
+5. Dead code elimination strips unused wrappers from final build
+6. `sky install` auto-scans source for FFI imports and generates missing bindings
 
 ### Type Mapping
 | Go | Sky |

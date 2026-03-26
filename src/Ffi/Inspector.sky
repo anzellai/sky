@@ -116,29 +116,52 @@ runInspector pkgName cacheDir cachePath =
 
         -- Build the inspector
         buildResult =
-            Process.run "sh" [ "-c" , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -o inspector . 2>&1" ]
+            Process.run "sh" [ "-c" , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1" ]
     in
         case buildResult of
             Err e ->
                 Err ("Failed to build Go inspector: " ++ errorToString e)
 
             Ok _ ->
-                -- Run the inspector
-                case Process.run (inspectorDir ++ "/inspector") [ pkgName ] of
-                    Err e ->
-                        Err ("Failed to inspect package " ++ pkgName ++ ": " ++ errorToString e)
+                -- Ensure the target package is available in gomod dir
+                -- (sky add already ran go get, so .skycache/gomod has it)
+                let
+                    gomodDir =
+                        ".skycache/gomod"
+                    _ =
+                        Process.run "sh" [ "-c" , "cd " ++ gomodDir ++ " && go get " ++ pkgName ++ " 2>/dev/null" ]
+                    -- Copy inspector binary to gomod dir and run from there
+                    _ =
+                        Process.run "cp" [ inspectorDir ++ "/inspector" , gomodDir ++ "/inspector" ]
+                in
+                    -- Write output directly to cache file (avoids OOM for large packages)
+                    let
+                        absCache =
+                            "../../" ++ cachePath
+                        runResult =
+                            Process.run "sh" [ "-c" , "cd " ++ gomodDir ++ " && GOFLAGS='-gcflags=all=-l' ./inspector " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null" ]
+                    in
+                        case runResult of
+                            Ok _ ->
+                                File.readFile cachePath
 
-                    Ok output ->
-                        let
-                            _ =
-                                File.writeFile cachePath output
-                        in
-                            Ok output
+                            Err _ ->
+                                -- Retry with --minimal flag (for large packages)
+                                let
+                                    retryResult =
+                                        Process.run "sh" [ "-c" , "cd " ++ gomodDir ++ " && GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null" ]
+                                in
+                                    case retryResult of
+                                        Ok _ ->
+                                            File.readFile cachePath
+
+                                        Err e2 ->
+                                            Err ("Failed to inspect package " ++ pkgName ++ ": " ++ errorToString e2)
 
 
 safePkgName : String -> String
 safePkgName name =
-    String.replace "/" "_" (String.replace "." "_" name)
+    String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" name))
 
 
 -- ══════════════════════════════════════════════════════
@@ -153,6 +176,8 @@ inspectorGoCode =
         , "import ("
         , "\t\"encoding/json\""
         , "\t\"fmt\""
+        , "\t\"go/importer\""
+        , "\t\"go/token\""
         , "\t\"go/types\""
         , "\t\"os\""
         , "\t_ \"strings\""
@@ -238,22 +263,36 @@ inspectorGoCode =
         , "\t\tfmt.Fprintln(os.Stderr, \"usage: inspector <package>\")"
         , "\t\tos.Exit(1)"
         , "\t}"
-        , "\tpkgPath := os.Args[1]"
+        , "\tminimal := len(os.Args) > 2 && os.Args[1] == \"--minimal\""
+        , "\tpkgPath := os.Args[len(os.Args)-1]"
         , ""
-        , "\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedImports | packages.NeedDeps}"
-        , "\tpkgs, err := packages.Load(cfg, pkgPath)"
-        , "\tif err != nil {"
-        , "\t\tfmt.Fprintf(os.Stderr, \"load error: %v\\n\", err)"
-        , "\t\tos.Exit(1)"
-        , "\t}"
-        , "\tif len(pkgs) == 0 || pkgs[0].Types == nil {"
-        , "\t\tfmt.Fprintln(os.Stderr, \"no types found\")"
-        , "\t\tos.Exit(1)"
+        , "\tvar pkg *types.Package"
+        , "\tif minimal {"
+        , "\t\t// Use go/importer for large packages (avoids OOM from go/packages NeedSyntax)"
+        , "\t\tfset := token.NewFileSet()"
+        , "\t\timp := importer.ForCompiler(fset, \"source\", nil)"
+        , "\t\tvar err error"
+        , "\t\tpkg, err = imp.Import(pkgPath)"
+        , "\t\tif err != nil {"
+        , "\t\t\tfmt.Fprintf(os.Stderr, \"import error: %v\\n\", err)"
+        , "\t\t\tos.Exit(1)"
+        , "\t\t}"
+        , "\t} else {"
+        , "\t\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName | packages.NeedImports | packages.NeedDeps | packages.NeedSyntax}"
+        , "\t\tpkgs, err := packages.Load(cfg, pkgPath)"
+        , "\t\tif err != nil {"
+        , "\t\t\tfmt.Fprintf(os.Stderr, \"load error: %v\\n\", err)"
+        , "\t\t\tos.Exit(1)"
+        , "\t\t}"
+        , "\t\tif len(pkgs) == 0 || pkgs[0].Types == nil {"
+        , "\t\t\tfmt.Fprintln(os.Stderr, \"no types found\")"
+        , "\t\t\tos.Exit(1)"
+        , "\t\t}"
+        , "\t\tpkg = pkgs[0].Types"
         , "\t}"
         , ""
-        , "\tpkg := pkgs[0]"
-        , "\tscope := pkg.Types.Scope()"
-        , "\tout := Output{Name: pkg.Types.Name(), Path: pkg.Types.Path()}"
+        , "\tscope := pkg.Scope()"
+        , "\tout := Output{Name: pkg.Name(), Path: pkg.Path()}"
         , ""
         , "\tfor _, name := range scope.Names() {"
         , "\t\tobj := scope.Lookup(name)"
@@ -274,10 +313,24 @@ inspectorGoCode =
         , "\t\t\t\t}"
         , "\t\t\tcase *types.Interface:"
         , "\t\t\t\ttd.Kind = \"interface\""
+        , "\t\t\t\tfor i := 0; i < u.NumMethods(); i++ {"
+        , "\t\t\t\t\tm := u.Method(i)"
+        , "\t\t\t\t\tif !m.Exported() { continue }"
+        , "\t\t\t\t\tsig := m.Type().(*types.Signature)"
+        , "\t\t\t\t\tmd := MethodDecl{Name: m.Name(), Variadic: sig.Variadic()}"
+        , "\t\t\t\t\tfor j := 0; j < sig.Params().Len(); j++ {"
+        , "\t\t\t\t\t\tp := sig.Params().At(j)"
+        , "\t\t\t\t\t\tmd.Params = append(md.Params, ParamDecl{Name: p.Name(), Type: typeStr(p.Type())})"
+        , "\t\t\t\t\t}"
+        , "\t\t\t\t\tfor j := 0; j < sig.Results().Len(); j++ {"
+        , "\t\t\t\t\t\tr := sig.Results().At(j)"
+        , "\t\t\t\t\t\tmd.Results = append(md.Results, ParamDecl{Name: r.Name(), Type: typeStr(r.Type())})"
+        , "\t\t\t\t\t}"
+        , "\t\t\t\t\ttd.Methods = append(td.Methods, md)"
+        , "\t\t\t\t}"
         , "\t\t\tdefault:"
         , "\t\t\t\ttd.Kind = \"other\""
         , "\t\t\t}"
-        , "\t\t\t// Methods"
         , "\t\t\tmset := types.NewMethodSet(types.NewPointer(named))"
         , "\t\t\tfor i := 0; i < mset.Len(); i++ {"
         , "\t\t\t\tm := mset.At(i)"

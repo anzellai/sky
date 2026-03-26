@@ -360,7 +360,7 @@ Go to /todos, add some items, navigate to /about, navigate back to /todos.
 Per-page: Todos state is gone (session expired on navigate away).
 Unified: Todos are still there. Same model.
 
-### The compiler still optimizes perfectly
+### The compiler still optimises perfectly
 
 ```
 Navigate TodosPage
@@ -612,7 +612,7 @@ produce **zero patches** when the user is on a different page.
 cost as a per-page system doing a full page init. And it only happens on
 navigation, not on every interaction.
 
-The compiler can optimize this too:
+The compiler can optimise this too:
 
 ```
 Navigate from TodosPage to AboutPage:
@@ -626,7 +626,7 @@ Navigate from TodosPage to AboutPage:
 Per-page: navigate away = expire session + replay new page's log.
 Unified: navigate = one more Msg in the log. No session churn.
 
-The replay optimizer handles Navigate efficiently:
+The replay optimiser handles Navigate efficiently:
 
 ```go
 // Compiler knows: Navigate just sets model.Page (and maybe triggers a Cmd)
@@ -887,7 +887,7 @@ the todos fields are still in memory (with default values).
 
 **In practice this doesn't matter.** A Model with 50 fields is maybe 2KB.
 You'd need millions of concurrent sessions before this is an issue.
-And the fields are zero-initialized, not populated with data.
+And the fields are zero-initialised, not populated with data.
 
 ### Stale page state
 
