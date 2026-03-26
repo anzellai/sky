@@ -265,22 +265,44 @@ main =
 
 2. **Lowerer limitation with new functions** — adding functions with nested `case` inside `case` inside `let` in Pipeline.sky can cause the lowerer to generate blank function names (`Compiler_Pipeline__`). Workaround: keep complex logic in external tools or inline it.
 
-3. **Skyshop duplicate wrappers** — both `sky_wrappers/` and `sky_ffi_*.go` generate overlapping `Sky_*` functions for the same package. Needs deduplication logic.
+3. **Skyshop duplicate wrappers** — `dist/sky_wrappers/` and `.skycache/go/` both generate `Sky_*` functions. Partially fixed (skip FFI copy when project wrapper exists). Remaining: wrapper naming mismatch — lowered code emits `Cloud_Google_Com_Go_Firestore_NewClient` but wrappers define `Sky_cloud_google_com_go_firestore_NewClient`. Needs alias generation.
 
-4. **JSON decoding runtime errors** — examples/06-json decoding tests (map2, pipeline, optional fields, nested at, list of objects, oneOf) produce runtime errors. Likely a codegen or runtime issue in the JSON decoder helpers.
+4. **FFI Task boundary** — pure Go functions (`time.Now`, `os.Getenv`, `fmt.Sprint`) return plain values, not `Task`. Violates Sky's effect boundary principle. Classification is in `Ffi/WrapperGen.sky` lines 50-110.
 
-5. **FFI Task boundary** — pure Go functions (`time.Now`, `os.Getenv`, `fmt.Sprint`) return plain values, not `Task`. Violates Sky's effect boundary principle. Classification is in `Ffi/WrapperGen.sky` lines 50-110.
+5. **Go generics** — `isGenericType` in WrapperGen.sky uses a naive single-char heuristic. With Go 1.18+ generics widespread, the FFI inspector sees generic types but binding/wrapper generators skip them. TS compiler handles this by detecting `hasTypeParams` and filtering out generic functions entirely. This is correct for now (can't call generic Go functions from `any`-typed Sky args) but limits FFI coverage.
+
+6. **Skyshop build time ~2min** — 43 local modules + 14 FFI = 25K Go declarations. 99.8% of wrapper functions (32,589/32,666) are eliminated by DCE. Root cause: wrappers are generated for ALL symbols then DCE'd, instead of only generating needed symbols.
 
 ### Techniques from TS Compiler (to port)
 
-The TypeScript compiler (`ts-compiler/`) achieved fast builds through techniques not yet ported to the self-hosted compiler:
+The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build, ~500ms incremental) through techniques not yet ported:
 
-1. **Symbol-level tree-shaking** — wrapper generation is pre-filtered to only symbols referenced during lowering (`collectedWrapperSymbols` set). The self-hosted compiler generates all wrappers then DCEs.
+1. **Symbol-level tree-shaking during lowering** — the TS lowerer collects `Sky_*` wrapper references into a `collectedWrapperSymbols` set AS it generates Go code. Wrappers are then filtered via `filterInspectResult()` to only generate code for referenced symbols. Impact: Stripe SDK 40K symbols → ~50 wrappers. The self-hosted compiler generates ALL wrappers then DCEs 99.8% of them.
 
-2. **Selective import emission** — the TS lowerer scans all Go declarations and only emits imports for detected modules. The self-hosted compiler emits all 17 stdlib imports unconditionally (`makeGoPackage`).
+2. **Selective import emission** — the TS lowerer scans emitted GoIR for `GoSelectorExpr`/`GoRawExpr` references and only emits imports for detected packages. The self-hosted compiler emits all 17 stdlib imports unconditionally in `makeGoPackage`.
 
-3. **.skyi modules not lowered** — TS compiler uses .skyi for type info only; wrappers are generated separately from InspectResult. The self-hosted compiler parses .skyi into full AST modules.
+3. **.skyi for types only, not lowered** — TS compiler uses .skyi modules purely for type information during type-checking. They are NOT lowered to Go code. Wrappers come from a separate generation step using InspectResult. The self-hosted compiler parses .skyi into full AST modules and lowers them.
 
-4. **`-gcflags="all=-l"`** — disables Go inlining for faster compilation. Not yet used in self-hosted build step.
+4. **`-gcflags="all=-l"`** — disables Go inlining for faster compilation. Not yet used in self-hosted build step (`Main.sky` line ~116).
 
-5. **Disk caching** — `.skydeps/.sky_export_cache.json` persists type exports across runs. No equivalent in self-hosted compiler.
+5. **Multi-level caching** — TS compiler has 4 cache levels: (a) in-memory type-check cache, (b) disk export cache (`.skydeps/.sky_export_cache.json`), (c) inspector cache (`.skycache/go/inspect.json`), (d) wrapper generation cache. Cold LSP start: 38s → 2s.
+
+6. **go.mod/go.sum preservation** — TS compiler preserves these across rebuilds, only deleting `.go` files. Allows Go's incremental build to reuse compiled object files. Self-hosted compiler's stale cleanup removes everything.
+
+7. **Single-pass emission** — imports tracked during lowering (not post-hoc scanning). No second pass over generated Go needed.
+
+### Priority Optimisation Roadmap
+
+**P0 — Biggest impact for skyshop (<15s goal):**
+- Port symbol-level tree-shaking: collect wrapper refs during lowering, filter wrapper generation
+- This alone would eliminate 99.8% of wasted wrapper generation
+
+**P1 — Moderate impact:**
+- Selective import emission in `makeGoPackage` (scan declarations, only emit used imports)
+- Add `-gcflags="all=-l"` to go build command
+- Preserve go.mod/go.sum across builds
+
+**P2 — Incremental/future:**
+- Multi-level caching for type-check results
+- Inspector cache for Go package introspection
+- Go generics support in FFI pipeline
