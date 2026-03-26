@@ -949,9 +949,22 @@ copyOneFfiWrapper outDir modName =
     let
         safeName =
             String.join "_" (List.map ffiSafePart (String.split "." modName))
+        -- Skip if project-local wrapper already exists (avoids duplicates)
+        projectWrapper =
+            "dist/sky_wrappers/" ++ safeName ++ ".go"
+        hasProjectWrapper =
+            case Process.run "sh" [ "-c" , "test -f " ++ projectWrapper ++ " && echo yes" ] of
+                Ok s ->
+                    String.contains "yes" s
+
+                Err _ ->
+                    False
         wrapperSrc =
             ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
     in
+        if hasProjectWrapper then
+            ()
+        else
         case File.readFile wrapperSrc of
             Ok content ->
                 let
