@@ -4611,15 +4611,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 1, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -5469,7 +5469,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 0, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) > 0 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return func() any { if sky_asBool(Ffi_WrapperGen_IsEffectfulName(funcName)) { return map[string]any{"Tag": 0, "SkyName": "Effectful"} }; return map[string]any{"Tag": 1, "SkyName": "Pure"} }() }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) > 0 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return func() any { if sky_asBool(Ffi_WrapperGen_IsEffectfulName(funcName)) { return map[string]any{"Tag": 2, "SkyName": "Effectful"} }; return map[string]any{"Tag": 0, "SkyName": "Pure"} }() }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -5661,7 +5661,7 @@ func scanFileForFfiImports(filePath any) any {
 }
 
 func processImportLine(line any) any {
-	return func() any { parts := sky_call(sky_stringSplit(" "), sky_stringTrim(line)); _ = parts; modName := func() any { return func() any { __subject := parts; if len(sky_asList(__subject)) > 0 { name := sky_asList(sky_asList(__subject)[1:])[0]; _ = name; return name };  if true { return "" };  return nil }() }(); _ = modName; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(modName)) || sky_asBool(Compiler_Resolver_IsStdlib(modName))) { return struct{}{} }; return func() any { goPath := Compiler_Resolver_ModuleNameToGoPath(modName); _ = goPath; safeName := sky_call2(sky_stringReplace("-"), "_", sky_call2(sky_stringReplace("/"), "_", sky_call2(sky_stringReplace("."), "_", goPath))); _ = safeName; bindingPath := sky_concat(".skycache/go/", sky_concat(safeName, "/bindings.skyi")); _ = bindingPath; return func() any { return func() any { __subject := sky_fileRead(bindingPath); if sky_asSkyResult(__subject).SkyName == "Ok" { return struct{}{} };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { sky_println(sky_concat("   Generating bindings for ", sky_concat(goPath, "..."))); firstPart := func() any { return func() any { __subject := sky_call(sky_stringSplit("/"), goPath); if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; return first };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = firstPart; return func() any { if sky_asBool(sky_asBool(isGoStdlib(firstPart)) || sky_asBool(isGoStdlib(goPath))) { return func() any { cacheDir := sky_concat(".skycache/go/", safeName); _ = cacheDir; sky_fileMkdirAll(cacheDir); ensureGoModDir(struct{}{}); return generateGoBindings(goPath, cacheDir) }() }; return func() any { if sky_asBool(sky_call(sky_stringContains("."), firstPart)) { return detectAndInstall(goPath) }; return struct{}{} }() }() }() };  return nil }() }() }() }() }()
+	return func() any { parts := sky_call(sky_stringSplit(" "), sky_stringTrim(line)); _ = parts; modName := func() any { if sky_asBool(sky_asInt(sky_listLength(parts)) >= sky_asInt(2)) { return func() any { return func() any { __subject := sky_listHead(sky_call(sky_listDrop(1), parts)); if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return n };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return "" }(); _ = modName; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(modName)) || sky_asBool(Compiler_Resolver_IsStdlib(modName))) { return struct{}{} }; return func() any { goPath := Compiler_Resolver_ModuleNameToGoPath(modName); _ = goPath; safeName := sky_call2(sky_stringReplace("-"), "_", sky_call2(sky_stringReplace("/"), "_", sky_call2(sky_stringReplace("."), "_", goPath))); _ = safeName; bindingPath := sky_concat(".skycache/go/", sky_concat(safeName, "/bindings.skyi")); _ = bindingPath; return func() any { return func() any { __subject := sky_fileRead(bindingPath); if sky_asSkyResult(__subject).SkyName == "Ok" { return struct{}{} };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { sky_println(sky_concat("   Generating bindings for ", sky_concat(goPath, "..."))); firstPart := func() any { return func() any { __subject := sky_call(sky_stringSplit("/"), goPath); if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; return first };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = firstPart; return func() any { if sky_asBool(sky_asBool(isGoStdlib(firstPart)) || sky_asBool(isGoStdlib(goPath))) { return func() any { cacheDir := sky_concat(".skycache/go/", safeName); _ = cacheDir; sky_fileMkdirAll(cacheDir); ensureGoModDir(struct{}{}); return generateGoBindings(goPath, cacheDir) }() }; return func() any { if sky_asBool(sky_call(sky_stringContains("."), firstPart)) { return detectAndInstall(goPath) }; return struct{}{} }() }() }() };  return nil }() }() }() }() }()
 }
 
 func cmdUpdate(_ any) any {

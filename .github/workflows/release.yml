@@ -29,8 +29,12 @@ jobs:
           cd ts-compiler
           npm ci
           npx tsx bin/sky.ts build ../src/Main.sky || true
-          sed -i 's/return func() any {  }()/return true/g' dist/Ffi/BindingGen/BindingGen.go dist/Ffi/WrapperGen/WrapperGen.go 2>/dev/null || true
-          cd dist && go build -gcflags=all=-l -o sky-bootstrap .
+          cd dist
+          # Patch known TS compiler codegen issues
+          find . -name '*.go' -exec sed -i 's/return func() any {  }()/return true/g' {} +
+          find . -name '*.go' -exec sed -i 's/sky_sky_core_args\.SkyVersion/skyVersion/g' {} +
+          grep -q 'var skyVersion' main.go || echo 'var skyVersion = "dev"' >> main.go
+          go build -gcflags=all=-l -o sky-bootstrap .
 
       # Phase 1 + 2: Self-hosted bootstrap
       - name: Bootstrap Phase 1+2 — self-hosted

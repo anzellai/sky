@@ -439,12 +439,15 @@ processImportLine line =
         parts =
             String.split " " (String.trim line)
         modName =
-            case parts of
-                "import" :: name :: _ ->
-                    name
+            if List.length parts >= 2 then
+                case List.head (List.drop 1 parts) of
+                    Just n ->
+                        n
 
-                _ ->
-                    ""
+                    Nothing ->
+                        ""
+            else
+                ""
     in
         if String.isEmpty modName || Resolver.isStdlib modName then
             ()
