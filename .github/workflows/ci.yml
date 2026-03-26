@@ -11,82 +11,60 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            artifact: sky-linux-x64
+          - os: macos-latest
+            artifact: sky-darwin-arm64
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
 
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 
-      # Phase 0: Build bootstrap compiler from TypeScript
-      - name: Bootstrap Phase 0 — TS compiler
+      # Download the latest released Sky binary
+      - name: Install Sky compiler
         run: |
-          cd ts-compiler
-          npm ci
-          npx tsx bin/sky.ts build ../src/Main.sky || true
-          # Patch TS compiler output for known Go build issues
-          cd dist
-          # Patch known TS compiler codegen issues
-          # Patch known TS compiler codegen issues
-          find . -name '*.go' -exec sed -i 's/return func() any {  }()/return true/g' {} +
-          find . -name '*.go' -exec sed -i 's/sky_sky_core_args\.SkyVersion/skyVersion/g' {} +
-          grep -q 'var skyVersion' main.go || echo 'var skyVersion = "dev"' >> main.go
-          go build -gcflags=all=-l -o sky-bootstrap .
-
-      # Phase 1: Build self-hosted compiler with bootstrap
-      - name: Bootstrap Phase 1 — first self-hosted build
-        run: |
-          mkdir -p bin
-          cp ts-compiler/dist/sky-bootstrap bin/sky
-          chmod +x bin/sky
-          export PATH="$PWD/bin:$PATH"
-          rm -rf sky-out
-          sky build src/Main.sky
-
-      # Phase 2: Build self-hosted compiler with itself + version injection
-      - name: Bootstrap Phase 2 — self-hosting verified
-        run: |
-          cp sky-out/app bin/sky
-          chmod +x bin/sky
-          export PATH="$PWD/bin:$PATH"
-          rm -rf sky-out
-          sky build src/Main.sky
-          # Re-build with version from git
-          VERSION=$(git describe --tags --always 2>/dev/null || echo "dev")
-          cd sky-out && go build -gcflags=all=-l -ldflags="-X main.skyVersion=${VERSION}" -o app . && cd ..
-          cp sky-out/app bin/sky
-
-      # Verify compiler
-      - name: Verify compiler
-        run: |
-          export PATH="$PWD/bin:$PATH"
+          curl -fsSL "https://github.com/anzellai/sky/releases/latest/download/${{ matrix.artifact }}" -o sky
+          chmod +x sky
+          sudo mv sky /usr/local/bin/sky
           sky version
-          sky check src/Main.sky
+
+      # Build the compiler from source (self-hosting test)
+      - name: Build compiler from source
+        run: |
+          sky build src/Main.sky
+          sky-out/app version
+
+      # Verify self-hosting (compiler compiles itself)
+      - name: Verify self-hosting
+        run: |
+          cp sky-out/app /usr/local/bin/sky
+          rm -rf sky-out
+          sky build src/Main.sky
+          sky-out/app version
+
+      # Type check
+      - name: Type check
+        run: sky check src/Main.sky
 
       # Test examples
       - name: Test hello-world
         run: |
-          export PATH="$PWD/bin:$PATH"
           rm -rf sky-out
           sky build examples/01-hello-world/src/Main.sky
           sky-out/app | grep "Hello from Sky!"
 
       - name: Test json
         run: |
-          export PATH="$PWD/bin:$PATH"
           rm -rf sky-out
           sky build examples/06-json/src/Main.sky
           sky-out/app | grep "Done!"
 
       - name: Test local-pkg
         run: |
-          export PATH="$PWD/bin:$PATH"
           rm -rf sky-out
           sky build examples/04-local-pkg/src/Main.sky
           sky-out/app | grep "Calculation result"
@@ -94,6 +72,5 @@ jobs:
       # Test Go FFI
       - name: Test sky add (Go stdlib)
         run: |
-          export PATH="$PWD/bin:$PATH"
           sky add fmt
           test -f .skycache/go/fmt/bindings.skyi

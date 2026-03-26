@@ -9,47 +9,37 @@ permissions:
   contents: write
 
 jobs:
-  # First: bootstrap the self-hosted compiler on a native runner
+  # Build the compiler from source using the latest released binary
   bootstrap:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
       - uses: actions/setup-go@v5
         with:
           go-version: '1.24'
 
-      # Phase 0: TS bootstrap
-      - name: Bootstrap Phase 0 — TS compiler
+      # Download the previous release to bootstrap
+      - name: Install Sky compiler
         run: |
-          cd ts-compiler
-          npm ci
-          npx tsx bin/sky.ts build ../src/Main.sky || true
-          cd dist
-          # Patch known TS compiler codegen issues
-          find . -name '*.go' -exec sed -i 's/return func() any {  }()/return true/g' {} +
-          find . -name '*.go' -exec sed -i 's/sky_sky_core_args\.SkyVersion/skyVersion/g' {} +
-          grep -q 'var skyVersion' main.go || echo 'var skyVersion = "dev"' >> main.go
-          go build -gcflags=all=-l -o sky-bootstrap .
+          # Try latest release; fall back to TS bootstrap if first release
+          curl -fsSL "https://github.com/anzellai/sky/releases/latest/download/sky-linux-x64" -o sky 2>/dev/null && chmod +x sky && sudo mv sky /usr/local/bin/sky && sky version || {
+            echo "No previous release found, using TS bootstrap..."
+            cd ts-compiler
+            npm ci
+            npx tsx bin/sky.ts build ../src/Main.sky || true
+            cd dist
+            find . -name '*.go' -exec sed -i 's/return func() any {  }()/return true/g' {} +
+            find . -name '*.go' -exec sed -i 's/sky_sky_core_args\.SkyVersion/skyVersion/g' {} +
+            grep -q 'var skyVersion' main.go || echo 'var skyVersion = "dev"' >> main.go
+            go build -gcflags=all=-l -o /usr/local/bin/sky .
+          }
 
-      # Phase 1 + 2: Self-hosted bootstrap
-      - name: Bootstrap Phase 1+2 — self-hosted
+      # Build from source (Phase 1 + 2)
+      - name: Build compiler from source
         run: |
-          mkdir -p bin
-          cp ts-compiler/dist/sky-bootstrap bin/sky
-          chmod +x bin/sky
-          export PATH="$PWD/bin:$PATH"
-
-          # Phase 1
-          rm -rf sky-out
           sky build src/Main.sky
-          cp sky-out/app bin/sky
-
-          # Phase 2 (verify self-hosting)
+          cp sky-out/app /usr/local/bin/sky
           rm -rf sky-out
           sky build src/Main.sky
 
@@ -62,7 +52,7 @@ jobs:
             sky-out/main.go
             sky-out/go.mod
 
-  # Then: cross-compile for all platforms from the bootstrapped Go source
+  # Cross-compile for all platforms
   build:
     needs: bootstrap
     strategy:
@@ -126,7 +116,6 @@ jobs:
         run: |
           mkdir -p release
           for dir in artifacts/*/; do
-            # Skip the go-source artifact
             [[ "$dir" == *"sky-go-source"* ]] && continue
             cp "$dir"* release/ 2>/dev/null || true
           done
