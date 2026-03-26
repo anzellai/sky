@@ -39,6 +39,7 @@ jobs:
       # Phase 1 + 2: Self-hosted bootstrap
       - name: Bootstrap Phase 1+2 — self-hosted
         run: |
+          mkdir -p bin
           cp ts-compiler/dist/sky-bootstrap bin/sky
           chmod +x bin/sky
           export PATH="$PWD/bin:$PATH"
