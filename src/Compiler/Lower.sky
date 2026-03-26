@@ -1983,7 +1983,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_asMapStringAny(v any) map[string]interface{} { if m, ok := v.(map[string]interface{}); ok { return m }; return sky_asMap(v) }"
     , GoDeclRaw "func sky_asMapStringString(v any) map[string]string { if m, ok := v.(map[string]string); ok { return m }; result := make(map[string]string); for k, val := range sky_asMap(v) { result[sky_asString(k)] = sky_asString(val) }; return result }"
     , GoDeclRaw "func sky_asContext(v any) context.Context { if c, ok := v.(context.Context); ok { return c }; return context.Background() }"
-    , GoDeclRaw "var _ = context.Background"
     , GoDeclRaw "func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"
     , GoDeclRaw "func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"
     , GoDeclRaw "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { fn := v.(func(any) any); return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w).(func(any) any)(r) } }"
@@ -2034,9 +2033,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_recordUpdate(base any, updates any) any { m := sky_asMap(base); result := make(map[string]any); for k, v := range m { result[k] = v }; for k, v := range sky_asMap(updates) { result[k] = v }; return result }"
     , GoDeclRaw "func sky_println(args ...any) any { ss := make([]any, len(args)); for i, a := range args { ss[i] = sky_asString(a) }; fmt.Println(ss...); return struct{}{} }"
     , GoDeclRaw "func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
-    , GoDeclRaw "var _ = strings.Contains"
-    , GoDeclRaw "var _ = strconv.Itoa"
-    , GoDeclRaw "var _ = os.Exit"
     , GoDeclRaw "func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }"
     , GoDeclRaw "func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
     , GoDeclRaw "func sky_asTuple2(v any) SkyTuple2 { if t, ok := v.(SkyTuple2); ok { return t }; return SkyTuple2{} }"
@@ -2089,8 +2085,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_charToLower(c any) any { return strings.ToLower(sky_asString(c)) }"
     , GoDeclRaw "func sky_stringFromChar(c any) any { return sky_asString(c) }"
     , GoDeclRaw "func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }"
-    , GoDeclRaw "var _ = exec.Command"
-    , GoDeclRaw "var _ = bufio.NewReader"
     , GoDeclRaw "func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }"
     , GoDeclRaw "func sky_goQuote(s any) any { return strconv.Quote(sky_asString(s)) }"
     , GoDeclRaw "func sky_fst(t any) any { return sky_asTuple2(t).V0 }"
@@ -2112,8 +2106,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
     , GoDeclRaw "func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"
     -- HTTP Server runtime helpers
-    , GoDeclRaw "var _ = net_http.ListenAndServe"
-    , GoDeclRaw "var _ = io.ReadAll"
     , GoDeclRaw "func sky_serverListen(port any) any { return func(routes any) any { return func() any { mux := sky_buildMux(sky_asList(routes), \"\"); addr := fmt.Sprintf(\":%d\", sky_asInt(port)); fmt.Fprintf(os.Stderr, \"Sky server listening on %s\\n\", addr); err := net_http.ListenAndServe(addr, mux); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } } }"
     , GoDeclRaw "func sky_serverGet(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"GET\", \"V1\": pattern, \"V2\": handler} } }"
     , GoDeclRaw "func sky_serverPost(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"POST\", \"V1\": pattern, \"V2\": handler} } }"
@@ -2164,7 +2156,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_stringWords(s any) any { words := strings.Fields(sky_asString(s)); result := make([]any, len(words)); for i, w := range words { result[i] = w }; return result }"
     , GoDeclRaw "func sky_stringRepeat(n any) any { return func(s any) any { return strings.Repeat(sky_asString(s), sky_asInt(n)) } }"
     -- Math
-    , GoDeclRaw "var _ = math.Sqrt"
     , GoDeclRaw "func sky_mathSqrt(v any) any { return math.Sqrt(sky_asFloat(v)) }"
     , GoDeclRaw "func sky_mathPow(base any) any { return func(exp any) any { return math.Pow(sky_asFloat(base), sky_asFloat(exp)) } }"
     , GoDeclRaw "func sky_mathAbs(v any) any { return math.Abs(sky_asFloat(v)) }"
@@ -2175,10 +2166,6 @@ generateHelperDecls =
     , GoDeclRaw "func sky_mathMax(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af > bf { return af }; return bf } }"
     , GoDeclRaw "func sky_modBy(m any) any { return func(n any) any { mod := sky_asInt(m); if mod == 0 { return 0 }; return sky_asInt(n) % mod } }"
     -- Crypto
-    , GoDeclRaw "var _ = crypto_sha256.New"
-    , GoDeclRaw "var _ = crypto_md5.New"
-    , GoDeclRaw "var _ = hex.EncodeToString"
-    , GoDeclRaw "var _ = base64.StdEncoding"
     , GoDeclRaw "func sky_cryptoSha256(s any) any { h := crypto_sha256.Sum256([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"
     , GoDeclRaw "func sky_cryptoMd5(s any) any { h := crypto_md5.Sum([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"
     , GoDeclRaw "func sky_encodingHexEncode(s any) any { return hex.EncodeToString([]byte(sky_asString(s))) }"
@@ -2190,7 +2177,6 @@ generateHelperDecls =
     -- HTTP client
     , GoDeclRaw "func sky_httpGetString(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(body)) } }"
     -- JSON Encode
-    , GoDeclRaw "var _ = encoding_json.Marshal"
     , GoDeclRaw "func sky_jsonEncString(v any) any { return sky_asString(v) }"
     , GoDeclRaw "func sky_jsonEncInt(v any) any { return sky_asInt(v) }"
     , GoDeclRaw "func sky_jsonEncFloat(v any) any { return sky_asFloat(v) }"

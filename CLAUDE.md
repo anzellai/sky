@@ -62,6 +62,10 @@ stdlib-go/                        -- Go runtime implementations for stdlib modul
 examples/                         -- 15 example projects
 ```
 
+## Shell Commands
+
+Always use `-f` flag with `rm` and `cp` commands (e.g. `rm -f`, `rm -rf`, `cp -f`) to avoid interactive confirmation prompts that block execution.
+
 ## Build & Test
 
 ```bash
@@ -234,3 +238,49 @@ main =
 | 13 | skyshop | E-commerce: Stripe, Firebase, i18n |
 | 14 | task-demo | Task effect boundary demonstration |
 | 15 | http-server | Sky.Http.Server with routing + cookies |
+
+## Compiler Optimisation Strategy (keep up to date)
+
+**This section must be kept current.** Any session that changes the compiler pipeline, codegen, or build system must update this section to reflect the new state. This prevents regressions and gives future sessions full context.
+
+### Current Optimisations (implemented)
+
+1. **Stale file cleanup** (`Pipeline.sky:compile`) — `rm -f sky-out/sky_ffi_*.go sky-out/sky_*.go` at start of every build prevents cross-project pollution when `sky-out/` is reused.
+
+2. **Empty wrapper deletion** (`Pipeline.sky:trimWrapperFile`) — when wrapper DCE eliminates ALL functions from an FFI wrapper file, the file is deleted entirely instead of leaving import-only stubs that cause Go build failures.
+
+3. **Main.go function-level DCE** (`Pipeline.sky:dceMainGo`) — after emitting Go code, performs transitive reachability analysis from `main()` plus FFI wrapper references plus var/header references. Unreachable `sky_*` helper functions are removed. `goimports` cleans unused imports. Result: hello-world 613→111 lines, Go build 3.4x faster.
+
+4. **Var declaration preservation** — DCE separates `var` declarations from `func` blocks before analysis. All vars are preserved (they may be type constructors or FFI aliases). Only unreachable functions are eliminated.
+
+5. **Import-keeper removal** (`Lower.sky`) — removed all `var _ = pkg.Symbol` declarations that forced unused Go imports. `goimports` now handles import management.
+
+6. **Large .skyi filtering** (`bin/skyi-filter` + `Pipeline.sky:loadOneFfiBinding`) — for binding files >10KB, runs external Go tool that precomputes used `Alias.funcName` set via regex, then streams the .skyi keeping only header + types + used declarations. Stripe SDK: 147K→9K lines in 90ms.
+
+7. **Wrapper goimports** (`Pipeline.sky:eliminateDeadCode`) — runs `goimports -w` on all remaining wrapper files after DCE to fix unused imports from partial function elimination.
+
+### Known Issues (to fix)
+
+1. **Formatter↔compiler compat** — `sky fmt` on `Pipeline.sky` produces code the self-hosted compiler cannot re-compile. Root cause: the lowerer generates incorrect Go for certain reformatted patterns. Do NOT format `Pipeline.sky` until this is fixed.
+
+2. **Lowerer limitation with new functions** — adding functions with nested `case` inside `case` inside `let` in Pipeline.sky can cause the lowerer to generate blank function names (`Compiler_Pipeline__`). Workaround: keep complex logic in external tools or inline it.
+
+3. **Skyshop duplicate wrappers** — both `sky_wrappers/` and `sky_ffi_*.go` generate overlapping `Sky_*` functions for the same package. Needs deduplication logic.
+
+4. **JSON decoding runtime errors** — examples/06-json decoding tests (map2, pipeline, optional fields, nested at, list of objects, oneOf) produce runtime errors. Likely a codegen or runtime issue in the JSON decoder helpers.
+
+5. **FFI Task boundary** — pure Go functions (`time.Now`, `os.Getenv`, `fmt.Sprint`) return plain values, not `Task`. Violates Sky's effect boundary principle. Classification is in `Ffi/WrapperGen.sky` lines 50-110.
+
+### Techniques from TS Compiler (to port)
+
+The TypeScript compiler (`ts-compiler/`) achieved fast builds through techniques not yet ported to the self-hosted compiler:
+
+1. **Symbol-level tree-shaking** — wrapper generation is pre-filtered to only symbols referenced during lowering (`collectedWrapperSymbols` set). The self-hosted compiler generates all wrappers then DCEs.
+
+2. **Selective import emission** — the TS lowerer scans all Go declarations and only emits imports for detected modules. The self-hosted compiler emits all 17 stdlib imports unconditionally (`makeGoPackage`).
+
+3. **.skyi modules not lowered** — TS compiler uses .skyi for type info only; wrappers are generated separately from InspectResult. The self-hosted compiler parses .skyi into full AST modules.
+
+4. **`-gcflags="all=-l"`** — disables Go inlining for faster compilation. Not yet used in self-hosted build step.
+
+5. **Disk caching** — `.skydeps/.sky_export_cache.json` persists type exports across runs. No equivalent in self-hosted compiler.

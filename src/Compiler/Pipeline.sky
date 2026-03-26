@@ -56,13 +56,12 @@ compile : String -> String -> Result String String
 compile filePath outDir =
     let
         _ =
-            println ("╔══════════════════════════════════════════════════╗")
-        _ =
-            println ("║  Sky Self-Hosted Compiler v0.4.2                ║")
-        _ =
-            println ("╚══════════════════════════════════════════════════╝")
+            println ("Sky Compiler " ++ Args.skyVersion)
         _ =
             println ""
+        -- Clean stale FFI wrapper and helper files from previous builds
+        _ =
+            Process.run "sh" [ "-c" , "rm -f " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null" ]
     in
         case File.readFile filePath of
             Err readErr ->
@@ -102,10 +101,10 @@ compileMultiModule entryPath outDir srcRoot entryMod =
             loadLocalModules srcRoot localImports []
         -- Load FFI bindings from entry module imports
         entryFfiModules =
-            loadFfiBindings localImports
+            loadFfiBindings srcRoot localImports
         -- Also load FFI bindings from dependency module imports
         depFfiModules =
-            List.concatMap (\pair -> let mod = snd pair in loadFfiBindings mod.imports) localModules
+            List.concatMap (\pair -> let mod = snd pair in loadFfiBindings srcRoot mod.imports) localModules
         ffiModules =
             List.append entryFfiModules depFfiModules
         loadedModules =
@@ -197,6 +196,9 @@ writeMultiModuleOutput outDir allDecls imports =
         -- Dead code elimination: strip unused wrapper functions
         _ =
             eliminateDeadCode outDir goCode
+        -- Dead code elimination: strip unreachable functions from main.go
+        _ =
+            dceMainGo outDir goCode
         _ =
             println ""
         _ =
@@ -308,6 +310,9 @@ eliminateDeadCode outDir mainGoCode =
                         List.map (\f -> trimWrapperFile f mainGoCode) wrapperFiles
                     totalAfter =
                         List.foldl (\f acc -> acc + countFuncsInFile f) 0 wrapperFiles
+                    -- Fix unused imports in remaining wrapper files
+                    _ =
+                        List.map (\f -> Process.run "sh" [ "-c" , "goimports -w " ++ f ++ " 2>/dev/null" ]) wrapperFiles
                 in
                     if totalBefore > totalAfter then
                         println ("   [DCE] Eliminated " ++ String.fromInt (totalBefore - totalAfter) ++ " unused wrapper functions (" ++ String.fromInt totalBefore ++ " → " ++ String.fromInt totalAfter ++ ")")
@@ -333,13 +338,29 @@ trimWrapperFile filePath mainGoCode =
     case File.readFile filePath of
         Ok content ->
             let
-                trimmed =
-                    trimWrapperContent content mainGoCode
+                sections =
+                    splitWrapperSections content
+                funcBlocks =
+                    sections.functions
+                keptFuncs =
+                    List.filter (\block -> isWrapperUsed block mainGoCode) funcBlocks
+                keptNonSky =
+                    List.filter (\block -> not (String.startsWith "func Sky_" block)) funcBlocks
+                allKept =
+                    List.append keptFuncs keptNonSky
             in
-                if trimmed /= content then
-                    File.writeFile filePath trimmed
+                if List.isEmpty allKept then
+                    Process.run "rm" [ "-f" , filePath ]
+                        |> (\_ -> ())
                 else
-                    ()
+                    let
+                        trimmed =
+                            sections.header ++ "\n\n" ++ String.join "\n\n" allKept ++ "\n"
+                    in
+                        if trimmed /= content then
+                            File.writeFile filePath trimmed
+                        else
+                            ()
 
         Err _ ->
             ()
@@ -456,6 +477,129 @@ splitWrapperLoop lines header funcs currentFunc inFunc =
             else
                 -- Still in header
                 splitWrapperLoop rest (header ++ "\n" ++ line) funcs currentFunc False
+
+
+-- ══════════════════════════════════════════════════════
+-- MAIN.GO DEAD CODE ELIMINATION
+-- ══════════════════════════════════════════════════════
+
+dceMainGo : String -> String -> ()
+dceMainGo outDir goCode =
+    let
+        sections =
+            splitWrapperSections goCode
+        funcBlocks =
+            sections.functions
+        allVarLines =
+            List.concatMap
+                (\block ->
+                    List.filter (\line -> String.startsWith "var " line) (String.split "\n" block)
+                )
+                funcBlocks
+        pureFuncBlocks =
+            List.filterMap
+                (\block ->
+                    let
+                        lines =
+                            String.split "\n" block
+                        funcLines =
+                            List.filter (\line -> not (String.startsWith "var " line)) lines
+                        cleaned =
+                            String.trim (String.join "\n" funcLines)
+                    in
+                        if String.startsWith "func " cleaned then
+                            Just cleaned
+                        else
+                            Nothing
+                )
+                funcBlocks
+        funcMap =
+            List.foldl
+                (\block acc ->
+                    let
+                        name =
+                            extractWrapperFuncName block
+                    in
+                        if String.isEmpty name then
+                            acc
+                        else
+                            Dict.insert name block acc
+                )
+                Dict.empty
+                pureFuncBlocks
+        allNonFuncCode =
+            sections.header ++ "\n" ++ String.join "\n" allVarLines
+        wrapperContent =
+            case Process.run "sh" [ "-c" , "cat " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null" ] of
+                Ok content ->
+                    content
+
+                Err _ ->
+                    ""
+        wrapperSeeds =
+            List.filter (\name -> String.contains name wrapperContent) (Dict.keys funcMap)
+        nonFuncSeeds =
+            List.filter (\name -> String.contains name allNonFuncCode) (Dict.keys funcMap)
+        reachable =
+            buildReachableSet (List.concat [ [ "main" ] , wrapperSeeds , nonFuncSeeds ]) Dict.empty funcMap
+        totalFuncs =
+            List.length pureFuncBlocks
+        keptFuncs =
+            List.filter (\block -> Dict.member (extractWrapperFuncName block) reachable) pureFuncBlocks
+        keptCount =
+            List.length keptFuncs
+        eliminated =
+            totalFuncs - keptCount
+    in
+        if eliminated > 0 then
+            let
+                varsSection =
+                    if List.isEmpty allVarLines then
+                        ""
+                    else
+                        "\n" ++ String.join "\n" allVarLines
+                newCode =
+                    sections.header ++ varsSection ++ "\n\n" ++ String.join "\n\n" keptFuncs ++ "\n"
+                outPath =
+                    outDir ++ "/main.go"
+                _ =
+                    File.writeFile outPath newCode
+                _ =
+                    Process.run "sh" [ "-c" , "goimports -w " ++ outPath ++ " 2>/dev/null" ]
+                _ =
+                    println ("   [DCE] Eliminated " ++ String.fromInt eliminated ++ " unreachable functions from main.go (" ++ String.fromInt totalFuncs ++ " -> " ++ String.fromInt keptCount ++ ")")
+            in
+                ()
+        else
+            ()
+
+
+buildReachableSet : List String -> Dict.Dict String Bool -> Dict.Dict String String -> Dict.Dict String Bool
+buildReachableSet pending visited funcMap =
+    case pending of
+        [] ->
+            visited
+
+        name :: rest ->
+            if Dict.member name visited then
+                buildReachableSet rest visited funcMap
+            else
+                let
+                    newVisited =
+                        Dict.insert name True visited
+                    body =
+                        case Dict.get name funcMap of
+                            Just b ->
+                                b
+
+                            Nothing ->
+                                ""
+                    referenced =
+                        List.filter (\n -> n /= name && String.contains n body) (Dict.keys funcMap)
+                    newPending =
+                        List.append rest referenced
+                in
+                    buildReachableSet newPending newVisited funcMap
 
 
 makeGoPackage : List GoDecl -> GoPackage
@@ -627,15 +771,13 @@ skydepSrcRoot srcRoot modName =
                 srcRoot
 
 
--- Load FFI binding modules from .skycache/go/ for non-stdlib, non-local imports
--- Uses lazy loading: only parses function definitions that are actually referenced
-loadFfiBindings : List Ast.ImportDecl -> List ( String , Ast.Module )
-loadFfiBindings imports =
-    List.filterMap loadOneFfiBinding imports
+loadFfiBindings : String -> List Ast.ImportDecl -> List ( String , Ast.Module )
+loadFfiBindings srcRoot imports =
+    List.filterMap (\imp -> loadOneFfiBinding srcRoot imp) imports
 
 
-loadOneFfiBinding : Ast.ImportDecl -> Maybe ( String , Ast.Module )
-loadOneFfiBinding imp =
+loadOneFfiBinding : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
+loadOneFfiBinding srcRoot imp =
     let
         modName =
             String.join "." imp.moduleName
@@ -650,8 +792,27 @@ loadOneFfiBinding imp =
                 case File.readFile skyiPath of
                     Ok skyiSource ->
                         let
+                            -- Filter large bindings via external tool
+                            filteredSource =
+                                if String.length skyiSource > 10000 then
+                                    case Process.run "sh" [ "-c" , "skyi-filter " ++ skyiPath ++ " " ++ importAlias imp ++ " " ++ srcRoot ] of
+                                        Ok s ->
+                                            if String.length (String.trim s) > 20 then
+                                                s
+                                            else
+                                                skyiSource
+
+                                        Err _ ->
+                                            skyiSource
+                                else
+                                    skyiSource
+                            _ =
+                                if String.length skyiSource > 10000 then
+                                    println ("   [FFI] Filtered " ++ modName ++ ": " ++ String.fromInt (List.length (String.split "\n" skyiSource)) ++ " -> " ++ String.fromInt (List.length (String.split "\n" filteredSource)) ++ " lines")
+                                else
+                                    ()
                             lexResult =
-                                Lexer.lex skyiSource
+                                Lexer.lex filteredSource
                         in
                             case Parser.parse lexResult.tokens of
                                 Ok skyiMod ->
@@ -1549,6 +1710,9 @@ compileModule filePath outDir mod =
                         File.writeFile outPath goCode
                     _ =
                         println ("   Wrote " ++ outPath)
+                    -- Dead code elimination: strip unreachable functions from main.go
+                    _ =
+                        dceMainGo outDir goCode
                     _ =
                         println ""
                     _ =
