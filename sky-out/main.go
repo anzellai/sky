@@ -4611,15 +4611,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 3, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -5653,11 +5653,11 @@ func cmdInstall(_ any) any {
 }
 
 func autoGenerateBindings(_ any) any {
-	return func() any { findResult := sky_call(sky_processRun("sh"), []any{"-c", "find src/ -name '*.sky' 2>/dev/null | head -100"}); _ = findResult; return func() any { return func() any { __subject := findResult; if sky_asSkyResult(__subject).SkyName == "Ok" { output := sky_asSkyResult(__subject).OkValue; _ = output; return func() any { files := sky_call(sky_listFilter(func(f any) any { return sky_not(sky_stringIsEmpty(sky_stringTrim(f))) }), sky_call(sky_stringSplit("\n"), output)); _ = files; return sky_call2(sky_listFoldl(func(f any) any { return func(_ any) any { return scanFileForFfiImports(f) } }), struct{}{}, files) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  return nil }() }() }()
+	return func() any { findResult := sky_call(sky_processRun("sh"), []any{"-c", "find src/ -name '*.sky' 2>/dev/null | head -100"}); _ = findResult; return func() any { return func() any { __subject := findResult; if sky_asSkyResult(__subject).SkyName == "Ok" { output := sky_asSkyResult(__subject).OkValue; _ = output; return func() any { files := sky_call(sky_listFilter(func(f any) any { return sky_not(sky_stringIsEmpty(sky_stringTrim(f))) }), sky_call(sky_stringSplit("\n"), output)); _ = files; return sky_call(sky_listMap(func(f any) any { return scanFileForFfiImports(f) }), files) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  return nil }() }() }()
 }
 
 func scanFileForFfiImports(filePath any) any {
-	return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lines := sky_call(sky_stringSplit("\n"), source); _ = lines; importLines := sky_call(sky_listFilter(func(l any) any { return sky_asBool(sky_call(sky_stringStartsWith("import "), l)) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Sky.Core"), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Std."), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Compiler."), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Formatter."), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Lsp."), l))) && sky_asBool(sky_not(sky_call(sky_stringContains("Ffi."), l)))))))) }), lines); _ = importLines; return sky_call2(sky_listFoldl(func(l any) any { return func(_ any) any { return processImportLine(l) } }), struct{}{}, importLines) }() };  return nil }() }()
+	return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lines := sky_call(sky_stringSplit("\n"), source); _ = lines; importLines := sky_call(sky_listFilter(func(l any) any { return sky_asBool(sky_call(sky_stringStartsWith("import "), l)) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Sky.Core"), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Std."), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Compiler."), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Formatter."), l))) && sky_asBool(sky_asBool(sky_not(sky_call(sky_stringContains("Lsp."), l))) && sky_asBool(sky_not(sky_call(sky_stringContains("Ffi."), l)))))))) }), lines); _ = importLines; return sky_call(sky_listMap(func(l any) any { return processImportLine(l) }), importLines) }() };  return nil }() }()
 }
 
 func processImportLine(line any) any {
@@ -5669,7 +5669,15 @@ func cmdUpdate(_ any) any {
 }
 
 func updateDependencies(lines any) any {
-	return func() any { inDeps := sky_call2(sky_listFoldl(func(line any) any { return func(acc any) any { return func() any { trimmed := sky_stringTrim(line); _ = trimmed; isInDeps := sky_snd(acc); _ = isInDeps; return func() any { if sky_asBool(sky_equal(trimmed, "[dependencies]")) { return SkyTuple2{V0: sky_fst(acc), V1: true} }; return func() any { if sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("["), trimmed)) && sky_asBool(!sky_equal(trimmed, "[dependencies]"))) { return SkyTuple2{V0: sky_fst(acc), V1: false} }; return func() any { if sky_asBool(sky_asBool(isInDeps) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) { return func() any { pkgName := sky_stringTrim(func() any { return func() any { __subject := sky_call(sky_stringSplit("="), trimmed); if len(sky_asList(__subject)) > 0 { name := sky_asList(__subject)[0]; _ = name; return name };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }()); _ = pkgName; return func() any { if sky_asBool(sky_not(sky_stringIsEmpty(pkgName))) { return func() any { sky_println(sky_concat("   Updating ", sky_concat(pkgName, "..."))); ensureGoModDir(struct{}{}); sky_call(sky_processRun("sh"), []any{"-c", sky_concat("cd .skycache/gomod && go get ", sky_concat(pkgName, "@latest 2>/dev/null"))}); return SkyTuple2{V0: sky_fst(acc), V1: true} }() }; return SkyTuple2{V0: sky_fst(acc), V1: true} }() }() }; return acc }() }() }() }() } }), SkyTuple2{V0: struct{}{}, V1: false}, lines); _ = inDeps; return sky_fst(inDeps) }()
+	return updateDepsLoop(lines, false)
+}
+
+func updateDepsLoop(lines any, inDeps any) any {
+	return func() any { if sky_asBool(sky_listIsEmpty(lines)) { return sky_println("") }; return func() any { line := func() any { return func() any { __subject := sky_listHead(lines); if sky_asSkyMaybe(__subject).SkyName == "Just" { l := sky_asSkyMaybe(__subject).JustValue; _ = l; return l };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }(); _ = line; rest := sky_call(sky_listDrop(1), lines); _ = rest; trimmed := sky_stringTrim(line); _ = trimmed; return func() any { if sky_asBool(sky_equal(trimmed, "[dependencies]")) { return updateDepsLoop(rest, true) }; return func() any { if sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("["), trimmed)) && sky_asBool(!sky_equal(trimmed, "[dependencies]"))) { return updateDepsLoop(rest, false) }; return func() any { if sky_asBool(sky_asBool(inDeps) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) { return func() any { updateOneDep(trimmed); return updateDepsLoop(rest, true) }() }; return updateDepsLoop(rest, inDeps) }() }() }() }() }()
+}
+
+func updateOneDep(depLine any) any {
+	return func() any { parts := sky_call(sky_stringSplit("="), depLine); _ = parts; pkgName := func() any { return func() any { __subject := parts; if len(sky_asList(__subject)) > 0 { name := sky_asList(__subject)[0]; _ = name; return sky_stringTrim(name) };  if true { return "" };  return nil }() }(); _ = pkgName; return func() any { if sky_asBool(sky_stringIsEmpty(pkgName)) { return sky_println("") }; return func() any { sky_println(sky_concat("   Updating ", sky_concat(pkgName, "..."))); ensureGoModDir(""); sky_call(sky_processRun("sh"), []any{"-c", sky_concat("cd .skycache/gomod && go get ", sky_concat(pkgName, "@latest 2>/dev/null"))}); return sky_println("") }() }() }()
 }
 
 func cmdUpgrade(_ any) any {

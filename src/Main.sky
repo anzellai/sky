@@ -408,7 +408,7 @@ autoGenerateBindings _ =
                     files =
                         List.filter (\f -> not (String.isEmpty (String.trim f))) (String.split "\n" output)
                 in
-                    List.foldl (\f _ -> scanFileForFfiImports f) () files
+                    List.map (\f -> scanFileForFfiImports f) files
 
             Err _ ->
                 ()
@@ -428,7 +428,7 @@ scanFileForFfiImports filePath =
                 importLines =
                     List.filter (\l -> String.startsWith "import " l && not (String.contains "Sky.Core" l) && not (String.contains "Std." l) && not (String.contains "Compiler." l) && not (String.contains "Formatter." l) && not (String.contains "Lsp." l) && not (String.contains "Ffi." l)) lines
             in
-                List.foldl (\l _ -> processImportLine l) () importLines
+                List.map (\l -> processImportLine l) importLines
 
 
 -- Process a single import line and generate bindings if needed
@@ -519,46 +519,66 @@ cmdUpdate _ =
 
 updateDependencies : List String -> ()
 updateDependencies lines =
-    let
-        inDeps =
-            List.foldl (\line acc ->
-                let
-                    trimmed =
-                        String.trim line
-                    isInDeps =
-                        snd acc
-                in
-                    if trimmed == "[dependencies]" then
-                        ( fst acc , True )
-                    else if String.startsWith "[" trimmed && trimmed /= "[dependencies]" then
-                        ( fst acc , False )
-                    else if isInDeps && String.contains "=" trimmed then
-                        let
-                            pkgName =
-                                String.trim (case String.split "=" trimmed of
-                                    name :: _ ->
-                                        name
+    updateDepsLoop lines False
 
-                                    [] ->
-                                        "")
-                        in
-                            if not (String.isEmpty pkgName) then
-                                let
-                                    _ =
-                                        println ("   Updating " ++ pkgName ++ "...")
-                                    _ =
-                                        ensureGoModDir ()
-                                    _ =
-                                        Process.run "sh" [ "-c" , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null" ]
-                                in
-                                    ( fst acc , True )
-                            else
-                                ( fst acc , True )
-                    else
-                        acc
-            ) ( () , False ) lines
+
+updateDepsLoop : List String -> Bool -> ()
+updateDepsLoop lines inDeps =
+    if List.isEmpty lines then
+        println ""
+    else
+        let
+            line =
+                case List.head lines of
+                    Just l ->
+                        l
+
+                    Nothing ->
+                        ""
+            rest =
+                List.drop 1 lines
+            trimmed =
+                String.trim line
+        in
+            if trimmed == "[dependencies]" then
+                updateDepsLoop rest True
+            else if String.startsWith "[" trimmed && trimmed /= "[dependencies]" then
+                updateDepsLoop rest False
+            else if inDeps && String.contains "=" trimmed then
+                let
+                    _ =
+                        updateOneDep trimmed
+                in
+                    updateDepsLoop rest True
+            else
+                updateDepsLoop rest inDeps
+
+
+updateOneDep : String -> ()
+updateOneDep depLine =
+    let
+        parts =
+            String.split "=" depLine
+        pkgName =
+            case parts of
+                name :: _ ->
+                    String.trim name
+
+                _ ->
+                    ""
     in
-        fst inDeps
+        if String.isEmpty pkgName then
+            println ""
+        else
+            let
+                _ =
+                    println ("   Updating " ++ pkgName ++ "...")
+                _ =
+                    ensureGoModDir ""
+                _ =
+                    Process.run "sh" [ "-c" , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null" ]
+            in
+                println ""
 
 
 -- ══════════════════════════════════════════════════════
