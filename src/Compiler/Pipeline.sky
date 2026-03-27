@@ -1179,20 +1179,39 @@ filterFfiModule projectRoot modName mod =
             ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
         combinedSrc =
             prefix ++ ".skycache/go/wrappers/" ++ safeName ++ ".go"
+        cwdWrapperSrc =
+            ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
+        cwdCombinedSrc =
+            ".skycache/go/wrappers/" ++ safeName ++ ".go"
         wrapperContent =
             case File.readFile  wrapperSrc of
-                
+
                 Ok content ->
                     content
-                
+
                 Err _ ->
                     case File.readFile  combinedSrc of
-                        
+
                         Ok content ->
                             content
-                        
+
                         Err _ ->
-                            ""
+                            if projectRoot == "." then
+                                ""
+                            else
+                                case File.readFile  cwdWrapperSrc of
+
+                                    Ok content ->
+                                        content
+
+                                    Err _ ->
+                                        case File.readFile  cwdCombinedSrc of
+
+                                            Ok content ->
+                                                content
+
+                                            Err _ ->
+                                                ""
         filteredDecls =
             List.filter  (declHasWrapper  wrapperContent)  mod.declarations
     in
