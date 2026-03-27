@@ -199,21 +199,40 @@ func sky_liveAppLive(config any) any {
 
 	liveApp := skylive_rt.LiveApp{
 		Init: func(req map[string]any, page any) (any, []any) {
-			result := initFn.(func(any) any)(req)
+			var result any
+			if fn1, ok := initFn.(func(any) any); ok {
+				result = fn1(req)
+			} else if fn2, ok := initFn.(func(any, any) any); ok {
+				result = fn2(req, page)
+			} else {
+				result = initFn
+			}
 			if t, ok := result.(SkyTuple2); ok {
 				return t.V0, nil
 			}
 			return result, nil
 		},
 		Update: func(msg any, model any) (any, []any) {
-			result := updateFn.(func(any) any)(msg).(func(any) any)(model)
+			var result any
+			if fn2, ok := updateFn.(func(any, any) any); ok {
+				result = fn2(msg, model)
+			} else if fn1, ok := updateFn.(func(any) any); ok {
+				result = fn1(msg).(func(any) any)(model)
+			} else {
+				result = updateFn
+			}
 			if t, ok := result.(SkyTuple2); ok {
 				return t.V0, nil
 			}
 			return result, nil
 		},
 		View: func(model any) *skylive_rt.VNode {
-			result := viewFn.(func(any) any)(model)
+			var result any
+			if fn1, ok := viewFn.(func(any) any); ok {
+				result = fn1(model)
+			} else {
+				result = viewFn
+			}
 			return skylive_rt.MapToVNode(result)
 		},
 		DecodeMsg: func(name string, args []json.RawMessage) (any, error) {
@@ -260,7 +279,12 @@ func sky_liveAppLive(config any) any {
 			if guardFn == nil {
 				return nil
 			}
-			result := guardFn.(func(any) any)(msg).(func(any) any)(model)
+			var result any
+			if fn2, ok := guardFn.(func(any, any) any); ok {
+				result = fn2(msg, model)
+			} else if fn1, ok := guardFn.(func(any) any); ok {
+				result = fn1(msg).(func(any) any)(model)
+			}
 			if sr, ok := result.(SkyResult); ok && sr.Tag == 1 {
 				return fmt.Errorf("%v", sr.ErrValue)
 			}
