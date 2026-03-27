@@ -1409,10 +1409,18 @@ lowerLambda ctx params body =
                         PWildcard emptySpan
             paramStr =
                 emitInlineParam (lowerParam singleParam)
+            -- Generate tuple destructuring bindings if needed
+            tupleBindings =
+                lambdaTupleBindings singleParam
             bodyStr =
                 emitGoExprInline (lowerExpr lambdaCtx body)
+            fullBody =
+                if String.isEmpty tupleBindings then
+                    "return " ++ bodyStr
+                else
+                    tupleBindings ++ " return " ++ bodyStr
         in
-            GoRawExpr ("func(" ++ paramStr ++ ") any { return " ++ bodyStr ++ " }")
+            GoRawExpr ("func(" ++ paramStr ++ ") any { " ++ fullBody ++ " }")
     else
         let
             firstParam =
@@ -1493,6 +1501,42 @@ lowerLetBinding ctx binding =
         
         _ ->
             [ GoShortDecl "_" (lowerExpr ctx binding.value) ]
+
+-- Generate inline tuple destructuring bindings for lambda parameters.
+-- Returns Go statements as a string like "v := sky_asTuple2(_p).V1; _ = v;"
+lambdaTupleBindings : Pattern -> String
+lambdaTupleBindings pat =
+    case pat of
+        PTuple items _ ->
+            let
+                size =
+                    List.length items
+                assertFn =
+                    if size >= 3 then
+                        "sky_asTuple3"
+                    else
+                        "sky_asTuple2"
+                bindings =
+                    List.indexedMap
+                        (\idx p ->
+                            case p of
+                                PVariable name _ ->
+                                    let
+                                        goName =
+                                            sanitizeGoIdent name
+                                    in
+                                        goName ++ " := " ++ assertFn ++ "(_p).V" ++ String.fromInt idx ++ "; _ = " ++ goName ++ "; "
+
+                                _ ->
+                                    ""
+                        )
+                        items
+            in
+                String.join "" bindings
+
+        _ ->
+            ""
+
 
 extractTupleBindings : String -> List Pattern -> Int -> Int -> List GoStmt
 extractTupleBindings tmpName items idx tupleSize =
