@@ -145,6 +145,18 @@ func skyTomlLive(key string, fallback string) string {
 	return fallback
 }
 
+func resolvePageValue(name string, pageDefs []skylive_rt.PageDef) any {
+	for _, pd := range pageDefs {
+		pm := sky_asMap(pd.Page)
+		if pm != nil {
+			if skyName, ok := pm["SkyName"].(string); ok && skyName == name {
+				return pd.Page
+			}
+		}
+	}
+	return nil
+}
+
 func sky_liveAppLive(config any) any {
 	c := sky_asMap(config)
 	initFn := c["init"]
@@ -240,6 +252,12 @@ func sky_liveAppLive(config any) any {
 			for i, a := range args {
 				var v any
 				json.Unmarshal(a, &v)
+				// Resolve page names to Page ADT values for Navigate
+				if s, ok := v.(string); ok {
+					if resolved := resolvePageValue(s, pageDefs); resolved != nil {
+						v = resolved
+					}
+				}
 				msg[fmt.Sprintf("V%d", i)] = v
 			}
 			return msg, nil
