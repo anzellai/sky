@@ -2176,7 +2176,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_mathRound(v any) any { return int(math.Round(sky_asFloat(v))) }"
     , GoDeclRaw "func sky_mathMin(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af < bf { return af }; return bf } }"
     , GoDeclRaw "func sky_mathMax(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af > bf { return af }; return bf } }"
-    , GoDeclRaw "func sky_modBy(m any) any { return func(n any) any { mod := sky_asInt(m); if mod == 0 { return 0 }; return sky_asInt(n) % mod } }"
+    , GoDeclRaw "func sky_modBy(args ...any) any { if len(args) == 2 { mod := sky_asInt(args[0]); if mod == 0 { return 0 }; return sky_asInt(args[1]) % mod }; m := args[0]; return func(n any) any { mod := sky_asInt(m); if mod == 0 { return 0 }; return sky_asInt(n) % mod } }"
     -- Crypto
     , GoDeclRaw "func sky_cryptoSha256(s any) any { h := crypto_sha256.Sum256([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"
     , GoDeclRaw "func sky_cryptoMd5(s any) any { h := crypto_md5.Sum([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"
