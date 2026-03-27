@@ -49,10 +49,11 @@ jobs:
       - name: Build compiler from source
         run: |
           sky build src/Main.sky || {
-            echo "Phase 1 bootstrap: patching undefined refs..."
+            echo "Phase 1 bootstrap: patching undefined Go refs..."
             cd sky-out
-            sed -i 's/io\.readAllStdin/sky_readAllStdin/g' main.go 2>/dev/null || true
-            go build -gcflags=all=-l -o app . 2>/dev/null || true
+            sed -i 's/io\.readAllStdin/sky_readAllStdin/g' main.go
+            echo 'func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }' >> main.go
+            go build -gcflags=all=-l -o app .
             cd ..
           }
           cp sky-out/app /usr/local/bin/sky
