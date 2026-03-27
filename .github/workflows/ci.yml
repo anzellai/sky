@@ -63,6 +63,14 @@ jobs:
           sky build src/Main.sky
           sky-out/app version
 
+      # Phase 3 bootstrap — ensures lowerer fixes (e.g. cons pattern) take effect
+      - name: Phase 3 bootstrap
+        run: |
+          cp sky-out/app /usr/local/bin/sky
+          rm -rf sky-out
+          sky build src/Main.sky
+          sky-out/app version
+
       # Type check
       - name: Type check
         run: sky check src/Main.sky
