@@ -5,5 +5,7 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
-[go.dependencies]
+["go.dependencies"]
 "fyne.io/fyne/v2" = "latest"
+"fyne.io/fyne/v2/app" = "latest"
+"fyne.io/fyne/v2/widget" = "latest"

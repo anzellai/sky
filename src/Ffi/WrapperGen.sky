@@ -458,9 +458,14 @@ generateFuncWrapper safePkg pkgName func =
     let
         wrapperName =
             "Sky_" ++ safePkg ++ "_" ++ func.name
-        paramList =
+        baseParamList =
             List.indexedMap  (\i p -> "arg" ++ String.fromInt  i ++ " any")
              func.params
+        paramList =
+            if List.isEmpty  baseParamList then
+                [ "_ any" ]
+            else
+                baseParamList
         paramStr =
             String.join  ", "  paramList
         allArgCasts =
@@ -688,10 +693,22 @@ wrapEffectfulReturn results goCall =
             "defer func() { recover() }()\n\t\t" ++
             goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}"
         
-        _ :: [  ] ->
-            "return func() any {\n\t\t" ++
-            "defer func() { recover() }()\n\t\t" ++
-            "result := " ++ goCall ++ "\n\t\t" ++ "return SkyOk(result)\n\t}"
+        single :: [  ] ->
+            let
+                isFixedArray =
+                    String.startsWith  "["  single &&
+                    String.contains  "]"  single
+                resultExpr =
+                    if isFixedArray then
+                        "result[:]"
+                    else
+                        "result"
+            in
+                "return func() any {\n\t\t" ++
+                "defer func() { recover() }()\n\t\t" ++
+                "result := " ++
+                goCall ++
+                "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}"
         
         _ ->
             let
@@ -915,7 +932,7 @@ generateConstAccessor safePkg shortPkg pkgName constJson =
             "func Sky_" ++
             safePkg ++
             "_" ++
-            name ++ "() any {\n\treturn " ++ shortPkg ++ "." ++ name ++ "\n}"
+            name ++ "(_ any) any {\n\treturn " ++ shortPkg ++ "." ++ name ++ "\n}"
             )
         else
             Nothing
@@ -957,7 +974,7 @@ generateVarAccessor safePkg shortPkg varJson =
             safePkg ++
             "_" ++
             name ++
-            "() any {\n" ++
+            "(_ any) any {\n" ++
             "\tsrc := " ++
             shortPkg ++
             "." ++
@@ -976,7 +993,7 @@ generateVarAccessor safePkg shortPkg varJson =
             safePkg ++
             "_" ++
             name ++
-            "() any {\n" ++
+            "(_ any) any {\n" ++
             "\treturn " ++
             shortPkg ++
             "." ++
@@ -1000,7 +1017,7 @@ generateVarAccessor safePkg shortPkg varJson =
             safePkg ++
             "_" ++
             name ++
-            "() any {\n" ++
+            "(_ any) any {\n" ++
             "\treturn " ++ shortPkg ++ "." ++ name ++ "\n" ++ "}"
             )
 

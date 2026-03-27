@@ -1,37 +1,44 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Std.Log exposing (println)
+import Sky.Core.Task as Task
 import Sky.Core.String as String
-import Net.Http as Http
+import Std.Log exposing (println)
 import Time
 import Crypto.Sha256 as Sha256
 import Encoding.Hex as Hex
+import Net.Http as Http
+
 
 main =
-    let
-        now =
-            Time.now ()
-        data =
-            "Hello, Sky!"
-        hash =
-            Sha256.sum256 (String.toBytes data)
-        hashStr =
-            Hex.encodeToString hash
-    in
-        let
-            _ =
-                println "Current time:" now
-            _ =
-                println "SHA256 of 'Hello, Sky!':" hashStr
-            _ =
-                println "Sending HTTP request..."
-            resp =
-                Http.get "https://google.com"
-        in
-            case resp of
-                Ok r ->
-                    println "Status Code:" (Http.responseStatusCode r)
-                
-                Err e ->
-                    println "Error:" e
+    Time.now ()
+        |> Task.andThen
+            (\now ->
+                let
+                    _ =
+                        println "Current time:" now
+                    data =
+                        "Hello, Sky!"
+                in
+                    Sha256.sum256 (String.toBytes data)
+                        |> Task.andThen
+                            (\hash ->
+                                Hex.encodeToString hash
+                                    |> Task.andThen
+                                        (\hashStr ->
+                                            let
+                                                _ =
+                                                    println "SHA256 of 'Hello, Sky!':" hashStr
+                                                _ =
+                                                    println "Sending HTTP request..."
+                                            in
+                                                Http.get "https://httpbin.org/get"
+                                                    |> Task.andThen
+                                                        (\resp ->
+                                                            Task.succeed
+                                                             (println "HTTP status:" (Http.responseStatusCode resp))
+                                                        )
+                                        )
+                            )
+            )
+        |> Task.perform

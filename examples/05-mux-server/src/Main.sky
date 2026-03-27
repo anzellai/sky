@@ -1,67 +1,53 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
 import Std.Log exposing (println)
 import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
-import Github.Com.Joho.Godotenv as Dotenv
-import Os
 import Io
 
+
 writeResponse w text =
-    let
-        _ =
-            Io.writeString w text
-    in
-        ()
+    Task.perform (Io.writeString w text)
+
 
 indexHandler w _ =
     writeResponse w "Welcome to Sky Mux Server!"
 
+
 echoHandler w req =
-    let
-        reqBody =
-            Http.requestBody req
-        body =
-            Io.readAll reqBody
-    in
-        case body of
-            Ok _ ->
-                writeResponse w "ok"
-            
-            Err e ->
-                writeResponse w (errorToString e)
+    writeResponse w "echo received"
+
 
 pingHandler w _ =
     writeResponse w "pong"
 
-main =
+
+setupRoutes router =
     let
         _ =
-            Dotenv.load []
-        envPort =
-            Os.getenv "PORT"
-        serverPort =
-            if envPort == "" then
-                "4000"
-            else
-                envPort
-        r =
-            Mux.newRouter ()
+            Task.perform (Mux.routerHandleFunc router "/" indexHandler)
         _ =
-            Mux.routerHandleFunc r "/" indexHandler
+            Task.perform (Mux.routerHandleFunc router "/echo" echoHandler)
         _ =
-            Mux.routerHandleFunc r "/echo" echoHandler
-        _ =
-            Mux.routerHandleFunc r "/ping" pingHandler
-        _ =
-            println "Starting server on port" serverPort
-        result =
-            Http.listenAndServe (":" ++ serverPort) r
+            Task.perform (Mux.routerHandleFunc router "/ping" pingHandler)
     in
-        case result of
-            Ok _ ->
-                println "Server stopped gracefully"
-            
-            Err e ->
-                println "Server error:" (errorToString e)
+        router
+
+
+startServer router =
+    let
+        _ =
+            println "Server starting on port 4000"
+    in
+        Http.listenAndServe ":4000" router
+
+
+main =
+    Mux.newRouter ()
+        |> Task.andThen
+            (\router ->
+                startServer (setupRoutes router)
+            )
+        |> Task.perform

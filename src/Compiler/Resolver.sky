@@ -115,7 +115,7 @@ resolveImports srcRoot imports loaded visited diagnostics =
                             Err _ ->
                                 let
                                     skyiPath =
-                                        resolveBindingPath  modName
+                                        resolveBindingPath  "."  modName
                                 in
                                     case File.readFile  skyiPath of
                                         
@@ -262,9 +262,9 @@ resolveModulePath srcRoot parts =
     srcRoot ++ "/" ++ String.join  "/"  parts ++ ".sky"
 
 
-resolveBindingPath : String -> String
+resolveBindingPath : String -> String -> String
 
-resolveBindingPath modName =
+resolveBindingPath projectRoot modName =
     let
         pkgParts =
             String.split  "."  modName
@@ -272,9 +272,15 @@ resolveBindingPath modName =
             List.map  camelToUnderscore  pkgParts
         safeName =
             String.join  "_"  safeParts
+        prefix =
+            if projectRoot == "." then
+                ""
+            else
+                projectRoot ++ "/"
         primaryPath =
-            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+            prefix ++ ".skycache/go/" ++ safeName ++ "/bindings.skyi"
         altPath =
+            prefix ++
             ".skycache/go/" ++
             String.join  "/"  (List.map  String.toLower  pkgParts) ++
             "/bindings.skyi"
@@ -1104,12 +1110,12 @@ buildStdlibEnv =
         Env.union  stdFunctions  prelude
 
 
-isFfiBinding : String -> Bool
+isFfiBinding : String -> String -> Bool
 
-isFfiBinding modName =
+isFfiBinding projectRoot modName =
     let
         skyiPath =
-            resolveBindingPath  modName
+            resolveBindingPath  projectRoot  modName
     in
         case File.readFile  skyiPath of
             
@@ -1154,9 +1160,9 @@ resolveWrapperPath modName =
         ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
 
 
-collectForeignImports : (List Ast.ImportDecl) -> List ( String , String , Bool )
+collectForeignImports : String -> (List Ast.ImportDecl) -> List ( String , String , Bool )
 
-collectForeignImports imports =
+collectForeignImports projectRoot imports =
     List.filterMap
      (
     \imp ->
@@ -1168,7 +1174,7 @@ collectForeignImports imports =
                 Nothing
             else if imp.alias_ == "_" then
                 Just  ( modName , moduleNameToGoPath  modName , True )
-            else if isFfiBinding  modName then
+            else if isFfiBinding  projectRoot  modName then
                 Just  ( modName , moduleNameToGoPath  modName , False )
             else
                 Nothing
@@ -1176,12 +1182,12 @@ collectForeignImports imports =
      imports
 
 
-collectAllForeignImports : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , String , Bool )
+collectAllForeignImports : String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , String , Bool )
 
-collectAllForeignImports entryImports loadedModules =
+collectAllForeignImports projectRoot entryImports loadedModules =
     let
         entryForeign =
-            collectForeignImports  entryImports
+            collectForeignImports  projectRoot  entryImports
         depForeign =
             List.concatMap
              (
@@ -1190,7 +1196,7 @@ collectAllForeignImports entryImports loadedModules =
                     mod =
                         snd  pair
                 in
-                    collectForeignImports  mod.imports
+                    collectForeignImports  projectRoot  mod.imports
             )
              loadedModules
     in

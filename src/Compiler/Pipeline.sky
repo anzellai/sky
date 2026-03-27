@@ -146,14 +146,18 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         depDecls =
             List.concatMap  (compileDependencyModule  stdlibEnv  loadedModules)
              loadedModules
+        projectRoot =
+            dirOfPath  srcRoot
     in
-        compileMultiModuleEntry  outDir  entryMod  aliasMap  stdlibEnv  depDecls
+        compileMultiModuleEntry  outDir  projectRoot  entryMod  aliasMap
+         stdlibEnv
+         depDecls
          loadedModules
 
 
-compileMultiModuleEntry : String -> Ast.Module -> (Dict.Dict String String) -> Env.TypeEnv -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
+compileMultiModuleEntry : String -> String -> Ast.Module -> (Dict.Dict String String) -> Env.TypeEnv -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
 
-compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls loadedModules =
+compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls loadedModules =
     let
         entryCheckResult =
             Checker.checkModule  entryMod  (Just  stdlibEnv)
@@ -166,13 +170,15 @@ compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls loadedModule
                 Err _ ->
                     Adt.emptyRegistry
     in
-        emitMultiModuleGo  outDir  entryMod  entryRegistry  aliasMap  depDecls
+        emitMultiModuleGo  outDir  projectRoot  entryMod  entryRegistry
+         aliasMap
+         depDecls
          loadedModules
 
 
-emitMultiModuleGo : String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
+emitMultiModuleGo : String -> String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
 
-emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules =
+emitMultiModuleGo outDir projectRoot entryMod entryRegistry aliasMap depDecls loadedModules =
     let
         baseCtx =
             Lower.emptyCtx
@@ -227,15 +233,17 @@ emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules 
              loadedModules
             )
     in
-        writeMultiModuleOutput  outDir  allDecls  allImports
+        writeMultiModuleOutput  outDir  projectRoot  allDecls  allImports
 
 
-writeMultiModuleOutput : String -> (List GoDecl) -> (List Ast.ImportDecl) -> Result String String
+writeMultiModuleOutput : String -> String -> (List GoDecl) -> (List Ast.ImportDecl) -> Result String String
 
-writeMultiModuleOutput outDir allDecls imports =
+writeMultiModuleOutput outDir projectRoot allDecls imports =
     let
+        blankImports =
+            collectBlankImports  imports
         goPackage =
-            makeGoPackage  allDecls
+            makeGoPackageWithImports  allDecls  blankImports
         rawGoCode =
             Emit.emitPackage  goPackage
         goCode =
@@ -255,7 +263,17 @@ writeMultiModuleOutput outDir allDecls imports =
             String.fromInt  (List.length  allDecls) ++ " total Go declarations"
             )
         _ =
-            copyFfiWrappers  outDir  imports  goCode
+            if String.contains  "skylive_rt"  goCode then
+                let
+                    _ =
+                        Process.run  "cp"
+                         [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
+                in
+                    println  "   Copied skylive_rt runtime"
+            else
+                ()
+        _ =
+            copyFfiWrappers  outDir  projectRoot  imports  goCode
         _ =
             eliminateDeadCode  outDir  goCode
         _ =
@@ -699,6 +717,17 @@ dceMainGo outDir goCode =
                     , "goimports -w " ++ outPath ++ " 2>/dev/null || true"
                     ]
                 _ =
+                    if String.contains  "skylive_rt"  bodyCode then
+                        Process.run  "sh"
+                         [ "-c"
+                        , "grep -q 'sky-app/skylive_rt' " ++
+                        outPath ++
+                        " || sed -i '' 's/^import (/import (\\n\\tskylive_rt \"sky-app\\/skylive_rt\"/' " ++
+                        outPath
+                        ]
+                    else
+                        Ok  ""
+                _ =
                     println
                      (
                     "   [DCE] Eliminated " ++
@@ -722,7 +751,7 @@ trimUnusedImports header bodyCode =
         _ =
             File.writeFile  "/tmp/_sky_dce_header.tmp"  header
         cmd =
-            "awk '/^import \\(/{print;next} /^\\)/{print;next} /^\\t/{line=$0; gsub(/\"/, \"\", line); n=split(line, a, \" \"); if(n>=2){pkg=a[1]}else{split(a[1],b,\"/\");pkg=b[length(b)]}; if(pkg==\"\"){print $0;next}; cmd=\"grep -cE \\\"[^a-zA-Z]\" pkg \"\\\\.\\\" /tmp/_sky_dce_body.tmp\"; cmd|getline r; close(cmd); if(r+0>0){print $0}; next} {print}' /tmp/_sky_dce_header.tmp"
+            "awk '/^import \\(/{print;next} /^\\)/{print;next} /^\\t/{if($0 ~ /^\\t_ /){print $0;next}; if($0 ~ /skylive_rt/){print $0;next}; line=$0; gsub(/\"/, \"\", line); n=split(line, a, \" \"); if(n>=2){pkg=a[1]}else{split(a[1],b,\"/\");pkg=b[length(b)]}; if(pkg==\"\"){print $0;next}; cmd=\"grep -cE \\\"[^a-zA-Z]\" pkg \"\\\\.\\\" /tmp/_sky_dce_body.tmp\"; cmd|getline r; close(cmd); if(r+0>0){print $0}; next} {print}' /tmp/_sky_dce_header.tmp"
     in
         case Process.run  "sh"  [ "-c" , cmd ] of
             
@@ -769,6 +798,34 @@ buildReachableSet pending visited funcMap =
                     buildReachableSet  newPending  newVisited  funcMap
 
 
+collectBlankImports : (List Ast.ImportDecl) -> List GoImport
+
+collectBlankImports imports =
+    List.filterMap
+     (
+    \imp ->
+        if imp.alias_ == "_" then
+            let
+                modName =
+                    String.join  "."  imp.moduleName
+            in
+                Just  { path = skyModuleToGoImport  modName , alias_ = "_" }
+        else
+            Nothing
+    )
+     imports
+
+
+makeGoPackageWithImports : (List GoDecl) -> (List GoImport) -> GoPackage
+
+makeGoPackageWithImports decls extraImports =
+    let
+        base =
+            makeGoPackage  decls
+    in
+        { base | imports = List.append  base.imports  extraImports }
+
+
 makeGoPackage : (List GoDecl) -> GoPackage
 
 makeGoPackage decls =
@@ -785,6 +842,7 @@ makeGoPackage decls =
         , { path = "strings" , alias_ = "" }
         , { path = "sort" , alias_ = "" }
         , { path = "math" , alias_ = "" }
+        , { path = "database/sql" , alias_ = "" }
         , { path = "crypto/sha256" , alias_ = "crypto_sha256" }
         , { path = "crypto/md5" , alias_ = "crypto_md5" }
         , { path = "encoding/hex" , alias_ = "hex" }
@@ -792,6 +850,7 @@ makeGoPackage decls =
         , { path = "encoding/json" , alias_ = "encoding_json" }
         , { path = "time" , alias_ = "" }
         , { path = "context" , alias_ = "" }
+        , { path = "sky-app/skylive_rt" , alias_ = "skylive_rt" }
         ]
     , declarations =
         decls
@@ -1028,8 +1087,10 @@ loadOneFfiBinding srcRoot imp =
             Nothing
         else
             let
+                projectRoot =
+                    dirOfPath  srcRoot
                 skyiPath =
-                    Resolver.resolveBindingPath  modName
+                    Resolver.resolveBindingPath  projectRoot  modName
             in
                 case File.readFile  skyiPath of
                     
@@ -1084,21 +1145,103 @@ loadOneFfiBinding srcRoot imp =
                             case Parser.parse  lexResult.tokens of
                                 
                                 Ok skyiMod ->
-                                    Just  ( modName , skyiMod )
+                                    let
+                                        filtered =
+                                            filterFfiModule  projectRoot
+                                             modName
+                                             skyiMod
+                                    in
+                                        Just  ( modName , filtered )
                                 
                                 Err _ ->
                                     Nothing
                                 
                                 Err _ ->
                                     Nothing
+
+
+filterFfiModule : String -> String -> Ast.Module -> Ast.Module
+
+filterFfiModule projectRoot modName mod =
+    let
+        safeName =
+            String.join  "_"
+             (List.map  ffiSafePart  (String.split  "."  modName))
+        prefix =
+            if projectRoot == "." then
+                ""
+            else
+                projectRoot ++ "/"
+        wrapperSrc =
+            prefix ++
+            ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
+        combinedSrc =
+            prefix ++ ".skycache/go/wrappers/" ++ safeName ++ ".go"
+        wrapperContent =
+            case File.readFile  wrapperSrc of
+                
+                Ok content ->
+                    content
+                
+                Err _ ->
+                    case File.readFile  combinedSrc of
+                        
+                        Ok content ->
+                            content
+                        
+                        Err _ ->
+                            ""
+        filteredDecls =
+            List.filter  (declHasWrapper  wrapperContent)  mod.declarations
+    in
+        { mod | declarations = filteredDecls }
+
+
+declHasWrapper : String -> Ast.Declaration -> Bool
+
+declHasWrapper wrapperContent decl =
+    case decl of
+        
+        Ast.FunDecl _ _ body _ ->
+            let
+                wrapperName =
+                    extractWrapperName  body
+            in
+                if String.isEmpty  wrapperName then
+                    True
+                else
+                    String.contains  wrapperName  wrapperContent
+        
+        _ ->
+            True
+
+
+extractWrapperName : Ast.Expression -> String
+
+extractWrapperName expr =
+    case expr of
+        
+        Ast.IdentifierExpr name _ ->
+            if String.startsWith  "Sky_"  name then
+                name
+            else
+                ""
+        
+        Ast.CallExpr callee _ _ ->
+            extractWrapperName  callee
+        
+        _ ->
+            ""
 
 
 tryLoadBinding : String -> String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
 
 tryLoadBinding srcRoot modName rest acc =
     let
+        projectRoot =
+            dirOfPath  srcRoot
         skyiPath =
-            Resolver.resolveBindingPath  modName
+            Resolver.resolveBindingPath  projectRoot  modName
         _ =
             println
              ("   [FFI] Looking for binding: " ++ modName ++ " at " ++ skyiPath)
@@ -1152,9 +1295,9 @@ tryLoadBinding srcRoot modName rest acc =
                                 loadLocalModules  srcRoot  rest  acc
 
 
-copyFfiWrappers : String -> (List Ast.ImportDecl) -> String -> ()
+copyFfiWrappers : String -> String -> (List Ast.ImportDecl) -> String -> ()
 
-copyFfiWrappers outDir imports mainGoCode =
+copyFfiWrappers outDir projectRoot imports mainGoCode =
     let
         _ =
             List.foldl
@@ -1167,22 +1310,28 @@ copyFfiWrappers outDir imports mainGoCode =
                     if Resolver.isStdlib  modName || imp.alias_ == "_" then
                         ()
                     else
-                        copyOneFfiWrapper  outDir  modName  mainGoCode
+                        copyOneFfiWrapper  outDir  projectRoot  modName
+                         mainGoCode
             )
              ()
              imports
         _ =
-            copyProjectWrappers  outDir  mainGoCode
+            copyProjectWrappers  outDir  projectRoot  mainGoCode
     in
         ()
 
 
-copyProjectWrappers : String -> String -> ()
+copyProjectWrappers : String -> String -> String -> ()
 
-copyProjectWrappers outDir mainGoCode =
+copyProjectWrappers outDir projectRoot mainGoCode =
     let
+        prefix =
+            if projectRoot == "." then
+                ""
+            else
+                projectRoot ++ "/"
         dirs =
-            [ "dist/sky_wrappers" , "sky_wrappers" ]
+            [ prefix ++ "sky_wrappers" ]
     in
         List.foldl  (\dir _ -> copyWrapperDir  outDir  dir  mainGoCode)  ()
          dirs
@@ -1241,9 +1390,9 @@ copyWrapperDir outDir wrapperDir mainGoCode =
             ()
 
 
-copyOneFfiWrapper : String -> String -> String -> ()
+copyOneFfiWrapper : String -> String -> String -> String -> ()
 
-copyOneFfiWrapper outDir modName mainGoCode =
+copyOneFfiWrapper outDir projectRoot modName mainGoCode =
     let
         safeName =
             String.join  "_"
@@ -1252,42 +1401,57 @@ copyOneFfiWrapper outDir modName mainGoCode =
             "Sky_" ++ safeName ++ "_"
         hasReferences =
             String.contains  wrapperPrefix  mainGoCode
-        projectWrapper =
-            "dist/sky_wrappers/" ++ safeName ++ ".go"
-        hasProjectWrapper =
-            case Process.run  "sh"
-                  [ "-c" , "test -f " ++ projectWrapper ++ " && echo yes" ] of
-                
-                Ok s ->
-                    String.contains  "yes"  s
-                
-                Err _ ->
-                    False
+        prefix =
+            if projectRoot == "." then
+                ""
+            else
+                projectRoot ++ "/"
         wrapperSrc =
+            prefix ++
             ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
     in
         if not  hasReferences then
             ()
-        else if hasProjectWrapper then
-            ()
         else
-            case File.readFile  wrapperSrc of
-                
-                Ok content ->
-                    let
-                        rewritten =
-                            String.replace  "package sky_wrappers"
-                             "package main"
-                             content
-                        wrapperDst =
-                            outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
-                        _ =
-                            File.writeFile  wrapperDst  rewritten
-                    in
-                        println  ("   Copied wrapper: " ++ wrapperDst)
-                
-                Err _ ->
-                    ()
+            let
+                combinedSrc =
+                    prefix ++ ".skycache/go/wrappers/" ++ safeName ++ ".go"
+            in
+                case File.readFile  wrapperSrc of
+                    
+                    Ok content ->
+                        let
+                            rewritten =
+                                String.replace  "package sky_wrappers"
+                                 "package main"
+                                 content
+                            wrapperDst =
+                                outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
+                            _ =
+                                File.writeFile  wrapperDst  rewritten
+                        in
+                            println  ("   Copied wrapper: " ++ wrapperDst)
+                    
+                    Err _ ->
+                        case File.readFile  combinedSrc of
+                            
+                            Ok content ->
+                                let
+                                    rewritten =
+                                        String.replace  "package sky_wrappers"
+                                         "package main"
+                                         content
+                                    wrapperDst =
+                                        outDir ++
+                                        "/sky_ffi_" ++ safeName ++ ".go"
+                                    _ =
+                                        File.writeFile  wrapperDst  rewritten
+                                in
+                                    println
+                                     ("   Copied wrapper: " ++ wrapperDst)
+                            
+                            Err _ ->
+                                ()
 
 
 buildAliasMap : (List Ast.ImportDecl) -> Dict.Dict String String
@@ -1569,43 +1733,84 @@ generateAliasesFromModule modName allModules =
             []
         
         Just mod ->
-            let
-                prefix =
-                    String.replace  "."  "_"  modName
-                declNames =
-                    extractExportedNames  mod
-            in
-                List.concatMap
-                 (
-                \name ->
-                    if String.isEmpty  name then
-                        []
-                    else
-                        let
-                            safeName =
-                                Lower.sanitizeGoIdent  name
-                            prefixedName =
-                                prefix ++ "_" ++ capitalizeFirst  safeName
-                            callSuffix =
-                                if isZeroArityInModule  name  mod then
-                                    "()"
-                                else
-                                    ""
-                        in
-                            [ GoDeclRaw
-                               (
-                              "var " ++
-                              safeName ++ " = " ++ prefixedName ++ callSuffix
-                              )
-                            , GoDeclRaw
-                               (
-                              "var " ++
-                              capitalizeFirst  safeName ++
-                              " = " ++ prefixedName ++ callSuffix
-                              )
-                            ]
-                )
-                 declNames
+            generateAliasesFromModuleInner  modName  mod
+
+
+isFfiModule : String -> Ast.Module -> Bool
+
+isFfiModule modName mod =
+    List.foldl
+     (
+    \decl acc ->
+        if acc then
+            True
+        else
+            case decl of
+                
+                Ast.FunDecl _ _ body _ ->
+                    exprHasWrapperCall  body
+                
+                _ ->
+                    False
+    )
+     False
+     mod.declarations
+
+
+exprHasWrapperCall : Ast.Expression -> Bool
+
+exprHasWrapperCall expr =
+    case expr of
+        
+        Ast.IdentifierExpr name _ ->
+            String.startsWith  "Sky_"  name
+        
+        Ast.CallExpr callee args _ ->
+            exprHasWrapperCall  callee
+        
+        _ ->
+            False
+
+
+generateAliasesFromModuleInner : String -> Ast.Module -> List GoDecl
+
+generateAliasesFromModuleInner modName mod =
+    let
+        prefix =
+            String.replace  "."  "_"  modName
+        declNames =
+            extractExportedNames  mod
+    in
+        List.concatMap
+         (
+        \name ->
+            if String.isEmpty  name || String.startsWith  "Sky_"  name then
+                []
+            else
+                let
+                    safeName =
+                        Lower.sanitizeGoIdent  name
+                    prefixedName =
+                        prefix ++ "_" ++ capitalizeFirst  safeName
+                    callSuffix =
+                        if isZeroArityInModule  name  mod then
+                            "()"
+                        else
+                            ""
+                in
+                    [ GoDeclRaw
+                       (
+                      "var " ++ safeName ++ " = " ++ prefixedName ++ callSuffix
+                      )
+                    , GoDeclRaw
+                       (
+                      "var " ++
+                      capitalizeFirst  safeName ++
+                      " = " ++ prefixedName ++ callSuffix
+                      )
+                    ]
+        )
+         declNames
 
 
 isExposingAll : Ast.ExposingClause -> Bool
@@ -2001,8 +2206,63 @@ importToGoImport imp =
              , alias_ =
                  "sky_" ++ String.toLower  (String.replace  "."  "_"  modName)
              }
+        else if imp.alias_ == "_" then
+            Just
+             { path =
+                 skyModuleToGoImport  modName
+             , alias_ =
+                 "_"
+             }
         else
             Nothing
+
+
+skyModuleToGoImport : String -> String
+
+skyModuleToGoImport modName =
+    let
+        parts =
+            List.map  String.toLower  (String.split  "."  modName)
+    in
+        skyModuleToGoImportLoop  parts  []  False
+
+
+skyModuleToGoImportLoop : (List String) -> (List String) -> Bool -> String
+
+skyModuleToGoImportLoop parts acc pastTld =
+    case parts of
+
+        [  ] ->
+            String.join  "/"  acc
+
+        part :: rest ->
+            if pastTld then
+                skyModuleToGoImportLoop  rest
+                 (List.append  acc  [ part ])
+                 True
+            else if isTld  part then
+                let
+                    domain =
+                        String.join  "."
+                         (List.append  acc  [ part ])
+                in
+                    skyModuleToGoImportLoop  rest  [ domain ]  True
+            else
+                skyModuleToGoImportLoop  rest
+                 (List.append  acc  [ part ])
+                 False
+
+
+isTld : String -> Bool
+
+isTld s =
+    s == "com" ||
+    s == "org" ||
+    s == "io" ||
+    s == "net" ||
+    s == "dev" ||
+    s == "co" ||
+    s == "ai"
 
 
 copyStdlibGo : String -> Result String ()

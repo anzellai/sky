@@ -92,7 +92,17 @@ cmdBuild _ =
                         outDir ++ "/go.mod"
                     _ =
                         File.writeFile  goModPath
-                         "module sky-app\n\ngo 1.21.0\n"
+                         "module sky-app\n\ngo 1.26.0\n"
+                    _ =
+                        if String.contains  "skylive_rt"  code then
+                            let
+                                _ =
+                                    Process.run  "cp"
+                                     [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
+                            in
+                                println  "   Copied skylive_rt runtime"
+                        else
+                            ()
                     hasFfiWrappers =
                         case Process.run  "sh"
                               [ "-c"
@@ -115,7 +125,7 @@ cmdBuild _ =
                                      [ "-c"
                                     , "cd " ++
                                     outDir ++
-                                    " && grep -h '\"' sky_*.go 2>/dev/null | grep -v '_ffi_\\|sky_wrappers\\|package\\|//' | sed 's/.*\"\\(.*\\)\".*/\\1/' | sort -u | while read pkg; do go get \"$pkg\" 2>/dev/null; done && go mod tidy 2>&1"
+                                    " && grep -h '\"' *.go 2>/dev/null | grep -v 'sky_wrappers\\|package\\|//' | sed 's/.*\"\\(.*\\)\".*/\\1/' | sort -u | while read pkg; do go get \"$pkg\" 2>/dev/null; done && go mod tidy 2>&1"
                                     ]
                             in
                                 Ok  ""
@@ -446,7 +456,7 @@ ensureGoModDir _ =
                 ()
             
             Err _ ->
-                File.writeFile  goModPath  "module skycache\n\ngo 1.21.0\n"
+                File.writeFile  goModPath  "module skycache\n\ngo 1.26.0\n"
 
 
 cmdInstall : () -> ()
@@ -457,6 +467,10 @@ cmdInstall _ =
             println  "Installing dependencies..."
         _ =
             ensureGoModDir  ()
+        _ =
+            installFromSkyToml  ()
+        _ =
+            installFromSkyToml  ()
         _ =
             autoGenerateBindings  ()
         tidyResult =
@@ -473,6 +487,227 @@ cmdInstall _ =
             checkForUpdates  ()
     in
         println  "Install complete."
+
+
+installFromSkyToml : () -> ()
+
+installFromSkyToml _ =
+    case File.readFile  "sky.toml" of
+        
+        Err _ ->
+            ()
+        
+        Ok content ->
+            let
+                lines =
+                    String.split  "\n"  content
+            in
+                installTomlDeps  lines  False
+
+
+installTomlDeps : (List String) -> Bool -> ()
+
+installTomlDeps lines inGoDeps =
+    case lines of
+        
+        [  ] ->
+            ()
+        
+        line :: rest ->
+            let
+                trimmed =
+                    String.trim  line
+                isGoDepsHeader =
+                    trimmed == "[\"go.dependencies\"]" ||
+                    trimmed == "[go.dependencies]"
+            in
+                if isGoDepsHeader then
+                    installTomlDeps  rest  True
+                else if String.startsWith  "["  trimmed &&
+                not  isGoDepsHeader then
+                    installTomlDeps  rest  False
+                else if inGoDeps && String.contains  "="  trimmed then
+                    let
+                        pkg =
+                            String.trim
+                             (
+                            String.replace  "\""  ""
+                             (
+                            String.trim
+                             (
+                            case String.split  "="  trimmed of
+                                
+                                key :: _ ->
+                                    key
+                                
+                                [  ] ->
+                                    ""
+                            )
+                            )
+                            )
+                        safeName =
+                            String.replace  "-"  "_"
+                             (
+                            String.replace  "/"  "_"
+                             (String.replace  "."  "_"  pkg)
+                            )
+                        bindingPath =
+                            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+                    in
+                        case File.readFile  bindingPath of
+                            
+                            Ok _ ->
+                                installTomlDeps  rest  True
+                            
+                            Err _ ->
+                                let
+                                    firstPart =
+                                        case String.split  "/"  pkg of
+                                            
+                                            first :: _ ->
+                                                first
+                                            
+                                            [  ] ->
+                                                pkg
+                                    _ =
+                                        println
+                                         (
+                                        "   Generating bindings for " ++
+                                        pkg ++ "..."
+                                        )
+                                in
+                                    if isGoStdlib  firstPart || isGoStdlib  pkg then
+                                        let
+                                            cacheDir =
+                                                ".skycache/go/" ++ safeName
+                                            _ =
+                                                File.mkdirAll  cacheDir
+                                        in
+                                            let
+                                                _ =
+                                                    generateGoBindings  pkg
+                                                     cacheDir
+                                            in
+                                                installTomlDeps  rest  True
+                                    else if String.contains  "."  firstPart then
+                                        let
+                                            _ =
+                                                detectAndInstall  pkg
+                                        in
+                                            installTomlDeps  rest  True
+                                    else
+                                        installTomlDeps  rest  True
+                else
+                    installTomlDeps  rest  inGoDeps
+
+
+
+installFromSkyToml : () -> ()
+
+installFromSkyToml _ =
+    case File.readFile  "sky.toml" of
+
+        Err _ ->
+            ()
+
+        Ok content ->
+            let
+                lines =
+                    String.split  "\n"  content
+            in
+                installTomlDeps  lines  False
+
+
+installTomlDeps : (List String) -> Bool -> ()
+
+installTomlDeps lines inGoDeps =
+    case lines of
+
+        [  ] ->
+            ()
+
+        line :: rest ->
+            let
+                trimmed =
+                    String.trim  line
+                isGoDepsHeader =
+                    trimmed == "[\"go.dependencies\"]" ||
+                    trimmed == "[go.dependencies]"
+            in
+                if isGoDepsHeader then
+                    installTomlDeps  rest  True
+                else if String.startsWith  "["  trimmed &&
+                not  isGoDepsHeader then
+                    installTomlDeps  rest  False
+                else if inGoDeps && String.contains  "="  trimmed then
+                    let
+                        pkg =
+                            String.trim
+                             (
+                            String.replace  "\""  ""
+                             (
+                            String.trim
+                             (
+                            case String.split  "="  trimmed of
+
+                                key :: _ ->
+                                    key
+
+                                [  ] ->
+                                    ""
+                            )
+                            )
+                            )
+                        safeName =
+                            String.replace  "-"  "_"
+                             (
+                            String.replace  "/"  "_"
+                             (String.replace  "."  "_"  pkg)
+                            )
+                        bindingPath =
+                            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+                    in
+                        case File.readFile  bindingPath of
+
+                            Ok _ ->
+                                installTomlDeps  rest  True
+
+                            Err _ ->
+                                let
+                                    firstPart =
+                                        case String.split  "/"  pkg of
+
+                                            first :: _ ->
+                                                first
+
+                                            [  ] ->
+                                                pkg
+                                    _ =
+                                        println
+                                         (
+                                        "   Generating bindings for " ++ pkg ++ "..."
+                                        )
+                                in
+                                    if isGoStdlib  firstPart || isGoStdlib  pkg then
+                                        let
+                                            cacheDir =
+                                                ".skycache/go/" ++ safeName
+                                            _ =
+                                                File.mkdirAll  cacheDir
+                                            _ =
+                                                generateGoBindings  pkg  cacheDir
+                                        in
+                                            installTomlDeps  rest  True
+                                    else if String.contains  "."  firstPart then
+                                        let
+                                            _ =
+                                                detectAndInstall  pkg
+                                        in
+                                            installTomlDeps  rest  True
+                                    else
+                                        installTomlDeps  rest  True
+                else
+                    installTomlDeps  rest  inGoDeps
 
 
 autoGenerateBindings : () -> ()

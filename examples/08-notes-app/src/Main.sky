@@ -1,84 +1,22 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Maybe exposing (..)
+import Sky.Core.Maybe as Maybe exposing (..)
 import Sky.Core.Result as Result
+import Sky.Core.Task as Task
 import Sky.Core.List as List
-import Sky.Core.Dict as Dict
 import Sky.Core.String as String
+import Sky.Http.Server as Server
+import Sky.Http.Server exposing (Request, Response)
 import Std.Log exposing (println)
-import Net.Http as Http
-import Github.Com.Gorilla.Mux as Mux
-import Io
-import Os
 import Lib.Db as Db
 import Lib.Auth as Auth
 import Lib.Notes as Notes
 import Lib.View as View
 
--- ============================================================
--- Response helpers
--- ============================================================
-respondHtml w content =
-    let
-        header =
-            Http.responseWriterHeader w
-        _ =
-            Http.headerSet header "Content-Type" "text/html; charset=utf-8"
-        _ =
-            Io.writeString w content
-    in
-        ()
-
-setCookie w name value =
-    let
-        header =
-            Http.responseWriterHeader w
-        _ =
-            Http.headerSet header "Set-Cookie"
-                (name ++ "=" ++ value ++ "; Path=/; HttpOnly; SameSite=Lax")
-    in
-        ()
-
-clearCookie w name =
-    let
-        header =
-            Http.responseWriterHeader w
-        _ =
-            Http.headerSet header "Set-Cookie"
-                (name ++ "=; Path=/; HttpOnly; Max-Age=0")
-    in
-        ()
-
-getSessionToken req =
-    case Http.requestCookie req "session" of
-        Ok cookie ->
-            Http.cookieValue cookie
-        
-        Err _ ->
-            ""
-
-requireAuth db w req onUser =
-    let
-        token =
-            getSessionToken req
-    in
-        if token == "" then
-            Http.redirect w req "/auth/sign-in" 302
-        else
-            case Auth.getSessionUser db token of
-                Just user ->
-                    onUser user
-                
-                Nothing ->
-                    let
-                        _ =
-                            clearCookie w "session"
-                    in
-                        Http.redirect w req "/auth/sign-in" 302
 
 -- ============================================================
--- Database initialization
+-- Database initialisation
 -- ============================================================
 initDb db =
     let
@@ -97,333 +35,324 @@ initDb db =
     in
         ()
 
+
 -- ============================================================
--- Auth handlers
+-- Auth helpers
 -- ============================================================
-handleLanding db w req =
+getSessionToken : Request -> String
+getSessionToken req =
+    Server.getCookie "session" req
+        |> Maybe.withDefault ""
+
+
+requireAuth db req onUser =
     let
         token =
             getSessionToken req
     in
         if token == "" then
-            respondHtml w (View.landingPage ())
+            Server.redirect "/auth/sign-in"
         else
-            Http.redirect w req "/notes" 302
+            case Auth.getSessionUser db token of
+                Just user ->
+                    let
+                        email =
+                            Db.getField "email" user
+                    in
+                        onUser user email
 
-doSignInSession db w req user =
-    let
-        userId =
-            Db.getField "id" user
-    in
-        case Auth.createSession db userId of
-            Ok sessionToken ->
-                let
-                    _ =
-                        setCookie w "session" sessionToken
-                in
-                    Http.redirect w req "/notes" 302
-            
-            Err msg ->
-                respondHtml w (View.signInPage msg)
+                Nothing ->
+                    Server.redirect "/auth/sign-in"
+                        |> Server.withCookie "session" "" "Path=/; HttpOnly; Max-Age=0"
 
-handleSignInPost db w req =
-    let
-        email =
-            Http.requestFormValue req "email"
-        password =
-            Http.requestFormValue req "password"
-    in
-        case Auth.authenticateUser db email password of
-            Ok user ->
-                doSignInSession db w req user
-            
-            Err msg ->
-                respondHtml w (View.signInPage msg)
 
-handleSignIn db w req =
-    let
-        method =
-            Http.requestMethod req
-    in
-        if method == "POST" then
-            handleSignInPost db w req
-        else
-            respondHtml w (View.signInPage "")
-
-doSignUpCreate db w email password =
-    case Auth.createUser db email password of
-        Ok _ ->
-            respondHtml w (View.signUpSuccessPage ())
-        
-        Err _ ->
-            respondHtml w
-                (
-                View.signUpPage
-                    "That email is already registered, or a server error occurred."
-                )
-
-doSignUpValidated db w email password =
-    if String.length password < 8 then
-        respondHtml w
-            (View.signUpPage "Password must be at least 8 characters.")
-    else
-        doSignUpCreate db w email password
-
-handleSignUpPost db w req =
-    let
-        email =
-            Http.requestFormValue req "email"
-        password =
-            Http.requestFormValue req "password"
-        confirm =
-            Http.requestFormValue req "confirm_password"
-    in
-        if password == confirm then
-            doSignUpValidated db w email password
-        else
-            respondHtml w (View.signUpPage "Passwords do not match.")
-
-handleSignUp db w req =
-    let
-        method =
-            Http.requestMethod req
-    in
-        if method == "POST" then
-            handleSignUpPost db w req
-        else
-            respondHtml w (View.signUpPage "")
-
-handleForgotPassword db w req =
-    let
-        method =
-            Http.requestMethod req
-    in
-        if method == "POST" then
-            let
-                email =
-                    Http.requestFormValue req "email"
-                resetToken =
-                    Auth.generateToken ()
-                _ =
-                    println ""
-                _ =
-                    println "=========================================="
-                _ =
-                    println "[Email Service] Password reset requested"
-                _ =
-                    println ("[Email Service] To: " ++ email)
-                _ =
-                    println ("[Email Service] Reset token: " ++ resetToken)
-                _ =
-                    println "=========================================="
-                _ =
-                    println ""
-            in
-                respondHtml w (View.forgotPasswordSentPage ())
-        else
-            respondHtml w (View.forgotPasswordPage "")
-
-handleVerify db w req =
+-- ============================================================
+-- Auth handlers
+-- ============================================================
+handleLanding : a -> Request -> Task String Response
+handleLanding db req =
     let
         token =
-            Http.requestFormValue req "token"
+            getSessionToken req
+    in
+        if token == "" then
+            Task.succeed (Server.html (View.landingPage ()))
+        else
+            Task.succeed (Server.redirect "/notes")
+
+
+handleSignIn : a -> Request -> Task String Response
+handleSignIn db req =
+    if Server.method req == "POST" then
+        let
+            email =
+                Server.formValue "email" req
+            password =
+                Server.formValue "password" req
+        in
+            case Auth.authenticateUser db email password of
+                Ok user ->
+                    let
+                        userId =
+                            Db.getField "id" user
+                    in
+                        case Auth.createSession db userId of
+                            Ok sessionToken ->
+                                Task.succeed
+                                    (Server.redirect "/notes"
+                                        |> Server.withCookie "session" sessionToken
+                                            "Path=/; HttpOnly; SameSite=Lax"
+                                    )
+
+                            Err msg ->
+                                Task.succeed (Server.html (View.signInPage msg))
+
+                Err msg ->
+                    Task.succeed (Server.html (View.signInPage msg))
+    else
+        Task.succeed (Server.html (View.signInPage ""))
+
+
+handleSignUp : a -> Request -> Task String Response
+handleSignUp db req =
+    if Server.method req == "POST" then
+        let
+            email =
+                Server.formValue "email" req
+            password =
+                Server.formValue "password" req
+            confirm =
+                Server.formValue "confirm_password" req
+        in
+            if password /= confirm then
+                Task.succeed
+                    (Server.html (View.signUpPage "Passwords do not match."))
+            else if String.length password < 8 then
+                Task.succeed
+                    (Server.html
+                        (View.signUpPage "Password must be at least 8 characters.")
+                    )
+            else
+                case Auth.createUser db email password of
+                    Ok _ ->
+                        Task.succeed
+                            (Server.html (View.signUpSuccessPage ()))
+
+                    Err _ ->
+                        Task.succeed
+                            (Server.html
+                                (View.signUpPage
+                                    "That email is already registered, or a server error occurred."
+                                )
+                            )
+    else
+        Task.succeed (Server.html (View.signUpPage ""))
+
+
+handleForgotPassword : a -> Request -> Task String Response
+handleForgotPassword db req =
+    if Server.method req == "POST" then
+        let
+            email =
+                Server.formValue "email" req
+            resetToken =
+                Auth.generateToken ()
+            _ =
+                println "[Email Service] Password reset for:" email resetToken
+        in
+            Task.succeed (Server.html (View.forgotPasswordSentPage ()))
+    else
+        Task.succeed (Server.html (View.forgotPasswordPage ""))
+
+
+handleVerify : a -> Request -> Task String Response
+handleVerify db req =
+    let
+        token =
+            Server.queryParam "token" req
     in
         case Auth.verifyEmail db token of
             Ok msg ->
-                respondHtml w (View.verifyResultPage True msg)
-            
-            Err msg ->
-                respondHtml w (View.verifyResultPage False msg)
+                Task.succeed (Server.html (View.verifyResultPage True msg))
 
-handleSignOut db w req =
+            Err msg ->
+                Task.succeed (Server.html (View.verifyResultPage False msg))
+
+
+handleSignOut : a -> Request -> Task String Response
+handleSignOut db req =
     let
         token =
             getSessionToken req
         _ =
             Db.exec db "DELETE FROM sessions WHERE token = ?" [ token ]
-        _ =
-            clearCookie w "session"
     in
-        Http.redirect w req "/" 302
+        Task.succeed
+            (Server.redirect "/"
+                |> Server.withCookie "session" "" "Path=/; HttpOnly; Max-Age=0"
+            )
+
 
 -- ============================================================
 -- Notes handlers
 -- ============================================================
-handleNotesList db w req =
-    requireAuth db w req
-        (
-        \user ->
-            let
-                email =
-                    Db.getField "email" user
-                userId =
-                    Db.getField "id" user
-                notes =
-                    Result.withDefault [] (Notes.getNotes db userId)
-            in
-                respondHtml w (View.notesListPage email notes)
+handleNotesList : a -> Request -> Task String Response
+handleNotesList db req =
+    Task.succeed
+        (requireAuth db req
+            (\user email ->
+                let
+                    userId =
+                        Db.getField "id" user
+                    notes =
+                        Result.withDefault [] (Notes.getNotes db userId)
+                in
+                    Server.html (View.notesListPage email notes)
+            )
         )
 
-handleNewNote db w req =
-    requireAuth db w req
-        (
-        \user ->
-            let
-                method =
-                    Http.requestMethod req
-                email =
-                    Db.getField "email" user
-                userId =
-                    Db.getField "id" user
-            in
-                if method == "POST" then
-                    let
-                        title =
-                            Http.requestFormValue req "title"
-                        content =
-                            Http.requestFormValue req "content"
-                        _ =
-                            Notes.createNote db userId title content
-                    in
-                        Http.redirect w req "/notes" 302
-                else
-                    respondHtml w (View.noteFormPage email "" "" "" False)
+
+handleNewNote : a -> Request -> Task String Response
+handleNewNote db req =
+    Task.succeed
+        (requireAuth db req
+            (\user email ->
+                let
+                    userId =
+                        Db.getField "id" user
+                in
+                    if Server.method req == "POST" then
+                        let
+                            title =
+                                Server.formValue "title" req
+                            content =
+                                Server.formValue "content" req
+                            _ =
+                                Notes.createNote db userId title content
+                        in
+                            Server.redirect "/notes"
+                    else
+                        Server.html (View.noteFormPage email "" "" "" False)
+            )
         )
 
-showNote db w email userId noteId =
-    case Notes.getNote db noteId userId of
-        Just note ->
-            respondHtml w (View.noteViewPage email note)
-        
-        Nothing ->
-            respondHtml w (View.errorPage "Note not found.")
 
-handleViewNote db w req =
-    requireAuth db w req
-        (
-        \user ->
-            let
-                email =
-                    Db.getField "email" user
-                userId =
-                    Db.getField "id" user
-                noteId =
-                    Http.requestFormValue req "id"
-            in
-                showNote db w email userId noteId
+handleViewNote : a -> Request -> Task String Response
+handleViewNote db req =
+    Task.succeed
+        (requireAuth db req
+            (\user email ->
+                let
+                    userId =
+                        Db.getField "id" user
+                    noteId =
+                        Server.queryParam "id" req
+                in
+                    case Notes.getNote db noteId userId of
+                        Just note ->
+                            Server.html (View.noteViewPage email note)
+
+                        Nothing ->
+                            Server.html (View.errorPage "Note not found.")
+            )
         )
 
-showEditForm db w email userId noteId =
-    case Notes.getNote db noteId userId of
-        Just note ->
-            let
-                title =
-                    Db.getField "title" note
-                content =
-                    Db.getField "content" note
-            in
-                respondHtml w
-                    (View.noteFormPage email title content noteId True)
-        
-        Nothing ->
-            respondHtml w (View.errorPage "Note not found.")
 
-handleEditNote db w req =
-    requireAuth db w req
-        (
-        \user ->
-            let
-                method =
-                    Http.requestMethod req
-                email =
-                    Db.getField "email" user
-                userId =
-                    Db.getField "id" user
-                noteId =
-                    Http.requestFormValue req "id"
-            in
-                if method == "POST" then
-                    let
-                        title =
-                            Http.requestFormValue req "title"
-                        content =
-                            Http.requestFormValue req "content"
-                        _ =
-                            Notes.updateNote db noteId userId title content
-                    in
-                        Http.redirect w req ("/notes/view?id=" ++ noteId) 302
-                else
-                    showEditForm db w email userId noteId
+handleEditNote : a -> Request -> Task String Response
+handleEditNote db req =
+    Task.succeed
+        (requireAuth db req
+            (\user email ->
+                let
+                    userId =
+                        Db.getField "id" user
+                    noteId =
+                        Server.queryParam "id" req
+                in
+                    if Server.method req == "POST" then
+                        let
+                            title =
+                                Server.formValue "title" req
+                            content =
+                                Server.formValue "content" req
+                            _ =
+                                Notes.updateNote db noteId userId title content
+                        in
+                            Server.redirect ("/notes/view?id=" ++ noteId)
+                    else
+                        case Notes.getNote db noteId userId of
+                            Just note ->
+                                let
+                                    title =
+                                        Db.getField "title" note
+                                    content =
+                                        Db.getField "content" note
+                                in
+                                    Server.html
+                                        (View.noteFormPage email title content noteId
+                                            True
+                                        )
+
+                            Nothing ->
+                                Server.html (View.errorPage "Note not found.")
+            )
         )
 
-handleDeleteNote db w req =
-    requireAuth db w req
-        (
-        \user ->
-            let
-                userId =
-                    Db.getField "id" user
-                noteId =
-                    Http.requestFormValue req "id"
-                _ =
-                    Notes.deleteNote db noteId userId
-            in
-                Http.redirect w req "/notes" 302
+
+handleDeleteNote : a -> Request -> Task String Response
+handleDeleteNote db req =
+    Task.succeed
+        (requireAuth db req
+            (\user email ->
+                let
+                    userId =
+                        Db.getField "id" user
+                    noteId =
+                        Server.formValue "id" req
+                    _ =
+                        Notes.deleteNote db noteId userId
+                in
+                    Server.redirect "/notes"
+            )
         )
 
-addRouteHandler p h r =
-    let
-        _ =
-            Mux.routerHandleFunc r p h
-    in
-        r
 
 -- ============================================================
 -- Server entry point
 -- ============================================================
 main =
-    case Db.open "skynotes.db" of
-        Ok db ->
-            let
-                _ =
-                    initDb db
-                envPort =
-                    Os.getenv "PORT"
-                serverPort =
-                    if envPort == "" then
-                        "4000"
-                    else
-                        envPort
-                r =
-                    Mux.newRouter ()
-                        |> addRouteHandler "/" (handleLanding db)
-                        |> addRouteHandler "/auth/sign-in" (handleSignIn db)
-                        |> addRouteHandler "/auth/sign-up" (handleSignUp db)
-                        |> addRouteHandler "/auth/forgot-password"
+    Db.open "skynotes.db"
+        |> Task.andThen
+            (\db ->
+                let
+                    _ =
+                        initDb db
+                    _ =
+                        println ""
+                    _ =
+                        println "==========================================="
+                    _ =
+                        println " SkyNotes server running"
+                    _ =
+                        println " http://localhost:4000"
+                    _ =
+                        println "==========================================="
+                    _ =
+                        println ""
+                in
+                    Server.listen 4000
+                        [ Server.any "/" (handleLanding db)
+                        , Server.any "/auth/sign-in" (handleSignIn db)
+                        , Server.any "/auth/sign-up" (handleSignUp db)
+                        , Server.any "/auth/forgot-password"
                             (handleForgotPassword db)
-                        |> addRouteHandler "/auth/verify" (handleVerify db)
-                        |> addRouteHandler "/auth/sign-out" (handleSignOut db)
-                        |> addRouteHandler "/notes" (handleNotesList db)
-                        |> addRouteHandler "/notes/new" (handleNewNote db)
-                        |> addRouteHandler "/notes/view" (handleViewNote db)
-                        |> addRouteHandler "/notes/edit" (handleEditNote db)
-                        |> addRouteHandler "/notes/delete" (handleDeleteNote db)
-                _ =
-                    println ""
-                _ =
-                    println "==========================================="
-                _ =
-                    println " SkyNotes server running"
-                _ =
-                    println (" http://localhost:" ++ serverPort)
-                _ =
-                    println "==========================================="
-                _ =
-                    println ""
-                err =
-                    Http.listenAndServe (":" ++ serverPort) r
-            in
-                println "Server stopped:" err
-        
-        Err e ->
-            println "Failed to open database:" e
+                        , Server.any "/auth/verify" (handleVerify db)
+                        , Server.any "/auth/sign-out" (handleSignOut db)
+                        , Server.any "/notes" (handleNotesList db)
+                        , Server.any "/notes/new" (handleNewNote db)
+                        , Server.any "/notes/view" (handleViewNote db)
+                        , Server.any "/notes/edit" (handleEditNote db)
+                        , Server.any "/notes/delete" (handleDeleteNote db)
+                        ]
+            )
+        |> Task.perform

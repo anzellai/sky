@@ -760,7 +760,15 @@ generateFuncBinding pkgName funcJson =
                         skyName ++
                         " " ++
                         finalParamStr ++
-                        " =\n" ++ "    " ++ wrapperName ++ " " ++ callArgs
+                        " =\n" ++
+                        "    " ++
+                        wrapperName ++
+                        (
+                        if hasParams then
+                            " " ++ callArgs
+                        else
+                            " ()"
+                        )
                         )
 
 

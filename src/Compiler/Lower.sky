@@ -451,7 +451,11 @@ lowerStdlibExposed : String -> String -> GoExpr
 
 lowerStdlibExposed modPath name =
     if modPath == "Std.Html" then
-        if name == "text" then
+        if name == "doctype" then
+            GoIdent  "sky_htmlDoctype"
+        else if name == "titleNode" then
+            GoIdent  "sky_htmlTitleNode"
+        else if name == "text" then
             GoIdent  "sky_htmlText"
         else if name == "raw" then
             GoIdent  "sky_htmlRaw"
@@ -485,8 +489,6 @@ lowerStdlibExposed modPath name =
                         "code"
                     else if name == "linkNode" then
                         "link"
-                    else if name == "titleNode" then
-                        "title"
                     else if name == "htmlNode" then
                         "html"
                     else if name == "headNode" then
@@ -550,6 +552,12 @@ lowerStdlibExposed modPath name =
             GoIdent  "sky_cssKeyframes"
         else if name == "frame" then
             GoIdent  "sky_cssFrame"
+        else if name == "transitionProp" then
+            GoIdent  "sky_cssTransitionProp"
+        else if name == "shadow" then
+            GoIdent  "sky_cssShadow"
+        else if name == "margin4" then
+            GoIdent  "sky_cssMargin4"
         else
             GoCallExpr  (GoIdent  "sky_cssPropFn")
              [ GoStringLit  (cssNameToProperty  name) ]
@@ -849,6 +857,12 @@ lowerQualified ctx parts =
             GoIdent  "sky_serverGetCookie"
         else if qualName == "Server.cookie" then
             GoIdent  "sky_serverCookie"
+        else if qualName == "Server.body" then
+            GoIdent  "sky_serverBody"
+        else if qualName == "Server.method" then
+            GoIdent  "sky_serverMethod"
+        else if qualName == "Server.formValue" then
+            GoIdent  "sky_serverFormValue"
         else if qualName == "Task.succeed" then
             GoIdent  "sky_taskSucceed"
         else if qualName == "Task.fail" then
@@ -859,6 +873,8 @@ lowerQualified ctx parts =
             GoIdent  "sky_taskMap"
         else if qualName == "Task.perform" then
             GoIdent  "sky_taskPerform"
+        else if qualName == "Task.run" then
+            GoIdent  "sky_taskRun"
         else if qualName == "Task.sequence" then
             GoIdent  "sky_taskSequence"
         else if qualName == "Result.map" then
@@ -1722,24 +1738,31 @@ patternToCondition ctx varName pat =
         PLiteral lit _ ->
             literalCondition  varName  lit
         
-        PConstructor parts _ _ ->
+        PConstructor parts args _ ->
             let
                 ctorName =
                     lastPartOf  parts
+                baseCond =
+                    if ctorName == "Ok" || ctorName == "Err" then
+                        "sky_asSkyResult(" ++
+                        varName ++ ").SkyName == \"" ++ ctorName ++ "\""
+                    else if ctorName == "Just" || ctorName == "Nothing" then
+                        "sky_asSkyMaybe(" ++
+                        varName ++ ").SkyName == \"" ++ ctorName ++ "\""
+                    else if ctorName == "True" then
+                        "sky_asBool(" ++ varName ++ ") == true"
+                    else if ctorName == "False" then
+                        "sky_asBool(" ++ varName ++ ") == false"
+                    else
+                        "sky_asMap(" ++
+                        varName ++ ")[\"SkyName\"] == \"" ++ ctorName ++ "\""
+                subConds =
+                    subPatternConditions  ctx  varName  ctorName  args  0
             in
-                if ctorName == "Ok" || ctorName == "Err" then
-                    "sky_asSkyResult(" ++
-                    varName ++ ").SkyName == \"" ++ ctorName ++ "\""
-                else if ctorName == "Just" || ctorName == "Nothing" then
-                    "sky_asSkyMaybe(" ++
-                    varName ++ ").SkyName == \"" ++ ctorName ++ "\""
-                else if ctorName == "True" then
-                    "sky_asBool(" ++ varName ++ ") == true"
-                else if ctorName == "False" then
-                    "sky_asBool(" ++ varName ++ ") == false"
+                if String.isEmpty  subConds then
+                    baseCond
                 else
-                    "sky_asMap(" ++
-                    varName ++ ")[\"SkyName\"] == \"" ++ ctorName ++ "\""
+                    baseCond ++ " && " ++ subConds
         
         PTuple _ _ ->
             "true"
@@ -1770,6 +1793,38 @@ patternToCondition ctx varName pat =
         
         _ ->
             "true"
+
+
+subPatternConditions : LowerCtx -> String -> String -> (List Pattern) -> Int -> String
+
+subPatternConditions ctx varName ctorName args idx =
+    case args of
+        
+        [  ] ->
+            ""
+        
+        pat :: rest ->
+            let
+                fieldAccess =
+                    if ctorName == "Ok" || ctorName == "Err" then
+                        "sky_asSkyResult(" ++ varName ++ ").V0"
+                    else if ctorName == "Just" then
+                        "sky_asSkyMaybe(" ++ varName ++ ").V0"
+                    else
+                        "sky_asMap(" ++
+                        varName ++ ")[\"V" ++ String.fromInt  idx ++ "\"]"
+                subCond =
+                    patternToCondition  ctx  fieldAccess  pat
+                restCond =
+                    subPatternConditions  ctx  varName  ctorName  rest
+                     (idx + 1)
+            in
+                if subCond == "true" then
+                    restCond
+                else if String.isEmpty  restCond then
+                    subCond
+                else
+                    subCond ++ " && " ++ restCond
 
 
 literalCondition varName lit =
@@ -2165,6 +2220,8 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_stringToBytes(s any) any { return []byte(sky_asString(s)) }"
     , GoDeclRaw
+       "func sky_sqlRowsToList(v any) any { rows, ok := v.(*sql.Rows); if !ok { return []any{} }; defer rows.Close(); cols, err := rows.Columns(); if err != nil { return []any{} }; var result []any; for rows.Next() { vals := make([]any, len(cols)); ptrs := make([]any, len(cols)); for i := range vals { ptrs[i] = &vals[i] }; if rows.Scan(ptrs...) != nil { continue }; row := make(map[string]any); for i, c := range cols { switch tv := vals[i].(type) { case []byte: row[c] = string(tv); case int64: row[c] = fmt.Sprintf(\"%d\", tv); default: row[c] = fmt.Sprintf(\"%v\", tv) } }; result = append(result, row) }; return result }"
+    , GoDeclRaw
        "func sky_stringFromBytes(b any) any { return string(sky_asBytes(b)) }"
     , GoDeclRaw
        "func sky_asMapStringAny(v any) map[string]interface{} { if m, ok := v.(map[string]interface{}); ok { return m }; return sky_asMap(v) }"
@@ -2176,7 +2233,7 @@ generateHelperDecls =
        "func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"
     , GoDeclRaw  "func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"
     , GoDeclRaw
-       "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { fn := v.(func(any) any); return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w).(func(any) any)(r) } }"
+       "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; fn := v.(func(any) any); return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w).(func(any) any)(r) } }"
     , GoDeclRaw  "func sky_asUint(v any) uint { return uint(sky_asInt(v)) }"
     , GoDeclRaw  "func sky_asUint8(v any) uint8 { return uint8(sky_asInt(v)) }"
     , GoDeclRaw
@@ -2379,7 +2436,7 @@ generateHelperDecls =
        "func sky_always(a any) any { return func(b any) any { return a } }"
     , GoDeclRaw  "func sky_js(v any) any { return v }"
     , GoDeclRaw
-       "func sky_call(f any, arg any) any { return f.(func(any) any)(arg) }"
+       "func sky_call(f any, arg any) any { if fn, ok := f.(func(any) any); ok { return fn(arg) }; if s, ok := f.(string); ok { if args, ok := arg.([]any); ok { parts := make([]string, len(args)); for i, a := range args { parts[i] = sky_asString(a) }; return s + \"(\" + strings.Join(parts, \", \") + \")\" }; return s + \" \" + sky_asString(arg) }; panic(fmt.Sprintf(\"sky_call: cannot call %T\", f)) }"
     , GoDeclRaw
        "func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any) any)(b) }"
     , GoDeclRaw
@@ -2393,11 +2450,13 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_taskAndThen(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { next := fn.(func(any) any)(sky_asSkyResult(r).OkValue); return sky_runTask(next) }; return r } } }"
     , GoDeclRaw
-       "func sky_taskPerform(task any) any { return sky_runTask(task) }"
+       "func sky_taskPerform(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok { if sr.Tag == 0 { return sr.OkValue }; return r }; return r }"
+    , GoDeclRaw
+       "func sky_taskRun(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok && sr.Tag == 0 { if _, isRows := sr.OkValue.(*sql.Rows); isRows { return SkyOk(sky_sqlRowsToList(sr.OkValue)) }; return r }; return r }"
     , GoDeclRaw
        "func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"
     , GoDeclRaw
-       "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
+       "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { fmt.Fprintf(os.Stderr, \"Task panic: %v\\n\", r); panic(r) } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
     , GoDeclRaw
        "func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"
     , GoDeclRaw
@@ -2429,7 +2488,7 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_serverWithHeader(key any) any { return func(val any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; hdrs := sky_asList(m[\"headers\"]); result[\"headers\"] = append(hdrs, SkyTuple2{key, val}); return result } } }"
     , GoDeclRaw
-       "func sky_serverWithCookie(cookie any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; cookies := sky_asList(m[\"cookies\"]); result[\"cookies\"] = append(cookies, cookie); return result } }"
+       "func sky_serverWithCookie(name any) any { return func(value any) any { return func(options any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; cookies := sky_asList(m[\"cookies\"]); cookie := map[string]any{\"name\": name, \"value\": value, \"path\": \"/\", \"maxAge\": 86400, \"httpOnly\": true, \"secure\": false}; result[\"cookies\"] = append(cookies, cookie); return result } } } }"
     , GoDeclRaw
        "func sky_serverParam(name any) any { return func(req any) any { m := sky_asMap(req); path := sky_asString(m[\"path\"]); params := sky_asList(m[\"params\"]); for _, p := range params { t := sky_asTuple2(p); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return sky_extractPathParam(sky_asString(name), path) } }"
     , GoDeclRaw
@@ -2443,11 +2502,17 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_serverCookie(name any) any { return func(val any) any { return map[string]any{\"name\": name, \"value\": val, \"path\": \"/\", \"maxAge\": 86400, \"httpOnly\": true, \"secure\": false, \"sameSite\": \"lax\"} } }"
     , GoDeclRaw
+       "func sky_serverBody(req any) any { m := sky_asMap(req); return m[\"body\"] }"
+    , GoDeclRaw
+       "func sky_serverMethod(req any) any { m := sky_asMap(req); return m[\"method\"] }"
+    , GoDeclRaw
+       "func sky_serverFormValue(name any) any { return func(req any) any { m := sky_asMap(req); n := sky_asString(name); fv := sky_asList(m[\"formValues\"]); for _, f := range fv { t := sky_asTuple2(f); if sky_asString(t.V0) == n { return sky_asString(t.V1) } }; query := sky_asList(m[\"query\"]); for _, q := range query { t := sky_asTuple2(q); if sky_asString(t.V0) == n { return sky_asString(t.V1) } }; return \"\" } }"
+    , GoDeclRaw
        "func sky_buildMux(routes []any, prefix string) *net_http.ServeMux { mux := net_http.NewServeMux(); for _, r := range routes { rm := sky_asMap(r); if rm == nil { continue }; skyName, _ := rm[\"SkyName\"].(string); switch skyName { case \"RouteEntry\": method := sky_asString(rm[\"V0\"]); pattern := prefix + sky_asString(rm[\"V1\"]); handler := rm[\"V2\"]; muxPattern := pattern; if method != \"*\" { muxPattern = method + \" \" + pattern }; mux.HandleFunc(muxPattern, sky_makeHandler(handler)); case \"RouteGroup\": groupPrefix := prefix + sky_asString(rm[\"V0\"]); groupRoutes := sky_asList(rm[\"V1\"]); subMux := sky_buildMux(groupRoutes, groupPrefix); mux.Handle(groupPrefix+\"/\", subMux); case \"RouteStatic\": urlPrefix := prefix + sky_asString(rm[\"V0\"]); dirPath := sky_asString(rm[\"V1\"]); fs := net_http.FileServer(net_http.Dir(dirPath)); mux.Handle(urlPrefix+\"/\", net_http.StripPrefix(urlPrefix, fs)) } }; return mux }"
     , GoDeclRaw
        "func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); fn, ok := handler.(func(any) any); if !ok { net_http.Error(w, \"Invalid handler\", 500); return }; taskResult := fn(skyReq); var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"
     , GoDeclRaw
-       "func sky_buildRequest(r *net_http.Request) map[string]any { _ = r.ParseForm(); body, _ := io.ReadAll(r.Body); headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; params := make([]any, 0); protocol := \"http\"; if r.TLS != nil { protocol = \"https\" }; return map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": params, \"query\": query, \"cookies\": cookies, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": protocol} }"
+       "func sky_buildRequest(r *net_http.Request) map[string]any { body, _ := io.ReadAll(r.Body); r.Body = io.NopCloser(strings.NewReader(string(body))); _ = r.ParseForm(); formValues := make([]any, 0); for k, vs := range r.Form { for _, v := range vs { formValues = append(formValues, SkyTuple2{k, v}) } }; headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; params := make([]any, 0); protocol := \"http\"; if r.TLS != nil { protocol = \"https\" }; return map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": params, \"query\": query, \"cookies\": cookies, \"formValues\": formValues, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": protocol} }"
     , GoDeclRaw
        "func sky_writeResponse(w net_http.ResponseWriter, resp map[string]any) { if resp == nil { w.WriteHeader(200); return }; if cookies, ok := resp[\"cookies\"].([]any); ok { for _, c := range cookies { cm := sky_asMap(c); if cm == nil { continue }; net_http.SetCookie(w, &net_http.Cookie{Name: sky_asString(cm[\"name\"]), Value: sky_asString(cm[\"value\"]), Path: sky_asString(cm[\"path\"]), MaxAge: sky_asInt(cm[\"maxAge\"]), HttpOnly: sky_asBool(cm[\"httpOnly\"]), Secure: sky_asBool(cm[\"secure\"])}) } }; if headers, ok := resp[\"headers\"].([]any); ok { for _, h := range headers { if t, ok := h.(SkyTuple2); ok { w.Header().Set(sky_asString(t.V0), sky_asString(t.V1)) } } }; status := sky_asInt(resp[\"status\"]); if status == 0 { status = 200 }; w.WriteHeader(status); fmt.Fprint(w, sky_asString(resp[\"body\"])) }"
     , GoDeclRaw
@@ -2591,6 +2656,10 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_htmlVoid(tag any) any { return func(attrs any) any { return map[string]any{\"tag\": tag, \"attrs\": attrs, \"children\": []any{}, \"text\": \"\"} } }"
     , GoDeclRaw
+       "func sky_htmlDoctype(_ any) any { return \"<!DOCTYPE html>\" }"
+    , GoDeclRaw
+       "func sky_htmlTitleNode(content any) any { return map[string]any{\"tag\": \"title\", \"attrs\": []any{}, \"children\": []any{map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(content)}}, \"text\": \"\"} }"
+    , GoDeclRaw
        "func sky_htmlText(s any) any { return map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(s)} }"
     , GoDeclRaw
        "func sky_htmlRaw(s any) any { return map[string]any{\"tag\": \"__raw__\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(s)} }"
@@ -2656,6 +2725,12 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_cssPropFn(prop any) any { return func(val any) any { return sky_asString(prop) + \": \" + sky_asString(val) } }"
     , GoDeclRaw
+       "func sky_cssTransitionProp(prop any) any { return func(duration any) any { return func(easing any) any { return fmt.Sprintf(\"transition: %s %vs %s\", sky_asString(prop), sky_asFloat(duration), sky_asString(easing)) } } }"
+    , GoDeclRaw
+       "func sky_cssShadow(x any) any { return func(y any) any { return func(blur any) any { return func(color any) any { return fmt.Sprintf(\"%dpx %dpx %dpx %s\", sky_asInt(x), sky_asInt(y), sky_asInt(blur), sky_asString(color)) } } } }"
+    , GoDeclRaw
+       "func sky_cssMargin4(top any) any { return func(right any) any { return func(bottom any) any { return func(left any) any { return \"margin: \" + sky_asString(top) + \" \" + sky_asString(right) + \" \" + sky_asString(bottom) + \" \" + sky_asString(left) } } } }"
+    , GoDeclRaw
        "func sky_evt_fileMaxSize(v any) any { return SkyTuple2{\"sky-file-maxsize\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"
     , GoDeclRaw
        "func sky_evt_fileMaxWidth(v any) any { return SkyTuple2{\"sky-file-maxwidth\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"
@@ -2663,7 +2738,8 @@ generateHelperDecls =
        "func sky_evt_fileMaxHeight(v any) any { return SkyTuple2{\"sky-file-maxheight\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"
     , GoDeclRaw
        "func sky_liveRoute(path any) any { return func(page any) any { return map[string]any{\"path\": path, \"page\": page} } }"
-    , GoDeclRaw  "func sky_liveApp(config any) any { return config }"
+    , GoDeclRaw  "func sky_liveApp(config any) any { c := sky_asMap(config); initFn := c[\"init\"]; updateFn := c[\"update\"]; viewFn := c[\"view\"]; subsFn := c[\"subscriptions\"]; guardFn := c[\"guard\"]; routes := sky_asList(c[\"routes\"]); notFound := c[\"notFound\"]; port := 4000; if p, ok := c[\"port\"]; ok { port = sky_asInt(p) }; pageDefs := make([]skylive_rt.PageDef, 0); for _, r := range routes { rm := sky_asMap(r); pageDefs = append(pageDefs, skylive_rt.PageDef{Pattern: sky_asString(rm[\"path\"]), Page: rm[\"page\"]}) }; liveConfig := skylive_rt.LiveConfig{Port: port, TTL: 30 * time.Minute, StoreType: \"memory\", InputMode: \"debounce\"}; liveApp := skylive_rt.LiveApp{Init: func(req map[string]any, page any) (any, []any) { result := initFn.(func(any) any)(req); if t, ok := result.(SkyTuple2); ok { return t.V0, nil }; return result, nil }, Update: func(msg any, model any) (any, []any) { result := updateFn.(func(any) any)(msg).(func(any) any)(model); if t, ok := result.(SkyTuple2); ok { return t.V0, nil }; return result, nil }, View: func(model any) *skylive_rt.VNode { result := viewFn.(func(any) any)(model); return skylive_rt.MapToVNode(result) }, DecodeMsg: func(name string, args []encoding_json.RawMessage) (any, error) { return sky_decodeLiveMsg(name, args), nil }, URLForPage: func(page any) string { pm := sky_asMap(page); if n, ok := pm[\"SkyName\"].(string); ok { for _, pd := range pageDefs { if sky_asMap(pd.Page)[\"SkyName\"] == n { return pd.Pattern } } }; return \"/\" }, TitleForPage: func(page any) string { pm := sky_asMap(page); if n, ok := pm[\"SkyName\"].(string); ok { return n }; return \"Sky.Live\" }, FixModel: func(model any) any { return model }, Routes: pageDefs, NotFound: notFound, BuildNavigateMsg: func(page any) any { return map[string]any{\"SkyName\": \"Navigate\", \"Tag\": 99, \"V0\": page} }, Subscriptions: func(model any) any { if subsFn == nil { return nil }; return subsFn.(func(any) any)(model) }, MsgTagToName: func(tag int) string { return fmt.Sprintf(\"Msg%d\", tag) }, Guard: func(msg any, model any) error { if guardFn == nil { return nil }; result := guardFn.(func(any) any)(msg).(func(any) any)(model); if sr, ok := result.(SkyResult); ok && sr.Tag == 1 { return fmt.Errorf(\"%v\", sr.ErrValue) }; return nil }}; skylive_rt.StartServer(liveConfig, liveApp); return nil }"
+    , GoDeclRaw  "func sky_decodeLiveMsg(name string, args []encoding_json.RawMessage) any { msg := map[string]any{\"SkyName\": name}; if len(args) > 0 { for i, a := range args { var v any; encoding_json.Unmarshal(a, &v); msg[fmt.Sprintf(\"V%d\", i)] = v }; msg[\"Tag\"] = 0 } else { msg[\"Tag\"] = 0 }; return msg }"
     ]
 
 

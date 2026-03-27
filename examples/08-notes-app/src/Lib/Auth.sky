@@ -1,6 +1,7 @@
 module Lib.Auth exposing (hashPassword, verifyPassword, generateToken, createUser, authenticateUser, createSession, getSessionUser, verifyEmail)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
@@ -11,20 +12,24 @@ import Encoding.Hex as Hex
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
+
 hashPassword password =
     let
         salted =
             "sky-notes-salt-v1:" ++ password
         hash =
-            Sha256.sum256 (String.toBytes salted)
+            Task.perform (Sha256.sum256 (String.toBytes salted))
     in
-        Hex.encodeToString hash
+        Task.perform (Hex.encodeToString hash)
+
 
 verifyPassword password storedHash =
     hashPassword password == storedHash
 
+
 generateToken _ =
-    Uuid.newString ()
+    Task.perform (Uuid.newString ())
+
 
 createUser db email password =
     let
@@ -56,9 +61,10 @@ createUser db email password =
         case result of
             Ok _ ->
                 Ok token
-            
+
             Err e ->
                 Err e
+
 
 checkUserCredentials db email password user =
     let
@@ -76,6 +82,7 @@ checkUserCredentials db email password user =
         else
             Err "Invalid email or password."
 
+
 authenticateUser db email password =
     let
         rows =
@@ -90,9 +97,10 @@ authenticateUser db email password =
         case maybeUser of
             Just user ->
                 checkUserCredentials db email password user
-            
+
             Nothing ->
                 Err "Invalid email or password."
+
 
 createSession db userId =
     let
@@ -105,9 +113,10 @@ createSession db userId =
         case result of
             Ok _ ->
                 Ok token
-            
+
             Err _ ->
                 Err "Failed to create session."
+
 
 getSessionUser db sessionToken =
     let
@@ -119,6 +128,7 @@ getSessionUser db sessionToken =
             Result.withDefault [] rows
     in
         List.head userRows
+
 
 verifyEmail db token =
     let
@@ -133,6 +143,6 @@ verifyEmail db token =
                     Err "Invalid or already used verification link."
                 else
                     Ok "Your email has been verified! You can now sign in."
-            
+
             Err _ ->
                 Err "A database error occurred during verification."
