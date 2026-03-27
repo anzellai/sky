@@ -286,7 +286,7 @@ generateMethodBinding pkgName typeName methodJson =
         variadic =
             Json.jsonGetBool "variadic" methodJson
     in
-        if String.isEmpty name || List.length results > 2 then
+        if String.isEmpty name || List.length results > 2 || TypeMapper.lowerCamelCase name == "type" then
             Nothing
         else if not (allMethodParamsSafe pkgName paramTypes variadic) then
             Nothing
@@ -540,6 +540,12 @@ generateFuncBinding pkgName funcJson =
             let
                 skyName =
                     TypeMapper.lowerCamelCase name
+            in
+                -- Skip Sky reserved keywords
+                if skyName == "type" || skyName == "module" || skyName == "import" || skyName == "case" || skyName == "of" || skyName == "let" || skyName == "in" || skyName == "if" || skyName == "then" || skyName == "else" || skyName == "where" || skyName == "exposing" || skyName == "as" || skyName == "foreign" then
+                    Nothing
+                else
+            let
                 safePkg =
                     String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
                 wrapperName =

@@ -215,8 +215,18 @@ resolveBindingPath modName =
             List.map camelToUnderscore pkgParts
         safeName =
             String.join "_" safeParts
+        primaryPath =
+            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+        -- Fallback: original Go package path format (from TS compiler)
+        altPath =
+            ".skycache/go/" ++ String.join "/" (List.map String.toLower pkgParts) ++ "/bindings.skyi"
     in
-        ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+        case File.readFile primaryPath of
+            Ok _ ->
+                primaryPath
+
+            Err _ ->
+                altPath
 
 
 -- Convert camelCase to underscore_separated lowercase
