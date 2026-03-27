@@ -97,7 +97,10 @@ jobs:
       - name: Test go-stdlib (FFI)
         run: |
           rm -rf sky-out
-          sky add crypto/sha256 encoding/hex net/http time
+          sky add crypto/sha256
+          sky add encoding/hex
+          sky add net/http
+          sky add time
           sky build examples/02-go-stdlib/src/Main.sky
           sky-out/app | grep "SHA256"
 
