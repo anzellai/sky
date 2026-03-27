@@ -265,13 +265,23 @@ main =
 
 2. **Lowerer limitation with new functions** — adding functions with nested `case` inside `case` inside `let` in Pipeline.sky can cause the lowerer to generate blank function names (`Compiler_Pipeline__`). Workaround: keep complex logic in external tools or inline it.
 
-3. **Skyshop duplicate wrappers** — `dist/sky_wrappers/` and `.skycache/go/` both generate `Sky_*` functions. Partially fixed (skip FFI copy when project wrapper exists). Remaining: wrapper naming mismatch — lowered code emits `Cloud_Google_Com_Go_Firestore_NewClient` but wrappers define `Sky_cloud_google_com_go_firestore_NewClient`. Needs alias generation.
+3. **Skyshop duplicate wrappers** — PARTIALLY FIXED. Skip FFI copy when `dist/sky_wrappers/` has project wrapper. Old `.skycache` path format supported via fallback.
 
-4. **FFI Task boundary** — FIXED. All Go FFI calls now wrapped in Task thunks with panic recovery. Pure classification removed. All .skyi bindings return `Result String T`.
+4. **FFI Task boundary** — FIXED. All Go FFI calls wrapped in Task with panic recovery.
 
-5. **Go generics** — FIXED. Inspector now detects `sig.TypeParams()` and `sig.RecvTypeParams()`. Generic functions, methods, and named types are filtered out in both WrapperGen and BindingGen. Generic Go functions can't be called from `any`-typed Sky code.
+5. **Go generics** — FIXED. Inspector detects `hasTypeParams`, generic functions/methods/types filtered out.
 
-6. **Skyshop build time ~2min** — 43 local modules + 14 FFI = 25K Go declarations. 99.8% of wrapper functions (32,589/32,666) are eliminated by DCE. Root cause: wrappers are generated for ALL symbols then DCE'd, instead of only generating needed symbols.
+6. **FFI keyword conflicts** — FIXED. BindingGen skips Go functions named `type`, `module`, `import` etc.
+
+7. **`sky fmt --stdin`** — DONE. Formatter reads stdin, writes to stdout. Helix auto-format enabled.
+
+8. **Missing stdlib functions** — FIXED. Added `List.sortBy`, `modBy` (prelude), `clamp`, `Io.readAllStdin`.
+
+9. **Lowerer: tuple pattern destructuring in lambdas** — `\( _, v ) -> v` emits `func(_p any) { return v }` (v undefined). Affects Tailwind `tw` function in skyshop. Needs fix in Lower.sky lambda handling.
+
+10. **FFI binding gaps** — Firestore `DocumentIteratorGetAll`, `Desc`, `Asc` and Stripe `Session.New`, `Session.Get` not generated because BindingGen doesn't support complex Go slice/pointer types in method params. Need to either extend type support or add hand-crafted wrappers.
+
+11. **Skyshop build time ~1:35** — 43 local modules + 18 FFI = 25K Go declarations. Symbol-level tree-shaking not yet ported from TS compiler.
 
 ### Techniques from TS Compiler (to port)
 
