@@ -269,8 +269,19 @@ func StartServer(config LiveConfig, app LiveApp) {
 	var store SessionStore
 	switch config.StoreType {
 	case "sqlite", "redis", "postgresql", "postgres", "firestore":
-		log.Printf("Store type %q not available in this build, falling back to memory", config.StoreType)
-		store = NewMemoryStore(config.TTL)
+		factory, ok := storeRegistry[config.StoreType]
+		if config.StoreType == "postgresql" {
+			factory, ok = storeRegistry["postgres"]
+		}
+		if !ok {
+			log.Fatalf("Session store %q not available. Add the dependency and rebuild with the appropriate build tag.", config.StoreType)
+		}
+		var err error
+		store, err = factory(config.StorePath, config.TTL)
+		if err != nil {
+			log.Fatalf("Failed to create %s session store: %v", config.StoreType, err)
+		}
+		log.Printf("Using %s session store", config.StoreType)
 	default:
 		store = NewMemoryStore(config.TTL)
 	}

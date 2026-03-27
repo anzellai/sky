@@ -97,12 +97,12 @@ cmdBuild _ =
                         case Process.run  "sh"
                               [ "-c"
                              , "ls " ++
-                             outDir ++ "/sky_*.go 2>/dev/null | head -1"
+                             outDir ++ "/sky_*.go " ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
                              ] of
-                            
+
                             Ok output ->
                                 not  (String.isEmpty  (String.trim  output))
-                            
+
                             Err _ ->
                                 False
                     _ =

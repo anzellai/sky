@@ -7,6 +7,17 @@ import (
 	"time"
 )
 
+// StoreFactory creates a SessionStore from a connection path and TTL.
+type StoreFactory func(path string, ttl time.Duration) (SessionStore, error)
+
+// storeRegistry allows store backends to register themselves via init().
+var storeRegistry = make(map[string]StoreFactory)
+
+// RegisterStore registers a session store backend by name.
+func RegisterStore(name string, factory StoreFactory) {
+	storeRegistry[name] = factory
+}
+
 // Session holds the state for a single client connection.
 type Session struct {
 	Model    any       // The current Model value
