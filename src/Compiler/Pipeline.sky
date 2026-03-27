@@ -21,231 +21,305 @@ import Compiler.Checker as Checker
 import Compiler.Lower as Lower
 import Compiler.Resolver as Resolver
 
--- ══════════════════════════════════════════════════════
--- COMPILATION PIPELINE
--- ══════════════════════════════════════════════════════
--- Full compilation pipeline:
---   1. Lex source
---   2. Parse tokens → AST
---   3. Resolve module imports
---   4. Type-check all modules
---   5. Lower AST → GoIR
---   6. Emit Go source code
---   7. Write output files
 findCharIdx : Char -> String -> Int -> Int
+
 findCharIdx ch str idx =
-    if idx >= String.length str then
+    if idx >= String.length  str then
         -1
-    else if String.slice idx (idx + 1) str == String.fromChar ch then
+    else if String.slice  idx  (idx + 1)  str == String.fromChar  ch then
         idx
     else
-        findCharIdx ch str (idx + 1)
+        findCharIdx  ch  str  (idx + 1)
 
 
 findLastSlash : String -> Int -> Int
+
 findLastSlash path idx =
     if idx < 0 then
         -1
-    else if String.slice idx (idx + 1) path == "/" then
+    else if String.slice  idx  (idx + 1)  path == "/" then
         idx
     else
-        findLastSlash path (idx - 1)
+        findLastSlash  path  (idx - 1)
 
 
 compile : String -> String -> Result String String
+
 compile filePath outDir =
     let
         _ =
-            println ("Sky Compiler " ++ Args.skyVersion)
+            println  ("Sky Compiler " ++ Args.skyVersion)
         _ =
-            println ""
-        -- Clean stale FFI wrapper and helper files from previous builds
+            println  ""
         _ =
-            Process.run "sh" [ "-c" , "rm -f " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null" ]
+            Process.run  "sh"
+             [ "-c"
+            , "rm -f " ++
+            outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null"
+            ]
     in
-        case File.readFile filePath of
+        case File.readFile  filePath of
+            
             Err readErr ->
-                Err ("Cannot read file: " ++ filePath ++ " (" ++ readErr ++ ")")
-
+                Err
+                 ("Cannot read file: " ++ filePath ++ " (" ++ readErr ++ ")")
+            
             Ok source ->
                 let
                     lexResult =
-                        Lexer.lex source
+                        Lexer.lex  source
                 in
-                    case Parser.parse lexResult.tokens of
+                    case Parser.parse  lexResult.tokens of
+                        
                         Err parseErr ->
-                            Err ("Parse error: " ++ parseErr)
-
+                            Err  ("Parse error: " ++ parseErr)
+                        
                         Ok mod ->
                             let
                                 srcRoot =
-                                    dirOfPath filePath
+                                    dirOfPath  filePath
                                 hasLocalImports =
-                                    List.foldl (\imp acc -> acc || not (Resolver.isStdlib (String.join "." imp.moduleName))) False mod.imports
+                                    List.foldl
+                                     (
+                                    \imp acc ->
+                                        acc ||
+                                        not
+                                         (
+                                        Resolver.isStdlib
+                                         (String.join  "."  imp.moduleName)
+                                        )
+                                    )
+                                     False
+                                     mod.imports
                             in
                                 if hasLocalImports then
-                                    compileMultiModule filePath outDir srcRoot mod
+                                    compileMultiModule  filePath  outDir
+                                     srcRoot
+                                     mod
                                 else
-                                    compileSource filePath outDir source
+                                    compileSource  filePath  outDir  source
 
--- ══════════════════════════════════════════════════════
--- MULTI-MODULE COMPILATION
--- ══════════════════════════════════════════════════════
 
 compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
+
 compileMultiModule entryPath outDir srcRoot entryMod =
     let
         localImports =
-            List.filter (\imp -> not (Resolver.isStdlib (String.join "." imp.moduleName))) entryMod.imports
+            List.filter
+             (
+            \imp -> not  (Resolver.isStdlib  (String.join  "."  imp.moduleName))
+            )
+             entryMod.imports
         localModules =
-            loadLocalModules srcRoot localImports []
-        -- Load FFI bindings from entry module imports
+            loadLocalModules  srcRoot  localImports  []
         entryFfiModules =
-            loadFfiBindings srcRoot localImports
-        -- Also load FFI bindings from dependency module imports
+            loadFfiBindings  srcRoot  localImports
         depFfiModules =
-            List.concatMap (\pair -> let mod = snd pair in loadFfiBindings srcRoot mod.imports) localModules
+            List.concatMap
+             (
+            \pair ->
+                let
+                    mod =
+                        snd  pair
+                in
+                    loadFfiBindings  srcRoot  mod.imports
+            )
+             localModules
         allFfiModules =
-            List.append entryFfiModules depFfiModules
-        -- Deduplicate FFI modules (same module imported by multiple local modules)
+            List.append  entryFfiModules  depFfiModules
         ffiModules =
-            deduplicateFfiModules allFfiModules []
+            deduplicateFfiModules  allFfiModules  []
         loadedModules =
-            List.append localModules ffiModules
+            List.append  localModules  ffiModules
         _ =
-            println ("   [MULTI] Loaded " ++ String.fromInt (List.length localModules) ++ " local + " ++ String.fromInt (List.length ffiModules) ++ " FFI modules")
+            println
+             (
+            "   [MULTI] Loaded " ++
+            String.fromInt  (List.length  localModules) ++
+            " local + " ++
+            String.fromInt  (List.length  ffiModules) ++ " FFI modules"
+            )
         aliasMap =
-            buildAliasMap entryMod.imports
+            buildAliasMap  entryMod.imports
         stdlibEnv =
             Resolver.buildStdlibEnv
         depDecls =
-            List.concatMap (compileDependencyModule stdlibEnv loadedModules) loadedModules
+            List.concatMap  (compileDependencyModule  stdlibEnv  loadedModules)
+             loadedModules
     in
-        compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls loadedModules
+        compileMultiModuleEntry  outDir  entryMod  aliasMap  stdlibEnv  depDecls
+         loadedModules
 
 
-compileMultiModuleEntry : String -> Ast.Module -> Dict.Dict String String -> Env.TypeEnv -> List GoDecl -> List ( String , Ast.Module ) -> Result String String
+compileMultiModuleEntry : String -> Ast.Module -> (Dict.Dict String String) -> Env.TypeEnv -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
+
 compileMultiModuleEntry outDir entryMod aliasMap stdlibEnv depDecls loadedModules =
     let
         entryCheckResult =
-            Checker.checkModule entryMod (Just stdlibEnv)
+            Checker.checkModule  entryMod  (Just  stdlibEnv)
         entryRegistry =
             case entryCheckResult of
+                
                 Ok result ->
                     result.registry
-
+                
                 Err _ ->
                     Adt.emptyRegistry
     in
-        emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules
+        emitMultiModuleGo  outDir  entryMod  entryRegistry  aliasMap  depDecls
+         loadedModules
 
 
-emitMultiModuleGo : String -> Ast.Module -> Adt.AdtRegistry -> Dict.Dict String String -> List GoDecl -> List ( String , Ast.Module ) -> Result String String
+emitMultiModuleGo : String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
+
 emitMultiModuleGo outDir entryMod entryRegistry aliasMap depDecls loadedModules =
     let
         baseCtx =
             Lower.emptyCtx
         entryExposed =
-            Lower.buildExposedStdlib entryMod.imports
+            Lower.buildExposedStdlib  entryMod.imports
         entryCtx =
             { baseCtx
-                | registry = entryRegistry
-                , localFunctions = Lower.collectLocalFunctions entryMod.declarations
-                , importedConstructors = Lower.buildConstructorMap entryRegistry
-                , importAliases = aliasMap
-                , exposedStdlib = entryExposed
-                , localFunctionArity = Lower.collectLocalFunctionArities entryMod.declarations
+            | registry =
+                entryRegistry
+            , localFunctions =
+                Lower.collectLocalFunctions  entryMod.declarations
+            , importedConstructors =
+                Lower.buildConstructorMap  entryRegistry
+            , importAliases =
+                aliasMap
+            , exposedStdlib =
+                entryExposed
+            , localFunctionArity =
+                Lower.collectLocalFunctionArities  entryMod.declarations
             }
         entryGoDecls =
-            Lower.lowerDeclarations entryCtx entryMod.declarations
+            Lower.lowerDeclarations  entryCtx  entryMod.declarations
         entryCtorDecls =
-            Lower.generateConstructorDecls entryRegistry entryMod.declarations
+            Lower.generateConstructorDecls  entryRegistry  entryMod.declarations
         helperDecls =
             Lower.generateHelperDecls
-        -- Generate aliases for functions imported via exposing(..) in entry module
         entryImportAliases =
-            generateImportAliases entryMod.imports loadedModules
+            generateImportAliases  entryMod.imports  loadedModules
         allDecls =
-            deduplicateDecls (List.concat [ helperDecls , depDecls , entryCtorDecls , entryGoDecls , entryImportAliases ])
-        -- Collect ALL imports (entry + deps) for wrapper copying
+            deduplicateDecls
+             (
+            List.concat
+             [ helperDecls
+            , depDecls
+            , entryCtorDecls
+            , entryGoDecls
+            , entryImportAliases
+            ]
+            )
         allImports =
-            List.append entryMod.imports (List.concatMap (\pair -> let mod = snd pair in mod.imports) loadedModules)
+            List.append  entryMod.imports
+             (
+            List.concatMap
+             (
+            \pair ->
+                let
+                    mod =
+                        snd  pair
+                in
+                    mod.imports
+            )
+             loadedModules
+            )
     in
-        writeMultiModuleOutput outDir allDecls allImports
+        writeMultiModuleOutput  outDir  allDecls  allImports
 
 
-writeMultiModuleOutput : String -> List GoDecl -> List Ast.ImportDecl -> Result String String
+writeMultiModuleOutput : String -> (List GoDecl) -> (List Ast.ImportDecl) -> Result String String
+
 writeMultiModuleOutput outDir allDecls imports =
     let
         goPackage =
-            makeGoPackage allDecls
+            makeGoPackage  allDecls
         rawGoCode =
-            Emit.emitPackage goPackage
+            Emit.emitPackage  goPackage
         goCode =
-            fixUnusedVars rawGoCode
+            fixUnusedVars  rawGoCode
         outPath =
             outDir ++ "/main.go"
         _ =
-            File.mkdirAll outDir
+            File.mkdirAll  outDir
         _ =
-            File.writeFile outPath goCode
+            File.writeFile  outPath  goCode
         _ =
-            println ("   Wrote " ++ outPath)
+            println  ("   Wrote " ++ outPath)
         _ =
-            println ("   " ++ String.fromInt (List.length allDecls) ++ " total Go declarations")
-        -- Copy FFI wrapper files AFTER main.go is written (so we can filter by usage)
+            println
+             (
+            "   " ++
+            String.fromInt  (List.length  allDecls) ++ " total Go declarations"
+            )
         _ =
-            copyFfiWrappers outDir imports []
-        -- Dead code elimination: strip unused wrapper functions
+            copyFfiWrappers  outDir  imports  goCode
         _ =
-            eliminateDeadCode outDir goCode
-        -- Dead code elimination: strip unreachable functions from main.go
+            eliminateDeadCode  outDir  goCode
         _ =
-            dceMainGo outDir goCode
+            dceMainGo  outDir  goCode
         _ =
-            println ""
+            println  ""
         _ =
-            println ("✓ Compilation successful")
+            println  ("✓ Compilation successful")
     in
-        Ok goCode
+        Ok  goCode
 
 
--- Replace recursive JSON function CALLS with native Go implementations
--- The native functions are defined via GoDeclRaw in generateHelperDecls
 optimiseJsonFunctions : String -> String
+
 optimiseJsonFunctions code =
     let
         s1 =
-            String.replace "Lsp_JsonRpc_ExtractBraced(" "sky_nativeExtractBracketed(" code
+            String.replace  "Lsp_JsonRpc_ExtractBraced("
+             "sky_nativeExtractBracketed("
+             code
         s2 =
-            String.replace "Lsp_JsonRpc_JsonSplitArray(" "sky_nativeJsonSplitArray(" s1
+            String.replace  "Lsp_JsonRpc_JsonSplitArray("
+             "sky_nativeJsonSplitArray("
+             s1
         s3 =
-            String.replace "Lsp_JsonRpc_SplitJsonElements(" "sky_nativeSplitJsonElements(" s2
+            String.replace  "Lsp_JsonRpc_SplitJsonElements("
+             "sky_nativeSplitJsonElements("
+             s2
         s4 =
-            String.replace "Lsp_JsonRpc_ExtractBracketed(" "sky_nativeExtractBracketed(" s3
+            String.replace  "Lsp_JsonRpc_ExtractBracketed("
+             "sky_nativeExtractBracketed("
+             s3
         s5 =
-            String.replace "Lsp_JsonRpc_FindInString(" "sky_nativeFindInString(" s4
+            String.replace  "Lsp_JsonRpc_FindInString("
+             "sky_nativeFindInString("
+             s4
     in
         s5
 
 
--- Write native Go JSON helpers and redirect recursive calls
 writeNativeJsonFile : String -> ()
+
 writeNativeJsonFile outDir =
     let
-        -- Write native helper file via heredoc (avoids Sky string duplication bug)
         _ =
-            Process.run "sh" [ "-c" , "cat > " ++ outDir ++ "/sky_json_native.go << 'GOEOF'\npackage main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\nfunc sky_nativeFindInString(needle any, haystack any, idx any) any {\n\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\nfunc sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 91 || c == 123 { depth++ } else if c == 93 || c == 125 { depth--; if depth == 0 { return str[:i+1] } }\n\t}\n\treturn str\n}\n\nfunc sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 123 || c == 91 { depth++ } else if c == 125 || c == 93 { depth-- } else if c == 44 && depth == 0 {\n\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n\t\t}\n\t}\n\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n\tif result == nil { return []any{} }; return result\n}\n\nfunc sky_nativeJsonSplitArray(arrayStr any) any {\n\tstr := strings.TrimSpace(sky_asString(arrayStr))\n\tif len(str) < 2 { return []any{} }\n\tinner := strings.TrimSpace(str[1:len(str)-1])\n\tif len(inner) == 0 { return []any{} }\n\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\nGOEOF" ]
-        -- Redirect recursive JSON calls to native implementations (skip func definitions)
+            Process.run  "sh"
+             [ "-c"
+            , "cat > " ++
+            outDir ++
+            "/sky_json_native.go << 'GOEOF'\npackage main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\nfunc sky_nativeFindInString(needle any, haystack any, idx any) any {\n\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\nfunc sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 91 || c == 123 { depth++ } else if c == 93 || c == 125 { depth--; if depth == 0 { return str[:i+1] } }\n\t}\n\treturn str\n}\n\nfunc sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 123 || c == 91 { depth++ } else if c == 125 || c == 93 { depth-- } else if c == 44 && depth == 0 {\n\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n\t\t}\n\t}\n\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n\tif result == nil { return []any{} }; return result\n}\n\nfunc sky_nativeJsonSplitArray(arrayStr any) any {\n\tstr := strings.TrimSpace(sky_asString(arrayStr))\n\tif len(str) < 2 { return []any{} }\n\tinner := strings.TrimSpace(str[1:len(str)-1])\n\tif len(inner) == 0 { return []any{} }\n\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\nGOEOF"
+            ]
         _ =
-            Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && python3 -c \"import re; f=open('main.go'); c=f.read(); f.close(); c=re.sub(r'(?<!func )Lsp_JsonRpc_FindInString\\(', 'sky_nativeFindInString(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBracketed\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBraced\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_SplitJsonElements\\(', 'sky_nativeSplitJsonElements(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_JsonSplitArray\\(', 'sky_nativeJsonSplitArray(', c); f=open('main.go','w'); f.write(c); f.close()\"" ]
+            Process.run  "sh"
+             [ "-c"
+            , "cd " ++
+            outDir ++
+            " && python3 -c \"import re; f=open('main.go'); c=f.read(); f.close(); c=re.sub(r'(?<!func )Lsp_JsonRpc_FindInString\\(', 'sky_nativeFindInString(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBracketed\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBraced\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_SplitJsonElements\\(', 'sky_nativeSplitJsonElements(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_JsonSplitArray\\(', 'sky_nativeJsonSplitArray(', c); f=open('main.go','w'); f.write(c); f.close()\""
+            ]
     in
         ()
 
 
--- Native Go JSON helpers — iterative, stack-safe for large JSON (7MB+)
--- These replace the recursive Sky implementations at compile time
 nativeJsonHelperCode : String
+
 nativeJsonHelperCode =
     "package main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\n" ++
     "func sky_nativeFindInString(needle any, haystack any, idx any) any {\n" ++
@@ -278,1644 +352,1969 @@ nativeJsonHelperCode =
     "\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\n"
 
 
--- Post-process Go code to suppress unused variable errors
--- Pattern: replace "varName := expr;" with "varName := expr; _ = varName;"
-
 fixUnusedVars : String -> String
+
 fixUnusedVars code =
-    -- Replace ':= expr;' patterns with ':= expr; _ = var;' by processing line by line
-    -- Simpler approach: just wrap in a function that ignores unused vars
     code
 
 
--- ══════════════════════════════════════════════════════
--- DEAD CODE ELIMINATION
--- ══════════════════════════════════════════════════════
--- After generating Go output, scan main.go for used Sky_* wrapper
--- function references, then strip unused functions from wrapper files.
--- This keeps the Go build lean even with full FFI bindings generated.
-
 eliminateDeadCode : String -> String -> ()
+
 eliminateDeadCode outDir mainGoCode =
     let
-        -- Find all wrapper .go files in output directory
         listResult =
-            Process.run "sh" [ "-c" , "ls " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null | sort -u" ]
+            Process.run  "sh"
+             [ "-c"
+            , "ls " ++
+            outDir ++
+            "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null | sort -u"
+            ]
     in
         case listResult of
+            
             Ok output ->
                 let
                     wrapperFiles =
-                        List.filter (\f -> not (String.isEmpty (String.trim f))) (String.split "\n" output)
+                        List.filter
+                         (\f -> not  (String.isEmpty  (String.trim  f)))
+                         (String.split  "\n"  output)
                     totalBefore =
-                        List.foldl (\f acc -> acc + countFuncsInFile f) 0 wrapperFiles
+                        List.foldl  (\f acc -> acc + countFuncsInFile  f)  0
+                         wrapperFiles
                     _ =
-                        List.map (\f -> trimWrapperFile f mainGoCode) wrapperFiles
+                        List.map  (\f -> trimWrapperFile  f  mainGoCode)
+                         wrapperFiles
                     totalAfter =
-                        List.foldl (\f acc -> acc + countFuncsInFile f) 0 wrapperFiles
-                    -- Fix unused imports in remaining wrapper files
+                        List.foldl  (\f acc -> acc + countFuncsInFile  f)  0
+                         wrapperFiles
                     _ =
-                        List.map (\f -> trimWrapperImports f) wrapperFiles
+                        List.map  (\f -> trimWrapperImports  f)  wrapperFiles
                 in
                     if totalBefore > totalAfter then
-                        println ("   [DCE] Eliminated " ++ String.fromInt (totalBefore - totalAfter) ++ " unused wrapper functions (" ++ String.fromInt totalBefore ++ " → " ++ String.fromInt totalAfter ++ ")")
+                        println
+                         (
+                        "   [DCE] Eliminated " ++
+                        String.fromInt  (totalBefore - totalAfter) ++
+                        " unused wrapper functions (" ++
+                        String.fromInt  totalBefore ++
+                        " → " ++ String.fromInt  totalAfter ++ ")"
+                        )
                     else
                         ()
-
+            
             Err _ ->
                 ()
 
 
 countFuncsInFile : String -> Int
-countFuncsInFile filePath =
-    case File.readFile filePath of
-        Ok content ->
-            List.length (List.filter (\line -> String.startsWith "func Sky_" (String.trim line)) (String.split "\n" content))
 
+countFuncsInFile filePath =
+    case File.readFile  filePath of
+        
+        Ok content ->
+            List.length
+             (
+            List.filter
+             (\line -> String.startsWith  "func Sky_"  (String.trim  line))
+             (String.split  "\n"  content)
+            )
+        
         Err _ ->
             0
 
 
 trimWrapperFile : String -> String -> ()
+
 trimWrapperFile filePath mainGoCode =
-    case File.readFile filePath of
+    case File.readFile  filePath of
+        
         Ok content ->
             let
                 sections =
-                    splitWrapperSections content
+                    splitWrapperSections  content
                 funcBlocks =
                     sections.functions
                 keptFuncs =
-                    List.filter (\block -> isWrapperUsed block mainGoCode) funcBlocks
+                    List.filter  (\block -> isWrapperUsed  block  mainGoCode)
+                     funcBlocks
                 keptNonSky =
-                    List.filter (\block -> not (String.startsWith "func Sky_" block)) funcBlocks
+                    List.filter
+                     (\block -> not  (String.startsWith  "func Sky_"  block))
+                     funcBlocks
                 allKept =
-                    List.append keptFuncs keptNonSky
+                    List.append  keptFuncs  keptNonSky
             in
-                if List.isEmpty allKept then
-                    Process.run "rm" [ "-f" , filePath ]
+                if List.isEmpty  allKept then
+                    Process.run  "rm"  [ "-f" , filePath ]
                         |> (\_ -> ())
                 else
                     let
                         trimmed =
-                            sections.header ++ "\n\n" ++ String.join "\n\n" allKept ++ "\n"
+                            sections.header ++
+                            "\n\n" ++ String.join  "\n\n"  allKept ++ "\n"
                     in
                         if trimmed /= content then
-                            File.writeFile filePath trimmed
+                            File.writeFile  filePath  trimmed
                         else
                             ()
-
+        
         Err _ ->
             ()
 
 
--- Trim a wrapper file to only keep functions referenced in main.go.
--- Trim unused imports from a wrapper .go file after DCE.
 trimWrapperImports : String -> ()
+
 trimWrapperImports filePath =
     let
         _ =
-            Process.run "sh" [ "-c" , "trim-imports " ++ filePath ++ " 2>/dev/null || goimports -w " ++ filePath ++ " 2>/dev/null || true" ]
+            Process.run  "sh"
+             [ "-c"
+            , "trim-imports " ++
+            filePath ++
+            " 2>/dev/null || goimports -w " ++
+            filePath ++ " 2>/dev/null || true"
+            ]
     in
         ()
 
 
--- Splits file into header (package + import block) and function blocks.
--- Keeps a function if its name appears anywhere in main.go.
 trimWrapperContent : String -> String -> String
+
 trimWrapperContent wrapperCode mainGoCode =
     let
-        -- Split into lines to find the header vs function blocks
         sections =
-            splitWrapperSections wrapperCode
+            splitWrapperSections  wrapperCode
         header =
             sections.header
         funcBlocks =
             sections.functions
-        -- Keep only functions whose name is referenced in main.go
         keptFuncs =
-            List.filter (\block -> isWrapperUsed block mainGoCode) funcBlocks
-        -- Also keep non-Sky_ functions (like var declarations, helpers)
+            List.filter  (\block -> isWrapperUsed  block  mainGoCode)
+             funcBlocks
         keptNonSky =
-            List.filter (\block -> not (String.startsWith "func Sky_" block)) funcBlocks
+            List.filter
+             (\block -> not  (String.startsWith  "func Sky_"  block))
+             funcBlocks
         allKept =
-            List.append keptFuncs keptNonSky
+            List.append  keptFuncs  keptNonSky
     in
-        if List.isEmpty allKept then
+        if List.isEmpty  allKept then
             header ++ "\n"
         else
-            header ++ "\n\n" ++ String.join "\n\n" allKept ++ "\n"
+            header ++ "\n\n" ++ String.join  "\n\n"  allKept ++ "\n"
 
 
 isWrapperUsed : String -> String -> Bool
+
 isWrapperUsed funcBlock mainGoCode =
     let
-        -- Extract function name from "func Sky_xxx_yyy(...) any {"
         funcName =
-            extractWrapperFuncName funcBlock
+            extractWrapperFuncName  funcBlock
     in
-        if String.isEmpty funcName then
+        if String.isEmpty  funcName then
             True
-        else if not (String.startsWith "Sky_" funcName) then
+        else if not  (String.startsWith  "Sky_"  funcName) then
             True
         else
-            String.contains funcName mainGoCode
+            String.contains  funcName  mainGoCode
 
 
 extractWrapperFuncName : String -> String
+
 extractWrapperFuncName block =
-    if String.startsWith "func " block then
+    if String.startsWith  "func "  block then
         let
             afterFunc =
-                String.slice 5 (String.length block) block
+                String.slice  5  (String.length  block)  block
             parenIdx =
-                findCharIdx '(' afterFunc 0
+                findCharIdx  '('  afterFunc  0
         in
             if parenIdx > 0 then
-                String.slice 0 parenIdx afterFunc
+                String.slice  0  parenIdx  afterFunc
             else
                 ""
     else
         ""
 
 
--- Split wrapper file into { header, functions }.
--- Header = everything before the first "func " line.
--- Functions = each block starting with "func " until the next "func " or EOF.
 type alias WrapperSections =
-    { header : String
-    , functions : List String
-    }
+    { header : String , functions : List String }
 
 
 splitWrapperSections : String -> WrapperSections
+
 splitWrapperSections code =
     let
         lines =
-            String.split "\n" code
+            String.split  "\n"  code
         result =
-            splitWrapperLoop lines "" [] "" False
+            splitWrapperLoop  lines  ""  []  ""  False
     in
         result
 
 
-splitWrapperLoop : List String -> String -> List String -> String -> Bool -> WrapperSections
+splitWrapperLoop : (List String) -> String -> (List String) -> String -> Bool -> WrapperSections
+
 splitWrapperLoop lines header funcs currentFunc inFunc =
     case lines of
-        [] ->
+        
+        [  ] ->
             let
                 finalFuncs =
-                    if String.isEmpty (String.trim currentFunc) then
+                    if String.isEmpty  (String.trim  currentFunc) then
                         funcs
                     else
-                        List.append funcs [ String.trim currentFunc ]
+                        List.append  funcs  [ String.trim  currentFunc ]
             in
-                { header = String.trim header , functions = finalFuncs }
-
+                { header = String.trim  header , functions = finalFuncs }
+        
         line :: rest ->
-            if String.startsWith "func " line then
-                -- Start of a new function block
+            if String.startsWith  "func "  line then
                 let
-                    -- Save previous function block if any
                     updatedFuncs =
-                        if String.isEmpty (String.trim currentFunc) then
+                        if String.isEmpty  (String.trim  currentFunc) then
                             funcs
                         else
-                            List.append funcs [ String.trim currentFunc ]
+                            List.append  funcs  [ String.trim  currentFunc ]
                 in
-                    splitWrapperLoop rest header updatedFuncs line True
+                    splitWrapperLoop  rest  header  updatedFuncs  line  True
             else if inFunc then
-                -- Continue current function block
-                splitWrapperLoop rest header funcs (currentFunc ++ "\n" ++ line) True
+                splitWrapperLoop  rest  header  funcs
+                 (currentFunc ++ "\n" ++ line)
+                 True
             else
-                -- Still in header
-                splitWrapperLoop rest (header ++ "\n" ++ line) funcs currentFunc False
+                splitWrapperLoop  rest  (header ++ "\n" ++ line)  funcs
+                 currentFunc
+                 False
 
-
--- ══════════════════════════════════════════════════════
--- MAIN.GO DEAD CODE ELIMINATION
--- ══════════════════════════════════════════════════════
 
 dceMainGo : String -> String -> ()
+
 dceMainGo outDir goCode =
     let
         sections =
-            splitWrapperSections goCode
+            splitWrapperSections  goCode
         funcBlocks =
             sections.functions
         allVarLines =
             List.concatMap
-                (\block ->
-                    List.filter (\line -> String.startsWith "var " line) (String.split "\n" block)
-                )
-                funcBlocks
+             (
+            \block ->
+                List.filter  (\line -> String.startsWith  "var "  line)
+                 (String.split  "\n"  block)
+            )
+             funcBlocks
         pureFuncBlocks =
             List.filterMap
-                (\block ->
-                    let
-                        lines =
-                            String.split "\n" block
-                        funcLines =
-                            List.filter (\line -> not (String.startsWith "var " line)) lines
-                        cleaned =
-                            String.trim (String.join "\n" funcLines)
-                    in
-                        if String.startsWith "func " cleaned then
-                            Just cleaned
-                        else
-                            Nothing
-                )
-                funcBlocks
+             (
+            \block ->
+                let
+                    lines =
+                        String.split  "\n"  block
+                    funcLines =
+                        List.filter
+                         (\line -> not  (String.startsWith  "var "  line))
+                         lines
+                    cleaned =
+                        String.trim  (String.join  "\n"  funcLines)
+                in
+                    if String.startsWith  "func "  cleaned then
+                        Just  cleaned
+                    else
+                        Nothing
+            )
+             funcBlocks
         funcMap =
             List.foldl
-                (\block acc ->
-                    let
-                        name =
-                            extractWrapperFuncName block
-                    in
-                        if String.isEmpty name then
-                            acc
-                        else
-                            Dict.insert name block acc
-                )
-                Dict.empty
-                pureFuncBlocks
+             (
+            \block acc ->
+                let
+                    name =
+                        extractWrapperFuncName  block
+                in
+                    if String.isEmpty  name then
+                        acc
+                    else
+                        Dict.insert  name  block  acc
+            )
+             Dict.empty
+             pureFuncBlocks
         allNonFuncCode =
-            sections.header ++ "\n" ++ String.join "\n" allVarLines
+            sections.header ++ "\n" ++ String.join  "\n"  allVarLines
         wrapperContent =
-            case Process.run "sh" [ "-c" , "cat " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null" ] of
+            case Process.run  "sh"
+                  [ "-c"
+                 , "cat " ++
+                 outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null"
+                 ] of
+                
                 Ok content ->
                     content
-
+                
                 Err _ ->
                     ""
         wrapperSeeds =
-            List.filter (\name -> String.contains name wrapperContent) (Dict.keys funcMap)
+            List.filter  (\name -> String.contains  name  wrapperContent)
+             (Dict.keys  funcMap)
         nonFuncSeeds =
-            List.filter (\name -> String.contains name allNonFuncCode) (Dict.keys funcMap)
+            List.filter  (\name -> String.contains  name  allNonFuncCode)
+             (Dict.keys  funcMap)
         reachable =
-            buildReachableSet (List.concat [ [ "main" ] , wrapperSeeds , nonFuncSeeds ]) Dict.empty funcMap
+            buildReachableSet
+             (List.concat  [ [ "main" ] , wrapperSeeds , nonFuncSeeds ])
+             Dict.empty
+             funcMap
         totalFuncs =
-            List.length pureFuncBlocks
+            List.length  pureFuncBlocks
         keptFuncs =
-            List.filter (\block -> Dict.member (extractWrapperFuncName block) reachable) pureFuncBlocks
+            List.filter
+             (\block -> Dict.member  (extractWrapperFuncName  block)  reachable)
+             pureFuncBlocks
         keptCount =
-            List.length keptFuncs
+            List.length  keptFuncs
         eliminated =
             totalFuncs - keptCount
     in
         if eliminated > 0 then
             let
                 varsSection =
-                    if List.isEmpty allVarLines then
+                    if List.isEmpty  allVarLines then
                         ""
                     else
-                        "\n" ++ String.join "\n" allVarLines
+                        "\n" ++ String.join  "\n"  allVarLines
                 bodyCode =
-                    varsSection ++ "\n\n" ++ String.join "\n\n" keptFuncs ++ "\n"
-                -- Rebuild imports: only keep imports referenced in remaining code
+                    varsSection ++
+                    "\n\n" ++ String.join  "\n\n"  keptFuncs ++ "\n"
                 trimmedHeader =
-                    trimUnusedImports sections.header bodyCode
+                    trimUnusedImports  sections.header  bodyCode
                 newCode =
                     trimmedHeader ++ bodyCode
                 outPath =
                     outDir ++ "/main.go"
                 _ =
-                    File.writeFile outPath newCode
-                -- Run goimports as backup if available
+                    File.writeFile  outPath  newCode
                 _ =
-                    Process.run "sh" [ "-c" , "goimports -w " ++ outPath ++ " 2>/dev/null || true" ]
+                    Process.run  "sh"
+                     [ "-c"
+                    , "goimports -w " ++ outPath ++ " 2>/dev/null || true"
+                    ]
                 _ =
-                    println ("   [DCE] Eliminated " ++ String.fromInt eliminated ++ " unreachable functions from main.go (" ++ String.fromInt totalFuncs ++ " -> " ++ String.fromInt keptCount ++ ")")
+                    println
+                     (
+                    "   [DCE] Eliminated " ++
+                    String.fromInt  eliminated ++
+                    " unreachable functions from main.go (" ++
+                    String.fromInt  totalFuncs ++
+                    " -> " ++ String.fromInt  keptCount ++ ")"
+                    )
             in
                 ()
         else
             ()
 
 
--- Trim unused imports from Go header based on what the body references.
--- Writes body to temp file, uses shell to filter import lines.
 trimUnusedImports : String -> String -> String
+
 trimUnusedImports header bodyCode =
     let
         _ =
-            File.writeFile "/tmp/_sky_dce_body.tmp" bodyCode
+            File.writeFile  "/tmp/_sky_dce_body.tmp"  bodyCode
         _ =
-            File.writeFile "/tmp/_sky_dce_header.tmp" header
-        -- Shell script: for each import line, extract package ident, grep body
+            File.writeFile  "/tmp/_sky_dce_header.tmp"  header
         cmd =
             "awk '/^import \\(/{print;next} /^\\)/{print;next} /^\\t/{line=$0; gsub(/\"/, \"\", line); n=split(line, a, \" \"); if(n>=2){pkg=a[1]}else{split(a[1],b,\"/\");pkg=b[length(b)]}; if(pkg==\"\"){print $0;next}; cmd=\"grep -cE \\\"[^a-zA-Z]\" pkg \"\\\\.\\\" /tmp/_sky_dce_body.tmp\"; cmd|getline r; close(cmd); if(r+0>0){print $0}; next} {print}' /tmp/_sky_dce_header.tmp"
     in
-        case Process.run "sh" [ "-c" , cmd ] of
+        case Process.run  "sh"  [ "-c" , cmd ] of
+            
             Ok trimmed ->
-                if String.length (String.trim trimmed) > 10 then
+                if String.length  (String.trim  trimmed) > 10 then
                     trimmed
                 else
                     header
-
+            
             Err _ ->
                 header
 
 
-buildReachableSet : List String -> Dict.Dict String Bool -> Dict.Dict String String -> Dict.Dict String Bool
+buildReachableSet : (List String) -> (Dict.Dict String Bool) -> (Dict.Dict String String) -> Dict.Dict String Bool
+
 buildReachableSet pending visited funcMap =
     case pending of
-        [] ->
+        
+        [  ] ->
             visited
-
+        
         name :: rest ->
-            if Dict.member name visited then
-                buildReachableSet rest visited funcMap
+            if Dict.member  name  visited then
+                buildReachableSet  rest  visited  funcMap
             else
                 let
                     newVisited =
-                        Dict.insert name True visited
+                        Dict.insert  name  True  visited
                     body =
-                        case Dict.get name funcMap of
+                        case Dict.get  name  funcMap of
+                            
                             Just b ->
                                 b
-
+                            
                             Nothing ->
                                 ""
                     referenced =
-                        List.filter (\n -> n /= name && String.contains n body) (Dict.keys funcMap)
+                        List.filter
+                         (\n -> n /= name && String.contains  n  body)
+                         (Dict.keys  funcMap)
                     newPending =
-                        List.append rest referenced
+                        List.append  rest  referenced
                 in
-                    buildReachableSet newPending newVisited funcMap
+                    buildReachableSet  newPending  newVisited  funcMap
 
 
-makeGoPackage : List GoDecl -> GoPackage
+makeGoPackage : (List GoDecl) -> GoPackage
+
 makeGoPackage decls =
-    { name = "main"
-    , imports = [ { path = "fmt" , alias_ = "" } , { path = "bufio" , alias_ = "" } , { path = "io" , alias_ = "" } , { path = "os" , alias_ = "" } , { path = "os/exec" , alias_ = "exec" } , { path = "net/http" , alias_ = "net_http" } , { path = "strconv" , alias_ = "" } , { path = "strings" , alias_ = "" } , { path = "sort" , alias_ = "" } , { path = "math" , alias_ = "" } , { path = "crypto/sha256" , alias_ = "crypto_sha256" } , { path = "crypto/md5" , alias_ = "crypto_md5" } , { path = "encoding/hex" , alias_ = "hex" } , { path = "encoding/base64" , alias_ = "base64" } , { path = "encoding/json" , alias_ = "encoding_json" } , { path = "time" , alias_ = "" } , { path = "context" , alias_ = "" } ]
-    , declarations = decls
+    { name =
+        "main"
+    , imports =
+        [ { path = "fmt" , alias_ = "" }
+        , { path = "bufio" , alias_ = "" }
+        , { path = "io" , alias_ = "" }
+        , { path = "os" , alias_ = "" }
+        , { path = "os/exec" , alias_ = "exec" }
+        , { path = "net/http" , alias_ = "net_http" }
+        , { path = "strconv" , alias_ = "" }
+        , { path = "strings" , alias_ = "" }
+        , { path = "sort" , alias_ = "" }
+        , { path = "math" , alias_ = "" }
+        , { path = "crypto/sha256" , alias_ = "crypto_sha256" }
+        , { path = "crypto/md5" , alias_ = "crypto_md5" }
+        , { path = "encoding/hex" , alias_ = "hex" }
+        , { path = "encoding/base64" , alias_ = "base64" }
+        , { path = "encoding/json" , alias_ = "encoding_json" }
+        , { path = "time" , alias_ = "" }
+        , { path = "context" , alias_ = "" }
+        ]
+    , declarations =
+        decls
     }
 
 
--- Load and parse local module files
+loadLocalModules : String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
 
-loadLocalModules : String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
 loadLocalModules srcRoot imports acc =
     case imports of
-        [] ->
-            List.reverse acc
-
+        
+        [  ] ->
+            List.reverse  acc
+        
         imp :: rest ->
             let
                 modName =
-                    String.join "." imp.moduleName
+                    String.join  "."  imp.moduleName
                 filePath =
-                    Resolver.resolveModulePath srcRoot imp.moduleName
+                    Resolver.resolveModulePath  srcRoot  imp.moduleName
             in
-                if Resolver.isStdlib modName || isModuleLoaded modName acc then
-                    loadLocalModules srcRoot rest acc
+                if Resolver.isStdlib  modName || isModuleLoaded  modName  acc then
+                    loadLocalModules  srcRoot  rest  acc
                 else if imp.alias_ == "_" then
-                    loadLocalModules srcRoot rest acc
+                    loadLocalModules  srcRoot  rest  acc
                 else
-                    case File.readFile filePath of
-                    Err _ ->
-                        -- Try .skydeps (Sky package dependencies)
-                        loadFromSkydepsOrSkip srcRoot modName imp.moduleName rest acc
+                    case File.readFile  filePath of
+                        
+                        Err _ ->
+                            loadFromSkydepsOrSkip  srcRoot  modName
+                             imp.moduleName
+                             rest
+                             acc
+                        
+                        Ok source ->
+                            let
+                                lexResult =
+                                    Lexer.lex  source
+                            in
+                                case Parser.parse  lexResult.tokens of
+                                    
+                                    Err _ ->
+                                        loadLocalModules  srcRoot  rest  acc
+                                    
+                                    Ok mod ->
+                                        let
+                                            transImports =
+                                                List.filter
+                                                 (
+                                                \i ->
+                                                    not
+                                                     (
+                                                    Resolver.isStdlib
+                                                     (
+                                                    String.join  "."
+                                                     i.moduleName
+                                                    )
+                                                    )
+                                                )
+                                                 mod.imports
+                                            withTransitive =
+                                                loadLocalModules  srcRoot
+                                                 transImports
+                                                 (( modName , mod ) :: acc)
+                                        in
+                                            loadLocalModules  srcRoot  rest
+                                             withTransitive
 
-                    Ok source ->
-                        let
-                            lexResult =
-                                Lexer.lex source
-                        in
-                            case Parser.parse lexResult.tokens of
-                                Err _ ->
-                                    loadLocalModules srcRoot rest acc
 
-                                Ok mod ->
-                                    let
-                                        transImports =
-                                            List.filter (\i -> not (Resolver.isStdlib (String.join "." i.moduleName))) mod.imports
-                                        withTransitive =
-                                            loadLocalModules srcRoot transImports (( modName , mod ) :: acc)
-                                    in
-                                        loadLocalModules srcRoot rest withTransitive
+loadFromSkydepsOrSkip : String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
 
-
--- Try loading from .skydeps or skip
-loadFromSkydepsOrSkip : String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
 loadFromSkydepsOrSkip srcRoot modName moduleParts rest acc =
     let
         candidates =
-            findSkydepCandidates (dirOfPath srcRoot ++ "/.skydeps") moduleParts
+            findSkydepCandidates  (dirOfPath  srcRoot ++ "/.skydeps")
+             moduleParts
     in
-        loadFromCandidatesOrSkip srcRoot modName candidates rest acc
+        loadFromCandidatesOrSkip  srcRoot  modName  candidates  rest  acc
 
 
-loadFromCandidatesOrSkip : String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+loadFromCandidatesOrSkip : String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
+
 loadFromCandidatesOrSkip srcRoot modName candidates rest acc =
-    if List.isEmpty candidates then
-        loadLocalModules srcRoot rest acc
+    if List.isEmpty  candidates then
+        loadLocalModules  srcRoot  rest  acc
     else
-        tryOneSkydepCandidate srcRoot modName candidates rest acc
+        tryOneSkydepCandidate  srcRoot  modName  candidates  rest  acc
 
 
-tryOneSkydepCandidate : String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+tryOneSkydepCandidate : String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
+
 tryOneSkydepCandidate srcRoot modName candidates rest acc =
     let
         firstPath =
-            case List.head candidates of
+            case List.head  candidates of
+                
                 Just p ->
                     p
-
+                
                 Nothing ->
                     ""
         restCandidates =
-            List.drop 1 candidates
+            List.drop  1  candidates
     in
-        if String.isEmpty firstPath then
-            loadLocalModules srcRoot rest acc
+        if String.isEmpty  firstPath then
+            loadLocalModules  srcRoot  rest  acc
         else
-            case File.readFile firstPath of
+            case File.readFile  firstPath of
+                
                 Err _ ->
-                    loadFromCandidatesOrSkip srcRoot modName restCandidates rest acc
-
+                    loadFromCandidatesOrSkip  srcRoot  modName  restCandidates
+                     rest
+                     acc
+                
                 Ok source ->
-                    parseAndLoadSkydep srcRoot modName source restCandidates rest acc
+                    parseAndLoadSkydep  srcRoot  modName  source  restCandidates
+                     rest
+                     acc
 
 
-parseAndLoadSkydep : String -> String -> String -> List String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+parseAndLoadSkydep : String -> String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
+
 parseAndLoadSkydep srcRoot modName source restCandidates rest acc =
     let
         lexResult =
-            Lexer.lex source
+            Lexer.lex  source
     in
-        case Parser.parse lexResult.tokens of
+        case Parser.parse  lexResult.tokens of
+            
             Err _ ->
-                loadFromCandidatesOrSkip srcRoot modName restCandidates rest acc
-
+                loadFromCandidatesOrSkip  srcRoot  modName  restCandidates  rest
+                 acc
+            
             Ok depMod ->
                 let
                     depSrcRoot =
-                        skydepSrcRoot srcRoot modName
+                        skydepSrcRoot  srcRoot  modName
                     depTransImports =
-                        List.filter (\i -> not (Resolver.isStdlib (String.join "." i.moduleName))) depMod.imports
+                        List.filter
+                         (
+                        \i ->
+                            not
+                             (
+                            Resolver.isStdlib  (String.join  "."  i.moduleName)
+                            )
+                        )
+                         depMod.imports
                     withDep =
-                        loadLocalModules depSrcRoot depTransImports (( modName , depMod ) :: acc)
+                        loadLocalModules  depSrcRoot  depTransImports
+                         (( modName , depMod ) :: acc)
                 in
-                    loadLocalModules srcRoot rest withDep
+                    loadLocalModules  srcRoot  rest  withDep
 
 
-findSkydepCandidates : String -> List String -> List String
+findSkydepCandidates : String -> (List String) -> List String
+
 findSkydepCandidates skydepsDir moduleParts =
     let
         moduleFile =
-            String.join "/" moduleParts ++ ".sky"
-        -- List .skydeps subdirectories and try each one's src/
+            String.join  "/"  moduleParts ++ ".sky"
         listResult =
-            Process.run "sh" [ "-c" , "find " ++ skydepsDir ++ " -name 'src' -type d 2>/dev/null" ]
+            Process.run  "sh"
+             [ "-c"
+            , "find " ++ skydepsDir ++ " -name 'src' -type d 2>/dev/null"
+            ]
     in
         case listResult of
+            
             Ok output ->
                 let
                     dirs =
-                        List.filter (\d -> not (String.isEmpty (String.trim d))) (String.split "\n" output)
+                        List.filter
+                         (\d -> not  (String.isEmpty  (String.trim  d)))
+                         (String.split  "\n"  output)
                 in
-                    List.map (\d -> d ++ "/" ++ moduleFile) dirs
-
+                    List.map  (\d -> d ++ "/" ++ moduleFile)  dirs
+            
             Err _ ->
                 []
 
 
--- Get the src root for a .skydeps module
 skydepSrcRoot : String -> String -> String
+
 skydepSrcRoot srcRoot modName =
     let
         projectRoot =
-            dirOfPath srcRoot
+            dirOfPath  srcRoot
         skydepsDir =
             projectRoot ++ "/.skydeps"
-        -- Find which skydep contains this module
         findResult =
-            Process.run "sh" [ "-c" , "find " ++ skydepsDir ++ " -path '*/src/" ++ modName ++ ".sky' 2>/dev/null | head -1" ]
+            Process.run  "sh"
+             [ "-c"
+            , "find " ++
+            skydepsDir ++
+            " -path '*/src/" ++ modName ++ ".sky' 2>/dev/null | head -1"
+            ]
     in
         case findResult of
+            
             Ok path ->
                 let
                     trimmed =
-                        String.trim path
-                    -- Extract the src/ directory from the path
+                        String.trim  path
                     modFile =
                         "/" ++ modName ++ ".sky"
                     srcDir =
-                        String.slice 0 (String.length trimmed - String.length modFile) trimmed
+                        String.slice  0
+                         (String.length  trimmed - String.length  modFile)
+                         trimmed
                 in
-                    if String.isEmpty trimmed then
+                    if String.isEmpty  trimmed then
                         srcRoot
                     else
                         srcDir
-
+            
             Err _ ->
                 srcRoot
 
 
-loadFfiBindings : String -> List Ast.ImportDecl -> List ( String , Ast.Module )
+loadFfiBindings : String -> (List Ast.ImportDecl) -> List ( String , Ast.Module )
+
 loadFfiBindings srcRoot imports =
-    List.filterMap (\imp -> loadOneFfiBinding srcRoot imp) imports
+    List.filterMap  (\imp -> loadOneFfiBinding  srcRoot  imp)  imports
 
 
 loadOneFfiBinding : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
+
 loadOneFfiBinding srcRoot imp =
     let
         modName =
-            String.join "." imp.moduleName
+            String.join  "."  imp.moduleName
     in
-        if Resolver.isStdlib modName || imp.alias_ == "_" then
+        if Resolver.isStdlib  modName || imp.alias_ == "_" then
             Nothing
         else
             let
                 skyiPath =
-                    Resolver.resolveBindingPath modName
+                    Resolver.resolveBindingPath  modName
             in
-                case File.readFile skyiPath of
+                case File.readFile  skyiPath of
+                    
                     Ok skyiSource ->
                         let
-                            -- Filter large bindings via external tool
                             filteredSource =
-                                if String.length skyiSource > 10000 then
-                                    case Process.run "sh" [ "-c" , "skyi-filter " ++ skyiPath ++ " " ++ importAlias imp ++ " " ++ srcRoot ] of
+                                if String.length  skyiSource > 10000 then
+                                    case Process.run  "sh"
+                                          [ "-c"
+                                         , "skyi-filter " ++
+                                         skyiPath ++
+                                         " " ++
+                                         importAlias  imp ++ " " ++ srcRoot
+                                         ] of
+                                        
                                         Ok s ->
-                                            if String.length (String.trim s) > 20 then
+                                            if String.length  (String.trim  s) >
+                                            20 then
                                                 s
                                             else
                                                 skyiSource
-
+                                        
                                         Err _ ->
                                             skyiSource
                                 else
                                     skyiSource
                             _ =
-                                if String.length skyiSource > 10000 then
-                                    println ("   [FFI] Filtered " ++ modName ++ ": " ++ String.fromInt (List.length (String.split "\n" skyiSource)) ++ " -> " ++ String.fromInt (List.length (String.split "\n" filteredSource)) ++ " lines")
+                                if String.length  skyiSource > 10000 then
+                                    println
+                                     (
+                                    "   [FFI] Filtered " ++
+                                    modName ++
+                                    ": " ++
+                                    String.fromInt
+                                     (
+                                    List.length
+                                     (String.split  "\n"  skyiSource)
+                                    ) ++
+                                    " -> " ++
+                                    String.fromInt
+                                     (
+                                    List.length
+                                     (String.split  "\n"  filteredSource)
+                                    ) ++
+                                    " lines"
+                                    )
                                 else
                                     ()
                             lexResult =
-                                Lexer.lex filteredSource
+                                Lexer.lex  filteredSource
                         in
-                            case Parser.parse lexResult.tokens of
+                            case Parser.parse  lexResult.tokens of
+                                
                                 Ok skyiMod ->
-                                    Just ( modName , skyiMod )
-
+                                    Just  ( modName , skyiMod )
+                                
+                                Err _ ->
+                                    Nothing
+                                
                                 Err _ ->
                                     Nothing
 
-                    Err _ ->
-                        Nothing
 
+tryLoadBinding : String -> String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
 
--- Lazy binding loading for large .skyi files.
--- Try loading a binding module from .skycache/go/ (legacy, unused)
-tryLoadBinding : String -> String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
 tryLoadBinding srcRoot modName rest acc =
     let
         skyiPath =
-            Resolver.resolveBindingPath modName
+            Resolver.resolveBindingPath  modName
         _ =
-            println ("   [FFI] Looking for binding: " ++ modName ++ " at " ++ skyiPath)
+            println
+             ("   [FFI] Looking for binding: " ++ modName ++ " at " ++ skyiPath)
     in
-        case File.readFile skyiPath of
+        case File.readFile  skyiPath of
+            
             Ok skyiSource ->
                 let
                     _ =
-                        println ("   [FFI] Found binding for " ++ modName)
+                        println  ("   [FFI] Found binding for " ++ modName)
                     lexResult =
-                        Lexer.lex skyiSource
+                        Lexer.lex  skyiSource
                 in
-                    case Parser.parse lexResult.tokens of
+                    case Parser.parse  lexResult.tokens of
+                        
                         Ok skyiMod ->
                             let
                                 _ =
-                                    println ("   [FFI] Parsed binding: " ++ modName ++ " (" ++ String.fromInt (List.length skyiMod.declarations) ++ " declarations)")
+                                    println
+                                     (
+                                    "   [FFI] Parsed binding: " ++
+                                    modName ++
+                                    " (" ++
+                                    String.fromInt
+                                     (List.length  skyiMod.declarations) ++
+                                    " declarations)"
+                                    )
                             in
-                                loadLocalModules srcRoot rest (( modName , skyiMod ) :: acc)
-
+                                loadLocalModules  srcRoot  rest
+                                 (( modName , skyiMod ) :: acc)
+                        
                         Err e ->
                             let
                                 _ =
-                                    println ("   [FFI] Parse error in binding " ++ modName ++ ": " ++ e)
+                                    println
+                                     (
+                                    "   [FFI] Parse error in binding " ++
+                                    modName ++ ": " ++ e
+                                    )
                             in
-                                loadLocalModules srcRoot rest acc
+                                loadLocalModules  srcRoot  rest  acc
+                        
+                        Err e ->
+                            let
+                                _ =
+                                    println
+                                     (
+                                    "   [FFI] Binding not found: " ++ skyiPath
+                                    )
+                            in
+                                loadLocalModules  srcRoot  rest  acc
 
-            Err e ->
-                let
-                    _ =
-                        println ("   [FFI] Binding not found: " ++ skyiPath)
-                in
-                    loadLocalModules srcRoot rest acc
 
+copyFfiWrappers : String -> (List Ast.ImportDecl) -> String -> ()
 
--- Copy FFI wrapper Go files from .skycache to the output directory
-copyFfiWrappers : String -> List Ast.ImportDecl -> List ( String , Ast.Module ) -> ()
-copyFfiWrappers outDir imports loadedModules =
+copyFfiWrappers outDir imports mainGoCode =
     let
         _ =
             List.foldl
-                (\imp _ ->
-                    let
-                        modName =
-                            String.join "." imp.moduleName
-                    in
-                        if Resolver.isStdlib modName || imp.alias_ == "_" then
-                            ()
-                        else
-                            copyOneFfiWrapper outDir modName
-                )
-                ()
-                imports
-        -- Also copy project-local sky_wrappers/ if it exists (for foreign import "sky_wrappers")
+             (
+            \imp _ ->
+                let
+                    modName =
+                        String.join  "."  imp.moduleName
+                in
+                    if Resolver.isStdlib  modName || imp.alias_ == "_" then
+                        ()
+                    else
+                        copyOneFfiWrapper  outDir  modName  mainGoCode
+            )
+             ()
+             imports
         _ =
-            copyProjectWrappers outDir
+            copyProjectWrappers  outDir  mainGoCode
     in
         ()
 
 
--- Copy project-local sky_wrappers/ Go files (for foreign import "sky_wrappers")
-copyProjectWrappers : String -> ()
-copyProjectWrappers outDir =
+copyProjectWrappers : String -> String -> ()
+
+copyProjectWrappers outDir mainGoCode =
     let
-        -- Try dist/sky_wrappers/ and sky_wrappers/ relative to CWD
         dirs =
             [ "dist/sky_wrappers" , "sky_wrappers" ]
     in
-        List.foldl (\dir _ -> copyWrapperDir outDir dir) () dirs
+        List.foldl  (\dir _ -> copyWrapperDir  outDir  dir  mainGoCode)  ()
+         dirs
 
 
-copyWrapperDir : String -> String -> ()
-copyWrapperDir outDir wrapperDir =
-    case Process.run "sh" [ "-c" , "ls " ++ wrapperDir ++ "/*.go 2>/dev/null" ] of
+copyWrapperDir : String -> String -> String -> ()
+
+copyWrapperDir outDir wrapperDir mainGoCode =
+    case Process.run  "sh"
+          [ "-c" , "ls " ++ wrapperDir ++ "/*.go 2>/dev/null" ] of
+        
         Ok output ->
             let
                 files =
-                    List.filter (\f -> not (String.isEmpty (String.trim f))) (String.split "\n" output)
+                    List.filter  (\f -> not  (String.isEmpty  (String.trim  f)))
+                     (String.split  "\n"  output)
             in
                 List.foldl
-                    (\filePath _ ->
-                        if String.contains "00_sky_helpers" filePath || String.contains "fmt.go" filePath then
-                            ()
-                        else
-                        case File.readFile filePath of
+                 (
+                \filePath _ ->
+                    if String.contains  "00_sky_helpers"  filePath ||
+                    String.contains  "fmt.go"  filePath then
+                        ()
+                    else
+                        case File.readFile  filePath of
+                            
                             Ok content ->
                                 let
                                     rewritten =
-                                        String.replace "package sky_wrappers" "package main" content
+                                        String.replace  "package sky_wrappers"
+                                         "package main"
+                                         content
                                     fileName =
-                                        case List.reverse (String.split "/" filePath) of
+                                        case List.reverse
+                                              (String.split  "/"  filePath) of
+                                            
                                             last :: _ ->
                                                 last
-
-                                            [] ->
+                                            
+                                            [  ] ->
                                                 "wrapper.go"
                                     dst =
                                         outDir ++ "/sky_" ++ fileName
                                     _ =
-                                        File.writeFile dst rewritten
+                                        File.writeFile  dst  rewritten
                                 in
                                     ()
-
+                            
                             Err _ ->
                                 ()
-                    )
-                    ()
-                    files
-
+                )
+                 ()
+                 files
+        
         Err _ ->
             ()
 
 
-copyOneFfiWrapper : String -> String -> ()
-copyOneFfiWrapper outDir modName =
+copyOneFfiWrapper : String -> String -> String -> ()
+
+copyOneFfiWrapper outDir modName mainGoCode =
     let
         safeName =
-            String.join "_" (List.map ffiSafePart (String.split "." modName))
-        -- Skip if project-local wrapper already exists (avoids duplicates)
+            String.join  "_"
+             (List.map  ffiSafePart  (String.split  "."  modName))
+        wrapperPrefix =
+            "Sky_" ++ safeName ++ "_"
+        hasReferences =
+            String.contains  wrapperPrefix  mainGoCode
         projectWrapper =
             "dist/sky_wrappers/" ++ safeName ++ ".go"
         hasProjectWrapper =
-            case Process.run "sh" [ "-c" , "test -f " ++ projectWrapper ++ " && echo yes" ] of
+            case Process.run  "sh"
+                  [ "-c" , "test -f " ++ projectWrapper ++ " && echo yes" ] of
+                
                 Ok s ->
-                    String.contains "yes" s
-
+                    String.contains  "yes"  s
+                
                 Err _ ->
                     False
         wrapperSrc =
             ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
     in
-        if hasProjectWrapper then
+        if not  hasReferences then
+            ()
+        else if hasProjectWrapper then
             ()
         else
-        case File.readFile wrapperSrc of
-            Ok content ->
-                let
-                    rewritten =
-                        String.replace "package sky_wrappers" "package main" content
-                    wrapperDst =
-                        outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
-                    _ =
-                        File.writeFile wrapperDst rewritten
-                in
-                    println ("   Copied wrapper: " ++ wrapperDst)
+            case File.readFile  wrapperSrc of
+                
+                Ok content ->
+                    let
+                        rewritten =
+                            String.replace  "package sky_wrappers"
+                             "package main"
+                             content
+                        wrapperDst =
+                            outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
+                        _ =
+                            File.writeFile  wrapperDst  rewritten
+                    in
+                        println  ("   Copied wrapper: " ++ wrapperDst)
+                
+                Err _ ->
+                    ()
 
-            Err _ ->
-                ()
 
+buildAliasMap : (List Ast.ImportDecl) -> Dict.Dict String String
 
--- Build alias → qualified module name map
-
-buildAliasMap : List Ast.ImportDecl -> Dict.Dict String String
 buildAliasMap imports =
-    List.foldl addImportAlias Dict.empty imports
+    List.foldl  addImportAlias  Dict.empty  imports
 
 
--- Generate aliases for ADT constructors only (capitalized names that are
--- likely constructor functions, not regular functions)
-generatePrefixAliases : String -> List GoDecl -> List GoDecl
+generatePrefixAliases : String -> (List GoDecl) -> List GoDecl
+
 generatePrefixAliases prefix decls =
-    List.filterMap (makePrefixAlias prefix) decls
+    List.filterMap  (makePrefixAlias  prefix)  decls
 
 
 makePrefixAlias : String -> GoDecl -> Maybe GoDecl
+
 makePrefixAlias prefix decl =
     let
         fullName =
-            getDeclName decl
+            getDeclName  decl
     in
-        if String.isEmpty fullName then
+        if String.isEmpty  fullName then
             Nothing
-        else if not (String.startsWith prefix fullName) then
+        else if not  (String.startsWith  prefix  fullName) then
             Nothing
         else
             let
                 unprefixed =
-                    String.slice (String.length prefix + 1) (String.length fullName) fullName
+                    String.slice  (String.length  prefix + 1)
+                     (String.length  fullName)
+                     fullName
                 firstChar =
-                    String.slice 0 1 unprefixed
+                    String.slice  0  1  unprefixed
             in
-                if String.isEmpty unprefixed then
+                if String.isEmpty  unprefixed then
                     Nothing
-                else if isCommonName unprefixed then
+                else if isCommonName  unprefixed then
                     Nothing
                 else
-                    Just (GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName))
+                    Just
+                     (GoDeclRaw  ("var " ++ unprefixed ++ " = " ++ fullName))
 
 
 isCommonName : String -> Bool
+
 isCommonName name =
     name == "main" || name == "_"
 
 
 isSharedValue : String -> Bool
+
 isSharedValue name =
-    name == "emptySub" || name == "emptySpan" || name == "emptyResult" ||
-    name == "emptyRegistry" || name == "emptyCtx" ||
-    name == "applySub" || name == "freshVar" || name == "unify" ||
-    name == "composeSubs" || name == "freeVars" || name == "freeVarsInScheme" ||
-    name == "instantiate" || name == "generalize" || name == "mono" ||
-    name == "formatType" || name == "applySubToScheme" ||
-    name == "initState" || name == "filterLayout" || name == "consume" ||
-    name == "consumeLex" || name == "matchKind" || name == "matchLexeme" ||
-    name == "matchKindLex" || name == "advance" || name == "peek" ||
-    name == "peekAt" || name == "previous" || name == "tokenKindEq" ||
-    name == "tokenKindStr" || name == "parseQualifiedParts" ||
+    name == "emptySub" ||
+    name == "emptySpan" ||
+    name == "emptyResult" ||
+    name == "emptyRegistry" ||
+    name == "emptyCtx" ||
+    name == "applySub" ||
+    name == "freshVar" ||
+    name == "unify" ||
+    name == "composeSubs" ||
+    name == "freeVars" ||
+    name == "freeVarsInScheme" ||
+    name == "instantiate" ||
+    name == "generalize" ||
+    name == "mono" ||
+    name == "formatType" ||
+    name == "applySubToScheme" ||
+    name == "initState" ||
+    name == "filterLayout" ||
+    name == "consume" ||
+    name == "consumeLex" ||
+    name == "matchKind" ||
+    name == "matchLexeme" ||
+    name == "matchKindLex" ||
+    name == "advance" ||
+    name == "peek" ||
+    name == "peekAt" ||
+    name == "previous" ||
+    name == "tokenKindEq" ||
+    name == "tokenKindStr" ||
+    name == "parseQualifiedParts" ||
     name == "isKeyword" ||
-    name == "peekLexeme" || name == "peekColumn" || name == "peekKind" ||
-    name == "peekAt1Kind" || name == "getLexemeAt1" || name == "dispatchDeclaration" ||
-    name == "parseDeclsHelper" || name == "addDeclAndContinue" || name == "prependToResult" ||
-    name == "buildVariant" || name == "finishVariant" || name == "prependVariant" ||
-    name == "applyTypeArgs" || name == "resolveTypeApp" ||
-    name == "parseVariantFields" || name == "parseTypeParams" ||
-    name == "parseTypeVariants" || name == "parseTypeExpr" ||
-    name == "parseTypeApp" || name == "parseTypeArgs" ||
-    name == "parseTypePrimary" || name == "parseTupleTypeRest" ||
-    name == "parseRecordType" || name == "parseRecordTypeFields" ||
-    name == "parseExposingClause" || name == "parseExposedItems" ||
-    name == "parseModuleName" || name == "parseModuleNameParts" ||
-    name == "parseOptionalExposing" || name == "parseImports" ||
-    name == "parseImport" || name == "parseForeignImport" ||
-    name == "parseTypeAlias" || name == "parseTypeDecl" ||
-    name == "parseTypeAnnot" || name == "parseFunDecl" ||
-    name == "parseFunParams" || name == "parseDeclaration" ||
-    name == "parseDeclarations" || name == "parseModule" ||
-    name == "isStartOfPrimary" || name == "getOperatorInfo" ||
-    name == "parseExpr" || name == "parseExprLoop" ||
-    name == "parseApplication" || name == "parseApplicationArgs" ||
-    name == "parsePrimary" || name == "parseCaseExpr" ||
-    name == "parseCaseBranches" || name == "parseIfExpr" ||
-    name == "parseLetExpr" || name == "parseLetBindings" ||
-    name == "parseLambdaExpr" || name == "parseLambdaParams" ||
-    name == "parseRecordOrUpdate" || name == "parseRecordFields" ||
-    name == "parseParenOrTuple" || name == "parseTupleRest" ||
-    name == "parseListExpr" || name == "parseListItems" ||
-    name == "parseQualifiedOrConstructor" || name == "parseFieldAccess" ||
-    name == "parsePatternExpr" || name == "parsePrimaryPattern" ||
-    name == "parsePatternArgs" || name == "parseTuplePatternRest" ||
-    name == "parsePatternList" || name == "parseVariantFields" ||
-    name == "parseTypeArgs"
+    name == "peekLexeme" ||
+    name == "peekColumn" ||
+    name == "peekKind" ||
+    name == "peekAt1Kind" ||
+    name == "getLexemeAt1" ||
+    name == "dispatchDeclaration" ||
+    name == "parseDeclsHelper" ||
+    name == "addDeclAndContinue" ||
+    name == "prependToResult" ||
+    name == "buildVariant" ||
+    name == "finishVariant" ||
+    name == "prependVariant" ||
+    name == "applyTypeArgs" ||
+    name == "resolveTypeApp" ||
+    name == "parseVariantFields" ||
+    name == "parseTypeParams" ||
+    name == "parseTypeVariants" ||
+    name == "parseTypeExpr" ||
+    name == "parseTypeApp" ||
+    name == "parseTypeArgs" ||
+    name == "parseTypePrimary" ||
+    name == "parseTupleTypeRest" ||
+    name == "parseRecordType" ||
+    name == "parseRecordTypeFields" ||
+    name == "parseExposingClause" ||
+    name == "parseExposedItems" ||
+    name == "parseModuleName" ||
+    name == "parseModuleNameParts" ||
+    name == "parseOptionalExposing" ||
+    name == "parseImports" ||
+    name == "parseImport" ||
+    name == "parseForeignImport" ||
+    name == "parseTypeAlias" ||
+    name == "parseTypeDecl" ||
+    name == "parseTypeAnnot" ||
+    name == "parseFunDecl" ||
+    name == "parseFunParams" ||
+    name == "parseDeclaration" ||
+    name == "parseDeclarations" ||
+    name == "parseModule" ||
+    name == "isStartOfPrimary" ||
+    name == "getOperatorInfo" ||
+    name == "parseExpr" ||
+    name == "parseExprLoop" ||
+    name == "parseApplication" ||
+    name == "parseApplicationArgs" ||
+    name == "parsePrimary" ||
+    name == "parseCaseExpr" ||
+    name == "parseCaseBranches" ||
+    name == "parseIfExpr" ||
+    name == "parseLetExpr" ||
+    name == "parseLetBindings" ||
+    name == "parseLambdaExpr" ||
+    name == "parseLambdaParams" ||
+    name == "parseRecordOrUpdate" ||
+    name == "parseRecordFields" ||
+    name == "parseParenOrTuple" ||
+    name == "parseTupleRest" ||
+    name == "parseListExpr" ||
+    name == "parseListItems" ||
+    name == "parseQualifiedOrConstructor" ||
+    name == "parseFieldAccess" ||
+    name == "parsePatternExpr" ||
+    name == "parsePrimaryPattern" ||
+    name == "parsePatternArgs" ||
+    name == "parseTuplePatternRest" ||
+    name == "parsePatternList" ||
+    name == "parseVariantFields" || name == "parseTypeArgs"
 
 
-deduplicateDecls : List GoDecl -> List GoDecl
+deduplicateDecls : (List GoDecl) -> List GoDecl
+
 deduplicateDecls decls =
-    deduplicateDeclsLoop decls Dict.empty []
+    deduplicateDeclsLoop  decls  Dict.empty  []
 
 
-deduplicateDeclsLoop : List GoDecl -> Dict.Dict String String -> List GoDecl -> List GoDecl
+deduplicateDeclsLoop : (List GoDecl) -> (Dict.Dict String String) -> (List GoDecl) -> List GoDecl
+
 deduplicateDeclsLoop decls seen acc =
     case decls of
-        [] ->
-            List.reverse acc
-
+        
+        [  ] ->
+            List.reverse  acc
+        
         decl :: rest ->
             let
                 name =
-                    getDeclName decl
+                    getDeclName  decl
             in
-                if String.isEmpty name then
-                    deduplicateDeclsLoop rest seen (decl :: acc)
+                if String.isEmpty  name then
+                    deduplicateDeclsLoop  rest  seen  (decl :: acc)
                 else
-                    case Dict.get name seen of
+                    case Dict.get  name  seen of
+                        
                         Just _ ->
-                            deduplicateDeclsLoop rest seen acc
-
+                            deduplicateDeclsLoop  rest  seen  acc
+                        
                         Nothing ->
-                            deduplicateDeclsLoop rest (Dict.insert name "1" seen) (decl :: acc)
+                            deduplicateDeclsLoop  rest
+                             (Dict.insert  name  "1"  seen)
+                             (decl :: acc)
 
 
 getDeclName : GoDecl -> String
+
 getDeclName decl =
     case decl of
+        
         GoDeclFunc funcDecl ->
             funcDecl.name
-
+        
         GoDeclVar name _ ->
             name
-
+        
         GoDeclRaw code ->
-            -- Extract name from "var Name = ..." or "func Name(...) ..."
-            if String.startsWith "var " code then
-                extractVarName code
-            else if String.startsWith "func " code then
-                extractFuncName code
-            else if String.startsWith "type " code then
-                extractTypeName code
+            if String.startsWith  "var "  code then
+                extractVarName  code
+            else if String.startsWith  "func "  code then
+                extractFuncName  code
+            else if String.startsWith  "type "  code then
+                extractTypeName  code
             else
                 ""
 
 
 extractVarName : String -> String
+
 extractVarName code =
     let
         afterVar =
-            String.slice 4 (String.length code) code
+            String.slice  4  (String.length  code)  code
         spaceIdx =
-            findCharIdx ' ' afterVar 0
+            findCharIdx  ' '  afterVar  0
     in
         if spaceIdx > 0 then
-            String.slice 0 spaceIdx afterVar
+            String.slice  0  spaceIdx  afterVar
         else
             ""
 
 
 extractFuncName : String -> String
+
 extractFuncName code =
     let
         afterFunc =
-            String.slice 5 (String.length code) code
+            String.slice  5  (String.length  code)  code
         parenIdx =
-            findCharIdx '(' afterFunc 0
+            findCharIdx  '('  afterFunc  0
     in
         if parenIdx > 0 then
-            String.slice 0 parenIdx afterFunc
+            String.slice  0  parenIdx  afterFunc
         else
             ""
 
 
 extractTypeName : String -> String
+
 extractTypeName code =
     let
         afterType =
-            String.slice 5 (String.length code) code
+            String.slice  5  (String.length  code)  code
         spaceIdx =
-            findCharIdx ' ' afterType 0
+            findCharIdx  ' '  afterType  0
     in
         if spaceIdx > 0 then
-            String.slice 0 spaceIdx afterType
+            String.slice  0  spaceIdx  afterType
         else
             ""
 
 
+generateImportAliases : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List GoDecl
 
--- Generate var aliases for names imported via exposing(..) from local modules
--- e.g. import Compiler.GoIr exposing (..) → var GoReturn = Compiler_GoIr_GoReturn
-
-generateImportAliases : List Ast.ImportDecl -> List ( String , Ast.Module ) -> List GoDecl
 generateImportAliases imports allModules =
-    List.concatMap (generateAliasesForImport allModules) imports
+    List.concatMap  (generateAliasesForImport  allModules)  imports
 
 
-generateAliasesForImport : List ( String , Ast.Module ) -> Ast.ImportDecl -> List GoDecl
+generateAliasesForImport : (List ( String , Ast.Module )) -> Ast.ImportDecl -> List GoDecl
+
 generateAliasesForImport allModules imp =
     let
         modName =
-            String.join "." imp.moduleName
+            String.join  "."  imp.moduleName
     in
-        if Resolver.isStdlib modName then
+        if Resolver.isStdlib  modName then
             []
         else
-            -- Generate aliases for ALL exports of imported local modules
-            generateAliasesFromModule modName allModules
+            generateAliasesFromModule  modName  allModules
 
 
-generateAliasesFromModule : String -> List ( String , Ast.Module ) -> List GoDecl
+generateAliasesFromModule : String -> (List ( String , Ast.Module )) -> List GoDecl
+
 generateAliasesFromModule modName allModules =
-    case findModule modName allModules of
+    case findModule  modName  allModules of
+        
         Nothing ->
             []
-
+        
         Just mod ->
             let
                 prefix =
-                    String.replace "." "_" modName
+                    String.replace  "."  "_"  modName
                 declNames =
-                    extractExportedNames mod
+                    extractExportedNames  mod
             in
-                List.concatMap (\name ->
-                    if String.isEmpty name then
+                List.concatMap
+                 (
+                \name ->
+                    if String.isEmpty  name then
                         []
                     else
                         let
                             safeName =
-                                Lower.sanitizeGoIdent name
+                                Lower.sanitizeGoIdent  name
                             prefixedName =
-                                prefix ++ "_" ++ capitalizeFirst safeName
-
+                                prefix ++ "_" ++ capitalizeFirst  safeName
                             callSuffix =
-                                if isZeroArityInModule name mod then "()" else ""
+                                if isZeroArityInModule  name  mod then
+                                    "()"
+                                else
+                                    ""
                         in
-                            [ GoDeclRaw ("var " ++ safeName ++ " = " ++ prefixedName ++ callSuffix)
-                            , GoDeclRaw ("var " ++ capitalizeFirst safeName ++ " = " ++ prefixedName ++ callSuffix)
+                            [ GoDeclRaw
+                               (
+                              "var " ++
+                              safeName ++ " = " ++ prefixedName ++ callSuffix
+                              )
+                            , GoDeclRaw
+                               (
+                              "var " ++
+                              capitalizeFirst  safeName ++
+                              " = " ++ prefixedName ++ callSuffix
+                              )
                             ]
-                ) declNames
+                )
+                 declNames
 
-
--- Check exposing clause without ADT pattern matching (avoids TS compiler tag issues)
--- ExposeAll has Tag=0, ExposeList has Tag=1, ExposeNone has Tag=2
 
 isExposingAll : Ast.ExposingClause -> Bool
+
 isExposingAll clause =
-    not (isExposingNone clause) && List.isEmpty (getExposeNames clause)
+    not  (isExposingNone  clause) && List.isEmpty  (getExposeNames  clause)
 
 
 isExposingNone : Ast.ExposingClause -> Bool
+
 isExposingNone clause =
     case clause of
+        
         Ast.ExposeNone ->
             True
-
+        
         _ ->
             False
 
 
 getExposeNames : Ast.ExposingClause -> List String
+
 getExposeNames clause =
     case clause of
+        
         Ast.ExposeList names ->
             names
-
+        
         _ ->
             []
 
 
 isZeroArityInModule : String -> Ast.Module -> Bool
+
 isZeroArityInModule name mod =
     List.foldl
-        (\decl acc ->
-            case decl of
-                Ast.FunDecl dName params _ _ ->
-                    if dName == name then
-                        List.isEmpty params
-                    else
-                        acc
-
-                _ ->
+     (
+    \decl acc ->
+        case decl of
+            
+            Ast.FunDecl dName params _ _ ->
+                if dName == name then
+                    List.isEmpty  params
+                else
                     acc
-        )
-        False
-        mod.declarations
+            
+            _ ->
+                acc
+    )
+     False
+     mod.declarations
 
 
-findModule : String -> List ( String , Ast.Module ) -> Maybe Ast.Module
+findModule : String -> (List ( String , Ast.Module )) -> Maybe Ast.Module
+
 findModule modName modules =
     case modules of
-        [] ->
+        
+        [  ] ->
             Nothing
-
+        
         pair :: rest ->
-            if fst pair == modName then
-                Just (snd pair)
+            if fst  pair == modName then
+                Just  (snd  pair)
             else
-                findModule modName rest
+                findModule  modName  rest
 
 
 extractExportedNames : Ast.Module -> List String
+
 extractExportedNames mod =
-    List.concatMap extractDeclNames mod.declarations
+    List.concatMap  extractDeclNames  mod.declarations
 
 
 extractDeclNames : Ast.Declaration -> List String
+
 extractDeclNames decl =
     case decl of
+        
         Ast.FunDecl name _ _ _ ->
             [ name ]
-
+        
         Ast.TypeDecl name _ variants _ ->
-            -- Only export variant constructors (they become Go functions)
-            -- The type name itself (e.g. "Expression") is not a Go value
-            List.map (\v -> v.name) variants
-
+            List.map  (\v -> v.name)  variants
+        
         Ast.TypeAliasDecl name _ _ _ ->
-            -- Type aliases don't generate Go values
             []
-
+        
         Ast.TypeAnnotDecl _ _ _ ->
             []
-
+        
         Ast.ForeignImportDecl name _ _ _ ->
             [ name ]
 
 
--- Collect function names from both FunDecl and TypeAnnotDecl
--- TypeAnnotDecl names mark functions that might have been dropped by the parser
--- (the parser successfully parses annotations but sometimes drops the function body)
-collectAllFunctionNames : List Ast.Declaration -> List String
+collectAllFunctionNames : (List Ast.Declaration) -> List String
+
 collectAllFunctionNames decls =
-    deduplicateStringList (List.filterMap extractDeclNameForFn decls)
+    deduplicateStringList  (List.filterMap  extractDeclNameForFn  decls)
 
 
 extractDeclNameForFn : Ast.Declaration -> Maybe String
+
 extractDeclNameForFn d =
     case d of
+        
         Ast.FunDecl name _ _ _ ->
-            Just name
-
+            Just  name
+        
         _ ->
             Nothing
 
 
-deduplicateStringList : List String -> List String
+deduplicateStringList : (List String) -> List String
+
 deduplicateStringList items =
-    deduplicateStringsLoop items Dict.empty []
+    deduplicateStringsLoop  items  Dict.empty  []
 
 
-deduplicateStringsLoop : List String -> Dict.Dict String String -> List String -> List String
+deduplicateStringsLoop : (List String) -> (Dict.Dict String String) -> (List String) -> List String
+
 deduplicateStringsLoop items seen acc =
     case items of
-        [] ->
-            List.reverse acc
-
+        
+        [  ] ->
+            List.reverse  acc
+        
         item :: rest ->
-            case Dict.get item seen of
+            case Dict.get  item  seen of
+                
                 Just _ ->
-                    deduplicateStringsLoop rest seen acc
-
+                    deduplicateStringsLoop  rest  seen  acc
+                
                 Nothing ->
-                    deduplicateStringsLoop rest (Dict.insert item "1" seen) (item :: acc)
+                    deduplicateStringsLoop  rest  (Dict.insert  item  "1"  seen)
+                     (item :: acc)
 
 
-isModuleLoaded : String -> List ( String , Ast.Module ) -> Bool
+isModuleLoaded : String -> (List ( String , Ast.Module )) -> Bool
+
 isModuleLoaded modName loaded =
-    List.foldl (\pair acc -> acc || fst pair == modName) False loaded
+    List.foldl  (\pair acc -> acc || fst  pair == modName)  False  loaded
 
 
-deduplicateFfiModules : List ( String , Ast.Module ) -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+deduplicateFfiModules : (List ( String , Ast.Module )) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
+
 deduplicateFfiModules modules acc =
     case modules of
-        [] ->
-            List.reverse acc
-
+        
+        [  ] ->
+            List.reverse  acc
+        
         pair :: rest ->
-            if isModuleLoaded (fst pair) acc then
-                deduplicateFfiModules rest acc
+            if isModuleLoaded  (fst  pair)  acc then
+                deduplicateFfiModules  rest  acc
             else
-                deduplicateFfiModules rest (pair :: acc)
+                deduplicateFfiModules  rest  (pair :: acc)
 
 
-addImportAlias : Ast.ImportDecl -> Dict.Dict String String -> Dict.Dict String String
+addImportAlias : Ast.ImportDecl -> (Dict.Dict String String) -> Dict.Dict String String
+
 addImportAlias imp acc =
     let
         modName =
-            String.join "." imp.moduleName
+            String.join  "."  imp.moduleName
     in
-        if Resolver.isStdlib modName then
+        if Resolver.isStdlib  modName then
             acc
         else
-            Dict.insert (importAlias imp) modName acc
+            Dict.insert  (importAlias  imp)  modName  acc
 
 
 importAlias : Ast.ImportDecl -> String
+
 importAlias imp =
-    if String.isEmpty imp.alias_ then
-        case List.reverse imp.moduleName of
+    if String.isEmpty  imp.alias_ then
+        case List.reverse  imp.moduleName of
+            
             last :: _ ->
                 last
-
-            [] ->
+            
+            [  ] ->
                 ""
     else
         imp.alias_
 
 
--- Compile a dependency module into Go declarations with namespaced names
+compileDependencyModule : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
 
-compileDependencyModule : Env.TypeEnv -> List ( String , Ast.Module ) -> ( String , Ast.Module ) -> List GoDecl
 compileDependencyModule stdlibEnv allModules pair =
     let
         modName =
-            fst pair
+            fst  pair
         mod =
-            snd pair
+            snd  pair
         prefix =
-            String.replace "." "_" modName
+            String.replace  "."  "_"  modName
         checkResult =
-            Checker.checkModule mod (Just stdlibEnv)
+            Checker.checkModule  mod  (Just  stdlibEnv)
         registry =
             case checkResult of
+                
                 Ok result ->
                     result.registry
-
+                
                 Err _ ->
                     Adt.emptyRegistry
         depBaseCtx =
             Lower.emptyCtx
         depAliasMap =
-            buildAliasMap mod.imports
-        -- Collect ALL names: FunDecls + TypeAnnotDecls (annotations mark functions
-        -- that might have been dropped by the parser)
+            buildAliasMap  mod.imports
         localFns =
-            collectAllFunctionNames mod.declarations
+            collectAllFunctionNames  mod.declarations
         _ =
-            println ("   [DEBUG] " ++ modName ++ ": " ++ String.fromInt (List.length localFns) ++ " fns: " ++ String.join "," localFns)
+            println
+             (
+            "   [DEBUG] " ++
+            modName ++
+            ": " ++
+            String.fromInt  (List.length  localFns) ++
+            " fns: " ++ String.join  ","  localFns
+            )
         depExposed =
-            Lower.buildExposedStdlib mod.imports
+            Lower.buildExposedStdlib  mod.imports
         ctx =
             { depBaseCtx
-                | registry = registry
-                , localFunctions = localFns
-                , importedConstructors = Lower.buildConstructorMap registry
-                , modulePrefix = prefix
-                , importAliases = depAliasMap
-                , localFunctionArity = Lower.collectLocalFunctionArities mod.declarations
-                , exposedStdlib = depExposed
+            | registry =
+                registry
+            , localFunctions =
+                localFns
+            , importedConstructors =
+                Lower.buildConstructorMap  registry
+            , modulePrefix =
+                prefix
+            , importAliases =
+                depAliasMap
+            , localFunctionArity =
+                Lower.collectLocalFunctionArities  mod.declarations
+            , exposedStdlib =
+                depExposed
             }
         goDecls =
-            Lower.lowerDeclarations ctx mod.declarations
+            Lower.lowerDeclarations  ctx  mod.declarations
         ctorDecls =
-            Lower.generateConstructorDecls registry mod.declarations
-        -- Filter out side-effect-only declarations and deduplicate
+            Lower.generateConstructorDecls  registry  mod.declarations
         filtered =
-            List.filter isExportableDecl (List.append ctorDecls goDecls)
+            List.filter  isExportableDecl  (List.append  ctorDecls  goDecls)
         prefixed =
-            List.map (prefixDecl prefix) filtered
-        -- Generate aliases for constructors and shared values from prefixed declarations
+            List.map  (prefixDecl  prefix)  filtered
         aliases =
-            generateConstructorAliases prefix prefixed
-        -- Generate import aliases for exposing(..) imports within this dependency
+            generateConstructorAliases  prefix  prefixed
         depImportAliases =
-            generateImportAliases mod.imports allModules
+            generateImportAliases  mod.imports  allModules
     in
-        deduplicateDecls (List.concat [ aliases , depImportAliases , prefixed ])
+        deduplicateDecls
+         (List.concat  [ aliases , depImportAliases , prefixed ])
 
 
--- Generate aliases for ALL functions from dependency modules
--- (constructors + shared values used via exposing(..))
-generateConstructorAliases : String -> List GoDecl -> List GoDecl
+generateConstructorAliases : String -> (List GoDecl) -> List GoDecl
+
 generateConstructorAliases prefix decls =
-    List.filterMap (makeConstructorAlias prefix) decls
+    List.filterMap  (makeConstructorAlias  prefix)  decls
 
 
 makeConstructorAlias : String -> GoDecl -> Maybe GoDecl
+
 makeConstructorAlias prefix decl =
     let
         fullName =
-            getDeclName decl
+            getDeclName  decl
         prefixLen =
-            String.length prefix + 1
+            String.length  prefix + 1
         unprefixed =
-            if String.startsWith (prefix ++ "_") fullName then
-                String.slice prefixLen (String.length fullName) fullName
+            if String.startsWith  (prefix ++ "_")  fullName then
+                String.slice  prefixLen  (String.length  fullName)  fullName
             else
                 ""
     in
-        if String.isEmpty unprefixed || unprefixed == "Main" then
+        if String.isEmpty  unprefixed || unprefixed == "Main" then
             Nothing
         else
             let
                 firstChar =
-                    String.slice 0 1 unprefixed
-                -- For lowercase shared values, uncapitalize
+                    String.slice  0  1  unprefixed
                 aliasName =
-                    if isSharedValue (String.toLower (String.slice 0 1 unprefixed) ++ String.slice 1 (String.length unprefixed) unprefixed) then
-                        String.toLower (String.slice 0 1 unprefixed) ++ String.slice 1 (String.length unprefixed) unprefixed
+                    if isSharedValue
+                        (
+                       String.toLower  (String.slice  0  1  unprefixed) ++
+                       String.slice  1  (String.length  unprefixed)  unprefixed
+                       ) then
+                        String.toLower  (String.slice  0  1  unprefixed) ++
+                        String.slice  1  (String.length  unprefixed)  unprefixed
                     else
                         unprefixed
             in
-                if firstChar == String.toUpper firstChar || isSharedValue aliasName then
-                    Just (GoDeclRaw ("var " ++ aliasName ++ " = " ++ fullName))
+                if firstChar == String.toUpper  firstChar ||
+                isSharedValue  aliasName then
+                    Just
+                     (GoDeclRaw  ("var " ++ aliasName ++ " = " ++ fullName))
                 else
                     Nothing
 
 
-generateOriginalAliases : String -> List GoDecl -> List GoDecl
+generateOriginalAliases : String -> (List GoDecl) -> List GoDecl
+
 generateOriginalAliases prefix decls =
-    List.filterMap (makeOriginalAlias prefix) decls
+    List.filterMap  (makeOriginalAlias  prefix)  decls
 
 
 makeOriginalAlias : String -> GoDecl -> Maybe GoDecl
+
 makeOriginalAlias prefix decl =
     let
         name =
-            getDeclName decl
+            getDeclName  decl
     in
-        if String.isEmpty name || name == "_" || name == "main" || isCommonName name then
+        if String.isEmpty  name ||
+        name == "_" || name == "main" || isCommonName  name then
             Nothing
         else
             let
                 prefixedName =
-                    prefix ++ "_" ++ capitalizeFirst name
+                    prefix ++ "_" ++ capitalizeFirst  name
             in
-                Just (GoDeclRaw ("var " ++ name ++ " = " ++ prefixedName))
+                Just  (GoDeclRaw  ("var " ++ name ++ " = " ++ prefixedName))
 
 
 isExportableDecl : GoDecl -> Bool
+
 isExportableDecl decl =
     case decl of
+        
         GoDeclFunc funcDecl ->
             funcDecl.name /= "_" && funcDecl.name /= "main"
-
+        
         GoDeclVar name _ ->
             name /= "_"
-
+        
         GoDeclRaw _ ->
             True
 
 
--- Check if a module needs stdlib Go wrappers
-
--- Get the directory part of a file path
-
 dirOfPath : String -> String
+
 dirOfPath path =
     let
         lastSlash =
-            findLastSlash path (String.length path - 1)
+            findLastSlash  path  (String.length  path - 1)
     in
         if lastSlash > 0 then
-            String.slice 0 lastSlash path
+            String.slice  0  lastSlash  path
         else
             "."
 
 
-
 needsStdlibWrapper : String -> Bool
+
 needsStdlibWrapper modName =
-    String.startsWith "Sky.Core.Json" modName ||
-    String.startsWith "Std.Html" modName ||
-    String.startsWith "Std.Css" modName ||
-    String.startsWith "Std.Live" modName ||
-    String.startsWith "Std.Cmd" modName ||
-    String.startsWith "Std.Sub" modName ||
-    String.startsWith "Std.Task" modName ||
-    String.startsWith "Std.Time" modName ||
-    String.startsWith "Std.Program" modName ||
-    modName == "Sky.Core.Result" ||
-    modName == "Sky.Core.Maybe"
+    String.startsWith  "Sky.Core.Json"  modName ||
+    String.startsWith  "Std.Html"  modName ||
+    String.startsWith  "Std.Css"  modName ||
+    String.startsWith  "Std.Live"  modName ||
+    String.startsWith  "Std.Cmd"  modName ||
+    String.startsWith  "Std.Sub"  modName ||
+    String.startsWith  "Std.Task"  modName ||
+    String.startsWith  "Std.Time"  modName ||
+    String.startsWith  "Std.Program"  modName ||
+    modName == "Sky.Core.Result" || modName == "Sky.Core.Maybe"
 
 
--- Build Go imports for stdlib modules
+buildStdlibGoImports : (List Ast.ImportDecl) -> List GoImport
 
-buildStdlibGoImports : List Ast.ImportDecl -> List GoImport
 buildStdlibGoImports imports =
     let
         stdImports =
-            List.filterMap importToGoImport imports
+            List.filterMap  importToGoImport  imports
     in
-        { path = "sky-out/sky_wrappers" , alias_ = "sky_wrappers" } :: stdImports
+        { path = "sky-out/sky_wrappers" , alias_ = "sky_wrappers" } ::
+        stdImports
 
 
 importToGoImport : Ast.ImportDecl -> Maybe GoImport
+
 importToGoImport imp =
     let
         modName =
-            String.join "." imp.moduleName
+            String.join  "."  imp.moduleName
     in
-        if Resolver.isStdlib modName then
-            Just { path = "sky-out/" ++ String.join "/" imp.moduleName , alias_ = "sky_" ++ String.toLower (String.replace "." "_" modName) }
+        if Resolver.isStdlib  modName then
+            Just
+             { path =
+                 "sky-out/" ++ String.join  "/"  imp.moduleName
+             , alias_ =
+                 "sky_" ++ String.toLower  (String.replace  "."  "_"  modName)
+             }
         else
             Nothing
 
 
--- Copy pre-built stdlib Go packages to output directory
-
 copyStdlibGo : String -> Result String ()
+
 copyStdlibGo outDir =
     let
-        -- Copy from sky-compiler/stdlib-go/ to outDir/
         cpResult =
-            Process.run "cp" [ "-r" , "sky-compiler/stdlib-go/Sky" , outDir ++ "/" ]
+            Process.run  "cp"
+             [ "-r" , "sky-compiler/stdlib-go/Sky" , outDir ++ "/" ]
         cpResult2 =
-            Process.run "cp" [ "-r" , "sky-compiler/stdlib-go/Std" , outDir ++ "/" ]
+            Process.run  "cp"
+             [ "-r" , "sky-compiler/stdlib-go/Std" , outDir ++ "/" ]
         cpResult3 =
-            Process.run "cp" [ "-r" , "sky-compiler/stdlib-go/sky_wrappers" , outDir ++ "/" ]
+            Process.run  "cp"
+             [ "-r" , "sky-compiler/stdlib-go/sky_wrappers" , outDir ++ "/" ]
     in
-        Ok ()
+        Ok  ()
 
 
 capitalizeFirst : String -> String
+
 capitalizeFirst s =
-    if String.isEmpty s then
+    if String.isEmpty  s then
         ""
     else
-        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+        String.toUpper  (String.slice  0  1  s) ++
+        String.slice  1  (String.length  s)  s
 
 
--- Convert camelCase to underscore_separated lowercase for FFI wrapper paths
--- "StripeGo" → "stripe_go", "Http" → "http", "V84" → "v84"
 ffiSafePart : String -> String
+
 ffiSafePart s =
-    ffiSafePartLoop s 0 ""
+    ffiSafePartLoop  s  0  ""
 
 
 ffiSafePartLoop : String -> Int -> String -> String
+
 ffiSafePartLoop s idx acc =
-    if idx >= String.length s then
-        String.toLower acc
+    if idx >= String.length  s then
+        String.toLower  acc
     else
         let
             ch =
-                String.slice idx (idx + 1) s
+                String.slice  idx  (idx + 1)  s
             isUpper =
-                ch == String.toUpper ch && ch /= String.toLower ch
+                ch == String.toUpper  ch && ch /= String.toLower  ch
             needsUnderscore =
                 isUpper && idx > 0
         in
             if needsUnderscore then
-                ffiSafePartLoop s (idx + 1) (acc ++ "_" ++ ch)
+                ffiSafePartLoop  s  (idx + 1)  (acc ++ "_" ++ ch)
             else
-                ffiSafePartLoop s (idx + 1) (acc ++ ch)
+                ffiSafePartLoop  s  (idx + 1)  (acc ++ ch)
 
 
 prefixDecl : String -> GoDecl -> GoDecl
+
 prefixDecl prefix decl =
     case decl of
+        
         GoDeclFunc funcDecl ->
             if funcDecl.name == "main" then
                 decl
             else
-                GoDeclFunc { funcDecl | name = prefix ++ "_" ++ capitalizeFirst funcDecl.name }
-
+                GoDeclFunc
+                 { funcDecl
+                 | name =
+                     prefix ++ "_" ++ capitalizeFirst  funcDecl.name
+                 }
+        
         GoDeclVar name expr ->
-            -- Skip blank _ declarations and raw helper vars
-            if name == "_" || String.startsWith "var _ =" name then
+            if name == "_" || String.startsWith  "var _ ="  name then
                 decl
             else
-                GoDeclVar (prefix ++ "_" ++ capitalizeFirst name) expr
-
+                GoDeclVar  (prefix ++ "_" ++ capitalizeFirst  name)  expr
+        
         GoDeclRaw code ->
             decl
 
 
 compileSource : String -> String -> String -> Result String String
+
 compileSource filePath outDir source =
     let
         _ =
-            println ("── Lexing " ++ filePath)
+            println  ("── Lexing " ++ filePath)
         lexResult =
-            Lexer.lex source
+            Lexer.lex  source
         _ =
             println
-                (
-                "   " ++
-                String.fromInt (List.length lexResult.tokens) ++ " tokens"
-                )
+             (
+            "   " ++
+            String.fromInt  (List.length  lexResult.tokens) ++ " tokens"
+            )
     in
-        case Parser.parse lexResult.tokens of
+        case Parser.parse  lexResult.tokens of
+            
             Err parseErr ->
-                Err ("Parse error: " ++ parseErr)
+                Err  ("Parse error: " ++ parseErr)
             
             Ok mod ->
                 let
                     _ =
-                        println ("── Parsing")
+                        println  ("── Parsing")
                     _ =
-                        println ("   Module: " ++ String.join "." mod.name)
+                        println  ("   Module: " ++ String.join  "."  mod.name)
                     _ =
                         println
-                            (
-                            "   " ++
-                            String.fromInt (List.length mod.declarations) ++
-                            " declarations, " ++
-                            String.fromInt (List.length mod.imports) ++
-                            " imports"
-                            )
+                         (
+                        "   " ++
+                        String.fromInt  (List.length  mod.declarations) ++
+                        " declarations, " ++
+                        String.fromInt  (List.length  mod.imports) ++ " imports"
+                        )
                 in
-                    compileModule filePath outDir mod
+                    compileModule  filePath  outDir  mod
+
 
 compileModule : String -> String -> Ast.Module -> Result String String
+
 compileModule filePath outDir mod =
     let
         counter =
-            Ref.new 100
-
+            Ref.new  100
         _ =
-            println ("── Type Checking (src: " ++ inferSrcRoot filePath mod.name ++ ")")
-
-        -- Build stdlib type environment
+            println
+             (
+            "── Type Checking (src: " ++
+            inferSrcRoot  filePath  mod.name ++ ")"
+            )
         stdlibEnv =
             Resolver.buildStdlibEnv
-
-        -- Type check module
         checkResult =
-            Checker.checkModule mod (Just stdlibEnv)
+            Checker.checkModule  mod  (Just  stdlibEnv)
     in
         case checkResult of
+            
             Err e ->
-                Err ("Type error: " ++ e)
+                Err  ("Type error: " ++ e)
             
             Ok result ->
                 let
                     _ =
-                        printDiagnostics result.diagnostics
+                        printDiagnostics  result.diagnostics
                     _ =
-                        printTypedDecls result.declarations
+                        printTypedDecls  result.declarations
                     _ =
-                        println ("── Lowering to Go IR")
-
-                    -- Lower AST → GoIR using the type-checked registry
+                        println  ("── Lowering to Go IR")
                     goPackage =
-                        Lower.lowerModule result.registry mod
-
-                    -- Emit Go code
+                        Lower.lowerModule  result.registry  mod
                     _ =
                         println
-                            (
-                            "   " ++
-                            String.fromInt (List.length goPackage.declarations) ++
-                            " Go declarations"
-                            )
+                         (
+                        "   " ++
+                        String.fromInt  (List.length  goPackage.declarations) ++
+                        " Go declarations"
+                        )
                     _ =
-                        println ("── Emitting Go")
+                        println  ("── Emitting Go")
                     goCode =
-                        Emit.emitPackage goPackage
-
-                    -- Write output
+                        Emit.emitPackage  goPackage
                     outPath =
                         outDir ++ "/main.go"
                     _ =
-                        File.mkdirAll outDir
+                        File.mkdirAll  outDir
                     _ =
-                        File.writeFile outPath goCode
+                        File.writeFile  outPath  goCode
                     _ =
-                        println ("   Wrote " ++ outPath)
-                    -- Dead code elimination: strip unreachable functions from main.go
+                        println  ("   Wrote " ++ outPath)
                     _ =
-                        dceMainGo outDir goCode
+                        dceMainGo  outDir  goCode
                     _ =
-                        println ""
+                        println  ""
                     _ =
-                        println ("✓ Compilation successful")
+                        println  ("✓ Compilation successful")
                 in
-                    Ok goCode
+                    Ok  goCode
 
--- ══════════════════════════════════════════════════════
--- MULTI-MODULE COMPILATION
--- ══════════════════════════════════════════════════════
+
 compileProject : String -> String -> Result String String
+
 compileProject entryPath outDir =
     let
         srcRoot =
-            inferSrcRootFromEntry entryPath
+            inferSrcRootFromEntry  entryPath
     in
-
-                        -- For now, compile just the entry module
-        case Resolver.resolveProject entryPath srcRoot of
+        case Resolver.resolveProject  entryPath  srcRoot of
+            
             Err e ->
-                Err e
+                Err  e
             
             Ok graph ->
-                case Resolver.checkAllModules graph of
+                case Resolver.checkAllModules  graph of
+                    
                     Err e ->
-                        Err e
+                        Err  e
                     
                     Ok checkedGraph ->
-                        case List.reverse checkedGraph.modules of
-                            [] ->
-                                Err "No modules to compile"
+                        case List.reverse  checkedGraph.modules of
+                            
+                            [  ] ->
+                                Err  "No modules to compile"
                             
                             entryMod :: _ ->
                                 let
                                     registry =
                                         case entryMod.checkResult of
+                                            
                                             Just r ->
                                                 r.registry
                                             
                                             Nothing ->
                                                 Adt.emptyRegistry
                                     goPackage =
-                                        Lower.lowerModule registry entryMod.ast
+                                        Lower.lowerModule  registry
+                                         entryMod.ast
                                     goCode =
-                                        Emit.emitPackage goPackage
+                                        Emit.emitPackage  goPackage
                                     outPath =
                                         outDir ++ "/main.go"
                                     _ =
-                                        File.mkdirAll outDir
+                                        File.mkdirAll  outDir
                                     _ =
-                                        File.writeFile outPath goCode
+                                        File.writeFile  outPath  goCode
                                 in
-                                    Ok goCode
+                                    Ok  goCode
 
--- ══════════════════════════════════════════════════════
--- HELPERS
--- ══════════════════════════════════════════════════════
--- Infer the source root from file path and module name.
--- e.g., filePath="src/Compiler/Lexer.sky", moduleName=["Compiler","Lexer"]
--- → srcRoot = "src"
-inferSrcRoot : String -> List String -> String
+
+inferSrcRoot : String -> (List String) -> String
+
 inferSrcRoot filePath moduleName =
     let
         modulePath =
-            String.join "/" moduleName ++ ".sky"
+            String.join  "/"  moduleName ++ ".sky"
         modulePathLen =
-            String.length modulePath
+            String.length  modulePath
         filePathLen =
-            String.length filePath
+            String.length  filePath
     in
-
-    -- Try common patterns like "src/Main.sky" -> "src"
-        if String.endsWith modulePath filePath then
+        if String.endsWith  modulePath  filePath then
             let
                 rootLen =
                     filePathLen - modulePathLen - 1
             in
                 if rootLen > 0 then
-                    String.slice 0 rootLen filePath
+                    String.slice  0  rootLen  filePath
                 else
                     "."
         else
             "src"
 
+
 inferSrcRootFromEntry : String -> String
+
 inferSrcRootFromEntry entryPath =
-    if String.contains "/src/" entryPath then
+    if String.contains  "/src/"  entryPath then
         let
             idx =
-                findSubstring "/src/" entryPath
+                findSubstring  "/src/"  entryPath
         in
-            String.slice 0 (idx + 4) entryPath
+            String.slice  0  (idx + 4)  entryPath
     else
         "src"
 
+
 findSubstring : String -> String -> Int
+
 findSubstring needle haystack =
-    findSubstringAt needle haystack 0
+    findSubstringAt  needle  haystack  0
+
 
 findSubstringAt : String -> String -> Int -> Int
-findSubstringAt needle haystack idx =
-    if idx >= String.length haystack then
-        0
-    else
-        if String.startsWith needle
-            (String.slice idx (String.length haystack) haystack) then
-            idx
-        else
-            findSubstringAt needle haystack (idx + 1)
 
-printDiagnostics : List String -> Unit
+findSubstringAt needle haystack idx =
+    if idx >= String.length  haystack then
+        0
+    else if String.startsWith  needle
+             (String.slice  idx  (String.length  haystack)  haystack) then
+        idx
+    else
+        findSubstringAt  needle  haystack  (idx + 1)
+
+
+printDiagnostics : (List String) -> Unit
+
 printDiagnostics diags =
     case diags of
-        [] ->
+        
+        [  ] ->
             ()
         
         _ ->
             let
                 _ =
                     println
-                        (
-                        "   ⚠ " ++
-                        String.fromInt (List.length diags) ++ " diagnostics:"
-                        )
+                     (
+                    "   ⚠ " ++
+                    String.fromInt  (List.length  diags) ++ " diagnostics:"
+                    )
                 _ =
-                    List.map (\d -> println ("     " ++ d)) diags
+                    List.map  (\d -> println  ("     " ++ d))  diags
             in
                 ()
 
-printTypedDecls : List Checker.TypedDecl -> Unit
+
+printTypedDecls : (List Checker.TypedDecl) -> Unit
+
 printTypedDecls decls =
     let
         _ =
-            List.map (\d -> println ("   " ++ d.name ++ " : " ++ d.prettyType))
-                decls
+            List.map
+             (\d -> println  ("   " ++ d.name ++ " : " ++ d.prettyType))
+             decls
     in
         ()

@@ -9,195 +9,185 @@ import Compiler.Types exposing (..)
 import Compiler.Ast as Ast exposing (..)
 import Compiler.Adt as Adt exposing (AdtRegistry, RegisteredAdt)
 
+checkExhaustiveness : AdtRegistry -> Type -> (List CaseBranch) -> Maybe String
 
--- ══════════════════════════════════════════════════════
--- EXHAUSTIVENESS CHECKING
--- ══════════════════════════════════════════════════════
-
--- Checks whether case branches cover all possible values of the subject type.
--- Returns Nothing if exhaustive, Just errorMessage if not.
-
-checkExhaustiveness : AdtRegistry -> Type -> List CaseBranch -> Maybe String
 checkExhaustiveness registry subjectType branches =
     let
         patterns =
-            List.map (\b -> b.pattern) branches
+            List.map  (\b -> b.pattern)  branches
     in
-        -- If any pattern is a catch-all, it's exhaustive
-        if hasCatchAll patterns then
+        if hasCatchAll  patterns then
             Nothing
         else
-            checkTypeExhaustiveness registry subjectType patterns
+            checkTypeExhaustiveness  registry  subjectType  patterns
 
 
--- ══════════════════════════════════════════════════════
--- CATCH-ALL DETECTION
--- ══════════════════════════════════════════════════════
+hasCatchAll : (List Pattern) -> Bool
 
-hasCatchAll : List Pattern -> Bool
 hasCatchAll patterns =
     case patterns of
-        [] ->
+        
+        [  ] ->
             False
-
+        
         pat :: rest ->
-            if isCatchAll pat then
+            if isCatchAll  pat then
                 True
             else
-                hasCatchAll rest
+                hasCatchAll  rest
 
 
 isCatchAll : Pattern -> Bool
+
 isCatchAll pat =
     case pat of
+        
         PWildcard _ ->
             True
-
+        
         PVariable _ _ ->
             True
-
+        
         PAs inner _ _ ->
-            isCatchAll inner
-
+            isCatchAll  inner
+        
         _ ->
             False
 
 
--- ══════════════════════════════════════════════════════
--- TYPE-SPECIFIC EXHAUSTIVENESS
--- ══════════════════════════════════════════════════════
+checkTypeExhaustiveness : AdtRegistry -> Type -> (List Pattern) -> Maybe String
 
-checkTypeExhaustiveness : AdtRegistry -> Type -> List Pattern -> Maybe String
 checkTypeExhaustiveness registry subjectType patterns =
     case subjectType of
+        
         TConst typeName ->
             if typeName == "Bool" then
-                checkBoolExhaustiveness patterns
+                checkBoolExhaustiveness  patterns
             else
-                case Dict.get typeName registry of
+                case Dict.get  typeName  registry of
+                    
                     Just adt ->
-                        checkAdtExhaustiveness adt patterns
-
+                        checkAdtExhaustiveness  adt  patterns
+                    
                     Nothing ->
                         Nothing
+                    
+                    TApp (TConst typeName) _ ->
+                        case Dict.get  typeName  registry of
+                            
+                            Just adt ->
+                                checkAdtExhaustiveness  adt  patterns
+                            
+                            Nothing ->
+                                Nothing
+                            
+                            _ ->
+                                Nothing
 
-        TApp (TConst typeName) _ ->
-            case Dict.get typeName registry of
-                Just adt ->
-                    checkAdtExhaustiveness adt patterns
 
-                Nothing ->
-                    Nothing
+checkBoolExhaustiveness : (List Pattern) -> Maybe String
 
-        _ ->
-            Nothing
-
-
--- ══════════════════════════════════════════════════════
--- BOOL EXHAUSTIVENESS
--- ══════════════════════════════════════════════════════
-
-checkBoolExhaustiveness : List Pattern -> Maybe String
 checkBoolExhaustiveness patterns =
     let
         covered =
-            collectBoolPatterns patterns Set.empty
+            collectBoolPatterns  patterns  Set.empty
         hasTrue =
-            Set.member "True" covered
+            Set.member  "True"  covered
         hasFalse =
-            Set.member "False" covered
+            Set.member  "False"  covered
     in
         if hasTrue && hasFalse then
             Nothing
         else if hasTrue then
-            Just "Missing pattern: False"
+            Just  "Missing pattern: False"
         else if hasFalse then
-            Just "Missing pattern: True"
+            Just  "Missing pattern: True"
         else
-            Just "Missing patterns: True, False"
+            Just  "Missing patterns: True, False"
 
 
-collectBoolPatterns : List Pattern -> Set.Set String -> Set.Set String
+collectBoolPatterns : (List Pattern) -> (Set.Set String) -> Set.Set String
+
 collectBoolPatterns patterns acc =
     case patterns of
-        [] ->
+        
+        [  ] ->
             acc
-
+        
         pat :: rest ->
             case pat of
+                
                 PConstructor parts _ _ ->
                     let
                         name =
-                            lastPart parts
+                            lastPart  parts
                     in
-                        collectBoolPatterns rest (Set.insert name acc)
-
+                        collectBoolPatterns  rest  (Set.insert  name  acc)
+                
                 PLiteral (LitBool b) _ ->
                     if b then
-                        collectBoolPatterns rest (Set.insert "True" acc)
+                        collectBoolPatterns  rest  (Set.insert  "True"  acc)
                     else
-                        collectBoolPatterns rest (Set.insert "False" acc)
-
+                        collectBoolPatterns  rest  (Set.insert  "False"  acc)
+                
                 _ ->
-                    collectBoolPatterns rest acc
+                    collectBoolPatterns  rest  acc
 
 
--- ══════════════════════════════════════════════════════
--- ADT EXHAUSTIVENESS
--- ══════════════════════════════════════════════════════
+checkAdtExhaustiveness : RegisteredAdt -> (List Pattern) -> Maybe String
 
-checkAdtExhaustiveness : RegisteredAdt -> List Pattern -> Maybe String
 checkAdtExhaustiveness adt patterns =
     let
         allCtors =
-            Set.fromList (Dict.keys adt.constructors)
+            Set.fromList  (Dict.keys  adt.constructors)
         coveredCtors =
-            collectConstructorPatterns patterns Set.empty
+            collectConstructorPatterns  patterns  Set.empty
         missing =
-            Set.diff allCtors coveredCtors
+            Set.diff  allCtors  coveredCtors
     in
-        if Set.isEmpty missing then
+        if Set.isEmpty  missing then
             Nothing
         else
             let
                 missingList =
-                    Set.toList missing
+                    Set.toList  missing
             in
-                Just ("Missing patterns: " ++ String.join ", " missingList)
+                Just  ("Missing patterns: " ++ String.join  ", "  missingList)
 
 
-collectConstructorPatterns : List Pattern -> Set.Set String -> Set.Set String
+collectConstructorPatterns : (List Pattern) -> (Set.Set String) -> Set.Set String
+
 collectConstructorPatterns patterns acc =
     case patterns of
-        [] ->
+        
+        [  ] ->
             acc
-
+        
         pat :: rest ->
             case pat of
+                
                 PConstructor parts _ _ ->
                     let
                         name =
-                            lastPart parts
+                            lastPart  parts
                     in
-                        collectConstructorPatterns rest (Set.insert name acc)
-
+                        collectConstructorPatterns  rest
+                         (Set.insert  name  acc)
+                
                 PAs inner _ _ ->
-                    -- Check inner pattern
-                    collectConstructorPatterns (inner :: rest) acc
-
+                    collectConstructorPatterns  (inner :: rest)  acc
+                
                 _ ->
-                    collectConstructorPatterns rest acc
+                    collectConstructorPatterns  rest  acc
 
 
--- ══════════════════════════════════════════════════════
--- HELPERS
--- ══════════════════════════════════════════════════════
+lastPart : (List String) -> String
 
-lastPart : List String -> String
 lastPart parts =
-    case List.reverse parts of
+    case List.reverse  parts of
+        
         last :: _ ->
             last
-
-        [] ->
+        
+        [  ] ->
             ""

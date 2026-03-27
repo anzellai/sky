@@ -15,14 +15,12 @@ import Compiler.Types exposing (..)
 import Compiler.Env as Env
 import Compiler.Checker as Checker
 
--- ══════════════════════════════════════════════════════
--- MODULE GRAPH
--- ══════════════════════════════════════════════════════
 type alias ModuleGraph =
     { modules : List LoadedModule
     , order : List String
     , diagnostics : List String
     }
+
 
 type alias LoadedModule =
     { name : String
@@ -32,304 +30,599 @@ type alias LoadedModule =
     , checkResult : Maybe Checker.CheckResult
     }
 
--- ══════════════════════════════════════════════════════
--- MODULE RESOLUTION
--- ══════════════════════════════════════════════════════
--- Resolve and load all modules for a project.
+
 resolveProject : String -> String -> Result String ModuleGraph
+
 resolveProject entryPath srcRoot =
-    case File.readFile entryPath of
+    case File.readFile  entryPath of
+        
         Err e ->
-            Err ("Cannot read entry file: " ++ entryPath ++ " (" ++ e ++ ")")
+            Err  ("Cannot read entry file: " ++ entryPath ++ " (" ++ e ++ ")")
         
         Ok source ->
             let
                 lexResult =
-                    Lexer.lex source
+                    Lexer.lex  source
             in
-                case Parser.parse lexResult.tokens of
+                case Parser.parse  lexResult.tokens of
+                    
                     Err e ->
-                        Err ("Parse error in " ++ entryPath ++ ": " ++ e)
+                        Err  ("Parse error in " ++ entryPath ++ ": " ++ e)
                     
                     Ok entryMod ->
                         let
                             entryName =
-                                String.join "." entryMod.name
+                                String.join  "."  entryMod.name
                             entryLoaded =
-                                { name = entryName
-                                , qualifiedName = entryMod.name
-                                , filePath = entryPath
-                                , ast = entryMod
-                                , checkResult = Nothing
+                                { name =
+                                    entryName
+                                , qualifiedName =
+                                    entryMod.name
+                                , filePath =
+                                    entryPath
+                                , ast =
+                                    entryMod
+                                , checkResult =
+                                    Nothing
                                 }
-
-                            -- Resolve imports
                             resolveResult =
-                                resolveImports srcRoot entryMod.imports
-                                    [ entryLoaded ]
-                                    Set.empty
-                                    []
-
+                                resolveImports  srcRoot  entryMod.imports
+                                 [ entryLoaded ]
+                                 Set.empty
+                                 []
                             allModules =
-                                fst resolveResult
-
+                                fst  resolveResult
                             diags =
-                                snd resolveResult
-
-                            -- Topological order: dependencies first, entry last
+                                snd  resolveResult
                             order =
-                                List.map (\m -> m.name) (List.reverse allModules)
+                                List.map  (\m -> m.name)
+                                 (List.reverse  allModules)
                         in
                             Ok
-                                { modules = List.reverse allModules
-                                , order = order
-                                , diagnostics = diags
-                                }
+                             { modules =
+                                 List.reverse  allModules
+                             , order =
+                                 order
+                             , diagnostics =
+                                 diags
+                             }
 
--- ══════════════════════════════════════════════════════
--- IMPORT RESOLUTION
--- ══════════════════════════════════════════════════════
+
 resolveImports srcRoot imports loaded visited diagnostics =
     case imports of
-        [] ->
+        
+        [  ] ->
             ( loaded , diagnostics )
-
+        
         imp :: rest ->
             let
                 modName =
-                    String.join "." imp.moduleName
+                    String.join  "."  imp.moduleName
             in
-                if Set.member modName visited || isStdlib modName then
-                    resolveImports srcRoot rest loaded visited diagnostics
+                if Set.member  modName  visited || isStdlib  modName then
+                    resolveImports  srcRoot  rest  loaded  visited  diagnostics
                 else if imp.alias_ == "_" then
-                    -- Blank import: side-effect only (e.g., import Modernc.Org.Sqlite as _)
-                    -- Don't load any module, just mark as visited
-                    resolveImports srcRoot rest loaded
-                        (Set.insert modName visited)
-                        diagnostics
+                    resolveImports  srcRoot  rest  loaded
+                     (Set.insert  modName  visited)
+                     diagnostics
                 else
                     let
                         filePath =
-                            resolveModulePath srcRoot imp.moduleName
+                            resolveModulePath  srcRoot  imp.moduleName
                     in
-                        case File.readFile filePath of
+                        case File.readFile  filePath of
+                            
                             Err _ ->
-                                -- Try loading from .skycache (Go FFI bindings)
                                 let
                                     skyiPath =
-                                        resolveBindingPath modName
+                                        resolveBindingPath  modName
                                 in
-                                    case File.readFile skyiPath of
+                                    case File.readFile  skyiPath of
+                                        
                                         Ok skyiSource ->
-                                            -- Found binding file, parse and load
                                             let
                                                 skyiLexResult =
-                                                    Lexer.lex skyiSource
+                                                    Lexer.lex  skyiSource
                                             in
-                                                case Parser.parse skyiLexResult.tokens of
+                                                case Parser.parse
+                                                      skyiLexResult.tokens of
+                                                    
                                                     Ok skyiMod ->
                                                         let
                                                             loaded2 =
-                                                                { name = modName
-                                                                , qualifiedName = imp.moduleName
-                                                                , filePath = skyiPath
-                                                                , ast = skyiMod
-                                                                , checkResult = Nothing
+                                                                { name =
+                                                                    modName
+                                                                , qualifiedName =
+                                                                    imp.moduleName
+                                                                , filePath =
+                                                                    skyiPath
+                                                                , ast =
+                                                                    skyiMod
+                                                                , checkResult =
+                                                                    Nothing
                                                                 }
                                                         in
-                                                            resolveImports srcRoot rest
-                                                                (loaded2 :: loaded)
-                                                                (Set.insert modName visited)
-                                                                diagnostics
-
+                                                            resolveImports
+                                                             srcRoot
+                                                             rest
+                                                             (loaded2 :: loaded)
+                                                             (
+                                                            Set.insert  modName
+                                                             visited
+                                                            )
+                                                             diagnostics
+                                                    
                                                     Err e ->
-                                                        resolveImports srcRoot rest loaded
-                                                            (Set.insert modName visited)
-                                                            (diagnostics ++ [ "Parse error in binding " ++ modName ++ ": " ++ e ])
+                                                        resolveImports  srcRoot
+                                                         rest
+                                                         loaded
+                                                         (
+                                                        Set.insert  modName
+                                                         visited
+                                                        )
+                                                         (
+                                                        diagnostics ++
+                                                        [ "Parse error in binding " ++
+                                                        modName ++ ": " ++ e
+                                                        ]
+                                                        )
+                                                    
+                                                    Err _ ->
+                                                        resolveImports  srcRoot
+                                                         rest
+                                                         loaded
+                                                         (
+                                                        Set.insert  modName
+                                                         visited
+                                                        )
+                                                         (
+                                                        diagnostics ++
+                                                        [ "Module not found: " ++
+                                                        modName ++
+                                                        " (looked at " ++
+                                                        filePath ++
+                                                        " and " ++
+                                                        skyiPath ++ ")"
+                                                        ]
+                                                        )
+                                                    
+                                                    Ok source ->
+                                                        let
+                                                            lexResult =
+                                                                Lexer.lex
+                                                                 source
+                                                        in
+                                                            case Parser.parse
+                                                                  lexResult.tokens of
+                                                                
+                                                                Err e ->
+                                                                    resolveImports
+                                                                     srcRoot
+                                                                     rest
+                                                                     loaded
+                                                                     (
+                                                                    Set.insert
+                                                                     modName
+                                                                     visited
+                                                                    )
+                                                                     (
+                                                                    diagnostics ++
+                                                                    [ "Parse error in " ++
+                                                                    modName ++
+                                                                    ": " ++ e
+                                                                    ]
+                                                                    )
+                                                                
+                                                                Ok modAst ->
+                                                                    let
+                                                                        newLoaded =
+                                                                            { name =
+                                                                                modName
+                                                                            , qualifiedName =
+                                                                                imp.moduleName
+                                                                            , filePath =
+                                                                                filePath
+                                                                            , ast =
+                                                                                modAst
+                                                                            , checkResult =
+                                                                                Nothing
+                                                                            }
+                                                                        newVisited =
+                                                                            Set.insert
+                                                                             modName
+                                                                             visited
+                                                                        depResult =
+                                                                            resolveImports
+                                                                             srcRoot
+                                                                             modAst.imports
+                                                                             (
+                                                                            newLoaded ::
+                                                                            loaded
+                                                                            )
+                                                                             newVisited
+                                                                             diagnostics
+                                                                    in
+                                                                        resolveImports
+                                                                         srcRoot
+                                                                         rest
+                                                                         (
+                                                                        fst
+                                                                         depResult
+                                                                        )
+                                                                         newVisited
+                                                                         (
+                                                                        snd
+                                                                         depResult
+                                                                        )
 
-                                        Err _ ->
-                                            -- Neither local file nor binding found
-                                            resolveImports srcRoot rest loaded
-                                                (Set.insert modName visited)
-                                                (diagnostics ++ [ "Module not found: " ++ modName ++ " (looked at " ++ filePath ++ " and " ++ skyiPath ++ ")" ])
-                            
-                            Ok source ->
-                                let
-                                    lexResult =
-                                        Lexer.lex source
-                                in
-                                    case Parser.parse lexResult.tokens of
-                                        Err e ->
-                                            resolveImports srcRoot rest loaded
-                                                (Set.insert modName visited)
-                                                (
-                                                diagnostics ++
-                                                [ "Parse error in " ++
-                                                modName ++ ": " ++ e
-                                                ]
-                                                )
-                                        
-                                        Ok modAst ->
-                                            let
-                                                newLoaded =
-                                                    { name = modName
-                                                    , qualifiedName =
-                                                        imp.moduleName
-                                                    , filePath = filePath
-                                                    , ast = modAst
-                                                    , checkResult = Nothing
-                                                    }
-                                                newVisited =
-                                                    Set.insert modName visited
-                                                depResult =
-                                                    resolveImports srcRoot
-                                                        modAst.imports
-                                                        (newLoaded :: loaded)
-                                                        newVisited
-                                                        diagnostics
-                                            in
-                                                resolveImports srcRoot rest
-                                                    (fst depResult)
-                                                    newVisited
-                                                    (snd depResult)
 
-resolveModulePath : String -> List String -> String
+resolveModulePath : String -> (List String) -> String
+
 resolveModulePath srcRoot parts =
-    srcRoot ++ "/" ++ String.join "/" parts ++ ".sky"
+    srcRoot ++ "/" ++ String.join  "/"  parts ++ ".sky"
 
--- ══════════════════════════════════════════════════════
--- FFI BINDING PATH RESOLUTION
--- ══════════════════════════════════════════════════════
 
--- Convert a module name to the binding .skyi file path
--- e.g. "Net.Http" → ".skycache/go/net_http/bindings.skyi"
---      "Github.Com.Google.Uuid" → ".skycache/go/github_com_google_uuid/bindings.skyi"
 resolveBindingPath : String -> String
+
 resolveBindingPath modName =
     let
-        -- Convert module name back to safe cache path
-        -- Handle camelCase: StripeGo → stripe_go
         pkgParts =
-            String.split "." modName
+            String.split  "."  modName
         safeParts =
-            List.map camelToUnderscore pkgParts
+            List.map  camelToUnderscore  pkgParts
         safeName =
-            String.join "_" safeParts
+            String.join  "_"  safeParts
         primaryPath =
             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
-        -- Fallback: original Go package path format (from TS compiler)
         altPath =
-            ".skycache/go/" ++ String.join "/" (List.map String.toLower pkgParts) ++ "/bindings.skyi"
+            ".skycache/go/" ++
+            String.join  "/"  (List.map  String.toLower  pkgParts) ++
+            "/bindings.skyi"
     in
-        case File.readFile primaryPath of
+        case File.readFile  primaryPath of
+            
             Ok _ ->
                 primaryPath
-
+            
             Err _ ->
                 altPath
 
 
--- Convert camelCase to underscore_separated lowercase
--- "StripeGo" → "stripe_go", "Http" → "http", "V84" → "v84"
 camelToUnderscore : String -> String
+
 camelToUnderscore s =
-    String.toLower (camelInsertUnderscores s 0 "")
+    String.toLower  (camelInsertUnderscores  s  0  "")
 
 
 camelInsertUnderscores : String -> Int -> String -> String
+
 camelInsertUnderscores s idx acc =
-    if idx >= String.length s then
+    if idx >= String.length  s then
         acc
     else
         let
             ch =
-                String.slice idx (idx + 1) s
+                String.slice  idx  (idx + 1)  s
             isUp =
-                ch == "A" || ch == "B" || ch == "C" || ch == "D" || ch == "E" ||
-                ch == "F" || ch == "G" || ch == "H" || ch == "I" || ch == "J" ||
-                ch == "K" || ch == "L" || ch == "M" || ch == "N" || ch == "O" ||
-                ch == "P" || ch == "Q" || ch == "R" || ch == "S" || ch == "T" ||
-                ch == "U" || ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z"
+                ch == "A" ||
+                ch == "B" ||
+                ch == "C" ||
+                ch == "D" ||
+                ch == "E" ||
+                ch == "F" ||
+                ch == "G" ||
+                ch == "H" ||
+                ch == "I" ||
+                ch == "J" ||
+                ch == "K" ||
+                ch == "L" ||
+                ch == "M" ||
+                ch == "N" ||
+                ch == "O" ||
+                ch == "P" ||
+                ch == "Q" ||
+                ch == "R" ||
+                ch == "S" ||
+                ch == "T" ||
+                ch == "U" ||
+                ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z"
         in
             if isUp && idx > 0 then
-                camelInsertUnderscores s (idx + 1) (acc ++ "_" ++ ch)
+                camelInsertUnderscores  s  (idx + 1)  (acc ++ "_" ++ ch)
             else
-                camelInsertUnderscores s (idx + 1) (acc ++ ch)
+                camelInsertUnderscores  s  (idx + 1)  (acc ++ ch)
 
 
--- ══════════════════════════════════════════════════════
--- STDLIB DETECTION
--- ══════════════════════════════════════════════════════
 isStdlib : String -> Bool
+
 isStdlib modName =
-    String.startsWith "Sky.Core." modName ||
-    String.startsWith "Sky.Http." modName ||
-    String.startsWith "Std." modName ||
+    String.startsWith  "Sky.Core."  modName ||
+    String.startsWith  "Sky.Http."  modName ||
+    String.startsWith  "Std."  modName ||
     modName == "Sky.Core.Prelude" || modName == "Sky.Interop"
 
--- ══════════════════════════════════════════════════════
--- STDLIB EXPORTS
--- ══════════════════════════════════════════════════════
--- Returns known exported names for a stdlib module.
--- When adding new functions to stdlib .sky files, update this list.
--- The lowerer uses module-level conventions — NOT per-name mapping.
 
 getStdlibExports : String -> List String
+
 getStdlibExports modName =
     if modName == "Std.Html" then
-        [ "text" , "raw" , "node" , "voidNode" , "styleNode"
-        , "render" , "toString" , "escapeHtml" , "escapeAttr" , "attrToString"
-        , "div" , "span" , "p" , "h1" , "h2" , "h3" , "h4" , "h5" , "h6"
-        , "a" , "button" , "form" , "label" , "textarea" , "select" , "option"
-        , "ul" , "ol" , "li" , "table" , "thead" , "tbody" , "tfoot" , "tr" , "th" , "td"
-        , "nav" , "headerNode" , "footerNode" , "section" , "article" , "aside" , "mainNode"
-        , "strong" , "em" , "small" , "pre" , "codeNode" , "blockquote"
-        , "input" , "br" , "hr" , "img" , "meta" , "linkNode" , "script"
-        , "fieldset" , "legend" , "body" , "doctype" , "htmlNode" , "headNode" , "titleNode"
+        [ "text"
+        , "raw"
+        , "node"
+        , "voidNode"
+        , "styleNode"
+        , "render"
+        , "toString"
+        , "escapeHtml"
+        , "escapeAttr"
+        , "attrToString"
+        , "div"
+        , "span"
+        , "p"
+        , "h1"
+        , "h2"
+        , "h3"
+        , "h4"
+        , "h5"
+        , "h6"
+        , "a"
+        , "button"
+        , "form"
+        , "label"
+        , "textarea"
+        , "select"
+        , "option"
+        , "ul"
+        , "ol"
+        , "li"
+        , "table"
+        , "thead"
+        , "tbody"
+        , "tfoot"
+        , "tr"
+        , "th"
+        , "td"
+        , "nav"
+        , "headerNode"
+        , "footerNode"
+        , "section"
+        , "article"
+        , "aside"
+        , "mainNode"
+        , "strong"
+        , "em"
+        , "small"
+        , "pre"
+        , "codeNode"
+        , "blockquote"
+        , "input"
+        , "br"
+        , "hr"
+        , "img"
+        , "meta"
+        , "linkNode"
+        , "script"
+        , "fieldset"
+        , "legend"
+        , "body"
+        , "doctype"
+        , "htmlNode"
+        , "headNode"
+        , "titleNode"
         ]
     else if modName == "Std.Html.Attributes" then
-        [ "attribute" , "boolAttribute"
-        , "class" , "id" , "style" , "title" , "hidden" , "tabindex" , "lang" , "dir" , "role"
-        , "href" , "target" , "rel" , "download"
-        , "type_" , "name" , "value" , "placeholder" , "action" , "method" , "for" , "enctype"
-        , "required" , "disabled" , "checked" , "readonly" , "autofocus" , "multiple" , "selected"
-        , "novalidate" , "autocomplete" , "minlength" , "maxlength" , "min" , "max" , "step" , "pattern"
-        , "rows" , "cols" , "src" , "alt" , "width" , "height"
-        , "charset" , "content" , "httpEquiv" , "colspan" , "rowspan" , "scope"
-        , "ariaLabel" , "ariaHidden" , "ariaDescribedby" , "ariaExpanded" , "dataAttribute"
+        [ "attribute"
+        , "boolAttribute"
+        , "class"
+        , "id"
+        , "style"
+        , "title"
+        , "hidden"
+        , "tabindex"
+        , "lang"
+        , "dir"
+        , "role"
+        , "href"
+        , "target"
+        , "rel"
+        , "download"
+        , "type_"
+        , "name"
+        , "value"
+        , "placeholder"
+        , "action"
+        , "method"
+        , "for"
+        , "enctype"
+        , "required"
+        , "disabled"
+        , "checked"
+        , "readonly"
+        , "autofocus"
+        , "multiple"
+        , "selected"
+        , "novalidate"
+        , "autocomplete"
+        , "minlength"
+        , "maxlength"
+        , "min"
+        , "max"
+        , "step"
+        , "pattern"
+        , "rows"
+        , "cols"
+        , "src"
+        , "alt"
+        , "width"
+        , "height"
+        , "charset"
+        , "content"
+        , "httpEquiv"
+        , "colspan"
+        , "rowspan"
+        , "scope"
+        , "ariaLabel"
+        , "ariaHidden"
+        , "ariaDescribedby"
+        , "ariaExpanded"
+        , "dataAttribute"
         ]
     else if modName == "Std.Live.Events" then
-        [ "onClick" , "onInput" , "onSubmit" , "onDblClick" , "onChange"
-        , "onFocus" , "onBlur" , "onImage" , "onFile"
-        , "fileMaxSize" , "fileMaxWidth" , "fileMaxHeight"
+        [ "onClick"
+        , "onInput"
+        , "onSubmit"
+        , "onDblClick"
+        , "onChange"
+        , "onFocus"
+        , "onBlur"
+        , "onImage"
+        , "onFile"
+        , "fileMaxSize"
+        , "fileMaxWidth"
+        , "fileMaxHeight"
         ]
     else if modName == "Std.Css" then
-        [ "styles" , "rule" , "media" , "keyframes" , "frame" , "stylesheet" , "property"
-        , "px" , "rem" , "em" , "pct" , "vh" , "vw" , "ch" , "fr" , "sec" , "ms" , "deg"
-        , "zero" , "auto" , "none" , "inherit"
-        , "hex" , "rgb" , "rgba" , "hsl" , "hsla" , "transparent" , "cssVar" , "cssVarOr"
-        , "display" , "position" , "top" , "right_" , "bottom" , "left" , "zIndex"
-        , "overflow" , "overflowX" , "overflowY" , "float" , "clear" , "visibility"
-        , "flexDirection" , "flexWrap" , "justifyContent" , "alignItems" , "alignContent"
-        , "alignSelf" , "flex" , "flexGrow" , "flexShrink" , "flexBasis" , "order"
-        , "gap" , "rowGap" , "columnGap"
-        , "gridTemplateColumns" , "gridTemplateRows" , "gridColumn" , "gridRow" , "gridArea"
-        , "repeat" , "minmax"
-        , "margin" , "margin2" , "margin4" , "marginTop" , "marginRight" , "marginBottom" , "marginLeft"
-        , "padding" , "padding2" , "padding4" , "paddingTop" , "paddingRight" , "paddingBottom" , "paddingLeft"
-        , "width" , "height" , "minWidth" , "maxWidth" , "minHeight" , "maxHeight"
-        , "fontFamily" , "fontSize" , "fontWeight" , "fontStyle" , "lineHeight" , "letterSpacing"
-        , "textAlign" , "textDecoration" , "textTransform" , "textOverflow" , "whiteSpace" , "wordBreak"
-        , "color" , "backgroundColor" , "background" , "backgroundImage" , "backgroundSize" , "backgroundPosition" , "backgroundRepeat"
-        , "opacity" , "linearGradient"
-        , "border" , "borderTop" , "borderRight" , "borderBottom" , "borderLeft"
-        , "borderColor" , "borderWidth" , "borderStyle" , "borderRadius" , "borderRadius4" , "borderCollapse"
-        , "outline" , "outlineOffset"
-        , "boxShadow" , "shadow" , "shadows" , "textShadow"
-        , "transform" , "translateX" , "translateY" , "scale" , "rotate"
-        , "transition" , "transitionProp" , "animation"
-        , "cursor" , "pointerEvents" , "userSelect" , "filter" , "backdropFilter"
-        , "calc" , "important" , "defineVar" , "systemFont" , "monoFont" , "boxSizingBorderBox"
+        [ "styles"
+        , "rule"
+        , "media"
+        , "keyframes"
+        , "frame"
+        , "stylesheet"
+        , "property"
+        , "px"
+        , "rem"
+        , "em"
+        , "pct"
+        , "vh"
+        , "vw"
+        , "ch"
+        , "fr"
+        , "sec"
+        , "ms"
+        , "deg"
+        , "zero"
+        , "auto"
+        , "none"
+        , "inherit"
+        , "hex"
+        , "rgb"
+        , "rgba"
+        , "hsl"
+        , "hsla"
+        , "transparent"
+        , "cssVar"
+        , "cssVarOr"
+        , "display"
+        , "position"
+        , "top"
+        , "right_"
+        , "bottom"
+        , "left"
+        , "zIndex"
+        , "overflow"
+        , "overflowX"
+        , "overflowY"
+        , "float"
+        , "clear"
+        , "visibility"
+        , "flexDirection"
+        , "flexWrap"
+        , "justifyContent"
+        , "alignItems"
+        , "alignContent"
+        , "alignSelf"
+        , "flex"
+        , "flexGrow"
+        , "flexShrink"
+        , "flexBasis"
+        , "order"
+        , "gap"
+        , "rowGap"
+        , "columnGap"
+        , "gridTemplateColumns"
+        , "gridTemplateRows"
+        , "gridColumn"
+        , "gridRow"
+        , "gridArea"
+        , "repeat"
+        , "minmax"
+        , "margin"
+        , "margin2"
+        , "margin4"
+        , "marginTop"
+        , "marginRight"
+        , "marginBottom"
+        , "marginLeft"
+        , "padding"
+        , "padding2"
+        , "padding4"
+        , "paddingTop"
+        , "paddingRight"
+        , "paddingBottom"
+        , "paddingLeft"
+        , "width"
+        , "height"
+        , "minWidth"
+        , "maxWidth"
+        , "minHeight"
+        , "maxHeight"
+        , "fontFamily"
+        , "fontSize"
+        , "fontWeight"
+        , "fontStyle"
+        , "lineHeight"
+        , "letterSpacing"
+        , "textAlign"
+        , "textDecoration"
+        , "textTransform"
+        , "textOverflow"
+        , "whiteSpace"
+        , "wordBreak"
+        , "color"
+        , "backgroundColor"
+        , "background"
+        , "backgroundImage"
+        , "backgroundSize"
+        , "backgroundPosition"
+        , "backgroundRepeat"
+        , "opacity"
+        , "linearGradient"
+        , "border"
+        , "borderTop"
+        , "borderRight"
+        , "borderBottom"
+        , "borderLeft"
+        , "borderColor"
+        , "borderWidth"
+        , "borderStyle"
+        , "borderRadius"
+        , "borderRadius4"
+        , "borderCollapse"
+        , "outline"
+        , "outlineOffset"
+        , "boxShadow"
+        , "shadow"
+        , "shadows"
+        , "textShadow"
+        , "transform"
+        , "translateX"
+        , "translateY"
+        , "scale"
+        , "rotate"
+        , "transition"
+        , "transitionProp"
+        , "animation"
+        , "cursor"
+        , "pointerEvents"
+        , "userSelect"
+        , "filter"
+        , "backdropFilter"
+        , "calc"
+        , "important"
+        , "defineVar"
+        , "systemFont"
+        , "monoFont"
+        , "boxSizingBorderBox"
         ]
     else if modName == "Std.Live" then
         [ "app" , "route" ]
@@ -343,583 +636,615 @@ getStdlibExports modName =
         []
 
 
--- ══════════════════════════════════════════════════════
--- MULTI-MODULE TYPE CHECKING
--- ══════════════════════════════════════════════════════
--- Type-check all modules in dependency order.
 checkAllModules : ModuleGraph -> Result String ModuleGraph
+
 checkAllModules graph =
     let
         checkResult =
-            checkModulesLoop graph.modules Env.empty []
-
+            checkModulesLoop  graph.modules  Env.empty  []
         checkedModules =
-            fst checkResult
-
+            fst  checkResult
         diagnostics =
-            snd checkResult
+            snd  checkResult
     in
         Ok
-            { graph
-            | modules = checkedModules
-            , diagnostics = List.append graph.diagnostics diagnostics
-            }
+         { graph
+         | modules =
+             checkedModules
+         , diagnostics =
+             List.append  graph.diagnostics  diagnostics
+         }
+
 
 checkModulesLoop modules importedEnv diagnostics =
     case modules of
-        [] ->
+        
+        [  ] ->
             ( [] , diagnostics )
         
         mod :: rest ->
-            case Checker.checkModule mod.ast (Just importedEnv) of
+            case Checker.checkModule  mod.ast  (Just  importedEnv) of
+                
                 Ok result ->
                     let
                         checkedMod =
-                            { mod | checkResult = Just result }
-
-                        -- Add this module's exports to the environment for subsequent modules
+                            { mod | checkResult = Just  result }
                         newImportedEnv =
-                            Env.union result.env importedEnv
-                        ( restModules, restDiags ) =
-                            checkModulesLoop rest newImportedEnv
-                                (List.append diagnostics result.diagnostics)
+                            Env.union  result.env  importedEnv
+                        ( restModules , restDiags ) =
+                            checkModulesLoop  rest  newImportedEnv
+                             (List.append  diagnostics  result.diagnostics)
                     in
                         ( checkedMod :: restModules , restDiags )
                 
                 Err e ->
                     let
-                        ( restModules, restDiags ) =
-                            checkModulesLoop rest importedEnv
-                                (List.append diagnostics [ e ])
+                        ( restModules , restDiags ) =
+                            checkModulesLoop  rest  importedEnv
+                             (List.append  diagnostics  [ e ])
                     in
                         ( mod :: restModules , restDiags )
 
--- ══════════════════════════════════════════════════════
--- STDLIB TYPE ENVIRONMENT
--- ══════════════════════════════════════════════════════
--- Build a type environment with common stdlib types.
+
 buildStdlibEnv : Env.TypeEnv
+
 buildStdlibEnv =
     let
         prelude =
             Env.createPreludeEnv
-
-        -- Common stdlib functions
         stdFunctions =
             Dict.fromList
-
-                -- String module
-                [ ( "String.toUpper"
-
-                -- List module (polymorphic)
-                , mono (TFun (TConst "String") (TConst "String"))
-                )
-
-                -- Dict module
-                , ( "String.toLower"
-
-                -- Log module
-                , mono (TFun (TConst "String") (TConst "String"))
-                )
-
-                -- Process module
-                , ( "String.length"
-
-                -- File module
-                , mono (TFun (TConst "String") (TConst "Int"))
-                )
-
-                -- Args module
-                , ( "String.fromInt"
-
-                -- Ref module
-                , mono (TFun (TConst "Int") (TConst "String"))
-                )
-                , ( "String.fromFloat"
-                , mono (TFun (TConst "Float") (TConst "String"))
-                )
-                , ( "String.join"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (
-                        TFun (TApp (TConst "List") [ TConst "String" ])
-                            (TConst "String")
-                        )
-                    )
-                )
-                , ( "String.split"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (
-                        TFun (TConst "String")
-                            (TApp (TConst "List") [ TConst "String" ])
-                        )
-                    )
-                )
-                , ( "String.contains"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (TFun (TConst "String") (TConst "Bool"))
-                    )
-                )
-                , ( "String.startsWith"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (TFun (TConst "String") (TConst "Bool"))
-                    )
-                )
-                , ( "String.trim"
-                , mono (TFun (TConst "String") (TConst "String"))
-                )
-                , ( "String.isEmpty"
-                , mono (TFun (TConst "String") (TConst "Bool"))
-                )
-                , ( "String.slice"
-                , mono
-                    (
-                    TFun (TConst "Int")
-                        (
-                        TFun (TConst "Int")
-                            (TFun (TConst "String") (TConst "String"))
-                        )
-                    )
-                )
-                , ( "String.append"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (TFun (TConst "String") (TConst "String"))
-                    )
-                )
-                , ( "List.map"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun (TFun (TVar 0 (Just "a")) (TVar 1 (Just "b")))
-                          (
-                          TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                              (TApp (TConst "List") [ TVar 1 (Just "b") ])
-                          )
-                  }
-                )
-                , ( "List.filter"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TFun (TVar 0 (Just "a")) (TConst "Bool"))
-                          (
-                          TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                              (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          )
-                  }
-                )
-                , ( "List.foldl"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun
-                          (
-                          TFun (TVar 0 (Just "a"))
-                              (TFun (TVar 1 (Just "b")) (TVar 1 (Just "b")))
-                          )
-                          (
-                          TFun (TVar 1 (Just "b"))
-                              (
-                              TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                                  (TVar 1 (Just "b"))
-                              )
-                          )
-                  }
-                )
-                , ( "List.foldr"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun
-                          (
-                          TFun (TVar 0 (Just "a"))
-                              (TFun (TVar 1 (Just "b")) (TVar 1 (Just "b")))
-                          )
-                          (
-                          TFun (TVar 1 (Just "b"))
-                              (
-                              TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                                  (TVar 1 (Just "b"))
-                              )
-                          )
-                  }
-                )
-                , ( "List.head"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          (TApp (TConst "Maybe") [ TVar 0 (Just "a") ])
-                  }
-                )
-                , ( "List.length"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          (TConst "Int")
-                  }
-                )
-                , ( "List.reverse"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                  }
-                )
-                , ( "List.isEmpty"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          (TConst "Bool")
-                  }
-                )
-                , ( "List.append"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          (
-                          TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                              (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                          )
-                  }
-                )
-                , ( "List.concatMap"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun
-                          (
-                          TFun (TVar 0 (Just "a"))
-                              (TApp (TConst "List") [ TVar 1 (Just "b") ])
-                          )
-                          (
-                          TFun (TApp (TConst "List") [ TVar 0 (Just "a") ])
-                              (TApp (TConst "List") [ TVar 1 (Just "b") ])
-                          )
-                  }
-                )
-                , ( "Dict.empty"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TApp (TConst "Dict")
-                          [ TVar 0 (Just "k") , TVar 1 (Just "v") ]
-                  }
-                )
-                , ( "Dict.insert"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun (TVar 0 (Just "k"))
-                          (
-                          TFun (TVar 1 (Just "v"))
-                              (
-                              TFun
-                                  (
-                                  TApp (TConst "Dict")
-                                      [ TVar 0 (Just "k") , TVar 1 (Just "v") ]
-                                  )
-                                  (
-                                  TApp (TConst "Dict")
-                                      [ TVar 0 (Just "k") , TVar 1 (Just "v") ]
-                                  )
-                              )
-                          )
-                  }
-                )
-                , ( "Dict.get"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun (TVar 0 (Just "k"))
-                          (
-                          TFun
-                              (
-                              TApp (TConst "Dict")
-                                  [ TVar 0 (Just "k") , TVar 1 (Just "v") ]
-                              )
-                              (TApp (TConst "Maybe") [ TVar 1 (Just "v") ])
-                          )
-                  }
-                )
-                , ( "Log.println"
-                , mono (TFun (TConst "String") (TConst "Unit"))
-                )
-                , ( "println" , mono (TFun (TConst "String") (TConst "Unit")) )
-                , ( "Process.exit"
-                , mono (TFun (TConst "Int") (TConst "Unit"))
-                )
-                , ( "File.readFile"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (
-                        TApp (TConst "Result")
-                            [ TConst "String" , TConst "String" ]
-                        )
-                    )
-                )
-                , ( "File.writeFile"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (
-                        TFun (TConst "String")
-                            (
-                            TApp (TConst "Result")
-                                [ TConst "String" , TConst "Unit" ]
-                            )
-                        )
-                    )
-                )
-                , ( "File.mkdirAll"
-                , mono
-                    (
-                    TFun (TConst "String")
-                        (
-                        TApp (TConst "Result")
-                            [ TConst "String" , TConst "Unit" ]
-                        )
-                    )
-                )
-                , ( "Args.getArgs"
-                , mono
-                    (
-                    TFun (TConst "Unit")
-                        (TApp (TConst "List") [ TConst "String" ])
-                    )
-                )
-                , ( "Args.getArg"
-                , mono
-                    (
-                    TFun (TConst "Int")
-                        (TApp (TConst "Maybe") [ TConst "String" ])
-                    )
-                )
-                , ( "Ref.new"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TVar 0 (Just "a"))
-                          (TApp (TConst "Ref") [ TVar 0 (Just "a") ])
-                  }
-                )
-                , ( "Ref.get"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TApp (TConst "Ref") [ TVar 0 (Just "a") ])
-                          (TVar 0 (Just "a"))
-                  }
-                )
-                , ( "Ref.set"
-                , { quantified = [ 0 ]
-                  , type_ =
-                      TFun (TVar 0 (Just "a"))
-                          (
-                          TFun (TApp (TConst "Ref") [ TVar 0 (Just "a") ])
-                              (TConst "Unit")
-                          )
-                  }
-                )
-                -- Task module (effect boundary)
-                , ( "Task.succeed"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun (TVar 0 (Just "a"))
-                          (TApp (TConst "Task") [ TVar 1 (Just "err") , TVar 0 (Just "a") ])
-                  }
-                )
-                , ( "Task.fail"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun (TVar 0 (Just "err"))
-                          (TApp (TConst "Task") [ TVar 0 (Just "err") , TVar 1 (Just "a") ])
-                  }
-                )
-                , ( "Task.andThen"
-                , { quantified = [ 0 , 1 , 2 ]
-                  , type_ =
-                      TFun
-                          (TFun (TVar 0 (Just "a"))
-                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 1 (Just "b") ])
-                          )
-                          (TFun
-                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 0 (Just "a") ])
-                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 1 (Just "b") ])
-                          )
-                  }
-                )
-                , ( "Task.map"
-                , { quantified = [ 0 , 1 , 2 ]
-                  , type_ =
-                      TFun
-                          (TFun (TVar 0 (Just "a")) (TVar 1 (Just "b")))
-                          (TFun
-                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 0 (Just "a") ])
-                              (TApp (TConst "Task") [ TVar 2 (Just "err") , TVar 1 (Just "b") ])
-                          )
-                  }
-                )
-                , ( "Task.perform"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun
-                          (TApp (TConst "Task") [ TVar 0 (Just "err") , TVar 1 (Just "a") ])
-                          (TApp (TConst "Result") [ TVar 0 (Just "err") , TVar 1 (Just "a") ])
-                  }
-                )
-                , ( "Task.sequence"
-                , { quantified = [ 0 , 1 ]
-                  , type_ =
-                      TFun
-                          (TApp (TConst "List") [ TApp (TConst "Task") [ TVar 0 (Just "err") , TVar 1 (Just "a") ] ])
-                          (TApp (TConst "Task") [ TVar 0 (Just "err") , TApp (TConst "List") [ TVar 1 (Just "a") ] ])
-                  }
-                )
-                ]
+             [ ( "String.toUpper"
+            , mono  (TFun  (TConst  "String")  (TConst  "String"))
+            )
+            , ( "String.toLower"
+            , mono  (TFun  (TConst  "String")  (TConst  "String"))
+            )
+            , ( "String.length"
+            , mono  (TFun  (TConst  "String")  (TConst  "Int"))
+            )
+            , ( "String.fromInt"
+            , mono  (TFun  (TConst  "Int")  (TConst  "String"))
+            )
+            , ( "String.fromFloat"
+            , mono  (TFun  (TConst  "Float")  (TConst  "String"))
+            )
+            , ( "String.join"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (
+              TFun  (TApp  (TConst  "List")  [ TConst  "String" ])
+               (TConst  "String")
+              )
+              )
+            )
+            , ( "String.split"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (
+              TFun  (TConst  "String")
+               (TApp  (TConst  "List")  [ TConst  "String" ])
+              )
+              )
+            )
+            , ( "String.contains"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (TFun  (TConst  "String")  (TConst  "Bool"))
+              )
+            )
+            , ( "String.startsWith"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (TFun  (TConst  "String")  (TConst  "Bool"))
+              )
+            )
+            , ( "String.trim"
+            , mono  (TFun  (TConst  "String")  (TConst  "String"))
+            )
+            , ( "String.isEmpty"
+            , mono  (TFun  (TConst  "String")  (TConst  "Bool"))
+            )
+            , ( "String.slice"
+            , mono
+               (
+              TFun  (TConst  "Int")
+               (
+              TFun  (TConst  "Int")
+               (TFun  (TConst  "String")  (TConst  "String"))
+              )
+              )
+            )
+            , ( "String.append"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (TFun  (TConst  "String")  (TConst  "String"))
+              )
+            )
+            , ( "List.map"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun  (TFun  (TVar  0  (Just  "a"))  (TVar  1  (Just  "b")))
+                   (
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TApp  (TConst  "List")  [ TVar  1  (Just  "b") ])
+                  )
+              }
+            )
+            , ( "List.filter"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TFun  (TVar  0  (Just  "a"))  (TConst  "Bool"))
+                   (
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                  )
+              }
+            )
+            , ( "List.foldl"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun
+                   (
+                  TFun  (TVar  0  (Just  "a"))
+                   (TFun  (TVar  1  (Just  "b"))  (TVar  1  (Just  "b")))
+                  )
+                   (
+                  TFun  (TVar  1  (Just  "b"))
+                   (
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TVar  1  (Just  "b"))
+                  )
+                  )
+              }
+            )
+            , ( "List.foldr"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun
+                   (
+                  TFun  (TVar  0  (Just  "a"))
+                   (TFun  (TVar  1  (Just  "b"))  (TVar  1  (Just  "b")))
+                  )
+                   (
+                  TFun  (TVar  1  (Just  "b"))
+                   (
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TVar  1  (Just  "b"))
+                  )
+                  )
+              }
+            )
+            , ( "List.head"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TApp  (TConst  "Maybe")  [ TVar  0  (Just  "a") ])
+              }
+            )
+            , ( "List.length"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TConst  "Int")
+              }
+            )
+            , ( "List.reverse"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+              }
+            )
+            , ( "List.isEmpty"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TConst  "Bool")
+              }
+            )
+            , ( "List.append"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                  )
+              }
+            )
+            , ( "List.concatMap"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun
+                   (
+                  TFun  (TVar  0  (Just  "a"))
+                   (TApp  (TConst  "List")  [ TVar  1  (Just  "b") ])
+                  )
+                   (
+                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
+                   (TApp  (TConst  "List")  [ TVar  1  (Just  "b") ])
+                  )
+              }
+            )
+            , ( "Dict.empty"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TApp  (TConst  "Dict")
+                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
+              }
+            )
+            , ( "Dict.insert"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun  (TVar  0  (Just  "k"))
+                   (
+                  TFun  (TVar  1  (Just  "v"))
+                   (
+                  TFun
+                   (
+                  TApp  (TConst  "Dict")
+                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
+                  )
+                   (
+                  TApp  (TConst  "Dict")
+                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
+                  )
+                  )
+                  )
+              }
+            )
+            , ( "Dict.get"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun  (TVar  0  (Just  "k"))
+                   (
+                  TFun
+                   (
+                  TApp  (TConst  "Dict")
+                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
+                  )
+                   (TApp  (TConst  "Maybe")  [ TVar  1  (Just  "v") ])
+                  )
+              }
+            )
+            , ( "Log.println"
+            , mono  (TFun  (TConst  "String")  (TConst  "Unit"))
+            )
+            , ( "println" , mono  (TFun  (TConst  "String")  (TConst  "Unit")) )
+            , ( "Process.exit"
+            , mono  (TFun  (TConst  "Int")  (TConst  "Unit"))
+            )
+            , ( "File.readFile"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (
+              TApp  (TConst  "Result")  [ TConst  "String" , TConst  "String" ]
+              )
+              )
+            )
+            , ( "File.writeFile"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (
+              TFun  (TConst  "String")
+               (TApp  (TConst  "Result")  [ TConst  "String" , TConst  "Unit" ])
+              )
+              )
+            )
+            , ( "File.mkdirAll"
+            , mono
+               (
+              TFun  (TConst  "String")
+               (TApp  (TConst  "Result")  [ TConst  "String" , TConst  "Unit" ])
+              )
+            )
+            , ( "Args.getArgs"
+            , mono
+               (
+              TFun  (TConst  "Unit")
+               (TApp  (TConst  "List")  [ TConst  "String" ])
+              )
+            )
+            , ( "Args.getArg"
+            , mono
+               (
+              TFun  (TConst  "Int")
+               (TApp  (TConst  "Maybe")  [ TConst  "String" ])
+              )
+            )
+            , ( "Ref.new"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TVar  0  (Just  "a"))
+                   (TApp  (TConst  "Ref")  [ TVar  0  (Just  "a") ])
+              }
+            )
+            , ( "Ref.get"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TApp  (TConst  "Ref")  [ TVar  0  (Just  "a") ])
+                   (TVar  0  (Just  "a"))
+              }
+            )
+            , ( "Ref.set"
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TVar  0  (Just  "a"))
+                   (
+                  TFun  (TApp  (TConst  "Ref")  [ TVar  0  (Just  "a") ])
+                   (TConst  "Unit")
+                  )
+              }
+            )
+            , ( "Task.succeed"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun  (TVar  0  (Just  "a"))
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  1  (Just  "err") , TVar  0  (Just  "a") ]
+                  )
+              }
+            )
+            , ( "Task.fail"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun  (TVar  0  (Just  "err"))
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
+                  )
+              }
+            )
+            , ( "Task.andThen"
+            , { quantified =
+                  [ 0 , 1 , 2 ]
+              , type_ =
+                  TFun
+                   (
+                  TFun  (TVar  0  (Just  "a"))
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  2  (Just  "err") , TVar  1  (Just  "b") ]
+                  )
+                  )
+                   (
+                  TFun
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  2  (Just  "err") , TVar  0  (Just  "a") ]
+                  )
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  2  (Just  "err") , TVar  1  (Just  "b") ]
+                  )
+                  )
+              }
+            )
+            , ( "Task.map"
+            , { quantified =
+                  [ 0 , 1 , 2 ]
+              , type_ =
+                  TFun  (TFun  (TVar  0  (Just  "a"))  (TVar  1  (Just  "b")))
+                   (
+                  TFun
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  2  (Just  "err") , TVar  0  (Just  "a") ]
+                  )
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  2  (Just  "err") , TVar  1  (Just  "b") ]
+                  )
+                  )
+              }
+            )
+            , ( "Task.perform"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
+                  )
+                   (
+                  TApp  (TConst  "Result")
+                   [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
+                  )
+              }
+            )
+            , ( "Task.sequence"
+            , { quantified =
+                  [ 0 , 1 ]
+              , type_ =
+                  TFun
+                   (
+                  TApp  (TConst  "List")
+                   [ TApp  (TConst  "Task")
+                      [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
+                  ]
+                  )
+                   (
+                  TApp  (TConst  "Task")
+                   [ TVar  0  (Just  "err")
+                  , TApp  (TConst  "List")  [ TVar  1  (Just  "a") ]
+                  ]
+                  )
+              }
+            )
+            ]
     in
-        Env.union stdFunctions prelude
+        Env.union  stdFunctions  prelude
 
 
--- ══════════════════════════════════════════════════════
--- FFI PACKAGE DETECTION
--- ══════════════════════════════════════════════════════
-
--- Check if a module was resolved from a .skyi binding file
 isFfiBinding : String -> Bool
+
 isFfiBinding modName =
     let
         skyiPath =
-            resolveBindingPath modName
+            resolveBindingPath  modName
     in
-        case File.readFile skyiPath of
+        case File.readFile  skyiPath of
+            
             Ok _ ->
                 True
-
+            
             Err _ ->
                 False
 
 
--- Convert a Sky module name to a Go import path
--- e.g. "Database.Sql" → "database/sql"
---      "Github.Com.Google.Uuid" → "github.com/google/uuid"
---      "Modernc.Org.Sqlite" → "modernc.org/sqlite"
 moduleNameToGoPath : String -> String
+
 moduleNameToGoPath modName =
     let
         parts =
-            String.split "." modName
+            String.split  "."  modName
         lowerParts =
-            List.map String.toLower parts
+            List.map  String.toLower  parts
     in
-        String.join "/" lowerParts
+        String.join  "/"  lowerParts
 
 
--- Convert a Sky module name to the safe (underscore-joined) name used in .skycache
--- e.g. "Github.Com.Google.Uuid" → "github_com_google_uuid"
 moduleNameToSafeName : String -> String
+
 moduleNameToSafeName modName =
     let
         parts =
-            String.split "." modName
+            String.split  "."  modName
         lowerParts =
-            List.map String.toLower parts
+            List.map  String.toLower  parts
     in
-        String.join "_" lowerParts
+        String.join  "_"  lowerParts
 
 
--- Get the path to the Go wrapper file for a given module
--- e.g. "Github.Com.Google.Uuid" → ".skycache/go/github_com_google_uuid/sky_wrappers/github_com_google_uuid.go"
 resolveWrapperPath : String -> String
+
 resolveWrapperPath modName =
     let
         safeName =
-            moduleNameToSafeName modName
+            moduleNameToSafeName  modName
     in
         ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
 
 
--- Collect all foreign Go packages from a list of imports
--- Returns a list of ( moduleName, goImportPath, isBlankImport )
-collectForeignImports : List Ast.ImportDecl -> List ( String , String , Bool )
+collectForeignImports : (List Ast.ImportDecl) -> List ( String , String , Bool )
+
 collectForeignImports imports =
     List.filterMap
-        (\imp ->
-            let
-                modName =
-                    String.join "." imp.moduleName
-            in
-                if isStdlib modName then
-                    Nothing
-                else if imp.alias_ == "_" then
-                    -- Blank import for side effects
-                    Just ( modName , moduleNameToGoPath modName , True )
-                else if isFfiBinding modName then
-                    -- Regular FFI import
-                    Just ( modName , moduleNameToGoPath modName , False )
-                else
-                    Nothing
-        )
-        imports
+     (
+    \imp ->
+        let
+            modName =
+                String.join  "."  imp.moduleName
+        in
+            if isStdlib  modName then
+                Nothing
+            else if imp.alias_ == "_" then
+                Just  ( modName , moduleNameToGoPath  modName , True )
+            else if isFfiBinding  modName then
+                Just  ( modName , moduleNameToGoPath  modName , False )
+            else
+                Nothing
+    )
+     imports
 
 
--- Recursively collect foreign imports from all loaded modules
-collectAllForeignImports : List Ast.ImportDecl -> List ( String , Ast.Module ) -> List ( String , String , Bool )
+collectAllForeignImports : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , String , Bool )
+
 collectAllForeignImports entryImports loadedModules =
     let
         entryForeign =
-            collectForeignImports entryImports
+            collectForeignImports  entryImports
         depForeign =
             List.concatMap
-                (\pair ->
-                    let
-                        mod =
-                            snd pair
-                    in
-                        collectForeignImports mod.imports
-                )
-                loadedModules
+             (
+            \pair ->
+                let
+                    mod =
+                        snd  pair
+                in
+                    collectForeignImports  mod.imports
+            )
+             loadedModules
     in
-        deduplicateForeignImports (List.append entryForeign depForeign)
+        deduplicateForeignImports  (List.append  entryForeign  depForeign)
 
 
-deduplicateForeignImports : List ( String , String , Bool ) -> List ( String , String , Bool )
+deduplicateForeignImports : (List ( String , String , Bool )) -> List ( String , String , Bool )
+
 deduplicateForeignImports imports =
-    deduplicateForeignLoop imports Set.empty []
+    deduplicateForeignLoop  imports  Set.empty  []
 
 
-deduplicateForeignLoop : List ( String , String , Bool ) -> Set.Set String -> List ( String , String , Bool ) -> List ( String , String , Bool )
+deduplicateForeignLoop : (List ( String , String , Bool )) -> (Set.Set String) -> (List ( String , String , Bool )) -> List ( String , String , Bool )
+
 deduplicateForeignLoop imports seen acc =
     case imports of
-        [] ->
-            List.reverse acc
-
+        
+        [  ] ->
+            List.reverse  acc
+        
         item :: rest ->
             let
                 modName =
-                    tripleFirst item
+                    tripleFirst  item
             in
-                if Set.member modName seen then
-                    deduplicateForeignLoop rest seen acc
+                if Set.member  modName  seen then
+                    deduplicateForeignLoop  rest  seen  acc
                 else
-                    deduplicateForeignLoop rest (Set.insert modName seen) (item :: acc)
+                    deduplicateForeignLoop  rest  (Set.insert  modName  seen)
+                     (item :: acc)
 
 
 tripleFirst : ( String , String , Bool ) -> String
+
 tripleFirst triple =
     case triple of
+        
         ( a , _ , _ ) ->
             a
 
 
 tripleSecond : ( String , String , Bool ) -> String
+
 tripleSecond triple =
     case triple of
+        
         ( _ , b , _ ) ->
             b
 
 
 tripleThird : ( String , String , Bool ) -> Bool
+
 tripleThird triple =
     case triple of
+        
         ( _ , _ , c ) ->
             c

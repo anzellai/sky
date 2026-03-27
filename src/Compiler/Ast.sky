@@ -2,14 +2,6 @@ module Compiler.Ast exposing (..)
 
 import Compiler.Token exposing (SourceSpan)
 
--- Sky AST node types.
--- Each constructor carries its data fields plus a SourceSpan for diagnostics.
-
-
--- ══════════════════════════════════════════════════════
--- EXPRESSIONS
--- ══════════════════════════════════════════════════════
-
 type Expression
     = IdentifierExpr String SourceSpan
     | QualifiedExpr (List String) SourceSpan
@@ -34,10 +26,6 @@ type Expression
     | ParenExpr Expression SourceSpan
 
 
--- ══════════════════════════════════════════════════════
--- PATTERNS
--- ══════════════════════════════════════════════════════
-
 type Pattern
     = PWildcard SourceSpan
     | PVariable String SourceSpan
@@ -58,10 +46,6 @@ type LiteralValue
     | LitBool Bool
 
 
--- ══════════════════════════════════════════════════════
--- TYPES
--- ══════════════════════════════════════════════════════
-
 type TypeExpr
     = TypeRef (List String) (List TypeExpr) SourceSpan
     | TypeVar String SourceSpan
@@ -72,20 +56,12 @@ type TypeExpr
 
 
 type alias NamedType =
-    { name : String
-    , type_ : TypeExpr
-    }
+    { name : String , type_ : TypeExpr }
 
 
 type alias NamedExpr =
-    { name : String
-    , value : Expression
-    }
+    { name : String , value : Expression }
 
-
--- ══════════════════════════════════════════════════════
--- DECLARATIONS
--- ══════════════════════════════════════════════════════
 
 type Declaration
     = FunDecl String (List Pattern) Expression SourceSpan
@@ -96,27 +72,16 @@ type Declaration
 
 
 type alias TypeVariant =
-    { name : String
-    , fields : List TypeExpr
-    , span : SourceSpan
-    }
+    { name : String , fields : List TypeExpr , span : SourceSpan }
 
 
 type alias LetBinding =
-    { pattern : Pattern
-    , value : Expression
-    }
+    { pattern : Pattern , value : Expression }
 
 
 type alias CaseBranch =
-    { pattern : Pattern
-    , body : Expression
-    }
+    { pattern : Pattern , body : Expression }
 
-
--- ══════════════════════════════════════════════════════
--- MODULE
--- ══════════════════════════════════════════════════════
 
 type alias Module =
     { name : List String

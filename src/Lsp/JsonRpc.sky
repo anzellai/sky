@@ -5,125 +5,109 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.Io as Io
 
-
--- ══════════════════════════════════════════════════════
--- JSON-RPC MESSAGE TYPES
--- ══════════════════════════════════════════════════════
-
 type alias Request =
-    { id : String
-    , method : String
-    , params : String
-    }
+    { id : String , method : String , params : String }
 
 
 type alias Response =
-    { id : String
-    , resultJson : String
-    }
+    { id : String , resultJson : String }
 
 
 type alias Notification =
-    { method : String
-    , params : String
-    }
+    { method : String , params : String }
 
-
--- ══════════════════════════════════════════════════════
--- READ / WRITE LSP MESSAGES
--- ══════════════════════════════════════════════════════
-
--- Read a single LSP message from stdin.
--- Format: Content-Length: N\r\n\r\n{json body}
 
 readMessage : () -> Maybe String
+
 readMessage _ =
-    case Io.readLine () of
+    case Io.readLine  () of
+        
         Nothing ->
             Nothing
-
+        
         Just headerLine ->
             let
                 contentLength =
-                    parseContentLength headerLine
+                    parseContentLength  headerLine
             in
                 if contentLength <= 0 then
                     Nothing
                 else
-                    readMessageBody contentLength
+                    readMessageBody  contentLength
 
 
 readMessageBody : Int -> Maybe String
+
 readMessageBody len =
-    case Io.readLine () of
+    case Io.readLine  () of
+        
         Nothing ->
             Nothing
-
+        
         Just _ ->
-            Io.readBytes len
+            Io.readBytes  len
 
 
 parseContentLength : String -> Int
+
 parseContentLength header =
-    if String.startsWith "Content-Length: " header then
+    if String.startsWith  "Content-Length: "  header then
         let
             raw =
-                String.slice 16 (String.length header) header
+                String.slice  16  (String.length  header)  header
             numStr =
-                String.replace "\r" "" (String.trim raw)
+                String.replace  "\r"  ""  (String.trim  raw)
         in
-            case String.toInt numStr of
+            case String.toInt  numStr of
+                
                 Just n ->
                     n
-
+                
                 Nothing ->
                     0
     else
         0
 
 
--- Write a JSON-RPC response to stdout.
-
 writeMessage : String -> ()
+
 writeMessage json =
     let
         len =
-            String.length json
+            String.length  json
         header =
-            "Content-Length: " ++ String.fromInt len ++ "\r\n\r\n"
+            "Content-Length: " ++ String.fromInt  len ++ "\r\n\r\n"
     in
-        Io.writeStdout (header ++ json)
+        Io.writeStdout  (header ++ json)
 
-
--- ══════════════════════════════════════════════════════
--- MINIMAL JSON CONSTRUCTION
--- ══════════════════════════════════════════════════════
-
--- Build JSON-RPC response string
 
 makeResponse : String -> String -> String
+
 makeResponse id resultJson =
     "{\"jsonrpc\":\"2.0\",\"id\":" ++ id ++ ",\"result\":" ++ resultJson ++ "}"
 
 
 makeNotification : String -> String -> String
+
 makeNotification method paramsJson =
-    "{\"jsonrpc\":\"2.0\",\"method\":\"" ++ method ++ "\",\"params\":" ++ paramsJson ++ "}"
+    "{\"jsonrpc\":\"2.0\",\"method\":\"" ++
+    method ++ "\",\"params\":" ++ paramsJson ++ "}"
 
-
--- JSON helpers
 
 jsonString : String -> String
+
 jsonString s =
-    "\"" ++ escapeJson s ++ "\""
+    "\"" ++ escapeJson  s ++ "\""
 
 
 jsonInt : Int -> String
+
 jsonInt n =
-    String.fromInt n
+    String.fromInt  n
 
 
 jsonBool : Bool -> String
+
 jsonBool b =
     if b then
         "true"
@@ -132,343 +116,388 @@ jsonBool b =
 
 
 jsonNull : String
+
 jsonNull =
     "null"
 
 
-jsonObject : List ( String , String ) -> String
+jsonObject : (List ( String , String )) -> String
+
 jsonObject fields =
-    "{" ++ String.join "," (List.map formatField fields) ++ "}"
+    "{" ++ String.join  ","  (List.map  formatField  fields) ++ "}"
 
 
 formatField : ( String , String ) -> String
+
 formatField pair =
-    jsonString (fst pair) ++ ":" ++ snd pair
+    jsonString  (fst  pair) ++ ":" ++ snd  pair
 
 
-jsonArray : List String -> String
+jsonArray : (List String) -> String
+
 jsonArray items =
-    "[" ++ String.join "," items ++ "]"
+    "[" ++ String.join  ","  items ++ "]"
 
 
 escapeJson : String -> String
+
 escapeJson s =
     let
         s1 =
-            String.replace "\\" "\\\\" s
-
+            String.replace  "\\"  "\\\\"  s
         s2 =
-            String.replace "\"" "\\\"" s1
-
+            String.replace  "\""  "\\\""  s1
         s3 =
-            String.replace "\n" "\\n" s2
-
+            String.replace  "\n"  "\\n"  s2
         s4 =
-            String.replace "\r" "\\r" s3
+            String.replace  "\r"  "\\r"  s3
     in
-        String.replace "\t" "\\t" s4
+        String.replace  "\t"  "\\t"  s4
 
-
--- ══════════════════════════════════════════════════════
--- MINIMAL JSON PARSING
--- ══════════════════════════════════════════════════════
-
--- Extract a string value from a JSON object by key.
 
 jsonGetString : String -> String -> String
+
 jsonGetString key json =
     let
         searchKey =
             "\"" ++ key ++ "\""
         keyIdx =
-            findInString searchKey json 0
+            findInString  searchKey  json  0
     in
         if keyIdx < 0 then
             ""
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                    String.slice  (keyIdx + String.length  searchKey)
+                     (String.length  json)
+                     json
                 colonIdx =
-                    findInString ":" afterKey 0
+                    findInString  ":"  afterKey  0
             in
                 if colonIdx < 0 then
                     ""
                 else
                     let
                         afterColon =
-                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                            String.trim
+                             (
+                            String.slice  (colonIdx + 1)
+                             (String.length  afterKey)
+                             afterKey
+                            )
                     in
-                        if String.startsWith "\"" afterColon then
-                            extractQuotedString (String.slice 1 (String.length afterColon) afterColon) ""
+                        if String.startsWith  "\""  afterColon then
+                            extractQuotedString
+                             (
+                            String.slice  1  (String.length  afterColon)
+                             afterColon
+                            )
+                             ""
                         else
-                            -- For non-string values (numbers, booleans), take until comma/brace
-                            takeUntilDelimiter afterColon ""
+                            takeUntilDelimiter  afterColon  ""
 
 
--- Extract a raw JSON value (preserving quotes for strings, raw for numbers)
 jsonGetRaw : String -> String -> String
+
 jsonGetRaw key json =
     let
         searchKey =
             "\"" ++ key ++ "\""
         keyIdx =
-            findInString searchKey json 0
+            findInString  searchKey  json  0
     in
         if keyIdx < 0 then
             "null"
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                    String.slice  (keyIdx + String.length  searchKey)
+                     (String.length  json)
+                     json
                 colonIdx =
-                    findInString ":" afterKey 0
+                    findInString  ":"  afterKey  0
             in
                 if colonIdx < 0 then
                     "null"
                 else
                     let
                         afterColon =
-                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                            String.trim
+                             (
+                            String.slice  (colonIdx + 1)
+                             (String.length  afterKey)
+                             afterKey
+                            )
                     in
-                        if String.startsWith "\"" afterColon then
-                            -- String value: return with quotes
-                            "\"" ++ extractQuotedString (String.slice 1 (String.length afterColon) afterColon) "" ++ "\""
+                        if String.startsWith  "\""  afterColon then
+                            "\"" ++
+                            extractQuotedString
+                             (
+                            String.slice  1  (String.length  afterColon)
+                             afterColon
+                            )
+                             "" ++
+                            "\""
                         else
-                            -- Number/bool/null: return raw
-                            takeUntilDelimiter afterColon ""
+                            takeUntilDelimiter  afterColon  ""
 
 
 jsonGetInt : String -> String -> Int
+
 jsonGetInt key json =
     let
         searchKey =
             "\"" ++ key ++ "\""
         keyIdx =
-            findInString searchKey json 0
+            findInString  searchKey  json  0
     in
         if keyIdx < 0 then
             0
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                    String.slice  (keyIdx + String.length  searchKey)
+                     (String.length  json)
+                     json
                 colonIdx =
-                    findInString ":" afterKey 0
+                    findInString  ":"  afterKey  0
             in
                 if colonIdx < 0 then
                     0
                 else
                     let
                         afterColon =
-                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                            String.trim
+                             (
+                            String.slice  (colonIdx + 1)
+                             (String.length  afterKey)
+                             afterKey
+                            )
                         numStr =
-                            takeWhileDigit afterColon ""
+                            takeWhileDigit  afterColon  ""
                     in
-                        case String.toInt numStr of
+                        case String.toInt  numStr of
+                            
                             Just n ->
                                 n
-
+                            
                             Nothing ->
                                 0
 
 
 jsonGetObject : String -> String -> String
+
 jsonGetObject key json =
     let
         searchKey =
             "\"" ++ key ++ "\""
         keyIdx =
-            findInString searchKey json 0
+            findInString  searchKey  json  0
     in
         if keyIdx < 0 then
             "{}"
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                    String.slice  (keyIdx + String.length  searchKey)
+                     (String.length  json)
+                     json
                 colonIdx =
-                    findInString ":" afterKey 0
+                    findInString  ":"  afterKey  0
             in
                 if colonIdx < 0 then
                     "{}"
                 else
                     let
                         afterColon =
-                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                            String.trim
+                             (
+                            String.slice  (colonIdx + 1)
+                             (String.length  afterKey)
+                             afterKey
+                            )
                     in
-                        if String.startsWith "{" afterColon then
-                            extractBraced afterColon 0 0
+                        if String.startsWith  "{"  afterColon then
+                            extractBraced  afterColon  0  0
                         else
                             "{}"
 
 
--- Get a JSON array value by key, returns the raw array string "[ ... ]"
 jsonGetArrayRaw : String -> String -> String
+
 jsonGetArrayRaw key json =
     let
         searchKey =
             "\"" ++ key ++ "\""
         keyIdx =
-            findInString searchKey json 0
+            findInString  searchKey  json  0
     in
         if keyIdx < 0 then
             "[]"
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (String.length json) json
+                    String.slice  (keyIdx + String.length  searchKey)
+                     (String.length  json)
+                     json
                 colonIdx =
-                    findInString ":" afterKey 0
+                    findInString  ":"  afterKey  0
             in
                 if colonIdx < 0 then
                     "[]"
                 else
                     let
                         afterColon =
-                            String.trim (String.slice (colonIdx + 1) (String.length afterKey) afterKey)
+                            String.trim
+                             (
+                            String.slice  (colonIdx + 1)
+                             (String.length  afterKey)
+                             afterKey
+                            )
                     in
-                        if String.startsWith "[" afterColon then
-                            extractBracketed afterColon 0 0
+                        if String.startsWith  "["  afterColon then
+                            extractBracketed  afterColon  0  0
                         else
                             "[]"
 
 
--- Extract a bracketed JSON array [...] respecting nesting
 extractBracketed : String -> Int -> Int -> String
+
 extractBracketed remaining depth idx =
-    if idx >= String.length remaining then
+    if idx >= String.length  remaining then
         remaining
     else
         let
             ch =
-                String.slice idx (idx + 1) remaining
+                String.slice  idx  (idx + 1)  remaining
         in
             if ch == "[" then
-                extractBracketed remaining (depth + 1) (idx + 1)
+                extractBracketed  remaining  (depth + 1)  (idx + 1)
             else if ch == "]" then
                 if depth <= 1 then
-                    String.slice 0 (idx + 1) remaining
+                    String.slice  0  (idx + 1)  remaining
                 else
-                    extractBracketed remaining (depth - 1) (idx + 1)
+                    extractBracketed  remaining  (depth - 1)  (idx + 1)
             else if ch == "\"" then
                 let
                     endQuote =
-                        skipQuotedString remaining (idx + 1)
+                        skipQuotedString  remaining  (idx + 1)
                 in
-                    extractBracketed remaining depth endQuote
+                    extractBracketed  remaining  depth  endQuote
             else
-                extractBracketed remaining depth (idx + 1)
+                extractBracketed  remaining  depth  (idx + 1)
 
 
 skipQuotedString : String -> Int -> Int
+
 skipQuotedString s idx =
-    if idx >= String.length s then
+    if idx >= String.length  s then
         idx
     else
         let
             ch =
-                String.slice idx (idx + 1) s
+                String.slice  idx  (idx + 1)  s
         in
             if ch == "\"" then
                 idx + 1
             else if ch == "\\" then
-                skipQuotedString s (idx + 2)
+                skipQuotedString  s  (idx + 2)
             else
-                skipQuotedString s (idx + 1)
+                skipQuotedString  s  (idx + 1)
 
 
--- Split a JSON array string into individual element strings
--- "[{...},{...}]" → ["{...}", "{...}"]
 jsonSplitArray : String -> List String
+
 jsonSplitArray arrayStr =
     let
         inner =
-            String.trim (String.slice 1 (String.length arrayStr - 1) arrayStr)
+            String.trim
+             (String.slice  1  (String.length  arrayStr - 1)  arrayStr)
     in
-        if String.isEmpty inner then
+        if String.isEmpty  inner then
             []
         else
-            splitJsonElements inner 0 0 0 []
+            splitJsonElements  inner  0  0  0  []
 
 
-splitJsonElements : String -> Int -> Int -> Int -> List String -> List String
+splitJsonElements : String -> Int -> Int -> Int -> (List String) -> List String
+
 splitJsonElements s idx start depth acc =
-    if idx >= String.length s then
+    if idx >= String.length  s then
         let
             last =
-                String.trim (String.slice start idx s)
+                String.trim  (String.slice  start  idx  s)
         in
-            if String.isEmpty last then
+            if String.isEmpty  last then
                 acc
             else
-                List.append acc [ last ]
+                List.append  acc  [ last ]
     else
         let
             ch =
-                String.slice idx (idx + 1) s
+                String.slice  idx  (idx + 1)  s
         in
             if ch == "{" || ch == "[" then
-                splitJsonElements s (idx + 1) start (depth + 1) acc
+                splitJsonElements  s  (idx + 1)  start  (depth + 1)  acc
             else if ch == "}" || ch == "]" then
-                splitJsonElements s (idx + 1) start (depth - 1) acc
+                splitJsonElements  s  (idx + 1)  start  (depth - 1)  acc
             else if ch == "\"" then
                 let
                     endQ =
-                        skipQuotedString s (idx + 1)
+                        skipQuotedString  s  (idx + 1)
                 in
-                    splitJsonElements s endQ start depth acc
+                    splitJsonElements  s  endQ  start  depth  acc
             else if ch == "," && depth == 0 then
                 let
                     element =
-                        String.trim (String.slice start idx s)
+                        String.trim  (String.slice  start  idx  s)
                 in
-                    splitJsonElements s (idx + 1) (idx + 1) depth (List.append acc [ element ])
+                    splitJsonElements  s  (idx + 1)  (idx + 1)  depth
+                     (List.append  acc  [ element ])
             else
-                splitJsonElements s (idx + 1) start depth acc
+                splitJsonElements  s  (idx + 1)  start  depth  acc
 
 
--- Get boolean value from JSON
 jsonGetBool : String -> String -> Bool
+
 jsonGetBool key json =
     let
         val =
-            jsonGetString key json
+            jsonGetString  key  json
     in
         val == "true"
 
 
--- ══════════════════════════════════════════════════════
--- STRING HELPERS
--- ══════════════════════════════════════════════════════
-
 findInString : String -> String -> Int -> Int
+
 findInString needle haystack idx =
-    if idx + String.length needle > String.length haystack then
+    if idx + String.length  needle > String.length  haystack then
         -1
-    else if String.slice idx (idx + String.length needle) haystack == needle then
+    else if String.slice  idx  (idx + String.length  needle)  haystack == needle then
         idx
     else
-        findInString needle haystack (idx + 1)
+        findInString  needle  haystack  (idx + 1)
 
 
 extractQuotedString : String -> String -> String
+
 extractQuotedString remaining acc =
-    if String.isEmpty remaining then
+    if String.isEmpty  remaining then
         acc
     else
         let
             ch =
-                String.slice 0 1 remaining
+                String.slice  0  1  remaining
             rest =
-                String.slice 1 (String.length remaining) remaining
+                String.slice  1  (String.length  remaining)  remaining
         in
             if ch == "\"" then
                 acc
             else if ch == "\\" then
                 let
                     escaped =
-                        String.slice 0 1 rest
+                        String.slice  0  1  rest
                     decoded =
                         if escaped == "n" then
                             "\n"
@@ -479,56 +508,71 @@ extractQuotedString remaining acc =
                         else
                             escaped
                 in
-                    extractQuotedString (String.slice 1 (String.length rest) rest) (acc ++ decoded)
+                    extractQuotedString
+                     (String.slice  1  (String.length  rest)  rest)
+                     (acc ++ decoded)
             else
-                extractQuotedString rest (acc ++ ch)
+                extractQuotedString  rest  (acc ++ ch)
 
 
 takeWhileDigit : String -> String -> String
+
 takeWhileDigit remaining acc =
-    if String.isEmpty remaining then
+    if String.isEmpty  remaining then
         acc
     else
         let
             ch =
-                String.slice 0 1 remaining
+                String.slice  0  1  remaining
         in
-            if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" then
-                takeWhileDigit (String.slice 1 (String.length remaining) remaining) (acc ++ ch)
+            if ch == "0" ||
+            ch == "1" ||
+            ch == "2" ||
+            ch == "3" ||
+            ch == "4" ||
+            ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" then
+                takeWhileDigit
+                 (String.slice  1  (String.length  remaining)  remaining)
+                 (acc ++ ch)
             else
                 acc
 
 
 takeUntilDelimiter : String -> String -> String
+
 takeUntilDelimiter remaining acc =
-    if String.isEmpty remaining then
+    if String.isEmpty  remaining then
         acc
     else
         let
             ch =
-                String.slice 0 1 remaining
+                String.slice  0  1  remaining
         in
-            if ch == "," || ch == "}" || ch == "]" || ch == " " || ch == "\n" || ch == "\r" then
+            if ch == "," ||
+            ch == "}" || ch == "]" || ch == " " || ch == "\n" || ch == "\r" then
                 acc
             else
-                takeUntilDelimiter (String.slice 1 (String.length remaining) remaining) (acc ++ ch)
+                takeUntilDelimiter
+                 (String.slice  1  (String.length  remaining)  remaining)
+                 (acc ++ ch)
 
 
 extractBraced : String -> Int -> Int -> String
+
 extractBraced remaining depth idx =
-    if idx >= String.length remaining then
+    if idx >= String.length  remaining then
         remaining
     else
         let
             ch =
-                String.slice idx (idx + 1) remaining
+                String.slice  idx  (idx + 1)  remaining
         in
             if ch == "{" then
-                extractBraced remaining (depth + 1) (idx + 1)
+                extractBraced  remaining  (depth + 1)  (idx + 1)
             else if ch == "}" then
                 if depth <= 1 then
-                    String.slice 0 (idx + 1) remaining
+                    String.slice  0  (idx + 1)  remaining
                 else
-                    extractBraced remaining (depth - 1) (idx + 1)
+                    extractBraced  remaining  (depth - 1)  (idx + 1)
             else
-                extractBraced remaining depth (idx + 1)
+                extractBraced  remaining  depth  (idx + 1)

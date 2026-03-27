@@ -9,278 +9,269 @@ import Ffi.TypeMapper as TypeMapper
 import Ffi.WrapperGen as WrapperGen
 import Lsp.JsonRpc as Json
 
-
--- ══════════════════════════════════════════════════════
--- BINDING GENERATION
--- ══════════════════════════════════════════════════════
-
--- Generate Sky bindings (.skyi) for a Go package.
--- This is the main entry point for `sky add <go-package>`.
-
 generateBindings : String -> String -> Result String String
-generateBindings pkgName outDir =
-    case Inspector.inspectPackage pkgName of
-        Err e ->
-            Err e
 
+generateBindings pkgName outDir =
+    case Inspector.inspectPackage  pkgName of
+        
+        Err e ->
+            Err  e
+        
         Ok inspectJson ->
             let
-                -- Generate .skyi binding file
                 skyiContent =
-                    generateSkyiFile pkgName inspectJson
+                    generateSkyiFile  pkgName  inspectJson
                 skyiPath =
                     outDir ++ "/bindings.skyi"
                 _ =
-                    File.mkdirAll outDir
+                    File.mkdirAll  outDir
                 _ =
-                    File.writeFile skyiPath skyiContent
-
-                -- Generate Go wrappers
+                    File.writeFile  skyiPath  skyiContent
                 wrapperResult =
-                    WrapperGen.generateWrappers pkgName inspectJson outDir
+                    WrapperGen.generateWrappers  pkgName  inspectJson  outDir
             in
                 case wrapperResult of
+                    
                     Ok _ ->
-                        Ok skyiContent
-
+                        Ok  skyiContent
+                    
                     Err e ->
-                        Err e
+                        Err  e
 
-
--- ══════════════════════════════════════════════════════
--- .skyi FILE GENERATION
--- ══════════════════════════════════════════════════════
 
 generateSkyiFile : String -> String -> String
+
 generateSkyiFile pkgName inspectJson =
     let
         moduleName =
-            pkgToModuleName pkgName
-
-        -- Extract functions from JSON
+            pkgToModuleName  pkgName
         funcLines =
-            extractFuncBindings pkgName inspectJson
-
-        -- Extract type names
+            extractFuncBindings  pkgName  inspectJson
         typeLines =
-            extractTypeBindings inspectJson
-
-        -- Extract struct field accessors
+            extractTypeBindings  inspectJson
         fieldLines =
-            extractFieldBindings pkgName inspectJson
-
-        -- Extract method bindings
+            extractFieldBindings  pkgName  inspectJson
         methodLines =
-            extractMethodBindings pkgName inspectJson
-
-        -- Extract variable bindings
+            extractMethodBindings  pkgName  inspectJson
         varLines =
-            extractVarBindings pkgName inspectJson
-
-        -- Extract constant bindings (Go enums → Sky string/int values)
+            extractVarBindings  pkgName  inspectJson
         constLines =
-            extractConstBindings pkgName inspectJson
+            extractConstBindings  pkgName  inspectJson
     in
-        String.join "\n"
-            [ "module " ++ moduleName ++ " exposing (..)"
-            , ""
-            , "foreign import \"" ++ pkgName ++ "\" exposing (..)"
-            , ""
-            , String.join "\n\n" funcLines
-            , ""
-            , String.join "\n\n" typeLines
-            , ""
-            , String.join "\n\n" fieldLines
-            , ""
-            , String.join "\n\n" methodLines
-            , ""
-            , String.join "\n\n" varLines
-            , ""
-            , String.join "\n\n" constLines
-            ]
+        String.join  "\n"
+         [ "module " ++ moduleName ++ " exposing (..)"
+        , ""
+        , "foreign import \"" ++ pkgName ++ "\" exposing (..)"
+        , ""
+        , String.join  "\n\n"  funcLines
+        , ""
+        , String.join  "\n\n"  typeLines
+        , ""
+        , String.join  "\n\n"  fieldLines
+        , ""
+        , String.join  "\n\n"  methodLines
+        , ""
+        , String.join  "\n\n"  varLines
+        , ""
+        , String.join  "\n\n"  constLines
+        ]
 
-
--- Convert Go package path to Sky module name
--- e.g. "net/http" → "Net.Http"
---      "github.com/google/uuid" → "Github.Com.Google.Uuid"
 
 pkgToModuleName : String -> String
+
 pkgToModuleName pkgPath =
     let
-        -- Split by / first, then split each segment by . and capitalize all
         slashParts =
-            String.split "/" pkgPath
+            String.split  "/"  pkgPath
         allParts =
-            List.concatMap (\seg -> String.split "." seg) (List.map (\seg -> hyphenToCamel seg) slashParts)
+            List.concatMap  (\seg -> String.split  "."  seg)
+             (List.map  (\seg -> hyphenToCamel  seg)  slashParts)
         capitalized =
-            List.map capitalizeFirst allParts
+            List.map  capitalizeFirst  allParts
     in
-        String.join "." capitalized
+        String.join  "."  capitalized
 
 
--- Extract struct field accessor bindings
 extractFieldBindings : String -> String -> List String
+
 extractFieldBindings pkgName json =
     let
         typesArrayStr =
-            Json.jsonGetArrayRaw "types" json
+            Json.jsonGetArrayRaw  "types"  json
         typeElements =
-            Json.jsonSplitArray typesArrayStr
+            Json.jsonSplitArray  typesArrayStr
     in
         let
             safePkg =
-                String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
+                String.replace  "-"  "_"
+                 (String.replace  "/"  "_"  (String.replace  "."  "_"  pkgName))
         in
-            List.concatMap (\t -> extractFieldsForType safePkg t) typeElements
+            List.concatMap  (\t -> extractFieldsForType  safePkg  t)
+             typeElements
 
 
 extractFieldsForType : String -> String -> List String
+
 extractFieldsForType safePkg typeJson =
     let
         typeName =
-            Json.jsonGetString "name" typeJson
+            Json.jsonGetString  "name"  typeJson
         kind =
-            Json.jsonGetString "kind" typeJson
+            Json.jsonGetString  "kind"  typeJson
         fieldsArrayStr =
-            Json.jsonGetArrayRaw "fields" typeJson
+            Json.jsonGetArrayRaw  "fields"  typeJson
         fieldElements =
-            Json.jsonSplitArray fieldsArrayStr
+            Json.jsonSplitArray  fieldsArrayStr
     in
-        if kind == "struct" && not (isGenericTypeBinding typeJson) then
-            List.filterMap (\f -> generateFieldBinding safePkg typeName f) fieldElements
+        if kind == "struct" && not  (isGenericTypeBinding  typeJson) then
+            List.filterMap  (\f -> generateFieldBinding  safePkg  typeName  f)
+             fieldElements
         else
             []
 
 
 isGenericTypeBinding : String -> Bool
+
 isGenericTypeBinding typeJson =
     let
         fieldsStr =
-            Json.jsonGetArrayRaw "fields" typeJson
+            Json.jsonGetArrayRaw  "fields"  typeJson
         fields =
-            Json.jsonSplitArray fieldsStr
+            Json.jsonSplitArray  fieldsStr
         fieldTypes =
-            List.map (\f -> Json.jsonGetString "type" f) fields
+            List.map  (\f -> Json.jsonGetString  "type"  f)  fields
     in
-        List.any (\t -> String.length t == 1) fieldTypes
+        List.any  (\t -> String.length  t == 1)  fieldTypes
 
 
 generateFieldBinding : String -> String -> String -> Maybe String
+
 generateFieldBinding safePkg typeName fieldJson =
     let
         fieldName =
-            Json.jsonGetString "name" fieldJson
+            Json.jsonGetString  "name"  fieldJson
         fieldType =
-            Json.jsonGetString "type" fieldJson
+            Json.jsonGetString  "type"  fieldJson
         skyFieldName =
-            TypeMapper.lowerCamelCase typeName ++ fieldName
+            TypeMapper.lowerCamelCase  typeName ++ fieldName
         skyType =
-            TypeMapper.mapGoTypeToSky fieldType
+            TypeMapper.mapGoTypeToSky  fieldType
         wrapperName =
             "Sky_" ++ safePkg ++ "_FIELD_" ++ typeName ++ "_" ++ fieldName
     in
-        if String.isEmpty fieldName || not (isSafeFieldType fieldType) then
+        if String.isEmpty  fieldName || not  (isSafeFieldType  fieldType) then
             Nothing
         else
             Just
-                (skyFieldName ++ " : Any -> " ++ skyType ++ "\n" ++
-                skyFieldName ++ " receiver =\n" ++
-                "    " ++ wrapperName ++ " receiver")
+             (
+            skyFieldName ++
+            " : Any -> " ++
+            skyType ++
+            "\n" ++
+            skyFieldName ++
+            " receiver =\n" ++ "    " ++ wrapperName ++ " receiver"
+            )
 
 
 isSafeFieldType : String -> Bool
+
 isSafeFieldType _ =
     True
 
 
--- Extract Go variable bindings as getter functions
--- Extract Go constants as Sky values.
--- String-typed constants become Sky string literals.
--- Int-typed constants become Sky int literals.
--- Named enum types become opaque values accessed via wrapper functions.
 extractConstBindings : String -> String -> List String
+
 extractConstBindings pkgName json =
     let
         constsArrayStr =
-            Json.jsonGetArrayRaw "consts" json
+            Json.jsonGetArrayRaw  "consts"  json
         constElements =
-            Json.jsonSplitArray constsArrayStr
+            Json.jsonSplitArray  constsArrayStr
         safePkg =
-            String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
+            String.replace  "-"  "_"
+             (String.replace  "/"  "_"  (String.replace  "."  "_"  pkgName))
     in
-        List.filterMap (\c -> generateConstBinding pkgName safePkg c) constElements
+        List.filterMap  (\c -> generateConstBinding  pkgName  safePkg  c)
+         constElements
 
 
 generateConstBinding : String -> String -> String -> Maybe String
+
 generateConstBinding pkgName safePkg constJson =
     let
         name =
-            Json.jsonGetString "name" constJson
+            Json.jsonGetString  "name"  constJson
         constType =
-            Json.jsonGetString "type" constJson
+            Json.jsonGetString  "type"  constJson
         value =
-            Json.jsonGetString "value" constJson
+            Json.jsonGetString  "value"  constJson
         skyName =
-            TypeMapper.lowerCamelCase name
+            TypeMapper.lowerCamelCase  name
     in
-        if String.isEmpty name then
+        if String.isEmpty  name then
             Nothing
-        else if skyName == "type" || skyName == "module" || skyName == "import" || skyName == "case" || skyName == "let" || skyName == "in" || skyName == "if" || skyName == "then" || skyName == "else" then
+        else if skyName == "type" ||
+        skyName == "module" ||
+        skyName == "import" ||
+        skyName == "case" ||
+        skyName == "let" ||
+        skyName == "in" ||
+        skyName == "if" || skyName == "then" || skyName == "else" then
             Nothing
-        else if String.startsWith (pkgName ++ ".") constType then
-            -- Named enum type (e.g. CheckoutSessionStatus) — return as opaque value via wrapper
+        else if String.startsWith  (pkgName ++ ".")  constType then
             let
                 wrapperName =
                     "Sky_" ++ safePkg ++ "_" ++ name
             in
                 Just
-                    (skyName ++ " : " ++ TypeMapper.mapGoTypeToSky constType ++ "\n" ++
-                    skyName ++ " =\n" ++
-                    "    " ++ wrapperName)
-        else if constType == "string" || String.endsWith "string" constType then
-            -- String constant — emit as literal
+                 (
+                skyName ++
+                " : " ++
+                TypeMapper.mapGoTypeToSky  constType ++
+                "\n" ++ skyName ++ " =\n" ++ "    " ++ wrapperName
+                )
+        else if constType == "string" || String.endsWith  "string"  constType then
             Just
-                (skyName ++ " : String\n" ++
-                skyName ++ " =\n" ++
-                "    " ++ value)
+             (skyName ++ " : String\n" ++ skyName ++ " =\n" ++ "    " ++ value)
         else if constType == "int" || constType == "int64" then
-            -- Int constant — emit as literal
             Just
-                (skyName ++ " : Int\n" ++
-                skyName ++ " =\n" ++
-                "    " ++ value)
+             (skyName ++ " : Int\n" ++ skyName ++ " =\n" ++ "    " ++ value)
         else
             Nothing
 
 
 extractVarBindings : String -> String -> List String
+
 extractVarBindings pkgName json =
     let
         varsArrayStr =
-            Json.jsonGetArrayRaw "vars" json
+            Json.jsonGetArrayRaw  "vars"  json
         varElements =
-            Json.jsonSplitArray varsArrayStr
+            Json.jsonSplitArray  varsArrayStr
         safePkg =
-            String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
+            String.replace  "-"  "_"
+             (String.replace  "/"  "_"  (String.replace  "."  "_"  pkgName))
     in
-        List.filterMap (\v -> generateVarBinding pkgName safePkg v) varElements
+        List.filterMap  (\v -> generateVarBinding  pkgName  safePkg  v)
+         varElements
 
 
 generateVarBinding : String -> String -> String -> Maybe String
+
 generateVarBinding pkgName safePkg varJson =
     let
         name =
-            Json.jsonGetString "name" varJson
+            Json.jsonGetString  "name"  varJson
         varType =
-            Json.jsonGetString "type" varJson
+            Json.jsonGetString  "type"  varJson
         skyName =
-            TypeMapper.lowerCamelCase name
+            TypeMapper.lowerCamelCase  name
         skyType =
-            TypeMapper.mapGoTypeToSky varType
+            TypeMapper.mapGoTypeToSky  varType
         wrapperName =
             "Sky_" ++ safePkg ++ "_" ++ name
     in
-        if String.isEmpty name || varType == "error" then
+        if String.isEmpty  name || varType == "error" then
             Nothing
         else if varType == "string" then
             let
@@ -290,455 +281,557 @@ generateVarBinding pkgName safePkg varJson =
                     "Sky_" ++ safePkg ++ "_Set" ++ name
             in
                 Just
-                    (skyName ++ " : () -> " ++ skyType ++ "\n" ++
-                    skyName ++ " _ =\n" ++
-                    "    " ++ wrapperName ++ "\n\n" ++
-                    setterName ++ " : " ++ skyType ++ " -> ()\n" ++
-                    setterName ++ " val =\n" ++
-                    "    " ++ setterWrapper ++ " val")
+                 (
+                skyName ++
+                " : () -> " ++
+                skyType ++
+                "\n" ++
+                skyName ++
+                " _ =\n" ++
+                "    " ++
+                wrapperName ++
+                "\n\n" ++
+                setterName ++
+                " : " ++
+                skyType ++
+                " -> ()\n" ++
+                setterName ++ " val =\n" ++ "    " ++ setterWrapper ++ " val"
+                )
         else
             Just
-                (skyName ++ " : () -> " ++ skyType ++ "\n" ++
-                skyName ++ " _ =\n" ++
-                "    " ++ wrapperName)
+             (
+            skyName ++
+            " : () -> " ++
+            skyType ++ "\n" ++ skyName ++ " _ =\n" ++ "    " ++ wrapperName
+            )
 
 
--- Extract method bindings from inspector JSON
 extractMethodBindings : String -> String -> List String
+
 extractMethodBindings pkgName json =
     let
         typesArrayStr =
-            Json.jsonGetArrayRaw "types" json
+            Json.jsonGetArrayRaw  "types"  json
         typeElements =
-            Json.jsonSplitArray typesArrayStr
+            Json.jsonSplitArray  typesArrayStr
     in
-        List.concatMap (\t -> extractMethodsForType pkgName t) typeElements
+        List.concatMap  (\t -> extractMethodsForType  pkgName  t)  typeElements
 
 
 extractMethodsForType : String -> String -> List String
+
 extractMethodsForType pkgName typeJson =
     let
         typeName =
-            Json.jsonGetString "name" typeJson
+            Json.jsonGetString  "name"  typeJson
         methodsArrayStr =
-            Json.jsonGetArrayRaw "methods" typeJson
+            Json.jsonGetArrayRaw  "methods"  typeJson
         methodElements =
-            Json.jsonSplitArray methodsArrayStr
+            Json.jsonSplitArray  methodsArrayStr
     in
-        if isGenericTypeBinding typeJson then
+        if isGenericTypeBinding  typeJson then
             []
         else
-            List.filterMap (\m -> generateMethodBinding pkgName typeName m) methodElements
+            List.filterMap  (\m -> generateMethodBinding  pkgName  typeName  m)
+             methodElements
 
 
 generateMethodBinding : String -> String -> String -> Maybe String
+
 generateMethodBinding pkgName typeName methodJson =
     let
         name =
-            Json.jsonGetString "name" methodJson
+            Json.jsonGetString  "name"  methodJson
         paramsStr =
-            Json.jsonGetArrayRaw "params" methodJson
+            Json.jsonGetArrayRaw  "params"  methodJson
         resultsStr =
-            Json.jsonGetArrayRaw "results" methodJson
+            Json.jsonGetArrayRaw  "results"  methodJson
         params =
-            Json.jsonSplitArray paramsStr
+            Json.jsonSplitArray  paramsStr
         results =
-            Json.jsonSplitArray resultsStr
+            Json.jsonSplitArray  resultsStr
         paramTypes =
-            List.map (\p -> Json.jsonGetString "type" p) params
+            List.map  (\p -> Json.jsonGetString  "type"  p)  params
         resultTypes =
-            List.map (\r -> Json.jsonGetString "type" r) results
+            List.map  (\r -> Json.jsonGetString  "type"  r)  results
         variadic =
-            Json.jsonGetBool "variadic" methodJson
+            Json.jsonGetBool  "variadic"  methodJson
     in
-        if String.isEmpty name || List.length results > 2 || TypeMapper.lowerCamelCase name == "type" then
+        if String.isEmpty  name ||
+        List.length  results > 2 || TypeMapper.lowerCamelCase  name == "type" then
             Nothing
-        else if not (allMethodParamsSafe pkgName paramTypes variadic) then
+        else if not  (allMethodParamsSafe  pkgName  paramTypes  variadic) then
             Nothing
-        else if not (List.all (\t -> isSafeTypeForPkg pkgName t) resultTypes) then
+        else if not
+                 (List.all  (\t -> isSafeTypeForPkg  pkgName  t)  resultTypes) then
             Nothing
         else
             let
                 safePkg =
-                    String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
+                    String.replace  "-"  "_"
+                     (
+                    String.replace  "/"  "_"
+                     (String.replace  "."  "_"  pkgName)
+                    )
                 skyName =
-                    TypeMapper.lowerCamelCase typeName ++ name
+                    TypeMapper.lowerCamelCase  typeName ++ name
                 wrapperName =
                     "Sky_" ++ safePkg ++ "_" ++ typeName ++ name
-
-                -- Build type signature: receiver -> params -> result
                 skyParamTypes =
-                    List.map (\t -> TypeMapper.mapGoTypeToSky t) paramTypes
+                    List.map  (\t -> TypeMapper.mapGoTypeToSky  t)  paramTypes
                 skyReturnType =
-                    buildReturnType resultTypes
+                    buildReturnType  resultTypes
                 allTypes =
-                    List.append ([ typeName ] ++ skyParamTypes) [ skyReturnType ]
+                    List.append  ([ typeName ] ++ skyParamTypes)
+                     [ skyReturnType ]
                 typeSignature =
-                    String.join " -> " allTypes
-
-                -- Build parameter list: receiver + args
+                    String.join  " -> "  allTypes
                 paramNames =
-                    List.indexedMap (\i _ -> "arg" ++ String.fromInt i) params
+                    List.indexedMap  (\i _ -> "arg" ++ String.fromInt  i)
+                     params
                 allParamNames =
                     "receiver" :: paramNames
                 paramStr =
-                    String.join " " allParamNames
+                    String.join  " "  allParamNames
                 callArgs =
-                    String.join " " allParamNames
+                    String.join  " "  allParamNames
             in
                 Just
-                    (skyName ++ " : " ++ typeSignature ++ "\n" ++
-                    skyName ++ " " ++ paramStr ++ " =\n" ++
-                    "    " ++ wrapperName ++ " " ++ callArgs)
+                 (
+                skyName ++
+                " : " ++
+                typeSignature ++
+                "\n" ++
+                skyName ++
+                " " ++
+                paramStr ++ " =\n" ++ "    " ++ wrapperName ++ " " ++ callArgs
+                )
 
 
--- Convert hyphenated segments to camelCase: "stripe-go" → "stripeGo"
 hyphenToCamel : String -> String
+
 hyphenToCamel s =
     let
         parts =
-            String.split "-" s
+            String.split  "-"  s
     in
         case parts of
-            [] ->
+            
+            [  ] ->
                 s
-
+            
             first :: rest ->
-                first ++ String.join "" (List.map capitalizeFirst rest)
+                first ++ String.join  ""  (List.map  capitalizeFirst  rest)
 
 
 capitalizeFirst : String -> String
+
 capitalizeFirst s =
-    if String.isEmpty s then
+    if String.isEmpty  s then
         ""
     else
-        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+        String.toUpper  (String.slice  0  1  s) ++
+        String.slice  1  (String.length  s)  s
 
-
--- Extract function bindings from inspector JSON
 
 extractFuncBindings : String -> String -> List String
+
 extractFuncBindings pkgName json =
     let
         funcsArrayStr =
-            Json.jsonGetArrayRaw "funcs" json
+            Json.jsonGetArrayRaw  "funcs"  json
         elements =
-            Json.jsonSplitArray funcsArrayStr
+            Json.jsonSplitArray  funcsArrayStr
     in
-        List.filterMap (\e -> generateFuncBinding pkgName e) (List.filter (\f -> isSupportedFuncForPkg pkgName f) elements)
+        List.filterMap  (\e -> generateFuncBinding  pkgName  e)
+         (List.filter  (\f -> isSupportedFuncForPkg  pkgName  f)  elements)
 
 
--- Filter functions with unsupported parameter types
 isSupportedFuncForPkg : String -> String -> Bool
+
 isSupportedFuncForPkg pkgName funcJson =
-    if Json.jsonGetBool "hasTypeParams" funcJson then
-        -- Skip generic functions
+    if Json.jsonGetBool  "hasTypeParams"  funcJson then
         False
     else
-    let
-        paramsStr =
-            Json.jsonGetArrayRaw "params" funcJson
-        resultsStr =
-            Json.jsonGetArrayRaw "results" funcJson
-        params =
-            Json.jsonSplitArray paramsStr
-        results =
-            Json.jsonSplitArray resultsStr
-        paramTypes =
-            List.map (\p -> Json.jsonGetString "type" p) params
-        resultTypes =
-            List.map (\r -> Json.jsonGetString "type" r) results
-        variadic =
-            Json.jsonGetBool "variadic" funcJson
-        paramCount =
-            List.length paramTypes
-    in
-        List.length results <= 2 &&
-        List.all (\pair ->
-            let
-                idx =
-                    fst pair
-                t =
-                    snd pair
-            in
-                if variadic && idx == paramCount - 1 then
-                    True
-                else
-                    isSafeTypeForPkg pkgName t
-        ) (List.indexedMap (\i t -> (i, t)) paramTypes) &&
-        List.all (\t -> isSafeTypeForPkg pkgName t) resultTypes
+        let
+            paramsStr =
+                Json.jsonGetArrayRaw  "params"  funcJson
+            resultsStr =
+                Json.jsonGetArrayRaw  "results"  funcJson
+            params =
+                Json.jsonSplitArray  paramsStr
+            results =
+                Json.jsonSplitArray  resultsStr
+            paramTypes =
+                List.map  (\p -> Json.jsonGetString  "type"  p)  params
+            resultTypes =
+                List.map  (\r -> Json.jsonGetString  "type"  r)  results
+            variadic =
+                Json.jsonGetBool  "variadic"  funcJson
+            paramCount =
+                List.length  paramTypes
+        in
+            List.length  results <= 2 &&
+            List.all
+             (
+            \pair ->
+                let
+                    idx =
+                        fst  pair
+                    t =
+                        snd  pair
+                in
+                    if variadic && idx == paramCount - 1 then
+                        True
+                    else
+                        isSafeTypeForPkg  pkgName  t
+            )
+             (List.indexedMap  (\i t -> ( i , t ))  paramTypes) &&
+            List.all  (\t -> isSafeTypeForPkg  pkgName  t)  resultTypes
 
 
-allMethodParamsSafe : String -> List String -> Bool -> Bool
+allMethodParamsSafe : String -> (List String) -> Bool -> Bool
+
 allMethodParamsSafe pkgName paramTypes variadic =
-    allMethodParamsLoop pkgName paramTypes variadic 0 (List.length paramTypes)
+    allMethodParamsLoop  pkgName  paramTypes  variadic  0
+     (List.length  paramTypes)
 
 
-allMethodParamsLoop : String -> List String -> Bool -> Int -> Int -> Bool
+allMethodParamsLoop : String -> (List String) -> Bool -> Int -> Int -> Bool
+
 allMethodParamsLoop pkgName params variadic idx total =
     case params of
-        [] ->
+        
+        [  ] ->
             True
-
+        
         t :: rest ->
             if variadic && idx == total - 1 then
-                allMethodParamsLoop pkgName rest variadic (idx + 1) total
-            else if isSafeTypeForPkg pkgName t then
-                allMethodParamsLoop pkgName rest variadic (idx + 1) total
+                allMethodParamsLoop  pkgName  rest  variadic  (idx + 1)  total
+            else if isSafeTypeForPkg  pkgName  t then
+                allMethodParamsLoop  pkgName  rest  variadic  (idx + 1)  total
             else
                 False
 
 
 isSafeTypeForPkg : String -> String -> Bool
+
 isSafeTypeForPkg pkgName goType =
-    if String.startsWith "func(" goType && not (String.contains "ResponseWriter" goType) then
+    if String.startsWith  "func("  goType &&
+    not  (String.contains  "ResponseWriter"  goType) then
         False
-    else if String.contains "[" goType && String.contains "]" goType && not (String.startsWith "[" goType) && not (String.startsWith "map[string]interface{}" goType) then
+    else if String.startsWith  "map["  goType &&
+    goType /= "map[string]interface{}" &&
+    goType /= "map[string]any" && goType /= "map[string]string" then
         False
-    else if String.startsWith "map[" goType && goType /= "map[string]interface{}" && goType /= "map[string]any" && goType /= "map[string]string" then
-        False
-    else if String.startsWith "[]" goType && goType /= "[]byte" && goType /= "[]string" && goType /= "[]any" then
-        -- Allow slices of package types: []pkg.Type or []*pkg.Type
+    else if String.startsWith  "[]"  goType &&
+    goType /= "[]byte" && goType /= "[]string" && goType /= "[]any" then
         let
             elemType =
-                String.slice 2 (String.length goType) goType
+                String.slice  2  (String.length  goType)  goType
             innerType =
-                if String.startsWith "*" elemType then
-                    String.slice 1 (String.length elemType) elemType
+                if String.startsWith  "*"  elemType then
+                    String.slice  1  (String.length  elemType)  elemType
                 else
                     elemType
         in
-            String.startsWith (pkgName ++ ".") innerType ||
-            String.contains "." innerType
+            String.startsWith  (pkgName ++ ".")  innerType ||
+            String.contains  "."  innerType
     else
         let
             parts =
-                String.split "/" pkgName
+                String.split  "/"  pkgName
             firstPart =
                 case parts of
+                    
                     f :: _ ->
                         f
-
-                    [] ->
+                    
+                    [  ] ->
                         ""
             lastPart =
-                case List.reverse parts of
+                case List.reverse  parts of
+                    
                     l :: _ ->
                         l
-
-                    [] ->
+                    
+                    [  ] ->
                         ""
             isExternal =
-                String.contains "." firstPart
+                String.contains  "."  firstPart
             candidateParent =
-                String.join "/" (List.reverse (List.drop 1 (List.reverse parts)))
+                String.join  "/"
+                 (List.reverse  (List.drop  1  (List.reverse  parts)))
             parentParts =
-                String.split "/" candidateParent
+                String.split  "/"  candidateParent
             isSubPkg =
-                isExternal && List.length parentParts >= 3 && not (String.startsWith "v" lastPart && String.length lastPart <= 3)
+                isExternal &&
+                List.length  parentParts >= 3 &&
+                not
+                 (
+                String.startsWith  "v"  lastPart && String.length  lastPart <= 3
+                )
             parentPkg =
                 if isSubPkg then
                     candidateParent
                 else
                     ""
         in
-            isSafeType goType ||
-            String.startsWith (pkgName ++ ".") goType ||
-            String.startsWith ("*" ++ pkgName ++ ".") goType ||
-            (not (String.isEmpty parentPkg) && String.startsWith (parentPkg ++ ".") goType) ||
-            (not (String.isEmpty parentPkg) && String.startsWith ("*" ++ parentPkg ++ ".") goType)
+            isSafeType  goType ||
+            String.startsWith  (pkgName ++ ".")  goType ||
+            String.startsWith  ("*" ++ pkgName ++ ".")  goType ||
+            (
+            not  (String.isEmpty  parentPkg) &&
+            String.startsWith  (parentPkg ++ ".")  goType
+            ) ||
+            (
+            not  (String.isEmpty  parentPkg) &&
+            String.startsWith  ("*" ++ parentPkg ++ ".")  goType
+            )
 
 
 isSafeType : String -> Bool
+
 isSafeType goType =
-    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" ||
-    goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" ||
-    goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" ||
-    goType == "float32" || goType == "float64" ||
-    goType == "interface{}" || goType == "any" || goType == "error" ||
+    goType == "string" ||
+    goType == "bool" ||
+    goType == "int" ||
+    goType == "[]byte" ||
+    goType == "int8" ||
+    goType == "int16" ||
+    goType == "int32" ||
+    goType == "int64" ||
+    goType == "uint" ||
+    goType == "uint8" ||
+    goType == "uint16" ||
+    goType == "uint32" ||
+    goType == "uint64" ||
+    goType == "float32" ||
+    goType == "float64" ||
+    goType == "interface{}" ||
+    goType == "any" ||
+    goType == "error" ||
     goType == "context.Context" ||
-    goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool" ||
-    String.startsWith "[" goType ||
-    (String.contains "." goType && not (needsExtraImportBinding goType)) ||
-    (String.startsWith "*" goType && isSafeType (String.slice 1 (String.length goType) goType)) ||
-    (String.startsWith "[]" goType && isSafeType (String.slice 2 (String.length goType) goType)) ||
-    String.startsWith "func(" goType || String.startsWith "map[" goType
+    goType == "[]string" ||
+    goType == "[]int" ||
+    goType == "[]float64" ||
+    goType == "[]bool" ||
+    String.startsWith  "["  goType ||
+    (String.contains  "."  goType && not  (needsExtraImportBinding  goType)) ||
+    (
+    String.startsWith  "*"  goType &&
+    isSafeType  (String.slice  1  (String.length  goType)  goType)
+    ) ||
+    (
+    String.startsWith  "[]"  goType &&
+    isSafeType  (String.slice  2  (String.length  goType)  goType)
+    ) ||
+    String.startsWith  "func("  goType || String.startsWith  "map["  goType
 
 
 needsExtraImportBinding : String -> Bool
+
 needsExtraImportBinding goType =
     let
         t =
-            if String.startsWith "*" goType then
-                String.slice 1 (String.length goType) goType
+            if String.startsWith  "*"  goType then
+                String.slice  1  (String.length  goType)  goType
             else
                 goType
     in
-    String.contains "/" t ||
-    String.startsWith "io." t ||
-    String.startsWith "hash." t ||
-    String.startsWith "context." t ||
-    String.startsWith "sync." t ||
-    String.startsWith "net." t ||
-    String.startsWith "crypto." t ||
-    String.startsWith "encoding." t ||
-    String.startsWith "reflect." t ||
-    String.startsWith "testing." t ||
-    String.startsWith "log." t ||
-    String.startsWith "regexp." t ||
-    String.startsWith "mime." t ||
-    String.startsWith "html." t ||
-    String.startsWith "text." t ||
-    String.startsWith "bufio." t ||
-    String.startsWith "fs." t ||
-    String.startsWith "os." t ||
-    String.startsWith "time." t ||
-    String.startsWith "fmt." t ||
-    String.startsWith "sort." t ||
-    String.startsWith "math." t ||
-    String.startsWith "strings." t ||
-    String.startsWith "bytes." t ||
-    String.startsWith "strconv." t ||
-    String.startsWith "database." t ||
-    String.startsWith "sql." t ||
-    String.startsWith "unicode." t
+        String.contains  "/"  t ||
+        String.startsWith  "io."  t ||
+        String.startsWith  "hash."  t ||
+        String.startsWith  "context."  t ||
+        String.startsWith  "sync."  t ||
+        String.startsWith  "net."  t ||
+        String.startsWith  "crypto."  t ||
+        String.startsWith  "encoding."  t ||
+        String.startsWith  "reflect."  t ||
+        String.startsWith  "testing."  t ||
+        String.startsWith  "log."  t ||
+        String.startsWith  "regexp."  t ||
+        String.startsWith  "mime."  t ||
+        String.startsWith  "html."  t ||
+        String.startsWith  "text."  t ||
+        String.startsWith  "bufio."  t ||
+        String.startsWith  "fs."  t ||
+        String.startsWith  "os."  t ||
+        String.startsWith  "time."  t ||
+        String.startsWith  "fmt."  t ||
+        String.startsWith  "sort."  t ||
+        String.startsWith  "math."  t ||
+        String.startsWith  "strings."  t ||
+        String.startsWith  "bytes."  t ||
+        String.startsWith  "strconv."  t ||
+        String.startsWith  "database."  t ||
+        String.startsWith  "sql."  t || String.startsWith  "unicode."  t
 
 
 generateFuncBinding : String -> String -> Maybe String
+
 generateFuncBinding pkgName funcJson =
     let
         name =
-            Json.jsonGetString "name" funcJson
+            Json.jsonGetString  "name"  funcJson
     in
-        if String.isEmpty name then
+        if String.isEmpty  name then
             Nothing
         else
             let
                 skyName =
-                    TypeMapper.lowerCamelCase name
+                    TypeMapper.lowerCamelCase  name
             in
-                -- Skip Sky reserved keywords
-                if skyName == "type" || skyName == "module" || skyName == "import" || skyName == "case" || skyName == "of" || skyName == "let" || skyName == "in" || skyName == "if" || skyName == "then" || skyName == "else" || skyName == "where" || skyName == "exposing" || skyName == "as" || skyName == "foreign" then
+                if skyName == "type" ||
+                skyName == "module" ||
+                skyName == "import" ||
+                skyName == "case" ||
+                skyName == "of" ||
+                skyName == "let" ||
+                skyName == "in" ||
+                skyName == "if" ||
+                skyName == "then" ||
+                skyName == "else" ||
+                skyName == "where" ||
+                skyName == "exposing" || skyName == "as" || skyName == "foreign" then
                     Nothing
                 else
-            let
-                safePkg =
-                    String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
-                wrapperName =
-                    "Sky_" ++ safePkg ++ "_" ++ name
+                    let
+                        safePkg =
+                            String.replace  "-"  "_"
+                             (
+                            String.replace  "/"  "_"
+                             (String.replace  "."  "_"  pkgName)
+                            )
+                        wrapperName =
+                            "Sky_" ++ safePkg ++ "_" ++ name
+                        paramsArrayStr =
+                            Json.jsonGetArrayRaw  "params"  funcJson
+                        paramElements =
+                            Json.jsonSplitArray  paramsArrayStr
+                        paramTypes =
+                            List.map
+                             (
+                            \p ->
+                                TypeMapper.mapGoTypeToSky
+                                 (Json.jsonGetString  "type"  p)
+                            )
+                             paramElements
+                        resultsArrayStr =
+                            Json.jsonGetArrayRaw  "results"  funcJson
+                        resultElements =
+                            Json.jsonSplitArray  resultsArrayStr
+                        resultTypes =
+                            List.map  (\r -> Json.jsonGetString  "type"  r)
+                             resultElements
+                        skyReturnType =
+                            buildReturnType  resultTypes
+                        allTypes =
+                            List.append  paramTypes  [ skyReturnType ]
+                        typeSignature =
+                            String.join  " -> "  allTypes
+                        paramNames =
+                            List.indexedMap
+                             (\i _ -> "arg" ++ String.fromInt  i)
+                             paramElements
+                        paramStr =
+                            String.join  " "  paramNames
+                        callArgs =
+                            String.join  " "  paramNames
+                        hasParams =
+                            not  (List.isEmpty  paramElements)
+                        finalParamStr =
+                            if hasParams then
+                                paramStr
+                            else
+                                "_"
+                        finalTypeSignature =
+                            if hasParams then
+                                typeSignature
+                            else
+                                "() -> " ++ skyReturnType
+                    in
+                        Just
+                         (
+                        skyName ++
+                        " : " ++
+                        finalTypeSignature ++
+                        "\n" ++
+                        skyName ++
+                        " " ++
+                        finalParamStr ++
+                        " =\n" ++ "    " ++ wrapperName ++ " " ++ callArgs
+                        )
 
-                -- Build Sky type signature from params and results
-                paramsArrayStr =
-                    Json.jsonGetArrayRaw "params" funcJson
-                paramElements =
-                    Json.jsonSplitArray paramsArrayStr
-                paramTypes =
-                    List.map (\p -> TypeMapper.mapGoTypeToSky (Json.jsonGetString "type" p)) paramElements
 
-                resultsArrayStr =
-                    Json.jsonGetArrayRaw "results" funcJson
-                resultElements =
-                    Json.jsonSplitArray resultsArrayStr
-                resultTypes =
-                    List.map (\r -> Json.jsonGetString "type" r) resultElements
+buildReturnType : (List String) -> String
 
-                -- Determine Sky return type
-                skyReturnType =
-                    buildReturnType resultTypes
-
-                -- Build full type signature
-                allTypes =
-                    List.append paramTypes [ skyReturnType ]
-                typeSignature =
-                    String.join " -> " allTypes
-
-                -- Build parameter names
-                paramNames =
-                    List.indexedMap (\i _ -> "arg" ++ String.fromInt i) paramElements
-                paramStr =
-                    String.join " " paramNames
-
-                -- Build call expression
-                callArgs =
-                    String.join " " paramNames
-                -- For zero-arity functions, add a dummy () parameter
-                -- so they can be called as `Uuid.newString ()` in Sky
-                hasParams =
-                    not (List.isEmpty paramElements)
-                finalParamStr =
-                    if hasParams then paramStr else "_"
-                finalTypeSignature =
-                    if hasParams then typeSignature else "() -> " ++ skyReturnType
-            in
-                Just
-                    (skyName ++ " : " ++ finalTypeSignature ++ "\n" ++
-                    skyName ++ " " ++ finalParamStr ++ " =\n" ++
-                    "    " ++ wrapperName ++ " " ++ callArgs)
-
-
--- Build return type for FFI bindings.
--- ALL Go FFI calls are wrapped in Task, so return types are always Result String T.
-buildReturnType : List String -> String
 buildReturnType results =
-    if List.isEmpty results then
+    if List.isEmpty  results then
         "Result String ()"
-    else if List.length results == 1 then
+    else if List.length  results == 1 then
         let
             single =
-                case List.head results of
+                case List.head  results of
+                    
                     Just s ->
                         s
-
+                    
                     Nothing ->
                         ""
         in
             if single == "error" then
                 "Result String ()"
             else
-                "Result String " ++ TypeMapper.mapGoTypeToSky single
+                "Result String " ++ TypeMapper.mapGoTypeToSky  single
     else
-            let
-                lastResult =
-                    case List.reverse results of
-                        last :: _ ->
-                            last
-
-                        [] ->
-                            ""
-            in
-                if lastResult == "error" then
-                    case results of
-                        first :: _ ->
-                            "Result String " ++ TypeMapper.mapGoTypeToSky first
-
-                        [] ->
-                            "Result String ()"
-                else
-                    -- Multiple non-error returns → Result String (tuple)
-                    "Result String (" ++ String.join ", " (List.map (\r -> TypeMapper.mapGoTypeToSky r) results) ++ ")"
+        let
+            lastResult =
+                case List.reverse  results of
+                    
+                    last :: _ ->
+                        last
+                    
+                    [  ] ->
+                        ""
+        in
+            if lastResult == "error" then
+                case results of
+                    
+                    first :: _ ->
+                        "Result String " ++ TypeMapper.mapGoTypeToSky  first
+                    
+                    [  ] ->
+                        "Result String ()"
+            else
+                "Result String (" ++
+                String.join  ", "
+                 (List.map  (\r -> TypeMapper.mapGoTypeToSky  r)  results) ++
+                ")"
 
 
 extractTypeBindings : String -> List String
+
 extractTypeBindings json =
     let
         typesArrayStr =
-            Json.jsonGetArrayRaw "types" json
+            Json.jsonGetArrayRaw  "types"  json
         elements =
-            Json.jsonSplitArray typesArrayStr
+            Json.jsonSplitArray  typesArrayStr
     in
-        List.filterMap generateTypeBinding elements
+        List.filterMap  generateTypeBinding  elements
 
 
 generateTypeBinding : String -> Maybe String
+
 generateTypeBinding typeJson =
     let
         name =
-            Json.jsonGetString "name" typeJson
+            Json.jsonGetString  "name"  typeJson
         kind =
-            Json.jsonGetString "kind" typeJson
+            Json.jsonGetString  "kind"  typeJson
     in
-        if String.isEmpty name then
+        if String.isEmpty  name then
             Nothing
         else
-            -- Generate opaque type declaration
-            Just ("type " ++ name ++ " = " ++ name)
+            Just  ("type " ++ name ++ " = " ++ name)

@@ -261,9 +261,13 @@ main =
 
 ### Known Issues (to fix)
 
-1. **Formatter↔compiler compat** — `sky fmt` on `Pipeline.sky` produces code the self-hosted compiler cannot re-compile. Root cause: the lowerer generates incorrect Go for certain reformatted patterns. Do NOT format `Pipeline.sky` until this is fixed.
+1. **Formatter↔compiler compat** — FIXED. All 30 modules format, compile, and self-host. Formatting is idempotent (running `sky fmt` twice produces identical output). Six fixes in Format.sky: (a) `getLexemeAt1` field access, (b) annotation-function pairing via `formatDeclPairs`, (c) flat `else if` chains via `isExprIf`, (d) record field layout on indented new line, (e) `formatCall` with `align` instead of `indent`, (f) `quoteString` identity (AST stores raw escaped strings, no re-escaping needed).
 
-2. **Lowerer limitation with new functions** — adding functions with nested `case` inside `case` inside `let` in Pipeline.sky can cause the lowerer to generate blank function names (`Compiler_Pipeline__`). Workaround: keep complex logic in external tools or inline it.
+2. **Lowerer limitation with new functions** — two known sub-issues: (a) Adding functions with nested `case` inside `case` inside `let` in Pipeline.sky can cause the lowerer to generate blank function names (`Compiler_Pipeline__`). (b) New standalone functions that pattern-match on ADT constructors (e.g., `case tail of PList items _ -> ... | PCons head rest _ -> ...`) generate incorrect Go code — the lowerer emits constructor names as function calls instead of pattern conditions. **Workaround**: inline the logic within existing functions, or use string-based checks (call `patternToCondition` recursively and inspect the result string, as done for the cons pattern fix).
+
+12. **Parser: `getLexemeAt1` field access** — FIXED. `(peekAt 1 state).lexeme` returned the full token object instead of `.lexeme` string because the lowerer dropped field access on parenthesised expressions. Fixed by using a let-binding. This caused `type alias` declarations to be silently skipped during parsing.
+
+13. **Lowerer: cons pattern `x :: []` matching** — FIXED. The lowerer was generating `len > 0` for ALL `PCons` patterns, causing `single :: []` to match any non-empty list instead of exactly 1-element lists. This broke `classifyFunc` in WrapperGen (fallible functions misclassified as effectful). Fix: recursively check tail pattern via `patternToCondition` and generate `len == N` for fixed-length cons patterns.
 
 3. **Skyshop duplicate wrappers** — PARTIALLY FIXED. Skip FFI copy when `dist/sky_wrappers/` has project wrapper. Old `.skycache` path format supported via fallback.
 
@@ -279,9 +283,9 @@ main =
 
 9. **Lowerer: tuple pattern destructuring in lambdas** — FIXED. `lambdaTupleBindings` extracts `V0`/`V1` fields from `SkyTuple2`/`SkyTuple3` before the lambda body.
 
-10. **FFI binding gaps** — Firestore `DocumentIteratorGetAll`, `Desc`, `Asc` and Stripe `Session.New`, `Session.Get` not generated because BindingGen doesn't support complex Go slice/pointer types in method params. Need to either extend type support or add hand-crafted wrappers.
+10. **FFI binding gaps** — PARTIALLY FIXED. Removed blanket `[` + `]` type rejection that blocked `[]` slice types from reaching the proper slice handler. Slice-of-pointer patterns like `[]*pkg.Type` now pass through to the existing slice handler in both BindingGen and WrapperGen. Some complex Firestore/Stripe methods may still be filtered by other type checks.
 
-11. **Skyshop build time ~1:35** — 43 local modules + 18 FFI = 25K Go declarations. Symbol-level tree-shaking not yet ported from TS compiler.
+11. **Skyshop build time ~1:35** — PARTIALLY FIXED. Added package-level wrapper filtering: `copyOneFfiWrapper` now checks if main.go references any `Sky_<pkg>_` function before copying the wrapper file. Unused FFI packages are skipped entirely. Full symbol-level tree-shaking (collecting refs during lowering) not yet ported from TS compiler.
 
 ### Techniques from TS Compiler (to port)
 
@@ -304,12 +308,12 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 ### Priority Optimisation Roadmap
 
 **P0 — Biggest impact for skyshop (<15s goal):**
-- Port symbol-level tree-shaking: collect wrapper refs during lowering, filter wrapper generation
-- This alone would eliminate 99.8% of wasted wrapper generation
+- PARTIAL: Package-level wrapper filtering implemented (skip entire unused FFI packages)
+- TODO: Port full symbol-level tree-shaking (collect wrapper refs during lowering, filter individual functions)
 
 **P1 — Moderate impact:**
 - Selective import emission in `makeGoPackage` (scan declarations, only emit used imports)
-- Add `-gcflags="all=-l"` to go build command
+- DONE: `-gcflags="all=-l"` already in go build command
 - Preserve go.mod/go.sum across builds
 
 **P2 — Incremental/future:**

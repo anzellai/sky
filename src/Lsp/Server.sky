@@ -17,11 +17,6 @@ import Compiler.Env as Env
 import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
 
-
--- ══════════════════════════════════════════════════════
--- LSP SERVER STATE
--- ══════════════════════════════════════════════════════
-
 type alias ServerState =
     { documents : Dict.Dict String String
     , astCache : Dict.Dict String Module
@@ -30,655 +25,755 @@ type alias ServerState =
 
 
 emptyState : ServerState
+
 emptyState =
-    { documents = Dict.empty
-    , astCache = Dict.empty
-    , typeCache = Dict.empty
-    }
+    { documents = Dict.empty , astCache = Dict.empty , typeCache = Dict.empty }
 
-
--- ══════════════════════════════════════════════════════
--- MAIN SERVER LOOP
--- ══════════════════════════════════════════════════════
 
 startServer : () -> ()
+
 startServer _ =
     let
         stateRef =
-            Ref.new emptyState
+            Ref.new  emptyState
     in
-        serverLoop stateRef
+        serverLoop  stateRef
 
 
-serverLoop : Ref.Ref ServerState -> ()
+serverLoop : (Ref.Ref ServerState) -> ()
+
 serverLoop stateRef =
-    case readMessage () of
+    case readMessage  () of
+        
         Nothing ->
             ()
-
+        
         Just body ->
             let
                 state =
-                    Ref.get stateRef
+                    Ref.get  stateRef
                 method =
-                    jsonGetString "method" body
+                    jsonGetString  "method"  body
                 id =
-                    jsonGetRaw "id" body
+                    jsonGetRaw  "id"  body
                 newState =
-                    handleMessage state id method body
+                    handleMessage  state  id  method  body
                 _ =
-                    Ref.set newState stateRef
+                    Ref.set  newState  stateRef
             in
-                serverLoop stateRef
+                serverLoop  stateRef
 
-
--- ══════════════════════════════════════════════════════
--- MESSAGE DISPATCH
--- ══════════════════════════════════════════════════════
 
 handleMessage : ServerState -> String -> String -> String -> ServerState
+
 handleMessage state id method body =
     if method == "initialize" then
-        handleInitialize state id
+        handleInitialize  state  id
     else if method == "initialized" then
         state
     else if method == "shutdown" then
-        sendAndReturn (makeResponse id jsonNull) state
+        sendAndReturn  (makeResponse  id  jsonNull)  state
     else if method == "textDocument/didOpen" then
-        handleDidOpen state body
+        handleDidOpen  state  body
     else if method == "textDocument/didChange" then
-        handleDidChange state body
+        handleDidChange  state  body
     else if method == "textDocument/hover" then
-        handleHover state id body
+        handleHover  state  id  body
     else if method == "textDocument/completion" then
-        handleCompletion state id body
+        handleCompletion  state  id  body
     else if method == "textDocument/definition" then
-        handleDefinition state id body
+        handleDefinition  state  id  body
     else if method == "textDocument/formatting" then
-        handleFormatting state id body
+        handleFormatting  state  id  body
     else
         state
 
 
--- Helper: send a message and return state unchanged
 sendAndReturn : String -> ServerState -> ServerState
+
 sendAndReturn msg state =
     let
         _ =
-            writeMessage msg
+            writeMessage  msg
     in
         state
 
 
 sendNotifyAndReturn : String -> ServerState -> ServerState
+
 sendNotifyAndReturn msg state =
     let
         _ =
-            writeMessage msg
+            writeMessage  msg
     in
         state
 
 
--- ══════════════════════════════════════════════════════
--- INITIALIZE
--- ══════════════════════════════════════════════════════
-
 handleInitialize : ServerState -> String -> ServerState
+
 handleInitialize state id =
     let
         capabilities =
             jsonObject
-                [ ( "textDocumentSync" , jsonInt 1 )
-                , ( "hoverProvider" , jsonBool True )
-                , ( "completionProvider" , jsonObject [ ( "triggerCharacters" , jsonArray [ jsonString "." ] ) ] )
-                , ( "definitionProvider" , jsonBool True )
-                , ( "documentFormattingProvider" , jsonBool True )
-                ]
+             [ ( "textDocumentSync" , jsonInt  1 )
+            , ( "hoverProvider" , jsonBool  True )
+            , ( "completionProvider"
+            , jsonObject
+               [ ( "triggerCharacters" , jsonArray  [ jsonString  "." ] ) ]
+            )
+            , ( "definitionProvider" , jsonBool  True )
+            , ( "documentFormattingProvider" , jsonBool  True )
+            ]
         result =
             jsonObject
-                [ ( "capabilities" , capabilities )
-                , ( "serverInfo" , jsonObject [ ( "name" , jsonString "sky-lsp" ) , ( "version" , jsonString "0.1.0" ) ] )
-                ]
+             [ ( "capabilities" , capabilities )
+            , ( "serverInfo"
+            , jsonObject
+               [ ( "name" , jsonString  "sky-lsp" )
+              , ( "version" , jsonString  "0.1.0" )
+              ]
+            )
+            ]
     in
-        sendAndReturn (makeResponse id result) state
+        sendAndReturn  (makeResponse  id  result)  state
 
-
--- ══════════════════════════════════════════════════════
--- DOCUMENT SYNC
--- ══════════════════════════════════════════════════════
 
 handleDidOpen : ServerState -> String -> ServerState
+
 handleDidOpen state body =
     let
         params =
-            jsonGetObject "params" body
+            jsonGetObject  "params"  body
         textDoc =
-            jsonGetObject "textDocument" params
+            jsonGetObject  "textDocument"  params
         uri =
-            jsonGetString "uri" textDoc
+            jsonGetString  "uri"  textDoc
         text =
-            jsonGetString "text" textDoc
+            jsonGetString  "text"  textDoc
         newDocs =
-            Dict.insert uri text state.documents
+            Dict.insert  uri  text  state.documents
         newState =
             { state | documents = newDocs }
         analyzed =
-            analyzeAndPublishDiagnostics newState uri text
+            analyzeAndPublishDiagnostics  newState  uri  text
     in
         analyzed
 
 
 handleDidChange : ServerState -> String -> ServerState
+
 handleDidChange state body =
     let
         params =
-            jsonGetObject "params" body
+            jsonGetObject  "params"  body
         textDoc =
-            jsonGetObject "textDocument" params
+            jsonGetObject  "textDocument"  params
         uri =
-            jsonGetString "uri" textDoc
-        -- For full sync, contentChanges[0].text has the full text
+            jsonGetString  "uri"  textDoc
         changes =
-            jsonGetString "text" (jsonGetObject "contentChanges" params)
+            jsonGetString  "text"  (jsonGetObject  "contentChanges"  params)
         text =
-            if String.isEmpty changes then
-                case Dict.get uri state.documents of
+            if String.isEmpty  changes then
+                case Dict.get  uri  state.documents of
+                    
                     Just existing ->
                         existing
-
+                    
                     Nothing ->
                         ""
             else
                 changes
         newDocs =
-            Dict.insert uri text state.documents
+            Dict.insert  uri  text  state.documents
         newState =
             { state | documents = newDocs }
         analyzed =
-            analyzeAndPublishDiagnostics newState uri text
+            analyzeAndPublishDiagnostics  newState  uri  text
     in
         analyzed
 
 
--- ══════════════════════════════════════════════════════
--- ANALYZE & DIAGNOSTICS
--- ══════════════════════════════════════════════════════
-
 analyzeAndPublishDiagnostics : ServerState -> String -> String -> ServerState
+
 analyzeAndPublishDiagnostics state uri text =
     let
         lexResult =
-            Lexer.lex text
+            Lexer.lex  text
         parseResult =
-            Parser.parse lexResult.tokens
+            Parser.parse  lexResult.tokens
     in
         case parseResult of
+            
             Err parseErr ->
                 let
                     diag =
                         jsonObject
-                            [ ( "range" , makeRange 0 0 0 1 )
-                            , ( "severity" , jsonInt 1 )
-                            , ( "message" , jsonString parseErr )
-                            ]
+                         [ ( "range" , makeRange  0  0  0  1 )
+                        , ( "severity" , jsonInt  1 )
+                        , ( "message" , jsonString  parseErr )
+                        ]
                 in
                     sendNotifyAndReturn
-                        (makeNotification "textDocument/publishDiagnostics"
-                            (jsonObject [ ( "uri" , jsonString uri ) , ( "diagnostics" , jsonArray [ diag ] ) ])
-                        )
-                        state
-
+                     (
+                    makeNotification  "textDocument/publishDiagnostics"
+                     (
+                    jsonObject
+                     [ ( "uri" , jsonString  uri )
+                    , ( "diagnostics" , jsonArray  [ diag ] )
+                    ]
+                    )
+                    )
+                     state
+            
             Ok mod ->
                 let
                     stdlibEnv =
                         Resolver.buildStdlibEnv
                     checkResult =
-                        Checker.checkModule mod (Just stdlibEnv)
+                        Checker.checkModule  mod  (Just  stdlibEnv)
                     diagnostics =
                         case checkResult of
+                            
                             Ok result ->
-                                List.map (\msg -> makeDiagnostic 2 msg) result.diagnostics
-
+                                List.map  (\msg -> makeDiagnostic  2  msg)
+                                 result.diagnostics
+                            
                             Err err ->
-                                [ makeDiagnostic 1 err ]
+                                [ makeDiagnostic  1  err ]
                 in
-                    publishAndUpdateState state uri mod checkResult diagnostics
+                    publishAndUpdateState  state  uri  mod  checkResult
+                     diagnostics
 
 
-publishAndUpdateState : ServerState -> String -> Module -> Result String Checker.CheckResult -> List String -> ServerState
+publishAndUpdateState : ServerState -> String -> Module -> (Result String Checker.CheckResult) -> (List String) -> ServerState
+
 publishAndUpdateState state uri mod checkResult diagnostics =
     let
         _ =
             writeMessage
-                (makeNotification "textDocument/publishDiagnostics"
-                    (jsonObject [ ( "uri" , jsonString uri ) , ( "diagnostics" , jsonArray diagnostics ) ])
-                )
+             (
+            makeNotification  "textDocument/publishDiagnostics"
+             (
+            jsonObject
+             [ ( "uri" , jsonString  uri )
+            , ( "diagnostics" , jsonArray  diagnostics )
+            ]
+            )
+            )
         newAstCache =
-            Dict.insert uri mod state.astCache
+            Dict.insert  uri  mod  state.astCache
         newTypeCache =
             case checkResult of
+                
                 Ok result ->
-                    Dict.insert uri result state.typeCache
-
+                    Dict.insert  uri  result  state.typeCache
+                
                 Err _ ->
                     state.typeCache
     in
-        { state
-            | astCache = newAstCache
-            , typeCache = newTypeCache
-        }
+        { state | astCache = newAstCache , typeCache = newTypeCache }
 
 
 makeDiagnostic : Int -> String -> String
+
 makeDiagnostic severity msg =
     jsonObject
-        [ ( "range" , makeRange 0 0 0 1 )
-        , ( "severity" , jsonInt severity )
-        , ( "message" , jsonString msg )
-        ]
+     [ ( "range" , makeRange  0  0  0  1 )
+    , ( "severity" , jsonInt  severity )
+    , ( "message" , jsonString  msg )
+    ]
 
 
 makeRange : Int -> Int -> Int -> Int -> String
+
 makeRange startLine startChar endLine endChar =
     jsonObject
-        [ ( "start" , jsonObject [ ( "line" , jsonInt startLine ) , ( "character" , jsonInt startChar ) ] )
-        , ( "end" , jsonObject [ ( "line" , jsonInt endLine ) , ( "character" , jsonInt endChar ) ] )
-        ]
+     [ ( "start"
+    , jsonObject
+       [ ( "line" , jsonInt  startLine )
+      , ( "character" , jsonInt  startChar )
+      ]
+    )
+    , ( "end"
+    , jsonObject
+       [ ( "line" , jsonInt  endLine ) , ( "character" , jsonInt  endChar ) ]
+    )
+    ]
 
-
--- ══════════════════════════════════════════════════════
--- HOVER
--- ══════════════════════════════════════════════════════
 
 handleHover : ServerState -> String -> String -> ServerState
+
 handleHover state id body =
     let
         params =
-            jsonGetObject "params" body
+            jsonGetObject  "params"  body
         textDoc =
-            jsonGetObject "textDocument" params
+            jsonGetObject  "textDocument"  params
         uri =
-            jsonGetString "uri" textDoc
+            jsonGetString  "uri"  textDoc
         position =
-            jsonGetObject "position" params
+            jsonGetObject  "position"  params
         line =
-            jsonGetInt "line" position
+            jsonGetInt  "line"  position
         character =
-            jsonGetInt "character" position
+            jsonGetInt  "character"  position
         hoverResult =
-            getHoverForPosition state uri line character
+            getHoverForPosition  state  uri  line  character
     in
-        sendAndReturn (makeResponse id hoverResult) state
+        sendAndReturn  (makeResponse  id  hoverResult)  state
 
 
 getHoverForPosition : ServerState -> String -> Int -> Int -> String
+
 getHoverForPosition state uri line character =
-    case Dict.get uri state.documents of
+    case Dict.get  uri  state.documents of
+        
         Nothing ->
             jsonNull
-
+        
         Just source ->
             let
                 lineText =
-                    getLineAt line source
+                    getLineAt  line  source
                 word =
-                    getWordAt character lineText
+                    getWordAt  character  lineText
                 info =
-                    if String.isEmpty word then
+                    if String.isEmpty  word then
                         ""
                     else
-                        findAnnotationInSource word source
+                        findAnnotationInSource  word  source
             in
-                if String.isEmpty info then
+                if String.isEmpty  info then
                     jsonNull
                 else
                     jsonObject
-                        [ ( "contents"
-                          , jsonObject
-                                [ ( "kind" , jsonString "markdown" )
-                                , ( "value" , jsonString info )
-                                ]
-                          )
-                        ]
+                     [ ( "contents"
+                    , jsonObject
+                       [ ( "kind" , jsonString  "markdown" )
+                      , ( "value" , jsonString  info )
+                      ]
+                    )
+                    ]
 
 
 getLineAt : Int -> String -> String
+
 getLineAt lineNum source =
-    getLineAtLoop lineNum source 0 0
+    getLineAtLoop  lineNum  source  0  0
 
 
 getLineAtLoop : Int -> String -> Int -> Int -> String
+
 getLineAtLoop target source currentLine idx =
-    if idx >= String.length source then
+    if idx >= String.length  source then
         ""
     else
         let
             ch =
-                String.slice idx (idx + 1) source
+                String.slice  idx  (idx + 1)  source
         in
             if ch == "\n" then
                 if currentLine == target then
-                    String.slice (findLineStart currentLine source idx) idx source
+                    String.slice  (findLineStart  currentLine  source  idx)  idx
+                     source
                 else
-                    getLineAtLoop target source (currentLine + 1) (idx + 1)
-            else if idx == String.length source - 1 then
+                    getLineAtLoop  target  source  (currentLine + 1)  (idx + 1)
+            else if idx == String.length  source - 1 then
                 if currentLine == target then
-                    String.slice (findLineStart currentLine source idx) (idx + 1) source
+                    String.slice  (findLineStart  currentLine  source  idx)
+                     (idx + 1)
+                     source
                 else
                     ""
             else
-                getLineAtLoop target source currentLine (idx + 1)
+                getLineAtLoop  target  source  currentLine  (idx + 1)
 
 
 findLineStart : Int -> String -> Int -> Int
+
 findLineStart lineNum source endIdx =
-    findLineStartLoop source (endIdx - 1)
+    findLineStartLoop  source  (endIdx - 1)
 
 
 findLineStartLoop : String -> Int -> Int
+
 findLineStartLoop source idx =
     if idx < 0 then
         0
     else
         let
             ch =
-                String.slice idx (idx + 1) source
+                String.slice  idx  (idx + 1)  source
         in
             if ch == "\n" then
                 idx + 1
             else
-                findLineStartLoop source (idx - 1)
+                findLineStartLoop  source  (idx - 1)
 
 
 getWordAt : Int -> String -> String
+
 getWordAt col lineText =
-    if col >= String.length lineText then
+    if col >= String.length  lineText then
         ""
     else
         let
             wordStart =
-                findWordStart lineText col
+                findWordStart  lineText  col
             wordEnd =
-                findWordEnd lineText col
+                findWordEnd  lineText  col
         in
-            String.slice wordStart wordEnd lineText
+            String.slice  wordStart  wordEnd  lineText
 
 
 findWordStart : String -> Int -> Int
+
 findWordStart text idx =
     if idx <= 0 then
         0
     else
         let
             ch =
-                String.slice (idx - 1) idx text
+                String.slice  (idx - 1)  idx  text
         in
-            if isIdentChar ch then
-                findWordStart text (idx - 1)
+            if isIdentChar  ch then
+                findWordStart  text  (idx - 1)
             else
                 idx
 
 
 findWordEnd : String -> Int -> Int
+
 findWordEnd text idx =
-    if idx >= String.length text then
+    if idx >= String.length  text then
         idx
     else
         let
             ch =
-                String.slice idx (idx + 1) text
+                String.slice  idx  (idx + 1)  text
         in
-            if isIdentChar ch then
-                findWordEnd text (idx + 1)
+            if isIdentChar  ch then
+                findWordEnd  text  (idx + 1)
             else
                 idx
 
 
 isIdentChar : String -> Bool
+
 isIdentChar ch =
-    ch == "_" || ch == "a" || ch == "b" || ch == "c" || ch == "d"
-        || ch == "e" || ch == "f" || ch == "g" || ch == "h" || ch == "i"
-        || ch == "j" || ch == "k" || ch == "l" || ch == "m" || ch == "n"
-        || ch == "o" || ch == "p" || ch == "q" || ch == "r" || ch == "s"
-        || ch == "t" || ch == "u" || ch == "v" || ch == "w" || ch == "x"
-        || ch == "y" || ch == "z" || ch == "A" || ch == "B" || ch == "C"
-        || ch == "D" || ch == "E" || ch == "F" || ch == "G" || ch == "H"
-        || ch == "I" || ch == "J" || ch == "K" || ch == "L" || ch == "M"
-        || ch == "N" || ch == "O" || ch == "P" || ch == "Q" || ch == "R"
-        || ch == "S" || ch == "T" || ch == "U" || ch == "V" || ch == "W"
-        || ch == "X" || ch == "Y" || ch == "Z" || ch == "0" || ch == "1"
-        || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6"
-        || ch == "7" || ch == "8" || ch == "9"
+    ch == "_" ||
+    ch == "a" ||
+    ch == "b" ||
+    ch == "c" ||
+    ch == "d" ||
+    ch == "e" ||
+    ch == "f" ||
+    ch == "g" ||
+    ch == "h" ||
+    ch == "i" ||
+    ch == "j" ||
+    ch == "k" ||
+    ch == "l" ||
+    ch == "m" ||
+    ch == "n" ||
+    ch == "o" ||
+    ch == "p" ||
+    ch == "q" ||
+    ch == "r" ||
+    ch == "s" ||
+    ch == "t" ||
+    ch == "u" ||
+    ch == "v" ||
+    ch == "w" ||
+    ch == "x" ||
+    ch == "y" ||
+    ch == "z" ||
+    ch == "A" ||
+    ch == "B" ||
+    ch == "C" ||
+    ch == "D" ||
+    ch == "E" ||
+    ch == "F" ||
+    ch == "G" ||
+    ch == "H" ||
+    ch == "I" ||
+    ch == "J" ||
+    ch == "K" ||
+    ch == "L" ||
+    ch == "M" ||
+    ch == "N" ||
+    ch == "O" ||
+    ch == "P" ||
+    ch == "Q" ||
+    ch == "R" ||
+    ch == "S" ||
+    ch == "T" ||
+    ch == "U" ||
+    ch == "V" ||
+    ch == "W" ||
+    ch == "X" ||
+    ch == "Y" ||
+    ch == "Z" ||
+    ch == "0" ||
+    ch == "1" ||
+    ch == "2" ||
+    ch == "3" ||
+    ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
 
 
--- Find type annotation for a name in source text
--- Looks for patterns like "name : Type -> Type"
 findAnnotationInSource : String -> String -> String
+
 findAnnotationInSource name source =
-    findAnnotationLoop name source 0
+    findAnnotationLoop  name  source  0
 
 
 findAnnotationLoop : String -> String -> Int -> String
+
 findAnnotationLoop name source idx =
     let
         searchFor =
             name ++ " : "
         searchLen =
-            String.length searchFor
+            String.length  searchFor
     in
-        if idx + searchLen > String.length source then
+        if idx + searchLen > String.length  source then
             ""
         else
             let
                 candidate =
-                    String.slice idx (idx + searchLen) source
+                    String.slice  idx  (idx + searchLen)  source
             in
                 if candidate == searchFor then
-                    -- Check it's at start of line (idx == 0 or preceded by newline)
                     let
                         atStart =
                             if idx == 0 then
                                 True
                             else
-                                String.slice (idx - 1) idx source == "\n"
+                                String.slice  (idx - 1)  idx  source == "\n"
                     in
                         if atStart then
                             let
                                 restOfLine =
-                                    extractUntilNewline source (idx + searchLen)
+                                    extractUntilNewline  source
+                                     (idx + searchLen)
                             in
                                 name ++ " : " ++ restOfLine
                         else
-                            findAnnotationLoop name source (idx + 1)
+                            findAnnotationLoop  name  source  (idx + 1)
                 else
-                    findAnnotationLoop name source (idx + 1)
+                    findAnnotationLoop  name  source  (idx + 1)
 
 
 extractUntilNewline : String -> Int -> String
+
 extractUntilNewline source idx =
-    if idx >= String.length source then
+    if idx >= String.length  source then
         ""
     else
         let
             ch =
-                String.slice idx (idx + 1) source
+                String.slice  idx  (idx + 1)  source
         in
             if ch == "\n" then
                 ""
             else
-                ch ++ extractUntilNewline source (idx + 1)
+                ch ++ extractUntilNewline  source  (idx + 1)
 
-
--- ══════════════════════════════════════════════════════
--- COMPLETION
--- ══════════════════════════════════════════════════════
 
 handleCompletion : ServerState -> String -> String -> ServerState
+
 handleCompletion state id body =
     let
         keywords =
-            [ "module" , "exposing" , "import" , "as" , "type" , "alias"
-            , "let" , "in" , "if" , "then" , "else" , "case" , "of"
-            , "foreign" , "True" , "False"
+            [ "module"
+            , "exposing"
+            , "import"
+            , "as"
+            , "type"
+            , "alias"
+            , "let"
+            , "in"
+            , "if"
+            , "then"
+            , "else"
+            , "case"
+            , "of"
+            , "foreign"
+            , "True"
+            , "False"
             ]
         keywordItems =
-            List.map (\kw -> jsonObject [ ( "label" , jsonString kw ) , ( "kind" , jsonInt 14 ) ]) keywords
-        -- Add known stdlib functions
+            List.map
+             (
+            \kw ->
+                jsonObject
+                 [ ( "label" , jsonString  kw ) , ( "kind" , jsonInt  14 ) ]
+            )
+             keywords
         stdlibItems =
-            [ makeCompletionItem "println" "function" 3
-            , makeCompletionItem "identity" "function" 3
-            , makeCompletionItem "not" "function" 3
-            , makeCompletionItem "always" "function" 3
-            , makeCompletionItem "fst" "function" 3
-            , makeCompletionItem "snd" "function" 3
-            , makeCompletionItem "Ok" "constructor" 4
-            , makeCompletionItem "Err" "constructor" 4
-            , makeCompletionItem "Just" "constructor" 4
-            , makeCompletionItem "Nothing" "constructor" 4
+            [ makeCompletionItem  "println"  "function"  3
+            , makeCompletionItem  "identity"  "function"  3
+            , makeCompletionItem  "not"  "function"  3
+            , makeCompletionItem  "always"  "function"  3
+            , makeCompletionItem  "fst"  "function"  3
+            , makeCompletionItem  "snd"  "function"  3
+            , makeCompletionItem  "Ok"  "constructor"  4
+            , makeCompletionItem  "Err"  "constructor"  4
+            , makeCompletionItem  "Just"  "constructor"  4
+            , makeCompletionItem  "Nothing"  "constructor"  4
             ]
         allItems =
-            List.append keywordItems stdlibItems
+            List.append  keywordItems  stdlibItems
         result =
-            jsonObject [ ( "isIncomplete" , jsonBool False ) , ( "items" , jsonArray allItems ) ]
+            jsonObject
+             [ ( "isIncomplete" , jsonBool  False )
+            , ( "items" , jsonArray  allItems )
+            ]
     in
-        sendAndReturn (makeResponse id result) state
+        sendAndReturn  (makeResponse  id  result)  state
 
 
 makeCompletionItem : String -> String -> Int -> String
+
 makeCompletionItem label detail kind =
     jsonObject
-        [ ( "label" , jsonString label )
-        , ( "kind" , jsonInt kind )
-        , ( "detail" , jsonString detail )
-        ]
+     [ ( "label" , jsonString  label )
+    , ( "kind" , jsonInt  kind )
+    , ( "detail" , jsonString  detail )
+    ]
 
-
--- ══════════════════════════════════════════════════════
--- DEFINITION
--- ══════════════════════════════════════════════════════
 
 handleDefinition : ServerState -> String -> String -> ServerState
+
 handleDefinition state id body =
     let
         params =
-            jsonGetObject "params" body
+            jsonGetObject  "params"  body
         textDoc =
-            jsonGetObject "textDocument" params
+            jsonGetObject  "textDocument"  params
         uri =
-            jsonGetString "uri" textDoc
+            jsonGetString  "uri"  textDoc
         position =
-            jsonGetObject "position" params
+            jsonGetObject  "position"  params
         line =
-            jsonGetInt "line" position
+            jsonGetInt  "line"  position
         character =
-            jsonGetInt "character" position
+            jsonGetInt  "character"  position
         defResult =
-            findDefinitionForPosition state uri line character
+            findDefinitionForPosition  state  uri  line  character
     in
-        sendAndReturn (makeResponse id defResult) state
+        sendAndReturn  (makeResponse  id  defResult)  state
 
 
 findDefinitionForPosition : ServerState -> String -> Int -> Int -> String
+
 findDefinitionForPosition state uri line character =
-    case Dict.get uri state.documents of
+    case Dict.get  uri  state.documents of
+        
         Nothing ->
             jsonNull
-
+        
         Just source ->
             let
                 lineText =
-                    getLineAt line source
+                    getLineAt  line  source
                 word =
-                    getWordAt character lineText
+                    getWordAt  character  lineText
             in
-                if String.isEmpty word then
+                if String.isEmpty  word then
                     jsonNull
                 else
-                    findDefinitionInSource word source uri
+                    findDefinitionInSource  word  source  uri
 
 
 findDefinitionInSource : String -> String -> String -> String
+
 findDefinitionInSource name source uri =
-    -- Look for "name =" or "name " at start of line (function definition)
     let
         defLine =
-            findDefLineInSource name source 0 0
+            findDefLineInSource  name  source  0  0
     in
         if defLine < 0 then
             jsonNull
         else
             jsonObject
-                [ ( "uri" , jsonString uri )
-                , ( "range" , makeRange defLine 0 defLine (String.length name) )
-                ]
+             [ ( "uri" , jsonString  uri )
+            , ( "range"
+            , makeRange  defLine  0  defLine  (String.length  name)
+            )
+            ]
 
 
 findDefLineInSource : String -> String -> Int -> Int -> Int
+
 findDefLineInSource name source lineNum idx =
-    if idx >= String.length source then
+    if idx >= String.length  source then
         -1
     else
         let
-            -- Check if we're at start of line
             atStart =
                 if idx == 0 then
                     True
                 else
-                    String.slice (idx - 1) idx source == "\n"
+                    String.slice  (idx - 1)  idx  source == "\n"
         in
             if atStart then
                 let
                     nameLen =
-                        String.length name
+                        String.length  name
                     candidate =
-                        String.slice idx (idx + nameLen) source
+                        String.slice  idx  (idx + nameLen)  source
                 in
                     if candidate == name then
                         let
                             afterName =
-                                String.slice (idx + nameLen) (idx + nameLen + 1) source
+                                String.slice  (idx + nameLen)
+                                 (idx + nameLen + 1)
+                                 source
                         in
-                            -- "name =" is a function definition (not annotation which has " :")
                             if afterName == " " then
                                 let
                                     afterSpace =
-                                        String.slice (idx + nameLen + 1) (idx + nameLen + 2) source
+                                        String.slice  (idx + nameLen + 1)
+                                         (idx + nameLen + 2)
+                                         source
                                 in
                                     if afterSpace == "=" || afterSpace == ":" then
-                                        -- For annotation, skip to find the actual def
                                         if afterSpace == ":" then
-                                            findDefLineInSource name source lineNum (idx + 1)
+                                            findDefLineInSource  name  source
+                                             lineNum
+                                             (idx + 1)
                                         else
                                             lineNum
                                     else
-                                        -- "name x y =" is also a function def with params
                                         lineNum
                             else
-                                findDefLineInSource name source lineNum (idx + 1)
+                                findDefLineInSource  name  source  lineNum
+                                 (idx + 1)
                     else
                         let
                             ch =
-                                String.slice idx (idx + 1) source
+                                String.slice  idx  (idx + 1)  source
                         in
                             if ch == "\n" then
-                                findDefLineInSource name source (lineNum + 1) (idx + 1)
+                                findDefLineInSource  name  source  (lineNum + 1)
+                                 (idx + 1)
                             else
-                                findDefLineInSource name source lineNum (idx + 1)
+                                findDefLineInSource  name  source  lineNum
+                                 (idx + 1)
             else
                 let
                     ch =
-                        String.slice idx (idx + 1) source
+                        String.slice  idx  (idx + 1)  source
                 in
                     if ch == "\n" then
-                        findDefLineInSource name source (lineNum + 1) (idx + 1)
+                        findDefLineInSource  name  source  (lineNum + 1)
+                         (idx + 1)
                     else
-                        findDefLineInSource name source lineNum (idx + 1)
+                        findDefLineInSource  name  source  lineNum  (idx + 1)
 
-
--- ══════════════════════════════════════════════════════
--- FORMATTING
--- ══════════════════════════════════════════════════════
 
 handleFormatting : ServerState -> String -> String -> ServerState
+
 handleFormatting state id body =
-    sendAndReturn (makeResponse id (jsonArray [])) state
+    sendAndReturn  (makeResponse  id  (jsonArray  []))  state

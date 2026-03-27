@@ -7,10 +7,6 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Ref as Ref
 
--- Hindley-Milner type system core types.
--- ══════════════════════════════════════════════════════
--- TYPE REPRESENTATION
--- ══════════════════════════════════════════════════════
 type Type
     = TVar Int (Maybe String)
     | TConst String
@@ -19,201 +15,223 @@ type Type
     | TTuple (List Type)
     | TRecord (Dict.Dict String Type)
 
+
 type alias Scheme =
     { quantified : List Int , type_ : Type }
+
 
 type alias Substitution =
     Dict.Dict Int Type
 
--- ══════════════════════════════════════════════════════
--- FRESH VARIABLES
--- ══════════════════════════════════════════════════════
-freshVar : Ref.Ref Int -> Maybe String -> Type
+
+freshVar : (Ref.Ref Int) -> (Maybe String) -> Type
+
 freshVar counter name =
     let
         id =
-            Ref.get counter
+            Ref.get  counter
         _ =
-            Ref.set (id + 1) counter
+            Ref.set  (id + 1)  counter
     in
-        TVar id name
+        TVar  id  name
 
--- ══════════════════════════════════════════════════════
--- SUBSTITUTION
--- ══════════════════════════════════════════════════════
+
 emptySub : Substitution
+
 emptySub =
     Dict.empty
 
+
 applySub : Substitution -> Type -> Type
+
 applySub sub t =
     case t of
+        
         TVar id _ ->
-            case Dict.get id sub of
+            case Dict.get  id  sub of
+                
                 Just replacement ->
                     replacement
                 
                 Nothing ->
                     t
-        
-        TConst _ ->
-            t
-        
-        TFun fromT toT ->
-            TFun (applySub sub fromT) (applySub sub toT)
-        
-        TApp ctor args ->
-            TApp (applySub sub ctor) (List.map (applySub sub) args)
-        
-        TTuple items ->
-            TTuple (List.map (applySub sub) items)
-        
-        TRecord fields ->
-            TRecord (Dict.map (\kk v -> applySub sub v) fields)
-
-        _ ->
-            t
+                
+                TConst _ ->
+                    t
+                
+                TFun fromT toT ->
+                    TFun  (applySub  sub  fromT)  (applySub  sub  toT)
+                
+                TApp ctor args ->
+                    TApp  (applySub  sub  ctor)
+                     (List.map  (applySub  sub)  args)
+                
+                TTuple items ->
+                    TTuple  (List.map  (applySub  sub)  items)
+                
+                TRecord fields ->
+                    TRecord  (Dict.map  (\kk v -> applySub  sub  v)  fields)
+                
+                _ ->
+                    t
 
 
 applySubToScheme : Substitution -> Scheme -> Scheme
+
 applySubToScheme sub scheme =
     let
         filtered =
-            List.foldl (\q s -> Dict.remove q s) sub scheme.quantified
+            List.foldl  (\q s -> Dict.remove  q  s)  sub  scheme.quantified
     in
-        { scheme | type_ = applySub filtered scheme.type_ }
+        { scheme | type_ = applySub  filtered  scheme.type_ }
+
 
 composeSubs : Substitution -> Substitution -> Substitution
+
 composeSubs s1 s2 =
     let
         applied =
-            Dict.map (\kk t -> applySub s1 t) s2
+            Dict.map  (\kk t -> applySub  s1  t)  s2
     in
-        Dict.union applied s1
+        Dict.union  applied  s1
 
--- ══════════════════════════════════════════════════════
--- FREE VARIABLES
--- ══════════════════════════════════════════════════════
+
 freeVars : Type -> Set.Set Int
+
 freeVars t =
     case t of
+        
         TVar id _ ->
-            Set.singleton id
+            Set.singleton  id
         
         TConst _ ->
             Set.empty
         
         TFun fromT toT ->
-            Set.union (freeVars fromT) (freeVars toT)
+            Set.union  (freeVars  fromT)  (freeVars  toT)
         
         TApp ctor args ->
-            List.foldl (\arg acc -> Set.union (freeVars arg) acc)
-                (freeVars ctor)
-                args
+            List.foldl  (\arg acc -> Set.union  (freeVars  arg)  acc)
+             (freeVars  ctor)
+             args
         
         TTuple items ->
-            List.foldl (\item acc -> Set.union (freeVars item) acc) Set.empty
-                items
+            List.foldl  (\item acc -> Set.union  (freeVars  item)  acc)
+             Set.empty
+             items
         
         TRecord fields ->
-            Dict.foldl (\kk v acc -> Set.union (freeVars v) acc) Set.empty fields
-
+            Dict.foldl  (\kk v acc -> Set.union  (freeVars  v)  acc)  Set.empty
+             fields
+        
         _ ->
             Set.empty
 
 
 freeVarsInScheme : Scheme -> Set.Set Int
+
 freeVarsInScheme scheme =
     let
         typeVars =
-            freeVars scheme.type_
+            freeVars  scheme.type_
         quantifiedSet =
-            Set.fromList scheme.quantified
+            Set.fromList  scheme.quantified
     in
-        Set.diff typeVars quantifiedSet
+        Set.diff  typeVars  quantifiedSet
 
--- ══════════════════════════════════════════════════════
--- INSTANTIATE / GENERALIZE
--- ══════════════════════════════════════════════════════
-instantiate : Ref.Ref Int -> Scheme -> Type
+
+instantiate : (Ref.Ref Int) -> Scheme -> Type
+
 instantiate counter scheme =
     let
         sub =
             List.foldl
-                (
-                \qv s ->
-                    let
-                        fresh =
-                            freshVar counter Nothing
-                    in
-                        Dict.insert qv fresh s
-                )
-                emptySub
-                scheme.quantified
+             (
+            \qv s ->
+                let
+                    fresh =
+                        freshVar  counter  Nothing
+                in
+                    Dict.insert  qv  fresh  s
+            )
+             emptySub
+             scheme.quantified
     in
-        applySub sub scheme.type_
+        applySub  sub  scheme.type_
 
-generalize : Dict.Dict String Scheme -> Type -> Scheme
+
+generalize : (Dict.Dict String Scheme) -> Type -> Scheme
+
 generalize env t =
     let
         typeVars =
-            freeVars t
+            freeVars  t
         envVars =
             Dict.foldl
-                (\kk scheme acc -> Set.union (freeVarsInScheme scheme) acc)
-                Set.empty
-                env
+             (\kk scheme acc -> Set.union  (freeVarsInScheme  scheme)  acc)
+             Set.empty
+             env
         quantified =
-            Set.toList (Set.diff typeVars envVars)
+            Set.toList  (Set.diff  typeVars  envVars)
     in
         { quantified = quantified , type_ = t }
 
+
 mono : Type -> Scheme
+
 mono t =
     { quantified = [] , type_ = t }
 
--- ══════════════════════════════════════════════════════
--- TYPE FORMATTING
--- ══════════════════════════════════════════════════════
+
 formatType : Type -> String
+
 formatType t =
     case t of
+        
         TVar id name ->
             case name of
+                
                 Just n ->
                     n
                 
                 Nothing ->
-                    "t" ++ String.fromInt id
-        
-        TConst name ->
-            name
-        
-        TFun fromT toT ->
-            let
-                fromStr =
-                    case fromT of
-                        TFun _ _ ->
-                            "(" ++ formatType fromT ++ ")"
-                        
-                        _ ->
-                            formatType fromT
-            in
-                fromStr ++ " -> " ++ formatType toT
-        
-        TApp ctor args ->
-            formatType ctor ++ " " ++ String.join " " (List.map formatType args)
-        
-        TTuple items ->
-            "( " ++ String.join " , " (List.map formatType items) ++ " )"
-        
-        TRecord fields ->
-            let
-                fieldStrs =
-                    List.map (\pair -> fst pair ++ " : " ++ formatType (snd pair))
-                        (Dict.toList fields)
-            in
-                "{ " ++ String.join " , " fieldStrs ++ " }"
-
-        _ ->
-            "?"
+                    "t" ++ String.fromInt  id
+                
+                TConst name ->
+                    name
+                
+                TFun fromT toT ->
+                    let
+                        fromStr =
+                            case fromT of
+                                
+                                TFun _ _ ->
+                                    "(" ++ formatType  fromT ++ ")"
+                                
+                                _ ->
+                                    formatType  fromT
+                    in
+                        fromStr ++ " -> " ++ formatType  toT
+                
+                TApp ctor args ->
+                    formatType  ctor ++
+                    " " ++ String.join  " "  (List.map  formatType  args)
+                
+                TTuple items ->
+                    "( " ++
+                    String.join  " , "  (List.map  formatType  items) ++ " )"
+                
+                TRecord fields ->
+                    let
+                        fieldStrs =
+                            List.map
+                             (
+                            \pair ->
+                                fst  pair ++ " : " ++ formatType  (snd  pair)
+                            )
+                             (Dict.toList  fields)
+                    in
+                        "{ " ++ String.join  " , "  fieldStrs ++ " }"
+                
+                _ ->
+                    "?"

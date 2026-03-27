@@ -1,9 +1,5 @@
 module Compiler.GoIr exposing (..)
 
--- Go Intermediate Representation.
--- Describes the structure of the generated Go code.
-
-
 type GoExpr
     = GoIdent String
     | GoBasicLit String
@@ -11,10 +7,10 @@ type GoExpr
     | GoCallExpr GoExpr (List GoExpr)
     | GoSelectorExpr GoExpr String
     | GoSliceLit (List GoExpr)
-    | GoMapLit (List ( GoExpr, GoExpr ))
+    | GoMapLit (List ( GoExpr , GoExpr ))
     | GoFuncLit (List GoParam) GoExpr
     | GoRawExpr String
-    | GoCompositeLit String (List ( String, GoExpr ))
+    | GoCompositeLit String (List ( String , GoExpr ))
     | GoBinaryExpr String GoExpr GoExpr
     | GoUnaryExpr String GoExpr
     | GoIndexExpr GoExpr GoExpr
@@ -22,9 +18,7 @@ type GoExpr
 
 
 type alias GoParam =
-    { name : String
-    , type_ : String
-    }
+    { name : String , type_ : String }
 
 
 type GoStmt
@@ -46,16 +40,11 @@ type alias GoFuncDecl =
 
 
 type alias GoImport =
-    { path : String
-    , alias_ : String
-    }
+    { path : String , alias_ : String }
 
 
 type alias GoPackage =
-    { name : String
-    , imports : List GoImport
-    , declarations : List GoDecl
-    }
+    { name : String , imports : List GoImport , declarations : List GoDecl }
 
 
 type GoDecl

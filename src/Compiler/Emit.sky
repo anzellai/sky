@@ -5,168 +5,188 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Compiler.GoIr exposing (..)
 
--- Go source code emitter.
--- Converts GoIR to Go source text.
-
-
 emitPackage : GoPackage -> String
+
 emitPackage pkg =
     let
         header =
             "package " ++ pkg.name ++ "\n\n"
         imports =
-            if List.isEmpty pkg.imports then
+            if List.isEmpty  pkg.imports then
                 ""
             else
-                emitImports pkg.imports ++ "\n"
+                emitImports  pkg.imports ++ "\n"
         decls =
-            String.join "\n\n" (List.map emitDecl pkg.declarations)
+            String.join  "\n\n"  (List.map  emitDecl  pkg.declarations)
     in
         header ++ imports ++ decls ++ "\n"
 
 
-emitImports : List GoImport -> String
+emitImports : (List GoImport) -> String
+
 emitImports imports =
     let
         lines =
             List.map
-                (\imp ->
-                    if imp.alias_ == "" then
-                        "\t\"" ++ imp.path ++ "\""
-                    else
-                        "\t" ++ imp.alias_ ++ " \"" ++ imp.path ++ "\""
-                )
-                imports
+             (
+            \imp ->
+                if imp.alias_ == "" then
+                    "\t\"" ++ imp.path ++ "\""
+                else
+                    "\t" ++ imp.alias_ ++ " \"" ++ imp.path ++ "\""
+            )
+             imports
     in
-        "import (\n" ++ String.join "\n" lines ++ "\n)\n"
+        "import (\n" ++ String.join  "\n"  lines ++ "\n)\n"
 
 
 emitDecl : GoDecl -> String
+
 emitDecl decl =
     case decl of
+        
         GoDeclFunc fd ->
-            emitFuncDecl fd
-
+            emitFuncDecl  fd
+        
         GoDeclVar name expr ->
-            "var " ++ name ++ " = " ++ emitExpr expr
-
+            "var " ++ name ++ " = " ++ emitExpr  expr
+        
         GoDeclRaw code ->
             code
 
 
 emitFuncDecl : GoFuncDecl -> String
+
 emitFuncDecl fd =
     let
         params =
-            String.join ", " (List.map emitParam fd.params)
+            String.join  ", "  (List.map  emitParam  fd.params)
         ret =
             if fd.returnType == "" then
                 ""
             else
                 " " ++ fd.returnType
         body =
-            String.join "\n" (List.map (\s -> "\t" ++ emitStmt s) fd.body)
+            String.join  "\n"  (List.map  (\s -> "\t" ++ emitStmt  s)  fd.body)
     in
-        "func " ++ fd.name ++ "(" ++ params ++ ")" ++ ret ++ " {\n" ++ body ++ "\n}"
+        "func " ++
+        fd.name ++ "(" ++ params ++ ")" ++ ret ++ " {\n" ++ body ++ "\n}"
 
 
 emitParam : GoParam -> String
+
 emitParam p =
     p.name ++ " " ++ p.type_
 
 
 emitStmt : GoStmt -> String
+
 emitStmt stmt =
     case stmt of
+        
         GoExprStmt expr ->
-            emitExpr expr
-
+            emitExpr  expr
+        
         GoAssign name expr ->
-            name ++ " = " ++ emitExpr expr
-
+            name ++ " = " ++ emitExpr  expr
+        
         GoShortDecl name expr ->
-            name ++ " := " ++ emitExpr expr
-
+            name ++ " := " ++ emitExpr  expr
+        
         GoReturn expr ->
-            "return " ++ emitExpr expr
-
+            "return " ++ emitExpr  expr
+        
         GoReturnVoid ->
             "return"
-
+        
         GoIf cond thenStmts elseStmts ->
             let
                 thenBody =
-                    String.join "\n\t" (List.map emitStmt thenStmts)
+                    String.join  "\n\t"  (List.map  emitStmt  thenStmts)
                 elseBody =
-                    String.join "\n\t" (List.map emitStmt elseStmts)
+                    String.join  "\n\t"  (List.map  emitStmt  elseStmts)
             in
-                if List.isEmpty elseStmts then
-                    "if " ++ emitExpr cond ++ " {\n\t" ++ thenBody ++ "\n}"
+                if List.isEmpty  elseStmts then
+                    "if " ++ emitExpr  cond ++ " {\n\t" ++ thenBody ++ "\n}"
                 else
-                    "if " ++ emitExpr cond ++ " {\n\t" ++ thenBody ++ "\n} else {\n\t" ++ elseBody ++ "\n}"
-
+                    "if " ++
+                    emitExpr  cond ++
+                    " {\n\t" ++
+                    thenBody ++ "\n} else {\n\t" ++ elseBody ++ "\n}"
+        
         GoBlock stmts ->
-            String.join "\n\t" (List.map emitStmt stmts)
+            String.join  "\n\t"  (List.map  emitStmt  stmts)
 
 
 emitExpr : GoExpr -> String
+
 emitExpr expr =
     case expr of
+        
         GoIdent name ->
             name
-
+        
         GoBasicLit value ->
             value
-
+        
         GoStringLit value ->
-            goQuote value
-
+            goQuote  value
+        
         GoCallExpr fn args ->
-            emitExpr fn ++ "(" ++ String.join ", " (List.map emitExpr args) ++ ")"
-
+            emitExpr  fn ++
+            "(" ++ String.join  ", "  (List.map  emitExpr  args) ++ ")"
+        
         GoSelectorExpr target sel ->
-            emitExpr target ++ "." ++ sel
-
+            emitExpr  target ++ "." ++ sel
+        
         GoSliceLit elems ->
-            "[]any{" ++ String.join ", " (List.map emitExpr elems) ++ "}"
-
+            "[]any{" ++ String.join  ", "  (List.map  emitExpr  elems) ++ "}"
+        
         GoMapLit entries ->
             let
                 pairs =
-                    List.map (\pair -> emitExpr (fst pair) ++ ": " ++ emitExpr (snd pair)) entries
+                    List.map
+                     (
+                    \pair ->
+                        emitExpr  (fst  pair) ++ ": " ++ emitExpr  (snd  pair)
+                    )
+                     entries
             in
-                "map[string]any{" ++ String.join ", " pairs ++ "}"
-
+                "map[string]any{" ++ String.join  ", "  pairs ++ "}"
+        
         GoFuncLit params body ->
             let
                 ps =
-                    String.join ", " (List.map emitParam params)
+                    String.join  ", "  (List.map  emitParam  params)
             in
-                "func(" ++ ps ++ ") any { return " ++ emitExpr body ++ " }"
-
+                "func(" ++ ps ++ ") any { return " ++ emitExpr  body ++ " }"
+        
         GoRawExpr code ->
             code
-
+        
         GoCompositeLit typeName fields ->
             let
                 fs =
-                    List.map (\pair -> fst pair ++ ": " ++ emitExpr (snd pair)) fields
+                    List.map
+                     (\pair -> fst  pair ++ ": " ++ emitExpr  (snd  pair))
+                     fields
             in
-                typeName ++ "{" ++ String.join ", " fs ++ "}"
-
+                typeName ++ "{" ++ String.join  ", "  fs ++ "}"
+        
         GoBinaryExpr op left right ->
-            emitExpr left ++ " " ++ op ++ " " ++ emitExpr right
-
+            emitExpr  left ++ " " ++ op ++ " " ++ emitExpr  right
+        
         GoUnaryExpr op operand ->
-            op ++ emitExpr operand
-
+            op ++ emitExpr  operand
+        
         GoIndexExpr target index ->
-            emitExpr target ++ "[" ++ emitExpr index ++ "]"
-
+            emitExpr  target ++ "[" ++ emitExpr  index ++ "]"
+        
         GoNilExpr ->
             "nil"
 
 
 goQuote : String -> String
+
 goQuote s =
     "\"" ++ s ++ "\""

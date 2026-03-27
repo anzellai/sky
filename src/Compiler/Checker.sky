@@ -12,11 +12,6 @@ import Compiler.Env as Env
 import Compiler.Infer as Infer
 import Compiler.Exhaustive as Exhaustive
 
-
--- ══════════════════════════════════════════════════════
--- TYPE CHECK RESULT
--- ══════════════════════════════════════════════════════
-
 type alias CheckResult =
     { env : Env.TypeEnv
     , registry : AdtRegistry
@@ -26,253 +21,240 @@ type alias CheckResult =
 
 
 type alias TypedDecl =
-    { name : String
-    , scheme : Scheme
-    , prettyType : String
-    }
+    { name : String , scheme : Scheme , prettyType : String }
 
 
 makeTypedDecl : String -> Scheme -> Type -> TypedDecl
+
 makeTypedDecl n s t =
-    { name = n , scheme = s , prettyType = formatType t }
+    { name = n , scheme = s , prettyType = formatType  t }
 
 
--- ══════════════════════════════════════════════════════
--- MODULE TYPE CHECKING
--- ══════════════════════════════════════════════════════
+checkModule : Module -> (Maybe Env.TypeEnv) -> Result String CheckResult
 
--- Type-check a complete module.
-
-checkModule : Module -> Maybe Env.TypeEnv -> Result String CheckResult
 checkModule mod imports =
     let
         counter =
-            Ref.new 100
-
-        -- Start with prelude + imported environment
+            Ref.new  100
         baseEnv =
             case imports of
+                
                 Just importedEnv ->
-                    Env.union importedEnv Env.createPreludeEnv
-
+                    Env.union  importedEnv  Env.createPreludeEnv
+                
                 Nothing ->
                     Env.createPreludeEnv
-
-        -- Register type aliases
         aliasEnv =
-            registerTypeAliases mod.declarations baseEnv
-
-        -- Register ADTs
+            registerTypeAliases  mod.declarations  baseEnv
         ( registry , adtEnv , adtDiags ) =
-            Adt.registerAdts counter mod.declarations
-
-        -- Merge environments
+            Adt.registerAdts  counter  mod.declarations
         env0 =
-            Env.union adtEnv aliasEnv
-
-        -- Collect type annotations
+            Env.union  adtEnv  aliasEnv
         annotations =
-            collectAnnotations mod.declarations
-
-        -- Pre-register all function names with fresh type vars (for forward references)
+            collectAnnotations  mod.declarations
         env1 =
-            preRegisterFunctions counter mod.declarations env0
-
-        -- Infer all function declarations
+            preRegisterFunctions  counter  mod.declarations  env0
         ( typedDecls , finalEnv , inferDiags ) =
-            inferAllDeclarations counter registry env1 mod.declarations annotations
-
-        -- Check exhaustiveness in case expressions
+            inferAllDeclarations  counter  registry  env1  mod.declarations
+             annotations
         exhaustDiags =
-            checkAllExhaustiveness registry mod.declarations
-
+            checkAllExhaustiveness  registry  mod.declarations
         allDiags =
-            List.concat [ adtDiags , inferDiags , exhaustDiags ]
+            List.concat  [ adtDiags , inferDiags , exhaustDiags ]
     in
         Ok
-            { env = finalEnv
-            , registry = registry
-            , declarations = typedDecls
-            , diagnostics = allDiags
-            }
+         { env =
+             finalEnv
+         , registry =
+             registry
+         , declarations =
+             typedDecls
+         , diagnostics =
+             allDiags
+         }
 
 
--- ══════════════════════════════════════════════════════
--- TYPE ALIAS REGISTRATION
--- ══════════════════════════════════════════════════════
+registerTypeAliases : (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
 
-registerTypeAliases : List Declaration -> Env.TypeEnv -> Env.TypeEnv
 registerTypeAliases decls env =
     case decls of
-        [] ->
+        
+        [  ] ->
             env
-
+        
         decl :: rest ->
             case decl of
+                
                 TypeAliasDecl aliasName aliasParams aliasType _ ->
-                    -- For now, skip alias registration
-                    -- A full implementation would expand aliases during unification
-                    registerTypeAliases rest env
-
+                    registerTypeAliases  rest  env
+                
                 _ ->
-                    registerTypeAliases rest env
+                    registerTypeAliases  rest  env
 
 
--- ══════════════════════════════════════════════════════
--- ANNOTATION COLLECTION
--- ══════════════════════════════════════════════════════
+collectAnnotations : (List Declaration) -> Dict.Dict String TypeExpr
 
-collectAnnotations : List Declaration -> Dict.Dict String TypeExpr
 collectAnnotations decls =
-    collectAnnotationsLoop decls Dict.empty
+    collectAnnotationsLoop  decls  Dict.empty
 
 
-collectAnnotationsLoop : List Declaration -> Dict.Dict String TypeExpr -> Dict.Dict String TypeExpr
+collectAnnotationsLoop : (List Declaration) -> (Dict.Dict String TypeExpr) -> Dict.Dict String TypeExpr
+
 collectAnnotationsLoop decls acc =
     case decls of
-        [] ->
+        
+        [  ] ->
             acc
-
+        
         decl :: rest ->
             case decl of
+                
                 TypeAnnotDecl name typeExpr _ ->
-                    collectAnnotationsLoop rest (Dict.insert name typeExpr acc)
-
+                    collectAnnotationsLoop  rest
+                     (Dict.insert  name  typeExpr  acc)
+                
                 _ ->
-                    collectAnnotationsLoop rest acc
+                    collectAnnotationsLoop  rest  acc
 
 
--- ══════════════════════════════════════════════════════
--- FORWARD REFERENCE REGISTRATION
--- ══════════════════════════════════════════════════════
+preRegisterFunctions : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
 
-preRegisterFunctions : Ref.Ref Int -> List Declaration -> Env.TypeEnv -> Env.TypeEnv
 preRegisterFunctions counter decls env =
     case decls of
-        [] ->
+        
+        [  ] ->
             env
-
+        
         decl :: rest ->
-            preRegisterOneFunction counter decl rest env
+            preRegisterOneFunction  counter  decl  rest  env
 
 
 preRegisterOneFunction counter decl rest env =
     case decl of
+        
         FunDecl name _ _ _ ->
             let
                 tv =
-                    freshVar counter Nothing
-
+                    freshVar  counter  Nothing
                 newEnv =
-                    Env.extend name (mono tv) env
+                    Env.extend  name  (mono  tv)  env
             in
-                preRegisterFunctions counter rest newEnv
-
+                preRegisterFunctions  counter  rest  newEnv
+        
         _ ->
-            preRegisterFunctions counter rest env
+            preRegisterFunctions  counter  rest  env
 
 
--- ══════════════════════════════════════════════════════
--- DECLARATION INFERENCE
--- ══════════════════════════════════════════════════════
+inferAllDeclarations : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> ( List TypedDecl , Env.TypeEnv , List String )
 
-inferAllDeclarations : Ref.Ref Int -> AdtRegistry -> Env.TypeEnv -> List Declaration -> Dict.Dict String TypeExpr -> ( List TypedDecl , Env.TypeEnv , List String )
 inferAllDeclarations counter registry env decls annotations =
-    inferDeclsLoop counter registry env decls annotations [] []
+    inferDeclsLoop  counter  registry  env  decls  annotations  []  []
 
 
-inferDeclsLoop : Ref.Ref Int -> AdtRegistry -> Env.TypeEnv -> List Declaration -> Dict.Dict String TypeExpr -> List TypedDecl -> List String -> ( List TypedDecl , Env.TypeEnv , List String )
+inferDeclsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (List TypedDecl) -> (List String) -> ( List TypedDecl , Env.TypeEnv , List String )
+
 inferDeclsLoop counter registry env decls annotations typedDecls diagnostics =
     case decls of
-        [] ->
-            ( List.reverse typedDecls , env , diagnostics )
-
+        
+        [  ] ->
+            ( List.reverse  typedDecls , env , diagnostics )
+        
         decl :: rest ->
-            inferOneDecl counter registry env decl rest annotations typedDecls diagnostics
+            inferOneDecl  counter  registry  env  decl  rest  annotations
+             typedDecls
+             diagnostics
 
 
 inferOneDecl counter registry env decl rest annotations typedDecls diagnostics =
     case decl of
+        
         FunDecl name _ _ _ ->
-            inferOneFunDecl counter registry env name decl rest annotations typedDecls diagnostics
-
+            inferOneFunDecl  counter  registry  env  name  decl  rest
+             annotations
+             typedDecls
+             diagnostics
+        
         _ ->
-            inferDeclsLoop counter registry env rest annotations typedDecls diagnostics
+            inferDeclsLoop  counter  registry  env  rest  annotations
+             typedDecls
+             diagnostics
 
 
 inferOneFunDecl counter registry env fnName decl rest annotations typedDecls diagnostics =
     let
         annotation =
-            Dict.get fnName annotations
+            Dict.get  fnName  annotations
     in
-        case Infer.inferDeclaration counter registry env decl annotation of
+        case Infer.inferDeclaration  counter  registry  env  decl  annotation of
+            
             Ok inferResult ->
-                inferDeclsLoop counter registry (Env.extend inferResult.name inferResult.scheme env) rest annotations (makeTypedDecl inferResult.name inferResult.scheme inferResult.scheme.type_ :: typedDecls) (List.append diagnostics inferResult.diagnostics)
+                inferDeclsLoop  counter  registry
+                 (Env.extend  inferResult.name  inferResult.scheme  env)
+                 rest
+                 annotations
 
-            Err e ->
-                inferDeclsLoop counter registry env rest annotations typedDecls (List.append diagnostics [ e ])
 
+checkAllExhaustiveness : AdtRegistry -> (List Declaration) -> List String
 
--- ══════════════════════════════════════════════════════
--- EXHAUSTIVENESS PASS
--- ══════════════════════════════════════════════════════
-
-checkAllExhaustiveness : AdtRegistry -> List Declaration -> List String
 checkAllExhaustiveness registry decls =
-    List.concatMap (checkDeclExhaustiveness registry) decls
+    List.concatMap  (checkDeclExhaustiveness  registry)  decls
 
 
 checkDeclExhaustiveness : AdtRegistry -> Declaration -> List String
+
 checkDeclExhaustiveness registry decl =
     case decl of
+        
         FunDecl _ _ body _ ->
-            checkExprExhaustiveness registry body
-
+            checkExprExhaustiveness  registry  body
+        
         _ ->
             []
 
 
 checkExprExhaustiveness : AdtRegistry -> Expression -> List String
+
 checkExprExhaustiveness registry expr =
     case expr of
+        
         CaseExpr _ branches _ ->
-            -- We'd need the subject type for proper checking.
-            -- For now, check sub-expressions.
-            List.concatMap (\b -> checkExprExhaustiveness registry b.body) branches
-
+            List.concatMap  (\b -> checkExprExhaustiveness  registry  b.body)
+             branches
+        
         IfExpr cond thenB elseB _ ->
             List.concat
-                [ checkExprExhaustiveness registry cond
-                , checkExprExhaustiveness registry thenB
-                , checkExprExhaustiveness registry elseB
-                ]
-
+             [ checkExprExhaustiveness  registry  cond
+            , checkExprExhaustiveness  registry  thenB
+            , checkExprExhaustiveness  registry  elseB
+            ]
+        
         LetExpr bindings body _ ->
             List.append
-                (List.concatMap (\b -> checkExprExhaustiveness registry b.value) bindings)
-                (checkExprExhaustiveness registry body)
-
+             (
+            List.concatMap  (\b -> checkExprExhaustiveness  registry  b.value)
+             bindings
+            )
+             (checkExprExhaustiveness  registry  body)
+        
         LambdaExpr _ body _ ->
-            checkExprExhaustiveness registry body
-
+            checkExprExhaustiveness  registry  body
+        
         CallExpr callee args _ ->
-            List.append
-                (checkExprExhaustiveness registry callee)
-                (List.concatMap (checkExprExhaustiveness registry) args)
-
+            List.append  (checkExprExhaustiveness  registry  callee)
+             (List.concatMap  (checkExprExhaustiveness  registry)  args)
+        
         BinaryExpr _ left right _ ->
-            List.append
-                (checkExprExhaustiveness registry left)
-                (checkExprExhaustiveness registry right)
-
+            List.append  (checkExprExhaustiveness  registry  left)
+             (checkExprExhaustiveness  registry  right)
+        
         TupleExpr items _ ->
-            List.concatMap (checkExprExhaustiveness registry) items
-
+            List.concatMap  (checkExprExhaustiveness  registry)  items
+        
         ListExpr items _ ->
-            List.concatMap (checkExprExhaustiveness registry) items
-
+            List.concatMap  (checkExprExhaustiveness  registry)  items
+        
         ParenExpr inner _ ->
-            checkExprExhaustiveness registry inner
-
+            checkExprExhaustiveness  registry  inner
+        
         _ ->
             []

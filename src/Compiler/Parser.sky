@@ -10,38 +10,39 @@ import Compiler.ParserCore exposing (..)
 import Compiler.ParserExpr as ParserExpr
 import Compiler.ParserPattern as ParserPattern
 
--- ══════════════════════════════════════════════════════
--- MODULE PARSING
--- ══════════════════════════════════════════════════════
-dispatchDeclaration : String -> String -> ParserState -> Result String (( Declaration, ParserState ))
+dispatchDeclaration : String -> String -> ParserState -> Result String ( Declaration , ParserState )
+
 dispatchDeclaration first second state =
     if first == "foreign" && second == "import" then
-        parseForeignImport state
+        parseForeignImport  state
     else if first == "type" && second == "alias" then
-        parseTypeAlias state
+        parseTypeAlias  state
     else if first == "type" then
-        parseTypeDecl state
-    else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkColon then
-        parseTypeAnnot state
-    else if matchKind TkIdentifier state then
-        parseFunDecl state
+        parseTypeDecl  state
+    else if matchKind  TkIdentifier  state &&
+    tokenKindEq  (peekAt1Kind  state)  TkColon then
+        parseTypeAnnot  state
+    else if matchKind  TkIdentifier  state then
+        parseFunDecl  state
     else
-        Err ("Unexpected token: " ++ first)
+        Err  ("Unexpected token: " ++ first)
 
 
-parseVariantFields : ParserState -> ( List TypeExpr, ParserState )
+parseVariantFields : ParserState -> ( List TypeExpr , ParserState )
+
 parseVariantFields state =
-    if matchKind TkUpperIdentifier state ||
-    matchKind TkIdentifier state ||
-    matchKind TkLParen state || matchKind TkLBrace state then
-        if peekColumn state == 1 || matchKind TkPipe state then
+    if matchKind  TkUpperIdentifier  state ||
+    matchKind  TkIdentifier  state ||
+    matchKind  TkLParen  state || matchKind  TkLBrace  state then
+        if peekColumn  state == 1 || matchKind  TkPipe  state then
             ( [] , state )
         else
-            case parseTypePrimary state of
-                Ok ( te, s1 ) ->
+            case parseTypePrimary  state of
+                
+                Ok ( te , s1 ) ->
                     let
-                        ( rest, s2 ) =
-                            parseVariantFields s1
+                        ( rest , s2 ) =
+                            parseVariantFields  s1
                     in
                         ( te :: rest , s2 )
                 
@@ -51,20 +52,22 @@ parseVariantFields state =
         ( [] , state )
 
 
-parseTypeArgs : ParserState -> ( List TypeExpr, ParserState )
+parseTypeArgs : ParserState -> ( List TypeExpr , ParserState )
+
 parseTypeArgs state =
-    if matchKind TkUpperIdentifier state ||
-    matchKind TkIdentifier state ||
-    matchKind TkLParen state || matchKind TkLBrace state then
-        if peekColumn state == 1 ||
-        matchKind TkEquals state || matchKind TkPipe state then
+    if matchKind  TkUpperIdentifier  state ||
+    matchKind  TkIdentifier  state ||
+    matchKind  TkLParen  state || matchKind  TkLBrace  state then
+        if peekColumn  state == 1 ||
+        matchKind  TkEquals  state || matchKind  TkPipe  state then
             ( [] , state )
         else
-            case parseTypePrimary state of
-                Ok ( te, s1 ) ->
+            case parseTypePrimary  state of
+                
+                Ok ( te , s1 ) ->
                     let
-                        ( rest, s2 ) =
-                            parseTypeArgs s1
+                        ( rest , s2 ) =
+                            parseTypeArgs  s1
                     in
                         ( te :: rest , s2 )
                 
@@ -74,93 +77,103 @@ parseTypeArgs state =
         ( [] , state )
 
 
-parse : List Token -> Result String Module
+parse : (List Token) -> Result String Module
+
 parse tokens =
     let
         state =
-            initState (filterLayout tokens)
+            initState  (filterLayout  tokens)
     in
-        case parseModule state of
-            Ok ( mod, _ ) ->
-                Ok mod
+        case parseModule  state of
+            
+            Ok ( mod , _ ) ->
+                Ok  mod
             
             Err e ->
-                Err e
+                Err  e
 
-parseModule : ParserState -> Result String (( Module, ParserState ))
+
+parseModule : ParserState -> Result String ( Module , ParserState )
+
 parseModule state =
-    case consumeLex TkKeyword "module" state of
-        Err e ->
-            Err e
+    case consumeLex  TkKeyword  "module"  state of
         
-        Ok ( _, s1 ) ->
-            case parseModuleName s1 of
-                Err e ->
-                    Err e
+        Err e ->
+            Err  e
+        
+        Ok ( _ , s1 ) ->
+            case parseModuleName  s1 of
                 
-                Ok ( name, s2 ) ->
+                Err e ->
+                    Err  e
+                
+                Ok ( name , s2 ) ->
                     let
-                        ( exposing_, s3 ) =
-                            parseOptionalExposing s2
-                        ( imports, s4 ) =
-
--- ══════════════════════════════════════════════════════
--- IMPORT PARSING
--- ══════════════════════════════════════════════════════
-                            parseImports s3
-                        ( decls, s5 ) =
-
--- ══════════════════════════════════════════════════════
--- DECLARATION PARSING
--- ══════════════════════════════════════════════════════
-                            parseDeclarations s4
+                        ( exposing_ , s3 ) =
+                            parseOptionalExposing  s2
+                        ( imports , s4 ) =
+                            parseImports  s3
+                        ( decls , s5 ) =
+                            parseDeclarations  s4
                     in
                         Ok
-                            ( { name = name
-                              , exposing_ = exposing_
-                              , imports = imports
-                              , declarations = decls
-                              , span = emptySpan
-                              }
-                            , s5
-                            )
+                         ( { name =
+                               name
+                           , exposing_ =
+                               exposing_
+                           , imports =
+                               imports
+                           , declarations =
+                               decls
+                           , span =
+                               emptySpan
+                           }
+                        , s5
+                        )
 
-parseModuleName : ParserState -> Result String (( List String, ParserState ))
+
+parseModuleName : ParserState -> Result String ( List String , ParserState )
+
 parseModuleName state =
-    case consume TkUpperIdentifier state of
-        Err e ->
-            Err e
+    case consume  TkUpperIdentifier  state of
         
-        Ok ( first, s1 ) ->
-            parseModuleNameParts [ first.lexeme ] s1
+        Err e ->
+            Err  e
+        
+        Ok ( first , s1 ) ->
+            parseModuleNameParts  [ first.lexeme ]  s1
 
-parseModuleNameParts : List String -> ParserState -> Result String (( List String, ParserState ))
+
+parseModuleNameParts : (List String) -> ParserState -> Result String ( List String , ParserState )
+
 parseModuleNameParts parts state =
-    if matchKind TkDot state then
-
-                -- Skip to next declaration on error
+    if matchKind  TkDot  state then
         let
-            ( _, s1 ) =
-                advance state
+            ( _ , s1 ) =
+                advance  state
         in
-            case consume TkUpperIdentifier s1 of
-                Err e ->
-                    Err e
+            case consume  TkUpperIdentifier  s1 of
                 
-                Ok ( part, s2 ) ->
-                    parseModuleNameParts (parts ++ [ part.lexeme ]) s2
+                Err e ->
+                    Err  e
+                
+                Ok ( part , s2 ) ->
+                    parseModuleNameParts  (parts ++ [ part.lexeme ])  s2
     else
-        Ok ( parts , state )
+        Ok  ( parts , state )
 
-parseOptionalExposing : ParserState -> ( ExposingClause, ParserState )
+
+parseOptionalExposing : ParserState -> ( ExposingClause , ParserState )
+
 parseOptionalExposing state =
-    if matchKindLex TkKeyword "exposing" state then
+    if matchKindLex  TkKeyword  "exposing"  state then
         let
-            ( _, s1 ) =
-                advance state
+            ( _ , s1 ) =
+                advance  state
         in
-            case parseExposingClause s1 of
-                Ok ( ec, s2 ) ->
+            case parseExposingClause  s1 of
+                
+                Ok ( ec , s2 ) ->
                     ( ec , s2 )
                 
                 Err _ ->
@@ -168,68 +181,78 @@ parseOptionalExposing state =
     else
         ( ExposeNone , state )
 
-parseExposingClause : ParserState -> Result String (( ExposingClause, ParserState ))
+
+parseExposingClause : ParserState -> Result String ( ExposingClause , ParserState )
+
 parseExposingClause state =
-    case consume TkLParen state of
-        Err e ->
-            Err e
+    case consume  TkLParen  state of
         
-        Ok ( _, s1 ) ->
-            if matchKind TkDot s1 then
+        Err e ->
+            Err  e
+        
+        Ok ( _ , s1 ) ->
+            if matchKind  TkDot  s1 then
                 let
-                    ( _, s2 ) =
-                        advance s1
-                    ( _, s3 ) =
-                        advance s2
+                    ( _ , s2 ) =
+                        advance  s1
+                    ( _ , s3 ) =
+                        advance  s2
                 in
-                    case consume TkRParen s3 of
-                        Err e ->
-                            Err e
+                    case consume  TkRParen  s3 of
                         
-                        Ok ( _, s4 ) ->
-                            Ok ( ExposeAll , s4 )
+                        Err e ->
+                            Err  e
+                        
+                        Ok ( _ , s4 ) ->
+                            Ok  ( ExposeAll , s4 )
             else
                 let
-                    ( items, s2 ) =
-                        parseExposedItems [] s1
+                    ( items , s2 ) =
+                        parseExposedItems  []  s1
                 in
-                    case consume TkRParen s2 of
-                        Err e ->
-                            Err e
+                    case consume  TkRParen  s2 of
                         
-                        Ok ( _, s3 ) ->
-                            Ok ( ExposeList items , s3 )
+                        Err e ->
+                            Err  e
+                        
+                        Ok ( _ , s3 ) ->
+                            Ok  ( ExposeList  items , s3 )
 
-parseExposedItems : List String -> ParserState -> ( List String, ParserState )
+
+parseExposedItems : (List String) -> ParserState -> ( List String , ParserState )
+
 parseExposedItems items state =
-    if matchKind TkRParen state then
+    if matchKind  TkRParen  state then
         ( items , state )
     else
         let
-            ( tok, s1 ) =
-                advance state
+            ( tok , s1 ) =
+                advance  state
             newItems =
                 items ++ [ tok.lexeme ]
             s2 =
-                if matchKind TkComma s1 then
+                if matchKind  TkComma  s1 then
                     let
-                        ( _, s ) =
-                            advance s1
+                        ( _ , s ) =
+                            advance  s1
                     in
                         s
                 else
                     s1
         in
-            parseExposedItems newItems s2
+            parseExposedItems  newItems  s2
 
-parseImports : ParserState -> ( List ImportDecl, ParserState )
+
+parseImports : ParserState -> ( List ImportDecl , ParserState )
+
 parseImports state =
-    if matchKindLex TkKeyword "import" state then
-        case parseImport state of
-            Ok ( imp, s1 ) ->
+    if matchKindLex  TkKeyword  "import"  state then
+        case parseImport  state of
+            
+            Ok ( imp , s1 ) ->
                 let
-                    ( rest, s2 ) =
-                        parseImports s1
+                    ( rest , s2 ) =
+                        parseImports  s1
                 in
                     ( imp :: rest , s2 )
             
@@ -238,468 +261,546 @@ parseImports state =
     else
         ( [] , state )
 
-parseImport : ParserState -> Result String ( ImportDecl, ParserState )
+
+parseImport : ParserState -> Result String ( ImportDecl , ParserState )
+
 parseImport state =
-    case consumeLex TkKeyword "import" state of
-        Err e ->
-            Err e
+    case consumeLex  TkKeyword  "import"  state of
         
-        Ok ( _, s1 ) ->
-            case parseModuleName s1 of
-                Err e ->
-                    Err e
+        Err e ->
+            Err  e
+        
+        Ok ( _ , s1 ) ->
+            case parseModuleName  s1 of
                 
-                Ok ( modName, s2 ) ->
+                Err e ->
+                    Err  e
+                
+                Ok ( modName , s2 ) ->
                     let
-                        ( alias_, s3 ) =
-                            if matchKindLex TkKeyword "as" s2 then
+                        ( alias_ , s3 ) =
+                            if matchKindLex  TkKeyword  "as"  s2 then
                                 let
-                                    ( _, sa ) =
-                                        advance s2
-                                    ( tok, sb ) =
-                                        advance sa
+                                    ( _ , sa ) =
+                                        advance  s2
+                                    ( tok , sb ) =
+                                        advance  sa
                                 in
                                     ( tok.lexeme , sb )
                             else
                                 ( "" , s2 )
-                        ( exposing_, s4 ) =
-                            parseOptionalExposing s3
+                        ( exposing_ , s4 ) =
+                            parseOptionalExposing  s3
                     in
                         Ok
-                            ( { moduleName = modName
-                              , alias_ = alias_
-                              , exposing_ = exposing_
-                              , span = emptySpan
-                              }
-                            , s4
-                            )
+                         ( { moduleName =
+                               modName
+                           , alias_ =
+                               alias_
+                           , exposing_ =
+                               exposing_
+                           , span =
+                               emptySpan
+                           }
+                        , s4
+                        )
+
 
 getLexemeAt1 : ParserState -> String
+
 getLexemeAt1 state =
-    (peekAt 1 state).lexeme
+    let
+        t =
+            peekAt  1  state
+    in
+        t.lexeme
 
 
-parseDeclaration : ParserState -> Result String (( Declaration, ParserState ))
+parseDeclaration : ParserState -> Result String ( Declaration , ParserState )
+
 parseDeclaration state =
-    dispatchDeclaration (peekLexeme state) (getLexemeAt1 state) state
+    dispatchDeclaration  (peekLexeme  state)  (getLexemeAt1  state)  state
 
 
-parseDeclarations : ParserState -> ( List Declaration, ParserState )
+parseDeclarations : ParserState -> ( List Declaration , ParserState )
+
 parseDeclarations state =
-    if matchKind TkEOF state then
+    if matchKind  TkEOF  state then
         ( [] , state )
     else
-        parseDeclsHelper (parseDeclaration state) state
+        parseDeclsHelper  (parseDeclaration  state)  state
 
-parseDeclsHelper : Result String (( Declaration, ParserState )) -> ParserState -> ( List Declaration, ParserState )
+
+parseDeclsHelper : (Result String ( Declaration , ParserState )) -> ParserState -> ( List Declaration , ParserState )
+
 parseDeclsHelper result origState =
     case result of
+        
         Ok pair ->
-            addDeclAndContinue (fst pair) (snd pair)
+            addDeclAndContinue  (fst  pair)  (snd  pair)
         
         Err _ ->
-            parseDeclarations (snd (advance origState))
+            parseDeclarations  (snd  (advance  origState))
 
-addDeclAndContinue : Declaration -> ParserState -> ( List Declaration, ParserState )
+
+addDeclAndContinue : Declaration -> ParserState -> ( List Declaration , ParserState )
+
 addDeclAndContinue decl s1 =
-    prependToResult decl (parseDeclarations s1)
+    prependToResult  decl  (parseDeclarations  s1)
 
-prependToResult : Declaration -> ( List Declaration, ParserState ) -> ( List Declaration, ParserState )
+
+prependToResult : Declaration -> ( List Declaration , ParserState ) -> ( List Declaration , ParserState )
+
 prependToResult decl result =
-    ( decl :: fst result , snd result )
+    ( decl :: fst  result , snd  result )
 
-parseForeignImport : ParserState -> Result String (( Declaration, ParserState ))
+
+parseForeignImport : ParserState -> Result String ( Declaration , ParserState )
+
 parseForeignImport state =
     let
-        ( _, s1 ) =
-            advance state
-        ( _, s2 ) =
-            advance s1
+        ( _ , s1 ) =
+            advance  state
+        ( _ , s2 ) =
+            advance  s1
     in
-        case consume TkString s2 of
-            Err e ->
-                Err e
+        case consume  TkString  s2 of
             
-            Ok ( pkgToken, s3 ) ->
+            Err e ->
+                Err  e
+            
+            Ok ( pkgToken , s3 ) ->
                 let
                     pkgName =
-                        String.slice 1 (String.length pkgToken.lexeme - 1)
-                            pkgToken.lexeme
-                    ( exposing_, s4 ) =
-                        parseOptionalExposing s3
+                        String.slice  1  (String.length  pkgToken.lexeme - 1)
+                         pkgToken.lexeme
+                    ( exposing_ , s4 ) =
+                        parseOptionalExposing  s3
                     names =
                         case exposing_ of
+                            
                             ExposeList items ->
                                 items
                             
                             _ ->
                                 []
                     firstDecl =
-                        case List.head names of
+                        case List.head  names of
+                            
                             Just n ->
                                 Ok
-                                    ( ForeignImportDecl n pkgName n emptySpan
-                                    , s4
-                                    )
+                                 ( ForeignImportDecl  n  pkgName  n  emptySpan
+                                , s4
+                                )
                             
                             Nothing ->
                                 Err
-                                    "Foreign import must expose at least one name"
+                                 "Foreign import must expose at least one name"
                 in
                     firstDecl
 
-parseTypeAlias : ParserState -> Result String (( Declaration, ParserState ))
+
+parseTypeAlias : ParserState -> Result String ( Declaration , ParserState )
+
 parseTypeAlias state =
     let
-        ( _, s1 ) =
-            advance state
-        ( _, s2 ) =
-            advance s1
+        ( _ , s1 ) =
+            advance  state
+        ( _ , s2 ) =
+            advance  s1
     in
-        case consume TkUpperIdentifier s2 of
-            Err e ->
-                Err e
+        case consume  TkUpperIdentifier  s2 of
             
-            Ok ( name, s3 ) ->
+            Err e ->
+                Err  e
+            
+            Ok ( name , s3 ) ->
                 let
-                    ( params, s4 ) =
-                        parseTypeParams s3
+                    ( params , s4 ) =
+                        parseTypeParams  s3
                 in
-                    case consume TkEquals s4 of
-                        Err e ->
-                            Err e
+                    case consume  TkEquals  s4 of
                         
-                        Ok ( _, s5 ) ->
-                            case parseTypeExpr s5 of
-                                Err e ->
-                                    Err e
+                        Err e ->
+                            Err  e
+                        
+                        Ok ( _ , s5 ) ->
+                            case parseTypeExpr  s5 of
                                 
-                                Ok ( typeExpr, s6 ) ->
+                                Err e ->
+                                    Err  e
+                                
+                                Ok ( typeExpr , s6 ) ->
                                     Ok
-                                        ( TypeAliasDecl name.lexeme params
-                                            typeExpr
-                                            emptySpan
-                                        , s6
-                                        )
-
-parseTypeDecl : ParserState -> Result String (( Declaration, ParserState ))
-parseTypeDecl state =
-    let
-        ( _, s1 ) =
-            advance state
-    in
-        case consume TkUpperIdentifier s1 of
-            Err e ->
-                Err e
-            
-            Ok ( name, s2 ) ->
-                let
-                    ( params, s3 ) =
-                        parseTypeParams s2
-                in
-                    case consume TkEquals s3 of
-                        Err e ->
-                            Err e
-                        
-                        Ok ( _, s4 ) ->
-                            let
-                                ( variants, s5 ) =
-
--- ══════════════════════════════════════════════════════
--- TYPE EXPRESSIONS
--- ══════════════════════════════════════════════════════
-                                    parseTypeVariants s4
-                            in
-                                Ok
-                                    ( TypeDecl name.lexeme params variants
+                                     ( TypeAliasDecl  name.lexeme  params
+                                        typeExpr
                                         emptySpan
-                                    , s5
+                                    , s6
                                     )
 
-parseTypeParams : ParserState -> ( List String, ParserState )
+
+parseTypeDecl : ParserState -> Result String ( Declaration , ParserState )
+
+parseTypeDecl state =
+    let
+        ( _ , s1 ) =
+            advance  state
+    in
+        case consume  TkUpperIdentifier  s1 of
+            
+            Err e ->
+                Err  e
+            
+            Ok ( name , s2 ) ->
+                let
+                    ( params , s3 ) =
+                        parseTypeParams  s2
+                in
+                    case consume  TkEquals  s3 of
+                        
+                        Err e ->
+                            Err  e
+                        
+                        Ok ( _ , s4 ) ->
+                            let
+                                ( variants , s5 ) =
+                                    parseTypeVariants  s4
+                            in
+                                Ok
+                                 ( TypeDecl  name.lexeme  params  variants
+                                    emptySpan
+                                , s5
+                                )
+
+
+parseTypeParams : ParserState -> ( List String , ParserState )
+
 parseTypeParams state =
-    if matchKind TkIdentifier state then
+    if matchKind  TkIdentifier  state then
         let
-            ( tok, s1 ) =
-                advance state
-            ( rest, s2 ) =
-                parseTypeParams s1
+            ( tok , s1 ) =
+                advance  state
+            ( rest , s2 ) =
+                parseTypeParams  s1
         in
             ( tok.lexeme :: rest , s2 )
     else
         ( [] , state )
 
-parseTypeVariants : ParserState -> ( List TypeVariant, ParserState )
+
+parseTypeVariants : ParserState -> ( List TypeVariant , ParserState )
+
 parseTypeVariants state =
-    case consume TkUpperIdentifier state of
+    case consume  TkUpperIdentifier  state of
+        
         Err _ ->
             ( [] , state )
         
         Ok pair ->
-            buildVariant (fst pair) (snd pair)
+            buildVariant  (fst  pair)  (snd  pair)
 
-buildVariant : Token -> ParserState -> ( List TypeVariant, ParserState )
+
+buildVariant : Token -> ParserState -> ( List TypeVariant , ParserState )
+
 buildVariant name s1 =
-    finishVariant name.lexeme (parseVariantFields s1)
+    finishVariant  name.lexeme  (parseVariantFields  s1)
 
-finishVariant : String -> ( List TypeExpr, ParserState ) -> ( List TypeVariant, ParserState )
+
+finishVariant : String -> ( List TypeExpr , ParserState ) -> ( List TypeVariant , ParserState )
+
 finishVariant variantName fieldResult =
-    if matchKind TkPipe (snd fieldResult) then
+    if matchKind  TkPipe  (snd  fieldResult) then
         prependVariant
-            { name = variantName , fields = fst fieldResult , span = emptySpan }
-            (parseTypeVariants (snd (advance (snd fieldResult))))
+         { name = variantName , fields = fst  fieldResult , span = emptySpan }
+         (parseTypeVariants  (snd  (advance  (snd  fieldResult))))
     else
-        ( [ { name = variantName , fields = fst fieldResult , span = emptySpan }
+        ( [ { name =
+                variantName
+            , fields =
+                fst  fieldResult
+            , span =
+                emptySpan
+            }
         ]
-        , snd fieldResult
+        , snd  fieldResult
         )
 
-prependVariant : TypeVariant -> ( List TypeVariant, ParserState ) -> ( List TypeVariant, ParserState )
+
+prependVariant : TypeVariant -> ( List TypeVariant , ParserState ) -> ( List TypeVariant , ParserState )
+
 prependVariant v rest =
-    ( v :: fst rest , snd rest )
+    ( v :: fst  rest , snd  rest )
 
-parseTypeExpr : ParserState -> Result String (( TypeExpr, ParserState ))
+
+parseTypeExpr : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseTypeExpr state =
-    case parseTypeApp state of
-        Err e ->
-            Err e
+    case parseTypeApp  state of
         
-        Ok ( left, s1 ) ->
-            if matchKind TkArrow s1 then
-                let
-                    ( _, s2 ) =
-                        advance s1
-                in
-                    case parseTypeExpr s2 of
-                        Err e ->
-                            Err e
-                        
-                        Ok ( right, s3 ) ->
-                            Ok ( FunType left right emptySpan , s3 )
-            else
-                Ok ( left , s1 )
-
-parseTypeApp : ParserState -> Result String (( TypeExpr, ParserState ))
-parseTypeApp state =
-    case parseTypePrimary state of
         Err e ->
-            Err e
+            Err  e
+        
+        Ok ( left , s1 ) ->
+            if matchKind  TkArrow  s1 then
+                let
+                    ( _ , s2 ) =
+                        advance  s1
+                in
+                    case parseTypeExpr  s2 of
+                        
+                        Err e ->
+                            Err  e
+                        
+                        Ok ( right , s3 ) ->
+                            Ok  ( FunType  left  right  emptySpan , s3 )
+            else
+                Ok  ( left , s1 )
+
+
+parseTypeApp : ParserState -> Result String ( TypeExpr , ParserState )
+
+parseTypeApp state =
+    case parseTypePrimary  state of
+        
+        Err e ->
+            Err  e
         
         Ok pair ->
-            applyTypeArgs (fst pair) (snd pair)
+            applyTypeArgs  (fst  pair)  (snd  pair)
 
-applyTypeArgs : TypeExpr -> ParserState -> Result String (( TypeExpr, ParserState ))
+
+applyTypeArgs : TypeExpr -> ParserState -> Result String ( TypeExpr , ParserState )
+
 applyTypeArgs target s1 =
-    resolveTypeApp target (parseTypeArgs s1)
+    resolveTypeApp  target  (parseTypeArgs  s1)
 
-resolveTypeApp : TypeExpr -> ( List TypeExpr, ParserState ) -> Result String (( TypeExpr, ParserState ))
+
+resolveTypeApp : TypeExpr -> ( List TypeExpr , ParserState ) -> Result String ( TypeExpr , ParserState )
+
 resolveTypeApp target argsResult =
-    if List.isEmpty (fst argsResult) then
-        Ok ( target , snd argsResult )
+    if List.isEmpty  (fst  argsResult) then
+        Ok  ( target , snd  argsResult )
     else
         case target of
+            
             TypeRef name _ span ->
-                Ok ( TypeRef name (fst argsResult) span , snd argsResult )
+                Ok  ( TypeRef  name  (fst  argsResult)  span , snd  argsResult )
             
             _ ->
-                Ok ( target , snd argsResult )
+                Ok  ( target , snd  argsResult )
 
-parseTypePrimary : ParserState -> Result String (( TypeExpr, ParserState ))
+
+parseTypePrimary : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseTypePrimary state =
-    if matchKind TkUpperIdentifier state then
+    if matchKind  TkUpperIdentifier  state then
         let
-            ( id, s1 ) =
-                advance state
-            ( parts, s2 ) =
-                parseQualifiedParts [ id.lexeme ] s1
+            ( id , s1 ) =
+                advance  state
+            ( parts , s2 ) =
+                parseQualifiedParts  [ id.lexeme ]  s1
         in
-            Ok ( TypeRef parts [] emptySpan , s2 )
-    else
-        if matchKind TkIdentifier state then
-            let
-                ( id, s1 ) =
-                    advance state
-            in
-                Ok ( TypeVar id.lexeme emptySpan , s1 )
-        else
-            if matchKind TkLParen state then
+            Ok  ( TypeRef  parts  []  emptySpan , s2 )
+    else if matchKind  TkIdentifier  state then
+        let
+            ( id , s1 ) =
+                advance  state
+        in
+            Ok  ( TypeVar  id.lexeme  emptySpan , s1 )
+    else if matchKind  TkLParen  state then
+        let
+            ( _ , s1 ) =
+                advance  state
+        in
+            if matchKind  TkRParen  s1 then
                 let
-                    ( _, s1 ) =
-                        advance state
+                    ( _ , s2 ) =
+                        advance  s1
                 in
-                    if matchKind TkRParen s1 then
-                        let
-                            ( _, s2 ) =
-                                advance s1
-                        in
-                            Ok ( UnitTypeExpr emptySpan , s2 )
-                    else
-                        case parseTypeExpr s1 of
-                            Err e ->
-                                Err e
-                            
-                            Ok ( inner, s2 ) ->
-                                if matchKind TkComma s2 then
-                                    parseTupleTypeRest [ inner ] s2
-                                else
-                                    case consume TkRParen s2 of
-                                        Err e ->
-                                            Err e
-                                        
-                                        Ok ( _, s3 ) ->
-                                            Ok ( inner , s3 )
+                    Ok  ( UnitTypeExpr  emptySpan , s2 )
             else
-                if matchKind TkLBrace state then
-                    parseRecordType state
-                else
-                    Err ("Unexpected token in type: " ++ peekLexeme state)
-
-parseTupleTypeRest : List TypeExpr -> ParserState -> Result String (( TypeExpr, ParserState ))
-parseTupleTypeRest items state =
-    if matchKind TkComma state then
-        let
-            ( _, s1 ) =
-                advance state
-        in
-            case parseTypeExpr s1 of
-                Err e ->
-                    Err e
-                
-                Ok ( item, s2 ) ->
-                    parseTupleTypeRest (items ++ [ item ]) s2
+                case parseTypeExpr  s1 of
+                    
+                    Err e ->
+                        Err  e
+                    
+                    Ok ( inner , s2 ) ->
+                        if matchKind  TkComma  s2 then
+                            parseTupleTypeRest  [ inner ]  s2
+                        else
+                            case consume  TkRParen  s2 of
+                                
+                                Err e ->
+                                    Err  e
+                                
+                                Ok ( _ , s3 ) ->
+                                    Ok  ( inner , s3 )
+    else if matchKind  TkLBrace  state then
+        parseRecordType  state
     else
-        case consume TkRParen state of
-            Err e ->
-                Err e
-            
-            Ok ( _, s1 ) ->
-                Ok ( TupleTypeExpr items emptySpan , s1 )
+        Err  ("Unexpected token in type: " ++ peekLexeme  state)
 
-parseRecordType : ParserState -> Result String (( TypeExpr, ParserState ))
+
+parseTupleTypeRest : (List TypeExpr) -> ParserState -> Result String ( TypeExpr , ParserState )
+
+parseTupleTypeRest items state =
+    if matchKind  TkComma  state then
+        let
+            ( _ , s1 ) =
+                advance  state
+        in
+            case parseTypeExpr  s1 of
+                
+                Err e ->
+                    Err  e
+                
+                Ok ( item , s2 ) ->
+                    parseTupleTypeRest  (items ++ [ item ])  s2
+    else
+        case consume  TkRParen  state of
+            
+            Err e ->
+                Err  e
+            
+            Ok ( _ , s1 ) ->
+                Ok  ( TupleTypeExpr  items  emptySpan , s1 )
+
+
+parseRecordType : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseRecordType state =
     let
-        ( _, s1 ) =
-            advance state
-        ( fields, s2 ) =
-            parseRecordTypeFields [] s1
+        ( _ , s1 ) =
+            advance  state
+        ( fields , s2 ) =
+            parseRecordTypeFields  []  s1
     in
-        case consume TkRBrace s2 of
-            Err e ->
-                Err e
+        case consume  TkRBrace  s2 of
             
-            Ok ( _, s3 ) ->
-                Ok ( RecordTypeExpr fields emptySpan , s3 )
+            Err e ->
+                Err  e
+            
+            Ok ( _ , s3 ) ->
+                Ok  ( RecordTypeExpr  fields  emptySpan , s3 )
 
-parseRecordTypeFields : List NamedType -> ParserState -> ( List NamedType, ParserState )
+
+parseRecordTypeFields : (List NamedType) -> ParserState -> ( List NamedType , ParserState )
+
 parseRecordTypeFields fields state =
-    if matchKind TkRBrace state then
+    if matchKind  TkRBrace  state then
         ( fields , state )
     else
-        case consume TkIdentifier state of
+        case consume  TkIdentifier  state of
+            
             Err _ ->
                 ( fields , state )
             
-            Ok ( name, s1 ) ->
-                case consume TkColon s1 of
+            Ok ( name , s1 ) ->
+                case consume  TkColon  s1 of
+                    
                     Err _ ->
                         ( fields , state )
                     
-                    Ok ( _, s2 ) ->
-                        case parseTypeExpr s2 of
+                    Ok ( _ , s2 ) ->
+                        case parseTypeExpr  s2 of
+                            
                             Err _ ->
                                 ( fields , state )
                             
-                            Ok ( te, s3 ) ->
+                            Ok ( te , s3 ) ->
                                 let
                                     newFields =
                                         fields ++
                                         [ { name = name.lexeme , type_ = te } ]
                                     s4 =
-                                        if matchKind TkComma s3 then
+                                        if matchKind  TkComma  s3 then
                                             let
-                                                ( _, s ) =
-                                                    advance s3
+                                                ( _ , s ) =
+                                                    advance  s3
                                             in
                                                 s
                                         else
                                             s3
                                 in
-                                    parseRecordTypeFields newFields s4
+                                    parseRecordTypeFields  newFields  s4
 
--- parseQualifiedParts moved to ParserCore
--- ══════════════════════════════════════════════════════
--- TYPE ANNOTATIONS
--- ══════════════════════════════════════════════════════
-parseTypeAnnot : ParserState -> Result String (( Declaration, ParserState ))
+
+parseTypeAnnot : ParserState -> Result String ( Declaration , ParserState )
+
 parseTypeAnnot state =
     let
-        ( name, s1 ) =
-            advance state
+        ( name , s1 ) =
+            advance  state
     in
-        case consume TkColon s1 of
-            Err e ->
-                Err e
+        case consume  TkColon  s1 of
             
-            Ok ( _, s2 ) ->
-                case parseTypeExpr s2 of
-                    Err e ->
-                        Err e
+            Err e ->
+                Err  e
+            
+            Ok ( _ , s2 ) ->
+                case parseTypeExpr  s2 of
                     
-                    Ok ( te, s3 ) ->
-                        Ok ( TypeAnnotDecl name.lexeme te emptySpan , s3 )
+                    Err e ->
+                        Err  e
+                    
+                    Ok ( te , s3 ) ->
+                        Ok  ( TypeAnnotDecl  name.lexeme  te  emptySpan , s3 )
 
--- ══════════════════════════════════════════════════════
--- FUNCTION DECLARATIONS
--- ══════════════════════════════════════════════════════
-parseFunDecl : ParserState -> Result String (( Declaration, ParserState ))
+
+parseFunDecl : ParserState -> Result String ( Declaration , ParserState )
+
 parseFunDecl state =
     let
-        ( name, s1 ) =
-            advance state
-        ( params, s2 ) =
-            parseFunParams s1
+        ( name , s1 ) =
+            advance  state
+        ( params , s2 ) =
+            parseFunParams  s1
     in
-        case consume TkEquals s2 of
-            Err e ->
-                Err e
+        case consume  TkEquals  s2 of
             
-            Ok ( _, s3 ) ->
-                case ParserExpr.parseExpr 0 s3 of
+            Err e ->
+                Err  e
+            
+            Ok ( _ , s3 ) ->
+                case ParserExpr.parseExpr  0  s3 of
+                    
                     Err e ->
-                        Err e
+                        Err  e
                     
-                    Ok ( body, s4 ) ->
-                        Ok ( FunDecl name.lexeme params body emptySpan , s4 )
+                    Ok ( body , s4 ) ->
+                        Ok
+                         ( FunDecl  name.lexeme  params  body  emptySpan , s4 )
 
-parseFunParams : ParserState -> ( List Pattern, ParserState )
+
+parseFunParams : ParserState -> ( List Pattern , ParserState )
+
 parseFunParams state =
-    if matchKind TkEquals state then
+    if matchKind  TkEquals  state then
         ( [] , state )
-    else
-        if matchKind TkIdentifier state then
-            let
-                ( tok, s1 ) =
-                    advance state
-                pat =
-                    if tok.lexeme == "_" then
-                        PWildcard emptySpan
-                    else
-                        PVariable tok.lexeme emptySpan
-                ( rest, s2 ) =
-                    parseFunParams s1
-            in
-                ( pat :: rest , s2 )
-        else
-            if matchKind TkLParen state then
-                case ParserPattern.parsePatternExpr state of
-                    Ok ( pat, s1 ) ->
-                        let
-                            ( rest, s2 ) =
-                                parseFunParams s1
-                        in
-                            ( pat :: rest , s2 )
-                    
-                    Err _ ->
-                        ( [] , state )
-            else
+    else if matchKind  TkIdentifier  state then
+        let
+            ( tok , s1 ) =
+                advance  state
+            pat =
+                if tok.lexeme == "_" then
+                    PWildcard  emptySpan
+                else
+                    PVariable  tok.lexeme  emptySpan
+            ( rest , s2 ) =
+                parseFunParams  s1
+        in
+            ( pat :: rest , s2 )
+    else if matchKind  TkLParen  state then
+        case ParserPattern.parsePatternExpr  state of
+            
+            Ok ( pat , s1 ) ->
+                let
+                    ( rest , s2 ) =
+                        parseFunParams  s1
+                in
+                    ( pat :: rest , s2 )
+            
+            Err _ ->
                 ( [] , state )
+    else
+        ( [] , state )

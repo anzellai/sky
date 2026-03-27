@@ -9,240 +9,253 @@ import Compiler.Types exposing (..)
 import Compiler.Ast as Ast exposing (..)
 import Compiler.Env as Env
 
--- ══════════════════════════════════════════════════════
--- ADT REGISTRY
--- ══════════════════════════════════════════════════════
--- Maps type name -> RegisteredAdt
 type alias AdtRegistry =
     Dict.Dict String RegisteredAdt
+
 
 type alias RegisteredAdt =
     { name : String , arity : Int , constructors : Dict.Dict String Scheme }
 
+
 emptyRegistry : AdtRegistry
+
 emptyRegistry =
     Dict.empty
 
-lookupConstructor : String -> AdtRegistry -> Maybe Scheme
-lookupConstructor ctorName registry =
-    lookupCtorInEntries ctorName (Dict.values registry)
 
-lookupCtorInEntries : String -> List RegisteredAdt -> Maybe Scheme
+lookupConstructor : String -> AdtRegistry -> Maybe Scheme
+
+lookupConstructor ctorName registry =
+    lookupCtorInEntries  ctorName  (Dict.values  registry)
+
+
+lookupCtorInEntries : String -> (List RegisteredAdt) -> Maybe Scheme
+
 lookupCtorInEntries ctorName adts =
     case adts of
-        [] ->
+        
+        [  ] ->
             Nothing
         
         adt :: rest ->
-            case Dict.get ctorName adt.constructors of
+            case Dict.get  ctorName  adt.constructors of
+                
                 Just scheme ->
-                    Just scheme
+                    Just  scheme
                 
                 Nothing ->
-                    lookupCtorInEntries ctorName rest
+                    lookupCtorInEntries  ctorName  rest
 
--- Find which ADT a constructor belongs to
+
 lookupConstructorAdt : String -> AdtRegistry -> Maybe RegisteredAdt
-lookupConstructorAdt ctorName registry =
-    lookupCtorAdtInEntries ctorName (Dict.values registry)
 
-lookupCtorAdtInEntries : String -> List RegisteredAdt -> Maybe RegisteredAdt
+lookupConstructorAdt ctorName registry =
+    lookupCtorAdtInEntries  ctorName  (Dict.values  registry)
+
+
+lookupCtorAdtInEntries : String -> (List RegisteredAdt) -> Maybe RegisteredAdt
+
 lookupCtorAdtInEntries ctorName adts =
     case adts of
-        [] ->
+        
+        [  ] ->
             Nothing
         
         adt :: rest ->
-            case Dict.get ctorName adt.constructors of
+            case Dict.get  ctorName  adt.constructors of
+                
                 Just _ ->
-                    Just adt
+                    Just  adt
                 
                 Nothing ->
-                    lookupCtorAdtInEntries ctorName rest
+                    lookupCtorAdtInEntries  ctorName  rest
 
--- ══════════════════════════════════════════════════════
--- ADT REGISTRATION
--- ══════════════════════════════════════════════════════
--- Register all type declarations from a module.
-registerAdts : Ref.Ref Int -> List Declaration -> ( AdtRegistry, Env.TypeEnv, List String )
+
+registerAdts : (Ref.Ref Int) -> (List Declaration) -> ( AdtRegistry , Env.TypeEnv , List String )
+
 registerAdts counter decls =
-    registerAdtsLoop counter decls emptyRegistry Env.empty []
+    registerAdtsLoop  counter  decls  emptyRegistry  Env.empty  []
 
-registerAdtsLoop : Ref.Ref Int -> List Declaration -> AdtRegistry -> Env.TypeEnv -> List String -> ( AdtRegistry, Env.TypeEnv, List String )
+
+registerAdtsLoop : (Ref.Ref Int) -> (List Declaration) -> AdtRegistry -> Env.TypeEnv -> (List String) -> ( AdtRegistry , Env.TypeEnv , List String )
+
 registerAdtsLoop counter decls registry env diagnostics =
     case decls of
-        [] ->
+        
+        [  ] ->
             ( registry , env , diagnostics )
         
         decl :: rest ->
             case decl of
+                
                 TypeDecl name params variants _ ->
                     let
-                        ( newRegistry, newEnv, newDiags ) =
-
--- Register a single ADT: type Name a b = Ctor1 T1 T2 | Ctor2 T3
-                            registerOneAdt counter name params variants registry
-                                env
+                        ( newRegistry , newEnv , newDiags ) =
+                            registerOneAdt  counter  name  params  variants
+                             registry
+                             env
                     in
-                        registerAdtsLoop counter rest newRegistry newEnv
-                            (List.append diagnostics newDiags)
+                        registerAdtsLoop  counter  rest  newRegistry  newEnv
+                         (List.append  diagnostics  newDiags)
                 
                 _ ->
-                    registerAdtsLoop counter rest registry env diagnostics
+                    registerAdtsLoop  counter  rest  registry  env  diagnostics
 
-registerOneAdt : Ref.Ref Int -> String -> List String -> List TypeVariant -> AdtRegistry -> Env.TypeEnv -> ( AdtRegistry, Env.TypeEnv, List String )
+
+registerOneAdt : (Ref.Ref Int) -> String -> (List String) -> (List TypeVariant) -> AdtRegistry -> Env.TypeEnv -> ( AdtRegistry , Env.TypeEnv , List String )
+
 registerOneAdt counter typeName typeParams variants registry env =
     let
         arity =
-            List.length typeParams
+            List.length  typeParams
         ctorSchemes =
             List.foldl
-                (
-                \variant acc ->
-                    let
-                        scheme =
-                            buildConstructorScheme counter typeName typeParams
-                                variant
-                    in
-                        Dict.insert variant.name scheme acc
-                )
-                Dict.empty
-                variants
+             (
+            \variant acc ->
+                let
+                    scheme =
+                        buildConstructorScheme  counter  typeName  typeParams
+                         variant
+                in
+                    Dict.insert  variant.name  scheme  acc
+            )
+             Dict.empty
+             variants
         adt =
             { name = typeName , arity = arity , constructors = ctorSchemes }
         newRegistry =
-            Dict.insert typeName adt registry
-
-        -- Add all constructor schemes to the environment
+            Dict.insert  typeName  adt  registry
         newEnv =
-            Dict.foldl (\ctorName scheme acc -> Env.extend ctorName scheme acc)
-                env
-                ctorSchemes
+            Dict.foldl
+             (\ctorName scheme acc -> Env.extend  ctorName  scheme  acc)
+             env
+             ctorSchemes
     in
         ( newRegistry , newEnv , [] )
 
--- Build the type scheme for a constructor.
--- For `type Maybe a = Just a | Nothing`:
---   Just : a -> Maybe a  (scheme with [a] quantified)
---   Nothing : Maybe a    (scheme with [a] quantified)
-buildConstructorScheme : Ref.Ref Int -> String -> List String -> TypeVariant -> Scheme
+
+buildConstructorScheme : (Ref.Ref Int) -> String -> (List String) -> TypeVariant -> Scheme
+
 buildConstructorScheme counter typeName typeParams variant =
     let
-
-        -- Create fresh type variables for each type parameter
         paramVars =
-            List.map (\p -> freshVar counter (Just p)) typeParams
-
-        -- Build mapping from param name to type variable
+            List.map  (\p -> freshVar  counter  (Just  p))  typeParams
         paramMap =
-            buildParamMap typeParams paramVars Dict.empty
-
-        -- The result type: TypeName param1 param2 ...
+            buildParamMap  typeParams  paramVars  Dict.empty
         resultType =
-            if List.isEmpty paramVars then
-                TConst typeName
+            if List.isEmpty  paramVars then
+                TConst  typeName
             else
-                TApp (TConst typeName) paramVars
-
-        -- Build constructor function type: field1 -> field2 -> ... -> ResultType
+                TApp  (TConst  typeName)  paramVars
         fieldTypes =
-            List.map (resolveTypeExpr paramMap) variant.fields
+            List.map  (resolveTypeExpr  paramMap)  variant.fields
         ctorType =
-            buildFunType fieldTypes resultType
-
-        -- Quantify all the param variables
+            buildFunType  fieldTypes  resultType
         quantified =
-            List.filterMap getVarId paramVars
+            List.filterMap  getVarId  paramVars
     in
         { quantified = quantified , type_ = ctorType }
 
--- Build param name -> TVar mapping
-buildParamMap : List String -> List Type -> Dict.Dict String Type -> Dict.Dict String Type
+
+buildParamMap : (List String) -> (List Type) -> (Dict.Dict String Type) -> Dict.Dict String Type
+
 buildParamMap names vars acc =
     case names of
-        [] ->
+        
+        [  ] ->
             acc
-
+        
         nameH :: nameRest ->
             case vars of
-                [] ->
+                
+                [  ] ->
                     acc
-
+                
                 varH :: varRest ->
-                    buildParamMap nameRest varRest (Dict.insert nameH varH acc)
+                    buildParamMap  nameRest  varRest
+                     (Dict.insert  nameH  varH  acc)
 
--- Build curried function type: a -> b -> c -> result
-buildFunType : List Type -> Type -> Type
+
+buildFunType : (List Type) -> Type -> Type
+
 buildFunType args result =
     case args of
-        [] ->
+        
+        [  ] ->
             result
         
         arg :: rest ->
-            TFun arg (buildFunType rest result)
+            TFun  arg  (buildFunType  rest  result)
 
--- Extract variable ID from TVar
+
 getVarId : Type -> Maybe Int
+
 getVarId t =
     case t of
+        
         TVar id _ ->
-            Just id
+            Just  id
         
         _ ->
             Nothing
 
--- ══════════════════════════════════════════════════════
--- TYPE EXPRESSION RESOLUTION
--- ══════════════════════════════════════════════════════
--- Resolve an AST type expression to a Type, using param mapping.
-resolveTypeExpr : Dict.Dict String Type -> TypeExpr -> Type
+
+resolveTypeExpr : (Dict.Dict String Type) -> TypeExpr -> Type
+
 resolveTypeExpr paramMap texpr =
     case texpr of
+        
         TypeRef parts args _ ->
             let
                 name =
-                    String.join "." parts
+                    String.join  "."  parts
                 resolvedArgs =
-                    List.map (resolveTypeExpr paramMap) args
+                    List.map  (resolveTypeExpr  paramMap)  args
             in
-                case Dict.get name paramMap of
+                case Dict.get  name  paramMap of
+                    
                     Just tv ->
                         tv
                     
                     Nothing ->
-                        if List.isEmpty resolvedArgs then
-                            TConst name
+                        if List.isEmpty  resolvedArgs then
+                            TConst  name
                         else
-                            TApp (TConst name) resolvedArgs
-        
-        TypeVar name _ ->
-            case Dict.get name paramMap of
-                Just tv ->
-                    tv
-                
-                Nothing ->
-                    TVar 0 (Just name)
-        
-        FunType fromT toT _ ->
-            TFun (resolveTypeExpr paramMap fromT) (resolveTypeExpr paramMap toT)
-        
-        RecordTypeExpr fields _ ->
-            let
-                fieldDict =
-                    List.foldl
-                        (
-                        \f acc ->
-                            Dict.insert f.name
-                                (resolveTypeExpr paramMap f.type_)
-                                acc
-                        )
-                        Dict.empty
-                        fields
-            in
-                TRecord fieldDict
-        
-        TupleTypeExpr items _ ->
-            TTuple (List.map (resolveTypeExpr paramMap) items)
-        
-        UnitTypeExpr _ ->
-            TConst "Unit"
+                            TApp  (TConst  name)  resolvedArgs
+                    
+                    TypeVar name _ ->
+                        case Dict.get  name  paramMap of
+                            
+                            Just tv ->
+                                tv
+                            
+                            Nothing ->
+                                TVar  0  (Just  name)
+                            
+                            FunType fromT toT _ ->
+                                TFun  (resolveTypeExpr  paramMap  fromT)
+                                 (resolveTypeExpr  paramMap  toT)
+                            
+                            RecordTypeExpr fields _ ->
+                                let
+                                    fieldDict =
+                                        List.foldl
+                                         (
+                                        \f acc ->
+                                            Dict.insert  f.name
+                                             (
+                                            resolveTypeExpr  paramMap  f.type_
+                                            )
+                                             acc
+                                        )
+                                         Dict.empty
+                                         fields
+                                in
+                                    TRecord  fieldDict
+                            
+                            TupleTypeExpr items _ ->
+                                TTuple
+                                 (List.map  (resolveTypeExpr  paramMap)  items)
+                            
+                            UnitTypeExpr _ ->
+                                TConst  "Unit"
