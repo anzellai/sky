@@ -366,6 +366,10 @@ extractFuncBindings pkgName json =
 -- Filter functions with unsupported parameter types
 isSupportedFuncForPkg : String -> String -> Bool
 isSupportedFuncForPkg pkgName funcJson =
+    if Json.jsonGetBool "hasTypeParams" funcJson then
+        -- Skip generic functions
+        False
+    else
     let
         paramsStr =
             Json.jsonGetArrayRaw "params" funcJson
@@ -590,10 +594,12 @@ generateFuncBinding pkgName funcJson =
                     "    " ++ wrapperName ++ " " ++ callArgs)
 
 
+-- Build return type for FFI bindings.
+-- ALL Go FFI calls are wrapped in Task, so return types are always Result String T.
 buildReturnType : List String -> String
 buildReturnType results =
     if List.isEmpty results then
-        "()"
+        "Result String ()"
     else if List.length results == 1 then
         let
             single =
@@ -607,9 +613,8 @@ buildReturnType results =
             if single == "error" then
                 "Result String ()"
             else
-                TypeMapper.mapGoTypeToSky single
+                "Result String " ++ TypeMapper.mapGoTypeToSky single
     else
-            -- Check if last is error → Result type
             let
                 lastResult =
                     case List.reverse results of
@@ -627,8 +632,8 @@ buildReturnType results =
                         [] ->
                             "Result String ()"
                 else
-                    -- Multiple non-error returns → tuple
-                    "(" ++ String.join ", " (List.map (\r -> TypeMapper.mapGoTypeToSky r) results) ++ ")"
+                    -- Multiple non-error returns → Result String (tuple)
+                    "Result String (" ++ String.join ", " (List.map (\r -> TypeMapper.mapGoTypeToSky r) results) ++ ")"
 
 
 extractTypeBindings : String -> List String

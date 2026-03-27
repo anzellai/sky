@@ -47,11 +47,12 @@ generateWrappers pkgName inspectJson outDir =
 -- FUNCTION CLASSIFICATION
 -- ══════════════════════════════════════════════════════
 
--- Classify a Go function as pure, fallible, or effectful.
--- This determines the wrapping strategy:
---   pure     → direct call, no Task
+-- Classify a Go function as fallible or effectful.
+-- ALL Go FFI calls are wrapped in Task with panic recovery for 100% safety.
 --   fallible → (T, error) return → Task wrapping with error handling
---   effectful → void/Unit return, or any function that does IO → Task wrapping
+--   effectful → all other returns → Task wrapping with panic recovery
+-- Pure classification was removed: even "pure" Go functions can panic,
+-- and wrapping everything in Task ensures consistent effect boundary.
 
 type FuncKind
     = Pure
@@ -63,22 +64,15 @@ classifyFunc : List String -> String -> FuncKind
 classifyFunc results funcName =
     case results of
         [] ->
-            -- void return → effectful (side-effect only)
             Effectful
 
         single :: [] ->
             if single == "error" then
                 Fallible
             else
-                -- Single non-error return could be pure or effectful
-                -- Heuristic: if name starts with Get/Read/Load → effectful
-                if isEffectfulName funcName then
-                    Effectful
-                else
-                    Pure
+                Effectful
 
         _ ->
-            -- Multi-return: check if last is error
             let
                 lastResult =
                     case List.reverse results of
@@ -96,18 +90,7 @@ classifyFunc results funcName =
 
 isEffectfulName : String -> Bool
 isEffectfulName name =
-    String.startsWith "Read" name ||
-    String.startsWith "Write" name ||
-    String.startsWith "Load" name ||
-    String.startsWith "Save" name ||
-    String.startsWith "Create" name ||
-    String.startsWith "Delete" name ||
-    String.startsWith "Open" name ||
-    String.startsWith "Close" name ||
-    String.startsWith "Send" name ||
-    String.startsWith "Fetch" name ||
-    String.startsWith "Set" name ||
-    String.startsWith "Print" name
+    True
 
 
 -- ══════════════════════════════════════════════════════
@@ -205,6 +188,10 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
 -- For variadic functions, the last param is a typed slice — allow it
 canWrapFuncForPkg : String -> FuncEntry -> Bool
 canWrapFuncForPkg pkgName func =
+    if func.hasTypeParams then
+        -- Skip generic functions — can't call from any-typed Sky code
+        False
+    else
     let
         paramCount =
             List.length func.params
@@ -233,6 +220,9 @@ zipIndex items idx =
 
 canWrapMethodForPkg : String -> MethodEntry -> Bool
 canWrapMethodForPkg pkgName method =
+    if method.hasTypeParams then
+        False
+    else
     let
         mParamCount =
             List.length method.params
@@ -377,6 +367,7 @@ type alias FuncEntry =
     , params : List ( String , String )
     , results : List String
     , variadic : Bool
+    , hasTypeParams : Bool
     }
 
 
@@ -387,6 +378,7 @@ type alias MethodEntry =
     , results : List String
     , variadic : Bool
     , isInterface : Bool
+    , hasTypeParams : Bool
     }
 
 
@@ -691,6 +683,7 @@ parseFuncEntry json =
                     , params = params
                     , results = results
                     , variadic = variadic
+                    , hasTypeParams = Json.jsonGetBool "hasTypeParams" json
                     }
 
 
@@ -896,4 +889,5 @@ parseMethodEntry typeName isIface json =
                     , results = results
                     , variadic = variadic
                     , isInterface = isIface
+                    , hasTypeParams = Json.jsonGetBool "hasTypeParams" json
                     }
