@@ -363,36 +363,19 @@ lookupTypeInfo : ServerState -> String -> String -> String -> String
 
 lookupTypeInfo state uri word source =
     let
-        fromTypeCache =
-            case Dict.get  uri  state.typeCache of
+        fromStdlib =
+            case Env.lookup  word  Resolver.buildStdlibEnv of
 
-                Just checkResult ->
-                    lookupInTypedDecls  word  checkResult.declarations
+                Just scheme ->
+                    word ++ " : " ++ formatType  scheme.type_
 
                 Nothing ->
                     ""
-        fromEnv =
-            if String.isEmpty  fromTypeCache then
-                case Dict.get  uri  state.typeCache of
-
-                    Just checkResult ->
-                        case Env.lookup  word  checkResult.env of
-
-                            Just scheme ->
-                                word ++ " : " ++ formatType  scheme.type_
-
-                            Nothing ->
-                                ""
-
-                    Nothing ->
-                        ""
-            else
-                fromTypeCache
         fromAnnotation =
-            if String.isEmpty  fromEnv then
+            if String.isEmpty  fromStdlib then
                 findAnnotationInSource  word  source
             else
-                fromEnv
+                fromStdlib
     in
         fromAnnotation
 
