@@ -5,42 +5,32 @@ import Sky.Core.Task as Task
 import Std.Log exposing (println)
 
 
--- Sky's Task effect boundary demo.
--- All side effects flow through Task. Pure at the surface.
-
 main =
     let
-        -- Build a Task pipeline
         pipeline =
             Task.succeed "Sky"
-                |> Task.andThen (\name ->
-                    Task.succeed ("Hello, " ++ name ++ "!")
-                )
-                |> Task.andThen (\greeting ->
-                    Task.succeed (greeting ++ " Task is the effect boundary.")
-                )
+                |> Task.andThen
+                    (\name ->
+                        Task.succeed ("Hello, " ++ name ++ "!")
+                    )
+                |> Task.andThen
+                    (\greeting ->
+                        Task.succeed (greeting ++ " Task is the effect boundary.")
+                    )
 
-        -- Execute the pipeline — this is the ONLY place effects happen
         result =
             Task.perform pipeline
 
         _ =
-            case result of
-                Ok value ->
-                    println value
+            println result
 
-                Err _ ->
-                    println "Pipeline failed"
-
-        -- Test fail short-circuits
-        failPipeline =
-            Task.fail "intentional"
-                |> Task.andThen (\_ -> Task.succeed "unreachable")
-
-        r2 =
-            Task.perform failPipeline
+        failResult =
+            Task.run
+                (Task.fail "intentional"
+                    |> Task.andThen (\_ -> Task.succeed "unreachable")
+                )
     in
-        case r2 of
+        case failResult of
             Ok _ ->
                 println "ERROR: should have failed"
 
