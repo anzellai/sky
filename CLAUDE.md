@@ -267,9 +267,9 @@ main =
 
 3. **Skyshop duplicate wrappers** — `dist/sky_wrappers/` and `.skycache/go/` both generate `Sky_*` functions. Partially fixed (skip FFI copy when project wrapper exists). Remaining: wrapper naming mismatch — lowered code emits `Cloud_Google_Com_Go_Firestore_NewClient` but wrappers define `Sky_cloud_google_com_go_firestore_NewClient`. Needs alias generation.
 
-4. **FFI Task boundary** — pure Go functions (`time.Now`, `os.Getenv`, `fmt.Sprint`) return plain values, not `Task`. Violates Sky's effect boundary principle. Classification is in `Ffi/WrapperGen.sky` lines 50-110.
+4. **FFI Task boundary** — FIXED. All Go FFI calls now wrapped in Task thunks with panic recovery. Pure classification removed. All .skyi bindings return `Result String T`.
 
-5. **Go generics** — `isGenericType` in WrapperGen.sky uses a naive single-char heuristic. With Go 1.18+ generics widespread, the FFI inspector sees generic types but binding/wrapper generators skip them. TS compiler handles this by detecting `hasTypeParams` and filtering out generic functions entirely. This is correct for now (can't call generic Go functions from `any`-typed Sky args) but limits FFI coverage.
+5. **Go generics** — FIXED. Inspector now detects `sig.TypeParams()` and `sig.RecvTypeParams()`. Generic functions, methods, and named types are filtered out in both WrapperGen and BindingGen. Generic Go functions can't be called from `any`-typed Sky code.
 
 6. **Skyshop build time ~2min** — 43 local modules + 14 FFI = 25K Go declarations. 99.8% of wrapper functions (32,589/32,666) are eliminated by DCE. Root cause: wrappers are generated for ALL symbols then DCE'd, instead of only generating needed symbols.
 
