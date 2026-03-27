@@ -1453,7 +1453,11 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
                                      ("   Copied wrapper: " ++ wrapperDst)
                             
                             Err _ ->
-                                ()
+                                if projectRoot /= "." then
+                                    copyOneFfiWrapper  outDir  "."  modName
+                                     mainGoCode
+                                else
+                                    ()
 
 
 buildAliasMap : (List Ast.ImportDecl) -> Dict.Dict String String

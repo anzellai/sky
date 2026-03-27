@@ -284,14 +284,35 @@ resolveBindingPath projectRoot modName =
             ".skycache/go/" ++
             String.join  "/"  (List.map  String.toLower  pkgParts) ++
             "/bindings.skyi"
+        cwdPrimary =
+            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+        cwdAlt =
+            ".skycache/go/" ++
+            String.join  "/"  (List.map  String.toLower  pkgParts) ++
+            "/bindings.skyi"
     in
         case File.readFile  primaryPath of
-            
+
             Ok _ ->
                 primaryPath
-            
+
             Err _ ->
-                altPath
+                case File.readFile  altPath of
+
+                    Ok _ ->
+                        altPath
+
+                    Err _ ->
+                        if projectRoot == "." then
+                            altPath
+                        else
+                            case File.readFile  cwdPrimary of
+
+                                Ok _ ->
+                                    cwdPrimary
+
+                                Err _ ->
+                                    cwdAlt
 
 
 camelToUnderscore : String -> String
