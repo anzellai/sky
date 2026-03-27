@@ -6,6 +6,7 @@ import Sky.Core.List as List
 import Sky.Core.Args as Args
 import Sky.Core.Process as Process
 import Sky.Core.File as File
+import Sky.Core.Io as Io
 import Std.Log exposing (println)
 import Compiler.Pipeline as Pipeline
 import Compiler.Lexer as Lexer
@@ -788,7 +789,12 @@ cmdFmt _ =
 
                 Nothing ->
                     "src/Main.sky"
+        useStdin =
+            filePath == "--stdin" || filePath == "-"
     in
+        if useStdin then
+            fmtStdin ()
+        else
         case File.readFile filePath of
             Err e ->
                 let
@@ -818,6 +824,33 @@ cmdFmt _ =
                                     File.writeFile filePath formatted
                             in
                                 println ("Formatted: " ++ filePath)
+
+
+fmtStdin : () -> ()
+fmtStdin _ =
+    case Io.readAllStdin () of
+        Ok source ->
+            let
+                lexResult =
+                    Lexer.lex source
+            in
+                case Parser.parse lexResult.tokens of
+                    Err e ->
+                        let
+                            _ =
+                                Io.writeStderr ("Parse error: " ++ e)
+                        in
+                            Process.exit 1
+
+                    Ok mod ->
+                        Io.writeStdout (Format.formatModule mod)
+
+        Err e ->
+            let
+                _ =
+                    Io.writeStderr ("Cannot read stdin")
+            in
+                Process.exit 1
 
 
 cmdClean : () -> ()

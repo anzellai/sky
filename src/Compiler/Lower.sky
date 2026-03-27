@@ -749,6 +749,8 @@ lowerQualified ctx parts =
             GoIdent "sky_stringFromBytes"
         else if qualName == "Io.readLine" then
             GoIdent "sky_readLine"
+        else if qualName == "Io.readAllStdin" then
+            GoIdent "sky_readAllStdin"
         else if qualName == "Io.readBytes" then
             GoIdent "sky_readBytes"
         else if qualName == "Io.writeStdout" then
@@ -2081,6 +2083,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_readLine(u any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; line, err := stdinReader.ReadString('\\n'); if err != nil && len(line) == 0 { return SkyNothing() }; return SkyJust(strings.TrimRight(line, \"\\r\\n\")) }"
     , GoDeclRaw "func sky_readBytes(n any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; count := sky_asInt(n); buf := make([]byte, count); total := 0; for total < count { nr, err := stdinReader.Read(buf[total:]); total += nr; if err != nil { break } }; if total == 0 { return SkyNothing() }; return SkyJust(string(buf[:total])) }"
     , GoDeclRaw "func sky_writeStdout(s any) any { fmt.Print(sky_asString(s)); return struct{}{} }"
+    , GoDeclRaw "func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }"
     , GoDeclRaw "func sky_writeStderr(s any) any { fmt.Fprint(os.Stderr, sky_asString(s)); return struct{}{} }"
     , GoDeclRaw "var stdinReader *bufio.Reader"
     , GoDeclRaw "func sky_charIsUpper(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'A' && r <= 'Z' }; return false }"
