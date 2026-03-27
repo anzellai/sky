@@ -84,10 +84,12 @@ jobs:
           sky build examples/14-task-demo/src/Main.sky
           sky-out/app | grep "Hello, Sky!"
 
-      # Test examples — with Go FFI
-      - name: Test go-stdlib
+      # Test examples — with Go FFI (requires .skycache bindings)
+      # These test sky add + build together
+      - name: Test go-stdlib (FFI)
         run: |
           rm -rf sky-out
+          sky add crypto/sha256 encoding/hex net/http time
           sky build examples/02-go-stdlib/src/Main.sky
           sky-out/app | grep "SHA256"
 
