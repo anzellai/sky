@@ -270,7 +270,7 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
                          [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
                     _ =
                         Process.run  "cp"
-                         [ "-f" , "stdlib-go/sky_live_init.go" , outDir ++ "/" ]
+                         [ "-f" , "stdlib-go/live_init.go" , outDir ++ "/" ]
                 in
                     println  "   Copied skylive_rt runtime"
             else
@@ -2445,7 +2445,7 @@ compileModule filePath outDir mod =
                                      [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
                                 _ =
                                     Process.run  "cp"
-                                     [ "-f" , "stdlib-go/sky_live_init.go" , outDir ++ "/" ]
+                                     [ "-f" , "stdlib-go/live_init.go" , outDir ++ "/" ]
                             in
                                 println  "   Copied skylive_rt runtime"
                         else
