@@ -51,7 +51,7 @@ jobs:
           sky build src/Main.sky || {
             echo "Phase 1 bootstrap: patching undefined Go refs..."
             cd sky-out
-            sed -i 's/io\.readAllStdin/sky_readAllStdin/g' main.go
+            sed 's/io\.readAllStdin/sky_readAllStdin/g' main.go > main.go.tmp && mv main.go.tmp main.go
             echo 'func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }' >> main.go
             go build -gcflags=all=-l -o app .
             cd ..
