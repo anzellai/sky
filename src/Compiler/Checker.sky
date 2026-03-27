@@ -186,12 +186,34 @@ inferOneFunDecl counter registry env fnName decl rest annotations typedDecls dia
             Dict.get  fnName  annotations
     in
         case Infer.inferDeclaration  counter  registry  env  decl  annotation of
-            
+
             Ok inferResult ->
-                inferDeclsLoop  counter  registry
-                 (Env.extend  inferResult.name  inferResult.scheme  env)
-                 rest
-                 annotations
+                addTypedDeclAndContinue  counter  registry  env  rest
+                 annotations  typedDecls  diagnostics  inferResult
+
+            Err e ->
+                inferDeclsLoop  counter  registry  env  rest  annotations
+                 typedDecls
+                 (e :: diagnostics)
+
+
+addTypedDeclAndContinue counter registry env rest annotations typedDecls diagnostics inferResult =
+    let
+        nm =
+            inferResult.name
+        sc =
+            inferResult.scheme
+        tp =
+            sc.type_
+        td =
+            makeTypedDecl  nm  sc  tp
+        newDecls =
+            td :: typedDecls
+        newEnv =
+            Env.extend  nm  sc  env
+    in
+        inferDeclsLoop  counter  registry  newEnv  rest  annotations
+         newDecls  diagnostics
 
 
 checkAllExhaustiveness : AdtRegistry -> (List Declaration) -> List String

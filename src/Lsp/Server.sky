@@ -327,10 +327,10 @@ getHoverForPosition : ServerState -> String -> Int -> Int -> String
 
 getHoverForPosition state uri line character =
     case Dict.get  uri  state.documents of
-        
+
         Nothing ->
             jsonNull
-        
+
         Just source ->
             let
                 lineText =
@@ -341,7 +341,7 @@ getHoverForPosition state uri line character =
                     if String.isEmpty  word then
                         ""
                     else
-                        findAnnotationInSource  word  source
+                        lookupTypeInfo  state  uri  word  source
             in
                 if String.isEmpty  info then
                     jsonNull
@@ -350,10 +350,66 @@ getHoverForPosition state uri line character =
                      [ ( "contents"
                     , jsonObject
                        [ ( "kind" , jsonString  "markdown" )
-                      , ( "value" , jsonString  info )
+                      , ( "value"
+                        , jsonString
+                           ("```sky\\n" ++ info ++ "\\n```")
+                        )
                       ]
                     )
                     ]
+
+
+lookupTypeInfo : ServerState -> String -> String -> String -> String
+
+lookupTypeInfo state uri word source =
+    let
+        fromTypeCache =
+            case Dict.get  uri  state.typeCache of
+
+                Just checkResult ->
+                    lookupInTypedDecls  word  checkResult.declarations
+
+                Nothing ->
+                    ""
+        fromEnv =
+            if String.isEmpty  fromTypeCache then
+                case Dict.get  uri  state.typeCache of
+
+                    Just checkResult ->
+                        case Env.lookup  word  checkResult.env of
+
+                            Just scheme ->
+                                word ++ " : " ++ formatType  scheme.type_
+
+                            Nothing ->
+                                ""
+
+                    Nothing ->
+                        ""
+            else
+                fromTypeCache
+        fromAnnotation =
+            if String.isEmpty  fromEnv then
+                findAnnotationInSource  word  source
+            else
+                fromEnv
+    in
+        fromAnnotation
+
+
+lookupInTypedDecls : String -> (List Checker.TypedDecl) -> String
+
+lookupInTypedDecls name decls =
+    case decls of
+
+        [  ] ->
+            ""
+
+        decl :: rest ->
+            if decl.name == name then
+                name ++ " : " ++ decl.prettyType
+            else
+                lookupInTypedDecls  name  rest
 
 
 getLineAt : Int -> String -> String
@@ -584,53 +640,208 @@ handleCompletion : ServerState -> String -> String -> ServerState
 
 handleCompletion state id body =
     let
+        params =
+            jsonGetObject  "params"  body
+        textDoc =
+            jsonGetObject  "textDocument"  params
+        uri =
+            jsonGetString  "uri"  textDoc
+        position =
+            jsonGetObject  "position"  params
+        line =
+            jsonGetInt  "line"  position
+        character =
+            jsonGetInt  "character"  position
+        lineText =
+            case Dict.get  uri  state.documents of
+
+                Just source ->
+                    getLineAt  line  source
+
+                Nothing ->
+                    ""
+        prefix =
+            getCompletionPrefix  character  lineText
+        isQualified =
+            String.contains  "."  prefix
+        qualParts =
+            String.split  "."  prefix
+        modulePart =
+            case qualParts of
+
+                mod :: _ ->
+                    mod
+
+                [  ] ->
+                    ""
         keywords =
-            [ "module"
-            , "exposing"
-            , "import"
-            , "as"
-            , "type"
-            , "alias"
-            , "let"
-            , "in"
-            , "if"
-            , "then"
-            , "else"
-            , "case"
-            , "of"
-            , "foreign"
-            , "True"
-            , "False"
+            [ "module" , "exposing" , "import" , "as" , "type" , "alias"
+            , "let" , "in" , "if" , "then" , "else" , "case" , "of"
+            , "foreign" , "True" , "False"
             ]
         keywordItems =
-            List.map
-             (
-            \kw ->
-                jsonObject
-                 [ ( "label" , jsonString  kw ) , ( "kind" , jsonInt  14 ) ]
-            )
-             keywords
-        stdlibItems =
-            [ makeCompletionItem  "println"  "function"  3
-            , makeCompletionItem  "identity"  "function"  3
-            , makeCompletionItem  "not"  "function"  3
-            , makeCompletionItem  "always"  "function"  3
-            , makeCompletionItem  "fst"  "function"  3
-            , makeCompletionItem  "snd"  "function"  3
-            , makeCompletionItem  "Ok"  "constructor"  4
-            , makeCompletionItem  "Err"  "constructor"  4
-            , makeCompletionItem  "Just"  "constructor"  4
-            , makeCompletionItem  "Nothing"  "constructor"  4
-            ]
+            if isQualified then
+                []
+            else
+                List.filterMap
+                 (
+                \kw ->
+                    if String.isEmpty  prefix ||
+                    String.startsWith  prefix  kw then
+                        Just
+                         (
+                        jsonObject
+                         [ ( "label" , jsonString  kw )
+                        , ( "kind" , jsonInt  14 )
+                        ]
+                        )
+                    else
+                        Nothing
+                )
+                 keywords
+        typeCheckedItems =
+            case Dict.get  uri  state.typeCache of
+
+                Just checkResult ->
+                    completionsFromCheckResult  checkResult  prefix  isQualified
+                     modulePart
+
+                Nothing ->
+                    []
+        moduleItems =
+            if isQualified then
+                completionsForModule  modulePart
+            else
+                []
         allItems =
-            List.append  keywordItems  stdlibItems
+            List.concat  [ keywordItems , typeCheckedItems , moduleItems ]
         result =
             jsonObject
-             [ ( "isIncomplete" , jsonBool  False )
+             [ ( "isIncomplete" , jsonBool  True )
             , ( "items" , jsonArray  allItems )
             ]
     in
         sendAndReturn  (makeResponse  id  result)  state
+
+
+getCompletionPrefix : Int -> String -> String
+
+getCompletionPrefix col lineText =
+    if col <= 0 || col > String.length  lineText then
+        ""
+    else
+        let
+            start =
+                findCompletionStart  lineText  (col - 1)
+        in
+            String.slice  start  col  lineText
+
+
+findCompletionStart : String -> Int -> Int
+
+findCompletionStart text idx =
+    if idx <= 0 then
+        0
+    else
+        let
+            ch =
+                String.slice  (idx - 1)  idx  text
+        in
+            if isIdentChar  ch || ch == "." then
+                findCompletionStart  text  (idx - 1)
+            else
+                idx
+
+
+completionsFromCheckResult : Checker.CheckResult -> String -> Bool -> String -> List String
+
+completionsFromCheckResult checkResult prefix isQualified modulePart =
+    let
+        declItems =
+            List.filterMap
+             (
+            \decl ->
+                if isQualified then
+                    Nothing
+                else if String.isEmpty  prefix ||
+                String.startsWith  prefix  decl.name then
+                    Just
+                     (makeCompletionItem  decl.name  decl.prettyType  3)
+                else
+                    Nothing
+            )
+             checkResult.declarations
+        envItems =
+            if isQualified then
+                []
+            else
+                List.filterMap
+                 (
+                \pair ->
+                    let
+                        name =
+                            fst  pair
+                        scheme =
+                            snd  pair
+                    in
+                        if String.isEmpty  prefix ||
+                        String.startsWith  prefix  name then
+                            Just
+                             (
+                            makeCompletionItem  name
+                             (formatType  scheme.type_)
+                             3
+                            )
+                        else
+                            Nothing
+                )
+                 (Env.toList  checkResult.env)
+    in
+        List.append  declItems  envItems
+
+
+completionsForModule : String -> List String
+
+completionsForModule modulePart =
+    let
+        moduleMap =
+            [ ( "String" , Resolver.getStdlibExports  "Sky.Core.String" )
+            , ( "List" , Resolver.getStdlibExports  "Sky.Core.List" )
+            , ( "Dict" , Resolver.getStdlibExports  "Sky.Core.Dict" )
+            , ( "Set" , Resolver.getStdlibExports  "Sky.Core.Set" )
+            , ( "Maybe" , Resolver.getStdlibExports  "Sky.Core.Maybe" )
+            , ( "Result" , Resolver.getStdlibExports  "Sky.Core.Result" )
+            , ( "Task" , Resolver.getStdlibExports  "Sky.Core.Task" )
+            , ( "Math" , Resolver.getStdlibExports  "Sky.Core.Math" )
+            , ( "Regex" , Resolver.getStdlibExports  "Sky.Core.Regex" )
+            , ( "Json" , Resolver.getStdlibExports  "Sky.Core.Json.Decode" )
+            , ( "Encode" , Resolver.getStdlibExports  "Sky.Core.Json.Encode" )
+            , ( "File" , Resolver.getStdlibExports  "Sky.Core.File" )
+            , ( "Process" , Resolver.getStdlibExports  "Sky.Core.Process" )
+            , ( "Http" , Resolver.getStdlibExports  "Sky.Core.Http" )
+            , ( "Time" , Resolver.getStdlibExports  "Sky.Core.Time" )
+            , ( "Server" , Resolver.getStdlibExports  "Sky.Http.Server" )
+            , ( "Html" , Resolver.getStdlibExports  "Std.Html" )
+            , ( "Attr" , Resolver.getStdlibExports  "Std.Html.Attributes" )
+            , ( "Css" , Resolver.getStdlibExports  "Std.Css" )
+            , ( "Live" , Resolver.getStdlibExports  "Std.Live" )
+            , ( "Cmd" , Resolver.getStdlibExports  "Std.Cmd" )
+            , ( "Sub" , Resolver.getStdlibExports  "Std.Sub" )
+            ]
+        exports =
+            List.concatMap
+             (
+            \pair ->
+                if fst  pair == modulePart then
+                    snd  pair
+                else
+                    []
+            )
+             moduleMap
+    in
+        List.map
+         (\name -> makeCompletionItem  name  (modulePart ++ "." ++ name)  3)
+         exports
 
 
 makeCompletionItem : String -> String -> Int -> String
