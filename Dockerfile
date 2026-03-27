@@ -10,7 +10,7 @@
 # ─────────────────────────────────────────────────────────────
 
 # ── Stage 1: Build the Sky compiler ─────────────────────────
-FROM golang:1.24-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 WORKDIR /sky
 COPY sky-out/ ./sky-out/
@@ -18,7 +18,7 @@ COPY sky-out/ ./sky-out/
 RUN cd sky-out && go build -ldflags="-s -w" -o /usr/local/bin/sky main.go
 
 # ── Stage 2: Runtime image ──────────────────────────────────
-FROM golang:1.24-bookworm
+FROM golang:1.26-bookworm
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git && \

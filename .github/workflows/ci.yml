@@ -22,7 +22,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26'
 
       # Download the latest released Sky binary
       - name: Install Sky compiler
@@ -31,6 +31,11 @@ jobs:
           chmod +x sky
           sudo mv sky /usr/local/bin/sky
           sky version
+
+      # Build the skyi-filter tool (needed for large .skyi filtering)
+      - name: Build skyi-filter
+        run: |
+          go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go
 
       # Build the compiler from source (self-hosting test)
       - name: Build compiler from source
@@ -50,7 +55,7 @@ jobs:
       - name: Type check
         run: sky check src/Main.sky
 
-      # Test examples
+      # Test examples — simple (no FFI)
       - name: Test hello-world
         run: |
           rm -rf sky-out
@@ -69,7 +74,25 @@ jobs:
           sky build examples/04-local-pkg/src/Main.sky
           sky-out/app | grep "Calculation result"
 
-      # Test Go FFI
+      - name: Test task-demo
+        run: |
+          rm -rf sky-out
+          sky build examples/14-task-demo/src/Main.sky
+          sky-out/app | grep "Hello, Sky!"
+
+      # Test examples — with Go FFI
+      - name: Test go-stdlib
+        run: |
+          rm -rf sky-out
+          sky build examples/02-go-stdlib/src/Main.sky
+          sky-out/app | grep "SHA256"
+
+      - name: Test live-component
+        run: |
+          rm -rf sky-out
+          sky build examples/10-live-component/src/Main.sky
+
+      # Test Go FFI toolchain
       - name: Test sky add (Go stdlib)
         run: |
           sky add fmt
