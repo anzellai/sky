@@ -264,15 +264,7 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
             )
         _ =
             if List.foldl  (\imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live")  False  imports then
-                let
-                    _ =
-                        Process.run  "cp"
-                         [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
-                    _ =
-                        Process.run  "cp"
-                         [ "-f" , "stdlib-go/live_init.go" , outDir ++ "/" ]
-                in
-                    println  "   Copied skylive_rt runtime"
+                copyLiveRuntime  outDir
             else
                 ()
         _ =
@@ -287,6 +279,55 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
             println  ("✓ Compilation successful")
     in
         Ok  goCode
+
+
+copyLiveRuntime : String -> ()
+
+copyLiveRuntime outDir =
+    let
+        skyBinDir =
+            case Process.run  "sh"
+                  [ "-c"
+                 , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
+                 ] of
+
+                Ok dir ->
+                    String.trim  dir
+
+                Err _ ->
+                    "."
+        candidates =
+            [ "stdlib-go"
+            , skyBinDir ++ "/../stdlib-go"
+            ]
+        stdlibDir =
+            findStdlibDir  candidates
+        _ =
+            Process.run  "cp"
+             [ "-rf" , stdlibDir ++ "/skylive_rt" , outDir ++ "/" ]
+        _ =
+            Process.run  "cp"
+             [ "-f" , stdlibDir ++ "/live_init.go" , outDir ++ "/" ]
+    in
+        println  "   Copied skylive_rt runtime"
+
+
+findStdlibDir : (List String) -> String
+
+findStdlibDir candidates =
+    case candidates of
+
+        [  ] ->
+            "stdlib-go"
+
+        dir :: rest ->
+            case File.readFile  (dir ++ "/live_init.go") of
+
+                Ok _ ->
+                    dir
+
+                Err _ ->
+                    findStdlibDir  rest
 
 
 optimiseJsonFunctions : String -> String
@@ -2462,15 +2503,7 @@ compileModule filePath outDir mod =
                              (\imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live")
                              False
                              mod.imports then
-                            let
-                                _ =
-                                    Process.run  "cp"
-                                     [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
-                                _ =
-                                    Process.run  "cp"
-                                     [ "-f" , "stdlib-go/live_init.go" , outDir ++ "/" ]
-                            in
-                                println  "   Copied skylive_rt runtime"
+                            copyLiveRuntime  outDir
                         else
                             ()
                     _ =
