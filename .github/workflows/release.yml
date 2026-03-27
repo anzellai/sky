@@ -24,9 +24,10 @@ jobs:
         run: go install golang.org/x/tools/cmd/goimports@latest
 
       # Build skyi-filter tool first (needed for large .skyi filtering)
-      - name: Build skyi-filter
+      - name: Build tools
         run: |
           go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go
+          go build -o /usr/local/bin/trim-imports tools/trim_imports.go
 
       # Download the previous release to bootstrap
       - name: Install Sky compiler
@@ -44,10 +45,16 @@ jobs:
             go build -gcflags=all=-l -o /usr/local/bin/sky .
           }
 
-      # Build from source (Phase 1 + 2)
+      # Build from source (Phase 1 + 2, handles new stdlib functions)
       - name: Build compiler from source
         run: |
-          sky build src/Main.sky
+          sky build src/Main.sky || {
+            echo "Phase 1 bootstrap: patching undefined refs..."
+            cd sky-out
+            sed -i 's/io\.readAllStdin/sky_readAllStdin/g' main.go 2>/dev/null || true
+            go build -gcflags=all=-l -o app . 2>/dev/null || true
+            cd ..
+          }
           cp sky-out/app /usr/local/bin/sky
           rm -rf sky-out
           sky build src/Main.sky
