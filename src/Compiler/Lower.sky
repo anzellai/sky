@@ -416,6 +416,10 @@ lowerIdentifier ctx name =
                                     GoIdent "sky_always"
                                 else if name == "js" then
                                     GoIdent "sky_js"
+                                else if name == "modBy" then
+                                    GoIdent "sky_modBy"
+                                else if name == "clamp" then
+                                    GoIdent "sky_clamp"
                                 else
                                     -- Dynamic stdlib lookup: check exposedStdlib dict
                                     case Dict.get name ctx.exposedStdlib of
@@ -825,6 +829,8 @@ lowerQualified ctx parts =
             GoIdent "sky_listTake"
         else if qualName == "List.sort" then
             GoIdent "sky_listSort"
+        else if qualName == "List.sortBy" then
+            GoIdent "sky_listSortBy"
         else if qualName == "List.zip" then
             GoIdent "sky_listZip"
         else if qualName == "List.range" then
@@ -1229,6 +1235,7 @@ isWellKnownIdent name =
     name == "True" || name == "False" ||
     name == "not" || name == "fst" || name == "snd" || name == "identity" ||
     name == "always" || name == "errorToString" || name == "println" || name == "js" ||
+    name == "modBy" || name == "clamp" ||
     String.startsWith "sky_" name || String.startsWith "Sky" name ||
     -- ADT constructors start with uppercase (TFun, TVar, Ok, Err, etc.)
     isUpperStart name ||
@@ -2142,6 +2149,8 @@ generateHelperDecls =
     -- List extras
     , GoDeclRaw "func sky_listTake(n any) any { return func(list any) any { items := sky_asList(list); c := sky_asInt(n); if c >= len(items) { return list }; return items[:c] } }"
     , GoDeclRaw "func sky_listSort(list any) any { items := sky_asList(list); result := make([]any, len(items)); copy(result, items); sort.Slice(result, func(i, j int) bool { return fmt.Sprintf(\"%v\", result[i]) < fmt.Sprintf(\"%v\", result[j]) }); return result }"
+    , GoDeclRaw "func sky_listSortBy(fn any) any { return func(list any) any { f := fn.(func(any) any); items := sky_asList(list); result := make([]any, len(items)); copy(result, items); sort.Slice(result, func(i, j int) bool { return fmt.Sprintf(\"%v\", f(result[i])) < fmt.Sprintf(\"%v\", f(result[j])) }); return result } }"
+    , GoDeclRaw "func sky_clamp(low any) any { return func(high any) any { return func(val any) any { v := sky_asInt(val); lo := sky_asInt(low); hi := sky_asInt(high); if v < lo { return lo }; if v > hi { return hi }; return v } } }"
     , GoDeclRaw "func sky_listZip(a any) any { return func(b any) any { la, lb := sky_asList(a), sky_asList(b); minLen := len(la); if len(lb) < minLen { minLen = len(lb) }; result := make([]any, minLen); for i := 0; i < minLen; i++ { result[i] = SkyTuple2{la[i], lb[i]} }; return result } }"
     , GoDeclRaw "func sky_listRange(from any) any { return func(to any) any { f, t := sky_asInt(from), sky_asInt(to); result := make([]any, 0); for i := f; i <= t; i++ { result = append(result, i) }; return result } }"
     , GoDeclRaw "func sky_listAny(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return true } }; return false } }"

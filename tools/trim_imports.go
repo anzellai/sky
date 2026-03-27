@@ -73,7 +73,17 @@ func extractPkgIdent(importLine string) string {
 	if len(parts) == 1 {
 		// "path" — last path segment is the identifier
 		segments := strings.Split(parts[0], "/")
-		return segments[len(segments)-1]
+		last := segments[len(segments)-1]
+		// Go version suffixes (v2, v84, etc.) aren't package names
+		// Use second-to-last segment stripped of "-go" suffix
+		if len(segments) >= 2 && len(last) >= 2 && last[0] == 'v' && last[1] >= '0' && last[1] <= '9' {
+			pkg := segments[len(segments)-2]
+			// Strip common suffixes like "-go" → "stripe-go" → "stripe"
+			pkg = strings.TrimSuffix(pkg, "-go")
+			pkg = strings.ReplaceAll(pkg, "-", "_")
+			return pkg
+		}
+		return last
 	}
 	return ""
 }
