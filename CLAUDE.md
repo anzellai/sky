@@ -277,7 +277,7 @@ main =
 
 8. **Missing stdlib functions** — FIXED. Added `List.sortBy`, `modBy` (prelude), `clamp`, `Io.readAllStdin`.
 
-9. **Lowerer: tuple pattern destructuring in lambdas** — `\( _, v ) -> v` emits `func(_p any) { return v }` (v undefined). Affects Tailwind `tw` function in skyshop. Needs fix in Lower.sky lambda handling.
+9. **Lowerer: tuple pattern destructuring in lambdas** — FIXED. `lambdaTupleBindings` extracts `V0`/`V1` fields from `SkyTuple2`/`SkyTuple3` before the lambda body.
 
 10. **FFI binding gaps** — Firestore `DocumentIteratorGetAll`, `Desc`, `Asc` and Stripe `Session.New`, `Session.Get` not generated because BindingGen doesn't support complex Go slice/pointer types in method params. Need to either extend type support or add hand-crafted wrappers.
 
