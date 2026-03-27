@@ -312,7 +312,7 @@ eliminateDeadCode outDir mainGoCode =
                         List.foldl (\f acc -> acc + countFuncsInFile f) 0 wrapperFiles
                     -- Fix unused imports in remaining wrapper files
                     _ =
-                        List.map (\f -> Process.run "sh" [ "-c" , "goimports -w " ++ f ++ " 2>/dev/null" ]) wrapperFiles
+                        List.map (\f -> trimWrapperImports f) wrapperFiles
                 in
                     if totalBefore > totalAfter then
                         println ("   [DCE] Eliminated " ++ String.fromInt (totalBefore - totalAfter) ++ " unused wrapper functions (" ++ String.fromInt totalBefore ++ " → " ++ String.fromInt totalAfter ++ ")")
@@ -367,6 +367,16 @@ trimWrapperFile filePath mainGoCode =
 
 
 -- Trim a wrapper file to only keep functions referenced in main.go.
+-- Trim unused imports from a wrapper .go file after DCE.
+trimWrapperImports : String -> ()
+trimWrapperImports filePath =
+    let
+        _ =
+            Process.run "sh" [ "-c" , "trim-imports " ++ filePath ++ " 2>/dev/null || goimports -w " ++ filePath ++ " 2>/dev/null || true" ]
+    in
+        ()
+
+
 -- Splits file into header (package + import block) and function blocks.
 -- Keeps a function if its name appears anywhere in main.go.
 trimWrapperContent : String -> String -> String
@@ -558,20 +568,50 @@ dceMainGo outDir goCode =
                         ""
                     else
                         "\n" ++ String.join "\n" allVarLines
+                bodyCode =
+                    varsSection ++ "\n\n" ++ String.join "\n\n" keptFuncs ++ "\n"
+                -- Rebuild imports: only keep imports referenced in remaining code
+                trimmedHeader =
+                    trimUnusedImports sections.header bodyCode
                 newCode =
-                    sections.header ++ varsSection ++ "\n\n" ++ String.join "\n\n" keptFuncs ++ "\n"
+                    trimmedHeader ++ bodyCode
                 outPath =
                     outDir ++ "/main.go"
                 _ =
                     File.writeFile outPath newCode
+                -- Run goimports as backup if available
                 _ =
-                    Process.run "sh" [ "-c" , "goimports -w " ++ outPath ++ " 2>/dev/null" ]
+                    Process.run "sh" [ "-c" , "goimports -w " ++ outPath ++ " 2>/dev/null || true" ]
                 _ =
                     println ("   [DCE] Eliminated " ++ String.fromInt eliminated ++ " unreachable functions from main.go (" ++ String.fromInt totalFuncs ++ " -> " ++ String.fromInt keptCount ++ ")")
             in
                 ()
         else
             ()
+
+
+-- Trim unused imports from Go header based on what the body references.
+-- Writes body to temp file, uses shell to filter import lines.
+trimUnusedImports : String -> String -> String
+trimUnusedImports header bodyCode =
+    let
+        _ =
+            File.writeFile "/tmp/_sky_dce_body.tmp" bodyCode
+        _ =
+            File.writeFile "/tmp/_sky_dce_header.tmp" header
+        -- Shell script: for each import line, extract package ident, grep body
+        cmd =
+            "awk '/^import \\(/{print;next} /^\\)/{print;next} /^\\t/{line=$0; gsub(/\"/, \"\", line); n=split(line, a, \" \"); if(n>=2){pkg=a[1]}else{split(a[1],b,\"/\");pkg=b[length(b)]}; if(pkg==\"\"){print $0;next}; cmd=\"grep -cE \\\"[^a-zA-Z]\" pkg \"\\\\.\\\" /tmp/_sky_dce_body.tmp\"; cmd|getline r; close(cmd); if(r+0>0){print $0}; next} {print}' /tmp/_sky_dce_header.tmp"
+    in
+        case Process.run "sh" [ "-c" , cmd ] of
+            Ok trimmed ->
+                if String.length (String.trim trimmed) > 10 then
+                    trimmed
+                else
+                    header
+
+            Err _ ->
+                header
 
 
 buildReachableSet : List String -> Dict.Dict String Bool -> Dict.Dict String String -> Dict.Dict String Bool
