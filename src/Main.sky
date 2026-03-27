@@ -93,16 +93,6 @@ cmdBuild _ =
                     _ =
                         File.writeFile  goModPath
                          "module sky-app\n\ngo 1.26.0\n"
-                    _ =
-                        if String.contains  "skylive_rt"  code then
-                            let
-                                _ =
-                                    Process.run  "cp"
-                                     [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
-                            in
-                                println  "   Copied skylive_rt runtime"
-                        else
-                            ()
                     hasFfiWrappers =
                         case Process.run  "sh"
                               [ "-c"

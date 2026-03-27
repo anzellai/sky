@@ -263,11 +263,14 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
             String.fromInt  (List.length  allDecls) ++ " total Go declarations"
             )
         _ =
-            if String.contains  "skylive_rt"  goCode then
+            if List.foldl  (\imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live")  False  imports then
                 let
                     _ =
                         Process.run  "cp"
                          [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
+                    _ =
+                        Process.run  "cp"
+                         [ "-f" , "stdlib-go/sky_live_init.go" , outDir ++ "/" ]
                 in
                     println  "   Copied skylive_rt runtime"
             else
@@ -850,7 +853,6 @@ makeGoPackage decls =
         , { path = "encoding/json" , alias_ = "encoding_json" }
         , { path = "time" , alias_ = "" }
         , { path = "context" , alias_ = "" }
-        , { path = "sky-app/skylive_rt" , alias_ = "skylive_rt" }
         ]
     , declarations =
         decls
@@ -2432,6 +2434,22 @@ compileModule filePath outDir mod =
                         File.writeFile  outPath  goCode
                     _ =
                         println  ("   Wrote " ++ outPath)
+                    _ =
+                        if List.foldl
+                             (\imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live")
+                             False
+                             mod.imports then
+                            let
+                                _ =
+                                    Process.run  "cp"
+                                     [ "-rf" , "stdlib-go/skylive_rt" , outDir ++ "/" ]
+                                _ =
+                                    Process.run  "cp"
+                                     [ "-f" , "stdlib-go/sky_live_init.go" , outDir ++ "/" ]
+                            in
+                                println  "   Copied skylive_rt runtime"
+                        else
+                            ()
                     _ =
                         dceMainGo  outDir  goCode
                     _ =
