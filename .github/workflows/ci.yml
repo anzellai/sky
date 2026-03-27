@@ -96,7 +96,7 @@ jobs:
       # These test sky add + build together
       - name: Test go-stdlib (FFI)
         run: |
-          rm -rf sky-out
+          rm -rf sky-out .skycache
           sky add crypto/sha256
           sky add encoding/hex
           sky add net/http
