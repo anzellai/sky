@@ -105,8 +105,11 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         -- Also load FFI bindings from dependency module imports
         depFfiModules =
             List.concatMap (\pair -> let mod = snd pair in loadFfiBindings srcRoot mod.imports) localModules
-        ffiModules =
+        allFfiModules =
             List.append entryFfiModules depFfiModules
+        -- Deduplicate FFI modules (same module imported by multiple local modules)
+        ffiModules =
+            deduplicateFfiModules allFfiModules []
         loadedModules =
             List.append localModules ffiModules
         _ =
@@ -184,15 +187,15 @@ writeMultiModuleOutput outDir allDecls imports =
             outDir ++ "/main.go"
         _ =
             File.mkdirAll outDir
-        -- Copy FFI wrapper files AFTER directory is created
-        _ =
-            copyFfiWrappers outDir imports []
         _ =
             File.writeFile outPath goCode
         _ =
             println ("   Wrote " ++ outPath)
         _ =
             println ("   " ++ String.fromInt (List.length allDecls) ++ " total Go declarations")
+        -- Copy FFI wrapper files AFTER main.go is written (so we can filter by usage)
+        _ =
+            copyFfiWrappers outDir imports []
         -- Dead code elimination: strip unused wrapper functions
         _ =
             eliminateDeadCode outDir goCode
@@ -1385,6 +1388,19 @@ deduplicateStringsLoop items seen acc =
 isModuleLoaded : String -> List ( String , Ast.Module ) -> Bool
 isModuleLoaded modName loaded =
     List.foldl (\pair acc -> acc || fst pair == modName) False loaded
+
+
+deduplicateFfiModules : List ( String , Ast.Module ) -> List ( String , Ast.Module ) -> List ( String , Ast.Module )
+deduplicateFfiModules modules acc =
+    case modules of
+        [] ->
+            List.reverse acc
+
+        pair :: rest ->
+            if isModuleLoaded (fst pair) acc then
+                deduplicateFfiModules rest acc
+            else
+                deduplicateFfiModules rest (pair :: acc)
 
 
 addImportAlias : Ast.ImportDecl -> Dict.Dict String String -> Dict.Dict String String
