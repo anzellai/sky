@@ -76,6 +76,10 @@ generateSkyiFile pkgName inspectJson =
         -- Extract variable bindings
         varLines =
             extractVarBindings pkgName inspectJson
+
+        -- Extract constant bindings (Go enums → Sky string/int values)
+        constLines =
+            extractConstBindings pkgName inspectJson
     in
         String.join "\n"
             [ "module " ++ moduleName ++ " exposing (..)"
@@ -91,6 +95,8 @@ generateSkyiFile pkgName inspectJson =
             , String.join "\n\n" methodLines
             , ""
             , String.join "\n\n" varLines
+            , ""
+            , String.join "\n\n" constLines
             ]
 
 
@@ -188,6 +194,65 @@ isSafeFieldType _ =
 
 
 -- Extract Go variable bindings as getter functions
+-- Extract Go constants as Sky values.
+-- String-typed constants become Sky string literals.
+-- Int-typed constants become Sky int literals.
+-- Named enum types become opaque values accessed via wrapper functions.
+extractConstBindings : String -> String -> List String
+extractConstBindings pkgName json =
+    let
+        constsArrayStr =
+            Json.jsonGetArrayRaw "consts" json
+        constElements =
+            Json.jsonSplitArray constsArrayStr
+        safePkg =
+            String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgName))
+    in
+        List.filterMap (\c -> generateConstBinding pkgName safePkg c) constElements
+
+
+generateConstBinding : String -> String -> String -> Maybe String
+generateConstBinding pkgName safePkg constJson =
+    let
+        name =
+            Json.jsonGetString "name" constJson
+        constType =
+            Json.jsonGetString "type" constJson
+        value =
+            Json.jsonGetString "value" constJson
+        skyName =
+            TypeMapper.lowerCamelCase name
+    in
+        if String.isEmpty name then
+            Nothing
+        else if skyName == "type" || skyName == "module" || skyName == "import" || skyName == "case" || skyName == "let" || skyName == "in" || skyName == "if" || skyName == "then" || skyName == "else" then
+            Nothing
+        else if String.startsWith (pkgName ++ ".") constType then
+            -- Named enum type (e.g. CheckoutSessionStatus) — return as opaque value via wrapper
+            let
+                wrapperName =
+                    "Sky_" ++ safePkg ++ "_" ++ name
+            in
+                Just
+                    (skyName ++ " : " ++ TypeMapper.mapGoTypeToSky constType ++ "\n" ++
+                    skyName ++ " =\n" ++
+                    "    " ++ wrapperName)
+        else if constType == "string" || String.endsWith "string" constType then
+            -- String constant — emit as literal
+            Just
+                (skyName ++ " : String\n" ++
+                skyName ++ " =\n" ++
+                "    " ++ value)
+        else if constType == "int" || constType == "int64" then
+            -- Int constant — emit as literal
+            Just
+                (skyName ++ " : Int\n" ++
+                skyName ++ " =\n" ++
+                "    " ++ value)
+        else
+            Nothing
+
+
 extractVarBindings : String -> String -> List String
 extractVarBindings pkgName json =
     let
@@ -433,7 +498,18 @@ isSafeTypeForPkg pkgName goType =
     else if String.startsWith "map[" goType && goType /= "map[string]interface{}" && goType /= "map[string]any" && goType /= "map[string]string" then
         False
     else if String.startsWith "[]" goType && goType /= "[]byte" && goType /= "[]string" && goType /= "[]any" then
-        False
+        -- Allow slices of package types: []pkg.Type or []*pkg.Type
+        let
+            elemType =
+                String.slice 2 (String.length goType) goType
+            innerType =
+                if String.startsWith "*" elemType then
+                    String.slice 1 (String.length elemType) elemType
+                else
+                    elemType
+        in
+            String.startsWith (pkgName ++ ".") innerType ||
+            String.contains "." innerType
     else
         let
             parts =

@@ -34,9 +34,11 @@ generateWrappers pkgName inspectJson outDir =
             extractFieldAccessors safePkg inspectJson
         varAccessors =
             extractVarAccessors pkgName inspectJson
+        constAccessors =
+            extractConstAccessors safePkg pkgName inspectJson
 
         wrapperCode =
-            generateWrapperFile safePkg pkgName funcs methods (List.append fieldAccessors varAccessors)
+            generateWrapperFile safePkg pkgName funcs methods (List.concat [ fieldAccessors , varAccessors , constAccessors ])
         _ =
             File.writeFile (wrapperDir ++ "/" ++ safePkg ++ ".go") wrapperCode
     in
@@ -248,8 +250,17 @@ isSupportedTypeForPkg pkgName goType =
     else if String.startsWith "map[" goType && goType /= "map[string]interface{}" && goType /= "map[string]any" then
         False
     else if String.startsWith "[]" goType && goType /= "[]byte" && goType /= "[]string" && goType /= "[]any" then
-        -- Typed slices ([]bool, []float64, []pkg.Type) — can't convert from []any
-        False
+        -- Allow slices of package types as opaque return values
+        let
+            sliceElem =
+                String.slice 2 (String.length goType) goType
+            sliceInner =
+                if String.startsWith "*" sliceElem then
+                    String.slice 1 (String.length sliceElem) sliceElem
+                else
+                    sliceElem
+        in
+            String.contains "." sliceInner
     else
         let
             typeParts =
@@ -772,6 +783,38 @@ varTypeCast goType =
     else if goType == "bool" then "sky_asBool"
     else if goType == "float64" then "sky_asFloat"
     else "sky_asString"
+
+
+-- Generate wrapper functions for Go constants (enum values).
+-- Named enum constants return the Go constant value as an opaque type.
+extractConstAccessors : String -> String -> String -> List String
+extractConstAccessors safePkg pkgName json =
+    let
+        constsArrayStr =
+            Json.jsonGetArrayRaw "consts" json
+        constElements =
+            Json.jsonSplitArray constsArrayStr
+        shortPkg =
+            shortPkgName pkgName
+    in
+        List.filterMap (\c -> generateConstAccessor safePkg shortPkg pkgName c) constElements
+
+
+generateConstAccessor : String -> String -> String -> String -> Maybe String
+generateConstAccessor safePkg shortPkg pkgName constJson =
+    let
+        name =
+            Json.jsonGetString "name" constJson
+        constType =
+            Json.jsonGetString "type" constJson
+    in
+        if String.isEmpty name then
+            Nothing
+        else if String.startsWith (pkgName ++ ".") constType then
+            -- Named enum type — generate wrapper that returns the Go constant
+            Just ("func Sky_" ++ safePkg ++ "_" ++ name ++ "() any {\n\treturn " ++ shortPkg ++ "." ++ name ++ "\n}")
+        else
+            Nothing
 
 
 extractVarAccessors : String -> String -> List String
