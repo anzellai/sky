@@ -3021,6 +3021,18 @@ var ImportAlias = Compiler_Pipeline_ImportAlias
 
 var CompileDependencyModule = Compiler_Pipeline_CompileDependencyModule
 
+var CompileFfiModuleLight = Compiler_Pipeline_CompileFfiModuleLight
+
+var MakeFfiWrapperVar = Compiler_Pipeline_MakeFfiWrapperVar
+
+var CountWrapperArgs = Compiler_Pipeline_CountWrapperArgs
+
+var MakeFfiFunc = Compiler_Pipeline_MakeFfiFunc
+
+var ExtractWrapperNameFromBody = Compiler_Pipeline_ExtractWrapperNameFromBody
+
+var CompileDependencyModuleFull = Compiler_Pipeline_CompileDependencyModuleFull
+
 var GenerateConstructorAliases = Compiler_Pipeline_GenerateConstructorAliases
 
 var MakeConstructorAlias = Compiler_Pipeline_MakeConstructorAlias
@@ -3532,7 +3544,7 @@ func Compiler_Pipeline_IsFfiModule(modName any, mod any) any {
 }
 
 func Compiler_Pipeline_ExprHasWrapperCall(expr any) any {
-	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "IdentifierExpr" { name := sky_asMap(__subject)["V0"]; _ = name; return sky_call(sky_stringStartsWith("Sky_"), name) };  if sky_asMap(__subject)["SkyName"] == "CallExpr" { callee := sky_asMap(__subject)["V0"]; _ = callee; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Pipeline_ExprHasWrapperCall(callee) };  if true { return false };  return nil }() }()
+	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "IdentifierExpr" { name := sky_asMap(__subject)["V0"]; _ = name; return sky_call(sky_stringStartsWith("Sky_"), name) };  if sky_asMap(__subject)["SkyName"] == "QualifiedExpr" { parts := sky_asMap(__subject)["V0"]; _ = parts; return func() any { return func() any { __subject := sky_listHead(parts); if sky_asSkyMaybe(__subject).SkyName == "Just" { first := sky_asSkyMaybe(__subject).JustValue; _ = first; return sky_call(sky_stringStartsWith("Sky_"), first) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return false };  if sky_asMap(__subject)["SkyName"] == "CallExpr" { callee := sky_asMap(__subject)["V0"]; _ = callee; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Pipeline_ExprHasWrapperCall(callee) };  if true { return false };  return nil }() }() };  return nil }() }()
 }
 
 func Compiler_Pipeline_GenerateAliasesFromModuleInner(modName any, mod any) any {
@@ -3600,6 +3612,30 @@ func Compiler_Pipeline_ImportAlias(imp any) any {
 }
 
 func Compiler_Pipeline_CompileDependencyModule(stdlibEnv any, allModules any, pair any) any {
+	return Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv, allModules, pair)
+}
+
+func Compiler_Pipeline_CompileFfiModuleLight(allModules any, pair any) any {
+	return func() any { modName := sky_fst(pair); _ = modName; mod := sky_snd(pair); _ = mod; prefix := sky_call2(sky_stringReplace("."), "_", modName); _ = prefix; registry := func() any { return func() any { __subject := Compiler_Checker_CheckModule(mod, SkyNothing()); if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  return nil }() }(); _ = registry; ctorDecls := Compiler_Lower_GenerateConstructorDecls(registry, sky_asMap(mod)["declarations"]); _ = ctorDecls; prefixed := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Pipeline_PrefixDecl(prefix, __pa0) }), ctorDecls); _ = prefixed; aliases := Compiler_Pipeline_GenerateConstructorAliases(prefix, prefixed); _ = aliases; wrapperVars := sky_call(sky_listFilterMap(func(__pa0 any) any { return Compiler_Pipeline_MakeFfiWrapperVar(prefix, __pa0) }), sky_asMap(mod)["declarations"]); _ = wrapperVars; depImportAliases := Compiler_Pipeline_GenerateImportAliases(sky_asMap(mod)["imports"], allModules); _ = depImportAliases; return Compiler_Pipeline_DeduplicateDecls(sky_listConcat([]any{aliases, depImportAliases, prefixed, wrapperVars})) }()
+}
+
+func Compiler_Pipeline_MakeFfiWrapperVar(prefix any, decl any) any {
+	return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "FunDecl" { name := sky_asMap(__subject)["V0"]; _ = name; params := sky_asMap(__subject)["V1"]; _ = params; body := sky_asMap(__subject)["V2"]; _ = body; return func() any { wrapperName := Compiler_Pipeline_ExtractWrapperNameFromBody(body); _ = wrapperName; goName := sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(sanitizeGoIdent(name)))); _ = goName; wrapperArgCount := Compiler_Pipeline_CountWrapperArgs(body); _ = wrapperArgCount; skyArgCount := sky_listLength(params); _ = skyArgCount; return func() any { if sky_asBool(sky_stringIsEmpty(wrapperName)) { return SkyNothing() }; if sky_asBool(sky_asBool(sky_equal(skyArgCount, 0)) && sky_asBool(sky_equal(wrapperArgCount, 0))) { return SkyJust(GoDeclRaw(sky_concat("var ", sky_concat(goName, sky_concat(" = ", wrapperName))))) }; return SkyJust }() }() };  return nil }() }()
+}
+
+func Compiler_Pipeline_CountWrapperArgs(expr any) any {
+	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "CallExpr" { args := sky_asMap(__subject)["V1"]; _ = args; return sky_listLength(args) };  if true { return 0 };  return nil }() }()
+}
+
+func Compiler_Pipeline_MakeFfiFunc(goName any, wrapperName any, skyArgCount any, wrapperArgCount any) any {
+	return func() any { argNames := sky_call(sky_listMap(func(i any) any { return sky_concat("a", sky_stringFromInt(i)) }), sky_call(sky_listRange(0), sky_asInt(skyArgCount) - sky_asInt(1))); _ = argNames; argList := sky_call(sky_stringJoin(", "), sky_call(sky_listMap(func(a any) any { return sky_concat(a, " any") }), argNames)); _ = argList; callArgNames := sky_call(sky_listTake(wrapperArgCount), argNames); _ = callArgNames; callArgs := sky_call(sky_stringJoin(", "), callArgNames); _ = callArgs; return sky_concat("func ", sky_concat(goName, sky_concat("(", sky_concat(argList, sky_concat(") any { return ", sky_concat(wrapperName, sky_concat("(", sky_concat(callArgs, ") }")))))))) }()
+}
+
+func Compiler_Pipeline_ExtractWrapperNameFromBody(expr any) any {
+	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "IdentifierExpr" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { if sky_asBool(sky_call(sky_stringStartsWith("Sky_"), name)) { return name }; return "" }() };  if sky_asMap(__subject)["SkyName"] == "QualifiedExpr" { parts := sky_asMap(__subject)["V0"]; _ = parts; return func() any { name := sky_call(sky_stringJoin("."), parts); _ = name; return func() any { if sky_asBool(sky_call(sky_stringStartsWith("Sky_"), name)) { return name }; return "" }() }() };  if sky_asMap(__subject)["SkyName"] == "CallExpr" { callee := sky_asMap(__subject)["V0"]; _ = callee; return Compiler_Pipeline_ExtractWrapperNameFromBody(callee) };  if sky_asMap(__subject)["SkyName"] == "ParenExpr" { inner := sky_asMap(__subject)["V0"]; _ = inner; return Compiler_Pipeline_ExtractWrapperNameFromBody(inner) };  if true { return "" };  return nil }() }()
+}
+
+func Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv any, allModules any, pair any) any {
 	return func() any { modName := sky_fst(pair); _ = modName; mod := sky_snd(pair); _ = mod; prefix := sky_call2(sky_stringReplace("."), "_", modName); _ = prefix; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; registry := func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  return nil }() }(); _ = registry; depBaseCtx := Compiler_Lower_EmptyCtx(); _ = depBaseCtx; depAliasMap := Compiler_Pipeline_BuildAliasMap(sky_asMap(mod)["imports"]); _ = depAliasMap; localFns := Compiler_Pipeline_CollectAllFunctionNames(sky_asMap(mod)["declarations"]); _ = localFns; depExposed := Compiler_Lower_BuildExposedStdlib(sky_asMap(mod)["imports"]); _ = depExposed; ctx := sky_recordUpdate(depBaseCtx, map[string]any{"registry": registry, "localFunctions": localFns, "importedConstructors": Compiler_Lower_BuildConstructorMap(registry), "modulePrefix": prefix, "importAliases": depAliasMap, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(mod)["declarations"]), "exposedStdlib": depExposed}); _ = ctx; goDecls := Compiler_Lower_LowerDeclarations(ctx, sky_asMap(mod)["declarations"]); _ = goDecls; ctorDecls := Compiler_Lower_GenerateConstructorDecls(registry, sky_asMap(mod)["declarations"]); _ = ctorDecls; filtered := sky_call(sky_listFilter(Compiler_Pipeline_IsExportableDecl), sky_call(sky_listAppend(ctorDecls), goDecls)); _ = filtered; prefixed := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Pipeline_PrefixDecl(prefix, __pa0) }), filtered); _ = prefixed; aliases := Compiler_Pipeline_GenerateConstructorAliases(prefix, prefixed); _ = aliases; depImportAliases := Compiler_Pipeline_GenerateImportAliases(sky_asMap(mod)["imports"], allModules); _ = depImportAliases; return Compiler_Pipeline_DeduplicateDecls(sky_listConcat([]any{aliases, depImportAliases, prefixed})) }()
 }
 
@@ -4878,15 +4914,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 3, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6492,6 +6528,18 @@ var addImportAlias = Compiler_Pipeline_AddImportAlias
 var importAlias = Compiler_Pipeline_ImportAlias
 
 var compileDependencyModule = Compiler_Pipeline_CompileDependencyModule
+
+var compileFfiModuleLight = Compiler_Pipeline_CompileFfiModuleLight
+
+var makeFfiWrapperVar = Compiler_Pipeline_MakeFfiWrapperVar
+
+var countWrapperArgs = Compiler_Pipeline_CountWrapperArgs
+
+var makeFfiFunc = Compiler_Pipeline_MakeFfiFunc
+
+var extractWrapperNameFromBody = Compiler_Pipeline_ExtractWrapperNameFromBody
+
+var compileDependencyModuleFull = Compiler_Pipeline_CompileDependencyModuleFull
 
 var generateConstructorAliases = Compiler_Pipeline_GenerateConstructorAliases
 

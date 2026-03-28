@@ -1907,13 +1907,22 @@ exprHasWrapperCall : Ast.Expression -> Bool
 
 exprHasWrapperCall expr =
     case expr of
-        
+
         Ast.IdentifierExpr name _ ->
             String.startsWith  "Sky_"  name
-        
+
+        Ast.QualifiedExpr parts _ ->
+            case List.head  parts of
+
+                Just first ->
+                    String.startsWith  "Sky_"  first
+
+                Nothing ->
+                    False
+
         Ast.CallExpr callee args _ ->
             exprHasWrapperCall  callee
-        
+
         _ ->
             False
 
@@ -2147,6 +2156,138 @@ importAlias imp =
 compileDependencyModule : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
 
 compileDependencyModule stdlibEnv allModules pair =
+    compileDependencyModuleFull  stdlibEnv  allModules  pair
+
+
+compileFfiModuleLight : (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
+
+compileFfiModuleLight allModules pair =
+    let
+        modName =
+            fst  pair
+        mod =
+            snd  pair
+        prefix =
+            String.replace  "."  "_"  modName
+        registry =
+            case Checker.checkModule  mod  Nothing of
+
+                Ok result ->
+                    result.registry
+
+                Err _ ->
+                    Adt.emptyRegistry
+        ctorDecls =
+            Lower.generateConstructorDecls  registry  mod.declarations
+        prefixed =
+            List.map  (prefixDecl  prefix)  ctorDecls
+        aliases =
+            generateConstructorAliases  prefix  prefixed
+        wrapperVars =
+            List.filterMap  (makeFfiWrapperVar  prefix)  mod.declarations
+        depImportAliases =
+            generateImportAliases  mod.imports  allModules
+    in
+        deduplicateDecls
+         (List.concat  [ aliases , depImportAliases , prefixed , wrapperVars ])
+
+
+makeFfiWrapperVar : String -> Ast.Declaration -> Maybe GoDecl
+
+makeFfiWrapperVar prefix decl =
+    case decl of
+
+        Ast.FunDecl name params body _ ->
+            let
+                wrapperName =
+                    extractWrapperNameFromBody  body
+                goName =
+                    prefix ++ "_" ++ capitalizeFirst  (sanitizeGoIdent  name)
+                wrapperArgCount =
+                    countWrapperArgs  body
+                skyArgCount =
+                    List.length  params
+            in
+                if String.isEmpty  wrapperName then
+                    Nothing
+                else if skyArgCount == 0 && wrapperArgCount == 0 then
+                    Just  (GoDeclRaw  ("var " ++ goName ++ " = " ++ wrapperName))
+                else
+                    Just  (GoDeclRaw
+                     (makeFfiFunc  goName  wrapperName  skyArgCount
+                      wrapperArgCount
+                     )
+                    )
+
+        _ ->
+            Nothing
+
+
+countWrapperArgs : Ast.Expression -> Int
+
+countWrapperArgs expr =
+    case expr of
+
+        Ast.CallExpr _ args _ ->
+            List.length  args
+
+        _ ->
+            0
+
+
+makeFfiFunc : String -> String -> Int -> Int -> String
+
+makeFfiFunc goName wrapperName skyArgCount wrapperArgCount =
+    let
+        argNames =
+            List.map  (\i -> "a" ++ String.fromInt  i)
+             (List.range  0  (skyArgCount - 1))
+        argList =
+            String.join  ", "
+             (List.map  (\a -> a ++ " any")  argNames)
+        callArgNames =
+            List.take  wrapperArgCount  argNames
+        callArgs =
+            String.join  ", "  callArgNames
+    in
+        "func " ++ goName ++ "(" ++ argList ++ ") any { return " ++
+        wrapperName ++ "(" ++ callArgs ++ ") }"
+
+
+extractWrapperNameFromBody : Ast.Expression -> String
+
+extractWrapperNameFromBody expr =
+    case expr of
+
+        Ast.IdentifierExpr name _ ->
+            if String.startsWith  "Sky_"  name then
+                name
+            else
+                ""
+
+        Ast.QualifiedExpr parts _ ->
+            let
+                name =
+                    String.join  "."  parts
+            in
+                if String.startsWith  "Sky_"  name then
+                    name
+                else
+                    ""
+
+        Ast.CallExpr callee _ _ ->
+            extractWrapperNameFromBody  callee
+
+        Ast.ParenExpr inner _ ->
+            extractWrapperNameFromBody  inner
+
+        _ ->
+            ""
+
+
+compileDependencyModuleFull : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
+
+compileDependencyModuleFull stdlibEnv allModules pair =
     let
         modName =
             fst  pair
