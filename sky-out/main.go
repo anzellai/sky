@@ -2933,6 +2933,10 @@ var SkydepSrcRoot = Compiler_Pipeline_SkydepSrcRoot
 
 var LoadFfiBindings = Compiler_Pipeline_LoadFfiBindings
 
+var DeduplicateFfiImports = Compiler_Pipeline_DeduplicateFfiImports
+
+var DeduplicateOneImport = Compiler_Pipeline_DeduplicateOneImport
+
 var LoadOneFfiBinding = Compiler_Pipeline_LoadOneFfiBinding
 
 var FilterFfiModule = Compiler_Pipeline_FilterFfiModule
@@ -3420,7 +3424,15 @@ func Compiler_Pipeline_SkydepSrcRoot(srcRoot any, modName any) any {
 }
 
 func Compiler_Pipeline_LoadFfiBindings(srcRoot any, imports any) any {
-	return sky_call(sky_listFilterMap(func(imp any) any { return Compiler_Pipeline_LoadOneFfiBinding(srcRoot, imp) }), imports)
+	return sky_call(sky_listFilterMap(func(imp any) any { return Compiler_Pipeline_LoadOneFfiBinding(srcRoot, imp) }), Compiler_Pipeline_DeduplicateFfiImports(imports, sky_dictEmpty()))
+}
+
+func Compiler_Pipeline_DeduplicateFfiImports(imports any, seen any) any {
+	return func() any { return func() any { __subject := imports; if len(sky_asList(__subject)) == 0 { return []any{} };  if len(sky_asList(__subject)) > 0 { imp := sky_asList(__subject)[0]; _ = imp; rest := sky_asList(__subject)[1:]; _ = rest; return Compiler_Pipeline_DeduplicateOneImport(imp, rest, seen) };  return nil }() }()
+}
+
+func Compiler_Pipeline_DeduplicateOneImport(imp any, rest any, seen any) any {
+	return func() any { modName := sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]); _ = modName; return func() any { if sky_asBool(sky_call(sky_dictMember(modName), seen)) { return Compiler_Pipeline_DeduplicateFfiImports(rest, seen) }; return sky_call(sky_listAppend([]any{imp}), Compiler_Pipeline_DeduplicateFfiImports(rest, sky_call2(sky_dictInsert(modName), true, seen))) }() }()
 }
 
 func Compiler_Pipeline_LoadOneFfiBinding(srcRoot any, imp any) any {
@@ -4870,11 +4882,11 @@ func Formatter_Doc_Line() any {
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 3, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6040,7 +6052,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 1, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -6392,6 +6404,10 @@ var findSkydepCandidates = Compiler_Pipeline_FindSkydepCandidates
 var skydepSrcRoot = Compiler_Pipeline_SkydepSrcRoot
 
 var loadFfiBindings = Compiler_Pipeline_LoadFfiBindings
+
+var deduplicateFfiImports = Compiler_Pipeline_DeduplicateFfiImports
+
+var deduplicateOneImport = Compiler_Pipeline_DeduplicateOneImport
 
 var loadOneFfiBinding = Compiler_Pipeline_LoadOneFfiBinding
 

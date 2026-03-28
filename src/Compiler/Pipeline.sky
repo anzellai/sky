@@ -1165,7 +1165,36 @@ skydepSrcRoot srcRoot modName =
 loadFfiBindings : String -> (List Ast.ImportDecl) -> List ( String , Ast.Module )
 
 loadFfiBindings srcRoot imports =
-    List.filterMap  (\imp -> loadOneFfiBinding  srcRoot  imp)  imports
+    List.filterMap  (\imp -> loadOneFfiBinding  srcRoot  imp)
+     (deduplicateFfiImports  imports  Dict.empty)
+
+
+deduplicateFfiImports : (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List Ast.ImportDecl
+
+deduplicateFfiImports imports seen =
+    case imports of
+
+        [] ->
+            []
+
+        imp :: rest ->
+            deduplicateOneImport  imp  rest  seen
+
+
+deduplicateOneImport : Ast.ImportDecl -> (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List Ast.ImportDecl
+
+deduplicateOneImport imp rest seen =
+    let
+        modName =
+            String.join  "."  imp.moduleName
+    in
+        if Dict.member  modName  seen then
+            deduplicateFfiImports  rest  seen
+        else
+            List.append  [ imp ]
+             (deduplicateFfiImports  rest
+              (Dict.insert  modName  True  seen)
+             )
 
 
 loadOneFfiBinding : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
