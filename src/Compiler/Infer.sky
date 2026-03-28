@@ -702,13 +702,37 @@ inferBinary counter registry env op left right =
 
 inferBinaryOp : (Ref.Ref Int) -> String -> Type -> Type -> Substitution -> Result String InferResult
 
+checkNumericType : String -> Type -> Substitution -> Result String InferResult
+
+checkNumericType op resultType finalSub =
+    case resultType of
+
+        TConst name ->
+            if name == "Int" || name == "Float" then
+                Ok  { substitution = finalSub , type_ = resultType }
+            else
+                Err
+                 (
+                "Arithmetic operator '" ++ op ++ "' requires a number type, got " ++ name
+                )
+
+        TVar _ _ ->
+            Ok  { substitution = finalSub , type_ = resultType }
+
+        _ ->
+            Err
+             (
+            "Arithmetic operator '" ++ op ++ "' requires a number type"
+            )
+
+
 inferBinaryOp counter op lt rt sub =
     if op == "+" || op == "-" || op == "*" || op == "%" then
         case unify  lt  rt of
-            
+
             Err e ->
                 Err  ("Arithmetic operator '" ++ op ++ "': " ++ e)
-            
+
             Ok unifySub ->
                 let
                     finalSub =
@@ -716,7 +740,7 @@ inferBinaryOp counter op lt rt sub =
                     resultType =
                         applySub  finalSub  lt
                 in
-                    Ok  { substitution = finalSub , type_ = resultType }
+                    checkNumericType  op  resultType  finalSub
     else if op == "/" then
         case unify  lt  (TConst  "Float") of
             
