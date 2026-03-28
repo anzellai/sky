@@ -1824,10 +1824,12 @@ subPatternConditions ctx varName ctorName args idx =
         pat :: rest ->
             let
                 fieldAccess =
-                    if ctorName == "Ok" || ctorName == "Err" then
-                        "sky_asSkyResult(" ++ varName ++ ").V0"
+                    if ctorName == "Ok" then
+                        "sky_asSkyResult(" ++ varName ++ ").OkValue"
+                    else if ctorName == "Err" then
+                        "sky_asSkyResult(" ++ varName ++ ").ErrValue"
                     else if ctorName == "Just" then
-                        "sky_asSkyMaybe(" ++ varName ++ ").V0"
+                        "sky_asSkyMaybe(" ++ varName ++ ").JustValue"
                     else
                         "sky_asMap(" ++
                         varName ++ ")[\"V" ++ String.fromInt  idx ++ "\"]"

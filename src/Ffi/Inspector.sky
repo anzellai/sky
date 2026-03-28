@@ -110,7 +110,7 @@ runInspectorMinimal pkgName cacheDir cachePath =
         result =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ gomodDir ++ " && GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+            , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
             ]
     in
         case result of
@@ -168,6 +168,14 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
              [ inspectorDir ++ "/inspector"
             , gomodDir ++ "/inspector"
             ]
+        _ =
+            if isLargePackage  pkgName then
+                Process.run  "sh"
+                 [ "-c"
+                , "cd " ++ gomodDir ++ " && go build " ++ pkgName ++ " 2>/dev/null"
+                ]
+            else
+                Ok  ""
         absCache =
             "../../" ++ cachePath
         useMinimal =
@@ -180,7 +188,7 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
         runResult =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ gomodDir ++ " && GOFLAGS='-gcflags=all=-l' ./inspector" ++ flag ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+            , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector" ++ flag ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
             ]
     in
         case runResult of
@@ -199,7 +207,7 @@ runInspectorRetry pkgName cachePath gomodDir absCache =
         retryResult =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ gomodDir ++ " && GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+            , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
             ]
     in
         case retryResult of
@@ -237,7 +245,6 @@ inspectorGoCode =
     , "\t\"encoding/json\""
     , "\t\"fmt\""
     , "\t\"go/importer\""
-    , "\t\"go/token\""
     , "\t\"go/types\""
     , "\t\"os\""
     , "\t_ \"strings\""
@@ -330,9 +337,8 @@ inspectorGoCode =
     , ""
     , "\tvar pkg *types.Package"
     , "\tif minimal {"
-    , "\t\t// Use go/importer for large packages (avoids OOM from go/packages NeedSyntax)"
-    , "\t\tfset := token.NewFileSet()"
-    , "\t\timp := importer.ForCompiler(fset, \"source\", nil)"
+    , "\t\t// Use compiled (gc) importer — reads export data, not source"
+    , "\t\timp := importer.Default()"
     , "\t\tvar err error"
     , "\t\tpkg, err = imp.Import(pkgPath)"
     , "\t\tif err != nil {"
@@ -340,7 +346,7 @@ inspectorGoCode =
     , "\t\t\tos.Exit(1)"
     , "\t\t}"
     , "\t} else {"
-    , "\t\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName | packages.NeedImports | packages.NeedDeps}"
+    , "\t\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName | packages.NeedImports | packages.NeedDeps | packages.NeedSyntax}"
     , "\t\tpkgs, err := packages.Load(cfg, pkgPath)"
     , "\t\tif err != nil {"
     , "\t\t\tfmt.Fprintf(os.Stderr, \"load error: %v\\n\", err)"
