@@ -291,11 +291,7 @@ runNativeDce outDir goCode =
                 ()
 
         Err _ ->
-            let
-                _ =
-                    eliminateDeadCode  outDir  goCode
-            in
-                dceMainGo  outDir  goCode
+            ()
 
 
 copyLiveRuntime : String -> ()
