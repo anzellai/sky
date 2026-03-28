@@ -4826,7 +4826,7 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
@@ -4834,7 +4834,7 @@ func Formatter_Doc_Hardline() any {
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 1, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -5360,7 +5360,7 @@ func Lsp_Server_HandleHover(state any, id any, body any) any {
 }
 
 func Lsp_Server_GetHoverForPosition(state any, uri any, line any, character any) any {
-	return func() any { return func() any { __subject := sky_call(sky_dictGet(uri), sky_asMap(state)["documents"]); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return jsonNull };  if sky_asSkyMaybe(__subject).SkyName == "Just" { source := sky_asSkyMaybe(__subject).JustValue; _ = source; return func() any { lineText := Lsp_Server_GetLineAt(line, source); _ = lineText; word := Lsp_Server_GetWordAt(character, lineText); _ = word; info := func() any { if sky_asBool(sky_stringIsEmpty(word)) { return "" }; return Lsp_Server_LookupTypeInfo(state, uri, word, source) }(); _ = info; return func() any { if sky_asBool(sky_stringIsEmpty(info)) { return jsonNull }; return jsonObject([]any{SkyTuple2{V0: "contents", V1: jsonObject([]any{SkyTuple2{V0: "kind", V1: jsonString("markdown")}, SkyTuple2{V0: "value", V1: jsonString(sky_concat("```sky\\n", sky_concat(info, "\\n```")))}})}}) }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := sky_call(sky_dictGet(uri), sky_asMap(state)["documents"]); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return jsonNull };  if sky_asSkyMaybe(__subject).SkyName == "Just" { source := sky_asSkyMaybe(__subject).JustValue; _ = source; return func() any { lineText := Lsp_Server_GetLineAt(line, source); _ = lineText; word := Lsp_Server_GetWordAt(character, lineText); _ = word; info := func() any { if sky_asBool(sky_stringIsEmpty(word)) { return "" }; return Lsp_Server_LookupTypeInfo(state, uri, word, source) }(); _ = info; return func() any { if sky_asBool(sky_stringIsEmpty(info)) { return jsonNull }; return jsonObject([]any{SkyTuple2{V0: "contents", V1: jsonObject([]any{SkyTuple2{V0: "kind", V1: jsonString("markdown")}, SkyTuple2{V0: "value", V1: jsonString(sky_concat("```sky\n", sky_concat(info, "\n```")))}})}}) }() }() };  return nil }() }()
 }
 
 func Lsp_Server_LookupTypeInfo(state any, uri any, word any, source any) any {

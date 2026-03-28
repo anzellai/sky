@@ -864,7 +864,7 @@ getHoverForPosition state uri line character =
                     , jsonObject
                        [ ( "kind" , jsonString  "markdown" )
                       , ( "value"
-                      , jsonString  ("```sky\\n" ++ info ++ "\\n```")
+                      , jsonString  ("```sky\n" ++ info ++ "\n```")
                       )
                       ]
                     )
