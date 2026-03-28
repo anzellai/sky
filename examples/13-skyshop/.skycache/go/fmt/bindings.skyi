@@ -1,0 +1,124 @@
+module Fmt exposing (..)
+
+foreign import "fmt" exposing (..)
+
+append : Bytes -> List Any -> Result String Bytes
+append arg0 arg1 =
+    Sky_fmt_Append arg0 arg1
+
+appendf : Bytes -> String -> List Any -> Result String Bytes
+appendf arg0 arg1 arg2 =
+    Sky_fmt_Appendf arg0 arg1 arg2
+
+appendln : Bytes -> List Any -> Result String Bytes
+appendln arg0 arg1 =
+    Sky_fmt_Appendln arg0 arg1
+
+errorf : String -> List Any -> Result String ()
+errorf arg0 arg1 =
+    Sky_fmt_Errorf arg0 arg1
+
+print : List Any -> Result String Int
+print arg0 =
+    Sky_fmt_Print arg0
+
+printf : String -> List Any -> Result String Int
+printf arg0 arg1 =
+    Sky_fmt_Printf arg0 arg1
+
+println : List Any -> Result String Int
+println arg0 =
+    Sky_fmt_Println arg0
+
+scan : List Any -> Result String Int
+scan arg0 =
+    Sky_fmt_Scan arg0
+
+scanf : String -> List Any -> Result String Int
+scanf arg0 arg1 =
+    Sky_fmt_Scanf arg0 arg1
+
+scanln : List Any -> Result String Int
+scanln arg0 =
+    Sky_fmt_Scanln arg0
+
+sprint : List Any -> Result String String
+sprint arg0 =
+    Sky_fmt_Sprint arg0
+
+sprintf : String -> List Any -> Result String String
+sprintf arg0 arg1 =
+    Sky_fmt_Sprintf arg0 arg1
+
+sprintln : List Any -> Result String String
+sprintln arg0 =
+    Sky_fmt_Sprintln arg0
+
+sscan : String -> List Any -> Result String Int
+sscan arg0 arg1 =
+    Sky_fmt_Sscan arg0 arg1
+
+sscanf : String -> String -> List Any -> Result String Int
+sscanf arg0 arg1 arg2 =
+    Sky_fmt_Sscanf arg0 arg1 arg2
+
+sscanln : String -> List Any -> Result String Int
+sscanln arg0 arg1 =
+    Sky_fmt_Sscanln arg0 arg1
+
+type Formatter = Formatter
+
+type GoStringer = GoStringer
+
+type ScanState = ScanState
+
+type Scanner = Scanner
+
+type State = State
+
+type Stringer = Stringer
+
+
+
+goStringerGoString : GoStringer -> Result String String
+goStringerGoString receiver =
+    Sky_fmt_GoStringerGoString receiver
+
+scanStateRead : ScanState -> Bytes -> Result String Int
+scanStateRead receiver arg0 =
+    Sky_fmt_ScanStateRead receiver arg0
+
+scanStateSkipSpace : ScanState -> Result String ()
+scanStateSkipSpace receiver =
+    Sky_fmt_ScanStateSkipSpace receiver
+
+scanStateUnreadRune : ScanState -> Result String ()
+scanStateUnreadRune receiver =
+    Sky_fmt_ScanStateUnreadRune receiver
+
+scanStateWidth : ScanState -> Result String (Int, Bool)
+scanStateWidth receiver =
+    Sky_fmt_ScanStateWidth receiver
+
+stateFlag : State -> Int -> Result String Bool
+stateFlag receiver arg0 =
+    Sky_fmt_StateFlag receiver arg0
+
+statePrecision : State -> Result String (Int, Bool)
+statePrecision receiver =
+    Sky_fmt_StatePrecision receiver
+
+stateWidth : State -> Result String (Int, Bool)
+stateWidth receiver =
+    Sky_fmt_StateWidth receiver
+
+stateWrite : State -> Bytes -> Result String Int
+stateWrite receiver arg0 =
+    Sky_fmt_StateWrite receiver arg0
+
+stringerString : Stringer -> Result String String
+stringerString receiver =
+    Sky_fmt_StringerString receiver
+
+
+

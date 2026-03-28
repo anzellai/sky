@@ -1,0 +1,274 @@
+{
+  "name": "firebase",
+  "path": "firebase.google.com/go/v4",
+  "types": [
+    {
+      "name": "App",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "AppCheck",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/appcheck.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Auth",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/auth.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Database",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/db.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "DatabaseWithURL",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            },
+            {
+              "name": "url",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/db.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Firestore",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*cloud.google.com/go/firestore.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "FirestoreWithDatabaseID",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            },
+            {
+              "name": "databaseID",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*cloud.google.com/go/firestore.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "InstanceID",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/iid.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Messaging",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/messaging.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "RemoteConfig",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/remoteconfig.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Storage",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*firebase.google.com/go/v4/storage.Client"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Config",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "AuthOverride",
+          "type": "*map[string]interface{}"
+        },
+        {
+          "name": "DatabaseURL",
+          "type": "string"
+        },
+        {
+          "name": "ProjectID",
+          "type": "string"
+        },
+        {
+          "name": "ServiceAccountID",
+          "type": "string"
+        },
+        {
+          "name": "StorageBucket",
+          "type": "string"
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "NewApp",
+      "params": [
+        {
+          "name": "ctx",
+          "type": "context.Context"
+        },
+        {
+          "name": "config",
+          "type": "*firebase.google.com/go/v4.Config"
+        },
+        {
+          "name": "opts",
+          "type": "[]google.golang.org/api/option.ClientOption"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*firebase.google.com/go/v4.App"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ],
+      "variadic": true
+    }
+  ],
+  "vars": null,
+  "consts": [
+    {
+      "name": "Version",
+      "type": "untyped string",
+      "value": "\"4.19.0\""
+    }
+  ]
+}

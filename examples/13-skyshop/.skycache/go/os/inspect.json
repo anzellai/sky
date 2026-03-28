@@ -1,0 +1,2406 @@
+{
+  "name": "os",
+  "path": "os",
+  "types": [
+    {
+      "name": "File",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Chdir",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Chmod",
+          "params": [
+            {
+              "name": "mode",
+              "type": "os.FileMode"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Chown",
+          "params": [
+            {
+              "name": "uid",
+              "type": "int"
+            },
+            {
+              "name": "gid",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Close",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Fd",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "uintptr"
+            }
+          ]
+        },
+        {
+          "name": "Name",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Read",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ReadAt",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            },
+            {
+              "name": "off",
+              "type": "int64"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ReadDir",
+          "params": [
+            {
+              "name": "n",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]os.DirEntry"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ReadFrom",
+          "params": [
+            {
+              "name": "r",
+              "type": "io.Reader"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int64"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Readdir",
+          "params": [
+            {
+              "name": "n",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]os.FileInfo"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Readdirnames",
+          "params": [
+            {
+              "name": "n",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "names",
+              "type": "[]string"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Seek",
+          "params": [
+            {
+              "name": "offset",
+              "type": "int64"
+            },
+            {
+              "name": "whence",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "ret",
+              "type": "int64"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetDeadline",
+          "params": [
+            {
+              "name": "t",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetReadDeadline",
+          "params": [
+            {
+              "name": "t",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetWriteDeadline",
+          "params": [
+            {
+              "name": "t",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Stat",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "os.FileInfo"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Sync",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SyscallConn",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "syscall.RawConn"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Truncate",
+          "params": [
+            {
+              "name": "size",
+              "type": "int64"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Write",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteAt",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            },
+            {
+              "name": "off",
+              "type": "int64"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteString",
+          "params": [
+            {
+              "name": "s",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteTo",
+          "params": [
+            {
+              "name": "w",
+              "type": "io.Writer"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int64"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "LinkError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Op",
+          "type": "string"
+        },
+        {
+          "name": "Old",
+          "type": "string"
+        },
+        {
+          "name": "New",
+          "type": "string"
+        },
+        {
+          "name": "Err",
+          "type": "error"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Unwrap",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ProcAttr",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Dir",
+          "type": "string"
+        },
+        {
+          "name": "Env",
+          "type": "[]string"
+        },
+        {
+          "name": "Files",
+          "type": "[]*os.File"
+        },
+        {
+          "name": "Sys",
+          "type": "*syscall.SysProcAttr"
+        }
+      ]
+    },
+    {
+      "name": "Process",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Pid",
+          "type": "int"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Kill",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Release",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Signal",
+          "params": [
+            {
+              "name": "sig",
+              "type": "os.Signal"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Wait",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*os.ProcessState"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WithHandle",
+          "params": [
+            {
+              "name": "f",
+              "type": "func(handle uintptr)"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ProcessState",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "ExitCode",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Exited",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Pid",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Success",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Sys",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "any"
+            }
+          ]
+        },
+        {
+          "name": "SysUsage",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "any"
+            }
+          ]
+        },
+        {
+          "name": "SystemTime",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Duration"
+            }
+          ]
+        },
+        {
+          "name": "UserTime",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Duration"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Root",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Chmod",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "mode",
+              "type": "os.FileMode"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Chown",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "uid",
+              "type": "int"
+            },
+            {
+              "name": "gid",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Chtimes",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "atime",
+              "type": "time.Time"
+            },
+            {
+              "name": "mtime",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Close",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Create",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*os.File"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "FS",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "io/fs.FS"
+            }
+          ]
+        },
+        {
+          "name": "Lchown",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "uid",
+              "type": "int"
+            },
+            {
+              "name": "gid",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Link",
+          "params": [
+            {
+              "name": "oldname",
+              "type": "string"
+            },
+            {
+              "name": "newname",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Lstat",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "os.FileInfo"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Mkdir",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "perm",
+              "type": "os.FileMode"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "MkdirAll",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "perm",
+              "type": "os.FileMode"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Name",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Open",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*os.File"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "OpenFile",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "flag",
+              "type": "int"
+            },
+            {
+              "name": "perm",
+              "type": "os.FileMode"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*os.File"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "OpenRoot",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*os.Root"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ReadFile",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Readlink",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Remove",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "RemoveAll",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Rename",
+          "params": [
+            {
+              "name": "oldname",
+              "type": "string"
+            },
+            {
+              "name": "newname",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Stat",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "os.FileInfo"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Symlink",
+          "params": [
+            {
+              "name": "oldname",
+              "type": "string"
+            },
+            {
+              "name": "newname",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteFile",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "data",
+              "type": "[]byte"
+            },
+            {
+              "name": "perm",
+              "type": "os.FileMode"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Signal",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Signal",
+          "params": null,
+          "results": null
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SyscallError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Syscall",
+          "type": "string"
+        },
+        {
+          "name": "Err",
+          "type": "error"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Timeout",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Unwrap",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "Chdir",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Chmod",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "mode",
+          "type": "os.FileMode"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Chown",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "uid",
+          "type": "int"
+        },
+        {
+          "name": "gid",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Chtimes",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "atime",
+          "type": "time.Time"
+        },
+        {
+          "name": "mtime",
+          "type": "time.Time"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Clearenv",
+      "params": null,
+      "results": null
+    },
+    {
+      "name": "CopyFS",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string"
+        },
+        {
+          "name": "fsys",
+          "type": "io/fs.FS"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Create",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.File"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "CreateTemp",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string"
+        },
+        {
+          "name": "pattern",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.File"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "DirFS",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "io/fs.FS"
+        }
+      ]
+    },
+    {
+      "name": "Environ",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "[]string"
+        }
+      ]
+    },
+    {
+      "name": "Executable",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Exit",
+      "params": [
+        {
+          "name": "code",
+          "type": "int"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "Expand",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        },
+        {
+          "name": "mapping",
+          "type": "func(string) string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "ExpandEnv",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "FindProcess",
+      "params": [
+        {
+          "name": "pid",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.Process"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Getegid",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getenv",
+      "params": [
+        {
+          "name": "key",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Geteuid",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getgid",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getgroups",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "[]int"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Getpagesize",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getpid",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getppid",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getuid",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "Getwd",
+      "params": null,
+      "results": [
+        {
+          "name": "dir",
+          "type": "string"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Hostname",
+      "params": null,
+      "results": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "IsExist",
+      "params": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "IsNotExist",
+      "params": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "IsPathSeparator",
+      "params": [
+        {
+          "name": "c",
+          "type": "uint8"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "IsPermission",
+      "params": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "IsTimeout",
+      "params": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "Lchown",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "uid",
+          "type": "int"
+        },
+        {
+          "name": "gid",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Link",
+      "params": [
+        {
+          "name": "oldname",
+          "type": "string"
+        },
+        {
+          "name": "newname",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "LookupEnv",
+      "params": [
+        {
+          "name": "key",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "Lstat",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "os.FileInfo"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Mkdir",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "perm",
+          "type": "os.FileMode"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "MkdirAll",
+      "params": [
+        {
+          "name": "path",
+          "type": "string"
+        },
+        {
+          "name": "perm",
+          "type": "os.FileMode"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "MkdirTemp",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string"
+        },
+        {
+          "name": "pattern",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewFile",
+      "params": [
+        {
+          "name": "fd",
+          "type": "uintptr"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.File"
+        }
+      ]
+    },
+    {
+      "name": "NewSyscallError",
+      "params": [
+        {
+          "name": "syscall",
+          "type": "string"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Open",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.File"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "OpenFile",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "flag",
+          "type": "int"
+        },
+        {
+          "name": "perm",
+          "type": "os.FileMode"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.File"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "OpenInRoot",
+      "params": [
+        {
+          "name": "dir",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.File"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "OpenRoot",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.Root"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Pipe",
+      "params": null,
+      "results": [
+        {
+          "name": "r",
+          "type": "*os.File"
+        },
+        {
+          "name": "w",
+          "type": "*os.File"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ReadDir",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "[]os.DirEntry"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ReadFile",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "[]byte"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Readlink",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Remove",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "RemoveAll",
+      "params": [
+        {
+          "name": "path",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Rename",
+      "params": [
+        {
+          "name": "oldpath",
+          "type": "string"
+        },
+        {
+          "name": "newpath",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "SameFile",
+      "params": [
+        {
+          "name": "fi1",
+          "type": "os.FileInfo"
+        },
+        {
+          "name": "fi2",
+          "type": "os.FileInfo"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "Setenv",
+      "params": [
+        {
+          "name": "key",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "StartProcess",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "argv",
+          "type": "[]string"
+        },
+        {
+          "name": "attr",
+          "type": "*os.ProcAttr"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*os.Process"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Stat",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "os.FileInfo"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Symlink",
+      "params": [
+        {
+          "name": "oldname",
+          "type": "string"
+        },
+        {
+          "name": "newname",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "TempDir",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Truncate",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "size",
+          "type": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Unsetenv",
+      "params": [
+        {
+          "name": "key",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "UserCacheDir",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "UserConfigDir",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "UserHomeDir",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "WriteFile",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        },
+        {
+          "name": "perm",
+          "type": "os.FileMode"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "name": "Args",
+      "type": "[]string"
+    },
+    {
+      "name": "ErrClosed",
+      "type": "error"
+    },
+    {
+      "name": "ErrDeadlineExceeded",
+      "type": "error"
+    },
+    {
+      "name": "ErrExist",
+      "type": "error"
+    },
+    {
+      "name": "ErrInvalid",
+      "type": "error"
+    },
+    {
+      "name": "ErrNoDeadline",
+      "type": "error"
+    },
+    {
+      "name": "ErrNoHandle",
+      "type": "error"
+    },
+    {
+      "name": "ErrNotExist",
+      "type": "error"
+    },
+    {
+      "name": "ErrPermission",
+      "type": "error"
+    },
+    {
+      "name": "ErrProcessDone",
+      "type": "error"
+    },
+    {
+      "name": "Interrupt",
+      "type": "os.Signal"
+    },
+    {
+      "name": "Kill",
+      "type": "os.Signal"
+    },
+    {
+      "name": "Stderr",
+      "type": "*os.File"
+    },
+    {
+      "name": "Stdin",
+      "type": "*os.File"
+    },
+    {
+      "name": "Stdout",
+      "type": "*os.File"
+    }
+  ],
+  "consts": [
+    {
+      "name": "DevNull",
+      "type": "untyped string",
+      "value": "\"/dev/null\""
+    },
+    {
+      "name": "ModeAppend",
+      "type": "io/fs.FileMode",
+      "value": "1073741824"
+    },
+    {
+      "name": "ModeCharDevice",
+      "type": "io/fs.FileMode",
+      "value": "2097152"
+    },
+    {
+      "name": "ModeDevice",
+      "type": "io/fs.FileMode",
+      "value": "67108864"
+    },
+    {
+      "name": "ModeDir",
+      "type": "io/fs.FileMode",
+      "value": "2147483648"
+    },
+    {
+      "name": "ModeExclusive",
+      "type": "io/fs.FileMode",
+      "value": "536870912"
+    },
+    {
+      "name": "ModeIrregular",
+      "type": "io/fs.FileMode",
+      "value": "524288"
+    },
+    {
+      "name": "ModeNamedPipe",
+      "type": "io/fs.FileMode",
+      "value": "33554432"
+    },
+    {
+      "name": "ModePerm",
+      "type": "io/fs.FileMode",
+      "value": "511"
+    },
+    {
+      "name": "ModeSetgid",
+      "type": "io/fs.FileMode",
+      "value": "4194304"
+    },
+    {
+      "name": "ModeSetuid",
+      "type": "io/fs.FileMode",
+      "value": "8388608"
+    },
+    {
+      "name": "ModeSocket",
+      "type": "io/fs.FileMode",
+      "value": "16777216"
+    },
+    {
+      "name": "ModeSticky",
+      "type": "io/fs.FileMode",
+      "value": "1048576"
+    },
+    {
+      "name": "ModeSymlink",
+      "type": "io/fs.FileMode",
+      "value": "134217728"
+    },
+    {
+      "name": "ModeTemporary",
+      "type": "io/fs.FileMode",
+      "value": "268435456"
+    },
+    {
+      "name": "ModeType",
+      "type": "io/fs.FileMode",
+      "value": "2401763328"
+    },
+    {
+      "name": "O_APPEND",
+      "type": "int",
+      "value": "8"
+    },
+    {
+      "name": "O_CREATE",
+      "type": "int",
+      "value": "512"
+    },
+    {
+      "name": "O_EXCL",
+      "type": "int",
+      "value": "2048"
+    },
+    {
+      "name": "O_RDONLY",
+      "type": "int",
+      "value": "0"
+    },
+    {
+      "name": "O_RDWR",
+      "type": "int",
+      "value": "2"
+    },
+    {
+      "name": "O_SYNC",
+      "type": "int",
+      "value": "128"
+    },
+    {
+      "name": "O_TRUNC",
+      "type": "int",
+      "value": "1024"
+    },
+    {
+      "name": "O_WRONLY",
+      "type": "int",
+      "value": "1"
+    },
+    {
+      "name": "PathListSeparator",
+      "type": "untyped rune",
+      "value": "58"
+    },
+    {
+      "name": "PathSeparator",
+      "type": "untyped rune",
+      "value": "47"
+    },
+    {
+      "name": "SEEK_CUR",
+      "type": "int",
+      "value": "1"
+    },
+    {
+      "name": "SEEK_END",
+      "type": "int",
+      "value": "2"
+    },
+    {
+      "name": "SEEK_SET",
+      "type": "int",
+      "value": "0"
+    }
+  ]
+}

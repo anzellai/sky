@@ -1,0 +1,281 @@
+{
+  "name": "base64",
+  "path": "encoding/base64",
+  "types": [
+    {
+      "name": "CorruptInputError",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Encoding",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "AppendDecode",
+          "params": [
+            {
+              "name": "dst",
+              "type": "[]byte"
+            },
+            {
+              "name": "src",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "AppendEncode",
+          "params": [
+            {
+              "name": "dst",
+              "type": "[]byte"
+            },
+            {
+              "name": "src",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            }
+          ]
+        },
+        {
+          "name": "Decode",
+          "params": [
+            {
+              "name": "dst",
+              "type": "[]byte"
+            },
+            {
+              "name": "src",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "DecodeString",
+          "params": [
+            {
+              "name": "s",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "DecodedLen",
+          "params": [
+            {
+              "name": "n",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Encode",
+          "params": [
+            {
+              "name": "dst",
+              "type": "[]byte"
+            },
+            {
+              "name": "src",
+              "type": "[]byte"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "EncodeToString",
+          "params": [
+            {
+              "name": "src",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "EncodedLen",
+          "params": [
+            {
+              "name": "n",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Strict",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*encoding/base64.Encoding"
+            }
+          ]
+        },
+        {
+          "name": "WithPadding",
+          "params": [
+            {
+              "name": "padding",
+              "type": "rune"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*encoding/base64.Encoding"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "NewDecoder",
+      "params": [
+        {
+          "name": "enc",
+          "type": "*encoding/base64.Encoding"
+        },
+        {
+          "name": "r",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "io.Reader"
+        }
+      ]
+    },
+    {
+      "name": "NewEncoder",
+      "params": [
+        {
+          "name": "enc",
+          "type": "*encoding/base64.Encoding"
+        },
+        {
+          "name": "w",
+          "type": "io.Writer"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "io.WriteCloser"
+        }
+      ]
+    },
+    {
+      "name": "NewEncoding",
+      "params": [
+        {
+          "name": "encoder",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*encoding/base64.Encoding"
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "name": "RawStdEncoding",
+      "type": "*encoding/base64.Encoding"
+    },
+    {
+      "name": "RawURLEncoding",
+      "type": "*encoding/base64.Encoding"
+    },
+    {
+      "name": "StdEncoding",
+      "type": "*encoding/base64.Encoding"
+    },
+    {
+      "name": "URLEncoding",
+      "type": "*encoding/base64.Encoding"
+    }
+  ],
+  "consts": [
+    {
+      "name": "NoPadding",
+      "type": "rune",
+      "value": "-1"
+    },
+    {
+      "name": "StdPadding",
+      "type": "rune",
+      "value": "61"
+    }
+  ]
+}

@@ -1,0 +1,676 @@
+{
+  "name": "customer",
+  "path": "github.com/stripe/stripe-go/v84/customer",
+  "types": [
+    {
+      "name": "Client",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "B",
+          "type": "github.com/stripe/stripe-go/v84.Backend"
+        },
+        {
+          "name": "Key",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "CreateFundingInstructions",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerCreateFundingInstructionsParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.FundingInstructions"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Del",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "DeleteDiscount",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerDeleteDiscountParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "params": [
+            {
+              "name": "listParams",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerListParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84/customer.Iter"
+            }
+          ]
+        },
+        {
+          "name": "ListPaymentMethods",
+          "params": [
+            {
+              "name": "listParams",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerListPaymentMethodsParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84/customer.PaymentMethodIter"
+            }
+          ]
+        },
+        {
+          "name": "New",
+          "params": [
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "RetrievePaymentMethod",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerRetrievePaymentMethodParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.PaymentMethod"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Search",
+          "params": [
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerSearchParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84/customer.SearchIter"
+            }
+          ]
+        },
+        {
+          "name": "Update",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Iter",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Iter",
+          "type": "*github.com/stripe/stripe-go/v84.Iter"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Current",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "interface{}"
+            }
+          ]
+        },
+        {
+          "name": "Customer",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            }
+          ]
+        },
+        {
+          "name": "CustomerList",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerList"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/stripe/stripe-go/v84.ListContainer"
+            }
+          ]
+        },
+        {
+          "name": "Meta",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.ListMeta"
+            }
+          ]
+        },
+        {
+          "name": "Next",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PaymentMethodIter",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Iter",
+          "type": "*github.com/stripe/stripe-go/v84.Iter"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Current",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "interface{}"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/stripe/stripe-go/v84.ListContainer"
+            }
+          ]
+        },
+        {
+          "name": "Meta",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.ListMeta"
+            }
+          ]
+        },
+        {
+          "name": "Next",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "PaymentMethod",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.PaymentMethod"
+            }
+          ]
+        },
+        {
+          "name": "PaymentMethodList",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.PaymentMethodList"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SearchIter",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "SearchIter",
+          "type": "*github.com/stripe/stripe-go/v84.SearchIter"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Current",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "interface{}"
+            }
+          ]
+        },
+        {
+          "name": "Customer",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.Customer"
+            }
+          ]
+        },
+        {
+          "name": "CustomerSearchResult",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CustomerSearchResult"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Meta",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.SearchMeta"
+            }
+          ]
+        },
+        {
+          "name": "Next",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "SearchResult",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/stripe/stripe-go/v84.SearchContainer"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "CreateFundingInstructions",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerCreateFundingInstructionsParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.FundingInstructions"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Del",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.Customer"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "DeleteDiscount",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerDeleteDiscountParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.Customer"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Get",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.Customer"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "List",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerListParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84/customer.Iter"
+        }
+      ]
+    },
+    {
+      "name": "ListPaymentMethods",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerListPaymentMethodsParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84/customer.PaymentMethodIter"
+        }
+      ]
+    },
+    {
+      "name": "New",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.Customer"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "RetrievePaymentMethod",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerRetrievePaymentMethodParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.PaymentMethod"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerSearchParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84/customer.SearchIter"
+        }
+      ]
+    },
+    {
+      "name": "Update",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CustomerParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.Customer"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    }
+  ],
+  "vars": null,
+  "consts": null
+}

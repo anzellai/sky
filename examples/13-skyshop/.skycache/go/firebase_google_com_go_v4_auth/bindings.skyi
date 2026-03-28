@@ -1,0 +1,1339 @@
+module Firebase.Google.Com.Go.V4.Auth exposing (..)
+
+foreign import "firebase.google.com/go/v4/auth" exposing (..)
+
+isCertificateFetchFailed : Error -> Result String Bool
+isCertificateFetchFailed arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsCertificateFetchFailed arg0
+
+isConfigurationNotFound : Error -> Result String Bool
+isConfigurationNotFound arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsConfigurationNotFound arg0
+
+isEmailAlreadyExists : Error -> Result String Bool
+isEmailAlreadyExists arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsEmailAlreadyExists arg0
+
+isEmailNotFound : Error -> Result String Bool
+isEmailNotFound arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsEmailNotFound arg0
+
+isIDTokenExpired : Error -> Result String Bool
+isIDTokenExpired arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsIDTokenExpired arg0
+
+isIDTokenInvalid : Error -> Result String Bool
+isIDTokenInvalid arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsIDTokenInvalid arg0
+
+isIDTokenRevoked : Error -> Result String Bool
+isIDTokenRevoked arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsIDTokenRevoked arg0
+
+isInsufficientPermission : Error -> Result String Bool
+isInsufficientPermission arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsInsufficientPermission arg0
+
+isInvalidDynamicLinkDomain : Error -> Result String Bool
+isInvalidDynamicLinkDomain arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsInvalidDynamicLinkDomain arg0
+
+isInvalidEmail : Error -> Result String Bool
+isInvalidEmail arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsInvalidEmail arg0
+
+isInvalidHostingLinkDomain : Error -> Result String Bool
+isInvalidHostingLinkDomain arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsInvalidHostingLinkDomain arg0
+
+isPhoneNumberAlreadyExists : Error -> Result String Bool
+isPhoneNumberAlreadyExists arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsPhoneNumberAlreadyExists arg0
+
+isProjectNotFound : Error -> Result String Bool
+isProjectNotFound arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsProjectNotFound arg0
+
+isSessionCookieExpired : Error -> Result String Bool
+isSessionCookieExpired arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsSessionCookieExpired arg0
+
+isSessionCookieInvalid : Error -> Result String Bool
+isSessionCookieInvalid arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsSessionCookieInvalid arg0
+
+isSessionCookieRevoked : Error -> Result String Bool
+isSessionCookieRevoked arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsSessionCookieRevoked arg0
+
+isTenantIDMismatch : Error -> Result String Bool
+isTenantIDMismatch arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsTenantIDMismatch arg0
+
+isTenantNotFound : Error -> Result String Bool
+isTenantNotFound arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsTenantNotFound arg0
+
+isUIDAlreadyExists : Error -> Result String Bool
+isUIDAlreadyExists arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsUIDAlreadyExists arg0
+
+isUnauthorizedContinueURI : Error -> Result String Bool
+isUnauthorizedContinueURI arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsUnauthorizedContinueURI arg0
+
+isUnknown : Error -> Result String Bool
+isUnknown arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsUnknown arg0
+
+isUserDisabled : Error -> Result String Bool
+isUserDisabled arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsUserDisabled arg0
+
+isUserNotFound : Error -> Result String Bool
+isUserNotFound arg0 =
+    Sky_firebase_google_com_go_v4_auth_IsUserNotFound arg0
+
+withHash : UserImportHash -> Result String UserImportOption
+withHash arg0 =
+    Sky_firebase_google_com_go_v4_auth_WithHash arg0
+
+type ActionCodeSettings = ActionCodeSettings
+
+type Client = Client
+
+type DeleteUsersErrorInfo = DeleteUsersErrorInfo
+
+type DeleteUsersResult = DeleteUsersResult
+
+type EmailIdentifier = EmailIdentifier
+
+type ErrorInfo = ErrorInfo
+
+type ExportedUserRecord = ExportedUserRecord
+
+type Expression = Expression
+
+type FirebaseInfo = FirebaseInfo
+
+type GetUsersResult = GetUsersResult
+
+type MultiFactorConfig = MultiFactorConfig
+
+type MultiFactorConfigState = MultiFactorConfigState
+
+type MultiFactorInfo = MultiFactorInfo
+
+type MultiFactorSettings = MultiFactorSettings
+
+type OIDCProviderConfig = OIDCProviderConfig
+
+type OIDCProviderConfigIterator = OIDCProviderConfigIterator
+
+type OIDCProviderConfigToCreate = OIDCProviderConfigToCreate
+
+type OIDCProviderConfigToUpdate = OIDCProviderConfigToUpdate
+
+type Order = Order
+
+type PhoneIdentifier = PhoneIdentifier
+
+type PhoneMultiFactorInfo = PhoneMultiFactorInfo
+
+type ProjectConfig = ProjectConfig
+
+type ProjectConfigToUpdate = ProjectConfigToUpdate
+
+type ProviderConfig = ProviderConfig
+
+type ProviderIdentifier = ProviderIdentifier
+
+type QueryUserInfoResponse = QueryUserInfoResponse
+
+type QueryUsersRequest = QueryUsersRequest
+
+type SAMLProviderConfig = SAMLProviderConfig
+
+type SAMLProviderConfigIterator = SAMLProviderConfigIterator
+
+type SAMLProviderConfigToCreate = SAMLProviderConfigToCreate
+
+type SAMLProviderConfigToUpdate = SAMLProviderConfigToUpdate
+
+type SortBy = SortBy
+
+type TOTPInfo = TOTPInfo
+
+type TOTPMultiFactorInfo = TOTPMultiFactorInfo
+
+type TOTPProviderConfig = TOTPProviderConfig
+
+type Tenant = Tenant
+
+type TenantClient = TenantClient
+
+type TenantIterator = TenantIterator
+
+type TenantManager = TenantManager
+
+type TenantToCreate = TenantToCreate
+
+type TenantToUpdate = TenantToUpdate
+
+type Token = Token
+
+type UIDIdentifier = UIDIdentifier
+
+type UserIdentifier = UserIdentifier
+
+type UserImportHash = UserImportHash
+
+type UserImportOption = UserImportOption
+
+type UserImportResult = UserImportResult
+
+type UserInfo = UserInfo
+
+type UserIterator = UserIterator
+
+type UserMetadata = UserMetadata
+
+type UserProvider = UserProvider
+
+type UserRecord = UserRecord
+
+type UserToCreate = UserToCreate
+
+type UserToImport = UserToImport
+
+type UserToUpdate = UserToUpdate
+
+actionCodeSettingsURL : Any -> String
+actionCodeSettingsURL receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_URL receiver
+
+actionCodeSettingsHandleCodeInApp : Any -> Bool
+actionCodeSettingsHandleCodeInApp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_HandleCodeInApp receiver
+
+actionCodeSettingsIOSBundleID : Any -> String
+actionCodeSettingsIOSBundleID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_IOSBundleID receiver
+
+actionCodeSettingsAndroidPackageName : Any -> String
+actionCodeSettingsAndroidPackageName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_AndroidPackageName receiver
+
+actionCodeSettingsAndroidMinimumVersion : Any -> String
+actionCodeSettingsAndroidMinimumVersion receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_AndroidMinimumVersion receiver
+
+actionCodeSettingsAndroidInstallApp : Any -> Bool
+actionCodeSettingsAndroidInstallApp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_AndroidInstallApp receiver
+
+actionCodeSettingsLinkDomain : Any -> String
+actionCodeSettingsLinkDomain receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_LinkDomain receiver
+
+actionCodeSettingsDynamicLinkDomain : Any -> String
+actionCodeSettingsDynamicLinkDomain receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ActionCodeSettings_DynamicLinkDomain receiver
+
+clientTenantManager : Any -> TenantManager
+clientTenantManager receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Client_TenantManager receiver
+
+deleteUsersErrorInfoIndex : Any -> Int
+deleteUsersErrorInfoIndex receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_DeleteUsersErrorInfo_Index receiver
+
+deleteUsersErrorInfoReason : Any -> String
+deleteUsersErrorInfoReason receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_DeleteUsersErrorInfo_Reason receiver
+
+deleteUsersResultSuccessCount : Any -> Int
+deleteUsersResultSuccessCount receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_DeleteUsersResult_SuccessCount receiver
+
+deleteUsersResultFailureCount : Any -> Int
+deleteUsersResultFailureCount receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_DeleteUsersResult_FailureCount receiver
+
+deleteUsersResultErrors : Any -> List Any
+deleteUsersResultErrors receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_DeleteUsersResult_Errors receiver
+
+emailIdentifierEmail : Any -> String
+emailIdentifierEmail receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_EmailIdentifier_Email receiver
+
+errorInfoIndex : Any -> Int
+errorInfoIndex receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ErrorInfo_Index receiver
+
+errorInfoReason : Any -> String
+errorInfoReason receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ErrorInfo_Reason receiver
+
+exportedUserRecordUserRecord : Any -> UserRecord
+exportedUserRecordUserRecord receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ExportedUserRecord_UserRecord receiver
+
+exportedUserRecordPasswordHash : Any -> String
+exportedUserRecordPasswordHash receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ExportedUserRecord_PasswordHash receiver
+
+exportedUserRecordPasswordSalt : Any -> String
+exportedUserRecordPasswordSalt receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ExportedUserRecord_PasswordSalt receiver
+
+expressionEmail : Any -> String
+expressionEmail receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Expression_Email receiver
+
+expressionPhoneNumber : Any -> String
+expressionPhoneNumber receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Expression_PhoneNumber receiver
+
+expressionUID : Any -> String
+expressionUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Expression_UID receiver
+
+firebaseInfoSignInProvider : Any -> String
+firebaseInfoSignInProvider receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_FirebaseInfo_SignInProvider receiver
+
+firebaseInfoTenant : Any -> String
+firebaseInfoTenant receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_FirebaseInfo_Tenant receiver
+
+firebaseInfoIdentities : Any -> Any
+firebaseInfoIdentities receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_FirebaseInfo_Identities receiver
+
+getUsersResultUsers : Any -> List Any
+getUsersResultUsers receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_GetUsersResult_Users receiver
+
+getUsersResultNotFound : Any -> List Any
+getUsersResultNotFound receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_GetUsersResult_NotFound receiver
+
+multiFactorConfigProviderConfigs : Any -> List Any
+multiFactorConfigProviderConfigs receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorConfig_ProviderConfigs receiver
+
+multiFactorInfoUID : Any -> String
+multiFactorInfoUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_UID receiver
+
+multiFactorInfoDisplayName : Any -> String
+multiFactorInfoDisplayName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_DisplayName receiver
+
+multiFactorInfoEnrollmentTimestamp : Any -> Int
+multiFactorInfoEnrollmentTimestamp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_EnrollmentTimestamp receiver
+
+multiFactorInfoFactorID : Any -> String
+multiFactorInfoFactorID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_FactorID receiver
+
+multiFactorInfoPhoneNumber : Any -> String
+multiFactorInfoPhoneNumber receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_PhoneNumber receiver
+
+multiFactorInfoPhone : Any -> PhoneMultiFactorInfo
+multiFactorInfoPhone receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_Phone receiver
+
+multiFactorInfoTOTP : Any -> TOTPMultiFactorInfo
+multiFactorInfoTOTP receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorInfo_TOTP receiver
+
+multiFactorSettingsEnrolledFactors : Any -> List Any
+multiFactorSettingsEnrolledFactors receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_MultiFactorSettings_EnrolledFactors receiver
+
+oIDCProviderConfigID : Any -> String
+oIDCProviderConfigID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_ID receiver
+
+oIDCProviderConfigDisplayName : Any -> String
+oIDCProviderConfigDisplayName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_DisplayName receiver
+
+oIDCProviderConfigEnabled : Any -> Bool
+oIDCProviderConfigEnabled receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_Enabled receiver
+
+oIDCProviderConfigClientID : Any -> String
+oIDCProviderConfigClientID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_ClientID receiver
+
+oIDCProviderConfigIssuer : Any -> String
+oIDCProviderConfigIssuer receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_Issuer receiver
+
+oIDCProviderConfigClientSecret : Any -> String
+oIDCProviderConfigClientSecret receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_ClientSecret receiver
+
+oIDCProviderConfigCodeResponseType : Any -> Bool
+oIDCProviderConfigCodeResponseType receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_CodeResponseType receiver
+
+oIDCProviderConfigIDTokenResponseType : Any -> Bool
+oIDCProviderConfigIDTokenResponseType receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_OIDCProviderConfig_IDTokenResponseType receiver
+
+phoneIdentifierPhoneNumber : Any -> String
+phoneIdentifierPhoneNumber receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_PhoneIdentifier_PhoneNumber receiver
+
+phoneMultiFactorInfoPhoneNumber : Any -> String
+phoneMultiFactorInfoPhoneNumber receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_PhoneMultiFactorInfo_PhoneNumber receiver
+
+projectConfigMultiFactorConfig : Any -> MultiFactorConfig
+projectConfigMultiFactorConfig receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ProjectConfig_MultiFactorConfig receiver
+
+providerConfigState : Any -> MultiFactorConfigState
+providerConfigState receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ProviderConfig_State receiver
+
+providerConfigTOTPProviderConfig : Any -> TOTPProviderConfig
+providerConfigTOTPProviderConfig receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ProviderConfig_TOTPProviderConfig receiver
+
+providerIdentifierProviderID : Any -> String
+providerIdentifierProviderID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ProviderIdentifier_ProviderID receiver
+
+providerIdentifierProviderUID : Any -> String
+providerIdentifierProviderUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_ProviderIdentifier_ProviderUID receiver
+
+queryUserInfoResponseUsers : Any -> List Any
+queryUserInfoResponseUsers receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUserInfoResponse_Users receiver
+
+queryUserInfoResponseCount : Any -> Int
+queryUserInfoResponseCount receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUserInfoResponse_Count receiver
+
+queryUsersRequestReturnUserInfo : Any -> Maybe Bool
+queryUsersRequestReturnUserInfo receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_ReturnUserInfo receiver
+
+queryUsersRequestLimit : Any -> Int
+queryUsersRequestLimit receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_Limit receiver
+
+queryUsersRequestOffset : Any -> Int
+queryUsersRequestOffset receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_Offset receiver
+
+queryUsersRequestSortBy : Any -> SortBy
+queryUsersRequestSortBy receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_SortBy receiver
+
+queryUsersRequestOrder : Any -> Order
+queryUsersRequestOrder receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_Order receiver
+
+queryUsersRequestTenantID : Any -> String
+queryUsersRequestTenantID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_TenantID receiver
+
+queryUsersRequestExpression : Any -> List Any
+queryUsersRequestExpression receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_QueryUsersRequest_Expression receiver
+
+sAMLProviderConfigID : Any -> String
+sAMLProviderConfigID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_ID receiver
+
+sAMLProviderConfigDisplayName : Any -> String
+sAMLProviderConfigDisplayName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_DisplayName receiver
+
+sAMLProviderConfigEnabled : Any -> Bool
+sAMLProviderConfigEnabled receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_Enabled receiver
+
+sAMLProviderConfigIDPEntityID : Any -> String
+sAMLProviderConfigIDPEntityID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_IDPEntityID receiver
+
+sAMLProviderConfigSSOURL : Any -> String
+sAMLProviderConfigSSOURL receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_SSOURL receiver
+
+sAMLProviderConfigRequestSigningEnabled : Any -> Bool
+sAMLProviderConfigRequestSigningEnabled receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_RequestSigningEnabled receiver
+
+sAMLProviderConfigX509Certificates : Any -> List String
+sAMLProviderConfigX509Certificates receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_X509Certificates receiver
+
+sAMLProviderConfigRPEntityID : Any -> String
+sAMLProviderConfigRPEntityID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_RPEntityID receiver
+
+sAMLProviderConfigCallbackURL : Any -> String
+sAMLProviderConfigCallbackURL receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_SAMLProviderConfig_CallbackURL receiver
+
+tOTPProviderConfigAdjacentIntervals : Any -> Int
+tOTPProviderConfigAdjacentIntervals receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_TOTPProviderConfig_AdjacentIntervals receiver
+
+tenantID : Any -> String
+tenantID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Tenant_ID receiver
+
+tenantDisplayName : Any -> String
+tenantDisplayName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Tenant_DisplayName receiver
+
+tenantAllowPasswordSignUp : Any -> Bool
+tenantAllowPasswordSignUp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Tenant_AllowPasswordSignUp receiver
+
+tenantEnableEmailLinkSignIn : Any -> Bool
+tenantEnableEmailLinkSignIn receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Tenant_EnableEmailLinkSignIn receiver
+
+tenantEnableAnonymousUsers : Any -> Bool
+tenantEnableAnonymousUsers receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Tenant_EnableAnonymousUsers receiver
+
+tenantMultiFactorConfig : Any -> MultiFactorConfig
+tenantMultiFactorConfig receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Tenant_MultiFactorConfig receiver
+
+tokenAuthTime : Any -> Int
+tokenAuthTime receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_AuthTime receiver
+
+tokenIssuer : Any -> String
+tokenIssuer receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Issuer receiver
+
+tokenAudience : Any -> String
+tokenAudience receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Audience receiver
+
+tokenExpires : Any -> Int
+tokenExpires receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Expires receiver
+
+tokenIssuedAt : Any -> Int
+tokenIssuedAt receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_IssuedAt receiver
+
+tokenSubject : Any -> String
+tokenSubject receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Subject receiver
+
+tokenUID : Any -> String
+tokenUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_UID receiver
+
+tokenFirebase : Any -> FirebaseInfo
+tokenFirebase receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Firebase receiver
+
+tokenClaims : Any -> Any
+tokenClaims receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Claims receiver
+
+uIDIdentifierUID : Any -> String
+uIDIdentifierUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UIDIdentifier_UID receiver
+
+userImportResultSuccessCount : Any -> Int
+userImportResultSuccessCount receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserImportResult_SuccessCount receiver
+
+userImportResultFailureCount : Any -> Int
+userImportResultFailureCount receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserImportResult_FailureCount receiver
+
+userImportResultErrors : Any -> List Any
+userImportResultErrors receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserImportResult_Errors receiver
+
+userInfoDisplayName : Any -> String
+userInfoDisplayName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserInfo_DisplayName receiver
+
+userInfoEmail : Any -> String
+userInfoEmail receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserInfo_Email receiver
+
+userInfoPhoneNumber : Any -> String
+userInfoPhoneNumber receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserInfo_PhoneNumber receiver
+
+userInfoPhotoURL : Any -> String
+userInfoPhotoURL receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserInfo_PhotoURL receiver
+
+userInfoProviderID : Any -> String
+userInfoProviderID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserInfo_ProviderID receiver
+
+userInfoUID : Any -> String
+userInfoUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserInfo_UID receiver
+
+userMetadataCreationTimestamp : Any -> Int
+userMetadataCreationTimestamp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserMetadata_CreationTimestamp receiver
+
+userMetadataLastLogInTimestamp : Any -> Int
+userMetadataLastLogInTimestamp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserMetadata_LastLogInTimestamp receiver
+
+userMetadataLastRefreshTimestamp : Any -> Int
+userMetadataLastRefreshTimestamp receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserMetadata_LastRefreshTimestamp receiver
+
+userProviderUID : Any -> String
+userProviderUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserProvider_UID receiver
+
+userProviderProviderID : Any -> String
+userProviderProviderID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserProvider_ProviderID receiver
+
+userProviderEmail : Any -> String
+userProviderEmail receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserProvider_Email receiver
+
+userProviderDisplayName : Any -> String
+userProviderDisplayName receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserProvider_DisplayName receiver
+
+userProviderPhotoURL : Any -> String
+userProviderPhotoURL receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserProvider_PhotoURL receiver
+
+userRecordUserInfo : Any -> UserInfo
+userRecordUserInfo receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_UserInfo receiver
+
+userRecordCustomClaims : Any -> Any
+userRecordCustomClaims receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_CustomClaims receiver
+
+userRecordDisabled : Any -> Bool
+userRecordDisabled receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_Disabled receiver
+
+userRecordEmailVerified : Any -> Bool
+userRecordEmailVerified receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_EmailVerified receiver
+
+userRecordProviderUserInfo : Any -> List Any
+userRecordProviderUserInfo receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_ProviderUserInfo receiver
+
+userRecordTokensValidAfterMillis : Any -> Int
+userRecordTokensValidAfterMillis receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_TokensValidAfterMillis receiver
+
+userRecordUserMetadata : Any -> UserMetadata
+userRecordUserMetadata receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_UserMetadata receiver
+
+userRecordTenantID : Any -> String
+userRecordTenantID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_TenantID receiver
+
+userRecordMultiFactor : Any -> MultiFactorSettings
+userRecordMultiFactor receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_UserRecord_MultiFactor receiver
+
+clientCreateOIDCProviderConfig : Client -> Context -> OIDCProviderConfigToCreate -> Result String OIDCProviderConfig
+clientCreateOIDCProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientCreateOIDCProviderConfig receiver arg0 arg1
+
+clientCreateSAMLProviderConfig : Client -> Context -> SAMLProviderConfigToCreate -> Result String SAMLProviderConfig
+clientCreateSAMLProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientCreateSAMLProviderConfig receiver arg0 arg1
+
+clientCreateUser : Client -> Context -> UserToCreate -> Result String UserRecord
+clientCreateUser receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientCreateUser receiver arg0 arg1
+
+clientCustomToken : Client -> Context -> String -> Result String String
+clientCustomToken receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientCustomToken receiver arg0 arg1
+
+clientCustomTokenWithClaims : Client -> Context -> String -> Any -> Result String String
+clientCustomTokenWithClaims receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientCustomTokenWithClaims receiver arg0 arg1 arg2
+
+clientDeleteOIDCProviderConfig : Client -> Context -> String -> Result String ()
+clientDeleteOIDCProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientDeleteOIDCProviderConfig receiver arg0 arg1
+
+clientDeleteSAMLProviderConfig : Client -> Context -> String -> Result String ()
+clientDeleteSAMLProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientDeleteSAMLProviderConfig receiver arg0 arg1
+
+clientDeleteUser : Client -> Context -> String -> Result String ()
+clientDeleteUser receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientDeleteUser receiver arg0 arg1
+
+clientDeleteUsers : Client -> Context -> List String -> Result String DeleteUsersResult
+clientDeleteUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientDeleteUsers receiver arg0 arg1
+
+clientEmailSignInLink : Client -> Context -> String -> ActionCodeSettings -> Result String String
+clientEmailSignInLink receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientEmailSignInLink receiver arg0 arg1 arg2
+
+clientEmailVerificationLink : Client -> Context -> String -> Result String String
+clientEmailVerificationLink receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientEmailVerificationLink receiver arg0 arg1
+
+clientEmailVerificationLinkWithSettings : Client -> Context -> String -> ActionCodeSettings -> Result String String
+clientEmailVerificationLinkWithSettings receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientEmailVerificationLinkWithSettings receiver arg0 arg1 arg2
+
+clientGetProjectConfig : Client -> Context -> Result String ProjectConfig
+clientGetProjectConfig receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetProjectConfig receiver arg0
+
+clientGetUser : Client -> Context -> String -> Result String UserRecord
+clientGetUser receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetUser receiver arg0 arg1
+
+clientGetUserByEmail : Client -> Context -> String -> Result String UserRecord
+clientGetUserByEmail receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetUserByEmail receiver arg0 arg1
+
+clientGetUserByPhoneNumber : Client -> Context -> String -> Result String UserRecord
+clientGetUserByPhoneNumber receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetUserByPhoneNumber receiver arg0 arg1
+
+clientGetUserByProviderID : Client -> Context -> String -> String -> Result String UserRecord
+clientGetUserByProviderID receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetUserByProviderID receiver arg0 arg1 arg2
+
+clientGetUserByProviderUID : Client -> Context -> String -> String -> Result String UserRecord
+clientGetUserByProviderUID receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetUserByProviderUID receiver arg0 arg1 arg2
+
+clientGetUsers : Client -> Context -> List Any -> Result String GetUsersResult
+clientGetUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientGetUsers receiver arg0 arg1
+
+clientImportUsers : Client -> Context -> List Any -> List Any -> Result String UserImportResult
+clientImportUsers receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientImportUsers receiver arg0 arg1 arg2
+
+clientOIDCProviderConfig : Client -> Context -> String -> Result String OIDCProviderConfig
+clientOIDCProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientOIDCProviderConfig receiver arg0 arg1
+
+clientOIDCProviderConfigs : Client -> Context -> String -> Result String OIDCProviderConfigIterator
+clientOIDCProviderConfigs receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientOIDCProviderConfigs receiver arg0 arg1
+
+clientPasswordResetLink : Client -> Context -> String -> Result String String
+clientPasswordResetLink receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientPasswordResetLink receiver arg0 arg1
+
+clientPasswordResetLinkWithSettings : Client -> Context -> String -> ActionCodeSettings -> Result String String
+clientPasswordResetLinkWithSettings receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientPasswordResetLinkWithSettings receiver arg0 arg1 arg2
+
+clientQueryUsers : Client -> Context -> QueryUsersRequest -> Result String QueryUserInfoResponse
+clientQueryUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientQueryUsers receiver arg0 arg1
+
+clientRevokeRefreshTokens : Client -> Context -> String -> Result String ()
+clientRevokeRefreshTokens receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientRevokeRefreshTokens receiver arg0 arg1
+
+clientSAMLProviderConfig : Client -> Context -> String -> Result String SAMLProviderConfig
+clientSAMLProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientSAMLProviderConfig receiver arg0 arg1
+
+clientSAMLProviderConfigs : Client -> Context -> String -> Result String SAMLProviderConfigIterator
+clientSAMLProviderConfigs receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientSAMLProviderConfigs receiver arg0 arg1
+
+clientSetCustomUserClaims : Client -> Context -> String -> Any -> Result String ()
+clientSetCustomUserClaims receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientSetCustomUserClaims receiver arg0 arg1 arg2
+
+clientUpdateOIDCProviderConfig : Client -> Context -> String -> OIDCProviderConfigToUpdate -> Result String OIDCProviderConfig
+clientUpdateOIDCProviderConfig receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientUpdateOIDCProviderConfig receiver arg0 arg1 arg2
+
+clientUpdateProjectConfig : Client -> Context -> ProjectConfigToUpdate -> Result String ProjectConfig
+clientUpdateProjectConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientUpdateProjectConfig receiver arg0 arg1
+
+clientUpdateSAMLProviderConfig : Client -> Context -> String -> SAMLProviderConfigToUpdate -> Result String SAMLProviderConfig
+clientUpdateSAMLProviderConfig receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientUpdateSAMLProviderConfig receiver arg0 arg1 arg2
+
+clientUpdateUser : Client -> Context -> String -> UserToUpdate -> Result String UserRecord
+clientUpdateUser receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_ClientUpdateUser receiver arg0 arg1 arg2
+
+clientUsers : Client -> Context -> String -> Result String UserIterator
+clientUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientUsers receiver arg0 arg1
+
+clientVerifyIDToken : Client -> Context -> String -> Result String Token
+clientVerifyIDToken receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientVerifyIDToken receiver arg0 arg1
+
+clientVerifyIDTokenAndCheckRevoked : Client -> Context -> String -> Result String Token
+clientVerifyIDTokenAndCheckRevoked receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientVerifyIDTokenAndCheckRevoked receiver arg0 arg1
+
+clientVerifySessionCookie : Client -> Context -> String -> Result String Token
+clientVerifySessionCookie receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientVerifySessionCookie receiver arg0 arg1
+
+clientVerifySessionCookieAndCheckRevoked : Client -> Context -> String -> Result String Token
+clientVerifySessionCookieAndCheckRevoked receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientVerifySessionCookieAndCheckRevoked receiver arg0 arg1
+
+oIDCProviderConfigIteratorNext : OIDCProviderConfigIterator -> Result String OIDCProviderConfig
+oIDCProviderConfigIteratorNext receiver =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigIteratorNext receiver
+
+oIDCProviderConfigToCreateClientID : OIDCProviderConfigToCreate -> String -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateClientID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateClientID receiver arg0
+
+oIDCProviderConfigToCreateClientSecret : OIDCProviderConfigToCreate -> String -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateClientSecret receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateClientSecret receiver arg0
+
+oIDCProviderConfigToCreateCodeResponseType : OIDCProviderConfigToCreate -> Bool -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateCodeResponseType receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateCodeResponseType receiver arg0
+
+oIDCProviderConfigToCreateDisplayName : OIDCProviderConfigToCreate -> String -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateDisplayName receiver arg0
+
+oIDCProviderConfigToCreateEnabled : OIDCProviderConfigToCreate -> Bool -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateEnabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateEnabled receiver arg0
+
+oIDCProviderConfigToCreateID : OIDCProviderConfigToCreate -> String -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateID receiver arg0
+
+oIDCProviderConfigToCreateIDTokenResponseType : OIDCProviderConfigToCreate -> Bool -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateIDTokenResponseType receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateIDTokenResponseType receiver arg0
+
+oIDCProviderConfigToCreateIssuer : OIDCProviderConfigToCreate -> String -> Result String OIDCProviderConfigToCreate
+oIDCProviderConfigToCreateIssuer receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToCreateIssuer receiver arg0
+
+oIDCProviderConfigToUpdateClientID : OIDCProviderConfigToUpdate -> String -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateClientID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateClientID receiver arg0
+
+oIDCProviderConfigToUpdateClientSecret : OIDCProviderConfigToUpdate -> String -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateClientSecret receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateClientSecret receiver arg0
+
+oIDCProviderConfigToUpdateCodeResponseType : OIDCProviderConfigToUpdate -> Bool -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateCodeResponseType receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateCodeResponseType receiver arg0
+
+oIDCProviderConfigToUpdateDisplayName : OIDCProviderConfigToUpdate -> String -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateDisplayName receiver arg0
+
+oIDCProviderConfigToUpdateEnabled : OIDCProviderConfigToUpdate -> Bool -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateEnabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateEnabled receiver arg0
+
+oIDCProviderConfigToUpdateIDTokenResponseType : OIDCProviderConfigToUpdate -> Bool -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateIDTokenResponseType receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateIDTokenResponseType receiver arg0
+
+oIDCProviderConfigToUpdateIssuer : OIDCProviderConfigToUpdate -> String -> Result String OIDCProviderConfigToUpdate
+oIDCProviderConfigToUpdateIssuer receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_OIDCProviderConfigToUpdateIssuer receiver arg0
+
+projectConfigToUpdateMultiFactorConfig : ProjectConfigToUpdate -> MultiFactorConfig -> Result String ProjectConfigToUpdate
+projectConfigToUpdateMultiFactorConfig receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_ProjectConfigToUpdateMultiFactorConfig receiver arg0
+
+sAMLProviderConfigIteratorNext : SAMLProviderConfigIterator -> Result String SAMLProviderConfig
+sAMLProviderConfigIteratorNext receiver =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigIteratorNext receiver
+
+sAMLProviderConfigToCreateCallbackURL : SAMLProviderConfigToCreate -> String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateCallbackURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateCallbackURL receiver arg0
+
+sAMLProviderConfigToCreateDisplayName : SAMLProviderConfigToCreate -> String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateDisplayName receiver arg0
+
+sAMLProviderConfigToCreateEnabled : SAMLProviderConfigToCreate -> Bool -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateEnabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateEnabled receiver arg0
+
+sAMLProviderConfigToCreateID : SAMLProviderConfigToCreate -> String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateID receiver arg0
+
+sAMLProviderConfigToCreateIDPEntityID : SAMLProviderConfigToCreate -> String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateIDPEntityID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateIDPEntityID receiver arg0
+
+sAMLProviderConfigToCreateRPEntityID : SAMLProviderConfigToCreate -> String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateRPEntityID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateRPEntityID receiver arg0
+
+sAMLProviderConfigToCreateRequestSigningEnabled : SAMLProviderConfigToCreate -> Bool -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateRequestSigningEnabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateRequestSigningEnabled receiver arg0
+
+sAMLProviderConfigToCreateSSOURL : SAMLProviderConfigToCreate -> String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateSSOURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateSSOURL receiver arg0
+
+sAMLProviderConfigToCreateX509Certificates : SAMLProviderConfigToCreate -> List String -> Result String SAMLProviderConfigToCreate
+sAMLProviderConfigToCreateX509Certificates receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToCreateX509Certificates receiver arg0
+
+sAMLProviderConfigToUpdateCallbackURL : SAMLProviderConfigToUpdate -> String -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateCallbackURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateCallbackURL receiver arg0
+
+sAMLProviderConfigToUpdateDisplayName : SAMLProviderConfigToUpdate -> String -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateDisplayName receiver arg0
+
+sAMLProviderConfigToUpdateEnabled : SAMLProviderConfigToUpdate -> Bool -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateEnabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateEnabled receiver arg0
+
+sAMLProviderConfigToUpdateIDPEntityID : SAMLProviderConfigToUpdate -> String -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateIDPEntityID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateIDPEntityID receiver arg0
+
+sAMLProviderConfigToUpdateRPEntityID : SAMLProviderConfigToUpdate -> String -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateRPEntityID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateRPEntityID receiver arg0
+
+sAMLProviderConfigToUpdateRequestSigningEnabled : SAMLProviderConfigToUpdate -> Bool -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateRequestSigningEnabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateRequestSigningEnabled receiver arg0
+
+sAMLProviderConfigToUpdateSSOURL : SAMLProviderConfigToUpdate -> String -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateSSOURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateSSOURL receiver arg0
+
+sAMLProviderConfigToUpdateX509Certificates : SAMLProviderConfigToUpdate -> List String -> Result String SAMLProviderConfigToUpdate
+sAMLProviderConfigToUpdateX509Certificates receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_SAMLProviderConfigToUpdateX509Certificates receiver arg0
+
+tenantClientCreateOIDCProviderConfig : TenantClient -> Context -> OIDCProviderConfigToCreate -> Result String OIDCProviderConfig
+tenantClientCreateOIDCProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientCreateOIDCProviderConfig receiver arg0 arg1
+
+tenantClientCreateSAMLProviderConfig : TenantClient -> Context -> SAMLProviderConfigToCreate -> Result String SAMLProviderConfig
+tenantClientCreateSAMLProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientCreateSAMLProviderConfig receiver arg0 arg1
+
+tenantClientCreateUser : TenantClient -> Context -> UserToCreate -> Result String UserRecord
+tenantClientCreateUser receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientCreateUser receiver arg0 arg1
+
+tenantClientCustomToken : TenantClient -> Context -> String -> Result String String
+tenantClientCustomToken receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientCustomToken receiver arg0 arg1
+
+tenantClientCustomTokenWithClaims : TenantClient -> Context -> String -> Any -> Result String String
+tenantClientCustomTokenWithClaims receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientCustomTokenWithClaims receiver arg0 arg1 arg2
+
+tenantClientDeleteOIDCProviderConfig : TenantClient -> Context -> String -> Result String ()
+tenantClientDeleteOIDCProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientDeleteOIDCProviderConfig receiver arg0 arg1
+
+tenantClientDeleteSAMLProviderConfig : TenantClient -> Context -> String -> Result String ()
+tenantClientDeleteSAMLProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientDeleteSAMLProviderConfig receiver arg0 arg1
+
+tenantClientDeleteUser : TenantClient -> Context -> String -> Result String ()
+tenantClientDeleteUser receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientDeleteUser receiver arg0 arg1
+
+tenantClientDeleteUsers : TenantClient -> Context -> List String -> Result String DeleteUsersResult
+tenantClientDeleteUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientDeleteUsers receiver arg0 arg1
+
+tenantClientEmailSignInLink : TenantClient -> Context -> String -> ActionCodeSettings -> Result String String
+tenantClientEmailSignInLink receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientEmailSignInLink receiver arg0 arg1 arg2
+
+tenantClientEmailVerificationLink : TenantClient -> Context -> String -> Result String String
+tenantClientEmailVerificationLink receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientEmailVerificationLink receiver arg0 arg1
+
+tenantClientEmailVerificationLinkWithSettings : TenantClient -> Context -> String -> ActionCodeSettings -> Result String String
+tenantClientEmailVerificationLinkWithSettings receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientEmailVerificationLinkWithSettings receiver arg0 arg1 arg2
+
+tenantClientGetProjectConfig : TenantClient -> Context -> Result String ProjectConfig
+tenantClientGetProjectConfig receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetProjectConfig receiver arg0
+
+tenantClientGetUser : TenantClient -> Context -> String -> Result String UserRecord
+tenantClientGetUser receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetUser receiver arg0 arg1
+
+tenantClientGetUserByEmail : TenantClient -> Context -> String -> Result String UserRecord
+tenantClientGetUserByEmail receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetUserByEmail receiver arg0 arg1
+
+tenantClientGetUserByPhoneNumber : TenantClient -> Context -> String -> Result String UserRecord
+tenantClientGetUserByPhoneNumber receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetUserByPhoneNumber receiver arg0 arg1
+
+tenantClientGetUserByProviderID : TenantClient -> Context -> String -> String -> Result String UserRecord
+tenantClientGetUserByProviderID receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetUserByProviderID receiver arg0 arg1 arg2
+
+tenantClientGetUserByProviderUID : TenantClient -> Context -> String -> String -> Result String UserRecord
+tenantClientGetUserByProviderUID receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetUserByProviderUID receiver arg0 arg1 arg2
+
+tenantClientGetUsers : TenantClient -> Context -> List Any -> Result String GetUsersResult
+tenantClientGetUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientGetUsers receiver arg0 arg1
+
+tenantClientImportUsers : TenantClient -> Context -> List Any -> List Any -> Result String UserImportResult
+tenantClientImportUsers receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientImportUsers receiver arg0 arg1 arg2
+
+tenantClientOIDCProviderConfig : TenantClient -> Context -> String -> Result String OIDCProviderConfig
+tenantClientOIDCProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientOIDCProviderConfig receiver arg0 arg1
+
+tenantClientOIDCProviderConfigs : TenantClient -> Context -> String -> Result String OIDCProviderConfigIterator
+tenantClientOIDCProviderConfigs receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientOIDCProviderConfigs receiver arg0 arg1
+
+tenantClientPasswordResetLink : TenantClient -> Context -> String -> Result String String
+tenantClientPasswordResetLink receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientPasswordResetLink receiver arg0 arg1
+
+tenantClientPasswordResetLinkWithSettings : TenantClient -> Context -> String -> ActionCodeSettings -> Result String String
+tenantClientPasswordResetLinkWithSettings receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientPasswordResetLinkWithSettings receiver arg0 arg1 arg2
+
+tenantClientQueryUsers : TenantClient -> Context -> QueryUsersRequest -> Result String QueryUserInfoResponse
+tenantClientQueryUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientQueryUsers receiver arg0 arg1
+
+tenantClientRevokeRefreshTokens : TenantClient -> Context -> String -> Result String ()
+tenantClientRevokeRefreshTokens receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientRevokeRefreshTokens receiver arg0 arg1
+
+tenantClientSAMLProviderConfig : TenantClient -> Context -> String -> Result String SAMLProviderConfig
+tenantClientSAMLProviderConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientSAMLProviderConfig receiver arg0 arg1
+
+tenantClientSAMLProviderConfigs : TenantClient -> Context -> String -> Result String SAMLProviderConfigIterator
+tenantClientSAMLProviderConfigs receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientSAMLProviderConfigs receiver arg0 arg1
+
+tenantClientSetCustomUserClaims : TenantClient -> Context -> String -> Any -> Result String ()
+tenantClientSetCustomUserClaims receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientSetCustomUserClaims receiver arg0 arg1 arg2
+
+tenantClientTenantID : TenantClient -> Result String String
+tenantClientTenantID receiver =
+    Sky_firebase_google_com_go_v4_auth_TenantClientTenantID receiver
+
+tenantClientUpdateOIDCProviderConfig : TenantClient -> Context -> String -> OIDCProviderConfigToUpdate -> Result String OIDCProviderConfig
+tenantClientUpdateOIDCProviderConfig receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientUpdateOIDCProviderConfig receiver arg0 arg1 arg2
+
+tenantClientUpdateProjectConfig : TenantClient -> Context -> ProjectConfigToUpdate -> Result String ProjectConfig
+tenantClientUpdateProjectConfig receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientUpdateProjectConfig receiver arg0 arg1
+
+tenantClientUpdateSAMLProviderConfig : TenantClient -> Context -> String -> SAMLProviderConfigToUpdate -> Result String SAMLProviderConfig
+tenantClientUpdateSAMLProviderConfig receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientUpdateSAMLProviderConfig receiver arg0 arg1 arg2
+
+tenantClientUpdateUser : TenantClient -> Context -> String -> UserToUpdate -> Result String UserRecord
+tenantClientUpdateUser receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientUpdateUser receiver arg0 arg1 arg2
+
+tenantClientUsers : TenantClient -> Context -> String -> Result String UserIterator
+tenantClientUsers receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientUsers receiver arg0 arg1
+
+tenantClientVerifyIDToken : TenantClient -> Context -> String -> Result String Token
+tenantClientVerifyIDToken receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientVerifyIDToken receiver arg0 arg1
+
+tenantClientVerifyIDTokenAndCheckRevoked : TenantClient -> Context -> String -> Result String Token
+tenantClientVerifyIDTokenAndCheckRevoked receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantClientVerifyIDTokenAndCheckRevoked receiver arg0 arg1
+
+tenantIteratorNext : TenantIterator -> Result String Tenant
+tenantIteratorNext receiver =
+    Sky_firebase_google_com_go_v4_auth_TenantIteratorNext receiver
+
+tenantManagerAuthForTenant : TenantManager -> String -> Result String TenantClient
+tenantManagerAuthForTenant receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantManagerAuthForTenant receiver arg0
+
+tenantManagerCreateTenant : TenantManager -> Context -> TenantToCreate -> Result String Tenant
+tenantManagerCreateTenant receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantManagerCreateTenant receiver arg0 arg1
+
+tenantManagerDeleteTenant : TenantManager -> Context -> String -> Result String ()
+tenantManagerDeleteTenant receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantManagerDeleteTenant receiver arg0 arg1
+
+tenantManagerTenant : TenantManager -> Context -> String -> Result String Tenant
+tenantManagerTenant receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantManagerTenant receiver arg0 arg1
+
+tenantManagerTenants : TenantManager -> Context -> String -> Result String TenantIterator
+tenantManagerTenants receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_TenantManagerTenants receiver arg0 arg1
+
+tenantManagerUpdateTenant : TenantManager -> Context -> String -> TenantToUpdate -> Result String Tenant
+tenantManagerUpdateTenant receiver arg0 arg1 arg2 =
+    Sky_firebase_google_com_go_v4_auth_TenantManagerUpdateTenant receiver arg0 arg1 arg2
+
+tenantToCreateAllowPasswordSignUp : TenantToCreate -> Bool -> Result String TenantToCreate
+tenantToCreateAllowPasswordSignUp receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToCreateAllowPasswordSignUp receiver arg0
+
+tenantToCreateDisplayName : TenantToCreate -> String -> Result String TenantToCreate
+tenantToCreateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToCreateDisplayName receiver arg0
+
+tenantToCreateEnableAnonymousUsers : TenantToCreate -> Bool -> Result String TenantToCreate
+tenantToCreateEnableAnonymousUsers receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToCreateEnableAnonymousUsers receiver arg0
+
+tenantToCreateEnableEmailLinkSignIn : TenantToCreate -> Bool -> Result String TenantToCreate
+tenantToCreateEnableEmailLinkSignIn receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToCreateEnableEmailLinkSignIn receiver arg0
+
+tenantToCreateMultiFactorConfig : TenantToCreate -> MultiFactorConfig -> Result String TenantToCreate
+tenantToCreateMultiFactorConfig receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToCreateMultiFactorConfig receiver arg0
+
+tenantToUpdateAllowPasswordSignUp : TenantToUpdate -> Bool -> Result String TenantToUpdate
+tenantToUpdateAllowPasswordSignUp receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToUpdateAllowPasswordSignUp receiver arg0
+
+tenantToUpdateDisplayName : TenantToUpdate -> String -> Result String TenantToUpdate
+tenantToUpdateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToUpdateDisplayName receiver arg0
+
+tenantToUpdateEnableAnonymousUsers : TenantToUpdate -> Bool -> Result String TenantToUpdate
+tenantToUpdateEnableAnonymousUsers receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToUpdateEnableAnonymousUsers receiver arg0
+
+tenantToUpdateEnableEmailLinkSignIn : TenantToUpdate -> Bool -> Result String TenantToUpdate
+tenantToUpdateEnableEmailLinkSignIn receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToUpdateEnableEmailLinkSignIn receiver arg0
+
+tenantToUpdateMultiFactorConfig : TenantToUpdate -> MultiFactorConfig -> Result String TenantToUpdate
+tenantToUpdateMultiFactorConfig receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_TenantToUpdateMultiFactorConfig receiver arg0
+
+userIteratorNext : UserIterator -> Result String ExportedUserRecord
+userIteratorNext receiver =
+    Sky_firebase_google_com_go_v4_auth_UserIteratorNext receiver
+
+userToCreateDisabled : UserToCreate -> Bool -> Result String UserToCreate
+userToCreateDisabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreateDisabled receiver arg0
+
+userToCreateDisplayName : UserToCreate -> String -> Result String UserToCreate
+userToCreateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreateDisplayName receiver arg0
+
+userToCreateEmail : UserToCreate -> String -> Result String UserToCreate
+userToCreateEmail receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreateEmail receiver arg0
+
+userToCreateEmailVerified : UserToCreate -> Bool -> Result String UserToCreate
+userToCreateEmailVerified receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreateEmailVerified receiver arg0
+
+userToCreateMFASettings : UserToCreate -> MultiFactorSettings -> Result String UserToCreate
+userToCreateMFASettings receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreateMFASettings receiver arg0
+
+userToCreatePassword : UserToCreate -> String -> Result String UserToCreate
+userToCreatePassword receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreatePassword receiver arg0
+
+userToCreatePhoneNumber : UserToCreate -> String -> Result String UserToCreate
+userToCreatePhoneNumber receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreatePhoneNumber receiver arg0
+
+userToCreatePhotoURL : UserToCreate -> String -> Result String UserToCreate
+userToCreatePhotoURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreatePhotoURL receiver arg0
+
+userToCreateUID : UserToCreate -> String -> Result String UserToCreate
+userToCreateUID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToCreateUID receiver arg0
+
+userToImportCustomClaims : UserToImport -> Any -> Result String UserToImport
+userToImportCustomClaims receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportCustomClaims receiver arg0
+
+userToImportDisabled : UserToImport -> Bool -> Result String UserToImport
+userToImportDisabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportDisabled receiver arg0
+
+userToImportDisplayName : UserToImport -> String -> Result String UserToImport
+userToImportDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportDisplayName receiver arg0
+
+userToImportEmail : UserToImport -> String -> Result String UserToImport
+userToImportEmail receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportEmail receiver arg0
+
+userToImportEmailVerified : UserToImport -> Bool -> Result String UserToImport
+userToImportEmailVerified receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportEmailVerified receiver arg0
+
+userToImportMetadata : UserToImport -> UserMetadata -> Result String UserToImport
+userToImportMetadata receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportMetadata receiver arg0
+
+userToImportPasswordHash : UserToImport -> Bytes -> Result String UserToImport
+userToImportPasswordHash receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportPasswordHash receiver arg0
+
+userToImportPasswordSalt : UserToImport -> Bytes -> Result String UserToImport
+userToImportPasswordSalt receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportPasswordSalt receiver arg0
+
+userToImportPhoneNumber : UserToImport -> String -> Result String UserToImport
+userToImportPhoneNumber receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportPhoneNumber receiver arg0
+
+userToImportPhotoURL : UserToImport -> String -> Result String UserToImport
+userToImportPhotoURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportPhotoURL receiver arg0
+
+userToImportProviderData : UserToImport -> List Any -> Result String UserToImport
+userToImportProviderData receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportProviderData receiver arg0
+
+userToImportUID : UserToImport -> String -> Result String UserToImport
+userToImportUID receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToImportUID receiver arg0
+
+userToUpdateCustomClaims : UserToUpdate -> Any -> Result String UserToUpdate
+userToUpdateCustomClaims receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateCustomClaims receiver arg0
+
+userToUpdateDisabled : UserToUpdate -> Bool -> Result String UserToUpdate
+userToUpdateDisabled receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateDisabled receiver arg0
+
+userToUpdateDisplayName : UserToUpdate -> String -> Result String UserToUpdate
+userToUpdateDisplayName receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateDisplayName receiver arg0
+
+userToUpdateEmail : UserToUpdate -> String -> Result String UserToUpdate
+userToUpdateEmail receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateEmail receiver arg0
+
+userToUpdateEmailVerified : UserToUpdate -> Bool -> Result String UserToUpdate
+userToUpdateEmailVerified receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateEmailVerified receiver arg0
+
+userToUpdateMFASettings : UserToUpdate -> MultiFactorSettings -> Result String UserToUpdate
+userToUpdateMFASettings receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateMFASettings receiver arg0
+
+userToUpdatePassword : UserToUpdate -> String -> Result String UserToUpdate
+userToUpdatePassword receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdatePassword receiver arg0
+
+userToUpdatePhoneNumber : UserToUpdate -> String -> Result String UserToUpdate
+userToUpdatePhoneNumber receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdatePhoneNumber receiver arg0
+
+userToUpdatePhotoURL : UserToUpdate -> String -> Result String UserToUpdate
+userToUpdatePhotoURL receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdatePhotoURL receiver arg0
+
+userToUpdateProviderToLink : UserToUpdate -> UserProvider -> Result String UserToUpdate
+userToUpdateProviderToLink receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateProviderToLink receiver arg0
+
+userToUpdateProvidersToDelete : UserToUpdate -> List String -> Result String UserToUpdate
+userToUpdateProvidersToDelete receiver arg0 =
+    Sky_firebase_google_com_go_v4_auth_UserToUpdateProvidersToDelete receiver arg0
+
+
+
+asc : Order
+asc =
+    Sky_firebase_google_com_go_v4_auth_Asc
+
+createdAt : SortBy
+createdAt =
+    Sky_firebase_google_com_go_v4_auth_CreatedAt
+
+desc : Order
+desc =
+    Sky_firebase_google_com_go_v4_auth_Desc
+
+disabled : MultiFactorConfigState
+disabled =
+    Sky_firebase_google_com_go_v4_auth_Disabled
+
+enabled : MultiFactorConfigState
+enabled =
+    Sky_firebase_google_com_go_v4_auth_Enabled
+
+lastLoginAt : SortBy
+lastLoginAt =
+    Sky_firebase_google_com_go_v4_auth_LastLoginAt
+
+name : SortBy
+name =
+    Sky_firebase_google_com_go_v4_auth_Name
+
+uID : SortBy
+uID =
+    Sky_firebase_google_com_go_v4_auth_UID
+
+userEmail : SortBy
+userEmail =
+    Sky_firebase_google_com_go_v4_auth_UserEmail

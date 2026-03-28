@@ -10,6 +10,7 @@ node_modules/
 
 # Sky compiler cache and deps
 .skycache/
+!examples/*/.skycache/
 .skydeps/
 
 # Environment and secrets

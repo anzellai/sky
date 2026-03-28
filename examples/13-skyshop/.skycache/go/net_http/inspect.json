@@ -1,0 +1,3519 @@
+{
+  "name": "http",
+  "path": "net/http",
+  "types": [
+    {
+      "name": "Client",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Transport",
+          "type": "net/http.RoundTripper"
+        },
+        {
+          "name": "CheckRedirect",
+          "type": "func(req *net/http.Request, via []*net/http.Request) error"
+        },
+        {
+          "name": "Jar",
+          "type": "net/http.CookieJar"
+        },
+        {
+          "name": "Timeout",
+          "type": "time.Duration"
+        }
+      ],
+      "methods": [
+        {
+          "name": "CloseIdleConnections",
+          "params": null,
+          "results": null
+        },
+        {
+          "name": "Do",
+          "params": [
+            {
+              "name": "req",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "params": [
+            {
+              "name": "url",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "resp",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Head",
+          "params": [
+            {
+              "name": "url",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "resp",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Post",
+          "params": [
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "contentType",
+              "type": "string"
+            },
+            {
+              "name": "body",
+              "type": "io.Reader"
+            }
+          ],
+          "results": [
+            {
+              "name": "resp",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "PostForm",
+          "params": [
+            {
+              "name": "url",
+              "type": "string"
+            },
+            {
+              "name": "data",
+              "type": "net/url.Values"
+            }
+          ],
+          "results": [
+            {
+              "name": "resp",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ClientConn",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Available",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Close",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "InFlight",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Release",
+          "params": null,
+          "results": null
+        },
+        {
+          "name": "Reserve",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "RoundTrip",
+          "params": [
+            {
+              "name": "req",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetStateHook",
+          "params": [
+            {
+              "name": "f",
+              "type": "func(*net/http.ClientConn)"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "CloseNotifier",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "CloseNotify",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "\u003c-chan bool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ConnState",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Cookie",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Name",
+          "type": "string"
+        },
+        {
+          "name": "Value",
+          "type": "string"
+        },
+        {
+          "name": "Quoted",
+          "type": "bool"
+        },
+        {
+          "name": "Path",
+          "type": "string"
+        },
+        {
+          "name": "Domain",
+          "type": "string"
+        },
+        {
+          "name": "Expires",
+          "type": "time.Time"
+        },
+        {
+          "name": "RawExpires",
+          "type": "string"
+        },
+        {
+          "name": "MaxAge",
+          "type": "int"
+        },
+        {
+          "name": "Secure",
+          "type": "bool"
+        },
+        {
+          "name": "HttpOnly",
+          "type": "bool"
+        },
+        {
+          "name": "SameSite",
+          "type": "net/http.SameSite"
+        },
+        {
+          "name": "Partitioned",
+          "type": "bool"
+        },
+        {
+          "name": "Raw",
+          "type": "string"
+        },
+        {
+          "name": "Unparsed",
+          "type": "[]string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Valid",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CookieJar",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Cookies",
+          "params": [
+            {
+              "name": "u",
+              "type": "*net/url.URL"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]*net/http.Cookie"
+            }
+          ]
+        },
+        {
+          "name": "SetCookies",
+          "params": [
+            {
+              "name": "u",
+              "type": "*net/url.URL"
+            },
+            {
+              "name": "cookies",
+              "type": "[]*net/http.Cookie"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "CrossOriginProtection",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "AddInsecureBypassPattern",
+          "params": [
+            {
+              "name": "pattern",
+              "type": "string"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "AddTrustedOrigin",
+          "params": [
+            {
+              "name": "origin",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Check",
+          "params": [
+            {
+              "name": "req",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Handler",
+          "params": [
+            {
+              "name": "h",
+              "type": "net/http.Handler"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "net/http.Handler"
+            }
+          ]
+        },
+        {
+          "name": "SetDenyHandler",
+          "params": [
+            {
+              "name": "h",
+              "type": "net/http.Handler"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "Dir",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "Open",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "net/http.File"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "File",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Close",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Read",
+          "params": [
+            {
+              "name": "p",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "n",
+              "type": "int"
+            },
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Readdir",
+          "params": [
+            {
+              "name": "count",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]io/fs.FileInfo"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Seek",
+          "params": [
+            {
+              "name": "offset",
+              "type": "int64"
+            },
+            {
+              "name": "whence",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Stat",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "io/fs.FileInfo"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FileSystem",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Open",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "net/http.File"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Flusher",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Flush",
+          "params": null,
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "HTTP2Config",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "MaxConcurrentStreams",
+          "type": "int"
+        },
+        {
+          "name": "StrictMaxConcurrentRequests",
+          "type": "bool"
+        },
+        {
+          "name": "MaxDecoderHeaderTableSize",
+          "type": "int"
+        },
+        {
+          "name": "MaxEncoderHeaderTableSize",
+          "type": "int"
+        },
+        {
+          "name": "MaxReadFrameSize",
+          "type": "int"
+        },
+        {
+          "name": "MaxReceiveBufferPerConnection",
+          "type": "int"
+        },
+        {
+          "name": "MaxReceiveBufferPerStream",
+          "type": "int"
+        },
+        {
+          "name": "SendPingTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "PingTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "WriteByteTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "PermitProhibitedCipherSuites",
+          "type": "bool"
+        },
+        {
+          "name": "CountError",
+          "type": "func(errType string)"
+        }
+      ]
+    },
+    {
+      "name": "Handler",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "ServeHTTP",
+          "params": [
+            {
+              "name": "",
+              "type": "net/http.ResponseWriter"
+            },
+            {
+              "name": "",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "HandlerFunc",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "ServeHTTP",
+          "params": [
+            {
+              "name": "w",
+              "type": "net/http.ResponseWriter"
+            },
+            {
+              "name": "r",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "Header",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "Add",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "string"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Clone",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "net/http.Header"
+            }
+          ]
+        },
+        {
+          "name": "Del",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Get",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Set",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "string"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Values",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]string"
+            }
+          ]
+        },
+        {
+          "name": "Write",
+          "params": [
+            {
+              "name": "w",
+              "type": "io.Writer"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteSubset",
+          "params": [
+            {
+              "name": "w",
+              "type": "io.Writer"
+            },
+            {
+              "name": "exclude",
+              "type": "map[string]bool"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Hijacker",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Hijack",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "net.Conn"
+            },
+            {
+              "name": "",
+              "type": "*bufio.ReadWriter"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MaxBytesError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Limit",
+          "type": "int64"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ProtocolError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "ErrorString",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Is",
+          "params": [
+            {
+              "name": "err",
+              "type": "error"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Protocols",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "HTTP1",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "HTTP2",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "SetHTTP1",
+          "params": [
+            {
+              "name": "ok",
+              "type": "bool"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "SetHTTP2",
+          "params": [
+            {
+              "name": "ok",
+              "type": "bool"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "SetUnencryptedHTTP2",
+          "params": [
+            {
+              "name": "ok",
+              "type": "bool"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "UnencryptedHTTP2",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "PushOptions",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Method",
+          "type": "string"
+        },
+        {
+          "name": "Header",
+          "type": "net/http.Header"
+        }
+      ]
+    },
+    {
+      "name": "Pusher",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Push",
+          "params": [
+            {
+              "name": "target",
+              "type": "string"
+            },
+            {
+              "name": "opts",
+              "type": "*net/http.PushOptions"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Request",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Method",
+          "type": "string"
+        },
+        {
+          "name": "URL",
+          "type": "*net/url.URL"
+        },
+        {
+          "name": "Proto",
+          "type": "string"
+        },
+        {
+          "name": "ProtoMajor",
+          "type": "int"
+        },
+        {
+          "name": "ProtoMinor",
+          "type": "int"
+        },
+        {
+          "name": "Header",
+          "type": "net/http.Header"
+        },
+        {
+          "name": "Body",
+          "type": "io.ReadCloser"
+        },
+        {
+          "name": "GetBody",
+          "type": "func() (io.ReadCloser, error)"
+        },
+        {
+          "name": "ContentLength",
+          "type": "int64"
+        },
+        {
+          "name": "TransferEncoding",
+          "type": "[]string"
+        },
+        {
+          "name": "Close",
+          "type": "bool"
+        },
+        {
+          "name": "Host",
+          "type": "string"
+        },
+        {
+          "name": "Form",
+          "type": "net/url.Values"
+        },
+        {
+          "name": "PostForm",
+          "type": "net/url.Values"
+        },
+        {
+          "name": "MultipartForm",
+          "type": "*mime/multipart.Form"
+        },
+        {
+          "name": "Trailer",
+          "type": "net/http.Header"
+        },
+        {
+          "name": "RemoteAddr",
+          "type": "string"
+        },
+        {
+          "name": "RequestURI",
+          "type": "string"
+        },
+        {
+          "name": "TLS",
+          "type": "*crypto/tls.ConnectionState"
+        },
+        {
+          "name": "Cancel",
+          "type": "\u003c-chan struct{}"
+        },
+        {
+          "name": "Response",
+          "type": "*net/http.Response"
+        },
+        {
+          "name": "Pattern",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "AddCookie",
+          "params": [
+            {
+              "name": "c",
+              "type": "*net/http.Cookie"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "BasicAuth",
+          "params": null,
+          "results": [
+            {
+              "name": "username",
+              "type": "string"
+            },
+            {
+              "name": "password",
+              "type": "string"
+            },
+            {
+              "name": "ok",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Clone",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Request"
+            }
+          ]
+        },
+        {
+          "name": "Context",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "context.Context"
+            }
+          ]
+        },
+        {
+          "name": "Cookie",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Cookie"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Cookies",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]*net/http.Cookie"
+            }
+          ]
+        },
+        {
+          "name": "CookiesNamed",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]*net/http.Cookie"
+            }
+          ]
+        },
+        {
+          "name": "FormFile",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "mime/multipart.File"
+            },
+            {
+              "name": "",
+              "type": "*mime/multipart.FileHeader"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "FormValue",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "MultipartReader",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*mime/multipart.Reader"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ParseForm",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ParseMultipartForm",
+          "params": [
+            {
+              "name": "maxMemory",
+              "type": "int64"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "PathValue",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "PostFormValue",
+          "params": [
+            {
+              "name": "key",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "ProtoAtLeast",
+          "params": [
+            {
+              "name": "major",
+              "type": "int"
+            },
+            {
+              "name": "minor",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Referer",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "SetBasicAuth",
+          "params": [
+            {
+              "name": "username",
+              "type": "string"
+            },
+            {
+              "name": "password",
+              "type": "string"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "SetPathValue",
+          "params": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "value",
+              "type": "string"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "UserAgent",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "WithContext",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Request"
+            }
+          ]
+        },
+        {
+          "name": "Write",
+          "params": [
+            {
+              "name": "w",
+              "type": "io.Writer"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteProxy",
+          "params": [
+            {
+              "name": "w",
+              "type": "io.Writer"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Response",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Status",
+          "type": "string"
+        },
+        {
+          "name": "StatusCode",
+          "type": "int"
+        },
+        {
+          "name": "Proto",
+          "type": "string"
+        },
+        {
+          "name": "ProtoMajor",
+          "type": "int"
+        },
+        {
+          "name": "ProtoMinor",
+          "type": "int"
+        },
+        {
+          "name": "Header",
+          "type": "net/http.Header"
+        },
+        {
+          "name": "Body",
+          "type": "io.ReadCloser"
+        },
+        {
+          "name": "ContentLength",
+          "type": "int64"
+        },
+        {
+          "name": "TransferEncoding",
+          "type": "[]string"
+        },
+        {
+          "name": "Close",
+          "type": "bool"
+        },
+        {
+          "name": "Uncompressed",
+          "type": "bool"
+        },
+        {
+          "name": "Trailer",
+          "type": "net/http.Header"
+        },
+        {
+          "name": "Request",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "TLS",
+          "type": "*crypto/tls.ConnectionState"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Cookies",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]*net/http.Cookie"
+            }
+          ]
+        },
+        {
+          "name": "Location",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*net/url.URL"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ProtoAtLeast",
+          "params": [
+            {
+              "name": "major",
+              "type": "int"
+            },
+            {
+              "name": "minor",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Write",
+          "params": [
+            {
+              "name": "w",
+              "type": "io.Writer"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ResponseController",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "EnableFullDuplex",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Flush",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Hijack",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "net.Conn"
+            },
+            {
+              "name": "",
+              "type": "*bufio.ReadWriter"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetReadDeadline",
+          "params": [
+            {
+              "name": "deadline",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetWriteDeadline",
+          "params": [
+            {
+              "name": "deadline",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ResponseWriter",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Header",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "net/http.Header"
+            }
+          ]
+        },
+        {
+          "name": "Write",
+          "params": [
+            {
+              "name": "",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "WriteHeader",
+          "params": [
+            {
+              "name": "statusCode",
+              "type": "int"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "RoundTripper",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "RoundTrip",
+          "params": [
+            {
+              "name": "",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SameSite",
+      "kind": "other"
+    },
+    {
+      "name": "ServeMux",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Handle",
+          "params": [
+            {
+              "name": "pattern",
+              "type": "string"
+            },
+            {
+              "name": "handler",
+              "type": "net/http.Handler"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "HandleFunc",
+          "params": [
+            {
+              "name": "pattern",
+              "type": "string"
+            },
+            {
+              "name": "handler",
+              "type": "func(net/http.ResponseWriter, *net/http.Request)"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Handler",
+          "params": [
+            {
+              "name": "r",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": [
+            {
+              "name": "h",
+              "type": "net/http.Handler"
+            },
+            {
+              "name": "pattern",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "ServeHTTP",
+          "params": [
+            {
+              "name": "w",
+              "type": "net/http.ResponseWriter"
+            },
+            {
+              "name": "r",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "Server",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Addr",
+          "type": "string"
+        },
+        {
+          "name": "Handler",
+          "type": "net/http.Handler"
+        },
+        {
+          "name": "DisableGeneralOptionsHandler",
+          "type": "bool"
+        },
+        {
+          "name": "TLSConfig",
+          "type": "*crypto/tls.Config"
+        },
+        {
+          "name": "ReadTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "ReadHeaderTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "WriteTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "IdleTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "MaxHeaderBytes",
+          "type": "int"
+        },
+        {
+          "name": "TLSNextProto",
+          "type": "map[string]func(*net/http.Server, *crypto/tls.Conn, net/http.Handler)"
+        },
+        {
+          "name": "ConnState",
+          "type": "func(net.Conn, net/http.ConnState)"
+        },
+        {
+          "name": "ErrorLog",
+          "type": "*log.Logger"
+        },
+        {
+          "name": "BaseContext",
+          "type": "func(net.Listener) context.Context"
+        },
+        {
+          "name": "ConnContext",
+          "type": "func(ctx context.Context, c net.Conn) context.Context"
+        },
+        {
+          "name": "HTTP2",
+          "type": "*net/http.HTTP2Config"
+        },
+        {
+          "name": "Protocols",
+          "type": "*net/http.Protocols"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Close",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ListenAndServe",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ListenAndServeTLS",
+          "params": [
+            {
+              "name": "certFile",
+              "type": "string"
+            },
+            {
+              "name": "keyFile",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "RegisterOnShutdown",
+          "params": [
+            {
+              "name": "f",
+              "type": "func()"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Serve",
+          "params": [
+            {
+              "name": "l",
+              "type": "net.Listener"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "ServeTLS",
+          "params": [
+            {
+              "name": "l",
+              "type": "net.Listener"
+            },
+            {
+              "name": "certFile",
+              "type": "string"
+            },
+            {
+              "name": "keyFile",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetKeepAlivesEnabled",
+          "params": [
+            {
+              "name": "v",
+              "type": "bool"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Shutdown",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Transport",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Proxy",
+          "type": "func(*net/http.Request) (*net/url.URL, error)"
+        },
+        {
+          "name": "OnProxyConnectResponse",
+          "type": "func(ctx context.Context, proxyURL *net/url.URL, connectReq *net/http.Request, connectRes *net/http.Response) error"
+        },
+        {
+          "name": "DialContext",
+          "type": "func(ctx context.Context, network string, addr string) (net.Conn, error)"
+        },
+        {
+          "name": "Dial",
+          "type": "func(network string, addr string) (net.Conn, error)"
+        },
+        {
+          "name": "DialTLSContext",
+          "type": "func(ctx context.Context, network string, addr string) (net.Conn, error)"
+        },
+        {
+          "name": "DialTLS",
+          "type": "func(network string, addr string) (net.Conn, error)"
+        },
+        {
+          "name": "TLSClientConfig",
+          "type": "*crypto/tls.Config"
+        },
+        {
+          "name": "TLSHandshakeTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "DisableKeepAlives",
+          "type": "bool"
+        },
+        {
+          "name": "DisableCompression",
+          "type": "bool"
+        },
+        {
+          "name": "MaxIdleConns",
+          "type": "int"
+        },
+        {
+          "name": "MaxIdleConnsPerHost",
+          "type": "int"
+        },
+        {
+          "name": "MaxConnsPerHost",
+          "type": "int"
+        },
+        {
+          "name": "IdleConnTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "ResponseHeaderTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "ExpectContinueTimeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "TLSNextProto",
+          "type": "map[string]func(authority string, c *crypto/tls.Conn) net/http.RoundTripper"
+        },
+        {
+          "name": "ProxyConnectHeader",
+          "type": "net/http.Header"
+        },
+        {
+          "name": "GetProxyConnectHeader",
+          "type": "func(ctx context.Context, proxyURL *net/url.URL, target string) (net/http.Header, error)"
+        },
+        {
+          "name": "MaxResponseHeaderBytes",
+          "type": "int64"
+        },
+        {
+          "name": "WriteBufferSize",
+          "type": "int"
+        },
+        {
+          "name": "ReadBufferSize",
+          "type": "int"
+        },
+        {
+          "name": "ForceAttemptHTTP2",
+          "type": "bool"
+        },
+        {
+          "name": "HTTP2",
+          "type": "*net/http.HTTP2Config"
+        },
+        {
+          "name": "Protocols",
+          "type": "*net/http.Protocols"
+        }
+      ],
+      "methods": [
+        {
+          "name": "CancelRequest",
+          "params": [
+            {
+              "name": "req",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Clone",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Transport"
+            }
+          ]
+        },
+        {
+          "name": "CloseIdleConnections",
+          "params": null,
+          "results": null
+        },
+        {
+          "name": "NewClientConn",
+          "params": [
+            {
+              "name": "ctx",
+              "type": "context.Context"
+            },
+            {
+              "name": "scheme",
+              "type": "string"
+            },
+            {
+              "name": "address",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.ClientConn"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "RegisterProtocol",
+          "params": [
+            {
+              "name": "scheme",
+              "type": "string"
+            },
+            {
+              "name": "rt",
+              "type": "net/http.RoundTripper"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "RoundTrip",
+          "params": [
+            {
+              "name": "req",
+              "type": "*net/http.Request"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*net/http.Response"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "AllowQuerySemicolons",
+      "params": [
+        {
+          "name": "h",
+          "type": "net/http.Handler"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "CanonicalHeaderKey",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "DetectContentType",
+      "params": [
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Error",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "error",
+          "type": "string"
+        },
+        {
+          "name": "code",
+          "type": "int"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "FS",
+      "params": [
+        {
+          "name": "fsys",
+          "type": "io/fs.FS"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.FileSystem"
+        }
+      ]
+    },
+    {
+      "name": "FileServer",
+      "params": [
+        {
+          "name": "root",
+          "type": "net/http.FileSystem"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "FileServerFS",
+      "params": [
+        {
+          "name": "root",
+          "type": "io/fs.FS"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "Get",
+      "params": [
+        {
+          "name": "url",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "resp",
+          "type": "*net/http.Response"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Handle",
+      "params": [
+        {
+          "name": "pattern",
+          "type": "string"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "HandleFunc",
+      "params": [
+        {
+          "name": "pattern",
+          "type": "string"
+        },
+        {
+          "name": "handler",
+          "type": "func(net/http.ResponseWriter, *net/http.Request)"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "Head",
+      "params": [
+        {
+          "name": "url",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "resp",
+          "type": "*net/http.Response"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ListenAndServe",
+      "params": [
+        {
+          "name": "addr",
+          "type": "string"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ListenAndServeTLS",
+      "params": [
+        {
+          "name": "addr",
+          "type": "string"
+        },
+        {
+          "name": "certFile",
+          "type": "string"
+        },
+        {
+          "name": "keyFile",
+          "type": "string"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "MaxBytesHandler",
+      "params": [
+        {
+          "name": "h",
+          "type": "net/http.Handler"
+        },
+        {
+          "name": "n",
+          "type": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "MaxBytesReader",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "r",
+          "type": "io.ReadCloser"
+        },
+        {
+          "name": "n",
+          "type": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "io.ReadCloser"
+        }
+      ]
+    },
+    {
+      "name": "NewCrossOriginProtection",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.CrossOriginProtection"
+        }
+      ]
+    },
+    {
+      "name": "NewFileTransport",
+      "params": [
+        {
+          "name": "fs",
+          "type": "net/http.FileSystem"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.RoundTripper"
+        }
+      ]
+    },
+    {
+      "name": "NewFileTransportFS",
+      "params": [
+        {
+          "name": "fsys",
+          "type": "io/fs.FS"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.RoundTripper"
+        }
+      ]
+    },
+    {
+      "name": "NewRequest",
+      "params": [
+        {
+          "name": "method",
+          "type": "string"
+        },
+        {
+          "name": "url",
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewRequestWithContext",
+      "params": [
+        {
+          "name": "ctx",
+          "type": "context.Context"
+        },
+        {
+          "name": "method",
+          "type": "string"
+        },
+        {
+          "name": "url",
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewResponseController",
+      "params": [
+        {
+          "name": "rw",
+          "type": "net/http.ResponseWriter"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.ResponseController"
+        }
+      ]
+    },
+    {
+      "name": "NewServeMux",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.ServeMux"
+        }
+      ]
+    },
+    {
+      "name": "NotFound",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "r",
+          "type": "*net/http.Request"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "NotFoundHandler",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "ParseCookie",
+      "params": [
+        {
+          "name": "line",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "[]*net/http.Cookie"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ParseHTTPVersion",
+      "params": [
+        {
+          "name": "vers",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "major",
+          "type": "int"
+        },
+        {
+          "name": "minor",
+          "type": "int"
+        },
+        {
+          "name": "ok",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "ParseSetCookie",
+      "params": [
+        {
+          "name": "line",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.Cookie"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ParseTime",
+      "params": [
+        {
+          "name": "text",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "t",
+          "type": "time.Time"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Post",
+      "params": [
+        {
+          "name": "url",
+          "type": "string"
+        },
+        {
+          "name": "contentType",
+          "type": "string"
+        },
+        {
+          "name": "body",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "resp",
+          "type": "*net/http.Response"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "PostForm",
+      "params": [
+        {
+          "name": "url",
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "type": "net/url.Values"
+        }
+      ],
+      "results": [
+        {
+          "name": "resp",
+          "type": "*net/http.Response"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ProxyFromEnvironment",
+      "params": [
+        {
+          "name": "req",
+          "type": "*net/http.Request"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/url.URL"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ProxyURL",
+      "params": [
+        {
+          "name": "fixedURL",
+          "type": "*net/url.URL"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "func(*net/http.Request) (*net/url.URL, error)"
+        }
+      ]
+    },
+    {
+      "name": "ReadRequest",
+      "params": [
+        {
+          "name": "b",
+          "type": "*bufio.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ReadResponse",
+      "params": [
+        {
+          "name": "r",
+          "type": "*bufio.Reader"
+        },
+        {
+          "name": "req",
+          "type": "*net/http.Request"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*net/http.Response"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Redirect",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "r",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "url",
+          "type": "string"
+        },
+        {
+          "name": "code",
+          "type": "int"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "RedirectHandler",
+      "params": [
+        {
+          "name": "url",
+          "type": "string"
+        },
+        {
+          "name": "code",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "Serve",
+      "params": [
+        {
+          "name": "l",
+          "type": "net.Listener"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ServeContent",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "req",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "modtime",
+          "type": "time.Time"
+        },
+        {
+          "name": "content",
+          "type": "io.ReadSeeker"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "ServeFile",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "r",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "ServeFileFS",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "r",
+          "type": "*net/http.Request"
+        },
+        {
+          "name": "fsys",
+          "type": "io/fs.FS"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "ServeTLS",
+      "params": [
+        {
+          "name": "l",
+          "type": "net.Listener"
+        },
+        {
+          "name": "handler",
+          "type": "net/http.Handler"
+        },
+        {
+          "name": "certFile",
+          "type": "string"
+        },
+        {
+          "name": "keyFile",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "SetCookie",
+      "params": [
+        {
+          "name": "w",
+          "type": "net/http.ResponseWriter"
+        },
+        {
+          "name": "cookie",
+          "type": "*net/http.Cookie"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "StatusText",
+      "params": [
+        {
+          "name": "code",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "StripPrefix",
+      "params": [
+        {
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "name": "h",
+          "type": "net/http.Handler"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    },
+    {
+      "name": "TimeoutHandler",
+      "params": [
+        {
+          "name": "h",
+          "type": "net/http.Handler"
+        },
+        {
+          "name": "dt",
+          "type": "time.Duration"
+        },
+        {
+          "name": "msg",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "net/http.Handler"
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "name": "DefaultClient",
+      "type": "*net/http.Client"
+    },
+    {
+      "name": "DefaultServeMux",
+      "type": "*net/http.ServeMux"
+    },
+    {
+      "name": "DefaultTransport",
+      "type": "net/http.RoundTripper"
+    },
+    {
+      "name": "ErrAbortHandler",
+      "type": "error"
+    },
+    {
+      "name": "ErrBodyNotAllowed",
+      "type": "error"
+    },
+    {
+      "name": "ErrBodyReadAfterClose",
+      "type": "error"
+    },
+    {
+      "name": "ErrContentLength",
+      "type": "error"
+    },
+    {
+      "name": "ErrHandlerTimeout",
+      "type": "error"
+    },
+    {
+      "name": "ErrHeaderTooLong",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrHijacked",
+      "type": "error"
+    },
+    {
+      "name": "ErrLineTooLong",
+      "type": "error"
+    },
+    {
+      "name": "ErrMissingBoundary",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrMissingContentLength",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrMissingFile",
+      "type": "error"
+    },
+    {
+      "name": "ErrNoCookie",
+      "type": "error"
+    },
+    {
+      "name": "ErrNoLocation",
+      "type": "error"
+    },
+    {
+      "name": "ErrNotMultipart",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrNotSupported",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrSchemeMismatch",
+      "type": "error"
+    },
+    {
+      "name": "ErrServerClosed",
+      "type": "error"
+    },
+    {
+      "name": "ErrShortBody",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrSkipAltProtocol",
+      "type": "error"
+    },
+    {
+      "name": "ErrUnexpectedTrailer",
+      "type": "*net/http.ProtocolError"
+    },
+    {
+      "name": "ErrUseLastResponse",
+      "type": "error"
+    },
+    {
+      "name": "ErrWriteAfterFlush",
+      "type": "error"
+    },
+    {
+      "name": "LocalAddrContextKey",
+      "type": "*net/http.contextKey"
+    },
+    {
+      "name": "NoBody",
+      "type": "net/http.noBody"
+    },
+    {
+      "name": "ServerContextKey",
+      "type": "*net/http.contextKey"
+    }
+  ],
+  "consts": [
+    {
+      "name": "DefaultMaxHeaderBytes",
+      "type": "untyped int",
+      "value": "1048576"
+    },
+    {
+      "name": "DefaultMaxIdleConnsPerHost",
+      "type": "untyped int",
+      "value": "2"
+    },
+    {
+      "name": "MethodConnect",
+      "type": "untyped string",
+      "value": "\"CONNECT\""
+    },
+    {
+      "name": "MethodDelete",
+      "type": "untyped string",
+      "value": "\"DELETE\""
+    },
+    {
+      "name": "MethodGet",
+      "type": "untyped string",
+      "value": "\"GET\""
+    },
+    {
+      "name": "MethodHead",
+      "type": "untyped string",
+      "value": "\"HEAD\""
+    },
+    {
+      "name": "MethodOptions",
+      "type": "untyped string",
+      "value": "\"OPTIONS\""
+    },
+    {
+      "name": "MethodPatch",
+      "type": "untyped string",
+      "value": "\"PATCH\""
+    },
+    {
+      "name": "MethodPost",
+      "type": "untyped string",
+      "value": "\"POST\""
+    },
+    {
+      "name": "MethodPut",
+      "type": "untyped string",
+      "value": "\"PUT\""
+    },
+    {
+      "name": "MethodTrace",
+      "type": "untyped string",
+      "value": "\"TRACE\""
+    },
+    {
+      "name": "SameSiteDefaultMode",
+      "type": "net/http.SameSite",
+      "value": "1"
+    },
+    {
+      "name": "SameSiteLaxMode",
+      "type": "net/http.SameSite",
+      "value": "2"
+    },
+    {
+      "name": "SameSiteNoneMode",
+      "type": "net/http.SameSite",
+      "value": "4"
+    },
+    {
+      "name": "SameSiteStrictMode",
+      "type": "net/http.SameSite",
+      "value": "3"
+    },
+    {
+      "name": "StateActive",
+      "type": "net/http.ConnState",
+      "value": "1"
+    },
+    {
+      "name": "StateClosed",
+      "type": "net/http.ConnState",
+      "value": "4"
+    },
+    {
+      "name": "StateHijacked",
+      "type": "net/http.ConnState",
+      "value": "3"
+    },
+    {
+      "name": "StateIdle",
+      "type": "net/http.ConnState",
+      "value": "2"
+    },
+    {
+      "name": "StateNew",
+      "type": "net/http.ConnState",
+      "value": "0"
+    },
+    {
+      "name": "StatusAccepted",
+      "type": "untyped int",
+      "value": "202"
+    },
+    {
+      "name": "StatusAlreadyReported",
+      "type": "untyped int",
+      "value": "208"
+    },
+    {
+      "name": "StatusBadGateway",
+      "type": "untyped int",
+      "value": "502"
+    },
+    {
+      "name": "StatusBadRequest",
+      "type": "untyped int",
+      "value": "400"
+    },
+    {
+      "name": "StatusConflict",
+      "type": "untyped int",
+      "value": "409"
+    },
+    {
+      "name": "StatusContinue",
+      "type": "untyped int",
+      "value": "100"
+    },
+    {
+      "name": "StatusCreated",
+      "type": "untyped int",
+      "value": "201"
+    },
+    {
+      "name": "StatusEarlyHints",
+      "type": "untyped int",
+      "value": "103"
+    },
+    {
+      "name": "StatusExpectationFailed",
+      "type": "untyped int",
+      "value": "417"
+    },
+    {
+      "name": "StatusFailedDependency",
+      "type": "untyped int",
+      "value": "424"
+    },
+    {
+      "name": "StatusForbidden",
+      "type": "untyped int",
+      "value": "403"
+    },
+    {
+      "name": "StatusFound",
+      "type": "untyped int",
+      "value": "302"
+    },
+    {
+      "name": "StatusGatewayTimeout",
+      "type": "untyped int",
+      "value": "504"
+    },
+    {
+      "name": "StatusGone",
+      "type": "untyped int",
+      "value": "410"
+    },
+    {
+      "name": "StatusHTTPVersionNotSupported",
+      "type": "untyped int",
+      "value": "505"
+    },
+    {
+      "name": "StatusIMUsed",
+      "type": "untyped int",
+      "value": "226"
+    },
+    {
+      "name": "StatusInsufficientStorage",
+      "type": "untyped int",
+      "value": "507"
+    },
+    {
+      "name": "StatusInternalServerError",
+      "type": "untyped int",
+      "value": "500"
+    },
+    {
+      "name": "StatusLengthRequired",
+      "type": "untyped int",
+      "value": "411"
+    },
+    {
+      "name": "StatusLocked",
+      "type": "untyped int",
+      "value": "423"
+    },
+    {
+      "name": "StatusLoopDetected",
+      "type": "untyped int",
+      "value": "508"
+    },
+    {
+      "name": "StatusMethodNotAllowed",
+      "type": "untyped int",
+      "value": "405"
+    },
+    {
+      "name": "StatusMisdirectedRequest",
+      "type": "untyped int",
+      "value": "421"
+    },
+    {
+      "name": "StatusMovedPermanently",
+      "type": "untyped int",
+      "value": "301"
+    },
+    {
+      "name": "StatusMultiStatus",
+      "type": "untyped int",
+      "value": "207"
+    },
+    {
+      "name": "StatusMultipleChoices",
+      "type": "untyped int",
+      "value": "300"
+    },
+    {
+      "name": "StatusNetworkAuthenticationRequired",
+      "type": "untyped int",
+      "value": "511"
+    },
+    {
+      "name": "StatusNoContent",
+      "type": "untyped int",
+      "value": "204"
+    },
+    {
+      "name": "StatusNonAuthoritativeInfo",
+      "type": "untyped int",
+      "value": "203"
+    },
+    {
+      "name": "StatusNotAcceptable",
+      "type": "untyped int",
+      "value": "406"
+    },
+    {
+      "name": "StatusNotExtended",
+      "type": "untyped int",
+      "value": "510"
+    },
+    {
+      "name": "StatusNotFound",
+      "type": "untyped int",
+      "value": "404"
+    },
+    {
+      "name": "StatusNotImplemented",
+      "type": "untyped int",
+      "value": "501"
+    },
+    {
+      "name": "StatusNotModified",
+      "type": "untyped int",
+      "value": "304"
+    },
+    {
+      "name": "StatusOK",
+      "type": "untyped int",
+      "value": "200"
+    },
+    {
+      "name": "StatusPartialContent",
+      "type": "untyped int",
+      "value": "206"
+    },
+    {
+      "name": "StatusPaymentRequired",
+      "type": "untyped int",
+      "value": "402"
+    },
+    {
+      "name": "StatusPermanentRedirect",
+      "type": "untyped int",
+      "value": "308"
+    },
+    {
+      "name": "StatusPreconditionFailed",
+      "type": "untyped int",
+      "value": "412"
+    },
+    {
+      "name": "StatusPreconditionRequired",
+      "type": "untyped int",
+      "value": "428"
+    },
+    {
+      "name": "StatusProcessing",
+      "type": "untyped int",
+      "value": "102"
+    },
+    {
+      "name": "StatusProxyAuthRequired",
+      "type": "untyped int",
+      "value": "407"
+    },
+    {
+      "name": "StatusRequestEntityTooLarge",
+      "type": "untyped int",
+      "value": "413"
+    },
+    {
+      "name": "StatusRequestHeaderFieldsTooLarge",
+      "type": "untyped int",
+      "value": "431"
+    },
+    {
+      "name": "StatusRequestTimeout",
+      "type": "untyped int",
+      "value": "408"
+    },
+    {
+      "name": "StatusRequestURITooLong",
+      "type": "untyped int",
+      "value": "414"
+    },
+    {
+      "name": "StatusRequestedRangeNotSatisfiable",
+      "type": "untyped int",
+      "value": "416"
+    },
+    {
+      "name": "StatusResetContent",
+      "type": "untyped int",
+      "value": "205"
+    },
+    {
+      "name": "StatusSeeOther",
+      "type": "untyped int",
+      "value": "303"
+    },
+    {
+      "name": "StatusServiceUnavailable",
+      "type": "untyped int",
+      "value": "503"
+    },
+    {
+      "name": "StatusSwitchingProtocols",
+      "type": "untyped int",
+      "value": "101"
+    },
+    {
+      "name": "StatusTeapot",
+      "type": "untyped int",
+      "value": "418"
+    },
+    {
+      "name": "StatusTemporaryRedirect",
+      "type": "untyped int",
+      "value": "307"
+    },
+    {
+      "name": "StatusTooEarly",
+      "type": "untyped int",
+      "value": "425"
+    },
+    {
+      "name": "StatusTooManyRequests",
+      "type": "untyped int",
+      "value": "429"
+    },
+    {
+      "name": "StatusUnauthorized",
+      "type": "untyped int",
+      "value": "401"
+    },
+    {
+      "name": "StatusUnavailableForLegalReasons",
+      "type": "untyped int",
+      "value": "451"
+    },
+    {
+      "name": "StatusUnprocessableEntity",
+      "type": "untyped int",
+      "value": "422"
+    },
+    {
+      "name": "StatusUnsupportedMediaType",
+      "type": "untyped int",
+      "value": "415"
+    },
+    {
+      "name": "StatusUpgradeRequired",
+      "type": "untyped int",
+      "value": "426"
+    },
+    {
+      "name": "StatusUseProxy",
+      "type": "untyped int",
+      "value": "305"
+    },
+    {
+      "name": "StatusVariantAlsoNegotiates",
+      "type": "untyped int",
+      "value": "506"
+    },
+    {
+      "name": "TimeFormat",
+      "type": "untyped string",
+      "value": "\"Mon, 02 Jan 2006 15:04:05 GMT\""
+    },
+    {
+      "name": "TrailerPrefix",
+      "type": "untyped string",
+      "value": "\"Trailer:\""
+    }
+  ]
+}

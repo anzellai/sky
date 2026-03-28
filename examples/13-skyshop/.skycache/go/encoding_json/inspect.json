@@ -1,0 +1,658 @@
+{
+  "name": "json",
+  "path": "encoding/json",
+  "types": [
+    {
+      "name": "Decoder",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Buffered",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "io.Reader"
+            }
+          ]
+        },
+        {
+          "name": "Decode",
+          "params": [
+            {
+              "name": "v",
+              "type": "any"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "DisallowUnknownFields",
+          "params": null,
+          "results": null
+        },
+        {
+          "name": "InputOffset",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "More",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Token",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "encoding/json.Token"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UseNumber",
+          "params": null,
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "Delim",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Encoder",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Encode",
+          "params": [
+            {
+              "name": "v",
+              "type": "any"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "SetEscapeHTML",
+          "params": [
+            {
+              "name": "on",
+              "type": "bool"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "SetIndent",
+          "params": [
+            {
+              "name": "prefix",
+              "type": "string"
+            },
+            {
+              "name": "indent",
+              "type": "string"
+            }
+          ],
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "InvalidUTF8Error",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "S",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "InvalidUnmarshalError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Type",
+          "type": "reflect.Type"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Marshaler",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "MarshalJSON",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "MarshalerError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Type",
+          "type": "reflect.Type"
+        },
+        {
+          "name": "Err",
+          "type": "error"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Unwrap",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Number",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "Float64",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "float64"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Int64",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "RawMessage",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "MarshalJSON",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalJSON",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "SyntaxError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Offset",
+          "type": "int64"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Token",
+      "kind": "interface"
+    },
+    {
+      "name": "UnmarshalFieldError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Key",
+          "type": "string"
+        },
+        {
+          "name": "Type",
+          "type": "reflect.Type"
+        },
+        {
+          "name": "Field",
+          "type": "reflect.StructField"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UnmarshalTypeError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Value",
+          "type": "string"
+        },
+        {
+          "name": "Type",
+          "type": "reflect.Type"
+        },
+        {
+          "name": "Offset",
+          "type": "int64"
+        },
+        {
+          "name": "Struct",
+          "type": "string"
+        },
+        {
+          "name": "Field",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Unmarshaler",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "UnmarshalJSON",
+          "params": [
+            {
+              "name": "",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UnsupportedTypeError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Type",
+          "type": "reflect.Type"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UnsupportedValueError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Value",
+          "type": "reflect.Value"
+        },
+        {
+          "name": "Str",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "Compact",
+      "params": [
+        {
+          "name": "dst",
+          "type": "*bytes.Buffer"
+        },
+        {
+          "name": "src",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "HTMLEscape",
+      "params": [
+        {
+          "name": "dst",
+          "type": "*bytes.Buffer"
+        },
+        {
+          "name": "src",
+          "type": "[]byte"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "Indent",
+      "params": [
+        {
+          "name": "dst",
+          "type": "*bytes.Buffer"
+        },
+        {
+          "name": "src",
+          "type": "[]byte"
+        },
+        {
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "name": "indent",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Marshal",
+      "params": [
+        {
+          "name": "v",
+          "type": "any"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "[]byte"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "MarshalIndent",
+      "params": [
+        {
+          "name": "v",
+          "type": "any"
+        },
+        {
+          "name": "prefix",
+          "type": "string"
+        },
+        {
+          "name": "indent",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "[]byte"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewDecoder",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*encoding/json.Decoder"
+        }
+      ]
+    },
+    {
+      "name": "NewEncoder",
+      "params": [
+        {
+          "name": "w",
+          "type": "io.Writer"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*encoding/json.Encoder"
+        }
+      ]
+    },
+    {
+      "name": "Unmarshal",
+      "params": [
+        {
+          "name": "data",
+          "type": "[]byte"
+        },
+        {
+          "name": "v",
+          "type": "any"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Valid",
+      "params": [
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    }
+  ],
+  "vars": null,
+  "consts": null
+}

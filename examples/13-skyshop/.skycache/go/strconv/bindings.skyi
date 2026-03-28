@@ -1,0 +1,112 @@
+module Strconv exposing (..)
+
+foreign import "strconv" exposing (..)
+
+appendBool : Bytes -> Bool -> Result String Bytes
+appendBool arg0 arg1 =
+    Sky_strconv_AppendBool arg0 arg1
+
+appendInt : Bytes -> Int -> Int -> Result String Bytes
+appendInt arg0 arg1 arg2 =
+    Sky_strconv_AppendInt arg0 arg1 arg2
+
+appendQuote : Bytes -> String -> Result String Bytes
+appendQuote arg0 arg1 =
+    Sky_strconv_AppendQuote arg0 arg1
+
+appendQuoteToASCII : Bytes -> String -> Result String Bytes
+appendQuoteToASCII arg0 arg1 =
+    Sky_strconv_AppendQuoteToASCII arg0 arg1
+
+appendQuoteToGraphic : Bytes -> String -> Result String Bytes
+appendQuoteToGraphic arg0 arg1 =
+    Sky_strconv_AppendQuoteToGraphic arg0 arg1
+
+appendUint : Bytes -> Int -> Int -> Result String Bytes
+appendUint arg0 arg1 arg2 =
+    Sky_strconv_AppendUint arg0 arg1 arg2
+
+atoi : String -> Result String Int
+atoi arg0 =
+    Sky_strconv_Atoi arg0
+
+canBackquote : String -> Result String Bool
+canBackquote arg0 =
+    Sky_strconv_CanBackquote arg0
+
+formatBool : Bool -> Result String String
+formatBool arg0 =
+    Sky_strconv_FormatBool arg0
+
+formatInt : Int -> Int -> Result String String
+formatInt arg0 arg1 =
+    Sky_strconv_FormatInt arg0 arg1
+
+formatUint : Int -> Int -> Result String String
+formatUint arg0 arg1 =
+    Sky_strconv_FormatUint arg0 arg1
+
+itoa : Int -> Result String String
+itoa arg0 =
+    Sky_strconv_Itoa arg0
+
+parseBool : String -> Result String Bool
+parseBool arg0 =
+    Sky_strconv_ParseBool arg0
+
+parseFloat : String -> Int -> Result String Float
+parseFloat arg0 arg1 =
+    Sky_strconv_ParseFloat arg0 arg1
+
+parseInt : String -> Int -> Int -> Result String Int
+parseInt arg0 arg1 arg2 =
+    Sky_strconv_ParseInt arg0 arg1 arg2
+
+parseUint : String -> Int -> Int -> Result String Int
+parseUint arg0 arg1 arg2 =
+    Sky_strconv_ParseUint arg0 arg1 arg2
+
+quote : String -> Result String String
+quote arg0 =
+    Sky_strconv_Quote arg0
+
+quoteToASCII : String -> Result String String
+quoteToASCII arg0 =
+    Sky_strconv_QuoteToASCII arg0
+
+quoteToGraphic : String -> Result String String
+quoteToGraphic arg0 =
+    Sky_strconv_QuoteToGraphic arg0
+
+quotedPrefix : String -> Result String String
+quotedPrefix arg0 =
+    Sky_strconv_QuotedPrefix arg0
+
+unquote : String -> Result String String
+unquote arg0 =
+    Sky_strconv_Unquote arg0
+
+type NumError = NumError
+
+numErrorFunc : Any -> String
+numErrorFunc receiver =
+    Sky_strconv_FIELD_NumError_Func receiver
+
+numErrorNum : Any -> String
+numErrorNum receiver =
+    Sky_strconv_FIELD_NumError_Num receiver
+
+numErrorErr : Any -> Error
+numErrorErr receiver =
+    Sky_strconv_FIELD_NumError_Err receiver
+
+numErrorError : NumError -> Result String String
+numErrorError receiver =
+    Sky_strconv_NumErrorError receiver
+
+numErrorUnwrap : NumError -> Result String ()
+numErrorUnwrap receiver =
+    Sky_strconv_NumErrorUnwrap receiver
+
+
+

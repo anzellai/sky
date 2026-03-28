@@ -1,0 +1,426 @@
+{
+  "name": "session",
+  "path": "github.com/stripe/stripe-go/v84/checkout/session",
+  "types": [
+    {
+      "name": "Client",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "B",
+          "type": "github.com/stripe/stripe-go/v84.Backend"
+        },
+        {
+          "name": "Key",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Expire",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionExpireParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Get",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "params": [
+            {
+              "name": "listParams",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionListParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84/checkout/session.Iter"
+            }
+          ]
+        },
+        {
+          "name": "ListLineItems",
+          "params": [
+            {
+              "name": "listParams",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionListLineItemsParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84/checkout/session.LineItemIter"
+            }
+          ]
+        },
+        {
+          "name": "New",
+          "params": [
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Update",
+          "params": [
+            {
+              "name": "id",
+              "type": "string"
+            },
+            {
+              "name": "params",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionParams"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Iter",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Iter",
+          "type": "*github.com/stripe/stripe-go/v84.Iter"
+        }
+      ],
+      "methods": [
+        {
+          "name": "CheckoutSession",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+            }
+          ]
+        },
+        {
+          "name": "CheckoutSessionList",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionList"
+            }
+          ]
+        },
+        {
+          "name": "Current",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "interface{}"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/stripe/stripe-go/v84.ListContainer"
+            }
+          ]
+        },
+        {
+          "name": "Meta",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.ListMeta"
+            }
+          ]
+        },
+        {
+          "name": "Next",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "LineItemIter",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Iter",
+          "type": "*github.com/stripe/stripe-go/v84.Iter"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Current",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "interface{}"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "LineItem",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.LineItem"
+            }
+          ]
+        },
+        {
+          "name": "LineItemList",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.LineItemList"
+            }
+          ]
+        },
+        {
+          "name": "List",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/stripe/stripe-go/v84.ListContainer"
+            }
+          ]
+        },
+        {
+          "name": "Meta",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*github.com/stripe/stripe-go/v84.ListMeta"
+            }
+          ]
+        },
+        {
+          "name": "Next",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "Expire",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionExpireParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Get",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "List",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionListParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84/checkout/session.Iter"
+        }
+      ]
+    },
+    {
+      "name": "ListLineItems",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionListLineItemsParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84/checkout/session.LineItemIter"
+        }
+      ]
+    },
+    {
+      "name": "New",
+      "params": [
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Update",
+      "params": [
+        {
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "name": "params",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSessionParams"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*github.com/stripe/stripe-go/v84.CheckoutSession"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    }
+  ],
+  "vars": null,
+  "consts": null
+}

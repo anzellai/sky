@@ -1,0 +1,196 @@
+module Github.Com.Stripe.StripeGo.V84.Customer exposing (..)
+
+foreign import "github.com/stripe/stripe-go/v84/customer" exposing (..)
+
+createFundingInstructions : String -> CustomerCreateFundingInstructionsParams -> Result String FundingInstructions
+createFundingInstructions arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_CreateFundingInstructions arg0 arg1
+
+del : String -> CustomerParams -> Result String Customer
+del arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_Del arg0 arg1
+
+deleteDiscount : String -> CustomerDeleteDiscountParams -> Result String Customer
+deleteDiscount arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_DeleteDiscount arg0 arg1
+
+get : String -> CustomerParams -> Result String Customer
+get arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_Get arg0 arg1
+
+list : CustomerListParams -> Iter
+list arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_List arg0
+
+listPaymentMethods : CustomerListPaymentMethodsParams -> PaymentMethodIter
+listPaymentMethods arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ListPaymentMethods arg0
+
+new : CustomerParams -> Result String Customer
+new arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_New arg0
+
+retrievePaymentMethod : String -> CustomerRetrievePaymentMethodParams -> Result String PaymentMethod
+retrievePaymentMethod arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_RetrievePaymentMethod arg0 arg1
+
+search : CustomerSearchParams -> SearchIter
+search arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_Search arg0
+
+update : String -> CustomerParams -> Result String Customer
+update arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_Update arg0 arg1
+
+type Client = Client
+
+type Iter = Iter
+
+type PaymentMethodIter = PaymentMethodIter
+
+type SearchIter = SearchIter
+
+clientB : Any -> Backend
+clientB receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_FIELD_Client_B receiver
+
+clientKey : Any -> String
+clientKey receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_FIELD_Client_Key receiver
+
+iterIter : Any -> Iter
+iterIter receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_FIELD_Iter_Iter receiver
+
+paymentMethodIterIter : Any -> Iter
+paymentMethodIterIter receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_FIELD_PaymentMethodIter_Iter receiver
+
+searchIterSearchIter : Any -> SearchIter
+searchIterSearchIter receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_FIELD_SearchIter_SearchIter receiver
+
+clientCreateFundingInstructions : Client -> String -> CustomerCreateFundingInstructionsParams -> Result String FundingInstructions
+clientCreateFundingInstructions receiver arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientCreateFundingInstructions receiver arg0 arg1
+
+clientDel : Client -> String -> CustomerParams -> Result String Customer
+clientDel receiver arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientDel receiver arg0 arg1
+
+clientDeleteDiscount : Client -> String -> CustomerDeleteDiscountParams -> Result String Customer
+clientDeleteDiscount receiver arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientDeleteDiscount receiver arg0 arg1
+
+clientGet : Client -> String -> CustomerParams -> Result String Customer
+clientGet receiver arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientGet receiver arg0 arg1
+
+clientList : Client -> CustomerListParams -> Iter
+clientList receiver arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientList receiver arg0
+
+clientListPaymentMethods : Client -> CustomerListPaymentMethodsParams -> PaymentMethodIter
+clientListPaymentMethods receiver arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientListPaymentMethods receiver arg0
+
+clientNew : Client -> CustomerParams -> Result String Customer
+clientNew receiver arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientNew receiver arg0
+
+clientRetrievePaymentMethod : Client -> String -> CustomerRetrievePaymentMethodParams -> Result String PaymentMethod
+clientRetrievePaymentMethod receiver arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientRetrievePaymentMethod receiver arg0 arg1
+
+clientSearch : Client -> CustomerSearchParams -> SearchIter
+clientSearch receiver arg0 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientSearch receiver arg0
+
+clientUpdate : Client -> String -> CustomerParams -> Result String Customer
+clientUpdate receiver arg0 arg1 =
+    Sky_github_com_stripe_stripe_go_v84_customer_ClientUpdate receiver arg0 arg1
+
+iterCurrent : Iter -> Any
+iterCurrent receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterCurrent receiver
+
+iterCustomer : Iter -> Customer
+iterCustomer receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterCustomer receiver
+
+iterCustomerList : Iter -> CustomerList
+iterCustomerList receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterCustomerList receiver
+
+iterErr : Iter -> Result String ()
+iterErr receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterErr receiver
+
+iterList : Iter -> ListContainer
+iterList receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterList receiver
+
+iterMeta : Iter -> ListMeta
+iterMeta receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterMeta receiver
+
+iterNext : Iter -> Bool
+iterNext receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_IterNext receiver
+
+paymentMethodIterCurrent : PaymentMethodIter -> Any
+paymentMethodIterCurrent receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterCurrent receiver
+
+paymentMethodIterErr : PaymentMethodIter -> Result String ()
+paymentMethodIterErr receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterErr receiver
+
+paymentMethodIterList : PaymentMethodIter -> ListContainer
+paymentMethodIterList receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterList receiver
+
+paymentMethodIterMeta : PaymentMethodIter -> ListMeta
+paymentMethodIterMeta receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterMeta receiver
+
+paymentMethodIterNext : PaymentMethodIter -> Bool
+paymentMethodIterNext receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterNext receiver
+
+paymentMethodIterPaymentMethod : PaymentMethodIter -> PaymentMethod
+paymentMethodIterPaymentMethod receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterPaymentMethod receiver
+
+paymentMethodIterPaymentMethodList : PaymentMethodIter -> PaymentMethodList
+paymentMethodIterPaymentMethodList receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterPaymentMethodList receiver
+
+searchIterCurrent : SearchIter -> Any
+searchIterCurrent receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterCurrent receiver
+
+searchIterCustomer : SearchIter -> Customer
+searchIterCustomer receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterCustomer receiver
+
+searchIterCustomerSearchResult : SearchIter -> CustomerSearchResult
+searchIterCustomerSearchResult receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterCustomerSearchResult receiver
+
+searchIterErr : SearchIter -> Result String ()
+searchIterErr receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterErr receiver
+
+searchIterMeta : SearchIter -> SearchMeta
+searchIterMeta receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterMeta receiver
+
+searchIterNext : SearchIter -> Bool
+searchIterNext receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterNext receiver
+
+searchIterSearchResult : SearchIter -> SearchContainer
+searchIterSearchResult receiver =
+    Sky_github_com_stripe_stripe_go_v84_customer_SearchIterSearchResult receiver
+

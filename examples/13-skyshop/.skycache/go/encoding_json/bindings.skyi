@@ -1,0 +1,222 @@
+module Encoding.Json exposing (..)
+
+foreign import "encoding/json" exposing (..)
+
+marshal : Any -> Result String Bytes
+marshal arg0 =
+    Sky_encoding_json_Marshal arg0
+
+marshalIndent : Any -> String -> String -> Result String Bytes
+marshalIndent arg0 arg1 arg2 =
+    Sky_encoding_json_MarshalIndent arg0 arg1 arg2
+
+unmarshal : Bytes -> Any -> Result String ()
+unmarshal arg0 arg1 =
+    Sky_encoding_json_Unmarshal arg0 arg1
+
+valid : Bytes -> Result String Bool
+valid arg0 =
+    Sky_encoding_json_Valid arg0
+
+type Decoder = Decoder
+
+type Delim = Delim
+
+type Encoder = Encoder
+
+type InvalidUTF8Error = InvalidUTF8Error
+
+type InvalidUnmarshalError = InvalidUnmarshalError
+
+type Marshaler = Marshaler
+
+type MarshalerError = MarshalerError
+
+type Number = Number
+
+type RawMessage = RawMessage
+
+type SyntaxError = SyntaxError
+
+type Token = Token
+
+type UnmarshalFieldError = UnmarshalFieldError
+
+type UnmarshalTypeError = UnmarshalTypeError
+
+type Unmarshaler = Unmarshaler
+
+type UnsupportedTypeError = UnsupportedTypeError
+
+type UnsupportedValueError = UnsupportedValueError
+
+invalidUTF8ErrorS : Any -> String
+invalidUTF8ErrorS receiver =
+    Sky_encoding_json_FIELD_InvalidUTF8Error_S receiver
+
+invalidUnmarshalErrorType : Any -> Type
+invalidUnmarshalErrorType receiver =
+    Sky_encoding_json_FIELD_InvalidUnmarshalError_Type receiver
+
+marshalerErrorType : Any -> Type
+marshalerErrorType receiver =
+    Sky_encoding_json_FIELD_MarshalerError_Type receiver
+
+marshalerErrorErr : Any -> Error
+marshalerErrorErr receiver =
+    Sky_encoding_json_FIELD_MarshalerError_Err receiver
+
+syntaxErrorOffset : Any -> Int
+syntaxErrorOffset receiver =
+    Sky_encoding_json_FIELD_SyntaxError_Offset receiver
+
+unmarshalFieldErrorKey : Any -> String
+unmarshalFieldErrorKey receiver =
+    Sky_encoding_json_FIELD_UnmarshalFieldError_Key receiver
+
+unmarshalFieldErrorType : Any -> Type
+unmarshalFieldErrorType receiver =
+    Sky_encoding_json_FIELD_UnmarshalFieldError_Type receiver
+
+unmarshalFieldErrorField : Any -> StructField
+unmarshalFieldErrorField receiver =
+    Sky_encoding_json_FIELD_UnmarshalFieldError_Field receiver
+
+unmarshalTypeErrorValue : Any -> String
+unmarshalTypeErrorValue receiver =
+    Sky_encoding_json_FIELD_UnmarshalTypeError_Value receiver
+
+unmarshalTypeErrorType : Any -> Type
+unmarshalTypeErrorType receiver =
+    Sky_encoding_json_FIELD_UnmarshalTypeError_Type receiver
+
+unmarshalTypeErrorOffset : Any -> Int
+unmarshalTypeErrorOffset receiver =
+    Sky_encoding_json_FIELD_UnmarshalTypeError_Offset receiver
+
+unmarshalTypeErrorStruct : Any -> String
+unmarshalTypeErrorStruct receiver =
+    Sky_encoding_json_FIELD_UnmarshalTypeError_Struct receiver
+
+unmarshalTypeErrorField : Any -> String
+unmarshalTypeErrorField receiver =
+    Sky_encoding_json_FIELD_UnmarshalTypeError_Field receiver
+
+unsupportedTypeErrorType : Any -> Type
+unsupportedTypeErrorType receiver =
+    Sky_encoding_json_FIELD_UnsupportedTypeError_Type receiver
+
+unsupportedValueErrorValue : Any -> Value
+unsupportedValueErrorValue receiver =
+    Sky_encoding_json_FIELD_UnsupportedValueError_Value receiver
+
+unsupportedValueErrorStr : Any -> String
+unsupportedValueErrorStr receiver =
+    Sky_encoding_json_FIELD_UnsupportedValueError_Str receiver
+
+decoderDecode : Decoder -> Any -> Result String ()
+decoderDecode receiver arg0 =
+    Sky_encoding_json_DecoderDecode receiver arg0
+
+decoderDisallowUnknownFields : Decoder -> Result String ()
+decoderDisallowUnknownFields receiver =
+    Sky_encoding_json_DecoderDisallowUnknownFields receiver
+
+decoderInputOffset : Decoder -> Result String Int
+decoderInputOffset receiver =
+    Sky_encoding_json_DecoderInputOffset receiver
+
+decoderMore : Decoder -> Result String Bool
+decoderMore receiver =
+    Sky_encoding_json_DecoderMore receiver
+
+decoderToken : Decoder -> Result String Token
+decoderToken receiver =
+    Sky_encoding_json_DecoderToken receiver
+
+decoderUseNumber : Decoder -> Result String ()
+decoderUseNumber receiver =
+    Sky_encoding_json_DecoderUseNumber receiver
+
+delimString : Delim -> Result String String
+delimString receiver =
+    Sky_encoding_json_DelimString receiver
+
+encoderEncode : Encoder -> Any -> Result String ()
+encoderEncode receiver arg0 =
+    Sky_encoding_json_EncoderEncode receiver arg0
+
+encoderSetEscapeHTML : Encoder -> Bool -> Result String ()
+encoderSetEscapeHTML receiver arg0 =
+    Sky_encoding_json_EncoderSetEscapeHTML receiver arg0
+
+encoderSetIndent : Encoder -> String -> String -> Result String ()
+encoderSetIndent receiver arg0 arg1 =
+    Sky_encoding_json_EncoderSetIndent receiver arg0 arg1
+
+invalidUTF8ErrorError : InvalidUTF8Error -> Result String String
+invalidUTF8ErrorError receiver =
+    Sky_encoding_json_InvalidUTF8ErrorError receiver
+
+invalidUnmarshalErrorError : InvalidUnmarshalError -> Result String String
+invalidUnmarshalErrorError receiver =
+    Sky_encoding_json_InvalidUnmarshalErrorError receiver
+
+marshalerMarshalJSON : Marshaler -> Result String Bytes
+marshalerMarshalJSON receiver =
+    Sky_encoding_json_MarshalerMarshalJSON receiver
+
+marshalerErrorError : MarshalerError -> Result String String
+marshalerErrorError receiver =
+    Sky_encoding_json_MarshalerErrorError receiver
+
+marshalerErrorUnwrap : MarshalerError -> Result String ()
+marshalerErrorUnwrap receiver =
+    Sky_encoding_json_MarshalerErrorUnwrap receiver
+
+numberFloat64 : Number -> Result String Float
+numberFloat64 receiver =
+    Sky_encoding_json_NumberFloat64 receiver
+
+numberInt64 : Number -> Result String Int
+numberInt64 receiver =
+    Sky_encoding_json_NumberInt64 receiver
+
+numberString : Number -> Result String String
+numberString receiver =
+    Sky_encoding_json_NumberString receiver
+
+rawMessageMarshalJSON : RawMessage -> Result String Bytes
+rawMessageMarshalJSON receiver =
+    Sky_encoding_json_RawMessageMarshalJSON receiver
+
+rawMessageUnmarshalJSON : RawMessage -> Bytes -> Result String ()
+rawMessageUnmarshalJSON receiver arg0 =
+    Sky_encoding_json_RawMessageUnmarshalJSON receiver arg0
+
+syntaxErrorError : SyntaxError -> Result String String
+syntaxErrorError receiver =
+    Sky_encoding_json_SyntaxErrorError receiver
+
+unmarshalFieldErrorError : UnmarshalFieldError -> Result String String
+unmarshalFieldErrorError receiver =
+    Sky_encoding_json_UnmarshalFieldErrorError receiver
+
+unmarshalTypeErrorError : UnmarshalTypeError -> Result String String
+unmarshalTypeErrorError receiver =
+    Sky_encoding_json_UnmarshalTypeErrorError receiver
+
+unmarshalerUnmarshalJSON : Unmarshaler -> Bytes -> Result String ()
+unmarshalerUnmarshalJSON receiver arg0 =
+    Sky_encoding_json_UnmarshalerUnmarshalJSON receiver arg0
+
+unsupportedTypeErrorError : UnsupportedTypeError -> Result String String
+unsupportedTypeErrorError receiver =
+    Sky_encoding_json_UnsupportedTypeErrorError receiver
+
+unsupportedValueErrorError : UnsupportedValueError -> Result String String
+unsupportedValueErrorError receiver =
+    Sky_encoding_json_UnsupportedValueErrorError receiver
+
+
+

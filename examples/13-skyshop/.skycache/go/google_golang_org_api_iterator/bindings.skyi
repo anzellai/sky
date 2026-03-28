@@ -1,0 +1,38 @@
+module Google.Golang.Org.Api.Iterator exposing (..)
+
+foreign import "google.golang.org/api/iterator" exposing (..)
+
+newPager : Pageable -> Int -> String -> Result String Pager
+newPager arg0 arg1 arg2 =
+    Sky_google_golang_org_api_iterator_NewPager arg0 arg1 arg2
+
+type PageInfo = PageInfo
+
+type Pageable = Pageable
+
+type Pager = Pager
+
+pageInfoToken : Any -> String
+pageInfoToken receiver =
+    Sky_google_golang_org_api_iterator_FIELD_PageInfo_Token receiver
+
+pageInfoMaxSize : Any -> Int
+pageInfoMaxSize receiver =
+    Sky_google_golang_org_api_iterator_FIELD_PageInfo_MaxSize receiver
+
+pageInfoRemaining : PageInfo -> Result String Int
+pageInfoRemaining receiver =
+    Sky_google_golang_org_api_iterator_PageInfoRemaining receiver
+
+pageablePageInfo : Pageable -> Result String PageInfo
+pageablePageInfo receiver =
+    Sky_google_golang_org_api_iterator_PageablePageInfo receiver
+
+pagerNextPage : Pager -> Any -> Result String String
+pagerNextPage receiver arg0 =
+    Sky_google_golang_org_api_iterator_PagerNextPage receiver arg0
+
+newPageInfo : () -> Any
+newPageInfo _ =
+    Sky_google_golang_org_api_iterator_NewPageInfo
+

@@ -1,0 +1,289 @@
+module Github.Com.Google.Uuid exposing (..)
+
+foreign import "github.com/google/uuid" exposing (..)
+
+clockSequence : () -> Result String Int
+clockSequence _ =
+    Sky_github_com_google_uuid_ClockSequence ()
+
+disableRandPool : () -> Result String ()
+disableRandPool _ =
+    Sky_github_com_google_uuid_DisableRandPool ()
+
+enableRandPool : () -> Result String ()
+enableRandPool _ =
+    Sky_github_com_google_uuid_EnableRandPool ()
+
+fromBytes : Bytes -> Result String UUID
+fromBytes arg0 =
+    Sky_github_com_google_uuid_FromBytes arg0
+
+isInvalidLengthError : Error -> Result String Bool
+isInvalidLengthError arg0 =
+    Sky_github_com_google_uuid_IsInvalidLengthError arg0
+
+must : UUID -> Error -> Result String UUID
+must arg0 arg1 =
+    Sky_github_com_google_uuid_Must arg0 arg1
+
+mustParse : String -> Result String UUID
+mustParse arg0 =
+    Sky_github_com_google_uuid_MustParse arg0
+
+new : () -> Result String UUID
+new _ =
+    Sky_github_com_google_uuid_New ()
+
+newDCEGroup : () -> Result String UUID
+newDCEGroup _ =
+    Sky_github_com_google_uuid_NewDCEGroup ()
+
+newDCEPerson : () -> Result String UUID
+newDCEPerson _ =
+    Sky_github_com_google_uuid_NewDCEPerson ()
+
+newDCESecurity : Domain -> Int -> Result String UUID
+newDCESecurity arg0 arg1 =
+    Sky_github_com_google_uuid_NewDCESecurity arg0 arg1
+
+newMD5 : UUID -> Bytes -> Result String UUID
+newMD5 arg0 arg1 =
+    Sky_github_com_google_uuid_NewMD5 arg0 arg1
+
+newRandom : () -> Result String UUID
+newRandom _ =
+    Sky_github_com_google_uuid_NewRandom ()
+
+newSHA1 : UUID -> Bytes -> Result String UUID
+newSHA1 arg0 arg1 =
+    Sky_github_com_google_uuid_NewSHA1 arg0 arg1
+
+newString : () -> Result String String
+newString _ =
+    Sky_github_com_google_uuid_NewString ()
+
+newUUID : () -> Result String UUID
+newUUID _ =
+    Sky_github_com_google_uuid_NewUUID ()
+
+newV6 : () -> Result String UUID
+newV6 _ =
+    Sky_github_com_google_uuid_NewV6 ()
+
+newV7 : () -> Result String UUID
+newV7 _ =
+    Sky_github_com_google_uuid_NewV7 ()
+
+nodeID : () -> Result String Bytes
+nodeID _ =
+    Sky_github_com_google_uuid_NodeID ()
+
+nodeInterface : () -> Result String String
+nodeInterface _ =
+    Sky_github_com_google_uuid_NodeInterface ()
+
+parse : String -> Result String UUID
+parse arg0 =
+    Sky_github_com_google_uuid_Parse arg0
+
+parseBytes : Bytes -> Result String UUID
+parseBytes arg0 =
+    Sky_github_com_google_uuid_ParseBytes arg0
+
+setClockSequence : Int -> Result String ()
+setClockSequence arg0 =
+    Sky_github_com_google_uuid_SetClockSequence arg0
+
+setNodeID : Bytes -> Result String Bool
+setNodeID arg0 =
+    Sky_github_com_google_uuid_SetNodeID arg0
+
+setNodeInterface : String -> Result String Bool
+setNodeInterface arg0 =
+    Sky_github_com_google_uuid_SetNodeInterface arg0
+
+validate : String -> Result String ()
+validate arg0 =
+    Sky_github_com_google_uuid_Validate arg0
+
+type Domain = Domain
+
+type NullUUID = NullUUID
+
+type Time = Time
+
+type UUID = UUID
+
+type UUIDs = UUIDs
+
+type Variant = Variant
+
+type Version = Version
+
+nullUUIDUUID : Any -> UUID
+nullUUIDUUID receiver =
+    Sky_github_com_google_uuid_FIELD_NullUUID_UUID receiver
+
+nullUUIDValid : Any -> Bool
+nullUUIDValid receiver =
+    Sky_github_com_google_uuid_FIELD_NullUUID_Valid receiver
+
+domainString : Domain -> Result String String
+domainString receiver =
+    Sky_github_com_google_uuid_DomainString receiver
+
+nullUUIDMarshalBinary : NullUUID -> Result String Bytes
+nullUUIDMarshalBinary receiver =
+    Sky_github_com_google_uuid_NullUUIDMarshalBinary receiver
+
+nullUUIDMarshalJSON : NullUUID -> Result String Bytes
+nullUUIDMarshalJSON receiver =
+    Sky_github_com_google_uuid_NullUUIDMarshalJSON receiver
+
+nullUUIDMarshalText : NullUUID -> Result String Bytes
+nullUUIDMarshalText receiver =
+    Sky_github_com_google_uuid_NullUUIDMarshalText receiver
+
+nullUUIDScan : NullUUID -> Any -> Result String ()
+nullUUIDScan receiver arg0 =
+    Sky_github_com_google_uuid_NullUUIDScan receiver arg0
+
+nullUUIDUnmarshalBinary : NullUUID -> Bytes -> Result String ()
+nullUUIDUnmarshalBinary receiver arg0 =
+    Sky_github_com_google_uuid_NullUUIDUnmarshalBinary receiver arg0
+
+nullUUIDUnmarshalJSON : NullUUID -> Bytes -> Result String ()
+nullUUIDUnmarshalJSON receiver arg0 =
+    Sky_github_com_google_uuid_NullUUIDUnmarshalJSON receiver arg0
+
+nullUUIDUnmarshalText : NullUUID -> Bytes -> Result String ()
+nullUUIDUnmarshalText receiver arg0 =
+    Sky_github_com_google_uuid_NullUUIDUnmarshalText receiver arg0
+
+timeUnixTime : Time -> Result String (Int, Int)
+timeUnixTime receiver =
+    Sky_github_com_google_uuid_TimeUnixTime receiver
+
+uUIDClockSequence : UUID -> Result String Int
+uUIDClockSequence receiver =
+    Sky_github_com_google_uuid_UUIDClockSequence receiver
+
+uUIDDomain : UUID -> Result String Domain
+uUIDDomain receiver =
+    Sky_github_com_google_uuid_UUIDDomain receiver
+
+uUIDID : UUID -> Result String Int
+uUIDID receiver =
+    Sky_github_com_google_uuid_UUIDID receiver
+
+uUIDMarshalBinary : UUID -> Result String Bytes
+uUIDMarshalBinary receiver =
+    Sky_github_com_google_uuid_UUIDMarshalBinary receiver
+
+uUIDMarshalText : UUID -> Result String Bytes
+uUIDMarshalText receiver =
+    Sky_github_com_google_uuid_UUIDMarshalText receiver
+
+uUIDNodeID : UUID -> Result String Bytes
+uUIDNodeID receiver =
+    Sky_github_com_google_uuid_UUIDNodeID receiver
+
+uUIDScan : UUID -> Any -> Result String ()
+uUIDScan receiver arg0 =
+    Sky_github_com_google_uuid_UUIDScan receiver arg0
+
+uUIDString : UUID -> Result String String
+uUIDString receiver =
+    Sky_github_com_google_uuid_UUIDString receiver
+
+uUIDTime : UUID -> Result String Time
+uUIDTime receiver =
+    Sky_github_com_google_uuid_UUIDTime receiver
+
+uUIDURN : UUID -> Result String String
+uUIDURN receiver =
+    Sky_github_com_google_uuid_UUIDURN receiver
+
+uUIDUnmarshalBinary : UUID -> Bytes -> Result String ()
+uUIDUnmarshalBinary receiver arg0 =
+    Sky_github_com_google_uuid_UUIDUnmarshalBinary receiver arg0
+
+uUIDUnmarshalText : UUID -> Bytes -> Result String ()
+uUIDUnmarshalText receiver arg0 =
+    Sky_github_com_google_uuid_UUIDUnmarshalText receiver arg0
+
+uUIDVariant : UUID -> Result String Variant
+uUIDVariant receiver =
+    Sky_github_com_google_uuid_UUIDVariant receiver
+
+uUIDVersion : UUID -> Result String Version
+uUIDVersion receiver =
+    Sky_github_com_google_uuid_UUIDVersion receiver
+
+uUIDsStrings : UUIDs -> Result String List String
+uUIDsStrings receiver =
+    Sky_github_com_google_uuid_UUIDsStrings receiver
+
+variantString : Variant -> Result String String
+variantString receiver =
+    Sky_github_com_google_uuid_VariantString receiver
+
+versionString : Version -> Result String String
+versionString receiver =
+    Sky_github_com_google_uuid_VersionString receiver
+
+max : () -> UUID
+max _ =
+    Sky_github_com_google_uuid_Max
+
+nameSpaceDNS : () -> UUID
+nameSpaceDNS _ =
+    Sky_github_com_google_uuid_NameSpaceDNS
+
+nameSpaceOID : () -> UUID
+nameSpaceOID _ =
+    Sky_github_com_google_uuid_NameSpaceOID
+
+nameSpaceURL : () -> UUID
+nameSpaceURL _ =
+    Sky_github_com_google_uuid_NameSpaceURL
+
+nameSpaceX500 : () -> UUID
+nameSpaceX500 _ =
+    Sky_github_com_google_uuid_NameSpaceX500
+
+nil : () -> UUID
+nil _ =
+    Sky_github_com_google_uuid_Nil
+
+future : Variant
+future =
+    Sky_github_com_google_uuid_Future
+
+group : Domain
+group =
+    Sky_github_com_google_uuid_Group
+
+invalid : Variant
+invalid =
+    Sky_github_com_google_uuid_Invalid
+
+microsoft : Variant
+microsoft =
+    Sky_github_com_google_uuid_Microsoft
+
+org : Domain
+org =
+    Sky_github_com_google_uuid_Org
+
+person : Domain
+person =
+    Sky_github_com_google_uuid_Person
+
+rFC4122 : Variant
+rFC4122 =
+    Sky_github_com_google_uuid_RFC4122
+
+reserved : Variant
+reserved =
+    Sky_github_com_google_uuid_Reserved

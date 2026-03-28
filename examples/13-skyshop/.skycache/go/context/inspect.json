@@ -1,0 +1,312 @@
+{
+  "name": "context",
+  "path": "context",
+  "types": [
+    {
+      "name": "CancelCauseFunc",
+      "kind": "other"
+    },
+    {
+      "name": "CancelFunc",
+      "kind": "other"
+    },
+    {
+      "name": "Context",
+      "kind": "interface",
+      "methods": [
+        {
+          "name": "Deadline",
+          "params": null,
+          "results": [
+            {
+              "name": "deadline",
+              "type": "time.Time"
+            },
+            {
+              "name": "ok",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Done",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "\u003c-chan struct{}"
+            }
+          ]
+        },
+        {
+          "name": "Err",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Value",
+          "params": [
+            {
+              "name": "key",
+              "type": "any"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "any"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "AfterFunc",
+      "params": [
+        {
+          "name": "ctx",
+          "type": "context.Context"
+        },
+        {
+          "name": "f",
+          "type": "func()"
+        }
+      ],
+      "results": [
+        {
+          "name": "stop",
+          "type": "func() bool"
+        }
+      ]
+    },
+    {
+      "name": "Background",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        }
+      ]
+    },
+    {
+      "name": "Cause",
+      "params": [
+        {
+          "name": "c",
+          "type": "context.Context"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "TODO",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        }
+      ]
+    },
+    {
+      "name": "WithCancel",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        }
+      ],
+      "results": [
+        {
+          "name": "ctx",
+          "type": "context.Context"
+        },
+        {
+          "name": "cancel",
+          "type": "context.CancelFunc"
+        }
+      ]
+    },
+    {
+      "name": "WithCancelCause",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        }
+      ],
+      "results": [
+        {
+          "name": "ctx",
+          "type": "context.Context"
+        },
+        {
+          "name": "cancel",
+          "type": "context.CancelCauseFunc"
+        }
+      ]
+    },
+    {
+      "name": "WithDeadline",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        },
+        {
+          "name": "d",
+          "type": "time.Time"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        },
+        {
+          "name": "",
+          "type": "context.CancelFunc"
+        }
+      ]
+    },
+    {
+      "name": "WithDeadlineCause",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        },
+        {
+          "name": "d",
+          "type": "time.Time"
+        },
+        {
+          "name": "cause",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        },
+        {
+          "name": "",
+          "type": "context.CancelFunc"
+        }
+      ]
+    },
+    {
+      "name": "WithTimeout",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        },
+        {
+          "name": "timeout",
+          "type": "time.Duration"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        },
+        {
+          "name": "",
+          "type": "context.CancelFunc"
+        }
+      ]
+    },
+    {
+      "name": "WithTimeoutCause",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        },
+        {
+          "name": "timeout",
+          "type": "time.Duration"
+        },
+        {
+          "name": "cause",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        },
+        {
+          "name": "",
+          "type": "context.CancelFunc"
+        }
+      ]
+    },
+    {
+      "name": "WithValue",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        },
+        {
+          "name": "key",
+          "type": "any"
+        },
+        {
+          "name": "val",
+          "type": "any"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        }
+      ]
+    },
+    {
+      "name": "WithoutCancel",
+      "params": [
+        {
+          "name": "parent",
+          "type": "context.Context"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "context.Context"
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "name": "Canceled",
+      "type": "error"
+    },
+    {
+      "name": "DeadlineExceeded",
+      "type": "error"
+    }
+  ],
+  "consts": null
+}

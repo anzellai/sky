@@ -1,0 +1,934 @@
+{
+  "name": "uuid",
+  "path": "github.com/google/uuid",
+  "types": [
+    {
+      "name": "Domain",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "NullUUID",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "UUID",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "Valid",
+          "type": "bool"
+        }
+      ],
+      "methods": [
+        {
+          "name": "MarshalBinary",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "MarshalJSON",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "MarshalText",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Scan",
+          "params": [
+            {
+              "name": "value",
+              "type": "interface{}"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalBinary",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalJSON",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalText",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Value",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "database/sql/driver.Value"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Time",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "UnixTime",
+          "params": null,
+          "results": [
+            {
+              "name": "sec",
+              "type": "int64"
+            },
+            {
+              "name": "nsec",
+              "type": "int64"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UUID",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "ClockSequence",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Domain",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/google/uuid.Domain"
+            }
+          ]
+        },
+        {
+          "name": "ID",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "uint32"
+            }
+          ]
+        },
+        {
+          "name": "MarshalBinary",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "MarshalText",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "NodeID",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            }
+          ]
+        },
+        {
+          "name": "Scan",
+          "params": [
+            {
+              "name": "src",
+              "type": "interface{}"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Time",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/google/uuid.Time"
+            }
+          ]
+        },
+        {
+          "name": "URN",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalBinary",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalText",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Value",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "database/sql/driver.Value"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Variant",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/google/uuid.Variant"
+            }
+          ]
+        },
+        {
+          "name": "Version",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "github.com/google/uuid.Version"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "UUIDs",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "Strings",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Variant",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Version",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "ClockSequence",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "int"
+        }
+      ]
+    },
+    {
+      "name": "DisableRandPool",
+      "params": null,
+      "results": null
+    },
+    {
+      "name": "EnableRandPool",
+      "params": null,
+      "results": null
+    },
+    {
+      "name": "FromBytes",
+      "params": [
+        {
+          "name": "b",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "uuid",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "GetTime",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.Time"
+        },
+        {
+          "name": "",
+          "type": "uint16"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "IsInvalidLengthError",
+      "params": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "Must",
+      "params": [
+        {
+          "name": "uuid",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        }
+      ]
+    },
+    {
+      "name": "MustParse",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        }
+      ]
+    },
+    {
+      "name": "New",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        }
+      ]
+    },
+    {
+      "name": "NewDCEGroup",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewDCEPerson",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewDCESecurity",
+      "params": [
+        {
+          "name": "domain",
+          "type": "github.com/google/uuid.Domain"
+        },
+        {
+          "name": "id",
+          "type": "uint32"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewHash",
+      "params": [
+        {
+          "name": "h",
+          "type": "hash.Hash"
+        },
+        {
+          "name": "space",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        },
+        {
+          "name": "version",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        }
+      ]
+    },
+    {
+      "name": "NewMD5",
+      "params": [
+        {
+          "name": "space",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        }
+      ]
+    },
+    {
+      "name": "NewRandom",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewRandomFromReader",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewSHA1",
+      "params": [
+        {
+          "name": "space",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        }
+      ]
+    },
+    {
+      "name": "NewString",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "NewUUID",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewV6",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewV7",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewV7FromReader",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NodeID",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "[]byte"
+        }
+      ]
+    },
+    {
+      "name": "NodeInterface",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "Parse",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ParseBytes",
+      "params": [
+        {
+          "name": "b",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "github.com/google/uuid.UUID"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "SetClockSequence",
+      "params": [
+        {
+          "name": "seq",
+          "type": "int"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "SetNodeID",
+      "params": [
+        {
+          "name": "id",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "SetNodeInterface",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "bool"
+        }
+      ]
+    },
+    {
+      "name": "SetRand",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "Validate",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "name": "Max",
+      "type": "github.com/google/uuid.UUID"
+    },
+    {
+      "name": "NameSpaceDNS",
+      "type": "github.com/google/uuid.UUID"
+    },
+    {
+      "name": "NameSpaceOID",
+      "type": "github.com/google/uuid.UUID"
+    },
+    {
+      "name": "NameSpaceURL",
+      "type": "github.com/google/uuid.UUID"
+    },
+    {
+      "name": "NameSpaceX500",
+      "type": "github.com/google/uuid.UUID"
+    },
+    {
+      "name": "Nil",
+      "type": "github.com/google/uuid.UUID"
+    }
+  ],
+  "consts": [
+    {
+      "name": "Future",
+      "type": "github.com/google/uuid.Variant",
+      "value": "4"
+    },
+    {
+      "name": "Group",
+      "type": "github.com/google/uuid.Domain",
+      "value": "1"
+    },
+    {
+      "name": "Invalid",
+      "type": "github.com/google/uuid.Variant",
+      "value": "0"
+    },
+    {
+      "name": "Microsoft",
+      "type": "github.com/google/uuid.Variant",
+      "value": "3"
+    },
+    {
+      "name": "Org",
+      "type": "github.com/google/uuid.Domain",
+      "value": "2"
+    },
+    {
+      "name": "Person",
+      "type": "github.com/google/uuid.Domain",
+      "value": "0"
+    },
+    {
+      "name": "RFC4122",
+      "type": "github.com/google/uuid.Variant",
+      "value": "1"
+    },
+    {
+      "name": "Reserved",
+      "type": "github.com/google/uuid.Variant",
+      "value": "2"
+    }
+  ]
+}

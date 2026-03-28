@@ -5094,11 +5094,11 @@ func Formatter_Doc_Line() any {
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 3, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
