@@ -672,7 +672,7 @@ wrapFallibleReturn results goCall =
             goCall ++
             "\n\t\t" ++
             "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++
-            "return SkyOk(result)\n\t}"
+            "return SkyOk(result)\n\t}()"
         else
             "return func() any {\n\t\t" ++
             "defer func() { recover() }()\n\t\t" ++
@@ -680,7 +680,7 @@ wrapFallibleReturn results goCall =
             goCall ++
             "\n\t\t" ++
             "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++
-            "return SkyOk(struct{}{})\n\t}"
+            "return SkyOk(struct{}{})\n\t}()"
 
 
 wrapEffectfulReturn : (List String) -> String -> String
@@ -691,7 +691,7 @@ wrapEffectfulReturn results goCall =
         [  ] ->
             "return func() any {\n\t\t" ++
             "defer func() { recover() }()\n\t\t" ++
-            goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}"
+            goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
         
         single :: [  ] ->
             let
@@ -708,8 +708,8 @@ wrapEffectfulReturn results goCall =
                 "defer func() { recover() }()\n\t\t" ++
                 "result := " ++
                 goCall ++
-                "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}"
-        
+                "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}()"
+
         _ ->
             let
                 n =
@@ -728,7 +728,7 @@ wrapEffectfulReturn results goCall =
                 goCall ++
                 "\n\t\t" ++
                 "return SkyOk(SkyTuple" ++
-                String.fromInt  n ++ "{" ++ vars ++ "})\n\t}"
+                String.fromInt  n ++ "{" ++ vars ++ "})\n\t}()"
 
 
 shortPkgName : String -> String

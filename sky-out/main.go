@@ -5090,7 +5090,7 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
@@ -5098,7 +5098,7 @@ func Formatter_Doc_Hardline() any {
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6328,11 +6328,11 @@ func Ffi_WrapperGen_WrapPureReturn(results any, goCall any) any {
 }
 
 func Ffi_WrapperGen_WrapFallibleReturn(results any, goCall any) any {
-	return func() any { hasValueReturn := sky_asInt(sky_listLength(results)) > sky_asInt(1); _ = hasValueReturn; return func() any { if sky_asBool(hasValueReturn) { return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat("result, err := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("if err != nil { return SkyErr(err.Error()) }\n\t\t", "return SkyOk(result)\n\t}")))))) }; return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat("err := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("if err != nil { return SkyErr(err.Error()) }\n\t\t", "return SkyOk(struct{}{})\n\t}")))))) }() }()
+	return func() any { hasValueReturn := sky_asInt(sky_listLength(results)) > sky_asInt(1); _ = hasValueReturn; return func() any { if sky_asBool(hasValueReturn) { return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat("result, err := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("if err != nil { return SkyErr(err.Error()) }\n\t\t", "return SkyOk(result)\n\t}()")))))) }; return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat("err := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("if err != nil { return SkyErr(err.Error()) }\n\t\t", "return SkyOk(struct{}{})\n\t}()")))))) }() }()
 }
 
 func Ffi_WrapperGen_WrapEffectfulReturn(results any, goCall any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat(goCall, sky_concat("\n\t\t", "return SkyOk(struct{}{})\n\t}")))) };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { isFixedArray := sky_asBool(sky_call(sky_stringStartsWith("["), single)) && sky_asBool(sky_call(sky_stringContains("]"), single)); _ = isFixedArray; resultExpr := func() any { if sky_asBool(isFixedArray) { return "result[:]" }; return "result" }(); _ = resultExpr; return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat("result := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("return SkyOk(", sky_concat(resultExpr, ")\n\t}"))))))) }() };  if true { return func() any { n := sky_listLength(results); _ = n; vars := sky_call(sky_stringJoin(", "), sky_call(sky_listIndexedMap(func(i any) any { return func(_ any) any { return sky_concat("_r", sky_stringFromInt(i)) } }), results)); _ = vars; return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat(vars, sky_concat(" := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("return SkyOk(SkyTuple", sky_concat(sky_stringFromInt(n), sky_concat("{", sky_concat(vars, "})\n\t}")))))))))) }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat(goCall, sky_concat("\n\t\t", "return SkyOk(struct{}{})\n\t}()")))) };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { isFixedArray := sky_asBool(sky_call(sky_stringStartsWith("["), single)) && sky_asBool(sky_call(sky_stringContains("]"), single)); _ = isFixedArray; resultExpr := func() any { if sky_asBool(isFixedArray) { return "result[:]" }; return "result" }(); _ = resultExpr; return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat("result := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("return SkyOk(", sky_concat(resultExpr, ")\n\t}()"))))))) }() };  if true { return func() any { n := sky_listLength(results); _ = n; vars := sky_call(sky_stringJoin(", "), sky_call(sky_listIndexedMap(func(i any) any { return func(_ any) any { return sky_concat("_r", sky_stringFromInt(i)) } }), results)); _ = vars; return sky_concat("return func() any {\n\t\t", sky_concat("defer func() { recover() }()\n\t\t", sky_concat(vars, sky_concat(" := ", sky_concat(goCall, sky_concat("\n\t\t", sky_concat("return SkyOk(SkyTuple", sky_concat(sky_stringFromInt(n), sky_concat("{", sky_concat(vars, "})\n\t}()")))))))))) }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_ShortPkgName(pkgPath any) any {
