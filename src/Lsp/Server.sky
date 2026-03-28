@@ -259,7 +259,7 @@ analyzeAndPublishDiagnostics state uri text =
                         case checkResult of
                             
                             Ok result ->
-                                List.map  (\msg -> makeDiagnostic  2  msg)
+                                List.map  (\msg -> makeDiagnostic  1  msg)
                                  result.diagnostics
                             
                             Err err ->
