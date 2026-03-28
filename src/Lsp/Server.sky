@@ -363,36 +363,198 @@ lookupTypeInfo : ServerState -> String -> String -> String -> String
 
 lookupTypeInfo state uri word source =
     let
-        fromStdlib =
-            case Env.lookup  word  Resolver.buildStdlibEnv of
-
-                Just scheme ->
-                    word ++ " : " ++ formatType  scheme.type_
-
-                Nothing ->
-                    ""
+        fromStdlibMap =
+            lookupStdlibType  word
         fromAnnotation =
-            if String.isEmpty  fromStdlib then
+            if String.isEmpty  fromStdlibMap then
                 findAnnotationInSource  word  source
             else
-                fromStdlib
+                fromStdlibMap
+        fromAst =
+            if String.isEmpty  fromAnnotation then
+                case Dict.get  uri  state.astCache of
+
+                    Just mod ->
+                        inferFromAst  word  mod.declarations
+
+                    Nothing ->
+                        ""
+            else
+                fromAnnotation
     in
-        fromAnnotation
+        fromAst
 
 
-lookupInTypedDecls : String -> (List Checker.TypedDecl) -> String
+lookupStdlibType : String -> String
 
-lookupInTypedDecls name decls =
+lookupStdlibType name =
+    case Dict.get  name  stdlibTypeMap of
+
+        Just sig ->
+            name ++ " : " ++ sig
+
+        Nothing ->
+            ""
+
+
+stdlibTypeMap : Dict.Dict String String
+
+stdlibTypeMap =
+    Dict.fromList
+     [ ( "identity" , "a -> a" )
+    , ( "not" , "Bool -> Bool" )
+    , ( "always" , "a -> b -> a" )
+    , ( "fst" , "( a, b ) -> a" )
+    , ( "snd" , "( a, b ) -> b" )
+    , ( "clamp" , "comparable -> comparable -> comparable -> comparable" )
+    , ( "modBy" , "Int -> Int -> Int" )
+    , ( "errorToString" , "Error -> String" )
+    , ( "Ok" , "a -> Result e a" )
+    , ( "Err" , "e -> Result e a" )
+    , ( "Just" , "a -> Maybe a" )
+    , ( "Nothing" , "Maybe a" )
+    , ( "True" , "Bool" )
+    , ( "False" , "Bool" )
+    , ( "println" , "String -> ()" )
+    , ( "String.toUpper" , "String -> String" )
+    , ( "String.toLower" , "String -> String" )
+    , ( "String.length" , "String -> Int" )
+    , ( "String.fromInt" , "Int -> String" )
+    , ( "String.fromFloat" , "Float -> String" )
+    , ( "String.join" , "String -> List String -> String" )
+    , ( "String.split" , "String -> String -> List String" )
+    , ( "String.contains" , "String -> String -> Bool" )
+    , ( "String.startsWith" , "String -> String -> Bool" )
+    , ( "String.trim" , "String -> String" )
+    , ( "String.isEmpty" , "String -> Bool" )
+    , ( "String.slice" , "Int -> Int -> String -> String" )
+    , ( "String.replace" , "String -> String -> String -> String" )
+    , ( "String.toInt" , "String -> Maybe Int" )
+    , ( "String.append" , "String -> String -> String" )
+    , ( "String.toBytes" , "String -> Bytes" )
+    , ( "List.map" , "(a -> b) -> List a -> List b" )
+    , ( "List.filter" , "(a -> Bool) -> List a -> List a" )
+    , ( "List.foldl" , "(a -> b -> b) -> b -> List a -> b" )
+    , ( "List.foldr" , "(a -> b -> b) -> b -> List a -> b" )
+    , ( "List.head" , "List a -> Maybe a" )
+    , ( "List.length" , "List a -> Int" )
+    , ( "List.reverse" , "List a -> List a" )
+    , ( "List.isEmpty" , "List a -> Bool" )
+    , ( "List.append" , "List a -> List a -> List a" )
+    , ( "List.concat" , "List (List a) -> List a" )
+    , ( "List.concatMap" , "(a -> List b) -> List a -> List b" )
+    , ( "List.take" , "Int -> List a -> List a" )
+    , ( "List.drop" , "Int -> List a -> List a" )
+    , ( "List.sort" , "List comparable -> List comparable" )
+    , ( "List.sortBy" , "(a -> comparable) -> List a -> List a" )
+    , ( "List.filterMap" , "(a -> Maybe b) -> List a -> List b" )
+    , ( "List.indexedMap" , "(Int -> a -> b) -> List a -> List b" )
+    , ( "List.zip" , "List a -> List b -> List ( a, b )" )
+    , ( "Dict.empty" , "Dict k v" )
+    , ( "Dict.insert" , "k -> v -> Dict k v -> Dict k v" )
+    , ( "Dict.get" , "k -> Dict k v -> Maybe v" )
+    , ( "Dict.remove" , "k -> Dict k v -> Dict k v" )
+    , ( "Dict.keys" , "Dict k v -> List k" )
+    , ( "Dict.values" , "Dict k v -> List v" )
+    , ( "Dict.member" , "k -> Dict k v -> Bool" )
+    , ( "Dict.map" , "(k -> v -> w) -> Dict k v -> Dict k w" )
+    , ( "Dict.union" , "Dict k v -> Dict k v -> Dict k v" )
+    , ( "Dict.fromList" , "List ( k, v ) -> Dict k v" )
+    , ( "Set.empty" , "Set a" )
+    , ( "Set.insert" , "a -> Set a -> Set a" )
+    , ( "Set.remove" , "a -> Set a -> Set a" )
+    , ( "Set.member" , "a -> Set a -> Bool" )
+    , ( "Set.fromList" , "List a -> Set a" )
+    , ( "Maybe.withDefault" , "a -> Maybe a -> a" )
+    , ( "Maybe.map" , "(a -> b) -> Maybe a -> Maybe b" )
+    , ( "Maybe.andThen" , "(a -> Maybe b) -> Maybe a -> Maybe b" )
+    , ( "Result.withDefault" , "a -> Result e a -> a" )
+    , ( "Result.map" , "(a -> b) -> Result e a -> Result e b" )
+    , ( "Result.andThen" , "(a -> Result e b) -> Result e a -> Result e b" )
+    , ( "Result.mapError" , "(e -> f) -> Result e a -> Result f a" )
+    , ( "Task.succeed" , "a -> Task err a" )
+    , ( "Task.fail" , "err -> Task err a" )
+    , ( "Task.andThen" , "(a -> Task err b) -> Task err a -> Task err b" )
+    , ( "Task.map" , "(a -> b) -> Task err a -> Task err b" )
+    , ( "Task.perform" , "Task err a -> a" )
+    , ( "Task.run" , "Task err a -> Result err a" )
+    , ( "Task.sequence" , "List (Task err a) -> Task err (List a)" )
+    , ( "File.readFile" , "String -> Task String String" )
+    , ( "File.writeFile" , "String -> String -> Task String ()" )
+    , ( "File.mkdirAll" , "String -> Task String ()" )
+    , ( "File.readDir" , "String -> Task String (List String)" )
+    , ( "File.exists" , "String -> Task String Bool" )
+    , ( "Process.run" , "String -> List String -> Task String String" )
+    , ( "Process.exit" , "Int -> ()" )
+    , ( "Process.getCwd" , "() -> Task String String" )
+    , ( "Io.readLine" , "() -> Task String String" )
+    , ( "Io.writeStdout" , "String -> Task String ()" )
+    , ( "Io.writeStderr" , "String -> Task String ()" )
+    , ( "Time.now" , "() -> Task String Int" )
+    , ( "Http.get" , "String -> Task String Response" )
+    , ( "Http.post" , "String -> String -> Task String Response" )
+    , ( "Server.listen" , "Int -> List Route -> Task String ()" )
+    , ( "Server.get" , "String -> Handler -> Route" )
+    , ( "Server.post" , "String -> Handler -> Route" )
+    , ( "Server.any" , "String -> Handler -> Route" )
+    , ( "Server.text" , "String -> Response" )
+    , ( "Server.html" , "String -> Response" )
+    , ( "Server.json" , "String -> Response" )
+    , ( "Server.redirect" , "String -> Response" )
+    , ( "Server.withStatus" , "Int -> Response -> Response" )
+    , ( "Server.withHeader" , "String -> String -> Response -> Response" )
+    , ( "Server.withCookie" , "String -> String -> String -> Response -> Response" )
+    , ( "Server.queryParam" , "String -> Request -> Maybe String" )
+    , ( "Server.formValue" , "String -> Request -> String" )
+    , ( "Server.method" , "Request -> String" )
+    , ( "Server.body" , "Request -> String" )
+    , ( "Server.getCookie" , "String -> Request -> Maybe String" )
+    , ( "Ref.new" , "a -> Ref a" )
+    , ( "Ref.get" , "Ref a -> a" )
+    , ( "Ref.set" , "a -> Ref a -> ()" )
+    , ( "Args.getArgs" , "() -> List String" )
+    , ( "Args.getArg" , "Int -> Maybe String" )
+    ]
+
+
+inferFromAst : String -> (List Declaration) -> String
+
+inferFromAst name decls =
     case decls of
 
         [  ] ->
             ""
 
         decl :: rest ->
-            if decl.name == name then
-                name ++ " : " ++ decl.prettyType
-            else
-                lookupInTypedDecls  name  rest
+            case decl of
+
+                FunDecl fname params _ _ ->
+                    if fname == name then
+                        let
+                            paramCount =
+                                List.length  params
+                            paramTypes =
+                                List.map
+                                 (\_ -> "a")
+                                 (List.take  paramCount
+                                  [ 1 , 2 , 3 , 4 , 5 , 6 , 7 , 8 ]
+                                 )
+                            vars =
+                                [ "a" , "b" , "c" , "d" , "e" , "f" , "g" , "h" ]
+                            typedParams =
+                                List.take  paramCount  vars
+                        in
+                            if paramCount == 0 then
+                                name ++ " : a"
+                            else
+                                name ++ " : " ++
+                                String.join  " -> "
+                                 (List.append  typedParams  [ "result" ])
+                    else
+                        inferFromAst  name  rest
+
+                _ ->
+                    inferFromAst  name  rest
 
 
 getLineAt : Int -> String -> String
@@ -475,7 +637,7 @@ findWordStart text idx =
             ch =
                 String.slice  (idx - 1)  idx  text
         in
-            if isIdentChar  ch then
+            if isIdentChar  ch || ch == "." then
                 findWordStart  text  (idx - 1)
             else
                 idx
@@ -491,7 +653,7 @@ findWordEnd text idx =
             ch =
                 String.slice  idx  (idx + 1)  text
         in
-            if isIdentChar  ch then
+            if isIdentChar  ch || ch == "." then
                 findWordEnd  text  (idx + 1)
             else
                 idx
@@ -682,22 +844,34 @@ handleCompletion state id body =
                         Nothing
                 )
                  keywords
-        typeCheckedItems =
-            case Dict.get  uri  state.typeCache of
+        localItems =
+            if isQualified then
+                []
+            else
+                case Dict.get  uri  state.astCache of
 
-                Just checkResult ->
-                    completionsFromCheckResult  checkResult  prefix  isQualified
-                     modulePart
+                    Just mod ->
+                        completionsFromAst  mod.declarations  prefix
 
-                Nothing ->
-                    []
+                    Nothing ->
+                        []
+        stdlibItems =
+            if isQualified then
+                []
+            else
+                completionsFromStdlib  prefix
         moduleItems =
             if isQualified then
                 completionsForModule  modulePart
             else
                 []
         allItems =
-            List.concat  [ keywordItems , typeCheckedItems , moduleItems ]
+            List.concat
+             [ keywordItems
+            , localItems
+            , stdlibItems
+            , moduleItems
+            ]
         result =
             jsonObject
              [ ( "isIncomplete" , jsonBool  True )
@@ -736,95 +910,137 @@ findCompletionStart text idx =
                 idx
 
 
-completionsFromCheckResult : Checker.CheckResult -> String -> Bool -> String -> List String
+completionsFromAst : (List Declaration) -> String -> List String
 
-completionsFromCheckResult checkResult prefix isQualified modulePart =
-    let
-        declItems =
-            List.filterMap
-             (
-            \decl ->
-                if isQualified then
-                    Nothing
-                else if String.isEmpty  prefix ||
-                String.startsWith  prefix  decl.name then
-                    Just
-                     (makeCompletionItem  decl.name  decl.prettyType  3)
+completionsFromAst decls prefix =
+    List.filterMap
+     (
+    \decl ->
+        case decl of
+
+            FunDecl name _ _ _ ->
+                if String.isEmpty  prefix ||
+                String.startsWith  prefix  name then
+                    let
+                        sig =
+                            case Dict.get  name  stdlibTypeMap of
+
+                                Just t ->
+                                    t
+
+                                Nothing ->
+                                    "function"
+                    in
+                        Just  (makeCompletionItem  name  sig  3)
                 else
                     Nothing
-            )
-             checkResult.declarations
-        envItems =
-            if isQualified then
-                []
-            else
-                List.filterMap
-                 (
-                \pair ->
-                    let
-                        name =
-                            fst  pair
-                        scheme =
-                            snd  pair
-                    in
+
+            TypeDecl name _ variants _ ->
+                let
+                    typeItem =
                         if String.isEmpty  prefix ||
                         String.startsWith  prefix  name then
-                            Just
-                             (
-                            makeCompletionItem  name
-                             (formatType  scheme.type_)
-                             3
-                            )
+                            [ makeCompletionItem  name  "type"  22 ]
                         else
+                            []
+                    ctorItems =
+                        List.filterMap
+                         (
+                        \v ->
+                            if String.isEmpty  prefix ||
+                            String.startsWith  prefix  v.name then
+                                Just
+                                 (makeCompletionItem  v.name  name  4)
+                            else
+                                Nothing
+                        )
+                         variants
+                in
+                    case List.append  typeItem  ctorItems of
+
+                        first :: _ ->
+                            Just  first
+
+                        [  ] ->
                             Nothing
-                )
-                 (Env.toList  checkResult.env)
+
+            TypeAliasDecl name _ _ _ ->
+                if String.isEmpty  prefix ||
+                String.startsWith  prefix  name then
+                    Just  (makeCompletionItem  name  "type alias"  22)
+                else
+                    Nothing
+
+            _ ->
+                Nothing
+    )
+     decls
+
+
+completionsFromStdlib : String -> List String
+
+completionsFromStdlib prefix =
+    let
+        preludeNames =
+            [ "identity" , "not" , "always" , "fst" , "snd" , "clamp"
+            , "modBy" , "errorToString" , "Ok" , "Err" , "Just"
+            , "Nothing" , "True" , "False" , "println"
+            ]
     in
-        List.append  declItems  envItems
+        List.filterMap
+         (
+        \name ->
+            if String.isEmpty  prefix || String.startsWith  prefix  name then
+                let
+                    sig =
+                        case Dict.get  name  stdlibTypeMap of
+
+                            Just t ->
+                                t
+
+                            Nothing ->
+                                ""
+                in
+                    Just  (makeCompletionItem  name  sig  3)
+            else
+                Nothing
+        )
+         preludeNames
+
+
 
 
 completionsForModule : String -> List String
 
 completionsForModule modulePart =
     let
-        moduleMap =
-            [ ( "String" , Resolver.getStdlibExports  "Sky.Core.String" )
-            , ( "List" , Resolver.getStdlibExports  "Sky.Core.List" )
-            , ( "Dict" , Resolver.getStdlibExports  "Sky.Core.Dict" )
-            , ( "Set" , Resolver.getStdlibExports  "Sky.Core.Set" )
-            , ( "Maybe" , Resolver.getStdlibExports  "Sky.Core.Maybe" )
-            , ( "Result" , Resolver.getStdlibExports  "Sky.Core.Result" )
-            , ( "Task" , Resolver.getStdlibExports  "Sky.Core.Task" )
-            , ( "Math" , Resolver.getStdlibExports  "Sky.Core.Math" )
-            , ( "Regex" , Resolver.getStdlibExports  "Sky.Core.Regex" )
-            , ( "Json" , Resolver.getStdlibExports  "Sky.Core.Json.Decode" )
-            , ( "Encode" , Resolver.getStdlibExports  "Sky.Core.Json.Encode" )
-            , ( "File" , Resolver.getStdlibExports  "Sky.Core.File" )
-            , ( "Process" , Resolver.getStdlibExports  "Sky.Core.Process" )
-            , ( "Http" , Resolver.getStdlibExports  "Sky.Core.Http" )
-            , ( "Time" , Resolver.getStdlibExports  "Sky.Core.Time" )
-            , ( "Server" , Resolver.getStdlibExports  "Sky.Http.Server" )
-            , ( "Html" , Resolver.getStdlibExports  "Std.Html" )
-            , ( "Attr" , Resolver.getStdlibExports  "Std.Html.Attributes" )
-            , ( "Css" , Resolver.getStdlibExports  "Std.Css" )
-            , ( "Live" , Resolver.getStdlibExports  "Std.Live" )
-            , ( "Cmd" , Resolver.getStdlibExports  "Std.Cmd" )
-            , ( "Sub" , Resolver.getStdlibExports  "Std.Sub" )
-            ]
-        exports =
-            List.concatMap
+        prefix =
+            modulePart ++ "."
+        matching =
+            List.filterMap
              (
             \pair ->
-                if fst  pair == modulePart then
-                    snd  pair
-                else
-                    []
+                let
+                    key =
+                        fst  pair
+                    sig =
+                        snd  pair
+                in
+                    if String.startsWith  prefix  key then
+                        let
+                            shortName =
+                                String.slice  (String.length  prefix)
+                                 (String.length  key)
+                                 key
+                        in
+                            Just
+                             (makeCompletionItem  shortName  sig  3)
+                    else
+                        Nothing
             )
-             moduleMap
+             (Dict.toList  stdlibTypeMap)
     in
-        List.map
-         (\name -> makeCompletionItem  name  (modulePart ++ "." ++ name)  3)
-         exports
+        matching
 
 
 makeCompletionItem : String -> String -> Int -> String
