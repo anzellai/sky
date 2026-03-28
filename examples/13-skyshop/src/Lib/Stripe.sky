@@ -25,9 +25,9 @@ foreign import "sky_wrappers" exposing (Sky_ToJSON)
 initStripe =
     let
         key =
-            Os.getenv "STRIPE_API_KEY"
+            Result.withDefault  ""  (Os.getenv  "STRIPE_API_KEY")
         _ =
-            Stripe.setKey key
+            Stripe.setKey  key
     in
         key
 
@@ -37,9 +37,9 @@ apiKey =
 domainUrl =
     let
         domain =
-            Os.getenv "DOMAIN"
+            Result.withDefault  ""  (Os.getenv  "DOMAIN")
         port_ =
-            Os.getenv "SKY_LIVE_PORT"
+            Result.withDefault  ""  (Os.getenv  "SKY_LIVE_PORT")
     in
         if domain != "" then
             domain

@@ -22,7 +22,7 @@ ctx =
 adminEmails =
     let
         envAdmins =
-            Os.getenv "ADMIN_EMAILS"
+            Result.withDefault  ""  (Os.getenv  "ADMIN_EMAILS")
     in
         if envAdmins == "" then
             [ "admin@example.com" ]
@@ -39,7 +39,7 @@ isAdmin user =
 getAuthClient _ =
     let
         credFile =
-            Os.getenv "GOOGLE_APPLICATION_CREDENTIALS"
+            Result.withDefault  ""  (Os.getenv  "GOOGLE_APPLICATION_CREDENTIALS")
         opts =
             if credFile == "" then
                 []

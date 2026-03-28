@@ -21,7 +21,7 @@ ctx =
 getProjectId _ =
     let
         env =
-            Os.getenv "GOOGLE_CLOUD_PROJECT"
+            Result.withDefault  ""  (Os.getenv  "GOOGLE_CLOUD_PROJECT")
     in
         if env == "" then
             "skyshop"

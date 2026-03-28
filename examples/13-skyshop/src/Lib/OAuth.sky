@@ -1,6 +1,7 @@
 module Lib.OAuth exposing (firebaseAuthScript, handleAuthCallback)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Result as Result
 import Os
 import Lib.Auth as Auth
 
@@ -24,11 +25,11 @@ import Lib.Auth as Auth
 firebaseAuthScript =
     let
         apiKey =
-            Os.getenv "FIREBASE_API_KEY"
+            Result.withDefault  ""  (Os.getenv  "FIREBASE_API_KEY")
         authDomain =
-            Os.getenv "AUTH_DOMAIN"
+            Result.withDefault  ""  (Os.getenv  "AUTH_DOMAIN")
         projectId =
-            Os.getenv "GOOGLE_CLOUD_PROJECT"
+            Result.withDefault  ""  (Os.getenv  "GOOGLE_CLOUD_PROJECT")
     in
         "<script>" ++
         "var _fbReady=false,_fbUser=null;" ++
