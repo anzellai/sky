@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  # Build the compiler from source using the latest released binary
+  # Build the compiler from committed Go source (no external dependency)
   bootstrap:
     runs-on: ubuntu-latest
     steps:
@@ -29,36 +29,37 @@ jobs:
           go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go
           go build -o /usr/local/bin/trim-imports tools/trim_imports.go
 
-      # Download the previous release to bootstrap
-      - name: Install Sky compiler
+      # Bootstrap from committed Go source (sky-out/main.go)
+      - name: Bootstrap compiler from Go source
         run: |
-          # Try latest release; fall back to TS bootstrap if first release
-          curl -fsSL "https://github.com/anzellai/sky/releases/latest/download/sky-linux-x64" -o sky 2>/dev/null && chmod +x sky && sudo mv sky /usr/local/bin/sky && sky version || {
-            echo "No previous release found, using TS bootstrap..."
-            cd ts-compiler
-            npm ci
-            npx tsx bin/sky.ts build ../src/Main.sky || true
-            cd dist
-            find . -name '*.go' -exec sed -i 's/return func() any {  }()/return true/g' {} +
-            find . -name '*.go' -exec sed -i 's/sky_sky_core_args\.SkyVersion/skyVersion/g' {} +
-            grep -q 'var skyVersion' main.go || echo 'var skyVersion = "dev"' >> main.go
-            go build -gcflags=all=-l -o /usr/local/bin/sky .
-          }
+          cd sky-out
+          go build -gcflags=all=-l -o app .
+          cd ..
+          cp -f sky-out/app /usr/local/bin/sky
+          sky build src/Main.sky
+          sky-out/app version
 
-      # Build from source (Phase 1 + 2, handles new stdlib functions)
-      - name: Build compiler from source
+      # Phase 2: self-host (new compiler compiles itself)
+      - name: Phase 2 self-host
         run: |
-          sky build src/Main.sky || {
-            echo "Phase 1 bootstrap: patching undefined Go refs..."
-            cd sky-out
-            sed 's/io\.readAllStdin/sky_readAllStdin/g' main.go > main.go.tmp && mv main.go.tmp main.go
-            echo 'func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }' >> main.go
-            go build -gcflags=all=-l -o app .
-            cd ..
-          }
-          cp sky-out/app /usr/local/bin/sky
+          cp -f sky-out/app /usr/local/bin/sky
           rm -rf sky-out
           sky build src/Main.sky
+          sky-out/app version
+
+      # Phase 3: propagate lowerer fixes
+      - name: Phase 3 bootstrap
+        run: |
+          cp -f sky-out/app /usr/local/bin/sky
+          rm -rf sky-out
+          sky build src/Main.sky
+          sky-out/app version
+
+      # Verify the built compiler works (not a hello-world binary)
+      - name: Verify compiler
+        run: |
+          sky-out/app check src/Main.sky
+          echo "Compiler verification passed"
 
       # Upload the bootstrapped Go source for cross-compilation
       - name: Upload Go source

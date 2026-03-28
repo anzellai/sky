@@ -28,48 +28,43 @@ jobs:
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
-      # Download the latest released Sky binary
-      - name: Install Sky compiler
-        run: |
-          curl -fsSL "https://github.com/anzellai/sky/releases/latest/download/${{ matrix.artifact }}" -o sky
-          chmod +x sky
-          sudo mv sky /usr/local/bin/sky
-          sky version
-
       # Build tools (needed for compilation pipeline)
       - name: Build tools
         run: |
           go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go
           go build -o /usr/local/bin/trim-imports tools/trim_imports.go
 
-      # Build the compiler from source (two-phase bootstrap for new stdlib functions)
-      - name: Build compiler from source
+      # Bootstrap: build compiler from committed Go source (sky-out/main.go)
+      - name: Bootstrap compiler from Go source
         run: |
-          sky build src/Main.sky || {
-            echo "Phase 1 bootstrap: patching undefined Go refs..."
-            cd sky-out
-            sed 's/io\.readAllStdin/sky_readAllStdin/g' main.go > main.go.tmp && mv main.go.tmp main.go
-            echo 'func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }' >> main.go
-            go build -gcflags=all=-l -o app .
-            cd ..
-          }
+          cd sky-out
+          go build -gcflags=all=-l -o app .
+          cd ..
+          cp -f sky-out/app /usr/local/bin/sky
+          sky build src/Main.sky
           sky-out/app version
 
-      # Verify self-hosting (Phase 2 — new compiler compiles itself)
-      - name: Verify self-hosting
+      # Phase 2: self-host (new compiler compiles itself)
+      - name: Phase 2 self-host
         run: |
-          cp sky-out/app /usr/local/bin/sky
+          cp -f sky-out/app /usr/local/bin/sky
           rm -rf sky-out
           sky build src/Main.sky
           sky-out/app version
 
-      # Phase 3 bootstrap — ensures lowerer fixes (e.g. cons pattern) take effect
+      # Phase 3: propagate lowerer fixes
       - name: Phase 3 bootstrap
         run: |
-          cp sky-out/app /usr/local/bin/sky
+          cp -f sky-out/app /usr/local/bin/sky
           rm -rf sky-out
           sky build src/Main.sky
           sky-out/app version
+
+      # Verify the built compiler works (not a hello-world binary)
+      - name: Verify compiler
+        run: |
+          sky-out/app check src/Main.sky
+          echo "Compiler verification passed"
 
       # Type check
       - name: Type check

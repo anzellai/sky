@@ -1,3 +1,3 @@
 module sky-app
 
-go 1.21.0
+go 1.26.0

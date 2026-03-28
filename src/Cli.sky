@@ -17,332 +17,356 @@ import Formatter.Format as Format
 import Ffi.Inspector as Inspector
 import Ffi.BindingGen as BindingGen
 
-
--- ══════════════════════════════════════════════════════
--- SKY CLI — Pure Sky, no Node/TypeScript
--- ══════════════════════════════════════════════════════
-
 main =
     let
         args =
-            Args.getArgs ()
+            Args.getArgs  ()
         command =
-            case Args.getArg 1 of
+            case Args.getArg  1 of
+                
                 Just cmd ->
                     cmd
-
+                
                 Nothing ->
                     "help"
     in
-        runCommand command args
+        runCommand  command  args
 
 
-runCommand : String -> List String -> ()
+runCommand : String -> (List String) -> ()
+
 runCommand command args =
     if command == "build" then
-        cmdBuild args
+        cmdBuild  args
     else if command == "run" then
-        cmdRun args
+        cmdRun  args
     else if command == "check" then
-        cmdCheck args
+        cmdCheck  args
     else if command == "fmt" then
-        cmdFmt args
+        cmdFmt  args
     else if command == "lsp" then
-        cmdLsp args
+        cmdLsp  args
     else if command == "inspect" then
-        cmdInspect args
+        cmdInspect  args
     else if command == "clean" then
-        cmdClean args
+        cmdClean  args
     else if command == "version" || command == "--version" || command == "-v" then
-        println "sky v0.6.0"
+        println  "sky v0.6.0"
     else
-        cmdHelp ()
+        cmdHelp  ()
 
 
--- ══════════════════════════════════════════════════════
--- BUILD COMMAND
--- ══════════════════════════════════════════════════════
+cmdBuild : (List String) -> ()
 
-cmdBuild : List String -> ()
 cmdBuild args =
     let
         entryFile =
-            case Args.getArg 2 of
+            case Args.getArg  2 of
+                
                 Just f ->
                     f
-
+                
                 Nothing ->
                     "src/Main.sky"
         outDir =
             "dist"
     in
-        case Pipeline.compile entryFile outDir of
+        case Pipeline.compile  entryFile  outDir of
+            
             Err e ->
                 let
                     _ =
-                        println ("Error: " ++ e)
+                        println  ("Error: " ++ e)
                 in
-                    Process.exit 1
-
+                    Process.exit  1
+            
             Ok code ->
                 let
-                    -- Write go.mod if it doesn't exist
                     goModPath =
                         outDir ++ "/go.mod"
                     _ =
-                        case File.readFile goModPath of
+                        case File.readFile  goModPath of
+                            
                             Ok _ ->
                                 ()
-
+                            
                             Err _ ->
-                                File.writeFile goModPath "module sky-app\n\ngo 1.21.0\n"
-                    -- Run go build
+                                File.writeFile  goModPath
+                                 "module sky-app\n\ngo 1.21.0\n"
                     _ =
-                        println "Running go build..."
+                        println  "Running go build..."
                     buildResult =
-                        Process.run "sh" [ "-c" , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app" ]
+                        Process.run  "sh"
+                         [ "-c"
+                        , "cd " ++
+                        outDir ++ " && go build -gcflags=all=-l -o app"
+                        ]
                 in
                     case buildResult of
+                        
                         Ok buildOutput ->
-                            println ("Build complete: " ++ outDir ++ "/app")
-
+                            println  ("Build complete: " ++ outDir ++ "/app")
+                        
                         Err e ->
                             let
                                 _ =
-                                    println ("go build failed: " ++ errorToString e)
+                                    println
+                                     ("go build failed: " ++ errorToString  e)
                             in
-                                Process.exit 1
+                                Process.exit  1
 
 
--- ══════════════════════════════════════════════════════
--- RUN COMMAND
--- ══════════════════════════════════════════════════════
+cmdRun : (List String) -> ()
 
-cmdRun : List String -> ()
 cmdRun args =
     let
         _ =
-            cmdBuild args
+            cmdBuild  args
         runResult =
-            Process.run "sh" [ "-c" , "./dist/app" ]
+            Process.run  "sh"  [ "-c" , "./dist/app" ]
     in
         case runResult of
+            
             Ok output ->
-                println output
-
+                println  output
+            
             Err e ->
                 let
                     _ =
-                        println (errorToString e)
+                        println  (errorToString  e)
                 in
-                    Process.exit 1
+                    Process.exit  1
 
 
--- ══════════════════════════════════════════════════════
--- CHECK COMMAND
--- ══════════════════════════════════════════════════════
+cmdCheck : (List String) -> ()
 
-cmdCheck : List String -> ()
 cmdCheck args =
     let
         entryFile =
-            case Args.getArg 2 of
+            case Args.getArg  2 of
+                
                 Just f ->
                     f
-
+                
                 Nothing ->
                     "src/Main.sky"
     in
-        case File.readFile entryFile of
+        case File.readFile  entryFile of
+            
             Err readErr ->
                 let
                     _ =
-                        println ("Cannot read: " ++ entryFile ++ " (" ++ readErr ++ ")")
+                        println
+                         (
+                        "Cannot read: " ++ entryFile ++ " (" ++ readErr ++ ")"
+                        )
                 in
-                    Process.exit 1
-
+                    Process.exit  1
+            
             Ok source ->
                 let
                     lexResult =
-                        Lexer.lex source
+                        Lexer.lex  source
                 in
-                    case Parser.parse lexResult.tokens of
+                    case Parser.parse  lexResult.tokens of
+                        
                         Err e ->
                             let
                                 _ =
-                                    println ("Parse error: " ++ e)
+                                    println  ("Parse error: " ++ e)
                             in
-                                Process.exit 1
-
+                                Process.exit  1
+                        
                         Ok mod ->
                             let
                                 stdlibEnv =
                                     Resolver.buildStdlibEnv
                                 checkResult =
-                                    Checker.checkModule mod (Just stdlibEnv)
+                                    Checker.checkModule  mod  (Just  stdlibEnv)
                             in
                                 case checkResult of
+                                    
                                     Ok result ->
                                         let
                                             _ =
-                                                List.map (\d -> println ("  " ++ d.name ++ " : " ++ d.prettyType)) result.declarations
+                                                List.map
+                                                 (
+                                                \d ->
+                                                    println
+                                                     (
+                                                    "  " ++
+                                                    d.name ++
+                                                    " : " ++ d.prettyType
+                                                    )
+                                                )
+                                                 result.declarations
                                             _ =
-                                                List.map (\d -> println ("  warning: " ++ d)) result.diagnostics
+                                                List.map
+                                                 (
+                                                \d ->
+                                                    println
+                                                     ("  warning: " ++ d)
+                                                )
+                                                 result.diagnostics
                                         in
-                                            if List.isEmpty result.diagnostics then
-                                                println ("Type check passed: " ++ entryFile)
+                                            if List.isEmpty  result.diagnostics then
+                                                println
+                                                 (
+                                                "Type check passed: " ++
+                                                entryFile
+                                                )
                                             else
-                                                println ("Type check passed with " ++ String.fromInt (List.length result.diagnostics) ++ " warnings: " ++ entryFile)
-
+                                                println
+                                                 (
+                                                "Type check passed with " ++
+                                                String.fromInt
+                                                 (
+                                                List.length  result.diagnostics
+                                                ) ++
+                                                " warnings: " ++ entryFile
+                                                )
+                                    
                                     Err e ->
                                         let
                                             _ =
-                                                println ("Type error: " ++ e)
+                                                println  ("Type error: " ++ e)
                                         in
-                                            Process.exit 1
+                                            Process.exit  1
 
 
--- ══════════════════════════════════════════════════════
--- LSP COMMAND
--- ══════════════════════════════════════════════════════
+cmdLsp : (List String) -> ()
 
-cmdLsp : List String -> ()
 cmdLsp args =
-    LspServer.startServer ()
+    LspServer.startServer  ()
 
 
--- ══════════════════════════════════════════════════════
--- FORMAT COMMAND
--- ══════════════════════════════════════════════════════
+cmdFmt : (List String) -> ()
 
-cmdFmt : List String -> ()
 cmdFmt args =
     let
         filePath =
-            case Args.getArg 2 of
+            case Args.getArg  2 of
+                
                 Just f ->
                     f
-
+                
                 Nothing ->
                     "src/Main.sky"
     in
-        case File.readFile filePath of
+        case File.readFile  filePath of
+            
             Err readErr ->
                 let
                     _ =
-                        println ("Cannot read: " ++ filePath ++ " (" ++ readErr ++ ")")
+                        println
+                         ("Cannot read: " ++ filePath ++ " (" ++ readErr ++ ")")
                 in
-                    Process.exit 1
-
+                    Process.exit  1
+            
             Ok source ->
                 let
                     lexResult =
-                        Lexer.lex source
+                        Lexer.lex  source
                 in
-                    case Parser.parse lexResult.tokens of
+                    case Parser.parse  lexResult.tokens of
+                        
                         Err parseErr ->
                             let
                                 _ =
-                                    println ("Parse error: " ++ parseErr)
+                                    println  ("Parse error: " ++ parseErr)
                             in
-                                Process.exit 1
-
+                                Process.exit  1
+                        
                         Ok mod ->
                             let
                                 formatted =
-                                    Format.formatModule mod
+                                    Format.formatModule  mod
                             in
                                 if formatted == source then
                                     ()
                                 else
                                     let
                                         _ =
-                                            File.writeFile filePath formatted
+                                            File.writeFile  filePath  formatted
                                     in
-                                        println ("Formatted " ++ filePath)
+                                        println  ("Formatted " ++ filePath)
 
 
--- ══════════════════════════════════════════════════════
--- INSPECT COMMAND (Go FFI)
--- ══════════════════════════════════════════════════════
+cmdInspect : (List String) -> ()
 
-cmdInspect : List String -> ()
 cmdInspect args =
     let
         pkgName =
-            case Args.getArg 2 of
+            case Args.getArg  2 of
+                
                 Just p ->
                     p
-
+                
                 Nothing ->
                     ""
     in
-        if String.isEmpty pkgName then
-            println "Usage: sky inspect <go-package>"
+        if String.isEmpty  pkgName then
+            println  "Usage: sky inspect <go-package>"
         else
-            case Inspector.inspectPackage pkgName of
+            case Inspector.inspectPackage  pkgName of
+                
                 Err e ->
                     let
                         _ =
-                            println ("Error: " ++ e)
+                            println  ("Error: " ++ e)
                     in
-                        Process.exit 1
-
+                        Process.exit  1
+                
                 Ok result ->
-                    println result
+                    println  result
 
 
--- ══════════════════════════════════════════════════════
--- CLEAN COMMAND
--- ══════════════════════════════════════════════════════
+cmdClean : (List String) -> ()
 
-cmdClean : List String -> ()
 cmdClean args =
     let
         _ =
-            Process.run "rm" [ "-rf" , "dist" ]
+            Process.run  "rm"  [ "-rf" , "dist" ]
         _ =
-            Process.run "rm" [ "-rf" , "sky-out" ]
+            Process.run  "rm"  [ "-rf" , "sky-out" ]
         _ =
-            Process.run "rm" [ "-rf" , ".skycache" ]
+            Process.run  "rm"  [ "-rf" , ".skycache" ]
         _ =
-            Process.run "rm" [ "-rf" , ".skydeps" ]
+            Process.run  "rm"  [ "-rf" , ".skydeps" ]
     in
-        println "Cleaned: dist/ sky-out/ .skycache/ .skydeps/"
+        println  "Cleaned: dist/ sky-out/ .skycache/ .skydeps/"
 
-
--- ══════════════════════════════════════════════════════
--- HELP COMMAND
--- ══════════════════════════════════════════════════════
 
 cmdHelp : () -> ()
+
 cmdHelp _ =
     let
         _ =
-            println "Sky Programming Language v0.6.0"
+            println  "Sky Programming Language v0.6.0"
         _ =
-            println ""
+            println  ""
         _ =
-            println "Usage: sky <command> [args]"
+            println  "Usage: sky <command> [args]"
         _ =
-            println ""
+            println  ""
         _ =
-            println "Commands:"
+            println  "Commands:"
         _ =
-            println "  build [file]    Compile to Go binary (default: src/Main.sky)"
+            println
+             "  build [file]    Compile to Go binary (default: src/Main.sky)"
         _ =
-            println "  run [file]      Build and run"
+            println  "  run [file]      Build and run"
         _ =
-            println "  check [file]    Type-check without compiling"
+            println  "  check [file]    Type-check without compiling"
         _ =
-            println "  fmt [file]      Format Sky source code"
+            println  "  fmt [file]      Format Sky source code"
         _ =
-            println "  lsp             Start Language Server"
+            println  "  lsp             Start Language Server"
         _ =
-            println "  inspect [pkg]   Inspect Go package for FFI bindings"
+            println  "  inspect [pkg]   Inspect Go package for FFI bindings"
         _ =
-            println "  clean           Remove build artifacts"
+            println  "  clean           Remove build artifacts"
         _ =
-            println "  version         Show version"
+            println  "  version         Show version"
     in
         ()

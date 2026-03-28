@@ -41,10 +41,14 @@ type alias ServerState =
 emptyState : ServerState
 
 emptyState =
-    { documents = Dict.empty
-    , astCache = Dict.empty
-    , typeCache = Dict.empty
-    , depCache = Dict.empty
+    { documents =
+        Dict.empty
+    , astCache =
+        Dict.empty
+    , typeCache =
+        Dict.empty
+    , depCache =
+        Dict.empty
     }
 
 
@@ -188,8 +192,10 @@ handleDidChange state body =
             jsonGetObject  "textDocument"  params
         uri =
             jsonGetString  "uri"  textDoc
+        changesArr =
+            jsonGetArrayRaw  "contentChanges"  params
         changes =
-            jsonGetString  "text"  (jsonGetObject  "contentChanges"  params)
+            jsonGetString  "text"  changesArr
         text =
             if String.isEmpty  changes then
                 case Dict.get  uri  state.documents of
@@ -294,10 +300,6 @@ publishAndUpdateState state uri mod checkResult diagnostics =
         { state | astCache = newAstCache , typeCache = newTypeCache }
 
 
--- ============================================================
--- Import resolution and dependency caching
--- ============================================================
-
 resolveAndCacheImports : ServerState -> String -> (List ImportDecl) -> ServerState
 
 resolveAndCacheImports state uri imports =
@@ -310,24 +312,24 @@ resolveAndCacheImports state uri imports =
         parts =
             String.split  "/"  fp
         srcIdx =
-            findLastSrcIdx  parts  0  -1
+            findLastSrcIdx  parts  0  (0 - 1)
         srcRoot =
             if srcIdx >= 0 then
                 String.join  "/"  (List.take  (srcIdx + 1)  parts)
             else
                 case List.reverse  (String.split  "/"  fp) of
-
+                    
                     _ :: rest ->
                         String.join  "/"  (List.reverse  rest)
-
+                    
                     [  ] ->
                         "."
         projectRoot =
             case List.reverse  (String.split  "/"  srcRoot) of
-
+                
                 _ :: rest ->
                     String.join  "/"  (List.reverse  rest)
-
+                
                 [  ] ->
                     "."
     in
@@ -343,19 +345,28 @@ resolveImportsLoop srcRoot projectRoot imports st =
         let
             hd =
                 case List.head  imports of
-
+                    
                     Just i ->
                         i
-
+                    
                     Nothing ->
-                        { moduleName = [] , alias_ = "" , exposing_ = ExposeAll , span = emptySpan }
+                        { moduleName =
+                            []
+                        , alias_ =
+                            ""
+                        , exposing_ =
+                            ExposeAll
+                        , span =
+                            emptySpan
+                        }
             tl =
                 List.drop  1  imports
             mn =
                 String.join  "."  hd.moduleName
             st2 =
-                resolveOneImportInline  srcRoot  projectRoot  mn
-                 hd.moduleName  hd.alias_  st
+                resolveOneImportInline  srcRoot  projectRoot  mn  hd.moduleName
+                 hd.alias_
+                 st
         in
             resolveImportsLoop  srcRoot  projectRoot  tl  st2
 
@@ -370,20 +381,20 @@ resolveOneImportInline sr pr mn mp ra st =
             al =
                 if String.isEmpty  ra || ra == "_" then
                     case List.reverse  mp of
-
+                        
                         last :: _ ->
                             last
-
+                        
                         [  ] ->
                             ""
                 else
                     ra
         in
             case Dict.get  al  st.depCache of
-
+                
                 Just _ ->
                     st
-
+                
                 Nothing ->
                     addDepFromFile  sr  pr  mn  mp  al  st
 
@@ -396,10 +407,10 @@ addDepFromFile sr pr mn mp al st =
             sr ++ "/" ++ String.join  "/"  mp ++ ".sky"
     in
         case File.readFile  lp of
-
+            
             Ok src ->
                 addParsedDep  lp  al  mn  src  st
-
+            
             Err _ ->
                 tryAddFfiDep  pr  al  mn  st
 
@@ -407,17 +418,21 @@ addDepFromFile sr pr mn mp al st =
 tryAddFfiDep : String -> String -> String -> ServerState -> ServerState
 
 tryAddFfiDep pr al mn st =
-    tryReadAndParse  (Resolver.resolveBindingPath  pr  mn)  al  mn  st
+    let
+        bindingPath =
+            Resolver.resolveBindingPath  pr  mn
+    in
+        tryReadAndParse  bindingPath  al  mn  st
 
 
 tryReadAndParse : String -> String -> String -> ServerState -> ServerState
 
 tryReadAndParse path al mn st =
     case File.readFile  path of
-
+        
         Ok src ->
             addParsedDep  path  al  mn  src  st
-
+        
         Err _ ->
             tryReadAndParseCwd  al  mn  st
 
@@ -425,29 +440,45 @@ tryReadAndParse path al mn st =
 tryReadAndParseCwd : String -> String -> ServerState -> ServerState
 
 tryReadAndParseCwd al mn st =
-    case File.readFile  (Resolver.resolveBindingPath  "."  mn) of
-
-        Ok src ->
-            addParsedDep  (Resolver.resolveBindingPath  "."  mn)  al  mn  src  st
-
-        Err _ ->
-            st
+    let
+        cwdPath =
+            Resolver.resolveBindingPath  "."  mn
+    in
+        case File.readFile  cwdPath of
+            
+            Ok src ->
+                addParsedDep  cwdPath  al  mn  src  st
+            
+            Err _ ->
+                st
 
 
 addParsedDep : String -> String -> String -> String -> ServerState -> ServerState
 
 addParsedDep fp al mn src st =
-    insertDepIfParsed  fp  al  mn  (Parser.parse  (Lexer.lex  src).tokens)  st
+    let
+        lexResult =
+            Lexer.lex  src
+        tokens =
+            lexResult.tokens
+        parsed =
+            Parser.parse  tokens
+    in
+        insertDepIfParsed  fp  al  mn  parsed  st
 
 
 insertDepIfParsed : String -> String -> String -> (Result String Module) -> ServerState -> ServerState
 
 insertDepIfParsed fp al mn parseResult st =
     case parseResult of
-
+        
         Ok parsedMod ->
-            insertDep  fp  al  mn  (extractExports  parsedMod)  st
-
+            let
+                exps =
+                    extractExports  parsedMod
+            in
+                insertDep  fp  al  mn  exps  st
+        
         Err _ ->
             st
 
@@ -471,15 +502,13 @@ extractExports mod =
             extractAllDecls  mod.declarations  []
     in
         case mod.exposing_ of
-
+            
             ExposeAll ->
                 allDecls
-
+            
             ExposeList names ->
-                List.filter
-                 (\d -> listContainsStr  d.name  names)
-                 allDecls
-
+                List.filter  (\d -> listContainsStr  d.name  names)  allDecls
+            
             _ ->
                 allDecls
 
@@ -488,42 +517,45 @@ extractAllDecls : (List Declaration) -> (List ExportedDecl) -> List ExportedDecl
 
 extractAllDecls decls acc =
     case decls of
-
+        
         [  ] ->
             List.reverse  acc
-
+        
         decl :: rest ->
             case decl of
-
+                
                 TypeAnnotDecl name typeExpr span ->
                     extractAllDecls  rest
-                     (makeExportedDecl  name
-                      (renderTypeExpr  typeExpr)
-                      (getSpanLine  span) :: acc
-                     )
-
+                     (
+                    makeExportedDecl  name  (renderTypeExpr  typeExpr)
+                     (getSpanLine  span) ::
+                    acc
+                    )
+                
                 FunDecl name params _ span ->
                     if hasAnnotation  name  acc then
                         extractAllDecls  rest  acc
                     else
                         extractAllDecls  rest
-                         (makeExportedDecl  name
-                          (inferSigFromParams  params)
-                          (getSpanLine  span) :: acc
-                         )
-
+                         (
+                        makeExportedDecl  name  (inferSigFromParams  params)
+                         (getSpanLine  span) ::
+                        acc
+                        )
+                
                 TypeDecl name _ _ span ->
                     extractAllDecls  rest
-                     (makeExportedDecl  name  "type"
-                      (getSpanLine  span) :: acc
-                     )
-
+                     (
+                    makeExportedDecl  name  "type"  (getSpanLine  span) :: acc
+                    )
+                
                 TypeAliasDecl name _ _ span ->
                     extractAllDecls  rest
-                     (makeExportedDecl  name  "type alias"
-                      (getSpanLine  span) :: acc
-                     )
-
+                     (
+                    makeExportedDecl  name  "type alias"  (getSpanLine  span) ::
+                    acc
+                    )
+                
                 _ ->
                     extractAllDecls  rest  acc
 
@@ -537,7 +569,7 @@ makeExportedDecl n s l =
 getSpanLine : SourceSpan -> Int
 
 getSpanLine sp =
-    sp.start.line
+    sp.start
 
 
 inferSigFromParams : (List Pattern) -> String
@@ -584,28 +616,63 @@ renderTEDispatch : TypeExpr -> String
 
 renderTEDispatch te =
     case te of
-
+        
         TypeRef parts args _ ->
             renderTypeRef  (String.join  "."  parts)  args
-
+        
         TypeVar n _ ->
             n
-
+        
         TupleTypeExpr types _ ->
             "( " ++
             String.join  ", "  (List.map  renderTEDispatch  types) ++ " )"
-
+        
         UnitTypeExpr _ ->
             "()"
-
+        
         _ ->
-            renderTEFallback  te
+            renderTEWildcard  te
 
 
-renderTEFallback : TypeExpr -> String
+renderTEWildcard : TypeExpr -> String
 
-renderTEFallback te =
-    "?"
+renderTEWildcard te =
+    case te of
+        
+        TypeRef _ _ _ ->
+            "?"
+        
+        TypeVar _ _ ->
+            "?"
+        
+        FunType fromT toT _ ->
+            renderTEDispatch  fromT ++ " -> " ++ renderTEDispatch  toT
+        
+        RecordTypeExpr fields _ ->
+            renderRecordFields  fields
+        
+        TupleTypeExpr _ _ ->
+            "?"
+        
+        UnitTypeExpr _ ->
+            "?"
+
+
+renderRecordFields : (List ( String , TypeExpr )) -> String
+
+renderRecordFields fields =
+    let
+        renderField =
+            \pair ->
+                let
+                    key =
+                        fst  pair
+                    val =
+                        snd  pair
+                in
+                    key ++ " : " ++ renderTEDispatch  val
+    in
+        "{ " ++ String.join  " , "  (List.map  renderField  fields) ++ " }"
 
 
 renderTypeRef : String -> (List TypeExpr) -> String
@@ -619,8 +686,9 @@ renderTypeRef base args =
 
 renderFunType : TypeExpr -> TypeExpr -> String
 
-renderFunType from to =
-    renderTE  from ++ " -> " ++ renderTE  to
+
+to =
+    renderTEDispatch
 
 
 uriToFilePath : String -> String
@@ -645,16 +713,16 @@ deriveSrcRoot filePath =
         parts =
             String.split  "/"  filePath
         srcIdx =
-            findLastSrcIdx  parts  0  -1
+            findLastSrcIdx  parts  0  (0 - 1)
     in
         if srcIdx >= 0 then
             String.join  "/"  (List.take  (srcIdx + 1)  parts)
         else
             case List.reverse  (String.split  "/"  filePath) of
-
+                
                 _ :: rest ->
                     String.join  "/"  (List.reverse  rest)
-
+                
                 [  ] ->
                     "."
 
@@ -663,10 +731,10 @@ findLastSrcIdx : (List String) -> Int -> Int -> Int
 
 findLastSrcIdx parts idx lastFound =
     case parts of
-
+        
         [  ] ->
             lastFound
-
+        
         part :: rest ->
             if part == "src" then
                 findLastSrcIdx  rest  (idx + 1)  idx
@@ -678,17 +746,13 @@ deriveProjectRoot : String -> String
 
 deriveProjectRoot srcRoot =
     case List.reverse  (String.split  "/"  srcRoot) of
-
+        
         _ :: rest ->
             String.join  "/"  (List.reverse  rest)
-
+        
         [  ] ->
             "."
 
-
--- ============================================================
--- Dependency-aware lookup helpers
--- ============================================================
 
 lookupDepExport : ServerState -> String -> String -> Maybe ExportedDecl
 
@@ -696,14 +760,14 @@ lookupDepExport st al fn =
     lookupInDepCache  (Dict.get  al  st.depCache)  fn
 
 
-lookupInDepCache : Maybe DepModule -> String -> Maybe ExportedDecl
+lookupInDepCache : (Maybe DepModule) -> String -> Maybe ExportedDecl
 
 lookupInDepCache maybeDep fn =
     case maybeDep of
-
+        
         Just depMod ->
             findExport  fn  depMod.exports
-
+        
         Nothing ->
             Nothing
 
@@ -712,10 +776,10 @@ findExport : String -> (List ExportedDecl) -> Maybe ExportedDecl
 
 findExport name exports =
     case exports of
-
+        
         [  ] ->
             Nothing
-
+        
         exp :: rest ->
             if exp.name == name then
                 Just  exp
@@ -776,10 +840,10 @@ getHoverForPosition : ServerState -> String -> Int -> Int -> String
 
 getHoverForPosition state uri line character =
     case Dict.get  uri  state.documents of
-
+        
         Nothing ->
             jsonNull
-
+        
         Just source ->
             let
                 lineText =
@@ -800,9 +864,8 @@ getHoverForPosition state uri line character =
                     , jsonObject
                        [ ( "kind" , jsonString  "markdown" )
                       , ( "value"
-                        , jsonString
-                           ("```sky\\n" ++ info ++ "\\n```")
-                        )
+                      , jsonString  ("```sky\\n" ++ info ++ "\\n```")
+                      )
                       ]
                     )
                     ]
@@ -818,27 +881,27 @@ lookupTypeInfo state uri word source =
             String.split  "."  word
         modAlias =
             case qualParts of
-
+                
                 m :: _ ->
                     m
-
+                
                 [  ] ->
                     ""
         funcName =
             case List.reverse  qualParts of
-
+                
                 f :: _ ->
                     f
-
+                
                 [  ] ->
                     ""
         fromDep =
             if isQualified then
                 case lookupDepExport  state  modAlias  funcName of
-
+                    
                     Just exp ->
                         word ++ " : " ++ exp.signature
-
+                    
                     Nothing ->
                         ""
             else
@@ -851,17 +914,22 @@ lookupTypeInfo state uri word source =
         fromAnnotation =
             if String.isEmpty  fromStdlibMap then
                 findAnnotationInSource
-                 (if isQualified then funcName else word)
+                 (
+                if isQualified then
+                    funcName
+                else
+                    word
+                )
                  source
             else
                 fromStdlibMap
         fromAst =
             if String.isEmpty  fromAnnotation then
                 case Dict.get  uri  state.astCache of
-
+                    
                     Just mod ->
                         inferFromAst  word  mod.declarations
-
+                    
                     Nothing ->
                         ""
             else
@@ -874,10 +942,10 @@ lookupStdlibType : String -> String
 
 lookupStdlibType name =
     case Dict.get  name  stdlibTypeMap of
-
+        
         Just sig ->
             name ++ " : " ++ sig
-
+        
         Nothing ->
             ""
 
@@ -988,7 +1056,9 @@ stdlibTypeMap =
     , ( "Server.redirect" , "String -> Response" )
     , ( "Server.withStatus" , "Int -> Response -> Response" )
     , ( "Server.withHeader" , "String -> String -> Response -> Response" )
-    , ( "Server.withCookie" , "String -> String -> String -> Response -> Response" )
+    , ( "Server.withCookie"
+    , "String -> String -> String -> Response -> Response"
+    )
     , ( "Server.queryParam" , "String -> Request -> Maybe String" )
     , ( "Server.formValue" , "String -> Request -> String" )
     , ( "Server.method" , "Request -> String" )
@@ -1006,38 +1076,47 @@ inferFromAst : String -> (List Declaration) -> String
 
 inferFromAst name decls =
     case decls of
-
+        
         [  ] ->
             ""
-
+        
         decl :: rest ->
             case decl of
-
+                
                 FunDecl fname params _ _ ->
                     if fname == name then
                         let
                             paramCount =
                                 List.length  params
                             paramTypes =
-                                List.map
-                                 (\_ -> "a")
-                                 (List.take  paramCount
-                                  [ 1 , 2 , 3 , 4 , 5 , 6 , 7 , 8 ]
-                                 )
+                                List.map  (\_ -> "a")
+                                 (
+                                List.take  paramCount
+                                 [ 1 , 2 , 3 , 4 , 5 , 6 , 7 , 8 ]
+                                )
                             vars =
-                                [ "a" , "b" , "c" , "d" , "e" , "f" , "g" , "h" ]
+                                [ "a"
+                                , "b"
+                                , "c"
+                                , "d"
+                                , "e"
+                                , "f"
+                                , "g"
+                                , "h"
+                                ]
                             typedParams =
                                 List.take  paramCount  vars
                         in
                             if paramCount == 0 then
                                 name ++ " : a"
                             else
-                                name ++ " : " ++
+                                name ++
+                                " : " ++
                                 String.join  " -> "
                                  (List.append  typedParams  [ "result" ])
                     else
                         inferFromAst  name  rest
-
+                
                 _ ->
                     inferFromAst  name  rest
 
@@ -1100,16 +1179,25 @@ findLineStartLoop source idx =
 getWordAt : Int -> String -> String
 
 getWordAt col lineText =
-    if col >= String.length  lineText then
-        ""
-    else
-        let
-            wordStart =
-                findWordStart  lineText  col
-            wordEnd =
-                findWordEnd  lineText  col
-        in
-            String.slice  wordStart  wordEnd  lineText
+    let
+        len =
+            String.length  lineText
+        effectiveCol =
+            if col >= len then
+                len - 1
+            else
+                col
+    in
+        if effectiveCol < 0 then
+            ""
+        else
+            let
+                wordStart =
+                    findWordStart  lineText  effectiveCol
+                wordEnd =
+                    findWordEnd  lineText  effectiveCol
+            in
+                String.slice  wordStart  wordEnd  lineText
 
 
 findWordStart : String -> Int -> Int
@@ -1284,10 +1372,10 @@ handleCompletion state id body =
             jsonGetInt  "character"  position
         lineText =
             case Dict.get  uri  state.documents of
-
+                
                 Just source ->
                     getLineAt  line  source
-
+                
                 Nothing ->
                     ""
         prefix =
@@ -1298,16 +1386,29 @@ handleCompletion state id body =
             String.split  "."  prefix
         modulePart =
             case qualParts of
-
+                
                 mod :: _ ->
                     mod
-
+                
                 [  ] ->
                     ""
         keywords =
-            [ "module" , "exposing" , "import" , "as" , "type" , "alias"
-            , "let" , "in" , "if" , "then" , "else" , "case" , "of"
-            , "foreign" , "True" , "False"
+            [ "module"
+            , "exposing"
+            , "import"
+            , "as"
+            , "type"
+            , "alias"
+            , "let"
+            , "in"
+            , "if"
+            , "then"
+            , "else"
+            , "case"
+            , "of"
+            , "foreign"
+            , "True"
+            , "False"
             ]
         keywordItems =
             if isQualified then
@@ -1316,8 +1417,7 @@ handleCompletion state id body =
                 List.filterMap
                  (
                 \kw ->
-                    if String.isEmpty  prefix ||
-                    String.startsWith  prefix  kw then
+                    if String.isEmpty  prefix || String.startsWith  prefix  kw then
                         Just
                          (
                         jsonObject
@@ -1334,10 +1434,10 @@ handleCompletion state id body =
                 []
             else
                 case Dict.get  uri  state.astCache of
-
+                    
                     Just mod ->
                         completionsFromAst  mod.declarations  prefix
-
+                    
                     Nothing ->
                         []
         stdlibItems =
@@ -1352,11 +1452,7 @@ handleCompletion state id body =
                 []
         allItems =
             List.concat
-             [ keywordItems
-            , localItems
-            , stdlibItems
-            , moduleItems
-            ]
+             [ keywordItems , localItems , stdlibItems , moduleItems ]
         result =
             jsonObject
              [ ( "isIncomplete" , jsonBool  True )
@@ -1369,14 +1465,23 @@ handleCompletion state id body =
 getCompletionPrefix : Int -> String -> String
 
 getCompletionPrefix col lineText =
-    if col <= 0 || col > String.length  lineText then
-        ""
-    else
-        let
-            start =
-                findCompletionStart  lineText  (col - 1)
-        in
-            String.slice  start  col  lineText
+    let
+        len =
+            String.length  lineText
+        effectiveCol =
+            if col > len then
+                len
+            else
+                col
+    in
+        if effectiveCol <= 0 then
+            ""
+        else
+            let
+                start =
+                    findCompletionStart  lineText  (effectiveCol - 1)
+            in
+                String.slice  start  effectiveCol  lineText
 
 
 findCompletionStart : String -> Int -> Int
@@ -1402,24 +1507,23 @@ completionsFromAst decls prefix =
      (
     \decl ->
         case decl of
-
+            
             FunDecl name _ _ _ ->
-                if String.isEmpty  prefix ||
-                String.startsWith  prefix  name then
+                if String.isEmpty  prefix || String.startsWith  prefix  name then
                     let
                         sig =
                             case Dict.get  name  stdlibTypeMap of
-
+                                
                                 Just t ->
                                     t
-
+                                
                                 Nothing ->
                                     "function"
                     in
                         Just  (makeCompletionItem  name  sig  3)
                 else
                     Nothing
-
+            
             TypeDecl name _ variants _ ->
                 let
                     typeItem =
@@ -1434,30 +1538,30 @@ completionsFromAst decls prefix =
                         \v ->
                             if String.isEmpty  prefix ||
                             String.startsWith  prefix  v.name then
-                                Just
-                                 (makeCompletionItem  v.name  name  4)
+                                Just  (makeCompletionItem  v.name  name  4)
                             else
                                 Nothing
                         )
                          variants
                 in
                     case List.append  typeItem  ctorItems of
-
+                        
                         first :: _ ->
                             Just  first
-
+                        
                         [  ] ->
                             Nothing
-
-            TypeAliasDecl name _ _ _ ->
-                if String.isEmpty  prefix ||
-                String.startsWith  prefix  name then
-                    Just  (makeCompletionItem  name  "type alias"  22)
-                else
-                    Nothing
-
-            _ ->
-                Nothing
+                        
+                        TypeAliasDecl name _ _ _ ->
+                            if String.isEmpty  prefix ||
+                            String.startsWith  prefix  name then
+                                Just
+                                 (makeCompletionItem  name  "type alias"  22)
+                            else
+                                Nothing
+                        
+                        _ ->
+                            Nothing
     )
      decls
 
@@ -1467,9 +1571,21 @@ completionsFromStdlib : String -> List String
 completionsFromStdlib prefix =
     let
         preludeNames =
-            [ "identity" , "not" , "always" , "fst" , "snd" , "clamp"
-            , "modBy" , "errorToString" , "Ok" , "Err" , "Just"
-            , "Nothing" , "True" , "False" , "println"
+            [ "identity"
+            , "not"
+            , "always"
+            , "fst"
+            , "snd"
+            , "clamp"
+            , "modBy"
+            , "errorToString"
+            , "Ok"
+            , "Err"
+            , "Just"
+            , "Nothing"
+            , "True"
+            , "False"
+            , "println"
             ]
     in
         List.filterMap
@@ -1479,10 +1595,10 @@ completionsFromStdlib prefix =
                 let
                     sig =
                         case Dict.get  name  stdlibTypeMap of
-
+                            
                             Just t ->
                                 t
-
+                            
                             Nothing ->
                                 ""
                 in
@@ -1491,8 +1607,6 @@ completionsFromStdlib prefix =
                 Nothing
         )
          preludeNames
-
-
 
 
 completionsForModule : ServerState -> String -> List String
@@ -1518,22 +1632,19 @@ completionsForModule state modulePart =
                                  (String.length  key)
                                  key
                         in
-                            Just
-                             (makeCompletionItem  shortName  sig  3)
+                            Just  (makeCompletionItem  shortName  sig  3)
                     else
                         Nothing
             )
              (Dict.toList  stdlibTypeMap)
         depMatching =
             case Dict.get  modulePart  state.depCache of
-
+                
                 Just depMod ->
                     List.map
-                     (\exp ->
-                        makeCompletionItem  exp.name  exp.signature  3
-                     )
+                     (\exp -> makeCompletionItem  exp.name  exp.signature  3)
                      depMod.exports
-
+                
                 Nothing ->
                     []
     in
@@ -1603,42 +1714,50 @@ findDefinitionInDep state word source uri =
             String.split  "."  word
         modAlias =
             case parts of
-
+                
                 m :: _ ->
                     m
-
+                
                 [  ] ->
                     ""
         funcName =
             case List.reverse  parts of
-
+                
                 f :: _ ->
                     f
-
+                
                 [  ] ->
                     ""
     in
         case lookupDepExport  state  modAlias  funcName of
-
+            
             Just exp ->
                 case Dict.get  modAlias  state.depCache of
-
+                    
                     Just depMod ->
-                        jsonObject
-                         [ ( "uri"
-                           , jsonString  (filePathToUri  depMod.filePath)
-                           )
-                        , ( "range"
-                          , makeRange  exp.defLine  0  exp.defLine
-                             (String.length  exp.name)
-                          )
-                        ]
-
+                        findDefinitionInDepFile  funcName  depMod.filePath
+                    
+                    Nothing ->
+                        findDefinitionInSource  funcName  source  uri
+                    
                     Nothing ->
                         findDefinitionInSource  funcName  source  uri
 
-            Nothing ->
-                findDefinitionInSource  funcName  source  uri
+
+findDefinitionInDepFile : String -> String -> String
+
+findDefinitionInDepFile name filePath =
+    case File.readFile  filePath of
+        
+        Ok depSource ->
+            let
+                depUri =
+                    filePathToUri  filePath
+            in
+                findDefinitionInSource  name  depSource  depUri
+        
+        Err _ ->
+            jsonNull
 
 
 findDefinitionInSource : String -> String -> String -> String
@@ -1651,12 +1770,14 @@ findDefinitionInSource name source uri =
         if defLine < 0 then
             jsonNull
         else
-            jsonObject
-             [ ( "uri" , jsonString  uri )
-            , ( "range"
-            , makeRange  defLine  0  defLine  (String.length  name)
-            )
-            ]
+            let
+                nameLen =
+                    String.length  name
+            in
+                jsonObject
+                 [ ( "uri" , jsonString  uri )
+                , ( "range" , makeRange  defLine  0  defLine  nameLen )
+                ]
 
 
 findDefLineInSource : String -> String -> Int -> Int -> Int
