@@ -21,7 +21,13 @@ generateBindings pkgName outDir =
 
         Ok inspectJson ->
             if String.length  inspectJson > 50000 then
-                generateBindingsNative  pkgName  outDir
+                case generateBindingsNative  pkgName  outDir of
+
+                    Ok content ->
+                        Ok  content
+
+                    Err _ ->
+                        generateBindingsFromJson  pkgName  outDir  inspectJson
             else
                 generateBindingsFromJson  pkgName  outDir  inspectJson
 

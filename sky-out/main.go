@@ -5090,7 +5090,7 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
@@ -5098,7 +5098,7 @@ func Formatter_Doc_Hardline() any {
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6114,7 +6114,7 @@ var parseMethodEntry = Ffi_WrapperGen_ParseMethodEntry
 var ParseMethodEntry = Ffi_WrapperGen_ParseMethodEntry
 
 func Ffi_BindingGen_GenerateBindings(pkgName any, outDir any) any {
-	return func() any { return func() any { __subject := Ffi_Inspector_InspectPackage(pkgName); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { inspectJson := sky_asSkyResult(__subject).OkValue; _ = inspectJson; return func() any { if sky_asBool(sky_asInt(sky_stringLength(inspectJson)) > sky_asInt(50000)) { return Ffi_BindingGen_GenerateBindingsNative(pkgName, outDir) }; return Ffi_BindingGen_GenerateBindingsFromJson(pkgName, outDir, inspectJson) }() };  return nil }() }()
+	return func() any { return func() any { __subject := Ffi_Inspector_InspectPackage(pkgName); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { inspectJson := sky_asSkyResult(__subject).OkValue; _ = inspectJson; return func() any { if sky_asBool(sky_asInt(sky_stringLength(inspectJson)) > sky_asInt(50000)) { return func() any { return func() any { __subject := Ffi_BindingGen_GenerateBindingsNative(pkgName, outDir); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return SkyOk(content) };  if sky_asSkyResult(__subject).SkyName == "Err" { return Ffi_BindingGen_GenerateBindingsFromJson(pkgName, outDir, inspectJson) };  return nil }() }() }; return Ffi_BindingGen_GenerateBindingsFromJson(pkgName, outDir, inspectJson) }() };  return nil }() }()
 }
 
 func Ffi_BindingGen_GenerateBindingsFromJson(pkgName any, outDir any, inspectJson any) any {
