@@ -715,8 +715,6 @@ dceMainGo outDir goCode =
             )
              Dict.empty
              pureFuncBlocks
-        allNonFuncCode =
-            sections.header ++ "\n" ++ String.join  "\n"  allVarLines
         wrapperContent =
             case Process.run  "sh"
                   [ "-c"
