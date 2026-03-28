@@ -885,7 +885,7 @@ lowerQualified ctx parts =
             GoIdent  "sky_resultAndThen"
         else if qualName == "Result.mapError" then
             GoIdent  "sky_resultMapError"
-        else if qualName == "Maybe.withDefault" then
+        else if qualName == "Maybe.withDefault" || qualName == "withDefault" then
             GoIdent  "sky_maybeWithDefault"
         else if qualName == "Maybe.map" then
             GoIdent  "sky_maybeMap"

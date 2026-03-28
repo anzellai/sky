@@ -332,7 +332,7 @@ handleUpdateCartItemQty itemId qtyStr model =
         qty =
             qtyStr
                 |> String.toInt
-                |> withDefault 0
+                |> Maybe.withDefault 0
         _ =
             Cart.updateItemQty itemId qty
     in
