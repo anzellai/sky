@@ -90,9 +90,22 @@ cmdBuild _ =
                 let
                     goModPath =
                         outDir ++ "/go.mod"
+                    goSumPath =
+                        outDir ++ "/go.sum"
+                    goModExists =
+                        case File.readFile  goModPath of
+
+                            Ok _ ->
+                                True
+
+                            Err _ ->
+                                False
                     _ =
-                        File.writeFile  goModPath
-                         "module sky-app\n\ngo 1.26.0\n"
+                        if goModExists then
+                            Ok  ""
+                        else
+                            File.writeFile  goModPath
+                             "module sky-app\n\ngo 1.26.0\n"
                     hasFfiWrappers =
                         case Process.run  "sh"
                               [ "-c"
@@ -105,20 +118,31 @@ cmdBuild _ =
 
                             Err _ ->
                                 False
+                    goSumExists =
+                        case File.readFile  goSumPath of
+
+                            Ok _ ->
+                                True
+
+                            Err _ ->
+                                False
                     _ =
-                        if hasFfiWrappers then
+                        if hasFfiWrappers && not  goSumExists then
                             let
                                 _ =
                                     println  "Running go mod tidy..."
-                                _ =
-                                    Process.run  "sh"
-                                     [ "-c"
-                                    , "cd " ++
-                                    outDir ++
-                                    " && grep -h '\"' *.go 2>/dev/null | grep -v 'sky_wrappers\\|package\\|//' | sed 's/.*\"\\(.*\\)\".*/\\1/' | sort -u | while read pkg; do go get \"$pkg\" 2>/dev/null; done && go mod tidy 2>&1"
-                                    ]
                             in
-                                Ok  ""
+                                Process.run  "sh"
+                                 [ "-c"
+                                , "cd " ++
+                                outDir ++
+                                " && grep -h '\"' *.go 2>/dev/null | grep -v 'sky_wrappers\\|package\\|//' | sed 's/.*\"\\(.*\\)\".*/\\1/' | sort -u | while read pkg; do go get \"$pkg\" 2>/dev/null; done && go mod tidy 2>&1"
+                                ]
+                        else if hasFfiWrappers then
+                            Process.run  "sh"
+                             [ "-c"
+                            , "cd " ++ outDir ++ " && go mod tidy 2>&1"
+                            ]
                         else
                             Ok  ""
                     _ =
