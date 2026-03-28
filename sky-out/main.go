@@ -3025,7 +3025,13 @@ var CompileFfiModuleLight = Compiler_Pipeline_CompileFfiModuleLight
 
 var MakeFfiWrapperVar = Compiler_Pipeline_MakeFfiWrapperVar
 
+var BuildFfiVarDecl = Compiler_Pipeline_BuildFfiVarDecl
+
+var BuildFfiDeclString = Compiler_Pipeline_BuildFfiDeclString
+
 var CountWrapperArgs = Compiler_Pipeline_CountWrapperArgs
+
+var CountWrapperArgsAcc = Compiler_Pipeline_CountWrapperArgsAcc
 
 var MakeFfiFunc = Compiler_Pipeline_MakeFfiFunc
 
@@ -3612,7 +3618,7 @@ func Compiler_Pipeline_ImportAlias(imp any) any {
 }
 
 func Compiler_Pipeline_CompileDependencyModule(stdlibEnv any, allModules any, pair any) any {
-	return Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv, allModules, pair)
+	return func() any { if sky_asBool(Compiler_Pipeline_IsFfiModule(sky_fst(pair), sky_snd(pair))) { return Compiler_Pipeline_CompileFfiModuleLight(allModules, pair) }; return Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv, allModules, pair) }()
 }
 
 func Compiler_Pipeline_CompileFfiModuleLight(allModules any, pair any) any {
@@ -3620,11 +3626,23 @@ func Compiler_Pipeline_CompileFfiModuleLight(allModules any, pair any) any {
 }
 
 func Compiler_Pipeline_MakeFfiWrapperVar(prefix any, decl any) any {
-	return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "FunDecl" { name := sky_asMap(__subject)["V0"]; _ = name; params := sky_asMap(__subject)["V1"]; _ = params; body := sky_asMap(__subject)["V2"]; _ = body; return func() any { wrapperName := Compiler_Pipeline_ExtractWrapperNameFromBody(body); _ = wrapperName; goName := sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(sanitizeGoIdent(name)))); _ = goName; wrapperArgCount := Compiler_Pipeline_CountWrapperArgs(body); _ = wrapperArgCount; skyArgCount := sky_listLength(params); _ = skyArgCount; return func() any { if sky_asBool(sky_stringIsEmpty(wrapperName)) { return SkyNothing() }; if sky_asBool(sky_asBool(sky_equal(skyArgCount, 0)) && sky_asBool(sky_equal(wrapperArgCount, 0))) { return SkyJust(GoDeclRaw(sky_concat("var ", sky_concat(goName, sky_concat(" = ", wrapperName))))) }; return SkyJust }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "FunDecl" { name := sky_asMap(__subject)["V0"]; _ = name; params := sky_asMap(__subject)["V1"]; _ = params; body := sky_asMap(__subject)["V2"]; _ = body; return Compiler_Pipeline_BuildFfiVarDecl(prefix, name, params, body) };  if true { return SkyNothing() };  return nil }() }()
+}
+
+func Compiler_Pipeline_BuildFfiVarDecl(prefix any, name any, params any, body any) any {
+	return func() any { wrapperName := Compiler_Pipeline_ExtractWrapperNameFromBody(body); _ = wrapperName; declStr := Compiler_Pipeline_BuildFfiDeclString(prefix, name, params, body, wrapperName); _ = declStr; return func() any { if sky_asBool(sky_stringIsEmpty(wrapperName)) { return SkyNothing() }; return SkyJust(GoDeclRaw(declStr)) }() }()
+}
+
+func Compiler_Pipeline_BuildFfiDeclString(prefix any, name any, params any, body any, wrapperName any) any {
+	return func() any { goName := sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(sanitizeGoIdent(name)))); _ = goName; skyArgCount := sky_listLength(params); _ = skyArgCount; wrapperArgCount := Compiler_Pipeline_CountWrapperArgs(body); _ = wrapperArgCount; return func() any { if sky_asBool(sky_asBool(sky_equal(skyArgCount, 0)) && sky_asBool(sky_equal(wrapperArgCount, 0))) { return sky_concat("var ", sky_concat(goName, sky_concat(" = ", wrapperName))) }; return Compiler_Pipeline_MakeFfiFunc(goName, wrapperName, skyArgCount, wrapperArgCount) }() }()
 }
 
 func Compiler_Pipeline_CountWrapperArgs(expr any) any {
-	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "CallExpr" { args := sky_asMap(__subject)["V1"]; _ = args; return sky_listLength(args) };  if true { return 0 };  return nil }() }()
+	return Compiler_Pipeline_CountWrapperArgsAcc(expr, 0)
+}
+
+func Compiler_Pipeline_CountWrapperArgsAcc(expr any, acc any) any {
+	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "CallExpr" { callee := sky_asMap(__subject)["V0"]; _ = callee; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Pipeline_CountWrapperArgsAcc(callee, sky_asInt(acc) + sky_asInt(sky_listLength(args))) };  if true { return acc };  return nil }() }()
 }
 
 func Compiler_Pipeline_MakeFfiFunc(goName any, wrapperName any, skyArgCount any, wrapperArgCount any) any {
@@ -4914,15 +4932,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6533,7 +6551,13 @@ var compileFfiModuleLight = Compiler_Pipeline_CompileFfiModuleLight
 
 var makeFfiWrapperVar = Compiler_Pipeline_MakeFfiWrapperVar
 
+var buildFfiVarDecl = Compiler_Pipeline_BuildFfiVarDecl
+
+var buildFfiDeclString = Compiler_Pipeline_BuildFfiDeclString
+
 var countWrapperArgs = Compiler_Pipeline_CountWrapperArgs
+
+var countWrapperArgsAcc = Compiler_Pipeline_CountWrapperArgsAcc
 
 var makeFfiFunc = Compiler_Pipeline_MakeFfiFunc
 

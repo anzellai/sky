@@ -2156,7 +2156,10 @@ importAlias imp =
 compileDependencyModule : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
 
 compileDependencyModule stdlibEnv allModules pair =
-    compileDependencyModuleFull  stdlibEnv  allModules  pair
+    if isFfiModule  (fst  pair)  (snd  pair) then
+        compileFfiModuleLight  allModules  pair
+    else
+        compileDependencyModuleFull  stdlibEnv  allModules  pair
 
 
 compileFfiModuleLight : (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
@@ -2198,41 +2201,60 @@ makeFfiWrapperVar prefix decl =
     case decl of
 
         Ast.FunDecl name params body _ ->
-            let
-                wrapperName =
-                    extractWrapperNameFromBody  body
-                goName =
-                    prefix ++ "_" ++ capitalizeFirst  (sanitizeGoIdent  name)
-                wrapperArgCount =
-                    countWrapperArgs  body
-                skyArgCount =
-                    List.length  params
-            in
-                if String.isEmpty  wrapperName then
-                    Nothing
-                else if skyArgCount == 0 && wrapperArgCount == 0 then
-                    Just  (GoDeclRaw  ("var " ++ goName ++ " = " ++ wrapperName))
-                else
-                    Just  (GoDeclRaw
-                     (makeFfiFunc  goName  wrapperName  skyArgCount
-                      wrapperArgCount
-                     )
-                    )
+            buildFfiVarDecl  prefix  name  params  body
 
         _ ->
             Nothing
 
 
+buildFfiVarDecl : String -> String -> (List Ast.Pattern) -> Ast.Expression -> Maybe GoDecl
+
+buildFfiVarDecl prefix name params body =
+    let
+        wrapperName =
+            extractWrapperNameFromBody  body
+        declStr =
+            buildFfiDeclString  prefix  name  params  body  wrapperName
+    in
+        if String.isEmpty  wrapperName then
+            Nothing
+        else
+            Just  (GoDeclRaw  declStr)
+
+
+buildFfiDeclString : String -> String -> (List Ast.Pattern) -> Ast.Expression -> String -> String
+
+buildFfiDeclString prefix name params body wrapperName =
+    let
+        goName =
+            prefix ++ "_" ++ capitalizeFirst  (sanitizeGoIdent  name)
+        skyArgCount =
+            List.length  params
+        wrapperArgCount =
+            countWrapperArgs  body
+    in
+        if skyArgCount == 0 && wrapperArgCount == 0 then
+            "var " ++ goName ++ " = " ++ wrapperName
+        else
+            makeFfiFunc  goName  wrapperName  skyArgCount  wrapperArgCount
+
+
 countWrapperArgs : Ast.Expression -> Int
 
 countWrapperArgs expr =
+    countWrapperArgsAcc  expr  0
+
+
+countWrapperArgsAcc : Ast.Expression -> Int -> Int
+
+countWrapperArgsAcc expr acc =
     case expr of
 
-        Ast.CallExpr _ args _ ->
-            List.length  args
+        Ast.CallExpr callee args _ ->
+            countWrapperArgsAcc  callee  (acc + List.length  args)
 
         _ ->
-            0
+            acc
 
 
 makeFfiFunc : String -> String -> Int -> Int -> String
