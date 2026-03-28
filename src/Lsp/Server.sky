@@ -497,10 +497,9 @@ extractAllDecls decls acc =
 
                 TypeAnnotDecl name typeExpr span ->
                     extractAllDecls  rest
-                     ({ name = name
-                      , signature = renderTypeExpr  typeExpr
-                      , defLine = span.start.line
-                      } :: acc
+                     (makeExportedDecl  name
+                      (renderTypeExpr  typeExpr)
+                      (getSpanLine  span) :: acc
                      )
 
                 FunDecl name params _ span ->
@@ -508,49 +507,37 @@ extractAllDecls decls acc =
                         extractAllDecls  rest  acc
                     else
                         extractAllDecls  rest
-                         ({ name = name
-                          , signature = inferSigFromParams  params
-                          , defLine = span.start.line
-                          } :: acc
+                         (makeExportedDecl  name
+                          (inferSigFromParams  params)
+                          (getSpanLine  span) :: acc
                          )
 
-                TypeDecl name _ variants span ->
-                    let
-                        ctorDecls =
-                            List.map
-                             (\v ->
-                                { name = v.name
-                                , signature = name
-                                , defLine = v.span.start.line
-                                }
-                             )
-                             variants
-                    in
-                        extractAllDecls  rest
-                         (List.append
-                          (List.reverse
-                           ({ name = name
-                            , signature = "type"
-                            , defLine = span.start.line
-                            } :: ctorDecls
-                           )
-                          )
-                          acc
-                         )
-
-                TypeAliasDecl name _ typeExpr span ->
+                TypeDecl name _ _ span ->
                     extractAllDecls  rest
-                     ({ name = name
-                      , signature = "type alias = " ++ renderTypeExpr  typeExpr
-                      , defLine = span.start.line
-                      } :: acc
+                     (makeExportedDecl  name  "type"
+                      (getSpanLine  span) :: acc
                      )
 
-                ForeignImportDecl name _ _ span ->
-                    extractAllDecls  rest  acc
+                TypeAliasDecl name _ _ span ->
+                    extractAllDecls  rest
+                     (makeExportedDecl  name  "type alias"
+                      (getSpanLine  span) :: acc
+                     )
 
                 _ ->
                     extractAllDecls  rest  acc
+
+
+makeExportedDecl : String -> String -> Int -> ExportedDecl
+
+makeExportedDecl n s l =
+    { name = n , signature = s , defLine = l }
+
+
+getSpanLine : SourceSpan -> Int
+
+getSpanLine sp =
+    sp.start.line
 
 
 inferSigFromParams : (List Pattern) -> String
@@ -584,52 +571,57 @@ listContainsStr s xs =
 renderTypeExpr : TypeExpr -> String
 
 renderTypeExpr texpr =
-    case texpr of
+    renderTE  texpr
+
+
+renderTE : TypeExpr -> String
+
+renderTE te =
+    case te of
 
         TypeRef parts args _ ->
-            let
-                base =
-                    String.join  "."  parts
-            in
-                if List.isEmpty  args then
-                    base
-                else
-                    base ++ " " ++
-                    String.join  " "  (List.map  renderTypeExpr  args)
+            renderTypeRef  (String.join  "."  parts)  args
 
-        TypeVar name _ ->
-            name
+        TypeVar n _ ->
+            n
 
         FunType from to _ ->
-            let
-                fromStr =
-                    case from of
-
-                        FunType _ _ _ ->
-                            "(" ++ renderTypeExpr  from ++ ")"
-
-                        _ ->
-                            renderTypeExpr  from
-            in
-                fromStr ++ " -> " ++ renderTypeExpr  to
+            renderFunType  from  to
 
         TupleTypeExpr types _ ->
             "( " ++
-            String.join  ", "  (List.map  renderTypeExpr  types) ++ " )"
-
-        RecordTypeExpr fields _ ->
-            "{ " ++
-            String.join  ", "
-             (List.map
-              (\f -> f.name ++ " : " ++ renderTypeExpr  f.type_)
-              fields
-             ) ++ " }"
+            String.join  ", "  (List.map  renderTE  types) ++ " )"
 
         UnitTypeExpr _ ->
             "()"
 
         _ ->
             "?"
+
+
+renderTypeRef : String -> (List TypeExpr) -> String
+
+renderTypeRef base args =
+    if List.isEmpty  args then
+        base
+    else
+        base ++ " " ++ String.join  " "  (List.map  renderTE  args)
+
+
+renderFunType : TypeExpr -> TypeExpr -> String
+
+renderFunType from to =
+    let
+        fromStr =
+            case from of
+
+                FunType _ _ _ ->
+                    "(" ++ renderTE  from ++ ")"
+
+                _ ->
+                    renderTE  from
+    in
+        fromStr ++ " -> " ++ renderTE  to
 
 
 uriToFilePath : String -> String

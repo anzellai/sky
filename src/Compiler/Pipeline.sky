@@ -274,6 +274,8 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
         _ =
             println  ""
         _ =
+            println  ""
+        _ =
             dceMainGo  outDir  goCode
         _ =
             println  ""
