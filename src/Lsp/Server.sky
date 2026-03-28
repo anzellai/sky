@@ -923,17 +923,28 @@ lookupTypeInfo state uri word source =
                  source
             else
                 fromStdlibMap
-        fromAst =
+        fromTypeCheck =
             if String.isEmpty  fromAnnotation then
-                case Dict.get  uri  state.astCache of
-                    
-                    Just mod ->
-                        inferFromAst  word  mod.declarations
-                    
+                case Dict.get  uri  state.typeCache of
+
+                    Just checkResult ->
+                        lookupInTypedDecls  word  checkResult.declarations
+
                     Nothing ->
                         ""
             else
                 fromAnnotation
+        fromAst =
+            if String.isEmpty  fromTypeCheck then
+                case Dict.get  uri  state.astCache of
+
+                    Just mod ->
+                        inferFromAst  word  mod.declarations
+
+                    Nothing ->
+                        ""
+            else
+                fromTypeCheck
     in
         fromAst
 
@@ -1070,6 +1081,21 @@ stdlibTypeMap =
     , ( "Args.getArgs" , "() -> List String" )
     , ( "Args.getArg" , "Int -> Maybe String" )
     ]
+
+
+lookupInTypedDecls : String -> (List Checker.TypedDecl) -> String
+
+lookupInTypedDecls name decls =
+    case decls of
+
+        [  ] ->
+            ""
+
+        td :: rest ->
+            if td.name == name then
+                name ++ " : " ++ td.prettyType
+            else
+                lookupInTypedDecls  name  rest
 
 
 inferFromAst : String -> (List Declaration) -> String
