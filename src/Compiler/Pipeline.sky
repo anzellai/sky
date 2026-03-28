@@ -500,15 +500,12 @@ trimWrapperFile filePath mainGoCode =
                     splitWrapperSections  content
                 funcBlocks =
                     sections.functions
-                keptFuncs =
-                    List.filter  (\block -> isWrapperUsed  block  mainGoCode)
-                     funcBlocks
-                keptNonSky =
-                    List.filter
-                     (\block -> not  (String.startsWith  "func Sky_"  block))
-                     funcBlocks
                 allKept =
-                    List.append  keptFuncs  keptNonSky
+                    List.filter
+                     (\block -> isWrapperUsed  block  mainGoCode ||
+                        isHelperFunc  block
+                     )
+                     funcBlocks
             in
                 if List.isEmpty  allKept then
                     Process.run  "rm"  [ "-f" , filePath ]
@@ -579,10 +576,23 @@ isWrapperUsed funcBlock mainGoCode =
     in
         if String.isEmpty  funcName then
             True
-        else if not  (String.startsWith  "Sky_"  funcName) then
-            True
         else
             String.contains  funcName  mainGoCode
+
+
+isHelperFunc : String -> Bool
+
+isHelperFunc funcBlock =
+    let
+        funcName =
+            extractWrapperFuncName  funcBlock
+        firstChar =
+            String.slice  0  1  funcName
+    in
+        if String.isEmpty  funcName then
+            True
+        else
+            firstChar == String.toLower  firstChar
 
 
 extractWrapperFuncName : String -> String
@@ -1391,22 +1401,28 @@ copyFfiWrappers : String -> String -> (List Ast.ImportDecl) -> String -> ()
 
 copyFfiWrappers outDir projectRoot imports mainGoCode =
     let
-        _ =
-            List.foldl
-             (
-            \imp _ ->
+        allModNames =
+            List.filterMap
+             (\imp ->
                 let
-                    modName =
+                    mn =
                         String.join  "."  imp.moduleName
                 in
-                    if Resolver.isStdlib  modName || imp.alias_ == "_" then
-                        ()
+                    if Resolver.isStdlib  mn || imp.alias_ == "_" then
+                        Nothing
                     else
-                        copyOneFfiWrapper  outDir  projectRoot  modName
-                         mainGoCode
-            )
-             ()
+                        Just  mn
+             )
              imports
+        uniqueModNames =
+            Set.toList  (Set.fromList  allModNames)
+        _ =
+            List.foldl
+             (\modName _ ->
+                copyOneFfiWrapper  outDir  projectRoot  modName  mainGoCode
+             )
+             ()
+             uniqueModNames
         _ =
             copyProjectWrappers  outDir  projectRoot  mainGoCode
     in
@@ -1491,8 +1507,12 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
              (List.map  ffiSafePart  (String.split  "."  modName))
         wrapperPrefix =
             "Sky_" ++ safeName ++ "_"
+        modulePrefix =
+            String.join  "_"
+             (List.map  ffiPascalPart  (String.split  "."  modName))
         hasReferences =
-            String.contains  wrapperPrefix  mainGoCode
+            String.contains  wrapperPrefix  mainGoCode ||
+            String.contains  (modulePrefix ++ "_")  mainGoCode
         prefix =
             if projectRoot == "." then
                 ""
@@ -1513,16 +1533,30 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
                     
                     Ok content ->
                         let
-                            rewritten =
-                                String.replace  "package sky_wrappers"
-                                 "package main"
-                                 content
                             wrapperDst =
                                 outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
-                            _ =
-                                File.writeFile  wrapperDst  rewritten
+                            alreadyCopied =
+                                case File.readFile  wrapperDst of
+
+                                    Ok _ ->
+                                        True
+
+                                    Err _ ->
+                                        False
                         in
-                            println  ("   Copied wrapper: " ++ wrapperDst)
+                            if alreadyCopied then
+                                ()
+                            else
+                                let
+                                    rewritten =
+                                        String.replace  "package sky_wrappers"
+                                         "package main"
+                                         content
+                                    _ =
+                                        File.writeFile  wrapperDst  rewritten
+                                in
+                                    println
+                                     ("   Copied wrapper: " ++ wrapperDst)
                     
                     Err _ ->
                         case File.readFile  combinedSrc of
@@ -2386,6 +2420,12 @@ capitalizeFirst s =
     else
         String.toUpper  (String.slice  0  1  s) ++
         String.slice  1  (String.length  s)  s
+
+
+ffiPascalPart : String -> String
+
+ffiPascalPart s =
+    s
 
 
 ffiSafePart : String -> String

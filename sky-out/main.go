@@ -2881,6 +2881,8 @@ var TrimWrapperContent = Compiler_Pipeline_TrimWrapperContent
 
 var IsWrapperUsed = Compiler_Pipeline_IsWrapperUsed
 
+var IsHelperFunc = Compiler_Pipeline_IsHelperFunc
+
 var ExtractWrapperFuncName = Compiler_Pipeline_ExtractWrapperFuncName
 
 var SplitWrapperSections = Compiler_Pipeline_SplitWrapperSections
@@ -3026,6 +3028,8 @@ var SkyModuleToGoImportLoop = Compiler_Pipeline_SkyModuleToGoImportLoop
 var IsTld = Compiler_Pipeline_IsTld
 
 var CopyStdlibGo = Compiler_Pipeline_CopyStdlibGo
+
+var FfiPascalPart = Compiler_Pipeline_FfiPascalPart
 
 var FfiSafePart = Compiler_Pipeline_FfiSafePart
 
@@ -3306,7 +3310,7 @@ func Compiler_Pipeline_CountFuncsInFile(filePath any) any {
 }
 
 func Compiler_Pipeline_TrimWrapperFile(filePath any, mainGoCode any) any {
-	return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { sections := Compiler_Pipeline_SplitWrapperSections(content); _ = sections; funcBlocks := sky_asMap(sections)["functions"]; _ = funcBlocks; keptFuncs := sky_call(sky_listFilter(func(block any) any { return Compiler_Pipeline_IsWrapperUsed(block, mainGoCode) }), funcBlocks); _ = keptFuncs; keptNonSky := sky_call(sky_listFilter(func(block any) any { return sky_not(sky_call(sky_stringStartsWith("func Sky_"), block)) }), funcBlocks); _ = keptNonSky; allKept := sky_call(sky_listAppend(keptFuncs), keptNonSky); _ = allKept; return func() any { if sky_asBool(sky_listIsEmpty(allKept)) { return sky_call(func(_ any) any { return struct{}{} }, sky_call(sky_processRun("rm"), []any{"-f", filePath})) }; return func() any { trimmed := sky_concat(sky_asMap(sections)["header"], sky_concat("\n\n", sky_concat(sky_call(sky_stringJoin("\n\n"), allKept), "\n"))); _ = trimmed; return func() any { if sky_asBool(!sky_equal(trimmed, content)) { return sky_call(sky_fileWrite(filePath), trimmed) }; return struct{}{} }() }() }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  return nil }() }()
+	return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { sections := Compiler_Pipeline_SplitWrapperSections(content); _ = sections; funcBlocks := sky_asMap(sections)["functions"]; _ = funcBlocks; allKept := sky_call(sky_listFilter(func(block any) any { return sky_asBool(Compiler_Pipeline_IsWrapperUsed(block, mainGoCode)) || sky_asBool(Compiler_Pipeline_IsHelperFunc(block)) }), funcBlocks); _ = allKept; return func() any { if sky_asBool(sky_listIsEmpty(allKept)) { return sky_call(func(_ any) any { return struct{}{} }, sky_call(sky_processRun("rm"), []any{"-f", filePath})) }; return func() any { trimmed := sky_concat(sky_asMap(sections)["header"], sky_concat("\n\n", sky_concat(sky_call(sky_stringJoin("\n\n"), allKept), "\n"))); _ = trimmed; return func() any { if sky_asBool(!sky_equal(trimmed, content)) { return sky_call(sky_fileWrite(filePath), trimmed) }; return struct{}{} }() }() }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  return nil }() }()
 }
 
 func Compiler_Pipeline_TrimWrapperImports(filePath any) any {
@@ -3318,7 +3322,11 @@ func Compiler_Pipeline_TrimWrapperContent(wrapperCode any, mainGoCode any) any {
 }
 
 func Compiler_Pipeline_IsWrapperUsed(funcBlock any, mainGoCode any) any {
-	return func() any { funcName := Compiler_Pipeline_ExtractWrapperFuncName(funcBlock); _ = funcName; return func() any { if sky_asBool(sky_stringIsEmpty(funcName)) { return true }; if sky_asBool(sky_not(sky_call(sky_stringStartsWith("Sky_"), funcName))) { return true }; return sky_call(sky_stringContains(funcName), mainGoCode) }() }()
+	return func() any { funcName := Compiler_Pipeline_ExtractWrapperFuncName(funcBlock); _ = funcName; return func() any { if sky_asBool(sky_stringIsEmpty(funcName)) { return true }; return sky_call(sky_stringContains(funcName), mainGoCode) }() }()
+}
+
+func Compiler_Pipeline_IsHelperFunc(funcBlock any) any {
+	return func() any { funcName := Compiler_Pipeline_ExtractWrapperFuncName(funcBlock); _ = funcName; firstChar := sky_call2(sky_stringSlice(0), 1, funcName); _ = firstChar; return func() any { if sky_asBool(sky_stringIsEmpty(funcName)) { return true }; return sky_equal(firstChar, sky_stringToLower(firstChar)) }() }()
 }
 
 func Compiler_Pipeline_ExtractWrapperFuncName(block any) any {
@@ -3414,7 +3422,7 @@ func Compiler_Pipeline_TryLoadBinding(srcRoot any, modName any, rest any, acc an
 }
 
 func Compiler_Pipeline_CopyFfiWrappers(outDir any, projectRoot any, imports any, mainGoCode any) any {
-	return func() any { sky_call2(sky_listFoldl(func(imp any) any { return func(_ any) any { return func() any { modName := sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]); _ = modName; return func() any { if sky_asBool(sky_asBool(Compiler_Resolver_IsStdlib(modName)) || sky_asBool(sky_equal(sky_asMap(imp)["alias_"], "_"))) { return struct{}{} }; return Compiler_Pipeline_CopyOneFfiWrapper(outDir, projectRoot, modName, mainGoCode) }() }() } }), struct{}{}, imports); Compiler_Pipeline_CopyProjectWrappers(outDir, projectRoot, mainGoCode); return struct{}{} }()
+	return func() any { allModNames := sky_call(sky_listFilterMap(func(imp any) any { return func() any { mn := sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]); _ = mn; return func() any { if sky_asBool(sky_asBool(Compiler_Resolver_IsStdlib(mn)) || sky_asBool(sky_equal(sky_asMap(imp)["alias_"], "_"))) { return SkyNothing() }; return SkyJust(mn) }() }() }), imports); _ = allModNames; uniqueModNames := sky_setToList(sky_setFromList(allModNames)); _ = uniqueModNames; sky_call2(sky_listFoldl(func(modName any) any { return func(_ any) any { return Compiler_Pipeline_CopyOneFfiWrapper(outDir, projectRoot, modName, mainGoCode) } }), struct{}{}, uniqueModNames); Compiler_Pipeline_CopyProjectWrappers(outDir, projectRoot, mainGoCode); return struct{}{} }()
 }
 
 func Compiler_Pipeline_CopyProjectWrappers(outDir any, projectRoot any, mainGoCode any) any {
@@ -3426,7 +3434,7 @@ func Compiler_Pipeline_CopyWrapperDir(outDir any, wrapperDir any, mainGoCode any
 }
 
 func Compiler_Pipeline_CopyOneFfiWrapper(outDir any, projectRoot any, modName any, mainGoCode any) any {
-	return func() any { safeName := sky_call(sky_stringJoin("_"), sky_call(sky_listMap(Compiler_Pipeline_FfiSafePart), sky_call(sky_stringSplit("."), modName))); _ = safeName; wrapperPrefix := sky_concat("Sky_", sky_concat(safeName, "_")); _ = wrapperPrefix; hasReferences := sky_call(sky_stringContains(wrapperPrefix), mainGoCode); _ = hasReferences; prefix := func() any { if sky_asBool(sky_equal(projectRoot, ".")) { return "" }; return sky_concat(projectRoot, "/") }(); _ = prefix; wrapperSrc := sky_concat(prefix, sky_concat(".skycache/go/", sky_concat(safeName, sky_concat("/sky_wrappers/", sky_concat(safeName, ".go"))))); _ = wrapperSrc; return func() any { if sky_asBool(sky_not(hasReferences)) { return struct{}{} }; return func() any { combinedSrc := sky_concat(prefix, sky_concat(".skycache/go/wrappers/", sky_concat(safeName, ".go"))); _ = combinedSrc; return func() any { return func() any { __subject := sky_fileRead(wrapperSrc); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { rewritten := sky_call2(sky_stringReplace("package sky_wrappers"), "package main", content); _ = rewritten; wrapperDst := sky_concat(outDir, sky_concat("/sky_ffi_", sky_concat(safeName, ".go"))); _ = wrapperDst; sky_call(sky_fileWrite(wrapperDst), rewritten); return sky_println(sky_concat("   Copied wrapper: ", wrapperDst)) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { return func() any { __subject := sky_fileRead(combinedSrc); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { rewritten := sky_call2(sky_stringReplace("package sky_wrappers"), "package main", content); _ = rewritten; wrapperDst := sky_concat(outDir, sky_concat("/sky_ffi_", sky_concat(safeName, ".go"))); _ = wrapperDst; sky_call(sky_fileWrite(wrapperDst), rewritten); return sky_println(sky_concat("   Copied wrapper: ", wrapperDst)) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { if sky_asBool(!sky_equal(projectRoot, ".")) { return Compiler_Pipeline_CopyOneFfiWrapper(outDir, ".", modName, mainGoCode) }; return struct{}{} }() };  return nil }() }() };  return nil }() }() }() }() }()
+	return func() any { safeName := sky_call(sky_stringJoin("_"), sky_call(sky_listMap(Compiler_Pipeline_FfiSafePart), sky_call(sky_stringSplit("."), modName))); _ = safeName; wrapperPrefix := sky_concat("Sky_", sky_concat(safeName, "_")); _ = wrapperPrefix; modulePrefix := sky_call(sky_stringJoin("_"), sky_call(sky_listMap(Compiler_Pipeline_FfiPascalPart), sky_call(sky_stringSplit("."), modName))); _ = modulePrefix; hasReferences := sky_asBool(sky_call(sky_stringContains(wrapperPrefix), mainGoCode)) || sky_asBool(sky_call(sky_stringContains(sky_concat(modulePrefix, "_")), mainGoCode)); _ = hasReferences; prefix := func() any { if sky_asBool(sky_equal(projectRoot, ".")) { return "" }; return sky_concat(projectRoot, "/") }(); _ = prefix; wrapperSrc := sky_concat(prefix, sky_concat(".skycache/go/", sky_concat(safeName, sky_concat("/sky_wrappers/", sky_concat(safeName, ".go"))))); _ = wrapperSrc; return func() any { if sky_asBool(sky_not(hasReferences)) { return struct{}{} }; return func() any { combinedSrc := sky_concat(prefix, sky_concat(".skycache/go/wrappers/", sky_concat(safeName, ".go"))); _ = combinedSrc; return func() any { return func() any { __subject := sky_fileRead(wrapperSrc); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { wrapperDst := sky_concat(outDir, sky_concat("/sky_ffi_", sky_concat(safeName, ".go"))); _ = wrapperDst; alreadyCopied := func() any { return func() any { __subject := sky_fileRead(wrapperDst); if sky_asSkyResult(__subject).SkyName == "Ok" { return true };  if sky_asSkyResult(__subject).SkyName == "Err" { return false };  return nil }() }(); _ = alreadyCopied; return func() any { if sky_asBool(alreadyCopied) { return struct{}{} }; return func() any { rewritten := sky_call2(sky_stringReplace("package sky_wrappers"), "package main", content); _ = rewritten; sky_call(sky_fileWrite(wrapperDst), rewritten); return sky_println(sky_concat("   Copied wrapper: ", wrapperDst)) }() }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { return func() any { __subject := sky_fileRead(combinedSrc); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { rewritten := sky_call2(sky_stringReplace("package sky_wrappers"), "package main", content); _ = rewritten; wrapperDst := sky_concat(outDir, sky_concat("/sky_ffi_", sky_concat(safeName, ".go"))); _ = wrapperDst; sky_call(sky_fileWrite(wrapperDst), rewritten); return sky_println(sky_concat("   Copied wrapper: ", wrapperDst)) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { if sky_asBool(!sky_equal(projectRoot, ".")) { return Compiler_Pipeline_CopyOneFfiWrapper(outDir, ".", modName, mainGoCode) }; return struct{}{} }() };  return nil }() }() };  return nil }() }() }() }() }()
 }
 
 func Compiler_Pipeline_BuildAliasMap(imports any) any {
@@ -3615,6 +3623,10 @@ func Compiler_Pipeline_CopyStdlibGo(outDir any) any {
 
 func Compiler_Pipeline_CapitalizeFirst(s any) any {
 	return func() any { if sky_asBool(sky_stringIsEmpty(s)) { return "" }; return sky_concat(sky_stringToUpper(sky_call2(sky_stringSlice(0), 1, s)), sky_call2(sky_stringSlice(1), sky_stringLength(s), s)) }()
+}
+
+func Compiler_Pipeline_FfiPascalPart(s any) any {
+	return s
 }
 
 func Compiler_Pipeline_FfiSafePart(s any) any {
@@ -4832,15 +4844,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 3, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6006,7 +6018,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 1, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -6315,6 +6327,8 @@ var trimWrapperContent = Compiler_Pipeline_TrimWrapperContent
 
 var isWrapperUsed = Compiler_Pipeline_IsWrapperUsed
 
+var isHelperFunc = Compiler_Pipeline_IsHelperFunc
+
 var extractWrapperFuncName = Compiler_Pipeline_ExtractWrapperFuncName
 
 var splitWrapperSections = Compiler_Pipeline_SplitWrapperSections
@@ -6460,6 +6474,8 @@ var skyModuleToGoImportLoop = Compiler_Pipeline_SkyModuleToGoImportLoop
 var isTld = Compiler_Pipeline_IsTld
 
 var copyStdlibGo = Compiler_Pipeline_CopyStdlibGo
+
+var ffiPascalPart = Compiler_Pipeline_FfiPascalPart
 
 var ffiSafePart = Compiler_Pipeline_FfiSafePart
 
