@@ -187,51 +187,51 @@ formatType : Type -> String
 
 formatType t =
     case t of
-        
+
         TVar id name ->
             case name of
-                
+
                 Just n ->
                     n
-                
+
                 Nothing ->
                     "t" ++ String.fromInt  id
-                
-                TConst name ->
-                    name
-                
-                TFun fromT toT ->
-                    let
-                        fromStr =
-                            case fromT of
-                                
-                                TFun _ _ ->
-                                    "(" ++ formatType  fromT ++ ")"
-                                
-                                _ ->
-                                    formatType  fromT
-                    in
-                        fromStr ++ " -> " ++ formatType  toT
-                
-                TApp ctor args ->
-                    formatType  ctor ++
-                    " " ++ String.join  " "  (List.map  formatType  args)
-                
-                TTuple items ->
-                    "( " ++
-                    String.join  " , "  (List.map  formatType  items) ++ " )"
-                
-                TRecord fields ->
-                    let
-                        fieldStrs =
-                            List.map
-                             (
-                            \pair ->
-                                fst  pair ++ " : " ++ formatType  (snd  pair)
-                            )
-                             (Dict.toList  fields)
-                    in
-                        "{ " ++ String.join  " , "  fieldStrs ++ " }"
-                
-                _ ->
-                    "?"
+
+        TConst name ->
+            name
+
+        TFun fromT toT ->
+            let
+                fromStr =
+                    case fromT of
+
+                        TFun _ _ ->
+                            "(" ++ formatType  fromT ++ ")"
+
+                        _ ->
+                            formatType  fromT
+            in
+                fromStr ++ " -> " ++ formatType  toT
+
+        TApp ctor args ->
+            formatType  ctor ++
+            " " ++ String.join  " "  (List.map  formatType  args)
+
+        TTuple items ->
+            "( " ++
+            String.join  " , "  (List.map  formatType  items) ++ " )"
+
+        TRecord fields ->
+            let
+                fieldStrs =
+                    List.map
+                     (
+                    \pair ->
+                        fst  pair ++ " : " ++ formatType  (snd  pair)
+                    )
+                     (Dict.toList  fields)
+            in
+                "{ " ++ String.join  " , "  fieldStrs ++ " }"
+
+        _ ->
+            "?"

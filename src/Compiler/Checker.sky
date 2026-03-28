@@ -211,9 +211,11 @@ addTypedDeclAndContinue counter registry env rest annotations typedDecls diagnos
             td :: typedDecls
         newEnv =
             Env.extend  nm  sc  env
+        newDiags =
+            List.append  diagnostics  inferResult.diagnostics
     in
         inferDeclsLoop  counter  registry  newEnv  rest  annotations
-         newDecls  diagnostics
+         newDecls  newDiags
 
 
 checkAllExhaustiveness : AdtRegistry -> (List Declaration) -> List String

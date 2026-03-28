@@ -163,17 +163,41 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
             Checker.checkModule  entryMod  (Just  stdlibEnv)
         entryRegistry =
             case entryCheckResult of
-                
+
                 Ok result ->
                     result.registry
-                
+
                 Err _ ->
                     Adt.emptyRegistry
+        diagnostics =
+            case entryCheckResult of
+
+                Ok result ->
+                    result.diagnostics
+
+                Err _ ->
+                    []
+        _ =
+            reportDiagnostics  diagnostics
     in
         emitMultiModuleGo  outDir  projectRoot  entryMod  entryRegistry
          aliasMap
          depDecls
          loadedModules
+
+
+reportDiagnostics : (List String) -> ()
+
+reportDiagnostics diags =
+    case diags of
+
+        [] ->
+            ()
+
+        _ ->
+            List.map
+             (\d -> println  ("   ⚠ " ++ d))
+             diags
 
 
 emitMultiModuleGo : String -> String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String

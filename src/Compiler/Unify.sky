@@ -63,82 +63,100 @@ unifyFun : Type -> Type -> Type -> Result String Substitution
 
 unifyFun fromA toA t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar  id2  (TFun  fromA  toA)
-        
+
         TFun fromB toB ->
-            case unify  fromA  fromB of
-                
-                Err e ->
-                    Err  e
-                
-                Ok s1 ->
-                    case unify  (applySub  s1  toA)  (applySub  s1  toB) of
-                        
-                        Err e ->
-                            Err  e
-                        
-                        Ok s2 ->
-                            Ok  (composeSubs  s2  s1)
-                        
-                        TConst name ->
-                            if isUniversalUnifier  name then
-                                Ok  emptySub
-                            else
-                                Err
-                                 (
-                                "Cannot unify " ++
-                                formatType  (TFun  fromA  toA) ++
-                                " with " ++ formatType  t2
-                                )
-                        
-                        _ ->
-                            Err
-                             (
-                            "Cannot unify " ++
-                            formatType  (TFun  fromA  toA) ++
-                            " with " ++ formatType  t2
-                            )
+            unifyFunParts  fromA  toA  fromB  toB
+
+        TConst name ->
+            if isUniversalUnifier  name then
+                Ok  emptySub
+            else
+                Err
+                 (
+                "Cannot unify " ++
+                formatType  (TFun  fromA  toA) ++
+                " with " ++ formatType  t2
+                )
+
+        _ ->
+            Err
+             (
+            "Cannot unify " ++
+            formatType  (TFun  fromA  toA) ++
+            " with " ++ formatType  t2
+            )
+
+
+unifyFunParts : Type -> Type -> Type -> Type -> Result String Substitution
+
+unifyFunParts fromA toA fromB toB =
+    case unify  fromA  fromB of
+
+        Err e ->
+            Err  e
+
+        Ok s1 ->
+            unifyFunReturn  s1  toA  toB
+
+
+unifyFunReturn : Substitution -> Type -> Type -> Result String Substitution
+
+unifyFunReturn s1 toA toB =
+    case unify  (applySub  s1  toA)  (applySub  s1  toB) of
+
+        Err e ->
+            Err  e
+
+        Ok s2 ->
+            Ok  (composeSubs  s2  s1)
 
 
 unifyApp : Type -> (List Type) -> Type -> Result String Substitution
 
 unifyApp ctorA argsA t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar  id2  (TApp  ctorA  argsA)
-        
+
         TApp ctorB argsB ->
-            case unify  ctorA  ctorB of
-                
-                Err e ->
-                    Err  e
-                
-                Ok s0 ->
-                    unifyList  (List.map  (\x -> applySub  s0  x)  argsA)
-                     (List.map  (\x -> applySub  s0  x)  argsB)
-                     s0
-                
-                TConst name ->
-                    if isUniversalUnifier  name then
-                        Ok  emptySub
-                    else
-                        Err
-                         (
-                        "Cannot unify " ++
-                        formatType  (TApp  ctorA  argsA) ++
-                        " with " ++ formatType  t2
-                        )
-                
-                _ ->
-                    Err
-                     (
-                    "Cannot unify " ++
-                    formatType  (TApp  ctorA  argsA) ++
-                    " with " ++ formatType  t2
-                    )
+            unifyAppParts  ctorA  argsA  ctorB  argsB
+
+        TConst name ->
+            if isUniversalUnifier  name then
+                Ok  emptySub
+            else
+                Err
+                 (
+                "Cannot unify " ++
+                formatType  (TApp  ctorA  argsA) ++
+                " with " ++ formatType  t2
+                )
+
+        _ ->
+            Err
+             (
+            "Cannot unify " ++
+            formatType  (TApp  ctorA  argsA) ++
+            " with " ++ formatType  t2
+            )
+
+
+unifyAppParts : Type -> (List Type) -> Type -> (List Type) -> Result String Substitution
+
+unifyAppParts ctorA argsA ctorB argsB =
+    case unify  ctorA  ctorB of
+
+        Err e ->
+            Err  e
+
+        Ok s0 ->
+            unifyList  (List.map  (\x -> applySub  s0  x)  argsA)
+             (List.map  (\x -> applySub  s0  x)  argsB)
+             s0
 
 
 unifyTuple : (List Type) -> Type -> Result String Substitution

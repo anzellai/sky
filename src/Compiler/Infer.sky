@@ -1166,30 +1166,44 @@ bindParamsLoop counter registry env params types sub =
                                  combinedSub
 
 
+debugType : Type -> String
+
+debugType t =
+    case t of
+
+        TConst name ->
+            name
+
+        TVar id _ ->
+            "t" ++ String.fromInt  id
+
+        _ ->
+            "other"
+
+
 checkAnnotation : (Ref.Ref Int) -> Env.TypeEnv -> Type -> (Maybe TypeExpr) -> List String
 
 checkAnnotation counter env inferredType annotation =
     case annotation of
-        
+
         Nothing ->
             []
-        
+
         Just annotExpr ->
-            let
-                annotType =
-                    Adt.resolveTypeExpr  Dict.empty  annotExpr
-            in
-                case unify  inferredType  annotType of
-                    
-                    Ok _ ->
-                        []
-                    
-                    Err e ->
-                        [ "Type annotation mismatch: declared " ++
-                        formatType  annotType ++
-                        " but inferred " ++
-                        formatType  inferredType ++ " (" ++ e ++ ")"
-                        ]
+            checkAnnotationInner  inferredType
+             (Adt.resolveTypeExpr  Dict.empty  annotExpr)
+
+
+checkAnnotationInner : Type -> Type -> List String
+
+checkAnnotationInner inferredType annotType =
+    case unify  inferredType  annotType of
+
+        Ok _ ->
+            []
+
+        Err e ->
+            [ "Type annotation mismatch: " ++ e ]
 
 
 applySubToEnv : Substitution -> Env.TypeEnv -> Env.TypeEnv

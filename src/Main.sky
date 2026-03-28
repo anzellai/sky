@@ -229,26 +229,33 @@ cmdCheck _ =
                                     Checker.checkModule  mod  (Just  stdlibEnv)
                             in
                                 case checkResult of
-                                    
+
                                     Ok result ->
-                                        let
-                                            _ =
-                                                List.map
-                                                 (
-                                                \d ->
-                                                    println
-                                                     (
-                                                    "  " ++
-                                                    d.name ++
-                                                    " : " ++ d.prettyType
-                                                    )
-                                                )
-                                                 result.declarations
-                                        in
+                                        if List.isEmpty  result.diagnostics then
                                             println
                                              (
                                             "Type check passed: " ++ entryFile
                                             )
+                                        else
+                                            let
+                                                _ =
+                                                    List.map
+                                                     (\d -> println  ("  ⚠ " ++ d))
+                                                     result.diagnostics
+                                                _ =
+                                                    println  ""
+                                            in
+                                                let
+                                                    _ =
+                                                        println
+                                                         (
+                                                        "Type check failed with " ++
+                                                        String.fromInt
+                                                         (List.length  result.diagnostics) ++
+                                                        " error(s): " ++ entryFile
+                                                        )
+                                                in
+                                                    Process.exit  1
                                     
                                     Err e ->
                                         let

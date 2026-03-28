@@ -2143,9 +2143,21 @@ var unifyFun = Compiler_Unify_UnifyFun
 
 var UnifyFun = Compiler_Unify_UnifyFun
 
+var unifyFunParts = Compiler_Unify_UnifyFunParts
+
+var UnifyFunParts = Compiler_Unify_UnifyFunParts
+
+var unifyFunReturn = Compiler_Unify_UnifyFunReturn
+
+var UnifyFunReturn = Compiler_Unify_UnifyFunReturn
+
 var unifyApp = Compiler_Unify_UnifyApp
 
 var UnifyApp = Compiler_Unify_UnifyApp
+
+var unifyAppParts = Compiler_Unify_UnifyAppParts
+
+var UnifyAppParts = Compiler_Unify_UnifyAppParts
 
 var unifyTuple = Compiler_Unify_UnifyTuple
 
@@ -2865,6 +2877,8 @@ var CompileMultiModule = Compiler_Pipeline_CompileMultiModule
 
 var CompileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
 
+var ReportDiagnostics = Compiler_Pipeline_ReportDiagnostics
+
 var EmitMultiModuleGo = Compiler_Pipeline_EmitMultiModuleGo
 
 var WriteMultiModuleOutput = Compiler_Pipeline_WriteMultiModuleOutput
@@ -3306,7 +3320,11 @@ func Compiler_Pipeline_CompileMultiModule(entryPath any, outDir any, srcRoot any
 }
 
 func Compiler_Pipeline_CompileMultiModuleEntry(outDir any, projectRoot any, entryMod any, aliasMap any, stdlibEnv any, depDecls any, loadedModules any) any {
-	return func() any { entryCheckResult := Compiler_Checker_CheckModule(entryMod, SkyJust(stdlibEnv)); _ = entryCheckResult; entryRegistry := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  return nil }() }(); _ = entryRegistry; return Compiler_Pipeline_EmitMultiModuleGo(outDir, projectRoot, entryMod, entryRegistry, aliasMap, depDecls, loadedModules) }()
+	return func() any { entryCheckResult := Compiler_Checker_CheckModule(entryMod, SkyJust(stdlibEnv)); _ = entryCheckResult; entryRegistry := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  return nil }() }(); _ = entryRegistry; diagnostics := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["diagnostics"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return []any{} };  return nil }() }(); _ = diagnostics; Compiler_Pipeline_ReportDiagnostics(diagnostics); return Compiler_Pipeline_EmitMultiModuleGo(outDir, projectRoot, entryMod, entryRegistry, aliasMap, depDecls, loadedModules) }()
+}
+
+func Compiler_Pipeline_ReportDiagnostics(diags any) any {
+	return func() any { return func() any { __subject := diags; if len(sky_asList(__subject)) == 0 { return struct{}{} };  if true { return sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("   ⚠ ", d)) }), diags) };  return nil }() }()
 }
 
 func Compiler_Pipeline_EmitMultiModuleGo(outDir any, projectRoot any, entryMod any, entryRegistry any, aliasMap any, depDecls any, loadedModules any) any {
@@ -4295,9 +4313,17 @@ var bindParamsLoop = Compiler_Infer_BindParamsLoop
 
 var BindParamsLoop = Compiler_Infer_BindParamsLoop
 
+var debugType = Compiler_Infer_DebugType
+
+var DebugType = Compiler_Infer_DebugType
+
 var checkAnnotation = Compiler_Infer_CheckAnnotation
 
 var CheckAnnotation = Compiler_Infer_CheckAnnotation
+
+var checkAnnotationInner = Compiler_Infer_CheckAnnotationInner
+
+var CheckAnnotationInner = Compiler_Infer_CheckAnnotationInner
 
 var applySubToEnv = Compiler_Infer_ApplySubToEnv
 
@@ -4390,7 +4416,7 @@ func Compiler_Checker_InferOneFunDecl(counter any, registry any, env any, fnName
 }
 
 func Compiler_Checker_AddTypedDeclAndContinue(counter any, registry any, env any, rest any, annotations any, typedDecls any, diagnostics any, inferResult any) any {
-	return func() any { nm := sky_asMap(inferResult)["name"]; _ = nm; sc := sky_asMap(inferResult)["scheme"]; _ = sc; tp := sky_asMap(sc)["type_"]; _ = tp; td := Compiler_Checker_MakeTypedDecl(nm, sc, tp); _ = td; newDecls := append([]any{td}, sky_asList(typedDecls)...); _ = newDecls; newEnv := Compiler_Env_Extend(nm, sc, env); _ = newEnv; return Compiler_Checker_InferDeclsLoop(counter, registry, newEnv, rest, annotations, newDecls, diagnostics) }()
+	return func() any { nm := sky_asMap(inferResult)["name"]; _ = nm; sc := sky_asMap(inferResult)["scheme"]; _ = sc; tp := sky_asMap(sc)["type_"]; _ = tp; td := Compiler_Checker_MakeTypedDecl(nm, sc, tp); _ = td; newDecls := append([]any{td}, sky_asList(typedDecls)...); _ = newDecls; newEnv := Compiler_Env_Extend(nm, sc, env); _ = newEnv; newDiags := sky_call(sky_listAppend(diagnostics), sky_asMap(inferResult)["diagnostics"]); _ = newDiags; return Compiler_Checker_InferDeclsLoop(counter, registry, newEnv, rest, annotations, newDecls, newDiags) }()
 }
 
 func Compiler_Checker_CheckAllExhaustiveness(registry any, decls any) any {
@@ -4483,8 +4509,16 @@ func Compiler_Infer_BindParamsLoop(counter any, registry any, env any, params an
 	return func() any { return func() any { __subject := params; if len(sky_asList(__subject)) == 0 { return SkyOk(SkyTuple2{V0: sub, V1: env}) };  if len(sky_asList(__subject)) > 0 { pat := sky_asList(__subject)[0]; _ = pat; restPats := sky_asList(__subject)[1:]; _ = restPats; return func() any { return func() any { __subject := types; if len(sky_asList(__subject)) == 0 { return SkyErr("Parameter count mismatch") };  if len(sky_asList(__subject)) > 0 { t := sky_asList(__subject)[0]; _ = t; restTypes := sky_asList(__subject)[1:]; _ = restTypes; return func() any { return func() any { __subject := Compiler_PatternCheck_CheckPattern(counter, registry, env, pat, applySub(sub, t)); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { patResult := sky_asSkyResult(__subject).OkValue; _ = patResult; return func() any { combinedSub := composeSubs(sky_asMap(patResult)["substitution"], sub); _ = combinedSub; newEnv := sky_call2(sky_listFoldl(func(pair any) any { return func(acc any) any { return Compiler_Env_Extend(sky_fst(pair), mono(applySub(combinedSub, sky_snd(pair))), acc) } }), env, sky_asMap(patResult)["bindings"]); _ = newEnv; return Compiler_Infer_BindParamsLoop(counter, registry, newEnv, restPats, restTypes, combinedSub) }() };  return nil }() }() };  return nil }() }() };  return nil }() }()
 }
 
+func Compiler_Infer_DebugType(t any) any {
+	return func() any { return func() any { __subject := t; if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if sky_asMap(__subject)["SkyName"] == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; return sky_concat("t", sky_stringFromInt(id)) };  if true { return "other" };  return nil }() }()
+}
+
 func Compiler_Infer_CheckAnnotation(counter any, env any, inferredType any, annotation any) any {
-	return func() any { return func() any { __subject := annotation; if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return []any{} };  if sky_asSkyMaybe(__subject).SkyName == "Just" { annotExpr := sky_asSkyMaybe(__subject).JustValue; _ = annotExpr; return func() any { annotType := Compiler_Adt_ResolveTypeExpr(sky_dictEmpty(), annotExpr); _ = annotType; return func() any { return func() any { __subject := unify(inferredType, annotType); if sky_asSkyResult(__subject).SkyName == "Ok" { return []any{} };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return []any{sky_concat("Type annotation mismatch: declared ", sky_concat(formatType(annotType), sky_concat(" but inferred ", sky_concat(formatType(inferredType), sky_concat(" (", sky_concat(e, ")"))))))} };  return nil }() }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := annotation; if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return []any{} };  if sky_asSkyMaybe(__subject).SkyName == "Just" { annotExpr := sky_asSkyMaybe(__subject).JustValue; _ = annotExpr; return Compiler_Infer_CheckAnnotationInner(inferredType, Compiler_Adt_ResolveTypeExpr(sky_dictEmpty(), annotExpr)) };  return nil }() }()
+}
+
+func Compiler_Infer_CheckAnnotationInner(inferredType any, annotType any) any {
+	return func() any { return func() any { __subject := unify(inferredType, annotType); if sky_asSkyResult(__subject).SkyName == "Ok" { return []any{} };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return []any{sky_concat("Type annotation mismatch: ", e)} };  return nil }() }()
 }
 
 func Compiler_Infer_ApplySubToEnv(sub any, env any) any {
@@ -4524,11 +4558,23 @@ func Compiler_Unify_UnifyConst(nameA any, t1 any, t2 any) any {
 }
 
 func Compiler_Unify_UnifyFun(fromA any, toA any, t2 any) any {
-	return func() any { return func() any { __subject := t2; if sky_asMap(__subject)["SkyName"] == "TVar" { id2 := sky_asMap(__subject)["V0"]; _ = id2; return Compiler_Unify_BindVar(id2, TFun(fromA, toA)) };  if sky_asMap(__subject)["SkyName"] == "TFun" { fromB := sky_asMap(__subject)["V0"]; _ = fromB; toB := sky_asMap(__subject)["V1"]; _ = toB; return func() any { return func() any { __subject := Compiler_Unify_Unify(fromA, fromB); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { s1 := sky_asSkyResult(__subject).OkValue; _ = s1; return func() any { return func() any { __subject := Compiler_Unify_Unify(applySub(s1, toA), applySub(s1, toB)); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { s2 := sky_asSkyResult(__subject).OkValue; _ = s2; return SkyOk(composeSubs(s2, s1)) };  if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) { return SkyOk(emptySub) }; return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TFun(fromA, toA)), sky_concat(" with ", formatType(t2))))) }() };  if true { return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TFun(fromA, toA)), sky_concat(" with ", formatType(t2))))) };  return nil }() }() };  return nil }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := t2; if sky_asMap(__subject)["SkyName"] == "TVar" { id2 := sky_asMap(__subject)["V0"]; _ = id2; return Compiler_Unify_BindVar(id2, TFun(fromA, toA)) };  if sky_asMap(__subject)["SkyName"] == "TFun" { fromB := sky_asMap(__subject)["V0"]; _ = fromB; toB := sky_asMap(__subject)["V1"]; _ = toB; return Compiler_Unify_UnifyFunParts(fromA, toA, fromB, toB) };  if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) { return SkyOk(emptySub) }; return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TFun(fromA, toA)), sky_concat(" with ", formatType(t2))))) }() };  if true { return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TFun(fromA, toA)), sky_concat(" with ", formatType(t2))))) };  return nil }() }()
+}
+
+func Compiler_Unify_UnifyFunParts(fromA any, toA any, fromB any, toB any) any {
+	return func() any { return func() any { __subject := Compiler_Unify_Unify(fromA, fromB); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { s1 := sky_asSkyResult(__subject).OkValue; _ = s1; return Compiler_Unify_UnifyFunReturn(s1, toA, toB) };  return nil }() }()
+}
+
+func Compiler_Unify_UnifyFunReturn(s1 any, toA any, toB any) any {
+	return func() any { return func() any { __subject := Compiler_Unify_Unify(applySub(s1, toA), applySub(s1, toB)); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { s2 := sky_asSkyResult(__subject).OkValue; _ = s2; return SkyOk(composeSubs(s2, s1)) };  return nil }() }()
 }
 
 func Compiler_Unify_UnifyApp(ctorA any, argsA any, t2 any) any {
-	return func() any { return func() any { __subject := t2; if sky_asMap(__subject)["SkyName"] == "TVar" { id2 := sky_asMap(__subject)["V0"]; _ = id2; return Compiler_Unify_BindVar(id2, TApp(ctorA, argsA)) };  if sky_asMap(__subject)["SkyName"] == "TApp" { ctorB := sky_asMap(__subject)["V0"]; _ = ctorB; argsB := sky_asMap(__subject)["V1"]; _ = argsB; return func() any { return func() any { __subject := Compiler_Unify_Unify(ctorA, ctorB); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { s0 := sky_asSkyResult(__subject).OkValue; _ = s0; return Compiler_Unify_UnifyList(sky_call(sky_listMap(func(x any) any { return applySub(s0, x) }), argsA), sky_call(sky_listMap(func(x any) any { return applySub(s0, x) }), argsB), s0) };  if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) { return SkyOk(emptySub) }; return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TApp(ctorA, argsA)), sky_concat(" with ", formatType(t2))))) }() };  if true { return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TApp(ctorA, argsA)), sky_concat(" with ", formatType(t2))))) };  return nil }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := t2; if sky_asMap(__subject)["SkyName"] == "TVar" { id2 := sky_asMap(__subject)["V0"]; _ = id2; return Compiler_Unify_BindVar(id2, TApp(ctorA, argsA)) };  if sky_asMap(__subject)["SkyName"] == "TApp" { ctorB := sky_asMap(__subject)["V0"]; _ = ctorB; argsB := sky_asMap(__subject)["V1"]; _ = argsB; return Compiler_Unify_UnifyAppParts(ctorA, argsA, ctorB, argsB) };  if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) { return SkyOk(emptySub) }; return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TApp(ctorA, argsA)), sky_concat(" with ", formatType(t2))))) }() };  if true { return SkyErr(sky_concat("Cannot unify ", sky_concat(formatType(TApp(ctorA, argsA)), sky_concat(" with ", formatType(t2))))) };  return nil }() }()
+}
+
+func Compiler_Unify_UnifyAppParts(ctorA any, argsA any, ctorB any, argsB any) any {
+	return func() any { return func() any { __subject := Compiler_Unify_Unify(ctorA, ctorB); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { s0 := sky_asSkyResult(__subject).OkValue; _ = s0; return Compiler_Unify_UnifyList(sky_call(sky_listMap(func(x any) any { return applySub(s0, x) }), argsA), sky_call(sky_listMap(func(x any) any { return applySub(s0, x) }), argsB), s0) };  return nil }() }()
 }
 
 func Compiler_Unify_UnifyTuple(itemsA any, t2 any) any {
@@ -4932,7 +4978,7 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
@@ -4940,7 +4986,7 @@ func Formatter_Doc_Hardline() any {
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6262,7 +6308,7 @@ func cmdRun(_ any) any {
 }
 
 func cmdCheck(_ any) any {
-	return func() any { entryFile := func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { f := sky_asSkyMaybe(__subject).JustValue; _ = f; return f };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "src/Main.sky" };  return nil }() }(); _ = entryFile; return func() any { return func() any { __subject := sky_fileRead(entryFile); if sky_asSkyResult(__subject).SkyName == "Err" { readErr := sky_asSkyResult(__subject).ErrValue; _ = readErr; return func() any { sky_println(sky_concat("Cannot read: ", entryFile)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; return func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("  ", sky_concat(sky_asMap(d)["name"], sky_concat(" : ", sky_asMap(d)["prettyType"])))) }), sky_asMap(result)["declarations"]); return sky_println(sky_concat("Type check passed: ", entryFile)) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Type error: ", e)); return sky_processExit(1) }() };  return nil }() }() }() };  return nil }() }() }() };  return nil }() }() }()
+	return func() any { entryFile := func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { f := sky_asSkyMaybe(__subject).JustValue; _ = f; return f };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "src/Main.sky" };  return nil }() }(); _ = entryFile; return func() any { return func() any { __subject := sky_fileRead(entryFile); if sky_asSkyResult(__subject).SkyName == "Err" { readErr := sky_asSkyResult(__subject).ErrValue; _ = readErr; return func() any { sky_println(sky_concat("Cannot read: ", entryFile)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; return func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { if sky_asBool(sky_listIsEmpty(sky_asMap(result)["diagnostics"])) { return sky_println(sky_concat("Type check passed: ", entryFile)) }; return func() any { sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("  ⚠ ", d)) }), sky_asMap(result)["diagnostics"]); sky_println(""); return func() any { sky_println(sky_concat("Type check failed with ", sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(result)["diagnostics"])), sky_concat(" error(s): ", entryFile)))); return sky_processExit(1) }() }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Type error: ", e)); return sky_processExit(1) }() };  return nil }() }() }() };  return nil }() }() }() };  return nil }() }() }()
 }
 
 func isGoStdlib(name any) any {
@@ -6390,6 +6436,8 @@ var compile = Compiler_Pipeline_Compile
 var compileMultiModule = Compiler_Pipeline_CompileMultiModule
 
 var compileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
+
+var reportDiagnostics = Compiler_Pipeline_ReportDiagnostics
 
 var emitMultiModuleGo = Compiler_Pipeline_EmitMultiModuleGo
 
