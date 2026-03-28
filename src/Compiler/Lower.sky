@@ -2670,7 +2670,9 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_timeEvery(interval any) any { return func(msg any) any { return map[string]any{\"SkyName\": \"SubTimer\", \"V0\": interval, \"V1\": msg} } }"
     , GoDeclRaw
-       "func sky_htmlEl(tag any) any { return func(attrs any) any { return func(children any) any { return map[string]any{\"tag\": tag, \"attrs\": attrs, \"children\": children, \"text\": \"\"} } } }"
+       "func sky_htmlEl(tag any) any { return func(attrs any) any { return func(children any) any { return map[string]any{\"tag\": tag, \"attrs\": sky_flattenAttrs(attrs), \"children\": children, \"text\": \"\"} } } }"
+    , GoDeclRaw
+       "func sky_flattenAttrs(attrs any) []any { var out []any; for _, a := range sky_asList(attrs) { if list, ok := a.([]any); ok { out = append(out, list...) } else { out = append(out, a) } }; return out }"
     , GoDeclRaw
        "func sky_htmlVoid(tag any) any { return func(attrs any) any { return map[string]any{\"tag\": tag, \"attrs\": attrs, \"children\": []any{}, \"text\": \"\"} } }"
     , GoDeclRaw
@@ -2706,9 +2708,13 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_attrData(key any) any { return func(val any) any { return SkyTuple2{\"data-\" + sky_asString(key), sky_asString(val)} } }"
     , GoDeclRaw
-       "func sky_evtHandler(evtType any) any { return func(msg any) any { return SkyTuple2{\"sky-\" + sky_asString(evtType), sky_msgName(msg)} } }"
+       "func sky_evtHandler(evtType any) any { return func(msg any) any { return sky_msgAttrs(sky_asString(evtType), msg) } }"
+    , GoDeclRaw
+       "func sky_msgAttrs(evtType string, msg any) any { name := sky_msgName(msg); args := sky_msgArgs(msg); if len(args) == 0 { return SkyTuple2{\"sky-\" + evtType, name} }; b, _ := encoding_json.Marshal(args); return []any{SkyTuple2{\"sky-\" + evtType, name}, SkyTuple2{\"sky-args\", string(b)}} }"
     , GoDeclRaw
        "func sky_msgName(msg any) string { if m, ok := msg.(map[string]any); ok { if name, exists := m[\"SkyName\"]; exists { return sky_asString(name) } }; return fmt.Sprintf(\"%v\", msg) }"
+    , GoDeclRaw
+       "func sky_msgArgs(msg any) []any { m, ok := msg.(map[string]any); if !ok { return nil }; var args []any; for i := 0; ; i++ { v, exists := m[fmt.Sprintf(\"V%d\", i)]; if !exists { break }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }"
     , GoDeclRaw
        "func sky_cssStylesheet(rules any) any { var sb strings.Builder; for _, r := range sky_asList(rules) { sb.WriteString(sky_asString(r)); sb.WriteString(\"\\n\") }; return sb.String() }"
     , GoDeclRaw
