@@ -577,6 +577,12 @@ renderTypeExpr texpr =
 renderTE : TypeExpr -> String
 
 renderTE te =
+    renderTEDispatch  te
+
+
+renderTEDispatch : TypeExpr -> String
+
+renderTEDispatch te =
     case te of
 
         TypeRef parts args _ ->
@@ -585,18 +591,21 @@ renderTE te =
         TypeVar n _ ->
             n
 
-        FunType from to _ ->
-            renderFunType  from  to
-
         TupleTypeExpr types _ ->
             "( " ++
-            String.join  ", "  (List.map  renderTE  types) ++ " )"
+            String.join  ", "  (List.map  renderTEDispatch  types) ++ " )"
 
         UnitTypeExpr _ ->
             "()"
 
         _ ->
-            "?"
+            renderTEFallback  te
+
+
+renderTEFallback : TypeExpr -> String
+
+renderTEFallback te =
+    "?"
 
 
 renderTypeRef : String -> (List TypeExpr) -> String
@@ -611,17 +620,7 @@ renderTypeRef base args =
 renderFunType : TypeExpr -> TypeExpr -> String
 
 renderFunType from to =
-    let
-        fromStr =
-            case from of
-
-                FunType _ _ _ ->
-                    "(" ++ renderTE  from ++ ")"
-
-                _ ->
-                    renderTE  from
-    in
-        fromStr ++ " -> " ++ renderTE  to
+    renderTE  from ++ " -> " ++ renderTE  to
 
 
 uriToFilePath : String -> String
@@ -693,11 +692,17 @@ deriveProjectRoot srcRoot =
 
 lookupDepExport : ServerState -> String -> String -> Maybe ExportedDecl
 
-lookupDepExport state alias funcName =
-    case Dict.get  alias  state.depCache of
+lookupDepExport st al fn =
+    lookupInDepCache  (Dict.get  al  st.depCache)  fn
+
+
+lookupInDepCache : Maybe DepModule -> String -> Maybe ExportedDecl
+
+lookupInDepCache maybeDep fn =
+    case maybeDep of
 
         Just depMod ->
-            findExport  funcName  depMod.exports
+            findExport  fn  depMod.exports
 
         Nothing ->
             Nothing

@@ -2204,25 +2204,8 @@ makeConstructorAlias prefix decl =
             in
                 if firstChar == String.toUpper  firstChar ||
                 isSharedValue  aliasName then
-                    let
-                        lowerAlias =
-                            String.toLower  (String.slice  0  1  unprefixed) ++
-                            String.slice  1  (String.length  unprefixed)
-                             unprefixed
-                    in
-                        if lowerAlias == aliasName then
-                            Just
-                             (GoDeclRaw
-                              ("var " ++ aliasName ++ " = " ++ fullName)
-                             )
-                        else
-                            Just
-                             (GoDeclRaw
-                              ("var " ++
-                              aliasName ++ " = " ++ fullName ++ "\n" ++
-                              "var " ++ lowerAlias ++ " = " ++ fullName
-                              )
-                             )
+                    Just
+                     (GoDeclRaw  ("var " ++ aliasName ++ " = " ++ fullName))
                 else
                     Nothing
 

@@ -1535,12 +1535,30 @@ lowerIf : LowerCtx -> Expression -> Expression -> Expression -> GoExpr
 lowerIf ctx condition thenBranch elseBranch =
     GoRawExpr
      (
-    "func() any { if sky_asBool(" ++
-    exprToGoString  ctx  condition ++
-    ") { return " ++
-    exprToGoString  ctx  thenBranch ++
-    " }; return " ++ exprToGoString  ctx  elseBranch ++ " }()"
+    "func() any { " ++
+    flattenIfElse  ctx  condition  thenBranch  elseBranch ++
+    " }()"
     )
+
+
+flattenIfElse : LowerCtx -> Expression -> Expression -> Expression -> String
+
+flattenIfElse ctx condition thenBranch elseBranch =
+    let
+        ifPart =
+            "if sky_asBool(" ++
+            exprToGoString  ctx  condition ++
+            ") { return " ++
+            exprToGoString  ctx  thenBranch ++ " }; "
+    in
+        case elseBranch of
+
+            IfExpr nextCond nextThen nextElse _ ->
+                ifPart ++
+                flattenIfElse  ctx  nextCond  nextThen  nextElse
+
+            _ ->
+                ifPart ++ "return " ++ exprToGoString  ctx  elseBranch
 
 
 lowerLet : LowerCtx -> (List LetBinding) -> Expression -> GoExpr
