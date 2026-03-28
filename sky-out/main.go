@@ -3656,7 +3656,7 @@ func Compiler_Pipeline_ImportAlias(imp any) any {
 }
 
 func Compiler_Pipeline_CompileDependencyModule(stdlibEnv any, allModules any, pair any) any {
-	return func() any { if sky_asBool(Compiler_Pipeline_IsFfiModule(sky_fst(pair), sky_snd(pair))) { return Compiler_Pipeline_CompileFfiModuleLight(allModules, pair) }; return Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv, allModules, pair) }()
+	return Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv, allModules, pair)
 }
 
 func Compiler_Pipeline_CompileFfiModuleLight(allModules any, pair any) any {
@@ -5090,15 +5090,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {

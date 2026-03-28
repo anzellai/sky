@@ -2179,10 +2179,7 @@ importAlias imp =
 compileDependencyModule : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
 
 compileDependencyModule stdlibEnv allModules pair =
-    if isFfiModule  (fst  pair)  (snd  pair) then
-        compileFfiModuleLight  allModules  pair
-    else
-        compileDependencyModuleFull  stdlibEnv  allModules  pair
+    compileDependencyModuleFull  stdlibEnv  allModules  pair
 
 
 compileFfiModuleLight : (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl

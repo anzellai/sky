@@ -34,3 +34,5 @@ firebaseadminsdk*.json
 uploads/
 uploads/
 examples/13-skyshop/assets/
+examples/**/sky-out/
+*.tmp
