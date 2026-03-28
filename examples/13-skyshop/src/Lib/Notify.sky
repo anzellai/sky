@@ -14,21 +14,18 @@ import Net.Http as Http
 import Strings as GoStrings
 import Io as Io
 
--- ══════════════════════════════════════════════════════
--- NOTIFICATIONS
--- ══════════════════════════════════════════════════════
 notifyOrderPlaced cart items userName userEmail =
     let
         env =
             Result.withDefault  ""  (Os.getenv  "ENV")
         cartId =
-            Db.getField "id" cart
+            Db.getField  "id"  cart
         totalAmount =
-            Db.getField "total_amount" cart
+            Db.getField  "total_amount"  cart
         totalCurrency =
-            Db.getField "total_currency" cart
+            Db.getField  "total_currency"  cart
         itemCount =
-            String.fromInt (List.length items)
+            String.fromInt  (List.length  items)
         prefix =
             if env == "production" then
                 "[REAL]"
@@ -41,36 +38,35 @@ notifyOrderPlaced cart items userName userEmail =
             " - " ++
             itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
         notificationId =
-            Uuid.newString ()
+            Result.withDefault  ""  (Uuid.newString  ())
         notificationData =
             Dict.fromList
-                [ ( "id" , notificationId )
-                , ( "notification_type" , "order" )
-                , ( "subject" , subject )
-                , ( "body" , body )
-                , ( "sent" , Db.boolVal False )
-                ]
-
-                -- Log the notification
+             [ ( "id" , notificationId )
+            , ( "notification_type" , "order" )
+            , ( "subject" , subject )
+            , ( "body" , body )
+            , ( "sent" , Db.boolVal  False )
+            ]
         _ =
-            Db.setDoc "notifications" notificationId notificationData
+            Db.setDoc  "notifications"  notificationId  notificationData
                 |> ignoreResult
-
-                -- Mark as sent in DB
         _ =
-            println ("[NOTIFY] " ++ body)
+            println  ("[NOTIFY] " ++ body)
         _ =
-            sendEmailNotification notificationId subject body
+            sendEmailNotification  notificationId  subject  body
     in
         ()
 
+
 ignoreResult result =
     case result of
+        
         Ok _ ->
             ()
         
         Err _ ->
             ()
+
 
 sendEmailNotification notificationId subject body =
     let
@@ -83,27 +79,28 @@ sendEmailNotification notificationId subject body =
             let
                 _ =
                     println
-                        "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
+                     "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
             in
                 ()
         else
             let
                 _ =
                     println
-                        (
-                        "[NOTIFY] Would send email to " ++
-                        notifyTo ++ ": " ++ subject
-                        )
+                     (
+                    "[NOTIFY] Would send email to " ++
+                    notifyTo ++ ": " ++ subject
+                    )
                 _ =
-                    case Db.getDoc "notifications" notificationId of
-                        Ok Just notification ->
-                            Db.setDoc "notifications" notificationId
-                                (
-                                Dict.insert "sent" (Db.boolVal True)
-                                    notification
-                                )
+                    case Db.getDoc  "notifications"  notificationId of
+                        
+                        Ok (Just notification) ->
+                            Db.setDoc  "notifications"  notificationId
+                             (
+                            Dict.insert  "sent"  (Db.boolVal  True)
+                             notification
+                            )
                         
                         _ ->
-                            Ok ()
+                            Ok  ()
             in
                 ()

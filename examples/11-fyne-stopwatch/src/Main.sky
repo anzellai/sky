@@ -1,40 +1,49 @@
 module Main exposing (main)
 
--- 11-fyne-stopwatch: A desktop GUI app using fyne.io/fyne/v2.
---
--- Uses Sky's auto-generated Go FFI bindings only — no hand-written wrappers.
--- Demonstrates: Fyne desktop GUI creation, window management, widgets.
---
--- Requirements: Go, C compiler (Xcode CLI tools on macOS, gcc on Linux)
---
--- Usage:
---   sky add fyne.io/fyne/v2
---   sky add fyne.io/fyne/v2/app
---   sky add fyne.io/fyne/v2/widget
---   sky build src/Main.sky
---   ./sky-out/app
-
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
 import Fyne.Io.Fyne.V2 as Fyne
 import Fyne.Io.Fyne.V2.App as FyneApp
 import Fyne.Io.Fyne.V2.Widget as Widget
 
+setupWindow myApp =
+    case Fyne.appNewWindow  myApp  "Sky Stopwatch" of
+        
+        Ok window ->
+            showWindow  window
+        
+        Err e ->
+            println  ("Failed to create window: " ++ e)
+
+
+showWindow window =
+    case Widget.newLabel  "00:00.0 — Built with Sky + Fyne" of
+        
+        Ok display ->
+            let
+                _ =
+                    Fyne.windowSetContent  window  display
+                _ =
+                    case Fyne.newSize  400.0  200.0 of
+                        
+                        Ok size ->
+                            Fyne.windowResize  window  size
+                        
+                        Err _ ->
+                            Err  "Failed to create size"
+            in
+                Fyne.windowShowAndRun  window
+        
+        Err e ->
+            println  ("Failed to create label: " ++ e)
+
 
 main =
-    let
-        myApp =
-            FyneApp.new ()
-        window =
-            Fyne.appNewWindow myApp "Sky Stopwatch"
-
-        -- Create widgets using auto-generated bindings
-        display =
-            Widget.newLabel "00:00.0 — Built with Sky + Fyne"
-
-        -- Set window content and size
-        _ =
-            Fyne.windowSetContent window display
-        _ =
-            Fyne.windowResize window (Fyne.newSize 400.0 200.0)
-    in
-        Fyne.windowShowAndRun window
+    case FyneApp.new  () of
+        
+        Ok myApp ->
+            setupWindow  myApp
+        
+        Err e ->
+            println  ("Failed to create Fyne app: " ++ e)

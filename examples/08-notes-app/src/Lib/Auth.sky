@@ -1,7 +1,6 @@
 module Lib.Auth exposing (hashPassword, verifyPassword, generateToken, createUser, authenticateUser, createSession, getSessionUser, verifyEmail)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.List as List
@@ -12,137 +11,140 @@ import Encoding.Hex as Hex
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
-
 hashPassword password =
     let
         salted =
             "sky-notes-salt-v1:" ++ password
         hash =
-            Task.perform (Sha256.sum256 (String.toBytes salted))
+            Result.withDefault  ""  (Sha256.sum256  (String.toBytes  salted))
     in
-        Task.perform (Hex.encodeToString hash)
+        Result.withDefault  ""  (Hex.encodeToString  hash)
 
 
 verifyPassword password storedHash =
-    hashPassword password == storedHash
+    hashPassword  password == storedHash
 
 
 generateToken _ =
-    Task.perform (Uuid.newString ())
+    Result.withDefault  ""  (Uuid.newString  ())
 
 
 createUser db email password =
     let
         passHash =
-            hashPassword password
+            hashPassword  password
         token =
-            generateToken ()
+            generateToken  ()
         _ =
-            println ""
+            println  ""
         _ =
-            println "=========================================="
+            println  "=========================================="
         _ =
-            println "[Email Service] New user registration"
+            println  "[Email Service] New user registration"
         _ =
-            println ("[Email Service] To: " ++ email)
+            println  ("[Email Service] To: " ++ email)
         _ =
-            println "[Email Service] Verify your email at:"
+            println  "[Email Service] Verify your email at:"
         _ =
-            println ("  http://localhost:4000/auth/verify?token=" ++ token)
+            println  ("  http://localhost:4000/auth/verify?token=" ++ token)
         _ =
-            println "=========================================="
+            println  "=========================================="
         _ =
-            println ""
+            println  ""
         result =
-            Db.exec db
-                "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
-                [ email , passHash , token ]
+            Db.exec  db
+             "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
+             [ email , passHash , token ]
     in
         case result of
+            
             Ok _ ->
-                Ok token
-
+                Ok  token
+            
             Err e ->
-                Err e
+                Err  e
 
 
 checkUserCredentials db email password user =
     let
         storedHash =
-            Db.getField "password_hash" user
+            Db.getField  "password_hash"  user
         verified =
-            Db.getField "verified" user
+            Db.getField  "verified"  user
     in
-        if verifyPassword password storedHash then
+        if verifyPassword  password  storedHash then
             if verified == "1" then
-                Ok user
+                Ok  user
             else
                 Err
-                    "Email not verified yet. Please check the server console for your verification link."
+                 "Email not verified yet. Please check the server console for your verification link."
         else
-            Err "Invalid email or password."
+            Err  "Invalid email or password."
 
 
 authenticateUser db email password =
     let
         rows =
-            Db.queryRows db
-                "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
-                [ email ]
+            Db.queryRows  db
+             "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
+             [ email ]
         userRows =
-            Result.withDefault [] rows
+            Result.withDefault  []  rows
         maybeUser =
-            List.head userRows
+            List.head  userRows
     in
         case maybeUser of
+            
             Just user ->
-                checkUserCredentials db email password user
-
+                checkUserCredentials  db  email  password  user
+            
             Nothing ->
-                Err "Invalid email or password."
+                Err  "Invalid email or password."
 
 
 createSession db userId =
     let
         token =
-            generateToken ()
+            generateToken  ()
         result =
-            Db.exec db "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
-                [ userId , token ]
+            Db.exec  db  "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
+             [ userId , token ]
     in
         case result of
+            
             Ok _ ->
-                Ok token
-
+                Ok  token
+            
             Err _ ->
-                Err "Failed to create session."
+                Err  "Failed to create session."
 
 
 getSessionUser db sessionToken =
     let
         rows =
-            Db.queryRows db
-                "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
-                [ sessionToken ]
+            Db.queryRows  db
+             "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
+             [ sessionToken ]
         userRows =
-            Result.withDefault [] rows
+            Result.withDefault  []  rows
     in
-        List.head userRows
+        List.head  userRows
 
 
 verifyEmail db token =
     let
         result =
-            Db.exec db
-                "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
-                [ token ]
+            Db.exec  db
+             "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
+             [ token ]
     in
         case result of
+            
             Ok rowsAffected ->
                 if rowsAffected == 0 then
-                    Err "Invalid or already used verification link."
+                    Err  "Invalid or already used verification link."
                 else
-                    Ok "Your email has been verified! You can now sign in."
-
+                    Ok  "Your email has been verified! You can now sign in."
+            
             Err _ ->
-                Err "A database error occurred during verification."
+                Err  "A database error occurred during verification."

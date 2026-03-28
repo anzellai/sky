@@ -16,87 +16,94 @@ hashPassword password =
         salted =
             "skyvote-salt-v1:" ++ password
         hash =
-            Sha256.sum256 (String.toBytes salted)
+            Result.withDefault  ""  (Sha256.sum256  (String.toBytes  salted))
     in
-        Hex.encodeToString hash
+        Result.withDefault  ""  (Hex.encodeToString  hash)
+
 
 verifyPassword password storedHash =
-    hashPassword password == storedHash
+    hashPassword  password == storedHash
+
 
 createUser username email password =
     let
         id =
-            String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
+            String.slice  0  12  (Crypto.sha256  (username ++ ":" ++ email))
         passHash =
-            hashPassword password
+            hashPassword  password
         result =
             Db.exec
-                "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
-                [ id , username , email , passHash ]
+             "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
+             [ id , username , email , passHash ]
     in
         case result of
+            
             Ok _ ->
                 let
                     _ =
                         println
-                            (
-                            "[AUTH] User created: " ++
-                            username ++ " (" ++ email ++ ")"
-                            )
+                         (
+                        "[AUTH] User created: " ++
+                        username ++ " (" ++ email ++ ")"
+                        )
                 in
-                    Ok id
+                    Ok  id
             
             Err e ->
-                Err "Username or email already taken."
+                Err  "Username or email already taken."
+
 
 authenticateUser email password =
     let
         rows =
             Db.queryRows
-                "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
-                [ email ]
+             "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
+             [ email ]
         userRows =
-            Result.withDefault [] rows
+            Result.withDefault  []  rows
         maybeUser =
-            List.head userRows
+            List.head  userRows
     in
         case maybeUser of
+            
             Just user ->
                 let
                     storedHash =
-                        Db.getField "password_hash" user
+                        Db.getField  "password_hash"  user
                 in
-                    if verifyPassword password storedHash then
+                    if verifyPassword  password  storedHash then
                         let
                             _ =
-                                println ("[AUTH] Sign-in success: " ++ email)
+                                println  ("[AUTH] Sign-in success: " ++ email)
                         in
-                            Ok user
+                            Ok  user
                     else
                         let
                             _ =
                                 println
-                                    (
-                                    "[AUTH] Sign-in failed (bad password): " ++
-                                    email
-                                    )
+                                 (
+                                "[AUTH] Sign-in failed (bad password): " ++
+                                email
+                                )
                         in
-                            Err "Invalid email or password."
+                            Err  "Invalid email or password."
             
             Nothing ->
                 let
                     _ =
-                        println ("[AUTH] Sign-in failed (not found): " ++ email)
+                        println
+                         ("[AUTH] Sign-in failed (not found): " ++ email)
                 in
-                    Err "Invalid email or password."
+                    Err  "Invalid email or password."
+
 
 getUserById userId =
     let
         rows =
             Db.queryRows
-                "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
-                [ userId ]
+             "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
+             [ userId ]
         userRows =
-            Result.withDefault [] rows
+            Result.withDefault  []  rows
     in
-        List.head userRows
+        List.head  userRows
