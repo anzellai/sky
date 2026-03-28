@@ -732,6 +732,8 @@ dceMainGo outDir goCode =
         wrapperSeeds =
             List.filter  (\name -> String.contains  name  wrapperContent)
              (Dict.keys  funcMap)
+        allNonFuncCode =
+            sections.header ++ "\n" ++ String.join  "\n"  allVarLines
         nonFuncSeeds =
             List.filter  (\name -> String.contains  name  allNonFuncCode)
              (Dict.keys  funcMap)

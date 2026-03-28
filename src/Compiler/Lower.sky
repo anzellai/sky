@@ -163,10 +163,10 @@ lowerDecl : LowerCtx -> Declaration -> Maybe GoDecl
 
 lowerDecl ctx decl =
     case decl of
-        
+
         FunDecl name params body _ ->
             Just  (lowerFunction  ctx  name  params  body)
-        
+
         _ ->
             Nothing
 
