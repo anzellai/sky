@@ -4,39 +4,70 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Sky.Core.List as List
 import Sky.Core.File as File
+import Sky.Core.Process as Process
 import Ffi.Inspector as Inspector
 import Ffi.TypeMapper as TypeMapper
 import Ffi.WrapperGen as WrapperGen
 import Lsp.JsonRpc as Json
 
+
 generateBindings : String -> String -> Result String String
 
 generateBindings pkgName outDir =
     case Inspector.inspectPackage  pkgName of
-        
+
         Err e ->
             Err  e
-        
+
         Ok inspectJson ->
-            let
-                skyiContent =
-                    generateSkyiFile  pkgName  inspectJson
-                skyiPath =
-                    outDir ++ "/bindings.skyi"
-                _ =
-                    File.mkdirAll  outDir
-                _ =
-                    File.writeFile  skyiPath  skyiContent
-                wrapperResult =
-                    WrapperGen.generateWrappers  pkgName  inspectJson  outDir
-            in
-                case wrapperResult of
-                    
-                    Ok _ ->
-                        Ok  skyiContent
-                    
-                    Err e ->
-                        Err  e
+            if String.length  inspectJson > 50000 then
+                generateBindingsNative  pkgName  outDir
+            else
+                generateBindingsFromJson  pkgName  outDir  inspectJson
+
+
+generateBindingsFromJson : String -> String -> String -> Result String String
+
+generateBindingsFromJson pkgName outDir inspectJson =
+    let
+        skyiContent =
+            generateSkyiFile  pkgName  inspectJson
+        skyiPath =
+            outDir ++ "/bindings.skyi"
+        _ =
+            File.mkdirAll  outDir
+        _ =
+            File.writeFile  skyiPath  skyiContent
+        wrapperResult =
+            WrapperGen.generateWrappers  pkgName  inspectJson  outDir
+    in
+        case wrapperResult of
+
+            Ok _ ->
+                Ok  skyiContent
+
+            Err e ->
+                Err  e
+
+
+generateBindingsNative : String -> String -> Result String String
+
+generateBindingsNative pkgName outDir =
+    let
+        inspectPath =
+            outDir ++ "/inspect.json"
+        _ =
+            File.mkdirAll  outDir
+        result =
+            Process.run  "sky-ffi-gen"  [ pkgName , inspectPath , outDir ]
+    in
+        case result of
+
+            Ok _ ->
+                File.readFile  (outDir ++ "/bindings.skyi")
+
+            Err e ->
+                Err  ("Native FFI gen failed for " ++ pkgName ++ ": " ++ errorToString  e)
 
 
 generateSkyiFile : String -> String -> String

@@ -163,27 +163,25 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
             Checker.checkModule  entryMod  (Just  stdlibEnv)
         entryRegistry =
             case entryCheckResult of
-
+                
                 Ok result ->
                     result.registry
-
+                
                 Err _ ->
                     Adt.emptyRegistry
         diagnostics =
             case entryCheckResult of
-
+                
                 Ok result ->
                     result.diagnostics
-
+                
                 Err _ ->
                     []
     in
         if not  (List.isEmpty  diagnostics) then
             let
                 _ =
-                    List.map
-                     (\d -> println  ("   ⚠ " ++ d))
-                     diagnostics
+                    List.map  (\d -> println  ("   ⚠ " ++ d))  diagnostics
             in
                 Err
                  (
@@ -195,8 +193,6 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
              aliasMap
              depDecls
              loadedModules
-
-
 
 
 emitMultiModuleGo : String -> String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
@@ -286,7 +282,12 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
             String.fromInt  (List.length  allDecls) ++ " total Go declarations"
             )
         _ =
-            if List.foldl  (\imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live")  False  imports then
+            if List.foldl
+                (
+               \imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live"
+               )
+                False
+                imports then
                 copyLiveRuntime  outDir
             else
                 ()
@@ -306,13 +307,13 @@ runNativeDce : String -> String -> ()
 
 runNativeDce outDir goCode =
     case Process.run  "sky-dce"  [ outDir ] of
-
+        
         Ok output ->
             if not  (String.isEmpty  (String.trim  output)) then
                 println  (String.trim  output)
             else
                 ()
-
+        
         Err _ ->
             ()
 
@@ -326,16 +327,14 @@ copyLiveRuntime outDir =
                   [ "-c"
                  , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
                  ] of
-
+                
                 Ok dir ->
                     String.trim  dir
-
+                
                 Err _ ->
                     "."
         candidates =
-            [ "stdlib-go"
-            , skyBinDir ++ "/../stdlib-go"
-            ]
+            [ "stdlib-go" , skyBinDir ++ "/../stdlib-go" ]
         stdlibDir =
             findStdlibDir  candidates
         _ =
@@ -352,16 +351,16 @@ findStdlibDir : (List String) -> String
 
 findStdlibDir candidates =
     case candidates of
-
+        
         [  ] ->
             "stdlib-go"
-
+        
         dir :: rest ->
             case File.readFile  (dir ++ "/live_init.go") of
-
+                
                 Ok _ ->
                     dir
-
+                
                 Err _ ->
                     findStdlibDir  rest
 
@@ -534,9 +533,10 @@ trimWrapperFile filePath mainGoCode =
                     sections.functions
                 allKept =
                     List.filter
-                     (\block -> isWrapperUsed  block  mainGoCode ||
-                        isHelperFunc  block
-                     )
+                     (
+                    \block ->
+                        isWrapperUsed  block  mainGoCode || isHelperFunc  block
+                    )
                      funcBlocks
             in
                 if List.isEmpty  allKept then
@@ -564,9 +564,9 @@ trimWrapperImports filePath =
         _ =
             Process.run  "sh"
              [ "-c"
-            , "trim-imports " ++
+            , "goimports -w " ++
             filePath ++
-            " 2>/dev/null || goimports -w " ++
+            " 2>/dev/null || trim-imports " ++
             filePath ++ " 2>/dev/null || true"
             ]
     in
@@ -880,13 +880,14 @@ buildReachableSet pending visited funcMap =
                                 ""
                     referenced =
                         List.filter
-                         (\n ->
+                         (
+                        \n ->
                             n /= name &&
                             (
                             String.contains  n  body ||
                             String.contains  (shortFuncName  n)  body
                             )
-                         )
+                        )
                          (Dict.keys  funcMap)
                     newPending =
                         List.append  rest  referenced
@@ -926,7 +927,7 @@ shortFuncName : String -> String
 
 shortFuncName fullName =
     case List.reverse  (String.split  "_"  fullName) of
-
+        
         last :: _ ->
             if String.length  last > 2 then
                 let
@@ -937,7 +938,7 @@ shortFuncName fullName =
                     lower
             else
                 fullName
-
+        
         [  ] ->
             fullName
 
@@ -1196,10 +1197,10 @@ deduplicateFfiImports : (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List
 
 deduplicateFfiImports imports seen =
     case imports of
-
-        [] ->
+        
+        [  ] ->
             []
-
+        
         imp :: rest ->
             deduplicateOneImport  imp  rest  seen
 
@@ -1215,9 +1216,7 @@ deduplicateOneImport imp rest seen =
             deduplicateFfiImports  rest  seen
         else
             List.append  [ imp ]
-             (deduplicateFfiImports  rest
-              (Dict.insert  modName  True  seen)
-             )
+             (deduplicateFfiImports  rest  (Dict.insert  modName  True  seen))
 
 
 loadOneFfiBinding : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
@@ -1237,7 +1236,7 @@ loadOneFfiBinding srcRoot imp =
                     Resolver.resolveBindingPath  projectRoot  modName
             in
                 case File.readFile  skyiPath of
-
+                    
                     Ok skyiSource ->
                         let
                             filteredSource =
@@ -1249,14 +1248,14 @@ loadOneFfiBinding srcRoot imp =
                                          " " ++
                                          importAlias  imp ++ " " ++ srcRoot
                                          ] of
-
+                                        
                                         Ok s ->
                                             if String.length  (String.trim  s) >
                                             20 then
                                                 s
                                             else
                                                 skyiSource
-
+                                        
                                         Err _ ->
                                             skyiSource
                                 else
@@ -1277,9 +1276,9 @@ loadOneFfiBinding srcRoot imp =
                                 
                                 Err _ ->
                                     Nothing
-
-                    Err _ ->
-                        Nothing
+                                
+                                Err _ ->
+                                    Nothing
 
 
 filterFfiModule : String -> String -> Ast.Module -> Ast.Module
@@ -1305,31 +1304,31 @@ filterFfiModule projectRoot modName mod =
             ".skycache/go/wrappers/" ++ safeName ++ ".go"
         wrapperContent =
             case File.readFile  wrapperSrc of
-
+                
                 Ok content ->
                     content
-
+                
                 Err _ ->
                     case File.readFile  combinedSrc of
-
+                        
                         Ok content ->
                             content
-
+                        
                         Err _ ->
                             if projectRoot == "." then
                                 ""
                             else
                                 case File.readFile  cwdWrapperSrc of
-
+                                    
                                     Ok content ->
                                         content
-
+                                    
                                     Err _ ->
                                         case File.readFile  cwdCombinedSrc of
-
+                                            
                                             Ok content ->
                                                 content
-
+                                            
                                             Err _ ->
                                                 ""
         filteredDecls =
@@ -1442,7 +1441,8 @@ copyFfiWrappers outDir projectRoot imports mainGoCode =
     let
         allModNames =
             List.filterMap
-             (\imp ->
+             (
+            \imp ->
                 let
                     mn =
                         String.join  "."  imp.moduleName
@@ -1451,15 +1451,16 @@ copyFfiWrappers outDir projectRoot imports mainGoCode =
                         Nothing
                     else
                         Just  mn
-             )
+            )
              imports
         uniqueModNames =
             Set.toList  (Set.fromList  allModNames)
         _ =
             List.foldl
-             (\modName _ ->
+             (
+            \modName _ ->
                 copyOneFfiWrapper  outDir  projectRoot  modName  mainGoCode
-             )
+            )
              ()
              uniqueModNames
         _ =
@@ -1576,10 +1577,10 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
                                 outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
                             alreadyCopied =
                                 case File.readFile  wrapperDst of
-
+                                    
                                     Ok _ ->
                                         True
-
+                                    
                                     Err _ ->
                                         False
                         in
@@ -1930,24 +1931,24 @@ exprHasWrapperCall : Ast.Expression -> Bool
 
 exprHasWrapperCall expr =
     case expr of
-
+        
         Ast.IdentifierExpr name _ ->
             String.startsWith  "Sky_"  name
-
+        
         Ast.QualifiedExpr parts _ ->
             case List.head  parts of
-
+                
                 Just first ->
                     String.startsWith  "Sky_"  first
-
+                
                 Nothing ->
                     False
-
-        Ast.CallExpr callee args _ ->
-            exprHasWrapperCall  callee
-
-        _ ->
-            False
+                
+                Ast.CallExpr callee args _ ->
+                    exprHasWrapperCall  callee
+                
+                _ ->
+                    False
 
 
 generateAliasesFromModuleInner : String -> Ast.Module -> List GoDecl
@@ -2194,10 +2195,10 @@ compileFfiModuleLight allModules pair =
             String.replace  "."  "_"  modName
         registry =
             case Checker.checkModule  mod  Nothing of
-
+                
                 Ok result ->
                     result.registry
-
+                
                 Err _ ->
                     Adt.emptyRegistry
         ctorDecls =
@@ -2219,10 +2220,10 @@ makeFfiWrapperVar : String -> Ast.Declaration -> Maybe GoDecl
 
 makeFfiWrapperVar prefix decl =
     case decl of
-
+        
         Ast.FunDecl name params body _ ->
             buildFfiVarDecl  prefix  name  params  body
-
+        
         _ ->
             Nothing
 
@@ -2269,10 +2270,10 @@ countWrapperArgsAcc : Ast.Expression -> Int -> Int
 
 countWrapperArgsAcc expr acc =
     case expr of
-
+        
         Ast.CallExpr callee args _ ->
             countWrapperArgsAcc  callee  (acc + List.length  args)
-
+        
         _ ->
             acc
 
@@ -2285,28 +2286,29 @@ makeFfiFunc goName wrapperName skyArgCount wrapperArgCount =
             List.map  (\i -> "a" ++ String.fromInt  i)
              (List.range  0  (skyArgCount - 1))
         argList =
-            String.join  ", "
-             (List.map  (\a -> a ++ " any")  argNames)
+            String.join  ", "  (List.map  (\a -> a ++ " any")  argNames)
         callArgNames =
             List.take  wrapperArgCount  argNames
         callArgs =
             String.join  ", "  callArgNames
     in
-        "func " ++ goName ++ "(" ++ argList ++ ") any { return " ++
-        wrapperName ++ "(" ++ callArgs ++ ") }"
+        "func " ++
+        goName ++
+        "(" ++
+        argList ++ ") any { return " ++ wrapperName ++ "(" ++ callArgs ++ ") }"
 
 
 extractWrapperNameFromBody : Ast.Expression -> String
 
 extractWrapperNameFromBody expr =
     case expr of
-
+        
         Ast.IdentifierExpr name _ ->
             if String.startsWith  "Sky_"  name then
                 name
             else
                 ""
-
+        
         Ast.QualifiedExpr parts _ ->
             let
                 name =
@@ -2316,13 +2318,13 @@ extractWrapperNameFromBody expr =
                     name
                 else
                     ""
-
+        
         Ast.CallExpr callee _ _ ->
             extractWrapperNameFromBody  callee
-
+        
         Ast.ParenExpr inner _ ->
             extractWrapperNameFromBody  inner
-
+        
         _ ->
             ""
 
@@ -2527,12 +2529,7 @@ importToGoImport imp =
                  "sky_" ++ String.toLower  (String.replace  "."  "_"  modName)
              }
         else if imp.alias_ == "_" then
-            Just
-             { path =
-                 skyModuleToGoImport  modName
-             , alias_ =
-                 "_"
-             }
+            Just  { path = skyModuleToGoImport  modName , alias_ = "_" }
         else
             Nothing
 
@@ -2551,25 +2548,22 @@ skyModuleToGoImportLoop : (List String) -> (List String) -> Bool -> String
 
 skyModuleToGoImportLoop parts acc pastTld =
     case parts of
-
+        
         [  ] ->
             String.join  "/"  acc
-
+        
         part :: rest ->
             if pastTld then
-                skyModuleToGoImportLoop  rest
-                 (List.append  acc  [ part ])
+                skyModuleToGoImportLoop  rest  (List.append  acc  [ part ])
                  True
             else if isTld  part then
                 let
                     domain =
-                        String.join  "."
-                         (List.append  acc  [ part ])
+                        String.join  "."  (List.append  acc  [ part ])
                 in
                     skyModuleToGoImportLoop  rest  [ domain ]  True
             else
-                skyModuleToGoImportLoop  rest
-                 (List.append  acc  [ part ])
+                skyModuleToGoImportLoop  rest  (List.append  acc  [ part ])
                  False
 
 
@@ -2578,11 +2572,7 @@ isTld : String -> Bool
 isTld s =
     s == "com" ||
     s == "org" ||
-    s == "io" ||
-    s == "net" ||
-    s == "dev" ||
-    s == "co" ||
-    s == "ai"
+    s == "io" || s == "net" || s == "dev" || s == "co" || s == "ai"
 
 
 copyStdlibGo : String -> Result String ()
@@ -2747,46 +2737,48 @@ compileModule filePath outDir mod =
 compileCheckedModule : String -> String -> Ast.Module -> Checker.CheckResult -> Result String String
 
 compileCheckedModule filePath outDir mod result =
-                let
-                    _ =
-                        println  ("── Lowering to Go IR")
-                    goPackage =
-                        Lower.lowerModule  result.registry  mod
-                    _ =
-                        println
-                         (
-                        "   " ++
-                        String.fromInt  (List.length  goPackage.declarations) ++
-                        " Go declarations"
-                        )
-                    _ =
-                        println  ("── Emitting Go")
-                    goCode =
-                        Emit.emitPackage  goPackage
-                    outPath =
-                        outDir ++ "/main.go"
-                    _ =
-                        File.mkdirAll  outDir
-                    _ =
-                        File.writeFile  outPath  goCode
-                    _ =
-                        println  ("   Wrote " ++ outPath)
-                    _ =
-                        if List.foldl
-                             (\imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live")
-                             False
-                             mod.imports then
-                            copyLiveRuntime  outDir
-                        else
-                            ()
-                    _ =
-                        dceMainGo  outDir  goCode
-                    _ =
-                        println  ""
-                    _ =
-                        println  ("✓ Compilation successful")
-                in
-                    Ok  goCode
+    let
+        _ =
+            println  ("── Lowering to Go IR")
+        goPackage =
+            Lower.lowerModule  result.registry  mod
+        _ =
+            println
+             (
+            "   " ++
+            String.fromInt  (List.length  goPackage.declarations) ++
+            " Go declarations"
+            )
+        _ =
+            println  ("── Emitting Go")
+        goCode =
+            Emit.emitPackage  goPackage
+        outPath =
+            outDir ++ "/main.go"
+        _ =
+            File.mkdirAll  outDir
+        _ =
+            File.writeFile  outPath  goCode
+        _ =
+            println  ("   Wrote " ++ outPath)
+        _ =
+            if List.foldl
+                (
+               \imp acc -> acc || String.join  "."  imp.moduleName == "Std.Live"
+               )
+                False
+                mod.imports then
+                copyLiveRuntime  outDir
+            else
+                ()
+        _ =
+            dceMainGo  outDir  goCode
+        _ =
+            println  ""
+        _ =
+            println  ("✓ Compilation successful")
+    in
+        Ok  goCode
 
 
 compileProject : String -> String -> Result String String
