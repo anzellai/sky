@@ -1184,11 +1184,7 @@ loadOneFfiBinding srcRoot imp =
                 skyiPath =
                     Resolver.resolveBindingPath  projectRoot  modName
             in
-                case Process.run  "sh"
-                      [ "-c"
-                     , "p=" ++ skyiPath ++ "; f=\"${p%.skyi}.filtered.skyi\";" ++
-                     " [ -s \"$f\" ] && cat \"$f\" || cat \"$p\""
-                     ] of
+                case File.readFile  skyiPath of
 
                     Ok filteredSource ->
                         let
