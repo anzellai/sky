@@ -6,6 +6,7 @@ import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.Ref as Ref
 import Sky.Core.Io as Io
+import Sky.Core.File as File
 import Lsp.JsonRpc exposing (..)
 import Compiler.Lexer as Lexer
 import Compiler.Parser as Parser
@@ -17,17 +18,34 @@ import Compiler.Env as Env
 import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
 
+type alias ExportedDecl =
+    { name : String , signature : String , defLine : Int }
+
+
+type alias DepModule =
+    { filePath : String
+    , alias_ : String
+    , moduleName : String
+    , exports : List ExportedDecl
+    }
+
+
 type alias ServerState =
     { documents : Dict.Dict String String
     , astCache : Dict.Dict String Module
     , typeCache : Dict.Dict String Checker.CheckResult
+    , depCache : Dict.Dict String DepModule
     }
 
 
 emptyState : ServerState
 
 emptyState =
-    { documents = Dict.empty , astCache = Dict.empty , typeCache = Dict.empty }
+    { documents = Dict.empty
+    , astCache = Dict.empty
+    , typeCache = Dict.empty
+    , depCache = Dict.empty
+    }
 
 
 startServer : () -> ()
@@ -240,8 +258,10 @@ analyzeAndPublishDiagnostics state uri text =
                             
                             Err err ->
                                 [ makeDiagnostic  1  err ]
+                    stateWithDeps =
+                        resolveAndCacheImports  state  uri  mod.imports
                 in
-                    publishAndUpdateState  state  uri  mod  checkResult
+                    publishAndUpdateState  stateWithDeps  uri  mod  checkResult
                      diagnostics
 
 
@@ -272,6 +292,438 @@ publishAndUpdateState state uri mod checkResult diagnostics =
                     state.typeCache
     in
         { state | astCache = newAstCache , typeCache = newTypeCache }
+
+
+-- ============================================================
+-- Import resolution and dependency caching
+-- ============================================================
+
+resolveAndCacheImports : ServerState -> String -> (List ImportDecl) -> ServerState
+
+resolveAndCacheImports state uri imports =
+    let
+        fp =
+            if String.startsWith  "file://"  uri then
+                String.slice  7  (String.length  uri)  uri
+            else
+                uri
+        parts =
+            String.split  "/"  fp
+        srcIdx =
+            findLastSrcIdx  parts  0  -1
+        srcRoot =
+            if srcIdx >= 0 then
+                String.join  "/"  (List.take  (srcIdx + 1)  parts)
+            else
+                case List.reverse  (String.split  "/"  fp) of
+
+                    _ :: rest ->
+                        String.join  "/"  (List.reverse  rest)
+
+                    [  ] ->
+                        "."
+        projectRoot =
+            case List.reverse  (String.split  "/"  srcRoot) of
+
+                _ :: rest ->
+                    String.join  "/"  (List.reverse  rest)
+
+                [  ] ->
+                    "."
+    in
+        resolveImportsLoop  srcRoot  projectRoot  imports  state
+
+
+resolveImportsLoop : String -> String -> (List ImportDecl) -> ServerState -> ServerState
+
+resolveImportsLoop srcRoot projectRoot imports st =
+    if List.isEmpty  imports then
+        st
+    else
+        let
+            hd =
+                case List.head  imports of
+
+                    Just i ->
+                        i
+
+                    Nothing ->
+                        { moduleName = [] , alias_ = "" , exposing_ = ExposeAll , span = emptySpan }
+            tl =
+                List.drop  1  imports
+            mn =
+                String.join  "."  hd.moduleName
+            st2 =
+                resolveOneImportInline  srcRoot  projectRoot  mn
+                 hd.moduleName  hd.alias_  st
+        in
+            resolveImportsLoop  srcRoot  projectRoot  tl  st2
+
+
+resolveOneImportInline : String -> String -> String -> (List String) -> String -> ServerState -> ServerState
+
+resolveOneImportInline sr pr mn mp ra st =
+    if Resolver.isStdlib  mn then
+        st
+    else
+        let
+            al =
+                if String.isEmpty  ra || ra == "_" then
+                    case List.reverse  mp of
+
+                        last :: _ ->
+                            last
+
+                        [  ] ->
+                            ""
+                else
+                    ra
+        in
+            case Dict.get  al  st.depCache of
+
+                Just _ ->
+                    st
+
+                Nothing ->
+                    addDepFromFile  sr  pr  mn  mp  al  st
+
+
+addDepFromFile : String -> String -> String -> (List String) -> String -> ServerState -> ServerState
+
+addDepFromFile sr pr mn mp al st =
+    let
+        lp =
+            sr ++ "/" ++ String.join  "/"  mp ++ ".sky"
+    in
+        case File.readFile  lp of
+
+            Ok src ->
+                addParsedDep  lp  al  mn  src  st
+
+            Err _ ->
+                tryAddFfiDep  pr  al  mn  st
+
+
+tryAddFfiDep : String -> String -> String -> ServerState -> ServerState
+
+tryAddFfiDep pr al mn st =
+    tryReadAndParse  (Resolver.resolveBindingPath  pr  mn)  al  mn  st
+
+
+tryReadAndParse : String -> String -> String -> ServerState -> ServerState
+
+tryReadAndParse path al mn st =
+    case File.readFile  path of
+
+        Ok src ->
+            addParsedDep  path  al  mn  src  st
+
+        Err _ ->
+            tryReadAndParseCwd  al  mn  st
+
+
+tryReadAndParseCwd : String -> String -> ServerState -> ServerState
+
+tryReadAndParseCwd al mn st =
+    case File.readFile  (Resolver.resolveBindingPath  "."  mn) of
+
+        Ok src ->
+            addParsedDep  (Resolver.resolveBindingPath  "."  mn)  al  mn  src  st
+
+        Err _ ->
+            st
+
+
+addParsedDep : String -> String -> String -> String -> ServerState -> ServerState
+
+addParsedDep fp al mn src st =
+    insertDepIfParsed  fp  al  mn  (Parser.parse  (Lexer.lex  src).tokens)  st
+
+
+insertDepIfParsed : String -> String -> String -> (Result String Module) -> ServerState -> ServerState
+
+insertDepIfParsed fp al mn parseResult st =
+    case parseResult of
+
+        Ok parsedMod ->
+            insertDep  fp  al  mn  (extractExports  parsedMod)  st
+
+        Err _ ->
+            st
+
+
+insertDep : String -> String -> String -> (List ExportedDecl) -> ServerState -> ServerState
+
+insertDep fp al mn exps st =
+    { st
+    | depCache =
+        Dict.insert  al
+         { filePath = fp , alias_ = al , moduleName = mn , exports = exps }
+         st.depCache
+    }
+
+
+extractExports : Module -> List ExportedDecl
+
+extractExports mod =
+    let
+        allDecls =
+            extractAllDecls  mod.declarations  []
+    in
+        case mod.exposing_ of
+
+            ExposeAll ->
+                allDecls
+
+            ExposeList names ->
+                List.filter
+                 (\d -> listContainsStr  d.name  names)
+                 allDecls
+
+            _ ->
+                allDecls
+
+
+extractAllDecls : (List Declaration) -> (List ExportedDecl) -> List ExportedDecl
+
+extractAllDecls decls acc =
+    case decls of
+
+        [  ] ->
+            List.reverse  acc
+
+        decl :: rest ->
+            case decl of
+
+                TypeAnnotDecl name typeExpr span ->
+                    extractAllDecls  rest
+                     ({ name = name
+                      , signature = renderTypeExpr  typeExpr
+                      , defLine = span.start.line
+                      } :: acc
+                     )
+
+                FunDecl name params _ span ->
+                    if hasAnnotation  name  acc then
+                        extractAllDecls  rest  acc
+                    else
+                        extractAllDecls  rest
+                         ({ name = name
+                          , signature = inferSigFromParams  params
+                          , defLine = span.start.line
+                          } :: acc
+                         )
+
+                TypeDecl name _ variants span ->
+                    let
+                        ctorDecls =
+                            List.map
+                             (\v ->
+                                { name = v.name
+                                , signature = name
+                                , defLine = v.span.start.line
+                                }
+                             )
+                             variants
+                    in
+                        extractAllDecls  rest
+                         (List.append
+                          (List.reverse
+                           ({ name = name
+                            , signature = "type"
+                            , defLine = span.start.line
+                            } :: ctorDecls
+                           )
+                          )
+                          acc
+                         )
+
+                TypeAliasDecl name _ typeExpr span ->
+                    extractAllDecls  rest
+                     ({ name = name
+                      , signature = "type alias = " ++ renderTypeExpr  typeExpr
+                      , defLine = span.start.line
+                      } :: acc
+                     )
+
+                ForeignImportDecl name _ _ span ->
+                    extractAllDecls  rest  acc
+
+                _ ->
+                    extractAllDecls  rest  acc
+
+
+inferSigFromParams : (List Pattern) -> String
+
+inferSigFromParams params =
+    let
+        vars =
+            [ "a" , "b" , "c" , "d" , "e" , "f" , "g" , "h" ]
+        n =
+            List.length  params
+    in
+        if n == 0 then
+            "a"
+        else
+            String.join  " -> "
+             (List.append  (List.take  n  vars)  [ "result" ])
+
+
+hasAnnotation : String -> (List ExportedDecl) -> Bool
+
+hasAnnotation name decls =
+    List.foldl  (\d acc -> acc || d.name == name)  False  decls
+
+
+listContainsStr : String -> (List String) -> Bool
+
+listContainsStr s xs =
+    List.foldl  (\x acc -> acc || x == s)  False  xs
+
+
+renderTypeExpr : TypeExpr -> String
+
+renderTypeExpr texpr =
+    case texpr of
+
+        TypeRef parts args _ ->
+            let
+                base =
+                    String.join  "."  parts
+            in
+                if List.isEmpty  args then
+                    base
+                else
+                    base ++ " " ++
+                    String.join  " "  (List.map  renderTypeExpr  args)
+
+        TypeVar name _ ->
+            name
+
+        FunType from to _ ->
+            let
+                fromStr =
+                    case from of
+
+                        FunType _ _ _ ->
+                            "(" ++ renderTypeExpr  from ++ ")"
+
+                        _ ->
+                            renderTypeExpr  from
+            in
+                fromStr ++ " -> " ++ renderTypeExpr  to
+
+        TupleTypeExpr types _ ->
+            "( " ++
+            String.join  ", "  (List.map  renderTypeExpr  types) ++ " )"
+
+        RecordTypeExpr fields _ ->
+            "{ " ++
+            String.join  ", "
+             (List.map
+              (\f -> f.name ++ " : " ++ renderTypeExpr  f.type_)
+              fields
+             ) ++ " }"
+
+        UnitTypeExpr _ ->
+            "()"
+
+        _ ->
+            "?"
+
+
+uriToFilePath : String -> String
+
+uriToFilePath uri =
+    if String.startsWith  "file://"  uri then
+        String.slice  7  (String.length  uri)  uri
+    else
+        uri
+
+
+filePathToUri : String -> String
+
+filePathToUri path =
+    "file://" ++ path
+
+
+deriveSrcRoot : String -> String
+
+deriveSrcRoot filePath =
+    let
+        parts =
+            String.split  "/"  filePath
+        srcIdx =
+            findLastSrcIdx  parts  0  -1
+    in
+        if srcIdx >= 0 then
+            String.join  "/"  (List.take  (srcIdx + 1)  parts)
+        else
+            case List.reverse  (String.split  "/"  filePath) of
+
+                _ :: rest ->
+                    String.join  "/"  (List.reverse  rest)
+
+                [  ] ->
+                    "."
+
+
+findLastSrcIdx : (List String) -> Int -> Int -> Int
+
+findLastSrcIdx parts idx lastFound =
+    case parts of
+
+        [  ] ->
+            lastFound
+
+        part :: rest ->
+            if part == "src" then
+                findLastSrcIdx  rest  (idx + 1)  idx
+            else
+                findLastSrcIdx  rest  (idx + 1)  lastFound
+
+
+deriveProjectRoot : String -> String
+
+deriveProjectRoot srcRoot =
+    case List.reverse  (String.split  "/"  srcRoot) of
+
+        _ :: rest ->
+            String.join  "/"  (List.reverse  rest)
+
+        [  ] ->
+            "."
+
+
+-- ============================================================
+-- Dependency-aware lookup helpers
+-- ============================================================
+
+lookupDepExport : ServerState -> String -> String -> Maybe ExportedDecl
+
+lookupDepExport state alias funcName =
+    case Dict.get  alias  state.depCache of
+
+        Just depMod ->
+            findExport  funcName  depMod.exports
+
+        Nothing ->
+            Nothing
+
+
+findExport : String -> (List ExportedDecl) -> Maybe ExportedDecl
+
+findExport name exports =
+    case exports of
+
+        [  ] ->
+            Nothing
+
+        exp :: rest ->
+            if exp.name == name then
+                Just  exp
+            else
+                findExport  name  rest
 
 
 makeDiagnostic : Int -> String -> String
@@ -363,11 +815,47 @@ lookupTypeInfo : ServerState -> String -> String -> String -> String
 
 lookupTypeInfo state uri word source =
     let
+        isQualified =
+            String.contains  "."  word
+        qualParts =
+            String.split  "."  word
+        modAlias =
+            case qualParts of
+
+                m :: _ ->
+                    m
+
+                [  ] ->
+                    ""
+        funcName =
+            case List.reverse  qualParts of
+
+                f :: _ ->
+                    f
+
+                [  ] ->
+                    ""
+        fromDep =
+            if isQualified then
+                case lookupDepExport  state  modAlias  funcName of
+
+                    Just exp ->
+                        word ++ " : " ++ exp.signature
+
+                    Nothing ->
+                        ""
+            else
+                ""
         fromStdlibMap =
-            lookupStdlibType  word
+            if String.isEmpty  fromDep then
+                lookupStdlibType  word
+            else
+                fromDep
         fromAnnotation =
             if String.isEmpty  fromStdlibMap then
-                findAnnotationInSource  word  source
+                findAnnotationInSource
+                 (if isQualified then funcName else word)
+                 source
             else
                 fromStdlibMap
         fromAst =
@@ -862,7 +1350,7 @@ handleCompletion state id body =
                 completionsFromStdlib  prefix
         moduleItems =
             if isQualified then
-                completionsForModule  modulePart
+                completionsForModule  state  modulePart
             else
                 []
         allItems =
@@ -1010,13 +1498,13 @@ completionsFromStdlib prefix =
 
 
 
-completionsForModule : String -> List String
+completionsForModule : ServerState -> String -> List String
 
-completionsForModule modulePart =
+completionsForModule state modulePart =
     let
         prefix =
             modulePart ++ "."
-        matching =
+        stdlibMatching =
             List.filterMap
              (
             \pair ->
@@ -1039,8 +1527,20 @@ completionsForModule modulePart =
                         Nothing
             )
              (Dict.toList  stdlibTypeMap)
+        depMatching =
+            case Dict.get  modulePart  state.depCache of
+
+                Just depMod ->
+                    List.map
+                     (\exp ->
+                        makeCompletionItem  exp.name  exp.signature  3
+                     )
+                     depMod.exports
+
+                Nothing ->
+                    []
     in
-        matching
+        List.append  stdlibMatching  depMatching
 
 
 makeCompletionItem : String -> String -> Int -> String
@@ -1092,8 +1592,56 @@ findDefinitionForPosition state uri line character =
             in
                 if String.isEmpty  word then
                     jsonNull
+                else if String.contains  "."  word then
+                    findDefinitionInDep  state  word  source  uri
                 else
                     findDefinitionInSource  word  source  uri
+
+
+findDefinitionInDep : ServerState -> String -> String -> String -> String
+
+findDefinitionInDep state word source uri =
+    let
+        parts =
+            String.split  "."  word
+        modAlias =
+            case parts of
+
+                m :: _ ->
+                    m
+
+                [  ] ->
+                    ""
+        funcName =
+            case List.reverse  parts of
+
+                f :: _ ->
+                    f
+
+                [  ] ->
+                    ""
+    in
+        case lookupDepExport  state  modAlias  funcName of
+
+            Just exp ->
+                case Dict.get  modAlias  state.depCache of
+
+                    Just depMod ->
+                        jsonObject
+                         [ ( "uri"
+                           , jsonString  (filePathToUri  depMod.filePath)
+                           )
+                        , ( "range"
+                          , makeRange  exp.defLine  0  exp.defLine
+                             (String.length  exp.name)
+                          )
+                        ]
+
+                    Nothing ->
+                        findDefinitionInSource  funcName  source  uri
+
+            Nothing ->
+                findDefinitionInSource  funcName  source  uri
 
 
 findDefinitionInSource : String -> String -> String -> String

@@ -272,6 +272,8 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
         _ =
             eliminateDeadCode  outDir  goCode
         _ =
+            println  ""
+        _ =
             dceMainGo  outDir  goCode
         _ =
             println  ""
@@ -834,7 +836,13 @@ buildReachableSet pending visited funcMap =
                                 ""
                     referenced =
                         List.filter
-                         (\n -> n /= name && String.contains  n  body)
+                         (\n ->
+                            n /= name &&
+                            (
+                            String.contains  n  body ||
+                            String.contains  (shortFuncName  n)  body
+                            )
+                         )
                          (Dict.keys  funcMap)
                     newPending =
                         List.append  rest  referenced
@@ -868,6 +876,26 @@ makeGoPackageWithImports decls extraImports =
             makeGoPackage  decls
     in
         { base | imports = List.append  base.imports  extraImports }
+
+
+shortFuncName : String -> String
+
+shortFuncName fullName =
+    case List.reverse  (String.split  "_"  fullName) of
+
+        last :: _ ->
+            if String.length  last > 2 then
+                let
+                    lower =
+                        String.toLower  (String.slice  0  1  last) ++
+                        String.slice  1  (String.length  last)  last
+                in
+                    lower
+            else
+                fullName
+
+        [  ] ->
+            fullName
 
 
 makeGoPackage : (List GoDecl) -> GoPackage
@@ -2174,8 +2202,25 @@ makeConstructorAlias prefix decl =
             in
                 if firstChar == String.toUpper  firstChar ||
                 isSharedValue  aliasName then
-                    Just
-                     (GoDeclRaw  ("var " ++ aliasName ++ " = " ++ fullName))
+                    let
+                        lowerAlias =
+                            String.toLower  (String.slice  0  1  unprefixed) ++
+                            String.slice  1  (String.length  unprefixed)
+                             unprefixed
+                    in
+                        if lowerAlias == aliasName then
+                            Just
+                             (GoDeclRaw
+                              ("var " ++ aliasName ++ " = " ++ fullName)
+                             )
+                        else
+                            Just
+                             (GoDeclRaw
+                              ("var " ++
+                              aliasName ++ " = " ++ fullName ++ "\n" ++
+                              "var " ++ lowerAlias ++ " = " ++ fullName
+                              )
+                             )
                 else
                     Nothing
 
