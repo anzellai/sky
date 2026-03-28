@@ -1105,6 +1105,10 @@ var applySub = Compiler_Types_ApplySub
 
 var ApplySub = Compiler_Types_ApplySub
 
+var applySubVar = Compiler_Types_ApplySubVar
+
+var ApplySubVar = Compiler_Types_ApplySubVar
+
 var applySubToScheme = Compiler_Types_ApplySubToScheme
 
 var ApplySubToScheme = Compiler_Types_ApplySubToScheme
@@ -1602,6 +1606,14 @@ var GetVarId = Compiler_Adt_GetVarId
 var resolveTypeExpr = Compiler_Adt_ResolveTypeExpr
 
 var ResolveTypeExpr = Compiler_Adt_ResolveTypeExpr
+
+var resolveTypeRef = Compiler_Adt_ResolveTypeRef
+
+var ResolveTypeRef = Compiler_Adt_ResolveTypeRef
+
+var resolveTypeVarExpr = Compiler_Adt_ResolveTypeVarExpr
+
+var ResolveTypeVarExpr = Compiler_Adt_ResolveTypeVarExpr
 
 var initState = Compiler_ParserCore_InitState
 
@@ -2268,7 +2280,15 @@ func Compiler_Adt_GetVarId(t any) any {
 }
 
 func Compiler_Adt_ResolveTypeExpr(paramMap any, texpr any) any {
-	return func() any { return func() any { __subject := texpr; if sky_asMap(__subject)["SkyName"] == "TypeRef" { parts := sky_asMap(__subject)["V0"]; _ = parts; args := sky_asMap(__subject)["V1"]; _ = args; return func() any { name := sky_call(sky_stringJoin("."), parts); _ = name; resolvedArgs := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Adt_ResolveTypeExpr(paramMap, __pa0) }), args); _ = resolvedArgs; return func() any { return func() any { __subject := sky_call(sky_dictGet(name), paramMap); if sky_asSkyMaybe(__subject).SkyName == "Just" { tv := sky_asSkyMaybe(__subject).JustValue; _ = tv; return tv };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return func() any { if sky_asBool(sky_listIsEmpty(resolvedArgs)) { return TConst(name) }; return TApp(TConst(name), resolvedArgs) }() };  if sky_asMap(__subject)["SkyName"] == "TypeVar" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { return func() any { __subject := sky_call(sky_dictGet(name), paramMap); if sky_asSkyMaybe(__subject).SkyName == "Just" { tv := sky_asSkyMaybe(__subject).JustValue; _ = tv; return tv };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return TVar(0, SkyJust(name)) };  if sky_asMap(__subject)["SkyName"] == "FunType" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return TFun(Compiler_Adt_ResolveTypeExpr(paramMap, fromT), Compiler_Adt_ResolveTypeExpr(paramMap, toT)) };  if sky_asMap(__subject)["SkyName"] == "RecordTypeExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { fieldDict := sky_call2(sky_listFoldl(func(f any) any { return func(acc any) any { return sky_call2(sky_dictInsert(sky_asMap(f)["name"]), Compiler_Adt_ResolveTypeExpr(paramMap, sky_asMap(f)["type_"]), acc) } }), sky_dictEmpty(), fields); _ = fieldDict; return TRecord(fieldDict) }() };  if sky_asMap(__subject)["SkyName"] == "TupleTypeExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Adt_ResolveTypeExpr(paramMap, __pa0) }), items)) };  if sky_asMap(__subject)["SkyName"] == "UnitTypeExpr" { return TConst("Unit") };  return nil }() }() };  return nil }() }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := texpr; if sky_asMap(__subject)["SkyName"] == "TypeRef" { parts := sky_asMap(__subject)["V0"]; _ = parts; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Adt_ResolveTypeRef(paramMap, parts, args) };  if sky_asMap(__subject)["SkyName"] == "TypeVar" { name := sky_asMap(__subject)["V0"]; _ = name; return Compiler_Adt_ResolveTypeVarExpr(paramMap, name) };  if sky_asMap(__subject)["SkyName"] == "FunType" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return TFun(Compiler_Adt_ResolveTypeExpr(paramMap, fromT), Compiler_Adt_ResolveTypeExpr(paramMap, toT)) };  if sky_asMap(__subject)["SkyName"] == "RecordTypeExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { fieldDict := sky_call2(sky_listFoldl(func(f any) any { return func(acc any) any { return sky_call2(sky_dictInsert(sky_asMap(f)["name"]), Compiler_Adt_ResolveTypeExpr(paramMap, sky_asMap(f)["type_"]), acc) } }), sky_dictEmpty(), fields); _ = fieldDict; return TRecord(fieldDict) }() };  if sky_asMap(__subject)["SkyName"] == "TupleTypeExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Adt_ResolveTypeExpr(paramMap, __pa0) }), items)) };  if sky_asMap(__subject)["SkyName"] == "UnitTypeExpr" { return TConst("Unit") };  if true { return TConst("Any") };  return nil }() }()
+}
+
+func Compiler_Adt_ResolveTypeRef(paramMap any, parts any, args any) any {
+	return func() any { name := sky_call(sky_stringJoin("."), parts); _ = name; resolvedArgs := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Adt_ResolveTypeExpr(paramMap, __pa0) }), args); _ = resolvedArgs; return func() any { return func() any { __subject := sky_call(sky_dictGet(name), paramMap); if sky_asSkyMaybe(__subject).SkyName == "Just" { tv := sky_asSkyMaybe(__subject).JustValue; _ = tv; return tv };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return func() any { if sky_asBool(sky_listIsEmpty(resolvedArgs)) { return TConst(name) }; return TApp(TConst(name), resolvedArgs) }() };  return nil }() }() }()
+}
+
+func Compiler_Adt_ResolveTypeVarExpr(paramMap any, name any) any {
+	return func() any { return func() any { __subject := sky_call(sky_dictGet(name), paramMap); if sky_asSkyMaybe(__subject).SkyName == "Just" { tv := sky_asSkyMaybe(__subject).JustValue; _ = tv; return tv };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return TVar(0, SkyJust(name)) };  return nil }() }()
 }
 
 func Compiler_Types_TVar(v0 any, v1 any) any {
@@ -2304,7 +2324,11 @@ func Compiler_Types_EmptySub() any {
 }
 
 func Compiler_Types_ApplySub(sub any, t any) any {
-	return func() any { return func() any { __subject := t; if sky_asMap(__subject)["SkyName"] == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; return func() any { return func() any { __subject := sky_call(sky_dictGet(id), sub); if sky_asSkyMaybe(__subject).SkyName == "Just" { replacement := sky_asSkyMaybe(__subject).JustValue; _ = replacement; return replacement };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return t };  if sky_asMap(__subject)["SkyName"] == "TConst" { return t };  if sky_asMap(__subject)["SkyName"] == "TFun" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return TFun(Compiler_Types_ApplySub(sub, fromT), Compiler_Types_ApplySub(sub, toT)) };  if sky_asMap(__subject)["SkyName"] == "TApp" { ctor := sky_asMap(__subject)["V0"]; _ = ctor; args := sky_asMap(__subject)["V1"]; _ = args; return TApp(Compiler_Types_ApplySub(sub, ctor), sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ApplySub(sub, __pa0) }), args)) };  if sky_asMap(__subject)["SkyName"] == "TTuple" { items := sky_asMap(__subject)["V0"]; _ = items; return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ApplySub(sub, __pa0) }), items)) };  if sky_asMap(__subject)["SkyName"] == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return TRecord(sky_call(sky_dictMap(func(kk any) any { return func(v any) any { return Compiler_Types_ApplySub(sub, v) } }), fields)) };  if true { return t };  return nil }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := t; if sky_asMap(__subject)["SkyName"] == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; return Compiler_Types_ApplySubVar(sub, t, id) };  if sky_asMap(__subject)["SkyName"] == "TConst" { return t };  if sky_asMap(__subject)["SkyName"] == "TFun" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return TFun(Compiler_Types_ApplySub(sub, fromT), Compiler_Types_ApplySub(sub, toT)) };  if sky_asMap(__subject)["SkyName"] == "TApp" { ctor := sky_asMap(__subject)["V0"]; _ = ctor; args := sky_asMap(__subject)["V1"]; _ = args; return TApp(Compiler_Types_ApplySub(sub, ctor), sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ApplySub(sub, __pa0) }), args)) };  if sky_asMap(__subject)["SkyName"] == "TTuple" { items := sky_asMap(__subject)["V0"]; _ = items; return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ApplySub(sub, __pa0) }), items)) };  if sky_asMap(__subject)["SkyName"] == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return TRecord(sky_call(sky_dictMap(func(kk any) any { return func(v any) any { return Compiler_Types_ApplySub(sub, v) } }), fields)) };  return nil }() }()
+}
+
+func Compiler_Types_ApplySubVar(sub any, t any, id any) any {
+	return func() any { return func() any { __subject := sky_call(sky_dictGet(id), sub); if sky_asSkyMaybe(__subject).SkyName == "Just" { replacement := sky_asSkyMaybe(__subject).JustValue; _ = replacement; return replacement };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return t };  if true { return t };  return nil }() }()
 }
 
 func Compiler_Types_ApplySubToScheme(sub any, scheme any) any {
@@ -4253,6 +4277,46 @@ var inferExpr = Compiler_Infer_InferExpr
 
 var InferExpr = Compiler_Infer_InferExpr
 
+var inferIdentifier = Compiler_Infer_InferIdentifier
+
+var InferIdentifier = Compiler_Infer_InferIdentifier
+
+var inferQualifiedExpr = Compiler_Infer_InferQualifiedExpr
+
+var InferQualifiedExpr = Compiler_Infer_InferQualifiedExpr
+
+var inferQualifiedFallback = Compiler_Infer_InferQualifiedFallback
+
+var InferQualifiedFallback = Compiler_Infer_InferQualifiedFallback
+
+var inferRecordUpdate = Compiler_Infer_InferRecordUpdate
+
+var InferRecordUpdate = Compiler_Infer_InferRecordUpdate
+
+var inferRecordUpdateWithBase = Compiler_Infer_InferRecordUpdateWithBase
+
+var InferRecordUpdateWithBase = Compiler_Infer_InferRecordUpdateWithBase
+
+var inferFieldAccess = Compiler_Infer_InferFieldAccess
+
+var InferFieldAccess = Compiler_Infer_InferFieldAccess
+
+var inferFieldAccessFromType = Compiler_Infer_InferFieldAccessFromType
+
+var InferFieldAccessFromType = Compiler_Infer_InferFieldAccessFromType
+
+var inferNegate = Compiler_Infer_InferNegate
+
+var InferNegate = Compiler_Infer_InferNegate
+
+var inferNegateType = Compiler_Infer_InferNegateType
+
+var InferNegateType = Compiler_Infer_InferNegateType
+
+var inferNegateFloat = Compiler_Infer_InferNegateFloat
+
+var InferNegateFloat = Compiler_Infer_InferNegateFloat
+
 var inferCall = Compiler_Infer_InferCall
 
 var InferCall = Compiler_Infer_InferCall
@@ -4446,7 +4510,47 @@ var checkPatternListSame = Compiler_PatternCheck_CheckPatternListSame
 var literalType = Compiler_PatternCheck_LiteralType
 
 func Compiler_Infer_InferExpr(counter any, registry any, env any, expr any) any {
-	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "IntLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Int")}) };  if sky_asMap(__subject)["SkyName"] == "FloatLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Float")}) };  if sky_asMap(__subject)["SkyName"] == "StringLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("String")}) };  if sky_asMap(__subject)["SkyName"] == "CharLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Char")}) };  if sky_asMap(__subject)["SkyName"] == "BoolLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Bool")}) };  if sky_asMap(__subject)["SkyName"] == "UnitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Unit")}) };  if sky_asMap(__subject)["SkyName"] == "IdentifierExpr" { name := sky_asMap(__subject)["V0"]; _ = name; return func() any { return func() any { __subject := Compiler_Env_Lookup(name, env); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyErr(sky_concat("Unbound variable: ", name)) };  if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return func() any { t := instantiate(counter, scheme); _ = t; return SkyOk(map[string]any{"substitution": emptySub, "type_": t}) }() };  if sky_asMap(__subject)["SkyName"] == "QualifiedExpr" { parts := sky_asMap(__subject)["V0"]; _ = parts; return func() any { qualName := sky_call(sky_stringJoin("."), parts); _ = qualName; return func() any { return func() any { __subject := Compiler_Env_Lookup(qualName, env); if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return func() any { return func() any { __subject := sky_listReverse(parts); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return func() any { return func() any { __subject := Compiler_Env_Lookup(last, env); if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyErr(sky_concat("Unbound qualified name: ", qualName)) };  if len(sky_asList(__subject)) == 0 { return SkyErr("Empty qualified name") };  if sky_asMap(__subject)["SkyName"] == "TupleExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return Compiler_Infer_InferTupleItems(counter, registry, env, items, emptySub, []any{}) };  if sky_asMap(__subject)["SkyName"] == "ListExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return Compiler_Infer_InferListItems(counter, registry, env, items) };  if sky_asMap(__subject)["SkyName"] == "RecordExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return Compiler_Infer_InferRecordFields(counter, registry, env, fields, emptySub, sky_dictEmpty()) };  if sky_asMap(__subject)["SkyName"] == "RecordUpdateExpr" { base := sky_asMap(__subject)["V0"]; _ = base; fields := sky_asMap(__subject)["V1"]; _ = fields; return func() any { return func() any { __subject := Compiler_Infer_InferExpr(counter, registry, env, base); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { baseResult := sky_asSkyResult(__subject).OkValue; _ = baseResult; return func() any { return func() any { __subject := Compiler_Infer_InferRecordUpdateFields(counter, registry, env, fields, sky_asMap(baseResult)["substitution"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { fieldSub := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V0; _ = fieldSub; fieldTypes := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1; _ = fieldTypes; return func() any { combinedSub := composeSubs(fieldSub, sky_asMap(baseResult)["substitution"]); _ = combinedSub; baseType := applySub(combinedSub, sky_asMap(baseResult)["type_"]); _ = baseType; return func() any { return func() any { __subject := baseType; if sky_asMap(__subject)["SkyName"] == "TRecord" { existingFields := sky_asMap(__subject)["V0"]; _ = existingFields; return func() any { updatedFields := sky_call(sky_dictUnion(fieldTypes), existingFields); _ = updatedFields; return SkyOk(map[string]any{"substitution": combinedSub, "type_": TRecord(updatedFields)}) }() };  if true { return SkyOk(map[string]any{"substitution": combinedSub, "type_": TRecord(fieldTypes)}) };  if sky_asMap(__subject)["SkyName"] == "FieldAccessExpr" { target := sky_asMap(__subject)["V0"]; _ = target; fieldName := sky_asMap(__subject)["V1"]; _ = fieldName; return func() any { return func() any { __subject := Compiler_Infer_InferExpr(counter, registry, env, target); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { targetResult := sky_asSkyResult(__subject).OkValue; _ = targetResult; return func() any { resultVar := freshVar(counter, SkyNothing()); _ = resultVar; targetType := applySub(sky_asMap(targetResult)["substitution"], sky_asMap(targetResult)["type_"]); _ = targetType; return func() any { return func() any { __subject := targetType; if sky_asMap(__subject)["SkyName"] == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { return func() any { __subject := sky_call(sky_dictGet(fieldName), fields); if sky_asSkyMaybe(__subject).SkyName == "Just" { fieldType := sky_asSkyMaybe(__subject).JustValue; _ = fieldType; return SkyOk(map[string]any{"substitution": sky_asMap(targetResult)["substitution"], "type_": fieldType}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyErr(sky_concat("Record has no field '", sky_concat(fieldName, "'"))) };  if true { return SkyOk(map[string]any{"substitution": sky_asMap(targetResult)["substitution"], "type_": resultVar}) };  if sky_asMap(__subject)["SkyName"] == "CallExpr" { callee := sky_asMap(__subject)["V0"]; _ = callee; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Infer_InferCall(counter, registry, env, callee, args) };  if sky_asMap(__subject)["SkyName"] == "LambdaExpr" { params := sky_asMap(__subject)["V0"]; _ = params; body := sky_asMap(__subject)["V1"]; _ = body; return Compiler_Infer_InferLambda(counter, registry, env, params, body) };  if sky_asMap(__subject)["SkyName"] == "IfExpr" { condition := sky_asMap(__subject)["V0"]; _ = condition; thenBranch := sky_asMap(__subject)["V1"]; _ = thenBranch; elseBranch := sky_asMap(__subject)["V2"]; _ = elseBranch; return Compiler_Infer_InferIf(counter, registry, env, condition, thenBranch, elseBranch) };  if sky_asMap(__subject)["SkyName"] == "LetExpr" { bindings := sky_asMap(__subject)["V0"]; _ = bindings; body := sky_asMap(__subject)["V1"]; _ = body; return Compiler_Infer_InferLet(counter, registry, env, bindings, body) };  if sky_asMap(__subject)["SkyName"] == "CaseExpr" { subject := sky_asMap(__subject)["V0"]; _ = subject; branches := sky_asMap(__subject)["V1"]; _ = branches; return Compiler_Infer_InferCase(counter, registry, env, subject, branches) };  if sky_asMap(__subject)["SkyName"] == "BinaryExpr" { op := sky_asMap(__subject)["V0"]; _ = op; left := sky_asMap(__subject)["V1"]; _ = left; right := sky_asMap(__subject)["V2"]; _ = right; return Compiler_Infer_InferBinary(counter, registry, env, op, left, right) };  if sky_asMap(__subject)["SkyName"] == "NegateExpr" { inner := sky_asMap(__subject)["V0"]; _ = inner; return func() any { return func() any { __subject := Compiler_Infer_InferExpr(counter, registry, env, inner); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { return func() any { __subject := unify(sky_asMap(result)["type_"], TConst("Int")); if sky_asSkyResult(__subject).SkyName == "Ok" { sub := sky_asSkyResult(__subject).OkValue; _ = sub; return SkyOk(map[string]any{"substitution": composeSubs(sub, sky_asMap(result)["substitution"]), "type_": applySub(sub, sky_asMap(result)["type_"])}) };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { return func() any { __subject := unify(sky_asMap(result)["type_"], TConst("Float")); if sky_asSkyResult(__subject).SkyName == "Ok" { sub := sky_asSkyResult(__subject).OkValue; _ = sub; return SkyOk(map[string]any{"substitution": composeSubs(sub, sky_asMap(result)["substitution"]), "type_": applySub(sub, sky_asMap(result)["type_"])}) };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(sky_concat("Negation requires a number type: ", e)) };  if sky_asMap(__subject)["SkyName"] == "ParenExpr" { inner := sky_asMap(__subject)["V0"]; _ = inner; return Compiler_Infer_InferExpr(counter, registry, env, inner) };  return nil }() }() };  return nil }() }() };  return nil }() }() };  return nil }() }() };  return nil }() }() }() };  return nil }() }() };  return nil }() }() }() };  return nil }() }() };  return nil }() }() };  return nil }() }() };  return nil }() }() };  return nil }() }() }() };  return nil }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := expr; if sky_asMap(__subject)["SkyName"] == "IntLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Int")}) };  if sky_asMap(__subject)["SkyName"] == "FloatLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Float")}) };  if sky_asMap(__subject)["SkyName"] == "StringLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("String")}) };  if sky_asMap(__subject)["SkyName"] == "CharLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Char")}) };  if sky_asMap(__subject)["SkyName"] == "BoolLitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Bool")}) };  if sky_asMap(__subject)["SkyName"] == "UnitExpr" { return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Unit")}) };  if sky_asMap(__subject)["SkyName"] == "IdentifierExpr" { name := sky_asMap(__subject)["V0"]; _ = name; return Compiler_Infer_InferIdentifier(counter, env, name) };  if sky_asMap(__subject)["SkyName"] == "QualifiedExpr" { parts := sky_asMap(__subject)["V0"]; _ = parts; return Compiler_Infer_InferQualifiedExpr(counter, registry, env, parts) };  if sky_asMap(__subject)["SkyName"] == "TupleExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return Compiler_Infer_InferTupleItems(counter, registry, env, items, emptySub, []any{}) };  if sky_asMap(__subject)["SkyName"] == "ListExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return Compiler_Infer_InferListItems(counter, registry, env, items) };  if sky_asMap(__subject)["SkyName"] == "RecordExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return Compiler_Infer_InferRecordFields(counter, registry, env, fields, emptySub, sky_dictEmpty()) };  if sky_asMap(__subject)["SkyName"] == "RecordUpdateExpr" { base := sky_asMap(__subject)["V0"]; _ = base; fields := sky_asMap(__subject)["V1"]; _ = fields; return Compiler_Infer_InferRecordUpdate(counter, registry, env, base, fields) };  if sky_asMap(__subject)["SkyName"] == "FieldAccessExpr" { target := sky_asMap(__subject)["V0"]; _ = target; fieldName := sky_asMap(__subject)["V1"]; _ = fieldName; return Compiler_Infer_InferFieldAccess(counter, registry, env, target, fieldName) };  if sky_asMap(__subject)["SkyName"] == "CallExpr" { callee := sky_asMap(__subject)["V0"]; _ = callee; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Infer_InferCall(counter, registry, env, callee, args) };  if sky_asMap(__subject)["SkyName"] == "LambdaExpr" { params := sky_asMap(__subject)["V0"]; _ = params; body := sky_asMap(__subject)["V1"]; _ = body; return Compiler_Infer_InferLambda(counter, registry, env, params, body) };  if sky_asMap(__subject)["SkyName"] == "IfExpr" { condition := sky_asMap(__subject)["V0"]; _ = condition; thenBranch := sky_asMap(__subject)["V1"]; _ = thenBranch; elseBranch := sky_asMap(__subject)["V2"]; _ = elseBranch; return Compiler_Infer_InferIf(counter, registry, env, condition, thenBranch, elseBranch) };  if sky_asMap(__subject)["SkyName"] == "LetExpr" { bindings := sky_asMap(__subject)["V0"]; _ = bindings; body := sky_asMap(__subject)["V1"]; _ = body; return Compiler_Infer_InferLet(counter, registry, env, bindings, body) };  if sky_asMap(__subject)["SkyName"] == "CaseExpr" { subject := sky_asMap(__subject)["V0"]; _ = subject; branches := sky_asMap(__subject)["V1"]; _ = branches; return Compiler_Infer_InferCase(counter, registry, env, subject, branches) };  if sky_asMap(__subject)["SkyName"] == "BinaryExpr" { op := sky_asMap(__subject)["V0"]; _ = op; left := sky_asMap(__subject)["V1"]; _ = left; right := sky_asMap(__subject)["V2"]; _ = right; return Compiler_Infer_InferBinary(counter, registry, env, op, left, right) };  if sky_asMap(__subject)["SkyName"] == "NegateExpr" { inner := sky_asMap(__subject)["V0"]; _ = inner; return Compiler_Infer_InferNegate(counter, registry, env, inner) };  if sky_asMap(__subject)["SkyName"] == "ParenExpr" { inner := sky_asMap(__subject)["V0"]; _ = inner; return Compiler_Infer_InferExpr(counter, registry, env, inner) };  return nil }() }()
+}
+
+func Compiler_Infer_InferIdentifier(counter any, env any, name any) any {
+	return func() any { return func() any { __subject := Compiler_Env_Lookup(name, env); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyErr(sky_concat("Unbound variable: ", name)) };  if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  return nil }() }()
+}
+
+func Compiler_Infer_InferQualifiedExpr(counter any, registry any, env any, parts any) any {
+	return func() any { qualName := sky_call(sky_stringJoin("."), parts); _ = qualName; return func() any { return func() any { __subject := Compiler_Env_Lookup(qualName, env); if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return Compiler_Infer_InferQualifiedFallback(counter, env, parts, qualName) };  return nil }() }() }()
+}
+
+func Compiler_Infer_InferQualifiedFallback(counter any, env any, parts any, qualName any) any {
+	return func() any { return func() any { __subject := sky_listReverse(parts); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return func() any { return func() any { __subject := Compiler_Env_Lookup(last, env); if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyErr(sky_concat("Unbound qualified name: ", qualName)) };  if len(sky_asList(__subject)) == 0 { return SkyErr("Empty qualified name") };  return nil }() }() };  return nil }() }()
+}
+
+func Compiler_Infer_InferRecordUpdate(counter any, registry any, env any, base any, fields any) any {
+	return func() any { return func() any { __subject := Compiler_Infer_InferExpr(counter, registry, env, base); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { baseResult := sky_asSkyResult(__subject).OkValue; _ = baseResult; return Compiler_Infer_InferRecordUpdateWithBase(counter, registry, env, fields, baseResult) };  return nil }() }()
+}
+
+func Compiler_Infer_InferRecordUpdateWithBase(counter any, registry any, env any, fields any, baseResult any) any {
+	return func() any { return func() any { __subject := Compiler_Infer_InferRecordUpdateFields(counter, registry, env, fields, sky_asMap(baseResult)["substitution"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { fieldSub := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V0; _ = fieldSub; fieldTypes := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1; _ = fieldTypes; return func() any { combinedSub := composeSubs(fieldSub, sky_asMap(baseResult)["substitution"]); _ = combinedSub; baseType := applySub(combinedSub, sky_asMap(baseResult)["type_"]); _ = baseType; return SkyOk(map[string]any{"substitution": combinedSub, "type_": TRecord(fieldTypes)}) }() };  return nil }() }()
+}
+
+func Compiler_Infer_InferFieldAccess(counter any, registry any, env any, target any, fieldName any) any {
+	return func() any { return func() any { __subject := Compiler_Infer_InferExpr(counter, registry, env, target); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { targetResult := sky_asSkyResult(__subject).OkValue; _ = targetResult; return func() any { resultVar := freshVar(counter, SkyNothing()); _ = resultVar; targetType := applySub(sky_asMap(targetResult)["substitution"], sky_asMap(targetResult)["type_"]); _ = targetType; return Compiler_Infer_InferFieldAccessFromType(targetResult, resultVar, targetType, fieldName) }() };  return nil }() }()
+}
+
+func Compiler_Infer_InferFieldAccessFromType(targetResult any, resultVar any, targetType any, fieldName any) any {
+	return func() any { return func() any { __subject := targetType; if sky_asMap(__subject)["SkyName"] == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { return func() any { __subject := sky_call(sky_dictGet(fieldName), fields); if sky_asSkyMaybe(__subject).SkyName == "Just" { fieldType := sky_asSkyMaybe(__subject).JustValue; _ = fieldType; return SkyOk(map[string]any{"substitution": sky_asMap(targetResult)["substitution"], "type_": fieldType}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyErr(sky_concat("Record has no field '", sky_concat(fieldName, "'"))) };  if true { return SkyOk(map[string]any{"substitution": sky_asMap(targetResult)["substitution"], "type_": resultVar}) };  return nil }() }() };  return nil }() }()
+}
+
+func Compiler_Infer_InferNegate(counter any, registry any, env any, inner any) any {
+	return func() any { return func() any { __subject := Compiler_Infer_InferExpr(counter, registry, env, inner); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return Compiler_Infer_InferNegateType(result) };  return nil }() }()
+}
+
+func Compiler_Infer_InferNegateType(result any) any {
+	return func() any { return func() any { __subject := unify(sky_asMap(result)["type_"], TConst("Int")); if sky_asSkyResult(__subject).SkyName == "Ok" { sub := sky_asSkyResult(__subject).OkValue; _ = sub; return SkyOk(map[string]any{"substitution": composeSubs(sub, sky_asMap(result)["substitution"]), "type_": applySub(sub, sky_asMap(result)["type_"])}) };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Infer_InferNegateFloat(result) };  return nil }() }()
+}
+
+func Compiler_Infer_InferNegateFloat(result any) any {
+	return func() any { return func() any { __subject := unify(sky_asMap(result)["type_"], TConst("Float")); if sky_asSkyResult(__subject).SkyName == "Ok" { sub := sky_asSkyResult(__subject).OkValue; _ = sub; return SkyOk(map[string]any{"substitution": composeSubs(sub, sky_asMap(result)["substitution"]), "type_": applySub(sub, sky_asMap(result)["type_"])}) };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(sky_concat("Negation requires a number type: ", e)) };  return nil }() }()
 }
 
 func Compiler_Infer_InferCall(counter any, registry any, env any, callee any, args any) any {
@@ -4978,15 +5082,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 6, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {

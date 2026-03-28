@@ -204,58 +204,70 @@ resolveTypeExpr : (Dict.Dict String Type) -> TypeExpr -> Type
 
 resolveTypeExpr paramMap texpr =
     case texpr of
-        
+
         TypeRef parts args _ ->
+            resolveTypeRef  paramMap  parts  args
+
+        TypeVar name _ ->
+            resolveTypeVarExpr  paramMap  name
+
+        FunType fromT toT _ ->
+            TFun  (resolveTypeExpr  paramMap  fromT)
+             (resolveTypeExpr  paramMap  toT)
+
+        RecordTypeExpr fields _ ->
             let
-                name =
-                    String.join  "."  parts
-                resolvedArgs =
-                    List.map  (resolveTypeExpr  paramMap)  args
+                fieldDict =
+                    List.foldl
+                     (
+                    \f acc ->
+                        Dict.insert  f.name
+                         (resolveTypeExpr  paramMap  f.type_)
+                         acc
+                    )
+                     Dict.empty
+                     fields
             in
-                case Dict.get  name  paramMap of
-                    
-                    Just tv ->
-                        tv
-                    
-                    Nothing ->
-                        if List.isEmpty  resolvedArgs then
-                            TConst  name
-                        else
-                            TApp  (TConst  name)  resolvedArgs
-                    
-                    TypeVar name _ ->
-                        case Dict.get  name  paramMap of
-                            
-                            Just tv ->
-                                tv
-                            
-                            Nothing ->
-                                TVar  0  (Just  name)
-                            
-                            FunType fromT toT _ ->
-                                TFun  (resolveTypeExpr  paramMap  fromT)
-                                 (resolveTypeExpr  paramMap  toT)
-                            
-                            RecordTypeExpr fields _ ->
-                                let
-                                    fieldDict =
-                                        List.foldl
-                                         (
-                                        \f acc ->
-                                            Dict.insert  f.name
-                                             (
-                                            resolveTypeExpr  paramMap  f.type_
-                                            )
-                                             acc
-                                        )
-                                         Dict.empty
-                                         fields
-                                in
-                                    TRecord  fieldDict
-                            
-                            TupleTypeExpr items _ ->
-                                TTuple
-                                 (List.map  (resolveTypeExpr  paramMap)  items)
-                            
-                            UnitTypeExpr _ ->
-                                TConst  "Unit"
+                TRecord  fieldDict
+
+        TupleTypeExpr items _ ->
+            TTuple  (List.map  (resolveTypeExpr  paramMap)  items)
+
+        UnitTypeExpr _ ->
+            TConst  "Unit"
+
+        _ ->
+            TConst  "Any"
+
+
+resolveTypeRef : (Dict.Dict String Type) -> (List String) -> (List TypeExpr) -> Type
+
+resolveTypeRef paramMap parts args =
+    let
+        name =
+            String.join  "."  parts
+        resolvedArgs =
+            List.map  (resolveTypeExpr  paramMap)  args
+    in
+        case Dict.get  name  paramMap of
+
+            Just tv ->
+                tv
+
+            Nothing ->
+                if List.isEmpty  resolvedArgs then
+                    TConst  name
+                else
+                    TApp  (TConst  name)  resolvedArgs
+
+
+resolveTypeVarExpr : (Dict.Dict String Type) -> String -> Type
+
+resolveTypeVarExpr paramMap name =
+    case Dict.get  name  paramMap of
+
+        Just tv ->
+            tv
+
+        Nothing ->
+            TVar  0  (Just  name)

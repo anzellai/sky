@@ -40,304 +40,214 @@ inferExpr counter registry env expr =
             Ok  { substitution = emptySub , type_ = TConst  "Unit" }
         
         IdentifierExpr name _ ->
-            case Env.lookup  name  env of
-                
-                Nothing ->
-                    Err  ("Unbound variable: " ++ name)
-                
+            inferIdentifier  counter  env  name
+
+        QualifiedExpr parts _ ->
+            inferQualifiedExpr  counter  registry  env  parts
+
+        TupleExpr items _ ->
+            inferTupleItems  counter  registry  env  items  emptySub  []
+
+        ListExpr items _ ->
+            inferListItems  counter  registry  env  items
+
+        RecordExpr fields _ ->
+            inferRecordFields  counter  registry  env  fields  emptySub
+             Dict.empty
+
+        RecordUpdateExpr base fields _ ->
+            inferRecordUpdate  counter  registry  env  base  fields
+
+        FieldAccessExpr target fieldName _ ->
+            inferFieldAccess  counter  registry  env  target  fieldName
+
+        CallExpr callee args _ ->
+            inferCall  counter  registry  env  callee  args
+
+        LambdaExpr params body _ ->
+            inferLambda  counter  registry  env  params  body
+
+        IfExpr condition thenBranch elseBranch _ ->
+            inferIf  counter  registry  env  condition  thenBranch
+             elseBranch
+
+        LetExpr bindings body _ ->
+            inferLet  counter  registry  env  bindings  body
+
+        CaseExpr subject branches _ ->
+            inferCase  counter  registry  env  subject  branches
+
+        BinaryExpr op left right _ ->
+            inferBinary  counter  registry  env  op  left  right
+
+        NegateExpr inner _ ->
+            inferNegate  counter  registry  env  inner
+
+        ParenExpr inner _ ->
+            inferExpr  counter  registry  env  inner
+
+
+inferIdentifier : (Ref.Ref Int) -> Env.TypeEnv -> String -> Result String InferResult
+
+inferIdentifier counter env name =
+    case Env.lookup  name  env of
+
+        Nothing ->
+            Err  ("Unbound variable: " ++ name)
+
+        Just scheme ->
+            Ok  { substitution = emptySub , type_ = instantiate  counter  scheme }
+
+
+inferQualifiedExpr : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List String) -> Result String InferResult
+
+inferQualifiedExpr counter registry env parts =
+    let
+        qualName =
+            String.join  "."  parts
+    in
+        case Env.lookup  qualName  env of
+
+            Just scheme ->
+                Ok  { substitution = emptySub , type_ = instantiate  counter  scheme }
+
+            Nothing ->
+                inferQualifiedFallback  counter  env  parts  qualName
+
+
+inferQualifiedFallback : (Ref.Ref Int) -> Env.TypeEnv -> (List String) -> String -> Result String InferResult
+
+inferQualifiedFallback counter env parts qualName =
+    case List.reverse  parts of
+
+        last :: _ ->
+            case Env.lookup  last  env of
+
                 Just scheme ->
-                    let
-                        t =
-                            instantiate  counter  scheme
-                    in
-                        Ok  { substitution = emptySub , type_ = t }
-                
-                QualifiedExpr parts _ ->
-                    let
-                        qualName =
-                            String.join  "."  parts
-                    in
-                        case Env.lookup  qualName  env of
-                            
-                            Just scheme ->
-                                Ok
-                                 { substitution =
-                                     emptySub
-                                 , type_ =
-                                     instantiate  counter  scheme
-                                 }
-                            
-                            Nothing ->
-                                case List.reverse  parts of
-                                    
-                                    last :: _ ->
-                                        case Env.lookup  last  env of
-                                            
-                                            Just scheme ->
-                                                Ok
-                                                 { substitution =
-                                                     emptySub
-                                                 , type_ =
-                                                     instantiate  counter
-                                                      scheme
-                                                 }
-                                            
-                                            Nothing ->
-                                                Err
-                                                 (
-                                                "Unbound qualified name: " ++
-                                                qualName
-                                                )
-                                            
-                                            [  ] ->
-                                                Err  ("Empty qualified name")
-                                            
-                                            TupleExpr items _ ->
-                                                inferTupleItems  counter
-                                                 registry
-                                                 env
-                                                 items
-                                                 emptySub
-                                                 []
-                                            
-                                            ListExpr items _ ->
-                                                inferListItems  counter
-                                                 registry
-                                                 env
-                                                 items
-                                            
-                                            RecordExpr fields _ ->
-                                                inferRecordFields  counter
-                                                 registry
-                                                 env
-                                                 fields
-                                                 emptySub
-                                                 Dict.empty
-                                            
-                                            RecordUpdateExpr base fields _ ->
-                                                case inferExpr  counter
-                                                      registry
-                                                      env
-                                                      base of
-                                                    
-                                                    Err e ->
-                                                        Err  e
-                                                    
-                                                    Ok baseResult ->
-                                                        case inferRecordUpdateFields
-                                                              counter
-                                                              registry
-                                                              env
-                                                              fields
-                                                              baseResult.substitution of
-                                                            
-                                                            Err e ->
-                                                                Err  e
-                                                            
-                                                            Ok ( fieldSub , fieldTypes ) ->
-                                                                let
-                                                                    combinedSub =
-                                                                        composeSubs
-                                                                         fieldSub
-                                                                         baseResult.substitution
-                                                                    baseType =
-                                                                        applySub
-                                                                         combinedSub
-                                                                         baseResult.type_
-                                                                in
-                                                                    case baseType of
-                                                                        
-                                                                        TRecord existingFields ->
-                                                                            let
-                                                                                updatedFields =
-                                                                                    Dict.union
-                                                                                     fieldTypes
-                                                                                     existingFields
-                                                                            in
-                                                                                Ok
-                                                                                 { substitution =
-                                                                                     combinedSub
-                                                                                 , type_ =
-                                                                                     TRecord
-                                                                                      updatedFields
-                                                                                 }
-                                                                        
-                                                                        _ ->
-                                                                            Ok
-                                                                             { substitution =
-                                                                                 combinedSub
-                                                                             , type_ =
-                                                                                 TRecord
-                                                                                  fieldTypes
-                                                                             }
-                                                                        
-                                                                        FieldAccessExpr target fieldName _ ->
-                                                                            case inferExpr
-                                                                                  counter
-                                                                                  registry
-                                                                                  env
-                                                                                  target of
-                                                                                
-                                                                                Err e ->
-                                                                                    Err
-                                                                                     e
-                                                                                
-                                                                                Ok targetResult ->
-                                                                                    let
-                                                                                        resultVar =
-                                                                                            freshVar
-                                                                                             counter
-                                                                                             Nothing
-                                                                                        targetType =
-                                                                                            applySub
-                                                                                             targetResult.substitution
-                                                                                             targetResult.type_
-                                                                                    in
-                                                                                        case targetType of
-                                                                                            
-                                                                                            TRecord fields ->
-                                                                                                case Dict.get
-                                                                                                      fieldName
-                                                                                                      fields of
-                                                                                                    
-                                                                                                    Just fieldType ->
-                                                                                                        Ok
-                                                                                                         { substitution =
-                                                                                                             targetResult.substitution
-                                                                                                         , type_ =
-                                                                                                             fieldType
-                                                                                                         }
-                                                                                                    
-                                                                                                    Nothing ->
-                                                                                                        Err
-                                                                                                         (
-                                                                                                        "Record has no field '" ++
-                                                                                                        fieldName ++
-                                                                                                        "'"
-                                                                                                        )
-                                                                                                    
-                                                                                                    _ ->
-                                                                                                        Ok
-                                                                                                         { substitution =
-                                                                                                             targetResult.substitution
-                                                                                                         , type_ =
-                                                                                                             resultVar
-                                                                                                         }
-                                                                                                    
-                                                                                                    CallExpr callee args _ ->
-                                                                                                        inferCall
-                                                                                                         counter
-                                                                                                         registry
-                                                                                                         env
-                                                                                                         callee
-                                                                                                         args
-                                                                                                    
-                                                                                                    LambdaExpr params body _ ->
-                                                                                                        inferLambda
-                                                                                                         counter
-                                                                                                         registry
-                                                                                                         env
-                                                                                                         params
-                                                                                                         body
-                                                                                                    
-                                                                                                    IfExpr condition thenBranch elseBranch _ ->
-                                                                                                        inferIf
-                                                                                                         counter
-                                                                                                         registry
-                                                                                                         env
-                                                                                                         condition
-                                                                                                         thenBranch
-                                                                                                         elseBranch
-                                                                                                    
-                                                                                                    LetExpr bindings body _ ->
-                                                                                                        inferLet
-                                                                                                         counter
-                                                                                                         registry
-                                                                                                         env
-                                                                                                         bindings
-                                                                                                         body
-                                                                                                    
-                                                                                                    CaseExpr subject branches _ ->
-                                                                                                        inferCase
-                                                                                                         counter
-                                                                                                         registry
-                                                                                                         env
-                                                                                                         subject
-                                                                                                         branches
-                                                                                                    
-                                                                                                    BinaryExpr op left right _ ->
-                                                                                                        inferBinary
-                                                                                                         counter
-                                                                                                         registry
-                                                                                                         env
-                                                                                                         op
-                                                                                                         left
-                                                                                                         right
-                                                                                                    
-                                                                                                    NegateExpr inner _ ->
-                                                                                                        case inferExpr
-                                                                                                              counter
-                                                                                                              registry
-                                                                                                              env
-                                                                                                              inner of
-                                                                                                            
-                                                                                                            Err e ->
-                                                                                                                Err
-                                                                                                                 e
-                                                                                                            
-                                                                                                            Ok result ->
-                                                                                                                case unify
-                                                                                                                      result.type_
-                                                                                                                      (
-                                                                                                                     TConst
-                                                                                                                      "Int"
-                                                                                                                     ) of
-                                                                                                                    
-                                                                                                                    Ok sub ->
-                                                                                                                        Ok
-                                                                                                                         { substitution =
-                                                                                                                             composeSubs
-                                                                                                                              sub
-                                                                                                                              result.substitution
-                                                                                                                         , type_ =
-                                                                                                                             applySub
-                                                                                                                              sub
-                                                                                                                              result.type_
-                                                                                                                         }
-                                                                                                                    
-                                                                                                                    Err _ ->
-                                                                                                                        case unify
-                                                                                                                              result.type_
-                                                                                                                              (
-                                                                                                                             TConst
-                                                                                                                              "Float"
-                                                                                                                             ) of
-                                                                                                                            
-                                                                                                                            Ok sub ->
-                                                                                                                                Ok
-                                                                                                                                 { substitution =
-                                                                                                                                     composeSubs
-                                                                                                                                      sub
-                                                                                                                                      result.substitution
-                                                                                                                                 , type_ =
-                                                                                                                                     applySub
-                                                                                                                                      sub
-                                                                                                                                      result.type_
-                                                                                                                                 }
-                                                                                                                            
-                                                                                                                            Err e ->
-                                                                                                                                Err
-                                                                                                                                 (
-                                                                                                                                "Negation requires a number type: " ++
-                                                                                                                                e
-                                                                                                                                )
-                                                                                                                            
-                                                                                                                            ParenExpr inner _ ->
-                                                                                                                                inferExpr
-                                                                                                                                 counter
-                                                                                                                                 registry
-                                                                                                                                 env
-                                                                                                                                 inner
+                    Ok  { substitution = emptySub , type_ = instantiate  counter  scheme }
+
+                Nothing ->
+                    Err  ("Unbound qualified name: " ++ qualName)
+
+        [] ->
+            Err  "Empty qualified name"
+
+
+inferRecordUpdate : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> (List NamedExpr) -> Result String InferResult
+
+inferRecordUpdate counter registry env base fields =
+    case inferExpr  counter  registry  env  base of
+
+        Err e ->
+            Err  e
+
+        Ok baseResult ->
+            inferRecordUpdateWithBase  counter  registry  env  fields
+             baseResult
+
+
+inferRecordUpdateWithBase : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> InferResult -> Result String InferResult
+
+inferRecordUpdateWithBase counter registry env fields baseResult =
+    case inferRecordUpdateFields  counter  registry  env  fields
+          baseResult.substitution of
+
+        Err e ->
+            Err  e
+
+        Ok ( fieldSub , fieldTypes ) ->
+            let
+                combinedSub =
+                    composeSubs  fieldSub  baseResult.substitution
+                baseType =
+                    applySub  combinedSub  baseResult.type_
+            in
+                Ok  { substitution = combinedSub , type_ = TRecord  fieldTypes }
+
+
+inferFieldAccess : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> String -> Result String InferResult
+
+inferFieldAccess counter registry env target fieldName =
+    case inferExpr  counter  registry  env  target of
+
+        Err e ->
+            Err  e
+
+        Ok targetResult ->
+            let
+                resultVar =
+                    freshVar  counter  Nothing
+                targetType =
+                    applySub  targetResult.substitution  targetResult.type_
+            in
+                inferFieldAccessFromType  targetResult  resultVar  targetType
+                 fieldName
+
+
+inferFieldAccessFromType : InferResult -> Type -> Type -> String -> Result String InferResult
+
+inferFieldAccessFromType targetResult resultVar targetType fieldName =
+    case targetType of
+
+        TRecord fields ->
+            case Dict.get  fieldName  fields of
+
+                Just fieldType ->
+                    Ok
+                     { substitution = targetResult.substitution
+                     , type_ = fieldType
+                     }
+
+                Nothing ->
+                    Err  ("Record has no field '" ++ fieldName ++ "'")
+
+        _ ->
+            Ok
+             { substitution = targetResult.substitution
+             , type_ = resultVar
+             }
+
+
+inferNegate : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> Result String InferResult
+
+inferNegate counter registry env inner =
+    case inferExpr  counter  registry  env  inner of
+
+        Err e ->
+            Err  e
+
+        Ok result ->
+            inferNegateType  result
+
+
+inferNegateType : InferResult -> Result String InferResult
+
+inferNegateType result =
+    case unify  result.type_  (TConst  "Int") of
+
+        Ok sub ->
+            Ok
+             { substitution = composeSubs  sub  result.substitution
+             , type_ = applySub  sub  result.type_
+             }
+
+        Err _ ->
+            inferNegateFloat  result
+
+
+inferNegateFloat : InferResult -> Result String InferResult
+
+inferNegateFloat result =
+    case unify  result.type_  (TConst  "Float") of
+
+        Ok sub ->
+            Ok
+             { substitution = composeSubs  sub  result.substitution
+             , type_ = applySub  sub  result.type_
+             }
+
+        Err e ->
+            Err  ("Negation requires a number type: " ++ e)
 
 
 inferCall : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> (List Expression) -> Result String InferResult

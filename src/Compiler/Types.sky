@@ -46,31 +46,37 @@ applySub : Substitution -> Type -> Type
 
 applySub sub t =
     case t of
-        
+
         TVar id _ ->
-            case Dict.get  id  sub of
-                
-                Just replacement ->
-                    replacement
-                
-                Nothing ->
-                    t
-                
-                TConst _ ->
-                    t
-                
-                TFun fromT toT ->
-                    TFun  (applySub  sub  fromT)  (applySub  sub  toT)
-                
-                TApp ctor args ->
-                    TApp  (applySub  sub  ctor)
-                     (List.map  (applySub  sub)  args)
-                
-                TTuple items ->
-                    TTuple  (List.map  (applySub  sub)  items)
-                
-                TRecord fields ->
-                    TRecord  (Dict.map  (\kk v -> applySub  sub  v)  fields)
+            applySubVar  sub  t  id
+
+        TConst _ ->
+            t
+
+        TFun fromT toT ->
+            TFun  (applySub  sub  fromT)  (applySub  sub  toT)
+
+        TApp ctor args ->
+            TApp  (applySub  sub  ctor)
+             (List.map  (applySub  sub)  args)
+
+        TTuple items ->
+            TTuple  (List.map  (applySub  sub)  items)
+
+        TRecord fields ->
+            TRecord  (Dict.map  (\kk v -> applySub  sub  v)  fields)
+
+
+applySubVar : Substitution -> Type -> Int -> Type
+
+applySubVar sub t id =
+    case Dict.get  id  sub of
+
+        Just replacement ->
+            replacement
+
+        Nothing ->
+            t
                 
                 _ ->
                     t
