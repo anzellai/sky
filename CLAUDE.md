@@ -285,7 +285,7 @@ main =
 
 10. **FFI binding gaps** — PARTIALLY FIXED. Removed blanket `[` + `]` type rejection that blocked `[]` slice types from reaching the proper slice handler. Slice-of-pointer patterns like `[]*pkg.Type` now pass through to the existing slice handler in both BindingGen and WrapperGen. Some complex Firestore/Stripe methods may still be filtered by other type checks.
 
-11. **Skyshop build time ~1:35** — MOSTLY FIXED. Native DCE tool (`bin/sky-dce`) reduced DCE from 27s to 1s. Warm build: 50s → 16s. Cold build: 2:56 → 1:20. Remaining time: local module loading (3.8s), dep lowering (5.9s), entry emit (2.9s), Go build (~3s). Full symbol-level tree-shaking during lowering not yet ported from TS compiler.
+11. **Skyshop build time ~1:35** — MOSTLY FIXED. Native DCE tool (`bin/sky-dce`) reduced DCE from 27s to 1s. Warm build: 50s → 15.5s. Cold build: 2:56 → 17s. Remaining time: local module loading (3.8s), dep lowering (5.9s), entry emit (2.9s), Go build (~3s). Full symbol-level tree-shaking during lowering not yet ported from TS compiler.
 
 14. **Lowerer: string pattern matching double-quoting** — FIXED. `literalCondition` in Lower.sky called `goQuote` on `LitString` values that already include surrounding quotes from the lexer. This double-quoted strings in pattern match conditions, causing ALL string `case` branches to fail silently and fall through to wildcards. Fix: use the `LitString` value directly since it's already a valid Go string literal. Impact: 253 string pattern matches in skyshop (translations) now work correctly.
 
@@ -293,7 +293,11 @@ main =
 
 17. **Lowerer: hardcoded `Css.` prefix intercepts import aliases** — FIXED. `lowerQualified` checked `String.startsWith "Css." qualName` before checking `importAliases`. When a project imports `Tailwind.Internal.Css as Css`, calls like `Css.allRules` were lowered to `sky_cssPropFn("all-rules")` (Std.Css property) instead of `Tailwind_Internal_Css_AllRules()`. Fix: skip the hardcoded `Css.` check when `Css` is in `importAliases`. Impact: Tailwind CSS `<style>` tag now renders CSS rules instead of Go function pointer addresses.
 
-16. **Lowerer: let-binding hoisting (bootstrapping)** — KNOWN ISSUE. The lowerer hoists let bindings that reference other let bindings or function parameters to top-level Go functions, causing out-of-scope errors. The `paramNames` tracking changes in Lower.sky (adding bound names from `lowerLet` and pattern vars from `emitBranchCode`) fix this for newly compiled code, but the fix cannot be applied to itself until fully bootstrapped. Workaround: avoid let bindings that reference other let bindings in Pipeline.sky; use helper functions with explicit parameters instead.
+16. **Lowerer: let-binding hoisting (bootstrapping)** — RESOLVED after 3-round bootstrap from v0.6.9. The `paramNames` tracking changes in Lower.sky (adding bound names from `lowerLet` and pattern vars from `emitBranchCode`) are now fully propagated. New functions with complex let bindings compile correctly. Remaining limitation: never write nested `case` inside a `case` branch — the parser's layout rules nest subsequent branches inside inner case expressions. Always extract inner cases to helper functions.
+
+18. **Type checker — working** (v0.7.2). Root cause of non-working type system: parser layout rules nest case branches inside inner case expressions at same indentation. Fixed by extracting inner cases to helpers across Types.sky (`applySub`, `formatType`), Unify.sky (`unifyFun`, `unifyApp`), Infer.sky (`inferExpr` — all 13 expression branches), Adt.sky (`resolveTypeExpr`). Type errors now caught at compile time: `sky check` reports errors, `sky build` stops on errors, LSP shows red errors in editors.
+
+19. **WrapperGen: IIFE missing invocation** — FIXED. `wrapFallibleReturn` and `wrapEffectfulReturn` generated `func() any { ... }` without trailing `()`. Effectful FFI calls (Os.getenv, Http.get, etc.) returned unevaluated closures instead of Result values. Fix: add `()` to invoke IIFEs. Existing projects must regenerate wrappers (`sky add <pkg>` or `sky install`).
 
 ### Techniques from TS Compiler (to port)
 
@@ -320,18 +324,20 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 - DONE: Package-level wrapper filtering (skip entire unused FFI packages)
 - DONE: Removed debug prints from `compileDependencyModule` (57 println calls per build)
 - DONE: Fixed string pattern matching + exposedStdlib priority (skyshop rendering)
-- TODO: Skip .skyi lowering — use .skyi for types only, emit direct wrapper calls (requires consistent wrapper naming or lowerer changes; blocked by bootstrapping issue #16)
-- TODO: Reduce dep declaration lowering time (5.9s for 57 modules — type checking + lowering all modules including .skyi)
+- DONE: Removed debug prints from `compileDependencyModule` (57 println calls per build)
+- DONE: FFI import deduplication (Os loaded 5x → 1x)
+- DONE: Removed `go get` loop before `go mod tidy` (cold build 1:41 → 17s)
+- DONE: Working type checker — catches errors at compile time (v0.7.2)
+- DONE: Wrapper IIFE fix — effectful FFI calls now return values not closures
+- TODO: Skip .skyi lowering — use .skyi for types only, emit direct wrapper calls
 
 **P1 — Moderate impact:**
 - Port full symbol-level tree-shaking (collect wrapper refs during lowering, skip unused wrappers)
 - Selective import emission in `makeGoPackage` (scan declarations, only emit used imports)
 - DONE: `-gcflags="all=-l"` already in go build command
 - Preserve go.mod/go.sum across builds
-- Deduplicate FFI imports before loading (Os filtered 5 times currently; blocked by bootstrapping issue #16)
 
 **P2 — Incremental/future:**
 - Multi-level caching for type-check results
 - Inspector cache for Go package introspection
 - Go generics support in FFI pipeline
-- Fix lowerer bootstrapping (issue #16) to unblock P0/P1 items
