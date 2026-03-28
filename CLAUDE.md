@@ -249,7 +249,7 @@ main =
 
 2. **Empty wrapper deletion** (`Pipeline.sky:trimWrapperFile`) — when wrapper DCE eliminates ALL functions from an FFI wrapper file, the file is deleted entirely instead of leaving import-only stubs that cause Go build failures.
 
-3. **Main.go function-level DCE** (`Pipeline.sky:dceMainGo`) — after emitting Go code, performs transitive reachability analysis from `main()` plus FFI wrapper references plus var/header references. Unreachable `sky_*` helper functions are removed. `goimports` cleans unused imports. Result: hello-world 613→111 lines, Go build 3.4x faster.
+3. **Native DCE tool** (`bin/sky-dce` + `Pipeline.sky:runNativeDce`) — compiled Go tool performs both wrapper DCE and main.go DCE in a single pass. Uses native `strings.Contains` (no `any` boxing) for O(n²) reachability analysis. Replaces the Sky-based DCE which took 27s with a 1s native implementation. Wrapper DCE: extracts function names from wrapper files, checks references in main.go, removes unused functions. Main.go DCE: BFS reachability from `main()` + wrapper seeds + var/header seeds. Falls back to Sky-based DCE if `sky-dce` not on PATH.
 
 4. **Var declaration preservation** — DCE separates `var` declarations from `func` blocks before analysis. All vars are preserved (they may be type constructors or FFI aliases). Only unreachable functions are eliminated.
 
@@ -257,7 +257,7 @@ main =
 
 6. **Large .skyi filtering** (`bin/skyi-filter` + `Pipeline.sky:loadOneFfiBinding`) — for binding files >10KB, runs external Go tool that precomputes used `Alias.funcName` set via regex, then streams the .skyi keeping only header + types + used declarations. Stripe SDK: 147K→9K lines in 90ms.
 
-7. **Wrapper goimports** (`Pipeline.sky:eliminateDeadCode`) — runs `goimports -w` on all remaining wrapper files after DCE to fix unused imports from partial function elimination.
+7. **Wrapper goimports** (`Pipeline.sky:eliminateDeadCode`) — runs `goimports -w` on all remaining wrapper files after DCE to fix unused imports from partial function elimination. Now handled by `bin/sky-dce` native tool.
 
 ### Known Issues (to fix)
 
@@ -285,7 +285,15 @@ main =
 
 10. **FFI binding gaps** — PARTIALLY FIXED. Removed blanket `[` + `]` type rejection that blocked `[]` slice types from reaching the proper slice handler. Slice-of-pointer patterns like `[]*pkg.Type` now pass through to the existing slice handler in both BindingGen and WrapperGen. Some complex Firestore/Stripe methods may still be filtered by other type checks.
 
-11. **Skyshop build time ~1:35** — PARTIALLY FIXED. Added package-level wrapper filtering: `copyOneFfiWrapper` now checks if main.go references any `Sky_<pkg>_` function before copying the wrapper file. Unused FFI packages are skipped entirely. Full symbol-level tree-shaking (collecting refs during lowering) not yet ported from TS compiler.
+11. **Skyshop build time ~1:35** — MOSTLY FIXED. Native DCE tool (`bin/sky-dce`) reduced DCE from 27s to 1s. Warm build: 50s → 16s. Cold build: 2:56 → 1:20. Remaining time: local module loading (3.8s), dep lowering (5.9s), entry emit (2.9s), Go build (~3s). Full symbol-level tree-shaking during lowering not yet ported from TS compiler.
+
+14. **Lowerer: string pattern matching double-quoting** — FIXED. `literalCondition` in Lower.sky called `goQuote` on `LitString` values that already include surrounding quotes from the lexer. This double-quoted strings in pattern match conditions, causing ALL string `case` branches to fail silently and fall through to wildcards. Fix: use the `LitString` value directly since it's already a valid Go string literal. Impact: 253 string pattern matches in skyshop (translations) now work correctly.
+
+15. **Lowerer: local variable shadowing by exposedStdlib** — FIXED. `lowerIdentifier` checked `ctx.exposedStdlib` BEFORE checking if a name was a local variable/parameter. Variables named `title`, `lang`, `content`, `body` were resolved to HTML attribute functions from `Std.Html.Attributes` instead of local bindings. Fix: check `ctx.paramNames` before `exposedStdlib` lookup. Impact: product titles, language selections, translations, and page content now render correctly instead of showing Go function pointer addresses.
+
+17. **Lowerer: hardcoded `Css.` prefix intercepts import aliases** — FIXED. `lowerQualified` checked `String.startsWith "Css." qualName` before checking `importAliases`. When a project imports `Tailwind.Internal.Css as Css`, calls like `Css.allRules` were lowered to `sky_cssPropFn("all-rules")` (Std.Css property) instead of `Tailwind_Internal_Css_AllRules()`. Fix: skip the hardcoded `Css.` check when `Css` is in `importAliases`. Impact: Tailwind CSS `<style>` tag now renders CSS rules instead of Go function pointer addresses.
+
+16. **Lowerer: let-binding hoisting (bootstrapping)** — KNOWN ISSUE. The lowerer hoists let bindings that reference other let bindings or function parameters to top-level Go functions, causing out-of-scope errors. The `paramNames` tracking changes in Lower.sky (adding bound names from `lowerLet` and pattern vars from `emitBranchCode`) fix this for newly compiled code, but the fix cannot be applied to itself until fully bootstrapped. Workaround: avoid let bindings that reference other let bindings in Pipeline.sky; use helper functions with explicit parameters instead.
 
 ### Techniques from TS Compiler (to port)
 
@@ -308,15 +316,22 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 ### Priority Optimisation Roadmap
 
 **P0 — Biggest impact for skyshop (<15s goal):**
-- PARTIAL: Package-level wrapper filtering implemented (skip entire unused FFI packages)
-- TODO: Port full symbol-level tree-shaking (collect wrapper refs during lowering, filter individual functions)
+- DONE: Native DCE tool (`bin/sky-dce`) — 27s → 1s DCE, warm build 50s → 16s
+- DONE: Package-level wrapper filtering (skip entire unused FFI packages)
+- DONE: Removed debug prints from `compileDependencyModule` (57 println calls per build)
+- DONE: Fixed string pattern matching + exposedStdlib priority (skyshop rendering)
+- TODO: Skip .skyi lowering — use .skyi for types only, emit direct wrapper calls (requires consistent wrapper naming or lowerer changes; blocked by bootstrapping issue #16)
+- TODO: Reduce dep declaration lowering time (5.9s for 57 modules — type checking + lowering all modules including .skyi)
 
 **P1 — Moderate impact:**
+- Port full symbol-level tree-shaking (collect wrapper refs during lowering, skip unused wrappers)
 - Selective import emission in `makeGoPackage` (scan declarations, only emit used imports)
 - DONE: `-gcflags="all=-l"` already in go build command
 - Preserve go.mod/go.sum across builds
+- Deduplicate FFI imports before loading (Os filtered 5 times currently; blocked by bootstrapping issue #16)
 
 **P2 — Incremental/future:**
 - Multi-level caching for type-check results
 - Inspector cache for Go package introspection
 - Go generics support in FFI pipeline
+- Fix lowerer bootstrapping (issue #16) to unblock P0/P1 items

@@ -163,10 +163,10 @@ lowerDecl : LowerCtx -> Declaration -> Maybe GoDecl
 
 lowerDecl ctx decl =
     case decl of
-
+        
         FunDecl name params body _ ->
             Just  (lowerFunction  ctx  name  params  body)
-
+        
         _ ->
             Nothing
 
@@ -422,6 +422,8 @@ lowerIdentifier ctx name =
                 GoIdent  "sky_modBy"
             else if name == "clamp" then
                 GoIdent  "sky_clamp"
+            else if Set.member  name  ctx.paramNames then
+                GoIdent  (sanitizeGoIdent  name)
             else
                 case Dict.get  name  ctx.exposedStdlib of
                     
@@ -1125,7 +1127,8 @@ lowerQualified ctx parts =
                     String.slice  7  (String.length  qualName)  qualName
             in
                 lowerStdlibExposed  "Std.Live.Events"  evtName
-        else if String.startsWith  "Css."  qualName then
+        else if String.startsWith  "Css."  qualName &&
+        not  (Dict.member  "Css"  ctx.importAliases) then
             let
                 cssName =
                     String.slice  4  (String.length  qualName)  qualName
@@ -1270,6 +1273,31 @@ isDynamicCallee ctx expr =
         
         _ ->
             False
+
+
+extractPatternVarNames : Pattern -> List String
+
+extractPatternVarNames pat =
+    case pat of
+        
+        PVariable name _ ->
+            [ name ]
+        
+        PConstructor _ args _ ->
+            List.concatMap  extractPatternVarNames  args
+        
+        PCons head tail _ ->
+            List.append  (extractPatternVarNames  head)
+             (extractPatternVarNames  tail)
+        
+        PTuple items _ ->
+            List.concatMap  extractPatternVarNames  items
+        
+        PAs inner name _ ->
+            name :: extractPatternVarNames  inner
+        
+        _ ->
+            []
 
 
 extractPatternName : Pattern -> Maybe String
@@ -1536,8 +1564,7 @@ lowerIf ctx condition thenBranch elseBranch =
     GoRawExpr
      (
     "func() any { " ++
-    flattenIfElse  ctx  condition  thenBranch  elseBranch ++
-    " }()"
+    flattenIfElse  ctx  condition  thenBranch  elseBranch ++ " }()"
     )
 
 
@@ -1548,15 +1575,13 @@ flattenIfElse ctx condition thenBranch elseBranch =
         ifPart =
             "if sky_asBool(" ++
             exprToGoString  ctx  condition ++
-            ") { return " ++
-            exprToGoString  ctx  thenBranch ++ " }; "
+            ") { return " ++ exprToGoString  ctx  thenBranch ++ " }; "
     in
         case elseBranch of
-
+            
             IfExpr nextCond nextThen nextElse _ ->
-                ifPart ++
-                flattenIfElse  ctx  nextCond  nextThen  nextElse
-
+                ifPart ++ flattenIfElse  ctx  nextCond  nextThen  nextElse
+            
             _ ->
                 ifPart ++ "return " ++ exprToGoString  ctx  elseBranch
 
@@ -1565,14 +1590,33 @@ lowerLet : LowerCtx -> (List LetBinding) -> Expression -> GoExpr
 
 lowerLet ctx bindings body =
     let
+        boundNames =
+            List.filterMap  extractBindingName  bindings
+        bodyCtx =
+            { ctx
+            | paramNames =
+                Set.union  ctx.paramNames  (Set.fromList  boundNames)
+            }
         stmts =
-            List.concatMap  (lowerLetBinding  ctx)  bindings
+            List.concatMap  (lowerLetBinding  bodyCtx)  bindings
         returnStmt =
-            [ GoReturn  (lowerExpr  ctx  body) ]
+            [ GoReturn  (lowerExpr  bodyCtx  body) ]
         allStmts =
             List.append  stmts  returnStmt
     in
         GoRawExpr  ("func() any { " ++ stmtsToGoString  allStmts ++ " }()")
+
+
+extractBindingName : LetBinding -> Maybe String
+
+extractBindingName binding =
+    case binding.pattern of
+        
+        PVariable name _ ->
+            Just  name
+        
+        _ ->
+            Nothing
 
 
 lowerLetBinding : LowerCtx -> LetBinding -> List GoStmt
@@ -1729,17 +1773,22 @@ emitBranchCode ctx pair =
     let
         branch =
             snd  pair
+        patVarNames =
+            extractPatternVarNames  branch.pattern
+        branchCtx =
+            { ctx
+            | paramNames =
+                Set.union  ctx.paramNames  (Set.fromList  patVarNames)
+            }
+        condition =
+            patternToCondition  branchCtx  "__subject"  branch.pattern
+        bindings =
+            patternToBindings  branchCtx  "__subject"  branch.pattern
+        bodyCode =
+            exprToGoString  branchCtx  branch.body
     in
-        let
-            condition =
-                patternToCondition  ctx  "__subject"  branch.pattern
-            bindings =
-                patternToBindings  ctx  "__subject"  branch.pattern
-            bodyCode =
-                exprToGoString  ctx  branch.body
-        in
-            "if " ++
-            condition ++ " { " ++ bindings ++ "return " ++ bodyCode ++ " }; "
+        "if " ++
+        condition ++ " { " ++ bindings ++ "return " ++ bodyCode ++ " }; "
 
 
 patternToCondition : LowerCtx -> String -> Pattern -> String
@@ -1857,7 +1906,7 @@ literalCondition varName lit =
             "sky_asFloat(" ++ varName ++ ") == " ++ String.fromFloat  f
         
         LitString s ->
-            "sky_asString(" ++ varName ++ ") == " ++ goQuote  s
+            "sky_asString(" ++ varName ++ ") == " ++ s
         
         LitBool b ->
             if b then
@@ -2765,7 +2814,8 @@ generateHelperDecls =
     , GoDeclRaw
        "func sky_liveRoute(path any) any { return func(page any) any { return map[string]any{\"path\": path, \"page\": page} } }"
     , GoDeclRaw  "var sky_liveAppImpl = func(config any) any { return config }"
-    , GoDeclRaw  "func sky_liveApp(config any) any { return sky_liveAppImpl(config) }"
+    , GoDeclRaw
+       "func sky_liveApp(config any) any { return sky_liveAppImpl(config) }"
     ]
 
 

@@ -447,10 +447,14 @@ generateGoBindings : String -> String -> ()
 
 generateGoBindings pkg cacheDir =
     case BindingGen.generateBindings  pkg  cacheDir of
-        
+
         Ok content ->
-            println  ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
-        
+            let
+                _ =
+                    println  ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+            in
+                preFilterBindings  ()
+
         Err e ->
             println  ("Warning: binding generation failed: " ++ e)
 
@@ -487,14 +491,16 @@ cmdInstall _ =
             installFromSkyToml  ()
         _ =
             autoGenerateBindings  ()
+        _ =
+            preFilterBindings  ()
         tidyResult =
             Process.run  "sh"  [ "-c" , "cd .skycache/gomod && go mod tidy" ]
         _ =
             case tidyResult of
-                
+
                 Ok _ ->
                     ()
-                
+
                 Err e ->
                     println  ("Install warning: " ++ errorToString  e)
         _ =
@@ -843,6 +849,31 @@ processImportLine line =
                                 detectAndInstall  goPath
                             else
                                 ()
+
+
+preFilterBindings : () -> ()
+
+preFilterBindings _ =
+    case Process.run  "sh"
+          [ "-c"
+         , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do " ++
+         "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); " ++
+         "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then " ++
+         "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++
+         "out=\"${f%.skyi}.filtered.skyi\"; " ++
+         "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++
+         "echo \"   Pre-filtered $f\"; " ++
+         "fi; done"
+         ] of
+
+        Ok output ->
+            if not  (String.isEmpty  (String.trim  output)) then
+                println  (String.trim  output)
+            else
+                ()
+
+        Err _ ->
+            ()
 
 
 cmdUpdate : () -> ()

@@ -270,19 +270,32 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
         _ =
             copyFfiWrappers  outDir  projectRoot  imports  goCode
         _ =
-            eliminateDeadCode  outDir  goCode
-        _ =
-            println  ""
-        _ =
-            println  ""
-        _ =
-            dceMainGo  outDir  goCode
+            runNativeDce  outDir  goCode
         _ =
             println  ""
         _ =
             println  ("✓ Compilation successful")
     in
         Ok  goCode
+
+
+runNativeDce : String -> String -> ()
+
+runNativeDce outDir goCode =
+    case Process.run  "sky-dce"  [ outDir ] of
+
+        Ok output ->
+            if not  (String.isEmpty  (String.trim  output)) then
+                println  (String.trim  output)
+            else
+                ()
+
+        Err _ ->
+            let
+                _ =
+                    eliminateDeadCode  outDir  goCode
+            in
+                dceMainGo  outDir  goCode
 
 
 copyLiveRuntime : String -> ()
@@ -1175,53 +1188,14 @@ loadOneFfiBinding srcRoot imp =
                 skyiPath =
                     Resolver.resolveBindingPath  projectRoot  modName
             in
-                case File.readFile  skyiPath of
-                    
-                    Ok skyiSource ->
+                case Process.run  "sh"
+                      [ "-c"
+                     , "p=" ++ skyiPath ++ "; f=\"${p%.skyi}.filtered.skyi\";" ++
+                     " [ -s \"$f\" ] && cat \"$f\" || cat \"$p\""
+                     ] of
+
+                    Ok filteredSource ->
                         let
-                            filteredSource =
-                                if String.length  skyiSource > 10000 then
-                                    case Process.run  "sh"
-                                          [ "-c"
-                                         , "skyi-filter " ++
-                                         skyiPath ++
-                                         " " ++
-                                         importAlias  imp ++ " " ++ srcRoot
-                                         ] of
-                                        
-                                        Ok s ->
-                                            if String.length  (String.trim  s) >
-                                            20 then
-                                                s
-                                            else
-                                                skyiSource
-                                        
-                                        Err _ ->
-                                            skyiSource
-                                else
-                                    skyiSource
-                            _ =
-                                if String.length  skyiSource > 10000 then
-                                    println
-                                     (
-                                    "   [FFI] Filtered " ++
-                                    modName ++
-                                    ": " ++
-                                    String.fromInt
-                                     (
-                                    List.length
-                                     (String.split  "\n"  skyiSource)
-                                    ) ++
-                                    " -> " ++
-                                    String.fromInt
-                                     (
-                                    List.length
-                                     (String.split  "\n"  filteredSource)
-                                    ) ++
-                                    " lines"
-                                    )
-                                else
-                                    ()
                             lexResult =
                                 Lexer.lex  filteredSource
                         in
@@ -1238,9 +1212,9 @@ loadOneFfiBinding srcRoot imp =
                                 
                                 Err _ ->
                                     Nothing
-                                
-                                Err _ ->
-                                    Nothing
+
+                    Err _ ->
+                        Nothing
 
 
 filterFfiModule : String -> String -> Ast.Module -> Ast.Module
@@ -2154,15 +2128,6 @@ compileDependencyModule stdlibEnv allModules pair =
             buildAliasMap  mod.imports
         localFns =
             collectAllFunctionNames  mod.declarations
-        _ =
-            println
-             (
-            "   [DEBUG] " ++
-            modName ++
-            ": " ++
-            String.fromInt  (List.length  localFns) ++
-            " fns: " ++ String.join  ","  localFns
-            )
         depExposed =
             Lower.buildExposedStdlib  mod.imports
         ctx =
