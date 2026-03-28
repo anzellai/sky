@@ -1186,8 +1186,29 @@ loadOneFfiBinding srcRoot imp =
             in
                 case File.readFile  skyiPath of
 
-                    Ok filteredSource ->
+                    Ok skyiSource ->
                         let
+                            filteredSource =
+                                if String.length  skyiSource > 10000 then
+                                    case Process.run  "sh"
+                                          [ "-c"
+                                         , "skyi-filter " ++
+                                         skyiPath ++
+                                         " " ++
+                                         importAlias  imp ++ " " ++ srcRoot
+                                         ] of
+
+                                        Ok s ->
+                                            if String.length  (String.trim  s) >
+                                            20 then
+                                                s
+                                            else
+                                                skyiSource
+
+                                        Err _ ->
+                                            skyiSource
+                                else
+                                    skyiSource
                             lexResult =
                                 Lexer.lex  filteredSource
                         in
