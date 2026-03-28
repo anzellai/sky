@@ -954,9 +954,19 @@ buildStdlibEnv =
               }
             )
             , ( "Log.println"
-            , mono  (TFun  (TConst  "String")  (TConst  "Unit"))
+            , { quantified = [ 0 ]
+              , type_ =
+                  TFun  (TConst  "String")
+                   (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
+              }
             )
-            , ( "println" , mono  (TFun  (TConst  "String")  (TConst  "Unit")) )
+            , ( "println"
+              , { quantified = [ 0 ]
+                , type_ =
+                    TFun  (TConst  "String")
+                     (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
+                }
+              )
             , ( "Process.exit"
             , mono  (TFun  (TConst  "Int")  (TConst  "Unit"))
             )

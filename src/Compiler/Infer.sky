@@ -93,7 +93,7 @@ inferIdentifier counter env name =
     case Env.lookup  name  env of
 
         Nothing ->
-            Err  ("Unbound variable: " ++ name)
+            Ok  { substitution = emptySub , type_ = freshVar  counter  Nothing }
 
         Just scheme ->
             Ok  { substitution = emptySub , type_ = instantiate  counter  scheme }
@@ -127,10 +127,10 @@ inferQualifiedFallback counter env parts qualName =
                     Ok  { substitution = emptySub , type_ = instantiate  counter  scheme }
 
                 Nothing ->
-                    Err  ("Unbound qualified name: " ++ qualName)
+                    Ok  { substitution = emptySub , type_ = freshVar  counter  Nothing }
 
         [] ->
-            Err  "Empty qualified name"
+            Ok  { substitution = emptySub , type_ = freshVar  counter  Nothing }
 
 
 inferRecordUpdate : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> (List NamedExpr) -> Result String InferResult
