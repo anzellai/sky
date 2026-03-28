@@ -2901,8 +2901,6 @@ var CompileMultiModule = Compiler_Pipeline_CompileMultiModule
 
 var CompileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
 
-var ReportDiagnostics = Compiler_Pipeline_ReportDiagnostics
-
 var EmitMultiModuleGo = Compiler_Pipeline_EmitMultiModuleGo
 
 var WriteMultiModuleOutput = Compiler_Pipeline_WriteMultiModuleOutput
@@ -3114,6 +3112,8 @@ var PrefixDecl = Compiler_Pipeline_PrefixDecl
 var CompileSource = Compiler_Pipeline_CompileSource
 
 var CompileModule = Compiler_Pipeline_CompileModule
+
+var CompileCheckedModule = Compiler_Pipeline_CompileCheckedModule
 
 var CompileProject = Compiler_Pipeline_CompileProject
 
@@ -3344,11 +3344,7 @@ func Compiler_Pipeline_CompileMultiModule(entryPath any, outDir any, srcRoot any
 }
 
 func Compiler_Pipeline_CompileMultiModuleEntry(outDir any, projectRoot any, entryMod any, aliasMap any, stdlibEnv any, depDecls any, loadedModules any) any {
-	return func() any { entryCheckResult := Compiler_Checker_CheckModule(entryMod, SkyJust(stdlibEnv)); _ = entryCheckResult; entryRegistry := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  return nil }() }(); _ = entryRegistry; diagnostics := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["diagnostics"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return []any{} };  return nil }() }(); _ = diagnostics; Compiler_Pipeline_ReportDiagnostics(diagnostics); return Compiler_Pipeline_EmitMultiModuleGo(outDir, projectRoot, entryMod, entryRegistry, aliasMap, depDecls, loadedModules) }()
-}
-
-func Compiler_Pipeline_ReportDiagnostics(diags any) any {
-	return func() any { return func() any { __subject := diags; if len(sky_asList(__subject)) == 0 { return struct{}{} };  if true { return sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("   ⚠ ", d)) }), diags) };  return nil }() }()
+	return func() any { entryCheckResult := Compiler_Checker_CheckModule(entryMod, SkyJust(stdlibEnv)); _ = entryCheckResult; entryRegistry := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  return nil }() }(); _ = entryRegistry; diagnostics := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["diagnostics"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return []any{} };  return nil }() }(); _ = diagnostics; return func() any { if sky_asBool(sky_not(sky_listIsEmpty(diagnostics))) { return func() any { sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("   ⚠ ", d)) }), diagnostics); return SkyErr(sky_concat(sky_stringFromInt(sky_listLength(diagnostics)), " type error(s) found")) }() }; return Compiler_Pipeline_EmitMultiModuleGo(outDir, projectRoot, entryMod, entryRegistry, aliasMap, depDecls, loadedModules) }() }()
 }
 
 func Compiler_Pipeline_EmitMultiModuleGo(outDir any, projectRoot any, entryMod any, entryRegistry any, aliasMap any, depDecls any, loadedModules any) any {
@@ -3776,7 +3772,11 @@ func Compiler_Pipeline_CompileSource(filePath any, outDir any, source any) any {
 }
 
 func Compiler_Pipeline_CompileModule(filePath any, outDir any, mod any) any {
-	return func() any { counter := sky_refNew(100); _ = counter; sky_println(sky_concat("── Type Checking (src: ", sky_concat(Compiler_Pipeline_InferSrcRoot(filePath, sky_asMap(mod)["name"]), ")"))); stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; return func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(sky_concat("Type error: ", e)) };  if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { Compiler_Pipeline_PrintDiagnostics(sky_asMap(result)["diagnostics"]); Compiler_Pipeline_PrintTypedDecls(sky_asMap(result)["declarations"]); sky_println("── Lowering to Go IR"); goPackage := Compiler_Lower_LowerModule(sky_asMap(result)["registry"], mod); _ = goPackage; sky_println(sky_concat("   ", sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(goPackage)["declarations"])), " Go declarations"))); sky_println("── Emitting Go"); goCode := Compiler_Emit_EmitPackage(goPackage); _ = goCode; outPath := sky_concat(outDir, "/main.go"); _ = outPath; sky_fileMkdirAll(outDir); sky_call(sky_fileWrite(outPath), goCode); sky_println(sky_concat("   Wrote ", outPath)); func() any { if sky_asBool(sky_call2(sky_listFoldl(func(imp any) any { return func(acc any) any { return sky_asBool(acc) || sky_asBool(sky_equal(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]), "Std.Live")) } }), false, sky_asMap(mod)["imports"])) { return Compiler_Pipeline_CopyLiveRuntime(outDir) }; return struct{}{} }(); Compiler_Pipeline_DceMainGo(outDir, goCode); sky_println(""); sky_println("✓ Compilation successful"); return SkyOk(goCode) }() };  return nil }() }() }()
+	return func() any { counter := sky_refNew(100); _ = counter; sky_println(sky_concat("── Type Checking (src: ", sky_concat(Compiler_Pipeline_InferSrcRoot(filePath, sky_asMap(mod)["name"]), ")"))); stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; return func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(sky_concat("Type error: ", e)) };  if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { if sky_asBool(sky_not(sky_listIsEmpty(sky_asMap(result)["diagnostics"]))) { return func() any { Compiler_Pipeline_PrintDiagnostics(sky_asMap(result)["diagnostics"]); return SkyErr(sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(result)["diagnostics"])), " type error(s) found")) }() }; return Compiler_Pipeline_CompileCheckedModule(filePath, outDir, mod, result) }() };  return nil }() }() }()
+}
+
+func Compiler_Pipeline_CompileCheckedModule(filePath any, outDir any, mod any, result any) any {
+	return func() any { sky_println("── Lowering to Go IR"); goPackage := Compiler_Lower_LowerModule(sky_asMap(result)["registry"], mod); _ = goPackage; sky_println(sky_concat("   ", sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(goPackage)["declarations"])), " Go declarations"))); sky_println("── Emitting Go"); goCode := Compiler_Emit_EmitPackage(goPackage); _ = goCode; outPath := sky_concat(outDir, "/main.go"); _ = outPath; sky_fileMkdirAll(outDir); sky_call(sky_fileWrite(outPath), goCode); sky_println(sky_concat("   Wrote ", outPath)); func() any { if sky_asBool(sky_call2(sky_listFoldl(func(imp any) any { return func(acc any) any { return sky_asBool(acc) || sky_asBool(sky_equal(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]), "Std.Live")) } }), false, sky_asMap(mod)["imports"])) { return Compiler_Pipeline_CopyLiveRuntime(outDir) }; return struct{}{} }(); Compiler_Pipeline_DceMainGo(outDir, goCode); sky_println(""); sky_println("✓ Compilation successful"); return SkyOk(goCode) }()
 }
 
 func Compiler_Pipeline_CompileProject(entryPath any, outDir any) any {
@@ -5090,15 +5090,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 7, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6264,7 +6264,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 1, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -6549,8 +6549,6 @@ var compileMultiModule = Compiler_Pipeline_CompileMultiModule
 
 var compileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
 
-var reportDiagnostics = Compiler_Pipeline_ReportDiagnostics
-
 var emitMultiModuleGo = Compiler_Pipeline_EmitMultiModuleGo
 
 var writeMultiModuleOutput = Compiler_Pipeline_WriteMultiModuleOutput
@@ -6762,6 +6760,8 @@ var prefixDecl = Compiler_Pipeline_PrefixDecl
 var compileSource = Compiler_Pipeline_CompileSource
 
 var compileModule = Compiler_Pipeline_CompileModule
+
+var compileCheckedModule = Compiler_Pipeline_CompileCheckedModule
 
 var compileProject = Compiler_Pipeline_CompileProject
 

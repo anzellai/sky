@@ -177,27 +177,26 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
 
                 Err _ ->
                     []
-        _ =
-            reportDiagnostics  diagnostics
     in
-        emitMultiModuleGo  outDir  projectRoot  entryMod  entryRegistry
-         aliasMap
-         depDecls
-         loadedModules
+        if not  (List.isEmpty  diagnostics) then
+            let
+                _ =
+                    List.map
+                     (\d -> println  ("   ⚠ " ++ d))
+                     diagnostics
+            in
+                Err
+                 (
+                String.fromInt  (List.length  diagnostics) ++
+                " type error(s) found"
+                )
+        else
+            emitMultiModuleGo  outDir  projectRoot  entryMod  entryRegistry
+             aliasMap
+             depDecls
+             loadedModules
 
 
-reportDiagnostics : (List String) -> ()
-
-reportDiagnostics diags =
-    case diags of
-
-        [] ->
-            ()
-
-        _ ->
-            List.map
-             (\d -> println  ("   ⚠ " ++ d))
-             diags
 
 
 emitMultiModuleGo : String -> String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
@@ -2734,11 +2733,24 @@ compileModule filePath outDir mod =
                 Err  ("Type error: " ++ e)
             
             Ok result ->
+                if not  (List.isEmpty  result.diagnostics) then
+                    let
+                        _ =
+                            printDiagnostics  result.diagnostics
+                    in
+                        Err
+                         (
+                        String.fromInt  (List.length  result.diagnostics) ++
+                        " type error(s) found"
+                        )
+                else
+                    compileCheckedModule  filePath  outDir  mod  result
+
+
+compileCheckedModule : String -> String -> Ast.Module -> Checker.CheckResult -> Result String String
+
+compileCheckedModule filePath outDir mod result =
                 let
-                    _ =
-                        printDiagnostics  result.diagnostics
-                    _ =
-                        printTypedDecls  result.declarations
                     _ =
                         println  ("── Lowering to Go IR")
                     goPackage =
