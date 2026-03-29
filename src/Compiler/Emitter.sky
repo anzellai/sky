@@ -21,31 +21,25 @@ type alias ProjectConfig =
 
 
 emitProject : ProjectConfig -> Result String String
-
 emitProject config =
-    case Pipeline.compile  config.entryFile  config.outDir of
+    case Pipeline.compile config.entryFile config.outDir of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok code ->
             let
-                goModContent =
-                    "module sky-app\n\ngo 1.21.0\n"
-                _ =
-                    File.writeFile  (config.outDir ++ "/go.mod")  goModContent
+                goModContent = "module sky-app\n\ngo 1.21.0\n"
+                _ = File.writeFile (config.outDir ++ "/go.mod") goModContent
             in
-                Ok  code
+                Ok code
 
 
 emitSingleModule : ProjectConfig -> Module -> String -> Result String String
-
 emitSingleModule config mod source =
     let
-        stdlibEnv =
-            Resolver.buildStdlibEnv
-        checkResult =
-            Checker.checkModule  mod  (Just  stdlibEnv)
+        stdlibEnv = Resolver.buildStdlibEnv
+        checkResult = Checker.checkModule mod (Just stdlibEnv)
         registry =
             case checkResult of
                 
@@ -54,80 +48,53 @@ emitSingleModule config mod source =
                 
                 Err _ ->
                     Adt.emptyRegistry
-        goPackage =
-            lowerModuleForProject  registry  mod  config.moduleName
-        goCode =
-            Emit.emitPackage  goPackage
-        _ =
-            File.mkdirAll  config.outDir
-        mainPath =
-            config.outDir ++ "/main.go"
-        _ =
-            File.writeFile  mainPath  goCode
-        goModContent =
-            "module " ++ config.moduleName ++ "\n\ngo 1.21.0\n"
-        _ =
-            File.writeFile  (config.outDir ++ "/go.mod")  goModContent
-        _ =
-            copyRuntime  config.outDir  config.moduleName
+        goPackage = lowerModuleForProject registry mod config.moduleName
+        goCode = Emit.emitPackage goPackage
+        _ = File.mkdirAll config.outDir
+        mainPath = config.outDir ++ "/main.go"
+        _ = File.writeFile mainPath goCode
+        goModContent = "module " ++ config.moduleName ++ "\n\ngo 1.21.0\n"
+        _ = File.writeFile (config.outDir ++ "/go.mod") goModContent
+        _ = copyRuntime config.outDir config.moduleName
     in
-        Ok  goCode
+        Ok goCode
 
 
 lowerModuleForProject : Adt.AdtRegistry -> Module -> String -> GoPackage
-
 lowerModuleForProject registry mod moduleName =
     let
-        baseCtx =
-            Lower.emptyCtx
+        baseCtx = Lower.emptyCtx
         ctx =
             { baseCtx
-            | registry =
-                registry
-            , localFunctions =
-                Lower.collectLocalFunctions  mod.declarations
-            , importedConstructors =
-                Lower.buildConstructorMap  registry
+            | registry = registry
+            , localFunctions = Lower.collectLocalFunctions mod.declarations
+            , importedConstructors = Lower.buildConstructorMap registry
             }
-        goDecls =
-            Lower.lowerDeclarations  ctx  mod.declarations
-        ctorDecls =
-            Lower.generateConstructorDecls  registry  mod.declarations
-        runtimeImport =
-            { path = moduleName ++ "/runtime" , alias_ = "rt" }
-        imports =
-            [ { path = "fmt" , alias_ = "" } , runtimeImport ]
+        goDecls = Lower.lowerDeclarations ctx mod.declarations
+        ctorDecls = Lower.generateConstructorDecls registry mod.declarations
+        runtimeImport = { path = moduleName ++ "/runtime" , alias_ = "rt" }
+        imports = [ { path = "fmt" , alias_ = "" } , runtimeImport ]
     in
-        { name =
-            "main"
-        , imports =
-            imports
-        , declarations =
-            List.append  ctorDecls  goDecls
+        { name = "main"
+        , imports = imports
+        , declarations = List.append ctorDecls goDecls
         }
 
 
 copyRuntime : String -> String -> Result String ()
-
 copyRuntime outDir moduleName =
     let
-        runtimeDir =
-            outDir ++ "/runtime"
-        _ =
-            File.mkdirAll  runtimeDir
-        runtimeCode =
-            generateRuntimeGo
-        _ =
-            File.writeFile  (runtimeDir ++ "/runtime.go")  runtimeCode
+        runtimeDir = outDir ++ "/runtime"
+        _ = File.mkdirAll runtimeDir
+        runtimeCode = generateRuntimeGo
+        _ = File.writeFile (runtimeDir ++ "/runtime.go") runtimeCode
     in
-        Ok  ()
+        Ok ()
 
 
 generateRuntimeGo : String
-
 generateRuntimeGo =
-    String.join  "\n"
-     [ "package runtime"
+    String.join "\n" [ "package runtime"
     , ""
     , "import ("
     , "\t\"bufio\""

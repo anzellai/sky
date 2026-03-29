@@ -21,180 +21,159 @@ inferExpr counter registry env expr =
     case expr of
         
         IntLitExpr _ _ _ ->
-            Ok  { substitution = emptySub , type_ = TConst  "Int" }
+            Ok { substitution = emptySub , type_ = TConst "Int" }
         
         FloatLitExpr _ _ _ ->
-            Ok  { substitution = emptySub , type_ = TConst  "Float" }
+            Ok { substitution = emptySub , type_ = TConst "Float" }
         
         StringLitExpr _ _ ->
-            Ok  { substitution = emptySub , type_ = TConst  "String" }
+            Ok { substitution = emptySub , type_ = TConst "String" }
         
         CharLitExpr _ _ ->
-            Ok  { substitution = emptySub , type_ = TConst  "Char" }
+            Ok { substitution = emptySub , type_ = TConst "Char" }
         
         BoolLitExpr _ _ ->
-            Ok  { substitution = emptySub , type_ = TConst  "Bool" }
+            Ok { substitution = emptySub , type_ = TConst "Bool" }
         
         UnitExpr _ ->
-            Ok  { substitution = emptySub , type_ = TConst  "Unit" }
+            Ok { substitution = emptySub , type_ = TConst "Unit" }
         
         IdentifierExpr name _ ->
-            inferIdentifier  counter  env  name
+            inferIdentifier counter env name
         
         QualifiedExpr parts _ ->
-            inferQualifiedExpr  counter  registry  env  parts
+            inferQualifiedExpr counter registry env parts
         
         TupleExpr items _ ->
-            inferTupleItems  counter  registry  env  items  emptySub  []
+            inferTupleItems counter registry env items emptySub []
         
         ListExpr items _ ->
-            inferListItems  counter  registry  env  items
+            inferListItems counter registry env items
         
         RecordExpr fields _ ->
-            inferRecordFields  counter  registry  env  fields  emptySub
-             Dict.empty
+            inferRecordFields counter registry env fields emptySub Dict.empty
         
         RecordUpdateExpr base fields _ ->
-            inferRecordUpdate  counter  registry  env  base  fields
+            inferRecordUpdate counter registry env base fields
         
         FieldAccessExpr target fieldName _ ->
-            inferFieldAccess  counter  registry  env  target  fieldName
+            inferFieldAccess counter registry env target fieldName
         
         CallExpr callee args _ ->
-            inferCall  counter  registry  env  callee  args
+            inferCall counter registry env callee args
         
         LambdaExpr params body _ ->
-            inferLambda  counter  registry  env  params  body
+            inferLambda counter registry env params body
         
         IfExpr condition thenBranch elseBranch _ ->
-            inferIf  counter  registry  env  condition  thenBranch  elseBranch
+            inferIf counter registry env condition thenBranch elseBranch
         
         LetExpr bindings body _ ->
-            inferLet  counter  registry  env  bindings  body
+            inferLet counter registry env bindings body
         
         CaseExpr subject branches _ ->
-            inferCase  counter  registry  env  subject  branches
+            inferCase counter registry env subject branches
         
         BinaryExpr op left right _ ->
-            inferBinary  counter  registry  env  op  left  right
+            inferBinary counter registry env op left right
         
         NegateExpr inner _ ->
-            inferNegate  counter  registry  env  inner
+            inferNegate counter registry env inner
         
         ParenExpr inner _ ->
-            inferExpr  counter  registry  env  inner
+            inferExpr counter registry env inner
 
 
 inferIdentifier : (Ref.Ref Int) -> Env.TypeEnv -> String -> Result String InferResult
 inferIdentifier counter env name =
-    case Env.lookup  name  env of
+    case Env.lookup name env of
         
         Nothing ->
-            Ok  { substitution = emptySub , type_ = freshVar  counter  Nothing }
+            Ok { substitution = emptySub , type_ = freshVar counter Nothing }
         
         Just scheme ->
-            Ok
-             { substitution = emptySub , type_ = instantiate  counter  scheme }
+            Ok { substitution = emptySub , type_ = instantiate counter scheme }
 
 
 inferQualifiedExpr : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List String) -> Result String InferResult
 inferQualifiedExpr counter registry env parts =
     let
-        qualName =
-            String.join  "."  parts
+        qualName = String.join "." parts
     in
-        case Env.lookup  qualName  env of
+        case Env.lookup qualName env of
             
             Just scheme ->
-                Ok
-                 { substitution =
-                     emptySub
-                 , type_ =
-                     instantiate  counter  scheme
-                 }
+                Ok { substitution = emptySub
+                   , type_ = instantiate counter scheme
+                   }
             
             Nothing ->
-                inferQualifiedFallback  counter  env  parts  qualName
+                inferQualifiedFallback counter env parts qualName
 
 
 inferQualifiedFallback : (Ref.Ref Int) -> Env.TypeEnv -> (List String) -> String -> Result String InferResult
 inferQualifiedFallback counter env parts qualName =
-    case List.reverse  parts of
+    case List.reverse parts of
         
         last :: _ ->
-            case Env.lookup  last  env of
+            case Env.lookup last env of
                 
                 Just scheme ->
-                    Ok
-                     { substitution =
-                         emptySub
-                     , type_ =
-                         instantiate  counter  scheme
-                     }
+                    Ok { substitution = emptySub
+                       , type_ = instantiate counter scheme
+                       }
                 
                 Nothing ->
-                    Ok
-                     { substitution =
-                         emptySub
-                     , type_ =
-                         freshVar  counter  Nothing
-                     }
+                    Ok { substitution = emptySub
+                       , type_ = freshVar counter Nothing
+                       }
                 
                 [  ] ->
-                    Ok
-                     { substitution =
-                         emptySub
-                     , type_ =
-                         freshVar  counter  Nothing
-                     }
+                    Ok { substitution = emptySub
+                       , type_ = freshVar counter Nothing
+                       }
 
 
 inferRecordUpdate : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> (List NamedExpr) -> Result String InferResult
 inferRecordUpdate counter registry env base fields =
-    case inferExpr  counter  registry  env  base of
+    case inferExpr counter registry env base of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok baseResult ->
-            inferRecordUpdateWithBase  counter  registry  env  fields
-             baseResult
+            inferRecordUpdateWithBase counter registry env fields baseResult
 
 
 inferRecordUpdateWithBase : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> InferResult -> Result String InferResult
 inferRecordUpdateWithBase counter registry env fields baseResult =
-    case inferRecordUpdateFields  counter  registry  env  fields
-          baseResult.substitution of
+    case inferRecordUpdateFields counter registry env fields baseResult.substitution of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok ( fieldSub , fieldTypes ) ->
             let
-                combinedSub =
-                    composeSubs  fieldSub  baseResult.substitution
-                baseType =
-                    applySub  combinedSub  baseResult.type_
+                combinedSub = composeSubs fieldSub baseResult.substitution
+                baseType = applySub combinedSub baseResult.type_
             in
-                Ok  { substitution = combinedSub , type_ = TRecord  fieldTypes }
+                Ok { substitution = combinedSub , type_ = TRecord fieldTypes }
 
 
 inferFieldAccess : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> String -> Result String InferResult
 inferFieldAccess counter registry env target fieldName =
-    case inferExpr  counter  registry  env  target of
+    case inferExpr counter registry env target of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok targetResult ->
             let
-                resultVar =
-                    freshVar  counter  Nothing
+                resultVar = freshVar counter Nothing
                 targetType =
-                    applySub  targetResult.substitution  targetResult.type_
+                    applySub targetResult.substitution targetResult.type_
             in
-                inferFieldAccessFromType  targetResult  resultVar  targetType
-                 fieldName
+                inferFieldAccessFromType targetResult resultVar targetType fieldName
 
 
 inferFieldAccessFromType : InferResult -> Type -> Type -> String -> Result String InferResult
@@ -202,82 +181,68 @@ inferFieldAccessFromType targetResult resultVar targetType fieldName =
     case targetType of
         
         TRecord fields ->
-            case Dict.get  fieldName  fields of
+            case Dict.get fieldName fields of
                 
                 Just fieldType ->
-                    Ok
-                     { substitution =
-                         targetResult.substitution
-                     , type_ =
-                         fieldType
-                     }
+                    Ok { substitution = targetResult.substitution
+                       , type_ = fieldType
+                       }
                 
                 Nothing ->
-                    Err  ("Record has no field '" ++ fieldName ++ "'")
+                    Err ("Record has no field '" ++ fieldName ++ "'")
                 
                 _ ->
-                    Ok
-                     { substitution =
-                         targetResult.substitution
-                     , type_ =
-                         resultVar
-                     }
+                    Ok { substitution = targetResult.substitution
+                       , type_ = resultVar
+                       }
 
 
 inferNegate : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> Result String InferResult
 inferNegate counter registry env inner =
-    case inferExpr  counter  registry  env  inner of
+    case inferExpr counter registry env inner of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok result ->
-            inferNegateType  result
+            inferNegateType result
 
 
 inferNegateType : InferResult -> Result String InferResult
 inferNegateType result =
-    case unify  result.type_  (TConst  "Int") of
+    case unify result.type_ (TConst "Int") of
         
         Ok sub ->
-            Ok
-             { substitution =
-                 composeSubs  sub  result.substitution
-             , type_ =
-                 applySub  sub  result.type_
-             }
+            Ok { substitution = composeSubs sub result.substitution
+               , type_ = applySub sub result.type_
+               }
         
         Err _ ->
-            inferNegateFloat  result
+            inferNegateFloat result
 
 
 inferNegateFloat : InferResult -> Result String InferResult
 inferNegateFloat result =
-    case unify  result.type_  (TConst  "Float") of
+    case unify result.type_ (TConst "Float") of
         
         Ok sub ->
-            Ok
-             { substitution =
-                 composeSubs  sub  result.substitution
-             , type_ =
-                 applySub  sub  result.type_
-             }
+            Ok { substitution = composeSubs sub result.substitution
+               , type_ = applySub sub result.type_
+               }
         
         Err e ->
-            Err  ("Negation requires a number type: " ++ e)
+            Err ("Negation requires a number type: " ++ e)
 
 
 inferCall : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> (List Expression) -> Result String InferResult
 inferCall counter registry env callee args =
-    case inferExpr  counter  registry  env  callee of
+    case inferExpr counter registry env callee of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok calleeResult ->
-            inferCallArgs  counter  registry  env  calleeResult.type_
-             calleeResult.substitution
-             args
+            inferCallArgs counter registry env calleeResult.type_ calleeResult.substitution args
 
 
 inferCallArgs : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Type -> Substitution -> (List Expression) -> Result String InferResult
@@ -285,49 +250,40 @@ inferCallArgs counter registry env fnType sub args =
     case args of
         
         [  ] ->
-            Ok  { substitution = sub , type_ = fnType }
+            Ok { substitution = sub , type_ = fnType }
         
         arg :: rest ->
             let
-                resultVar =
-                    freshVar  counter  Nothing
+                resultVar = freshVar counter Nothing
             in
-                case inferExpr  counter  registry  (applySubToEnv  sub  env)
-                      arg of
+                case inferExpr counter registry (applySubToEnv sub env) arg of
                     
                     Err e ->
-                        Err  e
+                        Err e
                     
                     Ok argResult ->
                         let
-                            combinedSub =
-                                composeSubs  argResult.substitution  sub
-                            expectedFnType =
-                                TFun  argResult.type_  resultVar
-                            actualFnType =
-                                applySub  combinedSub  fnType
+                            combinedSub = composeSubs argResult.substitution sub
+                            expectedFnType = TFun argResult.type_ resultVar
+                            actualFnType = applySub combinedSub fnType
                         in
-                            case unify  actualFnType  expectedFnType of
+                            case unify actualFnType expectedFnType of
                                 
                                 Err e ->
-                                    Err  ("Type error in function call: " ++ e)
+                                    Err ("Type error in function call: " ++ e)
                                 
                                 Ok unifySub ->
                                     let
                                         finalSub =
-                                            composeSubs  unifySub  combinedSub
-                                        resultType =
-                                            applySub  finalSub  resultVar
+                                            composeSubs unifySub combinedSub
+                                        resultType = applySub finalSub resultVar
                                     in
-                                        inferCallArgs  counter  registry  env
-                                         resultType
-                                         finalSub
-                                         rest
+                                        inferCallArgs counter registry env resultType finalSub rest
 
 
 inferLambda : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> Expression -> Result String InferResult
 inferLambda counter registry env params body =
-    inferLambdaParams  counter  registry  env  params  body  []
+    inferLambdaParams counter registry env params body []
 
 
 inferLambdaParams : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> Expression -> (List Type) -> Result String InferResult
@@ -335,144 +291,109 @@ inferLambdaParams counter registry env params body paramTypes =
     case params of
         
         [  ] ->
-            case inferExpr  counter  registry  env  body of
+            case inferExpr counter registry env body of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok bodyResult ->
                     let
                         resultType =
-                            List.foldr  (\pt acc -> TFun  pt  acc)
-                             bodyResult.type_
-                             paramTypes
+                            List.foldr (\pt acc -> TFun pt acc) bodyResult.type_ paramTypes
                     in
-                        Ok
-                         { substitution =
-                             bodyResult.substitution
-                         , type_ =
-                             applySub  bodyResult.substitution  resultType
-                         }
+                        Ok { substitution = bodyResult.substitution
+                           , type_ = applySub bodyResult.substitution resultType
+                           }
                 
                 pat :: rest ->
                     let
-                        paramVar =
-                            freshVar  counter  Nothing
+                        paramVar = freshVar counter Nothing
                     in
-                        case PatternCheck.checkPattern  counter  registry  env
-                              pat
-                              paramVar of
+                        case PatternCheck.checkPattern counter registry env pat paramVar of
                             
                             Err e ->
-                                Err  e
+                                Err e
                             
                             Ok patResult ->
                                 let
                                     newEnv =
-                                        List.foldl
-                                         (
+                                        List.foldl (
                                         \pair acc ->
-                                            Env.extend  (fst  pair)
-                                             (mono  (snd  pair))
-                                             acc
-                                        )
-                                         env
-                                         patResult.bindings
+                                            Env.extend (fst pair) (
+                                            mono (snd pair)
+                                            ) acc
+                                        ) env patResult.bindings
                                     boundParamType =
-                                        applySub  patResult.substitution
-                                         paramVar
+                                        applySub patResult.substitution paramVar
                                 in
-                                    inferLambdaParams  counter  registry  newEnv
-                                     rest
-                                     body
-                                     (
-                                    List.append  paramTypes  [ boundParamType ]
+                                    inferLambdaParams counter registry newEnv rest body (
+                                    List.append paramTypes [ boundParamType ]
                                     )
 
 
 inferIf : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> Expression -> Expression -> Result String InferResult
 inferIf counter registry env condition thenBranch elseBranch =
-    case inferExpr  counter  registry  env  condition of
+    case inferExpr counter registry env condition of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok condResult ->
-            case unify  condResult.type_  (TConst  "Bool") of
+            case unify condResult.type_ (TConst "Bool") of
                 
                 Err e ->
-                    Err  ("Condition must be Bool: " ++ e)
+                    Err ("Condition must be Bool: " ++ e)
                 
                 Ok condSub ->
                     let
-                        sub1 =
-                            composeSubs  condSub  condResult.substitution
-                        env1 =
-                            applySubToEnv  sub1  env
+                        sub1 = composeSubs condSub condResult.substitution
+                        env1 = applySubToEnv sub1 env
                     in
-                        case inferExpr  counter  registry  env1  thenBranch of
+                        case inferExpr counter registry env1 thenBranch of
                             
                             Err e ->
-                                Err  e
+                                Err e
                             
                             Ok thenResult ->
                                 let
                                     sub2 =
-                                        composeSubs  thenResult.substitution
-                                         sub1
-                                    env2 =
-                                        applySubToEnv  sub2  env
+                                        composeSubs thenResult.substitution sub1
+                                    env2 = applySubToEnv sub2 env
                                 in
-                                    case inferExpr  counter  registry  env2
-                                          elseBranch of
+                                    case inferExpr counter registry env2 elseBranch of
                                         
                                         Err e ->
-                                            Err  e
+                                            Err e
                                         
                                         Ok elseResult ->
                                             let
                                                 sub3 =
-                                                    composeSubs
-                                                     elseResult.substitution
-                                                     sub2
+                                                    composeSubs elseResult.substitution sub2
                                             in
-                                                case unify
-                                                      (
-                                                     applySub  sub3
-                                                      thenResult.type_
-                                                     )
-                                                      (
-                                                     applySub  sub3
-                                                      elseResult.type_
+                                                case unify (
+                                                     applySub sub3 thenResult.type_
+                                                     ) (
+                                                     applySub sub3 elseResult.type_
                                                      ) of
                                                     
                                                     Err e ->
-                                                        Err
-                                                         (
-                                                        "If branches have different types: " ++
-                                                        e
+                                                        Err (
+                                                        "If branches have different types: " ++ e
                                                         )
                                                     
                                                     Ok branchSub ->
                                                         let
                                                             finalSub =
-                                                                composeSubs
-                                                                 branchSub
-                                                                 sub3
+                                                                composeSubs branchSub sub3
                                                         in
-                                                            Ok
-                                                             { substitution =
-                                                                 finalSub
-                                                             , type_ =
-                                                                 applySub
-                                                                  finalSub
-                                                                  thenResult.type_
-                                                             }
+                                                            Ok { substitution = finalSub
+                                                               , type_ = applySub finalSub thenResult.type_
+                                                               }
 
 
 inferLet : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List LetBinding) -> Expression -> Result String InferResult
 inferLet counter registry env bindings body =
-    inferLetBindings  counter  registry  env  bindings  body
+    inferLetBindings counter registry env bindings body
 
 
 inferLetBindings : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List LetBinding) -> Expression -> Result String InferResult
@@ -480,126 +401,87 @@ inferLetBindings counter registry env bindings body =
     case bindings of
         
         [  ] ->
-            inferExpr  counter  registry  env  body
+            inferExpr counter registry env body
         
         binding :: rest ->
-            case inferExpr  counter  registry  env  binding.value of
+            case inferExpr counter registry env binding.value of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok valueResult ->
                     let
-                        sub =
-                            valueResult.substitution
-                        envWithSub =
-                            applySubToEnv  sub  env
+                        sub = valueResult.substitution
+                        envWithSub = applySubToEnv sub env
                         generalizedScheme =
-                            Env.generalizeInEnv  envWithSub
-                             (applySub  sub  valueResult.type_)
+                            Env.generalizeInEnv envWithSub (
+                            applySub sub valueResult.type_
+                            )
                     in
                         case binding.pattern of
                             
                             PVariable name _ ->
                                 let
                                     newEnv =
-                                        Env.extend  name  generalizedScheme
-                                         envWithSub
+                                        Env.extend name generalizedScheme envWithSub
                                 in
-                                    case inferLetBindings  counter  registry
-                                          newEnv
-                                          rest
-                                          body of
+                                    case inferLetBindings counter registry newEnv rest body of
                                         
                                         Err e ->
-                                            Err  e
+                                            Err e
                                         
                                         Ok bodyResult ->
-                                            Ok
-                                             { substitution =
-                                                 composeSubs
-                                                  bodyResult.substitution
-                                                  sub
-                                             , type_ =
-                                                 bodyResult.type_
-                                             }
+                                            Ok { substitution = composeSubs bodyResult.substitution sub
+                                               , type_ = bodyResult.type_
+                                               }
                                         
                                         _ ->
-                                            case PatternCheck.checkPattern
-                                                  counter
-                                                  registry
-                                                  env
-                                                  binding.pattern
-                                                  (
-                                                 applySub  sub
-                                                  valueResult.type_
+                                            case PatternCheck.checkPattern counter registry env binding.pattern (
+                                                 applySub sub valueResult.type_
                                                  ) of
                                                 
                                                 Err e ->
-                                                    Err  e
+                                                    Err e
                                                 
                                                 Ok patResult ->
                                                     let
                                                         combinedSub =
-                                                            composeSubs
-                                                             patResult.substitution
-                                                             sub
+                                                            composeSubs patResult.substitution sub
                                                         newEnv =
-                                                            List.foldl
-                                                             (
+                                                            List.foldl (
                                                             \pair acc ->
-                                                                Env.extend
-                                                                 (fst  pair)
-                                                                 (
-                                                                mono
-                                                                 (snd  pair)
-                                                                )
-                                                                 acc
-                                                            )
-                                                             (
-                                                            applySubToEnv
-                                                             combinedSub
-                                                             env
-                                                            )
-                                                             patResult.bindings
+                                                                Env.extend (
+                                                                fst pair
+                                                                ) (
+                                                                mono (snd pair)
+                                                                ) acc
+                                                            ) (
+                                                            applySubToEnv combinedSub env
+                                                            ) patResult.bindings
                                                     in
-                                                        case inferLetBindings
-                                                              counter
-                                                              registry
-                                                              newEnv
-                                                              rest
-                                                              body of
+                                                        case inferLetBindings counter registry newEnv rest body of
                                                             
                                                             Err e ->
-                                                                Err  e
+                                                                Err e
                                                             
                                                             Ok bodyResult ->
-                                                                Ok
-                                                                 { substitution =
-                                                                     composeSubs
-                                                                      bodyResult.substitution
-                                                                      combinedSub
-                                                                 , type_ =
-                                                                     bodyResult.type_
-                                                                 }
+                                                                Ok { substitution = composeSubs bodyResult.substitution combinedSub
+                                                                   , type_ = bodyResult.type_
+                                                                   }
 
 
 inferCase : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> (List CaseBranch) -> Result String InferResult
 inferCase counter registry env subject branches =
-    case inferExpr  counter  registry  env  subject of
+    case inferExpr counter registry env subject of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok subjectResult ->
             let
-                resultVar =
-                    freshVar  counter  Nothing
+                resultVar = freshVar counter Nothing
             in
-                inferCaseBranches  counter  registry  env  subjectResult.type_
-                 subjectResult.substitution
-                 branches
-                 resultVar
+                inferCaseBranches counter registry env subjectResult.type_ subjectResult.substitution branches resultVar
 
 
 inferCaseBranches : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Type -> Substitution -> (List CaseBranch) -> Type -> Result String InferResult
@@ -607,104 +489,79 @@ inferCaseBranches counter registry env subjectType sub branches resultType =
     case branches of
         
         [  ] ->
-            Ok  { substitution = sub , type_ = applySub  sub  resultType }
+            Ok { substitution = sub , type_ = applySub sub resultType }
         
         branch :: rest ->
             let
-                currentSubjectType =
-                    applySub  sub  subjectType
+                currentSubjectType = applySub sub subjectType
             in
-                case PatternCheck.checkPattern  counter  registry  env
-                      branch.pattern
-                      currentSubjectType of
+                case PatternCheck.checkPattern counter registry env branch.pattern currentSubjectType of
                     
                     Err e ->
-                        Err  e
+                        Err e
                     
                     Ok patResult ->
                         let
-                            patSub =
-                                composeSubs  patResult.substitution  sub
+                            patSub = composeSubs patResult.substitution sub
                             branchEnv =
-                                List.foldl
-                                 (
+                                List.foldl (
                                 \pair acc ->
-                                    Env.extend  (fst  pair)
-                                     (mono  (applySub  patSub  (snd  pair)))
-                                     acc
-                                )
-                                 (applySubToEnv  patSub  env)
-                                 patResult.bindings
+                                    Env.extend (fst pair) (
+                                    mono (applySub patSub (snd pair))
+                                    ) acc
+                                ) (applySubToEnv patSub env) patResult.bindings
                         in
-                            case inferExpr  counter  registry  branchEnv
-                                  branch.body of
+                            case inferExpr counter registry branchEnv branch.body of
                                 
                                 Err e ->
-                                    Err  e
+                                    Err e
                                 
                                 Ok bodyResult ->
                                     let
                                         bodySub =
-                                            composeSubs  bodyResult.substitution
-                                             patSub
+                                            composeSubs bodyResult.substitution patSub
                                     in
-                                        case unify
-                                              (applySub  bodySub  resultType)
-                                              (
-                                             applySub  bodySub  bodyResult.type_
+                                        case unify (applySub bodySub resultType) (
+                                             applySub bodySub bodyResult.type_
                                              ) of
                                             
                                             Err e ->
-                                                Err
-                                                 (
-                                                "Case branch type mismatch: " ++
-                                                e
+                                                Err (
+                                                "Case branch type mismatch: " ++ e
                                                 )
                                             
                                             Ok unifySub ->
                                                 let
                                                     finalSub =
-                                                        composeSubs  unifySub
-                                                         bodySub
+                                                        composeSubs unifySub bodySub
                                                 in
-                                                    inferCaseBranches  counter
-                                                     registry
-                                                     env
-                                                     subjectType
-                                                     finalSub
-                                                     rest
-                                                     resultType
+                                                    inferCaseBranches counter registry env subjectType finalSub rest resultType
 
 
 inferBinary : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> Expression -> Expression -> Result String InferResult
 inferBinary counter registry env op left right =
-    case inferExpr  counter  registry  env  left of
+    case inferExpr counter registry env left of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok leftResult ->
             let
-                sub1 =
-                    leftResult.substitution
-                env1 =
-                    applySubToEnv  sub1  env
+                sub1 = leftResult.substitution
+                env1 = applySubToEnv sub1 env
             in
-                case inferExpr  counter  registry  env1  right of
+                case inferExpr counter registry env1 right of
                     
                     Err e ->
-                        Err  e
+                        Err e
                     
                     Ok rightResult ->
                         let
-                            sub2 =
-                                composeSubs  rightResult.substitution  sub1
-                            lt =
-                                applySub  sub2  leftResult.type_
-                            rt =
-                                applySub  sub2  rightResult.type_
+                            sub2 = composeSubs rightResult.substitution sub1
+                            lt = applySub sub2 leftResult.type_
+                            rt = applySub sub2 rightResult.type_
                         in
-                            inferBinaryOp  counter  op  lt  rt  sub2
+                            inferBinaryOp counter op lt rt sub2
 
 
 inferBinaryOp : (Ref.Ref Int) -> String -> Type -> Type -> Substitution -> Result String InferResult
@@ -716,249 +573,206 @@ checkNumericType op resultType finalSub =
         
         TConst name ->
             if name == "Int" || name == "Float" then
-                Ok  { substitution = finalSub , type_ = resultType }
+                Ok { substitution = finalSub , type_ = resultType }
             else
-                Err
-                 (
-                "Arithmetic operator '" ++
-                op ++ "' requires a number type, got " ++ name
+                Err (
+                "Arithmetic operator '" ++ op ++ "' requires a number type, got " ++ name
                 )
         
         TVar _ _ ->
-            Ok  { substitution = finalSub , type_ = resultType }
+            Ok { substitution = finalSub , type_ = resultType }
         
         _ ->
-            Err  ("Arithmetic operator '" ++ op ++ "' requires a number type")
+            Err ("Arithmetic operator '" ++ op ++ "' requires a number type")
 
 
 inferBinaryOp counter op lt rt sub =
     if op == "+" || op == "-" || op == "*" || op == "%" then
-        case unify  lt  rt of
+        case unify lt rt of
             
             Err e ->
-                Err  ("Arithmetic operator '" ++ op ++ "': " ++ e)
+                Err ("Arithmetic operator '" ++ op ++ "': " ++ e)
             
             Ok unifySub ->
                 let
-                    finalSub =
-                        composeSubs  unifySub  sub
-                    resultType =
-                        applySub  finalSub  lt
+                    finalSub = composeSubs unifySub sub
+                    resultType = applySub finalSub lt
                 in
-                    checkNumericType  op  resultType  finalSub
+                    checkNumericType op resultType finalSub
     else if op == "/" then
-        case unify  lt  (TConst  "Float") of
+        case unify lt (TConst "Float") of
             
             Err e ->
-                Err  ("Division requires Float: " ++ e)
+                Err ("Division requires Float: " ++ e)
             
             Ok s1 ->
-                case unify  rt  (TConst  "Float") of
+                case unify rt (TConst "Float") of
                     
                     Err e ->
-                        Err  ("Division requires Float: " ++ e)
+                        Err ("Division requires Float: " ++ e)
                     
                     Ok s2 ->
                         let
-                            finalSub =
-                                composeSubs  s2  (composeSubs  s1  sub)
+                            finalSub = composeSubs s2 (composeSubs s1 sub)
                         in
-                            Ok
-                             { substitution =
-                                 finalSub
-                             , type_ =
-                                 TConst  "Float"
-                             }
+                            Ok { substitution = finalSub
+                               , type_ = TConst "Float"
+                               }
     else if op == "//" then
-        case unify  lt  (TConst  "Int") of
+        case unify lt (TConst "Int") of
             
             Err e ->
-                Err  ("Integer division requires Int: " ++ e)
+                Err ("Integer division requires Int: " ++ e)
             
             Ok s1 ->
-                case unify  rt  (TConst  "Int") of
+                case unify rt (TConst "Int") of
                     
                     Err e ->
-                        Err  ("Integer division requires Int: " ++ e)
+                        Err ("Integer division requires Int: " ++ e)
                     
                     Ok s2 ->
-                        Ok
-                         { substitution =
-                             composeSubs  s2  (composeSubs  s1  sub)
-                         , type_ =
-                             TConst  "Int"
-                         }
-    else if op == "==" ||
-    op == "!=" ||
-    op == "/=" || op == "<" || op == "<=" || op == ">" || op == ">=" then
-        case unify  lt  rt of
+                        Ok { substitution = composeSubs s2 (composeSubs s1 sub)
+                           , type_ = TConst "Int"
+                           }
+    else if op == "==" || op == "!=" || op == "/=" || op == "<" || op == "<=" || op == ">" || op == ">=" then
+        case unify lt rt of
             
             Err e ->
-                Err  ("Comparison operator '" ++ op ++ "': " ++ e)
+                Err ("Comparison operator '" ++ op ++ "': " ++ e)
             
             Ok unifySub ->
-                Ok
-                 { substitution =
-                     composeSubs  unifySub  sub
-                 , type_ =
-                     TConst  "Bool"
-                 }
+                Ok { substitution = composeSubs unifySub sub
+                   , type_ = TConst "Bool"
+                   }
     else if op == "&&" || op == "||" then
-        case unify  lt  (TConst  "Bool") of
+        case unify lt (TConst "Bool") of
             
             Err e ->
-                Err  ("Logical operator requires Bool: " ++ e)
+                Err ("Logical operator requires Bool: " ++ e)
             
             Ok s1 ->
-                case unify  (applySub  s1  rt)  (TConst  "Bool") of
+                case unify (applySub s1 rt) (TConst "Bool") of
                     
                     Err e ->
-                        Err  ("Logical operator requires Bool: " ++ e)
+                        Err ("Logical operator requires Bool: " ++ e)
                     
                     Ok s2 ->
-                        Ok
-                         { substitution =
-                             composeSubs  s2  (composeSubs  s1  sub)
-                         , type_ =
-                             TConst  "Bool"
-                         }
+                        Ok { substitution = composeSubs s2 (composeSubs s1 sub)
+                           , type_ = TConst "Bool"
+                           }
     else if op == "++" then
-        case unify  lt  rt of
+        case unify lt rt of
             
             Err e ->
-                Err  ("Append operator: " ++ e)
+                Err ("Append operator: " ++ e)
             
             Ok unifySub ->
-                Ok
-                 { substitution =
-                     composeSubs  unifySub  sub
-                 , type_ =
-                     applySub  (composeSubs  unifySub  sub)  lt
-                 }
+                Ok { substitution = composeSubs unifySub sub
+                   , type_ = applySub (composeSubs unifySub sub) lt
+                   }
     else if op == "::" then
         let
-            listType =
-                TApp  (TConst  "List")  [ lt ]
+            listType = TApp (TConst "List") [ lt ]
         in
-            case unify  rt  listType of
+            case unify rt listType of
                 
                 Err e ->
-                    Err  ("Cons operator: " ++ e)
+                    Err ("Cons operator: " ++ e)
                 
                 Ok unifySub ->
-                    Ok
-                     { substitution =
-                         composeSubs  unifySub  sub
-                     , type_ =
-                         applySub  (composeSubs  unifySub  sub)  rt
-                     }
+                    Ok { substitution = composeSubs unifySub sub
+                       , type_ = applySub (composeSubs unifySub sub) rt
+                       }
     else if op == "|>" then
         let
-            resultVar =
-                freshVar  counter  Nothing
-            expectedFnType =
-                TFun  lt  resultVar
+            resultVar = freshVar counter Nothing
+            expectedFnType = TFun lt resultVar
         in
-            case unify  rt  expectedFnType of
+            case unify rt expectedFnType of
                 
                 Err e ->
-                    Err  ("Pipeline operator: " ++ e)
+                    Err ("Pipeline operator: " ++ e)
                 
                 Ok unifySub ->
                     let
-                        finalSub =
-                            composeSubs  unifySub  sub
+                        finalSub = composeSubs unifySub sub
                     in
-                        Ok
-                         { substitution =
-                             finalSub
-                         , type_ =
-                             applySub  finalSub  resultVar
-                         }
+                        Ok { substitution = finalSub
+                           , type_ = applySub finalSub resultVar
+                           }
     else if op == "<|" then
         let
-            resultVar =
-                freshVar  counter  Nothing
-            expectedFnType =
-                TFun  rt  resultVar
+            resultVar = freshVar counter Nothing
+            expectedFnType = TFun rt resultVar
         in
-            case unify  lt  expectedFnType of
+            case unify lt expectedFnType of
                 
                 Err e ->
-                    Err  ("Reverse pipeline operator: " ++ e)
+                    Err ("Reverse pipeline operator: " ++ e)
                 
                 Ok unifySub ->
                     let
-                        finalSub =
-                            composeSubs  unifySub  sub
+                        finalSub = composeSubs unifySub sub
                     in
-                        Ok
-                         { substitution =
-                             finalSub
-                         , type_ =
-                             applySub  finalSub  resultVar
-                         }
+                        Ok { substitution = finalSub
+                           , type_ = applySub finalSub resultVar
+                           }
     else if op == ">>" || op == "<<" then
         let
-            aVar =
-                freshVar  counter  (Just  "a")
-            bVar =
-                freshVar  counter  (Just  "b")
-            cVar =
-                freshVar  counter  (Just  "c")
+            aVar = freshVar counter (Just "a")
+            bVar = freshVar counter (Just "b")
+            cVar = freshVar counter (Just "c")
         in
             if op == ">>" then
-                case unify  lt  (TFun  aVar  bVar) of
+                case unify lt (TFun aVar bVar) of
                     
                     Err e ->
-                        Err  ("Composition: " ++ e)
+                        Err ("Composition: " ++ e)
                     
                     Ok s1 ->
-                        case unify  (applySub  s1  rt)
-                              (TFun  (applySub  s1  bVar)  cVar) of
+                        case unify (applySub s1 rt) (
+                             TFun (applySub s1 bVar) cVar
+                             ) of
                             
                             Err e ->
-                                Err  ("Composition: " ++ e)
+                                Err ("Composition: " ++ e)
                             
                             Ok s2 ->
                                 let
                                     finalSub =
-                                        composeSubs  s2  (composeSubs  s1  sub)
+                                        composeSubs s2 (composeSubs s1 sub)
                                 in
-                                    Ok
-                                     { substitution =
-                                         finalSub
-                                     , type_ =
-                                         TFun  (applySub  finalSub  aVar)
-                                          (applySub  finalSub  cVar)
-                                     }
+                                    Ok { substitution = finalSub
+                                       , type_ = TFun (applySub finalSub aVar) (
+                                                 applySub finalSub cVar
+                                                 )
+                                       }
             else
-                case unify  rt  (TFun  aVar  bVar) of
+                case unify rt (TFun aVar bVar) of
                     
                     Err e ->
-                        Err  ("Composition: " ++ e)
+                        Err ("Composition: " ++ e)
                     
                     Ok s1 ->
-                        case unify  (applySub  s1  lt)
-                              (TFun  (applySub  s1  bVar)  cVar) of
+                        case unify (applySub s1 lt) (
+                             TFun (applySub s1 bVar) cVar
+                             ) of
                             
                             Err e ->
-                                Err  ("Composition: " ++ e)
+                                Err ("Composition: " ++ e)
                             
                             Ok s2 ->
                                 let
                                     finalSub =
-                                        composeSubs  s2  (composeSubs  s1  sub)
+                                        composeSubs s2 (composeSubs s1 sub)
                                 in
-                                    Ok
-                                     { substitution =
-                                         finalSub
-                                     , type_ =
-                                         TFun  (applySub  finalSub  aVar)
-                                          (applySub  finalSub  cVar)
-                                     }
+                                    Ok { substitution = finalSub
+                                       , type_ = TFun (applySub finalSub aVar) (
+                                                 applySub finalSub cVar
+                                                 )
+                                       }
     else
-        Err  ("Unknown operator: " ++ op)
+        Err ("Unknown operator: " ++ op)
 
 
 type alias DeclResult =
@@ -970,135 +784,107 @@ inferDeclaration counter registry env decl annotation =
     case decl of
         
         FunDecl name params body _ ->
-            inferFunction  counter  registry  env  name  params  body
-             annotation
+            inferFunction counter registry env name params body annotation
         
         _ ->
-            Err  "inferDeclaration: not a function declaration"
+            Err "inferDeclaration: not a function declaration"
 
 
 inferFunction : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> (List Pattern) -> Expression -> (Maybe TypeExpr) -> Result String DeclResult
 inferFunction counter registry env name params body annotation =
     let
-        paramVars =
-            List.map  (\p -> freshVar  counter  Nothing)  params
-        bindResult =
-            bindParams  counter  registry  env  params  paramVars
+        paramVars = List.map (\p -> freshVar counter Nothing) params
+        bindResult = bindParams counter registry env params paramVars
     in
         case bindResult of
             
             Err e ->
-                Err  e
+                Err e
             
             Ok ( paramSub , paramEnv ) ->
                 let
-                    selfVar =
-                        freshVar  counter  Nothing
-                    envWithSelf =
-                        Env.extend  name  (mono  selfVar)  paramEnv
+                    selfVar = freshVar counter Nothing
+                    envWithSelf = Env.extend name (mono selfVar) paramEnv
                 in
-                    case inferExpr  counter  registry  envWithSelf  body of
+                    case inferExpr counter registry envWithSelf body of
                         
                         Err e ->
-                            Err  ("In function '" ++ name ++ "': " ++ e)
+                            Err ("In function '" ++ name ++ "': " ++ e)
                         
                         Ok bodyResult ->
                             let
                                 bodySub =
-                                    composeSubs  bodyResult.substitution
-                                     paramSub
+                                    composeSubs bodyResult.substitution paramSub
                                 resolvedParamTypes =
-                                    List.map  (\pv -> applySub  bodySub  pv)
-                                     paramVars
-                                bodyType =
-                                    applySub  bodySub  bodyResult.type_
+                                    List.map (\pv -> applySub bodySub pv) paramVars
+                                bodyType = applySub bodySub bodyResult.type_
                                 funType =
-                                    List.foldr  (\pt acc -> TFun  pt  acc)
-                                     bodyType
-                                     resolvedParamTypes
-                                selfType =
-                                    applySub  bodySub  selfVar
+                                    List.foldr (\pt acc -> TFun pt acc) bodyType resolvedParamTypes
+                                selfType = applySub bodySub selfVar
                             in
-                                case unify  selfType  funType of
+                                case unify selfType funType of
                                     
                                     Err e ->
-                                        Err
-                                         (
-                                        "Recursive type error in '" ++
-                                        name ++ "': " ++ e
+                                        Err (
+                                        "Recursive type error in '" ++ name ++ "': " ++ e
                                         )
                                     
                                     Ok selfSub ->
                                         let
                                             finalSub =
-                                                composeSubs  selfSub  bodySub
+                                                composeSubs selfSub bodySub
                                             finalType =
-                                                applySub  finalSub  funType
+                                                applySub finalSub funType
                                             diagnostics =
-                                                checkAnnotation  counter  env
-                                                 finalType
-                                                 annotation
+                                                checkAnnotation counter env finalType annotation
                                             scheme =
-                                                Env.generalizeInEnv  env
-                                                 finalType
+                                                Env.generalizeInEnv env finalType
                                         in
-                                            Ok
-                                             { name =
-                                                 name
-                                             , scheme =
-                                                 scheme
-                                             , diagnostics =
-                                                 diagnostics
-                                             }
+                                            Ok { name = name
+                                               , scheme = scheme
+                                               , diagnostics = diagnostics
+                                               }
 
 
-bindParams : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Result String ( Substitution , Env.TypeEnv )
+bindParams : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Result String (Substitution, Env.TypeEnv)
 bindParams counter registry env params types =
-    bindParamsLoop  counter  registry  env  params  types  emptySub
+    bindParamsLoop counter registry env params types emptySub
 
 
-bindParamsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Substitution -> Result String ( Substitution , Env.TypeEnv )
+bindParamsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Substitution -> Result String (Substitution, Env.TypeEnv)
 bindParamsLoop counter registry env params types sub =
     case params of
         
         [  ] ->
-            Ok  ( sub , env )
+            Ok (sub, env)
         
         pat :: restPats ->
             case types of
                 
                 [  ] ->
-                    Err  "Parameter count mismatch"
+                    Err "Parameter count mismatch"
                 
                 t :: restTypes ->
-                    case PatternCheck.checkPattern  counter  registry  env  pat
-                          (applySub  sub  t) of
+                    case PatternCheck.checkPattern counter registry env pat (
+                         applySub sub t
+                         ) of
                         
                         Err e ->
-                            Err  e
+                            Err e
                         
                         Ok patResult ->
                             let
                                 combinedSub =
-                                    composeSubs  patResult.substitution  sub
+                                    composeSubs patResult.substitution sub
                                 newEnv =
-                                    List.foldl
-                                     (
+                                    List.foldl (
                                     \pair acc ->
-                                        Env.extend  (fst  pair)
-                                         (
-                                        mono
-                                         (applySub  combinedSub  (snd  pair))
-                                        )
-                                         acc
-                                    )
-                                     env
-                                     patResult.bindings
+                                        Env.extend (fst pair) (
+                                        mono (applySub combinedSub (snd pair))
+                                        ) acc
+                                    ) env patResult.bindings
                             in
-                                bindParamsLoop  counter  registry  newEnv
-                                 restPats
-                                 restTypes
-                                 combinedSub
+                                bindParamsLoop counter registry newEnv restPats restTypes combinedSub
 
 
 debugType : Type -> String
@@ -1109,7 +895,7 @@ debugType t =
             name
         
         TVar id _ ->
-            "t" ++ String.fromInt  id
+            "t" ++ String.fromInt id
         
         _ ->
             "other"
@@ -1123,13 +909,14 @@ checkAnnotation counter env inferredType annotation =
             []
         
         Just annotExpr ->
-            checkAnnotationInner  inferredType
-             (Adt.resolveTypeExpr  Dict.empty  annotExpr)
+            checkAnnotationInner inferredType (
+            Adt.resolveTypeExpr Dict.empty annotExpr
+            )
 
 
 checkAnnotationInner : Type -> Type -> List String
 checkAnnotationInner inferredType annotType =
-    case unify  inferredType  annotType of
+    case unify inferredType annotType of
         
         Ok _ ->
             []
@@ -1139,8 +926,7 @@ checkAnnotationInner inferredType annotType =
 
 
 applySubToEnv : Substitution -> Env.TypeEnv -> Env.TypeEnv
-applySubToEnv sub env =
-    Dict.map  (\kk scheme -> applySubToScheme  sub  scheme)  env
+applySubToEnv sub env = Dict.map (\kk scheme -> applySubToScheme sub scheme) env
 
 
 inferTupleItems : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Expression) -> Substitution -> (List Type) -> Result String InferResult
@@ -1148,27 +934,26 @@ inferTupleItems counter registry env items sub types =
     case items of
         
         [  ] ->
-            Ok  { substitution = sub , type_ = TTuple  (List.reverse  types) }
+            Ok { substitution = sub , type_ = TTuple (List.reverse types) }
         
         item :: rest ->
-            case inferExpr  counter  registry  (applySubToEnv  sub  env)  item of
+            case inferExpr counter registry (applySubToEnv sub env) item of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok result ->
-                    inferTupleItems  counter  registry  env  rest
-                     (composeSubs  result.substitution  sub)
-                     (result.type_ :: types)
+                    inferTupleItems counter registry env rest (
+                    composeSubs result.substitution sub
+                    ) (result.type_ :: types)
 
 
 inferListItems : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Expression) -> Result String InferResult
 inferListItems counter registry env items =
     let
-        elemVar =
-            freshVar  counter  (Just  "elem")
+        elemVar = freshVar counter (Just "elem")
     in
-        inferListItemsLoop  counter  registry  env  items  emptySub  elemVar
+        inferListItemsLoop counter registry env items emptySub elemVar
 
 
 inferListItemsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Expression) -> Substitution -> Type -> Result String InferResult
@@ -1176,33 +961,29 @@ inferListItemsLoop counter registry env items sub elemType =
     case items of
         
         [  ] ->
-            Ok
-             { substitution =
-                 sub
-             , type_ =
-                 TApp  (TConst  "List")  [ applySub  sub  elemType ]
-             }
+            Ok { substitution = sub
+               , type_ = TApp (TConst "List") [ applySub sub elemType ]
+               }
         
         item :: rest ->
-            case inferExpr  counter  registry  (applySubToEnv  sub  env)  item of
+            case inferExpr counter registry (applySubToEnv sub env) item of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok result ->
                     let
-                        itemSub =
-                            composeSubs  result.substitution  sub
+                        itemSub = composeSubs result.substitution sub
                     in
-                        case unify  (applySub  itemSub  elemType)  result.type_ of
+                        case unify (applySub itemSub elemType) result.type_ of
                             
                             Err e ->
-                                Err  ("List element type mismatch: " ++ e)
+                                Err ("List element type mismatch: " ++ e)
                             
                             Ok unifySub ->
-                                inferListItemsLoop  counter  registry  env  rest
-                                 (composeSubs  unifySub  itemSub)
-                                 elemType
+                                inferListItemsLoop counter registry env rest (
+                                composeSubs unifySub itemSub
+                                ) elemType
 
 
 inferRecordFields : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> Substitution -> (Dict.Dict String Type) -> Result String InferResult
@@ -1210,44 +991,42 @@ inferRecordFields counter registry env fields sub fieldTypes =
     case fields of
         
         [  ] ->
-            Ok  { substitution = sub , type_ = TRecord  fieldTypes }
+            Ok { substitution = sub , type_ = TRecord fieldTypes }
         
         field :: rest ->
-            case inferExpr  counter  registry  (applySubToEnv  sub  env)
-                  field.value of
+            case inferExpr counter registry (applySubToEnv sub env) field.value of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok result ->
                     let
-                        newSub =
-                            composeSubs  result.substitution  sub
+                        newSub = composeSubs result.substitution sub
                     in
-                        inferRecordFields  counter  registry  env  rest  newSub
-                         (Dict.insert  field.name  result.type_  fieldTypes)
+                        inferRecordFields counter registry env rest newSub (
+                        Dict.insert field.name result.type_ fieldTypes
+                        )
 
 
-inferRecordUpdateFields : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> Substitution -> Result String ( Substitution , Dict.Dict String Type )
+inferRecordUpdateFields : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> Substitution -> Result String (Substitution, Dict.Dict String Type)
 inferRecordUpdateFields counter registry env fields sub =
-    inferRecordUpdateFieldsLoop  counter  registry  env  fields  sub  Dict.empty
+    inferRecordUpdateFieldsLoop counter registry env fields sub Dict.empty
 
 
-inferRecordUpdateFieldsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> Substitution -> (Dict.Dict String Type) -> Result String ( Substitution , Dict.Dict String Type )
+inferRecordUpdateFieldsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedExpr) -> Substitution -> (Dict.Dict String Type) -> Result String (Substitution, Dict.Dict String Type)
 inferRecordUpdateFieldsLoop counter registry env fields sub fieldTypes =
     case fields of
         
         [  ] ->
-            Ok  ( sub , fieldTypes )
+            Ok (sub, fieldTypes)
         
         field :: rest ->
-            case inferExpr  counter  registry  (applySubToEnv  sub  env)
-                  field.value of
+            case inferExpr counter registry (applySubToEnv sub env) field.value of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok result ->
-                    inferRecordUpdateFieldsLoop  counter  registry  env  rest
-                     (composeSubs  result.substitution  sub)
-                     (Dict.insert  field.name  result.type_  fieldTypes)
+                    inferRecordUpdateFieldsLoop counter registry env rest (
+                    composeSubs result.substitution sub
+                    ) (Dict.insert field.name result.type_ fieldTypes)

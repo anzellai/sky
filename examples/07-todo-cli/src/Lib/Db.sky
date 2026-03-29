@@ -9,37 +9,33 @@ import Sky.Core.Ref as Ref
 import Database.Sql as Sql
 import Modernc.Org.Sqlite as _
 
-dbRef =
-    Ref.new  (Sql.open  "sqlite"  "todos.db")
+dbRef = Ref.new (Sql.open "sqlite" "todos.db")
 
 
-getConn _ =
-    Ref.get  dbRef
+getConn _ = Ref.get dbRef
 
 
 exec query args =
-    case getConn  () of
+    case getConn () of
         
         Ok conn ->
-            Sql.dBExec  conn  query  args
+            Sql.dBExec conn query args
         
         Err e ->
-            Err  e
+            Err e
 
 
 queryRows query args =
-    case getConn  () of
+    case getConn () of
         
         Ok conn ->
-            Sql.queryToMaps  conn  query  args
+            Sql.queryToMaps conn query args
         
         Err e ->
-            Err  e
+            Err e
 
 
-getField field row =
-    Maybe.withDefault  ""  (Dict.get  field  row)
+getField field row = Maybe.withDefault "" (Dict.get field row)
 
 
-parseInt s =
-    Result.withDefault  0  (String.toInt  s)
+parseInt s = Result.withDefault 0 (String.toInt s)

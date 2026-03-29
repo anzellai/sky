@@ -6,25 +6,20 @@ import Sky.Core.List as List
 import Sky.Core.Char as Char
 
 mapGoTypeToSky : String -> String
-
 mapGoTypeToSky goType =
     if goType == "string" then
         "String"
     else if goType == "bool" then
         "Bool"
-    else if goType == "int" ||
-    goType == "int8" ||
-    goType == "int16" || goType == "int32" || goType == "int64" then
+    else if goType == "int" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" then
         "Int"
-    else if goType == "uint" ||
-    goType == "uint8" ||
-    goType == "uint16" || goType == "uint32" || goType == "uint64" then
+    else if goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" then
         "Int"
     else if goType == "float32" || goType == "float64" then
         "Float"
     else if goType == "[]byte" then
         "Bytes"
-    else if String.startsWith  "["  goType && String.endsWith  "byte"  goType then
+    else if String.startsWith "[" goType && String.endsWith "byte" goType then
         "Bytes"
     else if goType == "error" then
         "Error"
@@ -38,37 +33,34 @@ mapGoTypeToSky goType =
         "List Float"
     else if goType == "[]bool" then
         "List Bool"
-    else if String.startsWith  "[]"  goType then
+    else if String.startsWith "[]" goType then
         "List Any"
     else if goType == "rune" then
         "Char"
-    else if String.startsWith  "map["  goType then
+    else if String.startsWith "map[" goType then
         "Any"
-    else if String.startsWith  "func("  goType then
+    else if String.startsWith "func(" goType then
         "Any"
-    else if String.startsWith  "*"  goType then
+    else if String.startsWith "*" goType then
         let
-            inner =
-                String.slice  1  (String.length  goType)  goType
+            inner = String.slice 1 (String.length goType) goType
         in
-            if isGoPrimitive  inner then
-                "Maybe " ++ mapGoTypeToSky  inner
+            if isGoPrimitive inner then
+                "Maybe " ++ mapGoTypeToSky inner
             else
-                mapGoTypeToSky  inner
-    else if String.startsWith  "[]"  goType then
+                mapGoTypeToSky inner
+    else if String.startsWith "[]" goType then
         let
-            elem =
-                String.slice  2  (String.length  goType)  goType
+            elem = String.slice 2 (String.length goType) goType
         in
-            "List " ++ mapGoTypeToSky  elem
-    else if String.startsWith  "map["  goType then
+            "List " ++ mapGoTypeToSky elem
+    else if String.startsWith "map[" goType then
         "Any"
-    else if String.contains  "."  goType then
+    else if String.contains "." goType then
         let
-            parts =
-                String.split  "."  goType
+            parts = String.split "." goType
         in
-            case List.reverse  parts of
+            case List.reverse parts of
                 
                 last :: _ ->
                     last
@@ -80,24 +72,11 @@ mapGoTypeToSky goType =
 
 
 isGoPrimitive : String -> Bool
-
 isGoPrimitive t =
-    t == "string" ||
-    t == "int" ||
-    t == "int8" ||
-    t == "int16" ||
-    t == "int32" ||
-    t == "int64" ||
-    t == "uint" ||
-    t == "uint8" ||
-    t == "uint16" ||
-    t == "uint32" ||
-    t == "uint64" ||
-    t == "float32" || t == "float64" || t == "bool" || t == "rune"
+    t == "string" || t == "int" || t == "int8" || t == "int16" || t == "int32" || t == "int64" || t == "uint" || t == "uint8" || t == "uint16" || t == "uint32" || t == "uint64" || t == "float32" || t == "float64" || t == "bool" || t == "rune"
 
 
 goTypeToAssertion : String -> String
-
 goTypeToAssertion goType =
     if goType == "string" then
         "sky_asString"
@@ -133,58 +112,50 @@ goTypeToAssertion goType =
         "sky_asError"
     else if goType == "interface{}" || goType == "any" then
         ""
-    else if String.startsWith  "func("  goType &&
-    String.contains  "ResponseWriter"  goType then
+    else if String.startsWith "func(" goType && String.contains "ResponseWriter" goType then
         "sky_asHttpHandler"
-    else if String.startsWith  "func("  goType then
+    else if String.startsWith "func(" goType then
         ""
     else if goType == "map[string]string" then
         "sky_asMapStringString"
     else if goType == "map[string]interface{}" then
         "sky_asMapStringAny"
-    else if String.startsWith  "map["  goType then
+    else if String.startsWith "map[" goType then
         ""
-    else if String.startsWith  "["  goType && String.contains  "]byte"  goType then
+    else if String.startsWith "[" goType && String.contains "]byte" goType then
         "sky_asFixedBytes"
-    else if String.startsWith  "[]"  goType then
+    else if String.startsWith "[]" goType then
         "sky_asList"
     else
         "sky_asType"
 
 
 goTypeToCast : String -> String -> String
-
 goTypeToCast goType argName =
     let
-        assertion =
-            goTypeToAssertion  goType
+        assertion = goTypeToAssertion goType
     in
         if assertion == "" then
             argName
         else if assertion == "sky_asType" then
-            argName ++ ".(" ++ shortTypeName  goType ++ ")"
+            argName ++ ".(" ++ shortTypeName goType ++ ")"
         else
             assertion ++ "(" ++ argName ++ ")"
 
 
 shortTypeName : String -> String
-
 shortTypeName goType =
-    if String.startsWith  "*"  goType then
-        "*" ++ shortTypeName  (String.slice  1  (String.length  goType)  goType)
-    else if String.startsWith  "[]"  goType then
-        "[]" ++
-        shortTypeName  (String.slice  2  (String.length  goType)  goType)
-    else if String.contains  "."  goType then
+    if String.startsWith "*" goType then
+        "*" ++ shortTypeName (String.slice 1 (String.length goType) goType)
+    else if String.startsWith "[]" goType then
+        "[]" ++ shortTypeName (String.slice 2 (String.length goType) goType)
+    else if String.contains "." goType then
         let
-            lastDot =
-                findLastDot  goType  (String.length  goType - 1)
-            pkgPath =
-                String.slice  0  lastDot  goType
-            typeName =
-                String.slice  (lastDot + 1)  (String.length  goType)  goType
+            lastDot = findLastDot goType (String.length goType - 1)
+            pkgPath = String.slice 0 lastDot goType
+            typeName = String.slice (lastDot + 1) (String.length goType) goType
             shortPkg =
-                case List.reverse  (String.split  "/"  pkgPath) of
+                case List.reverse (String.split "/" pkgPath) of
                     
                     last :: _ ->
                         last
@@ -198,21 +169,18 @@ shortTypeName goType =
 
 
 findLastDot : String -> Int -> Int
-
 findLastDot s idx =
     if idx < 0 then
         0
-    else if String.slice  idx  (idx + 1)  s == "." then
+    else if String.slice idx (idx + 1) s == "." then
         idx
     else
-        findLastDot  s  (idx - 1)
+        findLastDot s (idx - 1)
 
 
 lowerCamelCase : String -> String
-
 lowerCamelCase s =
-    if String.isEmpty  s then
+    if String.isEmpty s then
         ""
     else
-        String.toLower  (String.slice  0  1  s) ++
-        String.slice  1  (String.length  s)  s
+        String.toLower (String.slice 0 1 s) ++ String.slice 1 (String.length s) s

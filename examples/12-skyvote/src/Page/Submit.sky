@@ -8,63 +8,55 @@ import State exposing (..)
 import Ui.Layout as Layout
 
 viewSubmit model =
-    Layout.pageWithAuth model
-        (
-        div [ class "submit-container" ]
-            [ h1 [ class "page-title" ] [ text "Submit an Idea" ]
-            , p [ class "page-subtitle" ]
-                [ text
-                    "Have a feature request, bug report, or improvement? Share it with the community."
-                ]
-            , div [ class "card" ]
-                [ form [ onSubmit SubmitIdea ]
-                    [ div [ class "form-group" ]
-                        [ label [ class "form-label" ] [ text "Title" ]
-                        , input
-                            [ type_ "text"
-                            , class "form-input"
-                            , placeholder "A short, descriptive title"
-                            , value model.submitTitle
-                            , onInput UpdateTitle
-                            ]
-                        ]
-                    , div [ class "form-group" ]
-                        [ label [ class "form-label" ] [ text "Description" ]
-                        , textarea
-                            [ class "form-input"
-                            , placeholder
-                                "Describe your idea in detail. What problem does it solve? How should it work?"
-                            , value model.submitDescription
-                            , onInput UpdateDescription
-                            , rows 6
-                            ]
-                            []
-                        ]
-                    , div [ class "form-group" ]
-                        [ label [ class "form-label" ] [ text "Category" ]
-                        , select
-                            [ class "form-input"
-                            , value model.submitCategory
-                            , onChange UpdateCategory
-                            ]
-                            [ option [ value "feature" ]
-                                [ text "Feature Request" ]
-                            , option [ value "bug" ] [ text "Bug Report" ]
-                            , option [ value "improvement" ]
-                                [ text "Improvement" ]
-                            ]
-                        ]
-                    , div [ class "form-actions" ]
-                        [ button
-                            [ onClick BackToBoard
-                            , type_ "button"
-                            , class "btn btn-secondary"
-                            ]
-                            [ text "Cancel" ]
-                        , button [ type_ "submit" , class "btn btn-primary" ]
-                            [ text "Submit Idea" ]
-                        ]
-                    ]
-                ]
-            ]
-        )
+    Layout.pageWithAuth model (
+    div [ class "submit-container" ] [ h1 [ class "page-title" ] [ text "Submit an Idea"
+                                       ]
+    , p [ class "page-subtitle" ] [ text "Have a feature request, bug report, or improvement? Share it with the community."
+      ]
+    , div [ class "card" ] [ form [ onSubmit SubmitIdea ] [ div [ class "form-group"
+                                                            ] [ label [ class "form-label"
+                                                                ] [ text "Title"
+                                                                ]
+                                                            , input [ type_ "text"
+                                                              , class "form-input"
+                                                              , placeholder "A short, descriptive title"
+                                                              , value model.submitTitle
+                                                              , onInput UpdateTitle
+                                                              ]
+                                                            ]
+                             , div [ class "form-group" ] [ label [ class "form-label"
+                                                            ] [ text "Description"
+                                                            ]
+                               , textarea [ class "form-input"
+                                 , placeholder "Describe your idea in detail. What problem does it solve? How should it work?"
+                                 , value model.submitDescription
+                                 , onInput UpdateDescription
+                                 , rows 6
+                                 ] []
+                               ]
+                             , div [ class "form-group" ] [ label [ class "form-label"
+                                                            ] [ text "Category"
+                                                            ]
+                               , select [ class "form-input"
+                                 , value model.submitCategory
+                                 , onChange UpdateCategory
+                                 ] [ option [ value "feature" ] [ text "Feature Request"
+                                     ]
+                                 , option [ value "bug" ] [ text "Bug Report" ]
+                                 , option [ value "improvement" ] [ text "Improvement"
+                                   ]
+                                 ]
+                               ]
+                             , div [ class "form-actions" ] [ button [ onClick BackToBoard
+                                                              , type_ "button"
+                                                              , class "btn btn-secondary"
+                                                              ] [ text "Cancel"
+                                                              ]
+                               , button [ type_ "submit"
+                                 , class "btn btn-primary"
+                                 ] [ text "Submit Idea" ]
+                               ]
+                             ]
+      ]
+    ]
+    )

@@ -14,130 +14,140 @@ import Ui.Components exposing (statusBadge, emptyState)
 
 viewDetail model =
     case model.selectedIdea of
+        
         Just idea ->
             Layout.page model (viewIdeaDetail model idea)
-
+        
         Nothing ->
             Layout.page model (viewNotFound model)
 
+
 viewNotFound model =
-    div [ class "mt-32" ]
-        [ emptyState "Idea not found."
-        , div [ class "text-center" ]
-            [ button [ onClick BackToBoard , class "btn btn-secondary" ]
-                [ text "Back to Board" ]
-            ]
-        ]
+    div [ class "mt-32" ] [ emptyState "Idea not found."
+    , div [ class "text-center" ] [ button [ onClick BackToBoard
+                                    , class "btn btn-secondary"
+                                    ] [ text "Back to Board" ]
+      ]
+    ]
+
 
 viewIdeaDetail model idea =
     let
-        ideaId =
-            Db.getField "id" idea
-        voteCount =
-            Db.getField "vote_count" idea
-        commentCount =
-            Db.getField "comment_count" idea
-        status =
-            Db.getField "status" idea
-        category =
-            Db.getField "category" idea
+        ideaId = Db.getField "id" idea
+        voteCount = Db.getField "vote_count" idea
+        commentCount = Db.getField "comment_count" idea
+        status = Db.getField "status" idea
+        category = Db.getField "category" idea
     in
-        div [ class "mt-32" ]
-            [ button
-                [ onClick BackToBoard , class "btn btn-ghost btn-sm mb-16" ]
-                [ text "< Back to Board" ]
-            , div [ class "card" ]
-                [ div [ class "detail-header" ]
-                    [ div [ class "flex-row-gap-8" ]
-                        [ viewCategoryBadge category , statusBadge status ]
-                    , h1 [ class "detail-title" ]
-                        [ text (Db.getField "title" idea) ]
-                    , div [ class "idea-meta" ]
-                        [ span []
-                            [ text ("by " ++ Db.getField "author_name" idea) ]
-                        , span [] [ text (Db.getField "created_at" idea) ]
-                        ]
-                    ]
-                , div [ class "detail-body" ]
-                    [ p [] [ text (Db.getField "description" idea) ] ]
-                , div [ class "detail-actions" ]
-                    [ button
-                        [ onClick (ToggleVote ideaId) , class "vote-btn" ]
-                        [ span [ class "vote-count" ] [ text voteCount ]
-                        , span [ class "vote-label" ] [ text "votes" ]
-                        ]
-                    , span [ class "idea-meta" ]
-                        [ text (commentCount ++ " comments") ]
-                    ]
-                ]
-            , viewComments model
+        div [ class "mt-32" ] [ button [ onClick BackToBoard
+                                , class "btn btn-ghost btn-sm mb-16"
+                                ] [ text "< Back to Board" ]
+        , div [ class "card" ] [ div [ class "detail-header" ] [ div [ class "flex-row-gap-8"
+                                                                 ] [ viewCategoryBadge category
+                                                                 , statusBadge status
+                                                                 ]
+                                 , h1 [ class "detail-title" ] [ text (
+                                                                 Db.getField "title" idea
+                                                                 )
+                                   ]
+                                 , div [ class "idea-meta" ] [ span [] [ text (
+                                                                         "by " ++ Db.getField "author_name" idea
+                                                                         )
+                                                               ]
+                                   , span [] [ text (
+                                               Db.getField "created_at" idea
+                                               )
+                                     ]
+                                   ]
+                                 ]
+          , div [ class "detail-body" ] [ p [] [ text (
+                                                 Db.getField "description" idea
+                                                 )
+                                          ]
             ]
+          , div [ class "detail-actions" ] [ button [ onClick (
+                                                      ToggleVote ideaId
+                                                      )
+                                             , class "vote-btn"
+                                             ] [ span [ class "vote-count" ] [ text voteCount
+                                                 ]
+                                             , span [ class "vote-label" ] [ text "votes"
+                                               ]
+                                             ]
+            , span [ class "idea-meta" ] [ text (commentCount ++ " comments") ]
+            ]
+          ]
+        , viewComments model
+        ]
+
 
 viewCategoryBadge category =
     if category == "bug" then
         span [ class "badge badge-bug" ] [ text "Bug" ]
+    else if category == "improvement" then
+        span [ class "badge badge-improvement" ] [ text "Improvement" ]
     else
-        if category == "improvement" then
-            span [ class "badge badge-improvement" ] [ text "Improvement" ]
-        else
-            span [ class "badge badge-feature" ] [ text "Feature" ]
+        span [ class "badge badge-feature" ] [ text "Feature" ]
+
 
 viewComments model =
-    div [ class "comments-section" ]
-        [ h2 [ class "comments-title" ]
-            [ text
-                (
-                "Comments (" ++
-                String.fromInt (List.length model.ideaComments) ++ ")"
-                )
-            ]
-        , viewCommentForm model
-        , viewCommentList model
-        ]
+    div [ class "comments-section" ] [ h2 [ class "comments-title" ] [ text (
+                                                                       "Comments (" ++ String.fromInt (
+                                                                                       List.length model.ideaComments
+                                                                                       ) ++ ")"
+                                                                       )
+                                       ]
+    , viewCommentForm model
+    , viewCommentList model
+    ]
+
 
 viewCommentList model =
-    div []
-        (
-        if List.isEmpty model.ideaComments then
-            [ p [ class "text-muted-sm" ]
-                [ text "No comments yet. Be the first to share your thoughts!" ]
-            ]
-        else
-            List.map viewComment model.ideaComments
-        )
+    div [] (
+    if List.isEmpty model.ideaComments then
+        [ p [ class "text-muted-sm" ] [ text "No comments yet. Be the first to share your thoughts!"
+          ]
+        ]
+    else
+        List.map viewComment model.ideaComments
+    )
+
 
 viewComment comment =
-    div [ class "comment" ]
-        [ div [ class "comment-header" ]
-            [ span [ class "comment-author" ]
-                [ text (Db.getField "author_name" comment) ]
-            , span [ class "comment-date" ]
-                [ text (Db.getField "created_at" comment) ]
-            ]
-        , div [ class "comment-body" ] [ text (Db.getField "content" comment) ]
-        ]
+    div [ class "comment" ] [ div [ class "comment-header" ] [ span [ class "comment-author"
+                                                               ] [ text (
+                                                                   Db.getField "author_name" comment
+                                                                   )
+                                                               ]
+                              , span [ class "comment-date" ] [ text (
+                                                                Db.getField "created_at" comment
+                                                                )
+                                ]
+                              ]
+    , div [ class "comment-body" ] [ text (Db.getField "content" comment) ]
+    ]
+
 
 viewCommentForm model =
     case model.currentUser of
+        
         Just _ ->
             viewCommentFormAuth model
-
+        
         Nothing ->
-            p [ class "text-secondary-sm" ]
-                [ text "Sign in to leave a comment." ]
+            p [ class "text-secondary-sm" ] [ text "Sign in to leave a comment."
+            ]
+
 
 viewCommentFormAuth model =
-    form [ onSubmit SubmitComment , class "comment-form mb-20" ]
-        [ div [ class "form-group" ]
-            [ textarea
-                [ class "form-input"
-                , placeholder "Share your thoughts..."
-                , value model.newComment
-                , onInput UpdateComment
-                , rows 3
-                ]
-                []
-            ]
-        , button [ type_ "submit" , class "btn btn-primary btn-sm" ]
-            [ text "Post Comment" ]
-        ]
+    form [ onSubmit SubmitComment , class "comment-form mb-20" ] [ div [ class "form-group"
+                                                                   ] [ textarea [ class "form-input"
+                                                                       , placeholder "Share your thoughts..."
+                                                                       , value model.newComment
+                                                                       , onInput UpdateComment
+                                                                       , rows 3
+                                                                       ] []
+                                                                   ]
+    , button [ type_ "submit" , class "btn btn-primary btn-sm" ] [ text "Post Comment"
+      ]
+    ]

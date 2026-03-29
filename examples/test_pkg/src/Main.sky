@@ -5,7 +5,6 @@ import Std.Log exposing (println)
 
 main =
     let
-        list =
-            [ 1 , 2 , 3 ]
+        list = [ 1 , 2 , 3 ]
     in
         println "List" list

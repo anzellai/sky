@@ -40,69 +40,59 @@ type alias ServerState =
 
 emptyState : ServerState
 emptyState =
-    { documents =
-        Dict.empty
-    , astCache =
-        Dict.empty
-    , typeCache =
-        Dict.empty
-    , depCache =
-        Dict.empty
+    { documents = Dict.empty
+    , astCache = Dict.empty
+    , typeCache = Dict.empty
+    , depCache = Dict.empty
     }
 
 
 startServer : () -> ()
 startServer _ =
     let
-        stateRef =
-            Ref.new  emptyState
+        stateRef = Ref.new emptyState
     in
-        serverLoop  stateRef
+        serverLoop stateRef
 
 
 serverLoop : (Ref.Ref ServerState) -> ()
 serverLoop stateRef =
-    case readMessage  () of
+    case readMessage () of
         
         Nothing ->
             ()
         
         Just body ->
             let
-                state =
-                    Ref.get  stateRef
-                method =
-                    jsonGetString  "method"  body
-                id =
-                    jsonGetRaw  "id"  body
-                newState =
-                    handleMessage  state  id  method  body
-                _ =
-                    Ref.set  newState  stateRef
+                state = Ref.get stateRef
+                method = jsonGetString "method" body
+                id = jsonGetRaw "id" body
+                newState = handleMessage state id method body
+                _ = Ref.set newState stateRef
             in
-                serverLoop  stateRef
+                serverLoop stateRef
 
 
 handleMessage : ServerState -> String -> String -> String -> ServerState
 handleMessage state id method body =
     if method == "initialize" then
-        handleInitialize  state  id
+        handleInitialize state id
     else if method == "initialized" then
         state
     else if method == "shutdown" then
-        sendAndReturn  (makeResponse  id  jsonNull)  state
+        sendAndReturn (makeResponse id jsonNull) state
     else if method == "textDocument/didOpen" then
-        handleDidOpen  state  body
+        handleDidOpen state body
     else if method == "textDocument/didChange" then
-        handleDidChange  state  body
+        handleDidChange state body
     else if method == "textDocument/hover" then
-        handleHover  state  id  body
+        handleHover state id body
     else if method == "textDocument/completion" then
-        handleCompletion  state  id  body
+        handleCompletion state id body
     else if method == "textDocument/definition" then
-        handleDefinition  state  id  body
+        handleDefinition state id body
     else if method == "textDocument/formatting" then
-        handleFormatting  state  id  body
+        handleFormatting state id body
     else
         state
 
@@ -110,8 +100,7 @@ handleMessage state id method body =
 sendAndReturn : String -> ServerState -> ServerState
 sendAndReturn msg state =
     let
-        _ =
-            writeMessage  msg
+        _ = writeMessage msg
     in
         state
 
@@ -119,8 +108,7 @@ sendAndReturn msg state =
 sendNotifyAndReturn : String -> ServerState -> ServerState
 sendNotifyAndReturn msg state =
     let
-        _ =
-            writeMessage  msg
+        _ = writeMessage msg
     in
         state
 
@@ -129,47 +117,34 @@ handleInitialize : ServerState -> String -> ServerState
 handleInitialize state id =
     let
         capabilities =
-            jsonObject
-             [ ( "textDocumentSync" , jsonInt  1 )
-            , ( "hoverProvider" , jsonBool  True )
-            , ( "completionProvider"
-            , jsonObject
-               [ ( "triggerCharacters" , jsonArray  [ jsonString  "." ] ) ]
-            )
-            , ( "definitionProvider" , jsonBool  True )
-            , ( "documentFormattingProvider" , jsonBool  True )
+            jsonObject [ ("textDocumentSync", jsonInt 1)
+            , ("hoverProvider", jsonBool True)
+            , ("completionProvider", jsonObject [ ("triggerCharacters", jsonArray [ jsonString "."
+                                                                        ])
+                                     ])
+            , ("definitionProvider", jsonBool True)
+            , ("documentFormattingProvider", jsonBool True)
             ]
         result =
-            jsonObject
-             [ ( "capabilities" , capabilities )
-            , ( "serverInfo"
-            , jsonObject
-               [ ( "name" , jsonString  "sky-lsp" )
-              , ( "version" , jsonString  "0.1.0" )
-              ]
-            )
+            jsonObject [ ("capabilities", capabilities)
+            , ("serverInfo", jsonObject [ ("name", jsonString "sky-lsp")
+                             , ("version", jsonString "0.1.0")
+                             ])
             ]
     in
-        sendAndReturn  (makeResponse  id  result)  state
+        sendAndReturn (makeResponse id result) state
 
 
 handleDidOpen : ServerState -> String -> ServerState
 handleDidOpen state body =
     let
-        params =
-            jsonGetObject  "params"  body
-        textDoc =
-            jsonGetObject  "textDocument"  params
-        uri =
-            jsonGetString  "uri"  textDoc
-        text =
-            jsonGetString  "text"  textDoc
-        newDocs =
-            Dict.insert  uri  text  state.documents
-        newState =
-            { state | documents = newDocs }
-        analyzed =
-            analyzeAndPublishDiagnostics  newState  uri  text
+        params = jsonGetObject "params" body
+        textDoc = jsonGetObject "textDocument" params
+        uri = jsonGetString "uri" textDoc
+        text = jsonGetString "text" textDoc
+        newDocs = Dict.insert uri text state.documents
+        newState = { state | documents = newDocs }
+        analyzed = analyzeAndPublishDiagnostics newState uri text
     in
         analyzed
 
@@ -177,19 +152,14 @@ handleDidOpen state body =
 handleDidChange : ServerState -> String -> ServerState
 handleDidChange state body =
     let
-        params =
-            jsonGetObject  "params"  body
-        textDoc =
-            jsonGetObject  "textDocument"  params
-        uri =
-            jsonGetString  "uri"  textDoc
-        changesArr =
-            jsonGetArrayRaw  "contentChanges"  params
-        changes =
-            jsonGetString  "text"  changesArr
+        params = jsonGetObject "params" body
+        textDoc = jsonGetObject "textDocument" params
+        uri = jsonGetString "uri" textDoc
+        changesArr = jsonGetArrayRaw "contentChanges" params
+        changes = jsonGetString "text" changesArr
         text =
-            if String.isEmpty  changes then
-                case Dict.get  uri  state.documents of
+            if String.isEmpty changes then
+                case Dict.get uri state.documents of
                     
                     Just existing ->
                         existing
@@ -198,12 +168,9 @@ handleDidChange state body =
                         ""
             else
                 changes
-        newDocs =
-            Dict.insert  uri  text  state.documents
-        newState =
-            { state | documents = newDocs }
-        analyzed =
-            analyzeAndPublishDiagnostics  newState  uri  text
+        newDocs = Dict.insert uri text state.documents
+        newState = { state | documents = newDocs }
+        analyzed = analyzeAndPublishDiagnostics newState uri text
     in
         analyzed
 
@@ -211,77 +178,61 @@ handleDidChange state body =
 analyzeAndPublishDiagnostics : ServerState -> String -> String -> ServerState
 analyzeAndPublishDiagnostics state uri text =
     let
-        lexResult =
-            Lexer.lex  text
-        parseResult =
-            Parser.parse  lexResult.tokens
+        lexResult = Lexer.lex text
+        parseResult = Parser.parse lexResult.tokens
     in
         case parseResult of
             
             Err parseErr ->
                 let
                     diag =
-                        jsonObject
-                         [ ( "range" , makeRange  0  0  0  1 )
-                        , ( "severity" , jsonInt  1 )
-                        , ( "message" , jsonString  parseErr )
+                        jsonObject [ ("range", makeRange 0 0 0 1)
+                        , ("severity", jsonInt 1)
+                        , ("message", jsonString parseErr)
                         ]
                 in
-                    sendNotifyAndReturn
-                     (
-                    makeNotification  "textDocument/publishDiagnostics"
-                     (
-                    jsonObject
-                     [ ( "uri" , jsonString  uri )
-                    , ( "diagnostics" , jsonArray  [ diag ] )
+                    sendNotifyAndReturn (
+                    makeNotification "textDocument/publishDiagnostics" (
+                    jsonObject [ ("uri", jsonString uri)
+                    , ("diagnostics", jsonArray [ diag ])
                     ]
                     )
-                    )
-                     state
+                    ) state
             
             Ok mod ->
                 let
-                    stdlibEnv =
-                        Resolver.buildStdlibEnv
-                    checkResult =
-                        Checker.checkModule  mod  (Just  stdlibEnv)
+                    stdlibEnv = Resolver.buildStdlibEnv
+                    checkResult = Checker.checkModule mod (Just stdlibEnv)
                     diagnostics =
                         case checkResult of
                             
                             Ok result ->
-                                List.map  (\msg -> makeDiagnostic  1  msg)
-                                 result.diagnostics
+                                List.map (\msg -> makeDiagnostic 1 msg) result.diagnostics
                             
                             Err err ->
-                                [ makeDiagnostic  1  err ]
-                    stateWithDeps =
-                        resolveAndCacheImports  state  uri  mod.imports
+                                [ makeDiagnostic 1 err ]
+                    stateWithDeps = resolveAndCacheImports state uri mod.imports
                 in
-                    publishAndUpdateState  stateWithDeps  uri  mod  checkResult
-                     diagnostics
+                    publishAndUpdateState stateWithDeps uri mod checkResult diagnostics
 
 
 publishAndUpdateState : ServerState -> String -> Module -> (Result String Checker.CheckResult) -> (List String) -> ServerState
 publishAndUpdateState state uri mod checkResult diagnostics =
     let
         _ =
-            writeMessage
-             (
-            makeNotification  "textDocument/publishDiagnostics"
-             (
-            jsonObject
-             [ ( "uri" , jsonString  uri )
-            , ( "diagnostics" , jsonArray  diagnostics )
+            writeMessage (
+            makeNotification "textDocument/publishDiagnostics" (
+            jsonObject [ ("uri", jsonString uri)
+            , ("diagnostics", jsonArray diagnostics)
             ]
             )
             )
-        newAstCache =
-            Dict.insert  uri  mod  state.astCache
+        newAstCache = Dict.insert uri mod state.astCache
         newTypeCache =
             case checkResult of
                 
                 Ok result ->
-                    Dict.insert  uri  result  state.typeCache
+                    Dict.insert uri result state.typeCache
                 
                 Err _ ->
                     state.typeCache
@@ -293,80 +244,70 @@ resolveAndCacheImports : ServerState -> String -> (List ImportDecl) -> ServerSta
 resolveAndCacheImports state uri imports =
     let
         fp =
-            if String.startsWith  "file://"  uri then
-                String.slice  7  (String.length  uri)  uri
+            if String.startsWith "file://" uri then
+                String.slice 7 (String.length uri) uri
             else
                 uri
-        parts =
-            String.split  "/"  fp
-        srcIdx =
-            findLastSrcIdx  parts  0  (0 - 1)
+        parts = String.split "/" fp
+        srcIdx = findLastSrcIdx parts 0 (0 - 1)
         srcRoot =
             if srcIdx >= 0 then
-                String.join  "/"  (List.take  (srcIdx + 1)  parts)
+                String.join "/" (List.take (srcIdx + 1) parts)
             else
-                case List.reverse  (String.split  "/"  fp) of
+                case List.reverse (String.split "/" fp) of
                     
                     _ :: rest ->
-                        String.join  "/"  (List.reverse  rest)
+                        String.join "/" (List.reverse rest)
                     
                     [  ] ->
                         "."
         projectRoot =
-            case List.reverse  (String.split  "/"  srcRoot) of
+            case List.reverse (String.split "/" srcRoot) of
                 
                 _ :: rest ->
-                    String.join  "/"  (List.reverse  rest)
+                    String.join "/" (List.reverse rest)
                 
                 [  ] ->
                     "."
     in
-        resolveImportsLoop  srcRoot  projectRoot  imports  state
+        resolveImportsLoop srcRoot projectRoot imports state
 
 
 resolveImportsLoop : String -> String -> (List ImportDecl) -> ServerState -> ServerState
 resolveImportsLoop srcRoot projectRoot imports st =
-    if List.isEmpty  imports then
+    if List.isEmpty imports then
         st
     else
         let
             hd =
-                case List.head  imports of
+                case List.head imports of
                     
                     Just i ->
                         i
                     
                     Nothing ->
-                        { moduleName =
-                            []
-                        , alias_ =
-                            ""
-                        , exposing_ =
-                            ExposeAll
-                        , span =
-                            emptySpan
+                        { moduleName = []
+                        , alias_ = ""
+                        , exposing_ = ExposeAll
+                        , span = emptySpan
                         }
-            tl =
-                List.drop  1  imports
-            mn =
-                String.join  "."  hd.moduleName
+            tl = List.drop 1 imports
+            mn = String.join "." hd.moduleName
             st2 =
-                resolveOneImportInline  srcRoot  projectRoot  mn  hd.moduleName
-                 hd.alias_
-                 st
+                resolveOneImportInline srcRoot projectRoot mn hd.moduleName hd.alias_ st
         in
-            resolveImportsLoop  srcRoot  projectRoot  tl  st2
+            resolveImportsLoop srcRoot projectRoot tl st2
 
 
 resolveOneImportInline : String -> String -> String -> (List String) -> String -> ServerState -> ServerState
 resolveOneImportInline sr pr mn mp ra st =
-    if Resolver.isStdlib  mn then
+    if Resolver.isStdlib mn then
         st
     else
         let
             al =
-                if String.isEmpty  ra || ra == "_" then
-                    case List.reverse  mp of
+                if String.isEmpty ra || ra == "_" then
+                    case List.reverse mp of
                         
                         last :: _ ->
                             last
@@ -376,60 +317,57 @@ resolveOneImportInline sr pr mn mp ra st =
                 else
                     ra
         in
-            case Dict.get  al  st.depCache of
+            case Dict.get al st.depCache of
                 
                 Just _ ->
                     st
                 
                 Nothing ->
-                    addDepFromFile  sr  pr  mn  mp  al  st
+                    addDepFromFile sr pr mn mp al st
 
 
 addDepFromFile : String -> String -> String -> (List String) -> String -> ServerState -> ServerState
 addDepFromFile sr pr mn mp al st =
     let
-        lp =
-            sr ++ "/" ++ String.join  "/"  mp ++ ".sky"
+        lp = sr ++ "/" ++ String.join "/" mp ++ ".sky"
     in
-        case File.readFile  lp of
+        case File.readFile lp of
             
             Ok src ->
-                addParsedDep  lp  al  mn  src  st
+                addParsedDep lp al mn src st
             
             Err _ ->
-                tryAddFfiDep  pr  al  mn  st
+                tryAddFfiDep pr al mn st
 
 
 tryAddFfiDep : String -> String -> String -> ServerState -> ServerState
 tryAddFfiDep pr al mn st =
     let
-        bindingPath =
-            Resolver.resolveBindingPath  pr  mn
+        bindingPath = Resolver.resolveBindingPath pr mn
     in
-        tryReadAndParse  bindingPath  al  mn  st
+        tryReadAndParse bindingPath al mn st
 
 
 tryReadAndParse : String -> String -> String -> ServerState -> ServerState
 tryReadAndParse path al mn st =
-    case File.readFile  path of
+    case File.readFile path of
         
         Ok src ->
-            addParsedDep  path  al  mn  src  st
+            addParsedDep path al mn src st
         
         Err _ ->
-            tryReadAndParseCwd  al  mn  st
+            tryReadAndParseCwd al mn st
 
 
 tryReadAndParseCwd : String -> String -> ServerState -> ServerState
 tryReadAndParseCwd al mn st =
     let
-        cwdPath =
-            Resolver.resolveBindingPath  "."  mn
+        cwdPath = Resolver.resolveBindingPath "." mn
     in
-        case File.readFile  cwdPath of
+        case File.readFile cwdPath of
             
             Ok src ->
-                addParsedDep  cwdPath  al  mn  src  st
+                addParsedDep cwdPath al mn src st
             
             Err _ ->
                 st
@@ -438,14 +376,11 @@ tryReadAndParseCwd al mn st =
 addParsedDep : String -> String -> String -> String -> ServerState -> ServerState
 addParsedDep fp al mn src st =
     let
-        lexResult =
-            Lexer.lex  src
-        tokens =
-            lexResult.tokens
-        parsed =
-            Parser.parse  tokens
+        lexResult = Lexer.lex src
+        tokens = lexResult.tokens
+        parsed = Parser.parse tokens
     in
-        insertDepIfParsed  fp  al  mn  parsed  st
+        insertDepIfParsed fp al mn parsed st
 
 
 insertDepIfParsed : String -> String -> String -> (Result String Module) -> ServerState -> ServerState
@@ -454,10 +389,9 @@ insertDepIfParsed fp al mn parseResult st =
         
         Ok parsedMod ->
             let
-                exps =
-                    extractExports  parsedMod
+                exps = extractExports parsedMod
             in
-                insertDep  fp  al  mn  exps  st
+                insertDep fp al mn exps st
         
         Err _ ->
             st
@@ -466,18 +400,18 @@ insertDepIfParsed fp al mn parseResult st =
 insertDep : String -> String -> String -> (List ExportedDecl) -> ServerState -> ServerState
 insertDep fp al mn exps st =
     { st
-    | depCache =
-        Dict.insert  al
-         { filePath = fp , alias_ = al , moduleName = mn , exports = exps }
-         st.depCache
+    | depCache = Dict.insert al { filePath = fp
+                                , alias_ = al
+                                , moduleName = mn
+                                , exports = exps
+                                } st.depCache
     }
 
 
 extractExports : Module -> List ExportedDecl
 extractExports mod =
     let
-        allDecls =
-            extractAllDecls  mod.declarations  []
+        allDecls = extractAllDecls mod.declarations []
     in
         case mod.exposing_ of
             
@@ -485,7 +419,7 @@ extractExports mod =
                 allDecls
             
             ExposeList names ->
-                List.filter  (\d -> listContainsStr  d.name  names)  allDecls
+                List.filter (\d -> listContainsStr d.name names) allDecls
             
             _ ->
                 allDecls
@@ -496,90 +430,77 @@ extractAllDecls decls acc =
     case decls of
         
         [  ] ->
-            List.reverse  acc
+            List.reverse acc
         
         decl :: rest ->
             case decl of
                 
                 TypeAnnotDecl name typeExpr span ->
-                    extractAllDecls  rest
-                     (
-                    makeExportedDecl  name  (renderTypeExpr  typeExpr)
-                     (getSpanLine  span) ::
-                    acc
+                    extractAllDecls rest (
+                    makeExportedDecl name (renderTypeExpr typeExpr) (
+                    getSpanLine span
+                    ) :: acc
                     )
                 
                 FunDecl name params _ span ->
-                    if hasAnnotation  name  acc then
-                        extractAllDecls  rest  acc
+                    if hasAnnotation name acc then
+                        extractAllDecls rest acc
                     else
-                        extractAllDecls  rest
-                         (
-                        makeExportedDecl  name  (inferSigFromParams  params)
-                         (getSpanLine  span) ::
-                        acc
+                        extractAllDecls rest (
+                        makeExportedDecl name (inferSigFromParams params) (
+                        getSpanLine span
+                        ) :: acc
                         )
                 
                 TypeDecl name _ _ span ->
-                    extractAllDecls  rest
-                     (
-                    makeExportedDecl  name  "type"  (getSpanLine  span) :: acc
+                    extractAllDecls rest (
+                    makeExportedDecl name "type" (getSpanLine span) :: acc
                     )
                 
                 TypeAliasDecl name _ _ span ->
-                    extractAllDecls  rest
-                     (
-                    makeExportedDecl  name  "type alias"  (getSpanLine  span) ::
-                    acc
+                    extractAllDecls rest (
+                    makeExportedDecl name "type alias" (getSpanLine span) :: acc
                     )
                 
                 _ ->
-                    extractAllDecls  rest  acc
+                    extractAllDecls rest acc
 
 
 makeExportedDecl : String -> String -> Int -> ExportedDecl
-makeExportedDecl n s l =
-    { name = n , signature = s , defLine = l }
+makeExportedDecl n s l = { name = n , signature = s , defLine = l }
 
 
 getSpanLine : SourceSpan -> Int
-getSpanLine sp =
-    sp.start
+getSpanLine sp = sp.start
 
 
 inferSigFromParams : (List Pattern) -> String
 inferSigFromParams params =
     let
-        vars =
-            [ "a" , "b" , "c" , "d" , "e" , "f" , "g" , "h" ]
-        n =
-            List.length  params
+        vars = [ "a" , "b" , "c" , "d" , "e" , "f" , "g" , "h" ]
+        n = List.length params
     in
         if n == 0 then
             "a"
         else
-            String.join  " -> "
-             (List.append  (List.take  n  vars)  [ "result" ])
+            String.join " -> " (List.append (List.take n vars) [ "result" ])
 
 
 hasAnnotation : String -> (List ExportedDecl) -> Bool
 hasAnnotation name decls =
-    List.foldl  (\d acc -> acc || d.name == name)  False  decls
+    List.foldl (\d acc -> acc || d.name == name) False decls
 
 
 listContainsStr : String -> (List String) -> Bool
-listContainsStr s xs =
-    List.foldl  (\x acc -> acc || x == s)  False  xs
+listContainsStr s xs = List.foldl (\x acc -> acc || x == s) False xs
 
 
 renderTypeExpr : TypeExpr -> String
-renderTypeExpr texpr =
-    renderTE  texpr
+renderTypeExpr texpr = renderTE texpr
 
 
 renderTE : TypeExpr -> String
-renderTE te =
-    renderTEDispatch  te
+renderTE te = renderTEDispatch te
 
 
 renderTEDispatch : TypeExpr -> String
@@ -587,20 +508,19 @@ renderTEDispatch te =
     case te of
         
         TypeRef parts args _ ->
-            renderTypeRef  (String.join  "."  parts)  args
+            renderTypeRef (String.join "." parts) args
         
         TypeVar n _ ->
             n
         
         TupleTypeExpr types _ ->
-            "( " ++
-            String.join  ", "  (List.map  renderTEDispatch  types) ++ " )"
+            "( " ++ String.join ", " (List.map renderTEDispatch types) ++ " )"
         
         UnitTypeExpr _ ->
             "()"
         
         _ ->
-            renderTEWildcard  te
+            renderTEWildcard te
 
 
 renderTEWildcard : TypeExpr -> String
@@ -614,10 +534,10 @@ renderTEWildcard te =
             "?"
         
         FunType fromT toT _ ->
-            renderTEDispatch  fromT ++ " -> " ++ renderTEDispatch  toT
+            renderTEDispatch fromT ++ " -> " ++ renderTEDispatch toT
         
         RecordTypeExpr fields _ ->
-            renderRecordFields  fields
+            renderRecordFields fields
         
         TupleTypeExpr _ _ ->
             "?"
@@ -626,65 +546,59 @@ renderTEWildcard te =
             "?"
 
 
-renderRecordFields : (List ( String , TypeExpr )) -> String
+renderRecordFields : (List (String, TypeExpr)) -> String
 renderRecordFields fields =
     let
         renderField =
             \pair ->
                 let
-                    key =
-                        fst  pair
-                    val =
-                        snd  pair
+                    key = fst pair
+                    val = snd pair
                 in
-                    key ++ " : " ++ renderTEDispatch  val
+                    key ++ " : " ++ renderTEDispatch val
     in
-        "{ " ++ String.join  " , "  (List.map  renderField  fields) ++ " }"
+        "{ " ++ String.join " , " (List.map renderField fields) ++ " }"
 
 
 renderTypeRef : String -> (List TypeExpr) -> String
 renderTypeRef base args =
-    if List.isEmpty  args then
+    if List.isEmpty args then
         base
     else
-        base ++ " " ++ String.join  " "  (List.map  renderTE  args)
+        base ++ " " ++ String.join " " (List.map renderTE args)
 
 
 renderFunType : TypeExpr -> TypeExpr -> String
 
 
-to =
-    renderTEDispatch
+to = renderTEDispatch
 
 
 uriToFilePath : String -> String
 uriToFilePath uri =
-    if String.startsWith  "file://"  uri then
-        String.slice  7  (String.length  uri)  uri
+    if String.startsWith "file://" uri then
+        String.slice 7 (String.length uri) uri
     else
         uri
 
 
 filePathToUri : String -> String
-filePathToUri path =
-    "file://" ++ path
+filePathToUri path = "file://" ++ path
 
 
 deriveSrcRoot : String -> String
 deriveSrcRoot filePath =
     let
-        parts =
-            String.split  "/"  filePath
-        srcIdx =
-            findLastSrcIdx  parts  0  (0 - 1)
+        parts = String.split "/" filePath
+        srcIdx = findLastSrcIdx parts 0 (0 - 1)
     in
         if srcIdx >= 0 then
-            String.join  "/"  (List.take  (srcIdx + 1)  parts)
+            String.join "/" (List.take (srcIdx + 1) parts)
         else
-            case List.reverse  (String.split  "/"  filePath) of
+            case List.reverse (String.split "/" filePath) of
                 
                 _ :: rest ->
-                    String.join  "/"  (List.reverse  rest)
+                    String.join "/" (List.reverse rest)
                 
                 [  ] ->
                     "."
@@ -699,25 +613,24 @@ findLastSrcIdx parts idx lastFound =
         
         part :: rest ->
             if part == "src" then
-                findLastSrcIdx  rest  (idx + 1)  idx
+                findLastSrcIdx rest (idx + 1) idx
             else
-                findLastSrcIdx  rest  (idx + 1)  lastFound
+                findLastSrcIdx rest (idx + 1) lastFound
 
 
 deriveProjectRoot : String -> String
 deriveProjectRoot srcRoot =
-    case List.reverse  (String.split  "/"  srcRoot) of
+    case List.reverse (String.split "/" srcRoot) of
         
         _ :: rest ->
-            String.join  "/"  (List.reverse  rest)
+            String.join "/" (List.reverse rest)
         
         [  ] ->
             "."
 
 
 lookupDepExport : ServerState -> String -> String -> Maybe ExportedDecl
-lookupDepExport st al fn =
-    lookupInDepCache  (Dict.get  al  st.depCache)  fn
+lookupDepExport st al fn = lookupInDepCache (Dict.get al st.depCache) fn
 
 
 lookupInDepCache : (Maybe DepModule) -> String -> Maybe ExportedDecl
@@ -725,7 +638,7 @@ lookupInDepCache maybeDep fn =
     case maybeDep of
         
         Just depMod ->
-            findExport  fn  depMod.exports
+            findExport fn depMod.exports
         
         Nothing ->
             Nothing
@@ -740,98 +653,77 @@ findExport name exports =
         
         exp :: rest ->
             if exp.name == name then
-                Just  exp
+                Just exp
             else
-                findExport  name  rest
+                findExport name rest
 
 
 makeDiagnostic : Int -> String -> String
 makeDiagnostic severity msg =
-    jsonObject
-     [ ( "range" , makeRange  0  0  0  1 )
-    , ( "severity" , jsonInt  severity )
-    , ( "message" , jsonString  msg )
+    jsonObject [ ("range", makeRange 0 0 0 1)
+    , ("severity", jsonInt severity)
+    , ("message", jsonString msg)
     ]
 
 
 makeRange : Int -> Int -> Int -> Int -> String
 makeRange startLine startChar endLine endChar =
-    jsonObject
-     [ ( "start"
-    , jsonObject
-       [ ( "line" , jsonInt  startLine )
-      , ( "character" , jsonInt  startChar )
-      ]
-    )
-    , ( "end"
-    , jsonObject
-       [ ( "line" , jsonInt  endLine ) , ( "character" , jsonInt  endChar ) ]
-    )
+    jsonObject [ ("start", jsonObject [ ("line", jsonInt startLine)
+                           , ("character", jsonInt startChar)
+                           ])
+    , ("end", jsonObject [ ("line", jsonInt endLine)
+              , ("character", jsonInt endChar)
+              ])
     ]
 
 
 handleHover : ServerState -> String -> String -> ServerState
 handleHover state id body =
     let
-        params =
-            jsonGetObject  "params"  body
-        textDoc =
-            jsonGetObject  "textDocument"  params
-        uri =
-            jsonGetString  "uri"  textDoc
-        position =
-            jsonGetObject  "position"  params
-        line =
-            jsonGetInt  "line"  position
-        character =
-            jsonGetInt  "character"  position
-        hoverResult =
-            getHoverForPosition  state  uri  line  character
+        params = jsonGetObject "params" body
+        textDoc = jsonGetObject "textDocument" params
+        uri = jsonGetString "uri" textDoc
+        position = jsonGetObject "position" params
+        line = jsonGetInt "line" position
+        character = jsonGetInt "character" position
+        hoverResult = getHoverForPosition state uri line character
     in
-        sendAndReturn  (makeResponse  id  hoverResult)  state
+        sendAndReturn (makeResponse id hoverResult) state
 
 
 getHoverForPosition : ServerState -> String -> Int -> Int -> String
 getHoverForPosition state uri line character =
-    case Dict.get  uri  state.documents of
+    case Dict.get uri state.documents of
         
         Nothing ->
             jsonNull
         
         Just source ->
             let
-                lineText =
-                    getLineAt  line  source
-                word =
-                    getWordAt  character  lineText
+                lineText = getLineAt line source
+                word = getWordAt character lineText
                 info =
-                    if String.isEmpty  word then
+                    if String.isEmpty word then
                         ""
                     else
-                        lookupTypeInfo  state  uri  word  source
+                        lookupTypeInfo state uri word source
             in
-                if String.isEmpty  info then
+                if String.isEmpty info then
                     jsonNull
                 else
-                    jsonObject
-                     [ ( "contents"
-                    , jsonObject
-                       [ ( "kind" , jsonString  "markdown" )
-                      , ( "value"
-                      , jsonString  ("```sky\n" ++ info ++ "\n```")
-                      )
-                      ]
-                    )
+                    jsonObject [ ("contents", jsonObject [ ("kind", jsonString "markdown")
+                                              , ("value", jsonString (
+                                                          "```sky\n" ++ info ++ "\n```"
+                                                          ))
+                                              ])
                     ]
 
 
 lookupTypeInfo : ServerState -> String -> String -> String -> String
 lookupTypeInfo state uri word source =
     let
-        isQualified =
-            String.contains  "."  word
-        qualParts =
-            String.split  "."  word
+        isQualified = String.contains "." word
+        qualParts = String.split "." word
         modAlias =
             case qualParts of
                 
@@ -841,7 +733,7 @@ lookupTypeInfo state uri word source =
                 [  ] ->
                     ""
         funcName =
-            case List.reverse  qualParts of
+            case List.reverse qualParts of
                 
                 f :: _ ->
                     f
@@ -850,7 +742,7 @@ lookupTypeInfo state uri word source =
                     ""
         fromDep =
             if isQualified then
-                case lookupDepExport  state  modAlias  funcName of
+                case lookupDepExport state modAlias funcName of
                     
                     Just exp ->
                         word ++ " : " ++ exp.signature
@@ -860,47 +752,45 @@ lookupTypeInfo state uri word source =
             else
                 ""
         fromStdlibMap =
-            if String.isEmpty  fromDep then
-                lookupStdlibType  word
+            if String.isEmpty fromDep then
+                lookupStdlibType word
             else
                 fromDep
         fromAnnotation =
-            if String.isEmpty  fromStdlibMap then
-                findAnnotationInSource
-                 (
+            if String.isEmpty fromStdlibMap then
+                findAnnotationInSource (
                 if isQualified then
                     funcName
                 else
                     word
-                )
-                 source
+                ) source
             else
                 fromStdlibMap
         fromTypeCheck =
-            if String.isEmpty  fromAnnotation then
-                case Dict.get  uri  state.typeCache of
+            if String.isEmpty fromAnnotation then
+                case Dict.get uri state.typeCache of
                     
                     Just checkResult ->
-                        lookupInTypedDecls  word  checkResult.declarations
+                        lookupInTypedDecls word checkResult.declarations
                     
                     Nothing ->
                         ""
             else
                 fromAnnotation
         fromAst =
-            if String.isEmpty  fromTypeCheck then
-                case Dict.get  uri  state.astCache of
+            if String.isEmpty fromTypeCheck then
+                case Dict.get uri state.astCache of
                     
                     Just mod ->
-                        inferFromAst  word  mod.declarations
+                        inferFromAst word mod.declarations
                     
                     Nothing ->
                         ""
             else
                 fromTypeCheck
         fromLocal =
-            if String.isEmpty  fromAst then
-                inferLocalBinding  state  uri  word  source  line
+            if String.isEmpty fromAst then
+                inferLocalBinding state uri word source line
             else
                 fromAst
     in
@@ -909,7 +799,7 @@ lookupTypeInfo state uri word source =
 
 lookupStdlibType : String -> String
 lookupStdlibType name =
-    case Dict.get  name  stdlibTypeMap of
+    case Dict.get name stdlibTypeMap of
         
         Just sig ->
             name ++ " : " ++ sig
@@ -920,122 +810,119 @@ lookupStdlibType name =
 
 stdlibTypeMap : Dict.Dict String String
 stdlibTypeMap =
-    Dict.fromList
-     [ ( "identity" , "a -> a" )
-    , ( "not" , "Bool -> Bool" )
-    , ( "always" , "a -> b -> a" )
-    , ( "fst" , "( a, b ) -> a" )
-    , ( "snd" , "( a, b ) -> b" )
-    , ( "clamp" , "comparable -> comparable -> comparable -> comparable" )
-    , ( "modBy" , "Int -> Int -> Int" )
-    , ( "errorToString" , "Error -> String" )
-    , ( "Ok" , "a -> Result e a" )
-    , ( "Err" , "e -> Result e a" )
-    , ( "Just" , "a -> Maybe a" )
-    , ( "Nothing" , "Maybe a" )
-    , ( "True" , "Bool" )
-    , ( "False" , "Bool" )
-    , ( "println" , "String -> ()" )
-    , ( "String.toUpper" , "String -> String" )
-    , ( "String.toLower" , "String -> String" )
-    , ( "String.length" , "String -> Int" )
-    , ( "String.fromInt" , "Int -> String" )
-    , ( "String.fromFloat" , "Float -> String" )
-    , ( "String.join" , "String -> List String -> String" )
-    , ( "String.split" , "String -> String -> List String" )
-    , ( "String.contains" , "String -> String -> Bool" )
-    , ( "String.startsWith" , "String -> String -> Bool" )
-    , ( "String.trim" , "String -> String" )
-    , ( "String.isEmpty" , "String -> Bool" )
-    , ( "String.slice" , "Int -> Int -> String -> String" )
-    , ( "String.replace" , "String -> String -> String -> String" )
-    , ( "String.toInt" , "String -> Maybe Int" )
-    , ( "String.append" , "String -> String -> String" )
-    , ( "String.toBytes" , "String -> Bytes" )
-    , ( "List.map" , "(a -> b) -> List a -> List b" )
-    , ( "List.filter" , "(a -> Bool) -> List a -> List a" )
-    , ( "List.foldl" , "(a -> b -> b) -> b -> List a -> b" )
-    , ( "List.foldr" , "(a -> b -> b) -> b -> List a -> b" )
-    , ( "List.head" , "List a -> Maybe a" )
-    , ( "List.length" , "List a -> Int" )
-    , ( "List.reverse" , "List a -> List a" )
-    , ( "List.isEmpty" , "List a -> Bool" )
-    , ( "List.append" , "List a -> List a -> List a" )
-    , ( "List.concat" , "List (List a) -> List a" )
-    , ( "List.concatMap" , "(a -> List b) -> List a -> List b" )
-    , ( "List.take" , "Int -> List a -> List a" )
-    , ( "List.drop" , "Int -> List a -> List a" )
-    , ( "List.sort" , "List comparable -> List comparable" )
-    , ( "List.sortBy" , "(a -> comparable) -> List a -> List a" )
-    , ( "List.filterMap" , "(a -> Maybe b) -> List a -> List b" )
-    , ( "List.indexedMap" , "(Int -> a -> b) -> List a -> List b" )
-    , ( "List.zip" , "List a -> List b -> List ( a, b )" )
-    , ( "Dict.empty" , "Dict k v" )
-    , ( "Dict.insert" , "k -> v -> Dict k v -> Dict k v" )
-    , ( "Dict.get" , "k -> Dict k v -> Maybe v" )
-    , ( "Dict.remove" , "k -> Dict k v -> Dict k v" )
-    , ( "Dict.keys" , "Dict k v -> List k" )
-    , ( "Dict.values" , "Dict k v -> List v" )
-    , ( "Dict.member" , "k -> Dict k v -> Bool" )
-    , ( "Dict.map" , "(k -> v -> w) -> Dict k v -> Dict k w" )
-    , ( "Dict.union" , "Dict k v -> Dict k v -> Dict k v" )
-    , ( "Dict.fromList" , "List ( k, v ) -> Dict k v" )
-    , ( "Set.empty" , "Set a" )
-    , ( "Set.insert" , "a -> Set a -> Set a" )
-    , ( "Set.remove" , "a -> Set a -> Set a" )
-    , ( "Set.member" , "a -> Set a -> Bool" )
-    , ( "Set.fromList" , "List a -> Set a" )
-    , ( "Maybe.withDefault" , "a -> Maybe a -> a" )
-    , ( "Maybe.map" , "(a -> b) -> Maybe a -> Maybe b" )
-    , ( "Maybe.andThen" , "(a -> Maybe b) -> Maybe a -> Maybe b" )
-    , ( "Result.withDefault" , "a -> Result e a -> a" )
-    , ( "Result.map" , "(a -> b) -> Result e a -> Result e b" )
-    , ( "Result.andThen" , "(a -> Result e b) -> Result e a -> Result e b" )
-    , ( "Result.mapError" , "(e -> f) -> Result e a -> Result f a" )
-    , ( "Task.succeed" , "a -> Task err a" )
-    , ( "Task.fail" , "err -> Task err a" )
-    , ( "Task.andThen" , "(a -> Task err b) -> Task err a -> Task err b" )
-    , ( "Task.map" , "(a -> b) -> Task err a -> Task err b" )
-    , ( "Task.perform" , "Task err a -> a" )
-    , ( "Task.run" , "Task err a -> Result err a" )
-    , ( "Task.sequence" , "List (Task err a) -> Task err (List a)" )
-    , ( "File.readFile" , "String -> Task String String" )
-    , ( "File.writeFile" , "String -> String -> Task String ()" )
-    , ( "File.mkdirAll" , "String -> Task String ()" )
-    , ( "File.readDir" , "String -> Task String (List String)" )
-    , ( "File.exists" , "String -> Task String Bool" )
-    , ( "Process.run" , "String -> List String -> Task String String" )
-    , ( "Process.exit" , "Int -> ()" )
-    , ( "Process.getCwd" , "() -> Task String String" )
-    , ( "Io.readLine" , "() -> Task String String" )
-    , ( "Io.writeStdout" , "String -> Task String ()" )
-    , ( "Io.writeStderr" , "String -> Task String ()" )
-    , ( "Time.now" , "() -> Task String Int" )
-    , ( "Http.get" , "String -> Task String Response" )
-    , ( "Http.post" , "String -> String -> Task String Response" )
-    , ( "Server.listen" , "Int -> List Route -> Task String ()" )
-    , ( "Server.get" , "String -> Handler -> Route" )
-    , ( "Server.post" , "String -> Handler -> Route" )
-    , ( "Server.any" , "String -> Handler -> Route" )
-    , ( "Server.text" , "String -> Response" )
-    , ( "Server.html" , "String -> Response" )
-    , ( "Server.json" , "String -> Response" )
-    , ( "Server.redirect" , "String -> Response" )
-    , ( "Server.withStatus" , "Int -> Response -> Response" )
-    , ( "Server.withHeader" , "String -> String -> Response -> Response" )
-    , ( "Server.withCookie"
-    , "String -> String -> String -> Response -> Response"
-    )
-    , ( "Server.queryParam" , "String -> Request -> Maybe String" )
-    , ( "Server.formValue" , "String -> Request -> String" )
-    , ( "Server.method" , "Request -> String" )
-    , ( "Server.body" , "Request -> String" )
-    , ( "Server.getCookie" , "String -> Request -> Maybe String" )
-    , ( "Ref.new" , "a -> Ref a" )
-    , ( "Ref.get" , "Ref a -> a" )
-    , ( "Ref.set" , "a -> Ref a -> ()" )
-    , ( "Args.getArgs" , "() -> List String" )
-    , ( "Args.getArg" , "Int -> Maybe String" )
+    Dict.fromList [ ("identity", "a -> a")
+    , ("not", "Bool -> Bool")
+    , ("always", "a -> b -> a")
+    , ("fst", "( a, b ) -> a")
+    , ("snd", "( a, b ) -> b")
+    , ("clamp", "comparable -> comparable -> comparable -> comparable")
+    , ("modBy", "Int -> Int -> Int")
+    , ("errorToString", "Error -> String")
+    , ("Ok", "a -> Result e a")
+    , ("Err", "e -> Result e a")
+    , ("Just", "a -> Maybe a")
+    , ("Nothing", "Maybe a")
+    , ("True", "Bool")
+    , ("False", "Bool")
+    , ("println", "String -> ()")
+    , ("String.toUpper", "String -> String")
+    , ("String.toLower", "String -> String")
+    , ("String.length", "String -> Int")
+    , ("String.fromInt", "Int -> String")
+    , ("String.fromFloat", "Float -> String")
+    , ("String.join", "String -> List String -> String")
+    , ("String.split", "String -> String -> List String")
+    , ("String.contains", "String -> String -> Bool")
+    , ("String.startsWith", "String -> String -> Bool")
+    , ("String.trim", "String -> String")
+    , ("String.isEmpty", "String -> Bool")
+    , ("String.slice", "Int -> Int -> String -> String")
+    , ("String.replace", "String -> String -> String -> String")
+    , ("String.toInt", "String -> Maybe Int")
+    , ("String.append", "String -> String -> String")
+    , ("String.toBytes", "String -> Bytes")
+    , ("List.map", "(a -> b) -> List a -> List b")
+    , ("List.filter", "(a -> Bool) -> List a -> List a")
+    , ("List.foldl", "(a -> b -> b) -> b -> List a -> b")
+    , ("List.foldr", "(a -> b -> b) -> b -> List a -> b")
+    , ("List.head", "List a -> Maybe a")
+    , ("List.length", "List a -> Int")
+    , ("List.reverse", "List a -> List a")
+    , ("List.isEmpty", "List a -> Bool")
+    , ("List.append", "List a -> List a -> List a")
+    , ("List.concat", "List (List a) -> List a")
+    , ("List.concatMap", "(a -> List b) -> List a -> List b")
+    , ("List.take", "Int -> List a -> List a")
+    , ("List.drop", "Int -> List a -> List a")
+    , ("List.sort", "List comparable -> List comparable")
+    , ("List.sortBy", "(a -> comparable) -> List a -> List a")
+    , ("List.filterMap", "(a -> Maybe b) -> List a -> List b")
+    , ("List.indexedMap", "(Int -> a -> b) -> List a -> List b")
+    , ("List.zip", "List a -> List b -> List ( a, b )")
+    , ("Dict.empty", "Dict k v")
+    , ("Dict.insert", "k -> v -> Dict k v -> Dict k v")
+    , ("Dict.get", "k -> Dict k v -> Maybe v")
+    , ("Dict.remove", "k -> Dict k v -> Dict k v")
+    , ("Dict.keys", "Dict k v -> List k")
+    , ("Dict.values", "Dict k v -> List v")
+    , ("Dict.member", "k -> Dict k v -> Bool")
+    , ("Dict.map", "(k -> v -> w) -> Dict k v -> Dict k w")
+    , ("Dict.union", "Dict k v -> Dict k v -> Dict k v")
+    , ("Dict.fromList", "List ( k, v ) -> Dict k v")
+    , ("Set.empty", "Set a")
+    , ("Set.insert", "a -> Set a -> Set a")
+    , ("Set.remove", "a -> Set a -> Set a")
+    , ("Set.member", "a -> Set a -> Bool")
+    , ("Set.fromList", "List a -> Set a")
+    , ("Maybe.withDefault", "a -> Maybe a -> a")
+    , ("Maybe.map", "(a -> b) -> Maybe a -> Maybe b")
+    , ("Maybe.andThen", "(a -> Maybe b) -> Maybe a -> Maybe b")
+    , ("Result.withDefault", "a -> Result e a -> a")
+    , ("Result.map", "(a -> b) -> Result e a -> Result e b")
+    , ("Result.andThen", "(a -> Result e b) -> Result e a -> Result e b")
+    , ("Result.mapError", "(e -> f) -> Result e a -> Result f a")
+    , ("Task.succeed", "a -> Task err a")
+    , ("Task.fail", "err -> Task err a")
+    , ("Task.andThen", "(a -> Task err b) -> Task err a -> Task err b")
+    , ("Task.map", "(a -> b) -> Task err a -> Task err b")
+    , ("Task.perform", "Task err a -> a")
+    , ("Task.run", "Task err a -> Result err a")
+    , ("Task.sequence", "List (Task err a) -> Task err (List a)")
+    , ("File.readFile", "String -> Task String String")
+    , ("File.writeFile", "String -> String -> Task String ()")
+    , ("File.mkdirAll", "String -> Task String ()")
+    , ("File.readDir", "String -> Task String (List String)")
+    , ("File.exists", "String -> Task String Bool")
+    , ("Process.run", "String -> List String -> Task String String")
+    , ("Process.exit", "Int -> ()")
+    , ("Process.getCwd", "() -> Task String String")
+    , ("Io.readLine", "() -> Task String String")
+    , ("Io.writeStdout", "String -> Task String ()")
+    , ("Io.writeStderr", "String -> Task String ()")
+    , ("Time.now", "() -> Task String Int")
+    , ("Http.get", "String -> Task String Response")
+    , ("Http.post", "String -> String -> Task String Response")
+    , ("Server.listen", "Int -> List Route -> Task String ()")
+    , ("Server.get", "String -> Handler -> Route")
+    , ("Server.post", "String -> Handler -> Route")
+    , ("Server.any", "String -> Handler -> Route")
+    , ("Server.text", "String -> Response")
+    , ("Server.html", "String -> Response")
+    , ("Server.json", "String -> Response")
+    , ("Server.redirect", "String -> Response")
+    , ("Server.withStatus", "Int -> Response -> Response")
+    , ("Server.withHeader", "String -> String -> Response -> Response")
+    , ("Server.withCookie", "String -> String -> String -> Response -> Response")
+    , ("Server.queryParam", "String -> Request -> Maybe String")
+    , ("Server.formValue", "String -> Request -> String")
+    , ("Server.method", "Request -> String")
+    , ("Server.body", "Request -> String")
+    , ("Server.getCookie", "String -> Request -> Maybe String")
+    , ("Ref.new", "a -> Ref a")
+    , ("Ref.get", "Ref a -> a")
+    , ("Ref.set", "a -> Ref a -> ()")
+    , ("Args.getArgs", "() -> List String")
+    , ("Args.getArg", "Int -> Maybe String")
     ]
 
 
@@ -1050,7 +937,7 @@ lookupInTypedDecls name decls =
             if td.name == name then
                 name ++ " : " ++ td.prettyType
             else
-                lookupInTypedDecls  name  rest
+                lookupInTypedDecls name rest
 
 
 inferFromAst : String -> (List Declaration) -> String
@@ -1066,13 +953,18 @@ inferFromAst name decls =
                 FunDecl fname params _ _ ->
                     if fname == name then
                         let
-                            paramCount =
-                                List.length  params
+                            paramCount = List.length params
                             paramTypes =
-                                List.map  (\_ -> "a")
-                                 (
-                                List.take  paramCount
-                                 [ 1 , 2 , 3 , 4 , 5 , 6 , 7 , 8 ]
+                                List.map (\_ -> "a") (
+                                List.take paramCount [ 1
+                                , 2
+                                , 3
+                                , 4
+                                , 5
+                                , 6
+                                , 7
+                                , 8
+                                ]
                                 )
                             vars =
                                 [ "a"
@@ -1084,46 +976,41 @@ inferFromAst name decls =
                                 , "g"
                                 , "h"
                                 ]
-                            typedParams =
-                                List.take  paramCount  vars
+                            typedParams = List.take paramCount vars
                         in
                             if paramCount == 0 then
                                 name ++ " : a"
                             else
-                                name ++
-                                " : " ++
-                                String.join  " -> "
-                                 (List.append  typedParams  [ "result" ])
+                                name ++ " : " ++ String.join " -> " (
+                                                 List.append typedParams [ "result"
+                                                 ]
+                                                 )
                     else
-                        inferFromAst  name  rest
+                        inferFromAst name rest
                 
                 _ ->
-                    inferFromAst  name  rest
+                    inferFromAst name rest
 
 
 inferLocalBinding : ServerState -> String -> String -> String -> Int -> String
 inferLocalBinding state uri word source line =
     let
-        assignmentLine =
-            findAssignmentLine  word  source  line
-        rhsExpr =
-            extractRhsExpr  assignmentLine
+        assignmentLine = findAssignmentLine word source line
+        rhsExpr = extractRhsExpr assignmentLine
     in
-        if String.isEmpty  rhsExpr then
+        if String.isEmpty rhsExpr then
             ""
         else
-            inferRhsType  state  uri  rhsExpr  source
+            inferRhsType state uri rhsExpr source
 
 
 findAssignmentLine : String -> String -> Int -> String
 findAssignmentLine word source cursorLine =
     let
-        lines =
-            String.split  "\n"  source
-        pattern =
-            word ++ " ="
+        lines = String.split "\n" source
+        pattern = word ++ " ="
     in
-        findAssignmentLineLoop  lines  pattern  0  cursorLine
+        findAssignmentLineLoop lines pattern 0 cursorLine
 
 
 findAssignmentLineLoop : (List String) -> String -> Int -> Int -> String
@@ -1134,38 +1021,35 @@ findAssignmentLineLoop lines pattern idx cursorLine =
             ""
         
         line :: rest ->
-            if idx <= cursorLine &&
-            String.contains  pattern  (String.trim  line) then
+            if idx <= cursorLine && String.contains pattern (String.trim line) then
                 let
                     nextLine =
                         case rest of
                             
                             next :: _ ->
-                                String.trim  next
+                                String.trim next
                             
                             [  ] ->
                                 ""
                 in
-                    if String.isEmpty  nextLine then
+                    if String.isEmpty nextLine then
                         ""
                     else
                         nextLine
             else
-                findAssignmentLineLoop  rest  pattern  (idx + 1)  cursorLine
+                findAssignmentLineLoop rest pattern (idx + 1) cursorLine
 
 
 extractRhsExpr : String -> String
-extractRhsExpr line =
-    String.trim  line
+extractRhsExpr line = String.trim line
 
 
 inferRhsType : ServerState -> String -> String -> String -> String
 inferRhsType state uri expr source =
     let
-        parts =
-            String.split  " "  expr
+        parts = String.split " " expr
         callee =
-            case List.head  parts of
+            case List.head parts of
                 
                 Just c ->
                     c
@@ -1173,8 +1057,8 @@ inferRhsType state uri expr source =
                 Nothing ->
                     ""
     in
-        if String.contains  "."  callee then
-            inferQualifiedCallType  state  uri  callee  source
+        if String.contains "." callee then
+            inferQualifiedCallType state uri callee source
         else
             ""
 
@@ -1182,10 +1066,9 @@ inferRhsType state uri expr source =
 inferQualifiedCallType : ServerState -> String -> String -> String -> String
 inferQualifiedCallType state uri qualName source =
     let
-        callParts =
-            String.split  "."  qualName
+        callParts = String.split "." qualName
         modAlias =
-            case List.head  callParts of
+            case List.head callParts of
                 
                 Just m ->
                     m
@@ -1193,28 +1076,26 @@ inferQualifiedCallType state uri qualName source =
                 Nothing ->
                     ""
         funcName =
-            case List.reverse  callParts of
+            case List.reverse callParts of
                 
                 f :: _ ->
                     f
                 
                 [  ] ->
                     ""
-        depResult =
-            lookupDepExport  state  modAlias  funcName
+        depResult = lookupDepExport state modAlias funcName
     in
         case depResult of
             
             Just exp ->
-                extractReturnType  exp.signature
+                extractReturnType exp.signature
             
             Nothing ->
                 let
-                    annotResult =
-                        findAnnotationInSource  funcName  source
+                    annotResult = findAnnotationInSource funcName source
                 in
-                    if not  (String.isEmpty  annotResult) then
-                        extractReturnTypeFromAnnot  annotResult
+                    if not (String.isEmpty annotResult) then
+                        extractReturnTypeFromAnnot annotResult
                     else
                         ""
 
@@ -1222,10 +1103,9 @@ inferQualifiedCallType state uri qualName source =
 extractReturnType : String -> String
 extractReturnType sig =
     let
-        parts =
-            String.split  " -> "  sig
+        parts = String.split " -> " sig
         lastPart =
-            case List.reverse  parts of
+            case List.reverse parts of
                 
                 l :: _ ->
                     l
@@ -1239,62 +1119,58 @@ extractReturnType sig =
 extractReturnTypeFromAnnot : String -> String
 extractReturnTypeFromAnnot annot =
     let
-        colonIdx =
-            findCharInString  ':'  annot  0
+        colonIdx = findCharInString ':' annot 0
         typePart =
             if colonIdx > 0 then
-                String.trim
-                 (String.slice  (colonIdx + 1)  (String.length  annot)  annot)
+                String.trim (
+                String.slice (colonIdx + 1) (String.length annot) annot
+                )
             else
                 annot
     in
-        extractReturnType  typePart
+        extractReturnType typePart
 
 
 findCharInString : Char -> String -> Int -> Int
 findCharInString ch str idx =
-    if idx >= String.length  str then
+    if idx >= String.length str then
         -1
-    else if String.slice  idx  (idx + 1)  str == String.fromChar  ch then
+    else if String.slice idx (idx + 1) str == String.fromChar ch then
         idx
     else
-        findCharInString  ch  str  (idx + 1)
+        findCharInString ch str (idx + 1)
 
 
 getLineAt : Int -> String -> String
-getLineAt lineNum source =
-    getLineAtLoop  lineNum  source  0  0
+getLineAt lineNum source = getLineAtLoop lineNum source 0 0
 
 
 getLineAtLoop : Int -> String -> Int -> Int -> String
 getLineAtLoop target source currentLine idx =
-    if idx >= String.length  source then
+    if idx >= String.length source then
         ""
     else
         let
-            ch =
-                String.slice  idx  (idx + 1)  source
+            ch = String.slice idx (idx + 1) source
         in
             if ch == "\n" then
                 if currentLine == target then
-                    String.slice  (findLineStart  currentLine  source  idx)  idx
-                     source
+                    String.slice (findLineStart currentLine source idx) idx source
                 else
-                    getLineAtLoop  target  source  (currentLine + 1)  (idx + 1)
-            else if idx == String.length  source - 1 then
+                    getLineAtLoop target source (currentLine + 1) (idx + 1)
+            else if idx == String.length source - 1 then
                 if currentLine == target then
-                    String.slice  (findLineStart  currentLine  source  idx)
-                     (idx + 1)
-                     source
+                    String.slice (findLineStart currentLine source idx) (
+                    idx + 1
+                    ) source
                 else
                     ""
             else
-                getLineAtLoop  target  source  currentLine  (idx + 1)
+                getLineAtLoop target source currentLine (idx + 1)
 
 
 findLineStart : Int -> String -> Int -> Int
-findLineStart lineNum source endIdx =
-    findLineStartLoop  source  (endIdx - 1)
+findLineStart lineNum source endIdx = findLineStartLoop source (endIdx - 1)
 
 
 findLineStartLoop : String -> Int -> Int
@@ -1303,20 +1179,18 @@ findLineStartLoop source idx =
         0
     else
         let
-            ch =
-                String.slice  idx  (idx + 1)  source
+            ch = String.slice idx (idx + 1) source
         in
             if ch == "\n" then
                 idx + 1
             else
-                findLineStartLoop  source  (idx - 1)
+                findLineStartLoop source (idx - 1)
 
 
 getWordAt : Int -> String -> String
 getWordAt col lineText =
     let
-        len =
-            String.length  lineText
+        len = String.length lineText
         effectiveCol =
             if col >= len then
                 len - 1
@@ -1327,12 +1201,10 @@ getWordAt col lineText =
             ""
         else
             let
-                wordStart =
-                    findWordStart  lineText  effectiveCol
-                wordEnd =
-                    findWordEnd  lineText  effectiveCol
+                wordStart = findWordStart lineText effectiveCol
+                wordEnd = findWordEnd lineText effectiveCol
             in
-                String.slice  wordStart  wordEnd  lineText
+                String.slice wordStart wordEnd lineText
 
 
 findWordStart : String -> Int -> Int
@@ -1341,111 +1213,48 @@ findWordStart text idx =
         0
     else
         let
-            ch =
-                String.slice  (idx - 1)  idx  text
+            ch = String.slice (idx - 1) idx text
         in
-            if isIdentChar  ch || ch == "." then
-                findWordStart  text  (idx - 1)
+            if isIdentChar ch || ch == "." then
+                findWordStart text (idx - 1)
             else
                 idx
 
 
 findWordEnd : String -> Int -> Int
 findWordEnd text idx =
-    if idx >= String.length  text then
+    if idx >= String.length text then
         idx
     else
         let
-            ch =
-                String.slice  idx  (idx + 1)  text
+            ch = String.slice idx (idx + 1) text
         in
-            if isIdentChar  ch || ch == "." then
-                findWordEnd  text  (idx + 1)
+            if isIdentChar ch || ch == "." then
+                findWordEnd text (idx + 1)
             else
                 idx
 
 
 isIdentChar : String -> Bool
 isIdentChar ch =
-    ch == "_" ||
-    ch == "a" ||
-    ch == "b" ||
-    ch == "c" ||
-    ch == "d" ||
-    ch == "e" ||
-    ch == "f" ||
-    ch == "g" ||
-    ch == "h" ||
-    ch == "i" ||
-    ch == "j" ||
-    ch == "k" ||
-    ch == "l" ||
-    ch == "m" ||
-    ch == "n" ||
-    ch == "o" ||
-    ch == "p" ||
-    ch == "q" ||
-    ch == "r" ||
-    ch == "s" ||
-    ch == "t" ||
-    ch == "u" ||
-    ch == "v" ||
-    ch == "w" ||
-    ch == "x" ||
-    ch == "y" ||
-    ch == "z" ||
-    ch == "A" ||
-    ch == "B" ||
-    ch == "C" ||
-    ch == "D" ||
-    ch == "E" ||
-    ch == "F" ||
-    ch == "G" ||
-    ch == "H" ||
-    ch == "I" ||
-    ch == "J" ||
-    ch == "K" ||
-    ch == "L" ||
-    ch == "M" ||
-    ch == "N" ||
-    ch == "O" ||
-    ch == "P" ||
-    ch == "Q" ||
-    ch == "R" ||
-    ch == "S" ||
-    ch == "T" ||
-    ch == "U" ||
-    ch == "V" ||
-    ch == "W" ||
-    ch == "X" ||
-    ch == "Y" ||
-    ch == "Z" ||
-    ch == "0" ||
-    ch == "1" ||
-    ch == "2" ||
-    ch == "3" ||
-    ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
+    ch == "_" || ch == "a" || ch == "b" || ch == "c" || ch == "d" || ch == "e" || ch == "f" || ch == "g" || ch == "h" || ch == "i" || ch == "j" || ch == "k" || ch == "l" || ch == "m" || ch == "n" || ch == "o" || ch == "p" || ch == "q" || ch == "r" || ch == "s" || ch == "t" || ch == "u" || ch == "v" || ch == "w" || ch == "x" || ch == "y" || ch == "z" || ch == "A" || ch == "B" || ch == "C" || ch == "D" || ch == "E" || ch == "F" || ch == "G" || ch == "H" || ch == "I" || ch == "J" || ch == "K" || ch == "L" || ch == "M" || ch == "N" || ch == "O" || ch == "P" || ch == "Q" || ch == "R" || ch == "S" || ch == "T" || ch == "U" || ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z" || ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
 
 
 findAnnotationInSource : String -> String -> String
-findAnnotationInSource name source =
-    findAnnotationLoop  name  source  0
+findAnnotationInSource name source = findAnnotationLoop name source 0
 
 
 findAnnotationLoop : String -> String -> Int -> String
 findAnnotationLoop name source idx =
     let
-        searchFor =
-            name ++ " : "
-        searchLen =
-            String.length  searchFor
+        searchFor = name ++ " : "
+        searchLen = String.length searchFor
     in
-        if idx + searchLen > String.length  source then
+        if idx + searchLen > String.length source then
             ""
         else
             let
-                candidate =
-                    String.slice  idx  (idx + searchLen)  source
+                candidate = String.slice idx (idx + searchLen) source
             in
                 if candidate == searchFor then
                     let
@@ -1453,65 +1262,54 @@ findAnnotationLoop name source idx =
                             if idx == 0 then
                                 True
                             else
-                                String.slice  (idx - 1)  idx  source == "\n"
+                                String.slice (idx - 1) idx source == "\n"
                     in
                         if atStart then
                             let
                                 restOfLine =
-                                    extractUntilNewline  source
-                                     (idx + searchLen)
+                                    extractUntilNewline source (idx + searchLen)
                             in
                                 name ++ " : " ++ restOfLine
                         else
-                            findAnnotationLoop  name  source  (idx + 1)
+                            findAnnotationLoop name source (idx + 1)
                 else
-                    findAnnotationLoop  name  source  (idx + 1)
+                    findAnnotationLoop name source (idx + 1)
 
 
 extractUntilNewline : String -> Int -> String
 extractUntilNewline source idx =
-    if idx >= String.length  source then
+    if idx >= String.length source then
         ""
     else
         let
-            ch =
-                String.slice  idx  (idx + 1)  source
+            ch = String.slice idx (idx + 1) source
         in
             if ch == "\n" then
                 ""
             else
-                ch ++ extractUntilNewline  source  (idx + 1)
+                ch ++ extractUntilNewline source (idx + 1)
 
 
 handleCompletion : ServerState -> String -> String -> ServerState
 handleCompletion state id body =
     let
-        params =
-            jsonGetObject  "params"  body
-        textDoc =
-            jsonGetObject  "textDocument"  params
-        uri =
-            jsonGetString  "uri"  textDoc
-        position =
-            jsonGetObject  "position"  params
-        line =
-            jsonGetInt  "line"  position
-        character =
-            jsonGetInt  "character"  position
+        params = jsonGetObject "params" body
+        textDoc = jsonGetObject "textDocument" params
+        uri = jsonGetString "uri" textDoc
+        position = jsonGetObject "position" params
+        line = jsonGetInt "line" position
+        character = jsonGetInt "character" position
         lineText =
-            case Dict.get  uri  state.documents of
+            case Dict.get uri state.documents of
                 
                 Just source ->
-                    getLineAt  line  source
+                    getLineAt line source
                 
                 Nothing ->
                     ""
-        prefix =
-            getCompletionPrefix  character  lineText
-        isQualified =
-            String.contains  "."  prefix
-        qualParts =
-            String.split  "."  prefix
+        prefix = getCompletionPrefix character lineText
+        isQualified = String.contains "." prefix
+        qualParts = String.split "." prefix
         modulePart =
             case qualParts of
                 
@@ -1542,29 +1340,25 @@ handleCompletion state id body =
             if isQualified then
                 []
             else
-                List.filterMap
-                 (
+                List.filterMap (
                 \kw ->
-                    if String.isEmpty  prefix || String.startsWith  prefix  kw then
-                        Just
-                         (
-                        jsonObject
-                         [ ( "label" , jsonString  kw )
-                        , ( "kind" , jsonInt  14 )
+                    if String.isEmpty prefix || String.startsWith prefix kw then
+                        Just (
+                        jsonObject [ ("label", jsonString kw)
+                        , ("kind", jsonInt 14)
                         ]
                         )
                     else
                         Nothing
-                )
-                 keywords
+                ) keywords
         localItems =
             if isQualified then
                 []
             else
-                case Dict.get  uri  state.astCache of
+                case Dict.get uri state.astCache of
                     
                     Just mod ->
-                        completionsFromAst  mod.declarations  prefix
+                        completionsFromAst mod.declarations prefix
                     
                     Nothing ->
                         []
@@ -1572,29 +1366,30 @@ handleCompletion state id body =
             if isQualified then
                 []
             else
-                completionsFromStdlib  prefix
+                completionsFromStdlib prefix
         moduleItems =
             if isQualified then
-                completionsForModule  state  modulePart
+                completionsForModule state modulePart
             else
                 []
         allItems =
-            List.concat
-             [ keywordItems , localItems , stdlibItems , moduleItems ]
+            List.concat [ keywordItems
+            , localItems
+            , stdlibItems
+            , moduleItems
+            ]
         result =
-            jsonObject
-             [ ( "isIncomplete" , jsonBool  True )
-            , ( "items" , jsonArray  allItems )
+            jsonObject [ ("isIncomplete", jsonBool True)
+            , ("items", jsonArray allItems)
             ]
     in
-        sendAndReturn  (makeResponse  id  result)  state
+        sendAndReturn (makeResponse id result) state
 
 
 getCompletionPrefix : Int -> String -> String
 getCompletionPrefix col lineText =
     let
-        len =
-            String.length  lineText
+        len = String.length lineText
         effectiveCol =
             if col > len then
                 len
@@ -1605,10 +1400,9 @@ getCompletionPrefix col lineText =
             ""
         else
             let
-                start =
-                    findCompletionStart  lineText  (effectiveCol - 1)
+                start = findCompletionStart lineText (effectiveCol - 1)
             in
-                String.slice  start  effectiveCol  lineText
+                String.slice start effectiveCol lineText
 
 
 findCompletionStart : String -> Int -> Int
@@ -1617,27 +1411,25 @@ findCompletionStart text idx =
         0
     else
         let
-            ch =
-                String.slice  (idx - 1)  idx  text
+            ch = String.slice (idx - 1) idx text
         in
-            if isIdentChar  ch || ch == "." then
-                findCompletionStart  text  (idx - 1)
+            if isIdentChar ch || ch == "." then
+                findCompletionStart text (idx - 1)
             else
                 idx
 
 
 completionsFromAst : (List Declaration) -> String -> List String
 completionsFromAst decls prefix =
-    List.filterMap
-     (
+    List.filterMap (
     \decl ->
         case decl of
             
             FunDecl name _ _ _ ->
-                if String.isEmpty  prefix || String.startsWith  prefix  name then
+                if String.isEmpty prefix || String.startsWith prefix name then
                     let
                         sig =
-                            case Dict.get  name  stdlibTypeMap of
+                            case Dict.get name stdlibTypeMap of
                                 
                                 Just t ->
                                     t
@@ -1645,50 +1437,43 @@ completionsFromAst decls prefix =
                                 Nothing ->
                                     "function"
                     in
-                        Just  (makeCompletionItem  name  sig  3)
+                        Just (makeCompletionItem name sig 3)
                 else
                     Nothing
             
             TypeDecl name _ variants _ ->
                 let
                     typeItem =
-                        if String.isEmpty  prefix ||
-                        String.startsWith  prefix  name then
-                            [ makeCompletionItem  name  "type"  22 ]
+                        if String.isEmpty prefix || String.startsWith prefix name then
+                            [ makeCompletionItem name "type" 22 ]
                         else
                             []
                     ctorItems =
-                        List.filterMap
-                         (
+                        List.filterMap (
                         \v ->
-                            if String.isEmpty  prefix ||
-                            String.startsWith  prefix  v.name then
-                                Just  (makeCompletionItem  v.name  name  4)
+                            if String.isEmpty prefix || String.startsWith prefix v.name then
+                                Just (makeCompletionItem v.name name 4)
                             else
                                 Nothing
-                        )
-                         variants
+                        ) variants
                 in
-                    case List.append  typeItem  ctorItems of
+                    case List.append typeItem ctorItems of
                         
                         first :: _ ->
-                            Just  first
+                            Just first
                         
                         [  ] ->
                             Nothing
                         
                         TypeAliasDecl name _ _ _ ->
-                            if String.isEmpty  prefix ||
-                            String.startsWith  prefix  name then
-                                Just
-                                 (makeCompletionItem  name  "type alias"  22)
+                            if String.isEmpty prefix || String.startsWith prefix name then
+                                Just (makeCompletionItem name "type alias" 22)
                             else
                                 Nothing
                         
                         _ ->
                             Nothing
-    )
-     decls
+    ) decls
 
 
 completionsFromStdlib : String -> List String
@@ -1712,13 +1497,12 @@ completionsFromStdlib prefix =
             , "println"
             ]
     in
-        List.filterMap
-         (
+        List.filterMap (
         \name ->
-            if String.isEmpty  prefix || String.startsWith  prefix  name then
+            if String.isEmpty prefix || String.startsWith prefix name then
                 let
                     sig =
-                        case Dict.get  name  stdlibTypeMap of
+                        case Dict.get name stdlibTypeMap of
                             
                             Just t ->
                                 t
@@ -1726,111 +1510,94 @@ completionsFromStdlib prefix =
                             Nothing ->
                                 ""
                 in
-                    Just  (makeCompletionItem  name  sig  3)
+                    Just (makeCompletionItem name sig 3)
             else
                 Nothing
-        )
-         preludeNames
+        ) preludeNames
 
 
 completionsForModule : ServerState -> String -> List String
 completionsForModule state modulePart =
     let
-        prefix =
-            modulePart ++ "."
+        prefix = modulePart ++ "."
         stdlibMatching =
-            List.filterMap
-             (
+            List.filterMap (
             \pair ->
                 let
-                    key =
-                        fst  pair
-                    sig =
-                        snd  pair
+                    key = fst pair
+                    sig = snd pair
                 in
-                    if String.startsWith  prefix  key then
+                    if String.startsWith prefix key then
                         let
                             shortName =
-                                String.slice  (String.length  prefix)
-                                 (String.length  key)
-                                 key
+                                String.slice (String.length prefix) (
+                                String.length key
+                                ) key
                         in
-                            Just  (makeCompletionItem  shortName  sig  3)
+                            Just (makeCompletionItem shortName sig 3)
                     else
                         Nothing
-            )
-             (Dict.toList  stdlibTypeMap)
+            ) (Dict.toList stdlibTypeMap)
         depMatching =
-            case Dict.get  modulePart  state.depCache of
+            case Dict.get modulePart state.depCache of
                 
                 Just depMod ->
-                    List.map
-                     (\exp -> makeCompletionItem  exp.name  exp.signature  3)
-                     depMod.exports
+                    List.map (
+                    \exp -> makeCompletionItem exp.name exp.signature 3
+                    ) depMod.exports
                 
                 Nothing ->
                     []
     in
-        List.append  stdlibMatching  depMatching
+        List.append stdlibMatching depMatching
 
 
 makeCompletionItem : String -> String -> Int -> String
 makeCompletionItem label detail kind =
-    jsonObject
-     [ ( "label" , jsonString  label )
-    , ( "kind" , jsonInt  kind )
-    , ( "detail" , jsonString  detail )
+    jsonObject [ ("label", jsonString label)
+    , ("kind", jsonInt kind)
+    , ("detail", jsonString detail)
     ]
 
 
 handleDefinition : ServerState -> String -> String -> ServerState
 handleDefinition state id body =
     let
-        params =
-            jsonGetObject  "params"  body
-        textDoc =
-            jsonGetObject  "textDocument"  params
-        uri =
-            jsonGetString  "uri"  textDoc
-        position =
-            jsonGetObject  "position"  params
-        line =
-            jsonGetInt  "line"  position
-        character =
-            jsonGetInt  "character"  position
-        defResult =
-            findDefinitionForPosition  state  uri  line  character
+        params = jsonGetObject "params" body
+        textDoc = jsonGetObject "textDocument" params
+        uri = jsonGetString "uri" textDoc
+        position = jsonGetObject "position" params
+        line = jsonGetInt "line" position
+        character = jsonGetInt "character" position
+        defResult = findDefinitionForPosition state uri line character
     in
-        sendAndReturn  (makeResponse  id  defResult)  state
+        sendAndReturn (makeResponse id defResult) state
 
 
 findDefinitionForPosition : ServerState -> String -> Int -> Int -> String
 findDefinitionForPosition state uri line character =
-    case Dict.get  uri  state.documents of
+    case Dict.get uri state.documents of
         
         Nothing ->
             jsonNull
         
         Just source ->
             let
-                lineText =
-                    getLineAt  line  source
-                word =
-                    getWordAt  character  lineText
+                lineText = getLineAt line source
+                word = getWordAt character lineText
             in
-                if String.isEmpty  word then
+                if String.isEmpty word then
                     jsonNull
-                else if String.contains  "."  word then
-                    findDefinitionInDep  state  word  source  uri
+                else if String.contains "." word then
+                    findDefinitionInDep state word source uri
                 else
-                    findDefinitionInSource  word  source  uri
+                    findDefinitionInSource word source uri
 
 
 findDefinitionInDep : ServerState -> String -> String -> String -> String
 findDefinitionInDep state word source uri =
     let
-        parts =
-            String.split  "."  word
+        parts = String.split "." word
         modAlias =
             case parts of
                 
@@ -1840,7 +1607,7 @@ findDefinitionInDep state word source uri =
                 [  ] ->
                     ""
         funcName =
-            case List.reverse  parts of
+            case List.reverse parts of
                 
                 f :: _ ->
                     f
@@ -1848,31 +1615,30 @@ findDefinitionInDep state word source uri =
                 [  ] ->
                     ""
     in
-        case lookupDepExport  state  modAlias  funcName of
+        case lookupDepExport state modAlias funcName of
             
             Just exp ->
-                case Dict.get  modAlias  state.depCache of
+                case Dict.get modAlias state.depCache of
                     
                     Just depMod ->
-                        findDefinitionInDepFile  funcName  depMod.filePath
+                        findDefinitionInDepFile funcName depMod.filePath
                     
                     Nothing ->
-                        findDefinitionInSource  funcName  source  uri
+                        findDefinitionInSource funcName source uri
                     
                     Nothing ->
-                        findDefinitionInSource  funcName  source  uri
+                        findDefinitionInSource funcName source uri
 
 
 findDefinitionInDepFile : String -> String -> String
 findDefinitionInDepFile name filePath =
-    case File.readFile  filePath of
+    case File.readFile filePath of
         
         Ok depSource ->
             let
-                depUri =
-                    filePathToUri  filePath
+                depUri = filePathToUri filePath
             in
-                findDefinitionInSource  name  depSource  depUri
+                findDefinitionInSource name depSource depUri
         
         Err _ ->
             jsonNull
@@ -1881,25 +1647,22 @@ findDefinitionInDepFile name filePath =
 findDefinitionInSource : String -> String -> String -> String
 findDefinitionInSource name source uri =
     let
-        defLine =
-            findDefLineInSource  name  source  0  0
+        defLine = findDefLineInSource name source 0 0
     in
         if defLine < 0 then
             jsonNull
         else
             let
-                nameLen =
-                    String.length  name
+                nameLen = String.length name
             in
-                jsonObject
-                 [ ( "uri" , jsonString  uri )
-                , ( "range" , makeRange  defLine  0  defLine  nameLen )
+                jsonObject [ ("uri", jsonString uri)
+                , ("range", makeRange defLine 0 defLine nameLen)
                 ]
 
 
 findDefLineInSource : String -> String -> Int -> Int -> Int
 findDefLineInSource name source lineNum idx =
-    if idx >= String.length  source then
+    if idx >= String.length source then
         -1
     else
         let
@@ -1907,64 +1670,60 @@ findDefLineInSource name source lineNum idx =
                 if idx == 0 then
                     True
                 else
-                    String.slice  (idx - 1)  idx  source == "\n"
+                    String.slice (idx - 1) idx source == "\n"
         in
             if atStart then
                 let
-                    nameLen =
-                        String.length  name
-                    candidate =
-                        String.slice  idx  (idx + nameLen)  source
+                    nameLen = String.length name
+                    candidate = String.slice idx (idx + nameLen) source
                 in
                     if candidate == name then
                         let
                             afterName =
-                                String.slice  (idx + nameLen)
-                                 (idx + nameLen + 1)
-                                 source
+                                String.slice (idx + nameLen) (idx + nameLen + 1) source
                         in
                             if afterName == " " then
                                 let
                                     afterSpace =
-                                        String.slice  (idx + nameLen + 1)
-                                         (idx + nameLen + 2)
-                                         source
+                                        String.slice (idx + nameLen + 1) (
+                                        idx + nameLen + 2
+                                        ) source
                                 in
                                     if afterSpace == "=" || afterSpace == ":" then
                                         if afterSpace == ":" then
-                                            findDefLineInSource  name  source
-                                             lineNum
-                                             (idx + 1)
+                                            findDefLineInSource name source lineNum (
+                                            idx + 1
+                                            )
                                         else
                                             lineNum
                                     else
                                         lineNum
                             else
-                                findDefLineInSource  name  source  lineNum
-                                 (idx + 1)
+                                findDefLineInSource name source lineNum (
+                                idx + 1
+                                )
                     else
                         let
-                            ch =
-                                String.slice  idx  (idx + 1)  source
+                            ch = String.slice idx (idx + 1) source
                         in
                             if ch == "\n" then
-                                findDefLineInSource  name  source  (lineNum + 1)
-                                 (idx + 1)
+                                findDefLineInSource name source (lineNum + 1) (
+                                idx + 1
+                                )
                             else
-                                findDefLineInSource  name  source  lineNum
-                                 (idx + 1)
+                                findDefLineInSource name source lineNum (
+                                idx + 1
+                                )
             else
                 let
-                    ch =
-                        String.slice  idx  (idx + 1)  source
+                    ch = String.slice idx (idx + 1) source
                 in
                     if ch == "\n" then
-                        findDefLineInSource  name  source  (lineNum + 1)
-                         (idx + 1)
+                        findDefLineInSource name source (lineNum + 1) (idx + 1)
                     else
-                        findDefLineInSource  name  source  lineNum  (idx + 1)
+                        findDefLineInSource name source lineNum (idx + 1)
 
 
 handleFormatting : ServerState -> String -> String -> ServerState
 handleFormatting state id body =
-    sendAndReturn  (makeResponse  id  (jsonArray  []))  state
+    sendAndReturn (makeResponse id (jsonArray [])) state

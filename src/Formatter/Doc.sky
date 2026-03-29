@@ -17,43 +17,35 @@ type Doc
 
 
 text : String -> Doc
-text s =
-    DocText  s
+text s = DocText s
 
 
 line : Doc
-line =
-    DocLine
+line = DocLine
 
 
 hardline : Doc
-hardline =
-    DocHardline
+hardline = DocHardline
 
 
 softline : Doc
-softline =
-    DocSoftline
+softline = DocSoftline
 
 
 concat : (List Doc) -> Doc
-concat parts =
-    DocConcat  parts
+concat parts = DocConcat parts
 
 
 indent : Doc -> Doc
-indent doc =
-    DocIndent  doc
+indent doc = DocIndent doc
 
 
 group : Doc -> Doc
-group doc =
-    DocGroup  doc
+group doc = DocGroup doc
 
 
 align : Doc -> Doc
-align doc =
-    DocAlign  doc
+align doc = DocAlign doc
 
 
 joinDocs : (List Doc) -> Doc -> Doc
@@ -61,46 +53,38 @@ joinDocs docs sep =
     case docs of
         
         [  ] ->
-            DocConcat  []
+            DocConcat []
         
         first :: rest ->
-            DocConcat  (first :: List.concatMap  (\d -> [ sep , d ])  rest)
+            DocConcat (first :: List.concatMap (\d -> [ sep , d ]) rest)
 
 
 maxWidth : Int
-maxWidth =
-    80
+maxWidth = 80
 
 
 indentWidth : Int
-indentWidth =
-    4
+indentWidth = 4
 
 
 render : Doc -> String
 render doc =
     let
-        outputRef =
-            Ref.new  ""
-        colRef =
-            Ref.new  0
-        indentRef =
-            Ref.new  0
+        outputRef = Ref.new ""
+        colRef = Ref.new 0
+        indentRef = Ref.new 0
     in
         let
-            _ =
-                walk  doc  outputRef  colRef  indentRef
+            _ = walk doc outputRef colRef indentRef
         in
-            Ref.get  outputRef
+            Ref.get outputRef
 
 
 writeStr : String -> (Ref.Ref String) -> (Ref.Ref Int) -> ()
 writeStr s outputRef colRef =
     let
-        _ =
-            Ref.set  (Ref.get  outputRef ++ s)  outputRef
-        _ =
-            Ref.set  (Ref.get  colRef + String.length  s)  colRef
+        _ = Ref.set (Ref.get outputRef ++ s) outputRef
+        _ = Ref.set (Ref.get colRef + String.length s) colRef
     in
         ()
 
@@ -108,14 +92,10 @@ writeStr s outputRef colRef =
 newline : (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
 newline outputRef colRef indentRef =
     let
-        indentLevel =
-            Ref.get  indentRef
-        spaces =
-            makeSpaces  indentLevel
-        _ =
-            Ref.set  (Ref.get  outputRef ++ "\n" ++ spaces)  outputRef
-        _ =
-            Ref.set  indentLevel  colRef
+        indentLevel = Ref.get indentRef
+        spaces = makeSpaces indentLevel
+        _ = Ref.set (Ref.get outputRef ++ "\n" ++ spaces) outputRef
+        _ = Ref.set indentLevel colRef
     in
         ()
 
@@ -125,7 +105,7 @@ makeSpaces n =
     if n <= 0 then
         ""
     else
-        " " ++ makeSpaces  (n - 1)
+        " " ++ makeSpaces (n - 1)
 
 
 flatWidth : Doc -> Int
@@ -133,7 +113,7 @@ flatWidth doc =
     case doc of
         
         DocText s ->
-            String.length  s
+            String.length s
         
         DocLine ->
             1
@@ -145,16 +125,16 @@ flatWidth doc =
             9999
         
         DocConcat parts ->
-            List.foldl  (\part acc -> acc + flatWidth  part)  0  parts
+            List.foldl (\part acc -> acc + flatWidth part) 0 parts
         
         DocIndent inner ->
-            flatWidth  inner
+            flatWidth inner
         
         DocGroup inner ->
-            flatWidth  inner
+            flatWidth inner
         
         DocAlign inner ->
-            flatWidth  inner
+            flatWidth inner
 
 
 fits : Doc -> Int -> Bool
@@ -165,7 +145,7 @@ fits doc remaining =
         case doc of
             
             DocText s ->
-                String.length  s <= remaining
+                String.length s <= remaining
             
             DocLine ->
                 True
@@ -177,16 +157,16 @@ fits doc remaining =
                 False
             
             DocConcat parts ->
-                fitsConcat  parts  remaining
+                fitsConcat parts remaining
             
             DocIndent inner ->
-                fits  inner  remaining
+                fits inner remaining
             
             DocGroup inner ->
-                fits  inner  remaining
+                fits inner remaining
             
             DocAlign inner ->
-                fits  inner  remaining
+                fits inner remaining
 
 
 fitsConcat : (List Doc) -> Int -> Bool
@@ -198,13 +178,12 @@ fitsConcat parts remaining =
         
         part :: rest ->
             let
-                w =
-                    flatWidth  part
+                w = flatWidth part
             in
                 if w > remaining then
                     False
                 else
-                    fitsConcat  rest  (remaining - w)
+                    fitsConcat rest (remaining - w)
 
 
 walk : Doc -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
@@ -212,53 +191,44 @@ walk doc outputRef colRef indentRef =
     case doc of
         
         DocText s ->
-            writeStr  s  outputRef  colRef
+            writeStr s outputRef colRef
         
         DocLine ->
-            newline  outputRef  colRef  indentRef
+            newline outputRef colRef indentRef
         
         DocSoftline ->
-            newline  outputRef  colRef  indentRef
+            newline outputRef colRef indentRef
         
         DocHardline ->
-            newline  outputRef  colRef  indentRef
+            newline outputRef colRef indentRef
         
         DocConcat parts ->
-            walkParts  parts  outputRef  colRef  indentRef
+            walkParts parts outputRef colRef indentRef
         
         DocIndent inner ->
             let
-                oldIndent =
-                    Ref.get  indentRef
-                _ =
-                    Ref.set  (oldIndent + indentWidth)  indentRef
-                _ =
-                    walk  inner  outputRef  colRef  indentRef
-                _ =
-                    Ref.set  oldIndent  indentRef
+                oldIndent = Ref.get indentRef
+                _ = Ref.set (oldIndent + indentWidth) indentRef
+                _ = walk inner outputRef colRef indentRef
+                _ = Ref.set oldIndent indentRef
             in
                 ()
         
         DocGroup inner ->
             let
-                remaining =
-                    maxWidth - Ref.get  colRef
+                remaining = maxWidth - Ref.get colRef
             in
-                if fits  inner  remaining then
-                    flatten  inner  outputRef  colRef  indentRef
+                if fits inner remaining then
+                    flatten inner outputRef colRef indentRef
                 else
-                    walk  inner  outputRef  colRef  indentRef
+                    walk inner outputRef colRef indentRef
         
         DocAlign inner ->
             let
-                oldIndent =
-                    Ref.get  indentRef
-                _ =
-                    Ref.set  (Ref.get  colRef)  indentRef
-                _ =
-                    walk  inner  outputRef  colRef  indentRef
-                _ =
-                    Ref.set  oldIndent  indentRef
+                oldIndent = Ref.get indentRef
+                _ = Ref.set (Ref.get colRef) indentRef
+                _ = walk inner outputRef colRef indentRef
+                _ = Ref.set oldIndent indentRef
             in
                 ()
 
@@ -272,10 +242,9 @@ walkParts parts outputRef colRef indentRef =
         
         part :: rest ->
             let
-                _ =
-                    walk  part  outputRef  colRef  indentRef
+                _ = walk part outputRef colRef indentRef
             in
-                walkParts  rest  outputRef  colRef  indentRef
+                walkParts rest outputRef colRef indentRef
 
 
 flatten : Doc -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
@@ -283,28 +252,28 @@ flatten doc outputRef colRef indentRef =
     case doc of
         
         DocText s ->
-            writeStr  s  outputRef  colRef
+            writeStr s outputRef colRef
         
         DocLine ->
-            writeStr  " "  outputRef  colRef
+            writeStr " " outputRef colRef
         
         DocSoftline ->
             ()
         
         DocHardline ->
-            newline  outputRef  colRef  indentRef
+            newline outputRef colRef indentRef
         
         DocConcat parts ->
-            flattenParts  parts  outputRef  colRef  indentRef
+            flattenParts parts outputRef colRef indentRef
         
         DocIndent inner ->
-            flatten  inner  outputRef  colRef  indentRef
+            flatten inner outputRef colRef indentRef
         
         DocGroup inner ->
-            flatten  inner  outputRef  colRef  indentRef
+            flatten inner outputRef colRef indentRef
         
         DocAlign inner ->
-            flatten  inner  outputRef  colRef  indentRef
+            flatten inner outputRef colRef indentRef
 
 
 flattenParts : (List Doc) -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
@@ -316,7 +285,6 @@ flattenParts parts outputRef colRef indentRef =
         
         part :: rest ->
             let
-                _ =
-                    flatten  part  outputRef  colRef  indentRef
+                _ = flatten part outputRef colRef indentRef
             in
-                flattenParts  rest  outputRef  colRef  indentRef
+                flattenParts rest outputRef colRef indentRef

@@ -17,297 +17,268 @@ import Tailwind exposing (..)
 import Tailwind.Responsive exposing (sm, md, lg)
 
 viewProduct model =
-    Layout.page model
-        (
-        case model.product of
-            Just product ->
-                viewProductDetail model product
-            
-            Nothing ->
-                div [ tw [ textCenter , py16 ] ]
-                    [ p [ tw [ textGray400 ] ]
-                        [ text (Tr.t model.lang "common.loading") ]
-                    ]
-        )
+    Layout.page model (
+    case model.product of
+        
+        Just product ->
+            viewProductDetail model product
+        
+        Nothing ->
+            div [ tw [ textCenter , py16 ] ] [ p [ tw [ textGray400 ] ] [ text (
+                                                                          Tr.t model.lang "common.loading"
+                                                                          )
+                                               ]
+            ]
+    )
+
 
 viewProductDetail model product =
     let
-        _ =
-            Db.getField "id" product
-        title =
-            Db.getField "title" product
-        summary =
-            Db.getField "summary" product
-        category =
-            Db.getField "category" product
-        pricing =
-            Money.formatPriceFromRow product
-        stock =
-            Db.getInt "stock" product
-        images =
-            model.productImages
-        lang =
-            model.lang
+        _ = Db.getField "id" product
+        title = Db.getField "title" product
+        summary = Db.getField "summary" product
+        category = Db.getField "category" product
+        pricing = Money.formatPriceFromRow product
+        stock = Db.getInt "stock" product
+        images = model.productImages
+        lang = model.lang
     in
-        div []
-            [ nav [ tw [ mb6 , flex , itemsCenter , gap2 ] ]
-                [ a
-                    [ href "/"
-                    , attribute "sky-nav" ""
-                    , tw [ textSm , textGray400 ]
-                    ]
-                    [ text (Tr.t lang "nav.home") ]
-                , span [ tw [ textGray300 , textSm ] ] [ text "/" ]
-                , a
-                    [ href "/products"
-                    , attribute "sky-nav" ""
-                    , tw [ textSm , textGray400 ]
-                    ]
-                    [ text (Tr.t lang "nav.products") ]
-                , span [ tw [ textGray300 , textSm ] ] [ text "/" ]
-                , span [ tw [ textSm , textGray600 ] ] [ text title ]
-                ]
-            , div
-                [ tw [ grid , gridCols1 , lg gridCols2 , gap8 , itemsStart ]
-                , style "gap:3rem"
-                ]
-                [ viewImageGallery images
-                , div []
-                    [ span
-                        [ tw
-                            [ textXs
+        div [] [ nav [ tw [ mb6 , flex , itemsCenter , gap2 ] ] [ a [ href "/"
+                                                                  , attribute "sky-nav" ""
+                                                                  , tw [ textSm
+                                                                    , textGray400
+                                                                    ]
+                                                                  ] [ text (
+                                                                      Tr.t lang "nav.home"
+                                                                      )
+                                                                  ]
+                 , span [ tw [ textGray300 , textSm ] ] [ text "/" ]
+                 , a [ href "/products"
+                   , attribute "sky-nav" ""
+                   , tw [ textSm , textGray400 ]
+                   ] [ text (Tr.t lang "nav.products") ]
+                 , span [ tw [ textGray300 , textSm ] ] [ text "/" ]
+                 , span [ tw [ textSm , textGray600 ] ] [ text title ]
+                 ]
+        , div [ tw [ grid , gridCols1 , lg gridCols2 , gap8 , itemsStart ]
+          , style "gap:3rem"
+          ] [ viewImageGallery images
+          , div [] [ span [ tw [ textXs
                             , fontSemibold
                             , uppercase
                             , textBlue500
                             , mb3
                             , block
                             ]
-                        , style "letter-spacing:.1em"
-                        ]
-                        [ text (Tr.tCategory lang category) ]
-                    , h1
-                        [ tw [ text3xl , fontBold , textGray900 , mb5 ]
-                        , style "line-height:1.2"
-                        ]
-                        [ text title ]
-                    , viewDetailPrice pricing
-                    , viewDetailStock model stock
-                    , if summary != "" then
-                        div [ tw [ mt6 ] ]
-                            [ h3
-                                [ tw
-                                    [ textSm
-                                    , fontSemibold
-                                    , textGray900
-                                    , mb2
-                                    ]
-                                ]
-                                [ text (Tr.t lang "product.description") ]
-                            , p [ tw [ textGray500 , leadingRelaxed ] ]
-                                [ text summary ]
-                            ]
-                    else
-                        text ""
-                    , viewAddToCart model product stock
-                    , div [ tw [ mt6 , pt6 , borderT , borderGray100 ] ]
-                        [ div [ tw [ flex , gap6 ] ]
-                            [ viewFeature (Tr.t lang "product.quality")
-                            , viewFeature (Tr.t lang "product.securePayment")
-                            , viewFeature (Tr.t lang "product.fastShipping")
-                            ]
-                        ]
-                    ]
+                     , style "letter-spacing:.1em"
+                     ] [ text (Tr.tCategory lang category) ]
+            , h1 [ tw [ text3xl , fontBold , textGray900 , mb5 ]
+              , style "line-height:1.2"
+              ] [ text title ]
+            , viewDetailPrice pricing
+            , viewDetailStock model stock
+            , if summary != "" then
+                div [ tw [ mt6 ] ] [ h3 [ tw [ textSm
+                                          , fontSemibold
+                                          , textGray900
+                                          , mb2
+                                          ]
+                                     ] [ text (Tr.t lang "product.description")
+                                     ]
+                , p [ tw [ textGray500 , leadingRelaxed ] ] [ text summary ]
                 ]
+            else
+                text ""
+            , viewAddToCart model product stock
+            , div [ tw [ mt6 , pt6 , borderT , borderGray100 ] ] [ div [ tw [ flex
+                                                                         , gap6
+                                                                         ]
+                                                                   ] [ viewFeature (
+                                                                       Tr.t lang "product.quality"
+                                                                       )
+                                                                   , viewFeature (
+                                                                     Tr.t lang "product.securePayment"
+                                                                     )
+                                                                   , viewFeature (
+                                                                     Tr.t lang "product.fastShipping"
+                                                                     )
+                                                                   ]
+              ]
             ]
+          ]
+        ]
+
 
 viewFeature : String -> VNode
 viewFeature featureLabel =
-    div [ tw [ flex , itemsCenter , gap2 ] ]
-        [ span
-            [ tw [ w2 , Layout.h2_ , roundedFull , bgGreen500 , inlineBlock ] ]
-            []
-        , span [ tw [ textXs , textGray500 ] ] [ text featureLabel ]
-        ]
+    div [ tw [ flex , itemsCenter , gap2 ] ] [ span [ tw [ w2
+                                                      , Layout.h2_
+                                                      , roundedFull
+                                                      , bgGreen500
+                                                      , inlineBlock
+                                                      ]
+                                               ] []
+    , span [ tw [ textXs , textGray500 ] ] [ text featureLabel ]
+    ]
+
 
 viewImageGallery images =
     if List.isEmpty images then
         div [ Layout.galleryPlaceholder ] [ text "No images" ]
     else
-        div [ tw [ flex , flexCol , gap3 ] ]
-            [ case List.head images of
-                Just firstImg ->
-                    div [ Layout.galleryMain ]
-                        [ img
-                            [ src (Db.getField "data" firstImg)
-                            , alt "Product"
-                            , Layout.objectCover_
-                            ]
-                        ]
-                
-                Nothing ->
-                    text ""
-            , if List.length images > 1 then
-                div [ tw [ grid , gridCols3 , md gridCols4 , gap2 ] ]
-                    (
-                    List.map
-                        (
-                        \imgRow ->
-                            div [ Layout.galleryThumb ]
-                                [ img
-                                    [ src (Db.getField "data" imgRow)
-                                    , alt "Thumbnail"
-                                    , Layout.objectCover_
-                                    ]
-                                ]
-                        )
-                        images
-                    )
-            else
+        div [ tw [ flex , flexCol , gap3 ] ] [ case List.head images of
+            
+            Just firstImg ->
+                div [ Layout.galleryMain ] [ img [ src (
+                                                   Db.getField "data" firstImg
+                                                   )
+                                             , alt "Product"
+                                             , Layout.objectCover_
+                                             ]
+                ]
+            
+            Nothing ->
                 text ""
-            ]
+        , if List.length images > 1 then
+            div [ tw [ grid , gridCols3 , md gridCols4 , gap2 ] ] (
+            List.map (
+            \imgRow ->
+                div [ Layout.galleryThumb ] [ img [ src (
+                                                    Db.getField "data" imgRow
+                                                    )
+                                              , alt "Thumbnail"
+                                              , Layout.objectCover_
+                                              ]
+                ]
+            ) images
+            )
+        else
+            text ""
+        ]
+
 
 viewDetailPrice pricing =
     if pricing.hasDiscount then
-        div [ tw [ flex , gap3 , itemsCenter , mb3 ] ]
-            [ span [ tw [ text3xl , fontBold , textRed600 ] ]
-                [ text pricing.discounted ]
-            , span [ tw [ textLg , textGray400 ] , class "line-through" ]
-                [ text pricing.original ]
-            , span
-                [ tw
-                    [ textXs
-                    , fontSemibold
-                    , textRed600
-                    , bgRed50
-                    , px2
-                    , py1
-                    , roundedSm
-                    ]
-                ]
-                [ text "SALE" ]
-            ]
+        div [ tw [ flex , gap3 , itemsCenter , mb3 ] ] [ span [ tw [ text3xl
+                                                                , fontBold
+                                                                , textRed600
+                                                                ]
+                                                         ] [ text pricing.discounted
+                                                         ]
+        , span [ tw [ textLg , textGray400 ] , class "line-through" ] [ text pricing.original
+          ]
+        , span [ tw [ textXs
+                 , fontSemibold
+                 , textRed600
+                 , bgRed50
+                 , px2
+                 , py1
+                 , roundedSm
+                 ]
+          ] [ text "SALE" ]
+        ]
     else
-        div [ tw [ mb3 ] ]
-            [ span [ tw [ text3xl , fontBold , textGray900 ] ]
-                [ text pricing.original ]
-            ]
+        div [ tw [ mb3 ] ] [ span [ tw [ text3xl , fontBold , textGray900 ] ] [ text pricing.original
+                             ]
+        ]
+
 
 viewDetailStock model stock =
     let
-        lang =
-            model.lang
+        lang = model.lang
     in
-        div [ tw [ mb4 ] ]
-            [ if stock == 0 then
-                span
-                    [ tw
-                        [ textSm
-                        , fontSemibold
-                        , px3
-                        , py1
-                        , roundedFull
-                        , inlineBlock
-                        , textRed600
-                        , bgRed50
-                        ]
-                    ]
-                    [ text (Tr.t lang "product.outOfStock") ]
-            else
-                if stock > 0 then
-                    span
-                        [ tw
-                            [ textSm
-                            , fontSemibold
-                            , px3
-                            , py1
-                            , roundedFull
-                            , inlineBlock
-                            , textGreen600
-                            , bgGreen50
-                            ]
-                        ]
-                        [ text
-                            (
-                            Tr.t lang "product.inStock" ++
-                            " - " ++
-                            String.fromInt stock ++
-                            " " ++ Tr.t lang "product.left"
-                            )
-                        ]
-                else
-                    span
-                        [ tw
-                            [ textSm
-                            , fontSemibold
-                            , px3
-                            , py1
-                            , roundedFull
-                            , inlineBlock
-                            , textGreen600
-                            , bgGreen50
-                            ]
-                        ]
-                        [ text (Tr.t lang "product.unlimited") ]
+        div [ tw [ mb4 ] ] [ if stock == 0 then
+            span [ tw [ textSm
+                   , fontSemibold
+                   , px3
+                   , py1
+                   , roundedFull
+                   , inlineBlock
+                   , textRed600
+                   , bgRed50
+                   ]
+            ] [ text (Tr.t lang "product.outOfStock") ]
+        else if stock > 0 then
+            span [ tw [ textSm
+                   , fontSemibold
+                   , px3
+                   , py1
+                   , roundedFull
+                   , inlineBlock
+                   , textGreen600
+                   , bgGreen50
+                   ]
+            ] [ text (
+                Tr.t lang "product.inStock" ++ " - " ++ String.fromInt stock ++ " " ++ Tr.t lang "product.left"
+                )
             ]
+        else
+            span [ tw [ textSm
+                   , fontSemibold
+                   , px3
+                   , py1
+                   , roundedFull
+                   , inlineBlock
+                   , textGreen600
+                   , bgGreen50
+                   ]
+            ] [ text (Tr.t lang "product.unlimited") ]
+        ]
+
 
 viewAddToCart : Model -> a -> Int -> VNode
 viewAddToCart model product stock =
     let
-        lang =
-            model.lang
-        productId =
-            Db.getField "id" product
-        canAdd =
-            stock != 0
+        lang = model.lang
+        productId = Db.getField "id" product
+        canAdd = stock != 0
     in
-        div [ tw [ mt8 ] ]
-            [ if canAdd then
-                div []
-                    [ div [ tw [ flex , itemsCenter , gap3 , mb4 ] ]
-                        [ label [ tw [ textSm , fontMedium , textGray700 ] ]
-                            [ text (Tr.t lang "product.quantity") ]
-                        , div [ tw [ flex , itemsCenter ] ]
-                            [ button
-                                [ onClick (UpdateQuantity (model.quantity - 1))
-                                , Layout.qtyBtn
-                                ]
-                                [ text "-" ]
-                            , input
-                                [ type_ "number"
-                                , value (String.fromInt model.quantity)
-                                , onInput UpdateQuantity
-                                , min "1"
-                                , max
-                                    (
-                                    if stock > 0 then
-                                        String.fromInt stock
-                                    else
-                                        "99"
-                                    )
-                                , class "qty-input"
-                                ]
-                            , button
-                                [ onClick (UpdateQuantity (model.quantity + 1))
-                                , Layout.qtyBtn
-                                ]
-                                [ text "+" ]
-                            ]
-                        ]
-                    , button
-                        [ onClick (AddToCart productId) , Layout.btnPrimaryLg ]
-                        [ text (Tr.t lang "product.addToCart") ]
-                    ]
-            else
-                button
-                    [ tw
-                        [ wFull
-                        , bgGray200
-                        , textGray400
-                        , py3
-                        , roundedLg
-                        , fontSemibold
-                        ]
-                    , attribute "disabled" ""
-                    ]
-                    [ text (Tr.t lang "product.outOfStock") ]
+        div [ tw [ mt8 ] ] [ if canAdd then
+            div [] [ div [ tw [ flex , itemsCenter , gap3 , mb4 ] ] [ label [ tw [ textSm
+                                                                              , fontMedium
+                                                                              , textGray700
+                                                                              ]
+                                                                      ] [ text (
+                                                                          Tr.t lang "product.quantity"
+                                                                          )
+                                                                      ]
+                     , div [ tw [ flex , itemsCenter ] ] [ button [ onClick (
+                                                                    UpdateQuantity (
+                                                                    model.quantity - 1
+                                                                    )
+                                                                    )
+                                                           , Layout.qtyBtn
+                                                           ] [ text "-" ]
+                       , input [ type_ "number"
+                         , value (String.fromInt model.quantity)
+                         , onInput UpdateQuantity
+                         , min "1"
+                         , max (
+                           if stock > 0 then
+                               String.fromInt stock
+                           else
+                               "99"
+                           )
+                         , class "qty-input"
+                         ]
+                       , button [ onClick (UpdateQuantity (model.quantity + 1))
+                         , Layout.qtyBtn
+                         ] [ text "+" ]
+                       ]
+                     ]
+            , button [ onClick (AddToCart productId) , Layout.btnPrimaryLg ] [ text (
+                                                                               Tr.t lang "product.addToCart"
+                                                                               )
+              ]
             ]
+        else
+            button [ tw [ wFull
+                     , bgGray200
+                     , textGray400
+                     , py3
+                     , roundedLg
+                     , fontSemibold
+                     ]
+            , attribute "disabled" ""
+            ] [ text (Tr.t lang "product.outOfStock") ]
+        ]

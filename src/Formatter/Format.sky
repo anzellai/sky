@@ -10,12 +10,9 @@ import Formatter.Doc exposing (..)
 formatModule : Module -> String
 formatModule mod =
     let
-        header =
-            formatModuleHeader mod
-        importDocs =
-            List.map formatImport mod.imports
-        declDocs =
-            formatDeclarations mod.declarations
+        header = formatModuleHeader mod
+        importDocs = List.map formatImport mod.imports
+        declDocs = formatDeclarations mod.declarations
         allDocs =
             if List.isEmpty mod.imports then
                 concat [ header , hardline , hardline , declDocs ]
@@ -34,10 +31,8 @@ formatModule mod =
 formatModuleHeader : Module -> Doc
 formatModuleHeader mod =
     let
-        name =
-            String.join "." mod.name
-        exposing_ =
-            formatExposing mod.exposing_
+        name = String.join "." mod.name
+        exposing_ = formatExposing mod.exposing_
     in
         concat [ text "module " , text name , text " exposing " , exposing_ ]
 
@@ -61,8 +56,7 @@ formatExposing clause =
 formatImport : ImportDecl -> Doc
 formatImport imp =
     let
-        name =
-            String.join "." imp.moduleName
+        name = String.join "." imp.moduleName
         aliasDoc =
             if String.isEmpty imp.alias_ then
                 text ""
@@ -103,8 +97,7 @@ formatDeclPairs docs decls =
         
         d1 :: rest ->
             let
-                isAnnotFunPair =
-                    isDeclAnnotFunPair decls
+                isAnnotFunPair = isDeclAnnotFunPair decls
                 sep =
                     if isAnnotFunPair then
                         hardline
@@ -117,10 +110,8 @@ formatDeclPairs docs decls =
 isDeclAnnotFunPair : (List Declaration) -> Bool
 isDeclAnnotFunPair decls =
     let
-        firstName =
-            getDeclAnnotName (List.head decls)
-        secondName =
-            getDeclFunName (List.head (List.drop 1 decls))
+        firstName = getDeclAnnotName (List.head decls)
+        secondName = getDeclFunName (List.head (List.drop 1 decls))
     in
         not (String.isEmpty firstName) && firstName == secondName
 
@@ -197,8 +188,7 @@ formatDeclaration decl =
 formatFunction : String -> (List Pattern) -> Expression -> Doc
 formatFunction name params body =
     let
-        paramDocs =
-            List.map formatPattern params
+        paramDocs = List.map formatPattern params
         header =
             if List.isEmpty params then
                 concat [ text name , text " =" ]
@@ -220,8 +210,7 @@ formatTypeDecl name params variants =
                 ""
             else
                 " " ++ String.join " " params
-        header =
-            text ("type " ++ name ++ paramStr)
+        header = text ("type " ++ name ++ paramStr)
     in
         case variants of
             
@@ -230,8 +219,7 @@ formatTypeDecl name params variants =
             
             first :: rest ->
                 let
-                    firstDoc =
-                        concat [ text "= " , formatVariant first ]
+                    firstDoc = concat [ text "= " , formatVariant first ]
                     restDocs =
                         List.map (\v -> concat [ text "| " , formatVariant v ]) rest
                 in
@@ -369,24 +357,21 @@ formatTuple items =
 formatList : (List Expression) -> Doc
 formatList items =
     case items of
-
-        [] ->
+        
+        [  ] ->
             text "[]"
-
+        
         first :: rest ->
-            group
-             (concat
-              [ text "[ "
-             , formatExpr first
-             , concat
-                (List.map
-                 (\item -> concat [ line, text ", ", formatExpr item ])
-                 rest
-                )
-             , line
-             , text "]"
-             ]
-             )
+            group (
+            concat [ text "[ "
+            , formatExpr first
+            , concat (
+              List.map (\item -> concat [ line , text ", " , formatExpr item ]) rest
+              )
+            , line
+            , text "]"
+            ]
+            )
 
 
 formatRecord : (List NamedExpr) -> Doc
@@ -413,11 +398,7 @@ formatRecord fields =
 
 formatField : NamedExpr -> Doc
 formatField field =
-    group
-     (concat [ text field.name
-    , text " = "
-    , formatExpr field.value
-    ])
+    group (concat [ text field.name , text " = " , formatExpr field.value ])
 
 
 formatRecordUpdate : Expression -> (List NamedExpr) -> Doc
@@ -467,14 +448,12 @@ formatBinary op leftExpr rightExpr =
           )
         ]
     else
-        group (
         concat [ formatExpr leftExpr
         , text " "
         , text op
-        , line
+        , text " "
         , formatExpr rightExpr
         ]
-        )
 
 
 formatIf : Expression -> Expression -> Expression -> Doc
@@ -521,11 +500,12 @@ formatLet bindings body =
 formatLetBinding : LetBinding -> Doc
 formatLetBinding binding =
     concat [ hardline
-    , group
-       (concat [ formatPattern binding.pattern
+    , group (
+      concat [ formatPattern binding.pattern
       , text " ="
       , indent (concat [ line , formatExpr binding.value ])
-      ])
+      ]
+      )
     ]
 
 
@@ -560,8 +540,7 @@ formatPattern pat =
         
         PConstructor parts argPats _ ->
             let
-                ctorName =
-                    String.join "." parts
+                ctorName = String.join "." parts
             in
                 if List.isEmpty argPats then
                     text ctorName
@@ -649,8 +628,7 @@ formatTypeExpr texpr =
         
         TypeRef parts args _ ->
             let
-                name =
-                    String.join "." parts
+                name = String.join "." parts
             in
                 if List.isEmpty args then
                     text name
@@ -727,5 +705,4 @@ formatNamedType field =
 
 
 quoteString : String -> String
-quoteString s =
-    s
+quoteString s = s

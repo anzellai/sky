@@ -11,15 +11,12 @@ type alias ParserState =
 
 
 initState : (List Token) -> ParserState
-
-initState tokens =
-    { tokens = tokens , pos = 0 , errors = [] }
+initState tokens = { tokens = tokens , pos = 0 , errors = [] }
 
 
 peek : ParserState -> Token
-
 peek state =
-    case List.drop  state.pos  state.tokens
+    case List.drop state.pos state.tokens
         |> List.head of
         
         Just t ->
@@ -30,9 +27,8 @@ peek state =
 
 
 peekAt : Int -> ParserState -> Token
-
 peekAt offset state =
-    case List.drop  (state.pos + offset)  state.tokens
+    case List.drop (state.pos + offset) state.tokens
         |> List.head of
         
         Just t ->
@@ -43,10 +39,9 @@ peekAt offset state =
 
 
 previous : ParserState -> Token
-
 previous state =
     if state.pos > 0 then
-        case List.drop  (state.pos - 1)  state.tokens
+        case List.drop (state.pos - 1) state.tokens
             |> List.head of
             
             Just t ->
@@ -58,105 +53,72 @@ previous state =
         { kind = TkEOF , lexeme = "" , span = emptySpan }
 
 
-advance : ParserState -> ( Token , ParserState )
-
+advance : ParserState -> (Token, ParserState)
 advance state =
     let
-        token =
-            peek  state
+        token = peek state
     in
-        if tokenKindEq  token.kind  TkEOF then
-            ( token , state )
+        if tokenKindEq token.kind TkEOF then
+            (token, state)
         else
-            ( token , { state | pos = state.pos + 1 } )
+            (token, { state | pos = state.pos + 1 })
 
 
 matchKind : TokenKind -> ParserState -> Bool
-
-matchKind kind state =
-    tokenKindEq  (peekKind  state)  kind
+matchKind kind state = tokenKindEq (peekKind state) kind
 
 
 matchLexeme : String -> ParserState -> Bool
-
-matchLexeme lex state =
-    peekLexeme  state == lex
+matchLexeme lex state = peekLexeme state == lex
 
 
 matchKindLex : TokenKind -> String -> ParserState -> Bool
-
 matchKindLex kind lex state =
     let
-        t =
-            peek  state
+        t = peek state
     in
-        tokenKindEq  t.kind  kind && t.lexeme == lex
+        tokenKindEq t.kind kind && t.lexeme == lex
 
 
-consume : TokenKind -> ParserState -> Result String ( Token , ParserState )
-
+consume : TokenKind -> ParserState -> Result String (Token, ParserState)
 consume kind state =
     let
-        t =
-            peek  state
+        t = peek state
     in
-        if tokenKindEq  t.kind  kind then
-            Ok  ( t , { state | pos = state.pos + 1 } )
+        if tokenKindEq t.kind kind then
+            Ok (t, { state | pos = state.pos + 1 })
         else
             let
-                sp =
-                    t.span
-                st =
-                    sp.start
+                sp = t.span
+                st = sp.start
             in
-                Err
-                 (
-                "Expected " ++
-                tokenKindStr  kind ++
-                " but got " ++
-                tokenKindStr  t.kind ++
-                " '" ++
-                t.lexeme ++
-                "' at " ++
-                String.fromInt  st.line ++ ":" ++ String.fromInt  st.column
+                Err (
+                "Expected " ++ tokenKindStr kind ++ " but got " ++ tokenKindStr t.kind ++ " '" ++ t.lexeme ++ "' at " ++ String.fromInt st.line ++ ":" ++ String.fromInt st.column
                 )
 
 
-consumeLex : TokenKind -> String -> ParserState -> Result String ( Token , ParserState )
-
+consumeLex : TokenKind -> String -> ParserState -> Result String (Token, ParserState)
 consumeLex kind lex state =
     let
-        t =
-            peek  state
+        t = peek state
     in
-        if tokenKindEq  t.kind  kind && t.lexeme == lex then
-            Ok  ( t , { state | pos = state.pos + 1 } )
+        if tokenKindEq t.kind kind && t.lexeme == lex then
+            Ok (t, { state | pos = state.pos + 1 })
         else
             let
-                sp =
-                    t.span
-                st =
-                    sp.start
+                sp = t.span
+                st = sp.start
             in
-                Err
-                 (
-                "Expected " ++
-                lex ++
-                " but got '" ++
-                t.lexeme ++
-                "' at " ++
-                String.fromInt  st.line ++ ":" ++ String.fromInt  st.column
+                Err (
+                "Expected " ++ lex ++ " but got '" ++ t.lexeme ++ "' at " ++ String.fromInt st.line ++ ":" ++ String.fromInt st.column
                 )
 
 
 tokenKindEq : TokenKind -> TokenKind -> Bool
-
-tokenKindEq a b =
-    tokenKindStr  a == tokenKindStr  b
+tokenKindEq a b = tokenKindStr a == tokenKindStr b
 
 
 tokenKindStr : TokenKind -> String
-
 tokenKindStr k =
     case k of
         
@@ -236,88 +198,69 @@ tokenKindStr k =
             "EOF"
 
 
-parseQualifiedParts : (List String) -> ParserState -> ( List String , ParserState )
-
+parseQualifiedParts : (List String) -> ParserState -> (List String, ParserState)
 parseQualifiedParts parts state =
-    if matchKind  TkDot  state then
+    if matchKind TkDot state then
         let
-            ( dotTok , s1 ) =
-                advance  state
+            ( dotTok , s1 ) = advance state
         in
-            if matchKind  TkUpperIdentifier  s1 || matchKind  TkIdentifier  s1 then
+            if matchKind TkUpperIdentifier s1 || matchKind TkIdentifier s1 then
                 let
-                    ( tok , s2 ) =
-                        advance  s1
+                    ( tok , s2 ) = advance s1
                 in
-                    parseQualifiedParts  (List.append  parts  [ tok.lexeme ])
-                     s2
+                    parseQualifiedParts (List.append parts [ tok.lexeme ]) s2
             else
-                ( parts , state )
+                (parts, state)
     else
-        ( parts , state )
+        (parts, state)
 
 
 peekLexeme : ParserState -> String
-
 peekLexeme state =
     let
-        t =
-            peek  state
+        t = peek state
     in
         t.lexeme
 
 
 peekColumn : ParserState -> Int
-
 peekColumn state =
     let
-        t =
-            peek  state
-        sp =
-            t.span
-        st =
-            sp.start
+        t = peek state
+        sp = t.span
+        st = sp.start
     in
         st.column
 
 
 peekKind : ParserState -> TokenKind
-
 peekKind state =
     let
-        t =
-            peek  state
+        t = peek state
     in
         t.kind
 
 
 peekAt1Kind : ParserState -> TokenKind
-
 peekAt1Kind state =
     let
-        t =
-            peekAt  1  state
+        t = peekAt 1 state
     in
         t.kind
 
 
 unescapeString s =
     let
-        s1 =
-            String.replace  "\\\\"  "\\"  s
-        s2 =
-            String.replace  "\\\""  "\""  s1
-        s3 =
-            String.replace  "\\n"  "\n"  s2
+        s1 = String.replace "\\\\" "\\" s
+        s2 = String.replace "\\\"" "\"" s1
+        s3 = String.replace "\\n" "\n" s2
     in
-        String.replace  "\\t"  "\t"  s3
+        String.replace "\\t" "\t" s3
 
 
 filterLayout : (List Token) -> List Token
-
 filterLayout tokens =
-    List.filter
-     (
+    List.filter (
     \t ->
         case t.kind of
             
@@ -332,5 +275,4 @@ filterLayout tokens =
             
             _ ->
                 True
-    )
-     tokens
+    ) tokens

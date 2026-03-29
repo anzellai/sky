@@ -6,14 +6,13 @@ import Std.Log exposing (println)
 
 main =
     let
-        resp =
-            Http.get "http://localhost:3000"
+        resp = Http.get "http://localhost:3000"
     in
         case resp of
+            
             Ok r ->
                 let
-                    status =
-                        Http.responseStatus r
+                    status = Http.responseStatus r
                 in
                     println "OK" status
             

@@ -14,61 +14,50 @@ import Ui.Components exposing (emptyState)
 
 viewRoadmap model =
     let
-        planned =
-            Ideas.getIdeasByStatus "planned"
-        inProgress =
-            Ideas.getIdeasByStatus "in-progress"
-        done =
-            Ideas.getIdeasByStatus "done"
-        open_ =
-            Ideas.getIdeasByStatus "open"
+        planned = Ideas.getIdeasByStatus "planned"
+        inProgress = Ideas.getIdeasByStatus "in-progress"
+        done = Ideas.getIdeasByStatus "done"
+        open_ = Ideas.getIdeasByStatus "open"
     in
-        Layout.page model
-            (
-            div [ class "mt-32" ]
-                [ h1 [ class "page-title" ] [ text "Roadmap" ]
-                , p [ class "page-subtitle" ]
-                    [ text
-                        "Track the progress of community ideas from submission to completion."
-                    ]
-                , div [ class "roadmap-grid" ]
-                    [ roadmapColumn "Open" "Awaiting review" open_
-                    , roadmapColumn "Planned" "On the roadmap" planned
-                    , roadmapColumn "In Progress" "Currently being built"
-                        inProgress
-                    , roadmapColumn "Done" "Shipped!" done
-                    ]
-                ]
-            )
+        Layout.page model (
+        div [ class "mt-32" ] [ h1 [ class "page-title" ] [ text "Roadmap" ]
+        , p [ class "page-subtitle" ] [ text "Track the progress of community ideas from submission to completion."
+          ]
+        , div [ class "roadmap-grid" ] [ roadmapColumn "Open" "Awaiting review" open_
+          , roadmapColumn "Planned" "On the roadmap" planned
+          , roadmapColumn "In Progress" "Currently being built" inProgress
+          , roadmapColumn "Done" "Shipped!" done
+          ]
+        ]
+        )
+
 
 roadmapColumn title subtitle items =
-    div [ class "roadmap-column" ]
-        [ div [ class "roadmap-column-title" ]
-            [ text title
-            , span [ class "roadmap-count" ]
-                [ text ("(" ++ String.fromInt (List.length items) ++ ")") ]
-            ]
-        , p [ class "roadmap-subtitle" ] [ text subtitle ]
-        , div []
-            (
-            if List.isEmpty items then
-                [ p [ class "roadmap-empty" ] [ text "Nothing here yet" ] ]
-            else
-                List.map roadmapItem items
-            )
-        ]
+    div [ class "roadmap-column" ] [ div [ class "roadmap-column-title" ] [ text title
+                                     , span [ class "roadmap-count" ] [ text (
+                                                                        "(" ++ String.fromInt (
+                                                                               List.length items
+                                                                               ) ++ ")"
+                                                                        )
+                                       ]
+                                     ]
+    , p [ class "roadmap-subtitle" ] [ text subtitle ]
+    , div [] (
+      if List.isEmpty items then
+          [ p [ class "roadmap-empty" ] [ text "Nothing here yet" ] ]
+      else
+          List.map roadmapItem items
+      )
+    ]
+
 
 roadmapItem idea =
     let
-        ideaId =
-            Db.getField "id" idea
-        voteCount =
-            Db.getField "vote_count" idea
+        ideaId = Db.getField "id" idea
+        voteCount = Db.getField "vote_count" idea
     in
-        div [ class "roadmap-item" ]
-            [ button
-                [ onClick (ViewIdea ideaId) , class "roadmap-item-title" ]
-                [ text (Db.getField "title" idea) ]
-            , div [ class "roadmap-item-votes" ]
-                [ text (voteCount ++ " votes") ]
-            ]
+        div [ class "roadmap-item" ] [ button [ onClick (ViewIdea ideaId)
+                                       , class "roadmap-item-title"
+                                       ] [ text (Db.getField "title" idea) ]
+        , div [ class "roadmap-item-votes" ] [ text (voteCount ++ " votes") ]
+        ]

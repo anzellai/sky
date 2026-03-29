@@ -34,268 +34,185 @@ type alias LoadedModule =
 
 resolveProject : String -> String -> Result String ModuleGraph
 resolveProject entryPath srcRoot =
-    case File.readFile  entryPath of
+    case File.readFile entryPath of
         
         Err e ->
-            Err  ("Cannot read entry file: " ++ entryPath ++ " (" ++ e ++ ")")
+            Err ("Cannot read entry file: " ++ entryPath ++ " (" ++ e ++ ")")
         
         Ok source ->
             let
-                lexResult =
-                    Lexer.lex  source
+                lexResult = Lexer.lex source
             in
-                case Parser.parse  lexResult.tokens of
+                case Parser.parse lexResult.tokens of
                     
                     Err e ->
-                        Err  ("Parse error in " ++ entryPath ++ ": " ++ e)
+                        Err ("Parse error in " ++ entryPath ++ ": " ++ e)
                     
                     Ok entryMod ->
                         let
-                            entryName =
-                                String.join  "."  entryMod.name
+                            entryName = String.join "." entryMod.name
                             entryLoaded =
-                                { name =
-                                    entryName
-                                , qualifiedName =
-                                    entryMod.name
-                                , filePath =
-                                    entryPath
-                                , ast =
-                                    entryMod
-                                , checkResult =
-                                    Nothing
+                                { name = entryName
+                                , qualifiedName = entryMod.name
+                                , filePath = entryPath
+                                , ast = entryMod
+                                , checkResult = Nothing
                                 }
                             resolveResult =
-                                resolveImports  srcRoot  entryMod.imports
-                                 [ entryLoaded ]
-                                 Set.empty
-                                 []
-                            allModules =
-                                fst  resolveResult
-                            diags =
-                                snd  resolveResult
+                                resolveImports srcRoot entryMod.imports [ entryLoaded
+                                ] Set.empty []
+                            allModules = fst resolveResult
+                            diags = snd resolveResult
                             order =
-                                List.map  (\m -> m.name)
-                                 (List.reverse  allModules)
+                                List.map (\m -> m.name) (
+                                List.reverse allModules
+                                )
                         in
-                            Ok
-                             { modules =
-                                 List.reverse  allModules
-                             , order =
-                                 order
-                             , diagnostics =
-                                 diags
-                             }
+                            Ok { modules = List.reverse allModules
+                               , order = order
+                               , diagnostics = diags
+                               }
 
 
 resolveImports srcRoot imports loaded visited diagnostics =
     case imports of
         
         [  ] ->
-            ( loaded , diagnostics )
+            (loaded, diagnostics)
         
         imp :: rest ->
             let
-                modName =
-                    String.join  "."  imp.moduleName
+                modName = String.join "." imp.moduleName
             in
-                if Set.member  modName  visited || isStdlib  modName then
-                    resolveImports  srcRoot  rest  loaded  visited  diagnostics
+                if Set.member modName visited || isStdlib modName then
+                    resolveImports srcRoot rest loaded visited diagnostics
                 else if imp.alias_ == "_" then
-                    resolveImports  srcRoot  rest  loaded
-                     (Set.insert  modName  visited)
-                     diagnostics
+                    resolveImports srcRoot rest loaded (
+                    Set.insert modName visited
+                    ) diagnostics
                 else
                     let
-                        filePath =
-                            resolveModulePath  srcRoot  imp.moduleName
+                        filePath = resolveModulePath srcRoot imp.moduleName
                     in
-                        case File.readFile  filePath of
+                        case File.readFile filePath of
                             
                             Err _ ->
                                 let
-                                    skyiPath =
-                                        resolveBindingPath  "."  modName
+                                    skyiPath = resolveBindingPath "." modName
                                 in
-                                    case File.readFile  skyiPath of
+                                    case File.readFile skyiPath of
                                         
                                         Ok skyiSource ->
                                             let
                                                 skyiLexResult =
-                                                    Lexer.lex  skyiSource
+                                                    Lexer.lex skyiSource
                                             in
-                                                case Parser.parse
-                                                      skyiLexResult.tokens of
+                                                case Parser.parse skyiLexResult.tokens of
                                                     
                                                     Ok skyiMod ->
                                                         let
                                                             loaded2 =
-                                                                { name =
-                                                                    modName
-                                                                , qualifiedName =
-                                                                    imp.moduleName
-                                                                , filePath =
-                                                                    skyiPath
-                                                                , ast =
-                                                                    skyiMod
-                                                                , checkResult =
-                                                                    Nothing
+                                                                { name = modName
+                                                                , qualifiedName = imp.moduleName
+                                                                , filePath = skyiPath
+                                                                , ast = skyiMod
+                                                                , checkResult = Nothing
                                                                 }
                                                         in
-                                                            resolveImports
-                                                             srcRoot
-                                                             rest
-                                                             (loaded2 :: loaded)
-                                                             (
-                                                            Set.insert  modName
-                                                             visited
-                                                            )
-                                                             diagnostics
+                                                            resolveImports srcRoot rest (
+                                                            loaded2 :: loaded
+                                                            ) (
+                                                            Set.insert modName visited
+                                                            ) diagnostics
                                                     
                                                     Err e ->
-                                                        resolveImports  srcRoot
-                                                         rest
-                                                         loaded
-                                                         (
-                                                        Set.insert  modName
-                                                         visited
-                                                        )
-                                                         (
-                                                        diagnostics ++
-                                                        [ "Parse error in binding " ++
-                                                        modName ++ ": " ++ e
+                                                        resolveImports srcRoot rest loaded (
+                                                        Set.insert modName visited
+                                                        ) (
+                                                        diagnostics ++ [ "Parse error in binding " ++ modName ++ ": " ++ e
                                                         ]
                                                         )
                                                     
                                                     Err _ ->
-                                                        resolveImports  srcRoot
-                                                         rest
-                                                         loaded
-                                                         (
-                                                        Set.insert  modName
-                                                         visited
-                                                        )
-                                                         (
-                                                        diagnostics ++
-                                                        [ "Module not found: " ++
-                                                        modName ++
-                                                        " (looked at " ++
-                                                        filePath ++
-                                                        " and " ++
-                                                        skyiPath ++ ")"
+                                                        resolveImports srcRoot rest loaded (
+                                                        Set.insert modName visited
+                                                        ) (
+                                                        diagnostics ++ [ "Module not found: " ++ modName ++ " (looked at " ++ filePath ++ " and " ++ skyiPath ++ ")"
                                                         ]
                                                         )
                                                     
                                                     Ok source ->
                                                         let
                                                             lexResult =
-                                                                Lexer.lex
-                                                                 source
+                                                                Lexer.lex source
                                                         in
-                                                            case Parser.parse
-                                                                  lexResult.tokens of
+                                                            case Parser.parse lexResult.tokens of
                                                                 
                                                                 Err e ->
-                                                                    resolveImports
-                                                                     srcRoot
-                                                                     rest
-                                                                     loaded
-                                                                     (
-                                                                    Set.insert
-                                                                     modName
-                                                                     visited
-                                                                    )
-                                                                     (
-                                                                    diagnostics ++
-                                                                    [ "Parse error in " ++
-                                                                    modName ++
-                                                                    ": " ++ e
+                                                                    resolveImports srcRoot rest loaded (
+                                                                    Set.insert modName visited
+                                                                    ) (
+                                                                    diagnostics ++ [ "Parse error in " ++ modName ++ ": " ++ e
                                                                     ]
                                                                     )
                                                                 
                                                                 Ok modAst ->
                                                                     let
                                                                         newLoaded =
-                                                                            { name =
-                                                                                modName
-                                                                            , qualifiedName =
-                                                                                imp.moduleName
-                                                                            , filePath =
-                                                                                filePath
-                                                                            , ast =
-                                                                                modAst
-                                                                            , checkResult =
-                                                                                Nothing
+                                                                            { name = modName
+                                                                            , qualifiedName = imp.moduleName
+                                                                            , filePath = filePath
+                                                                            , ast = modAst
+                                                                            , checkResult = Nothing
                                                                             }
                                                                         newVisited =
-                                                                            Set.insert
-                                                                             modName
-                                                                             visited
+                                                                            Set.insert modName visited
                                                                         depResult =
-                                                                            resolveImports
-                                                                             srcRoot
-                                                                             modAst.imports
-                                                                             (
-                                                                            newLoaded ::
-                                                                            loaded
-                                                                            )
-                                                                             newVisited
-                                                                             diagnostics
+                                                                            resolveImports srcRoot modAst.imports (
+                                                                            newLoaded :: loaded
+                                                                            ) newVisited diagnostics
                                                                     in
-                                                                        resolveImports
-                                                                         srcRoot
-                                                                         rest
-                                                                         (
-                                                                        fst
-                                                                         depResult
-                                                                        )
-                                                                         newVisited
-                                                                         (
-                                                                        snd
-                                                                         depResult
+                                                                        resolveImports srcRoot rest (
+                                                                        fst depResult
+                                                                        ) newVisited (
+                                                                        snd depResult
                                                                         )
 
 
 resolveModulePath : String -> (List String) -> String
 resolveModulePath srcRoot parts =
-    srcRoot ++ "/" ++ String.join  "/"  parts ++ ".sky"
+    srcRoot ++ "/" ++ String.join "/" parts ++ ".sky"
 
 
 resolveBindingPath : String -> String -> String
 resolveBindingPath projectRoot modName =
     let
-        pkgParts =
-            String.split  "."  modName
-        safeParts =
-            List.map  camelToUnderscore  pkgParts
-        safeName =
-            String.join  "_"  safeParts
+        pkgParts = String.split "." modName
+        safeParts = List.map camelToUnderscore pkgParts
+        safeName = String.join "_" safeParts
         prefix =
             if projectRoot == "." then
                 ""
             else
                 projectRoot ++ "/"
-        primaryPath =
-            prefix ++ ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+        primaryPath = prefix ++ ".skycache/go/" ++ safeName ++ "/bindings.skyi"
         altPath =
-            prefix ++
-            ".skycache/go/" ++
-            String.join  "/"  (List.map  String.toLower  pkgParts) ++
-            "/bindings.skyi"
-        cwdPrimary =
-            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+            prefix ++ ".skycache/go/" ++ String.join "/" (
+                                         List.map String.toLower pkgParts
+                                         ) ++ "/bindings.skyi"
+        cwdPrimary = ".skycache/go/" ++ safeName ++ "/bindings.skyi"
         cwdAlt =
-            ".skycache/go/" ++
-            String.join  "/"  (List.map  String.toLower  pkgParts) ++
-            "/bindings.skyi"
+            ".skycache/go/" ++ String.join "/" (
+                               List.map String.toLower pkgParts
+                               ) ++ "/bindings.skyi"
     in
-        case File.readFile  primaryPath of
+        case File.readFile primaryPath of
             
             Ok _ ->
                 primaryPath
             
             Err _ ->
-                case File.readFile  altPath of
+                case File.readFile altPath of
                     
                     Ok _ ->
                         altPath
@@ -304,7 +221,7 @@ resolveBindingPath projectRoot modName =
                         if projectRoot == "." then
                             altPath
                         else
-                            case File.readFile  cwdPrimary of
+                            case File.readFile cwdPrimary of
                                 
                                 Ok _ ->
                                     cwdPrimary
@@ -314,54 +231,28 @@ resolveBindingPath projectRoot modName =
 
 
 camelToUnderscore : String -> String
-camelToUnderscore s =
-    String.toLower  (camelInsertUnderscores  s  0  "")
+camelToUnderscore s = String.toLower (camelInsertUnderscores s 0 "")
 
 
 camelInsertUnderscores : String -> Int -> String -> String
 camelInsertUnderscores s idx acc =
-    if idx >= String.length  s then
+    if idx >= String.length s then
         acc
     else
         let
-            ch =
-                String.slice  idx  (idx + 1)  s
+            ch = String.slice idx (idx + 1) s
             isUp =
-                ch == "A" ||
-                ch == "B" ||
-                ch == "C" ||
-                ch == "D" ||
-                ch == "E" ||
-                ch == "F" ||
-                ch == "G" ||
-                ch == "H" ||
-                ch == "I" ||
-                ch == "J" ||
-                ch == "K" ||
-                ch == "L" ||
-                ch == "M" ||
-                ch == "N" ||
-                ch == "O" ||
-                ch == "P" ||
-                ch == "Q" ||
-                ch == "R" ||
-                ch == "S" ||
-                ch == "T" ||
-                ch == "U" ||
-                ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z"
+                ch == "A" || ch == "B" || ch == "C" || ch == "D" || ch == "E" || ch == "F" || ch == "G" || ch == "H" || ch == "I" || ch == "J" || ch == "K" || ch == "L" || ch == "M" || ch == "N" || ch == "O" || ch == "P" || ch == "Q" || ch == "R" || ch == "S" || ch == "T" || ch == "U" || ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z"
         in
             if isUp && idx > 0 then
-                camelInsertUnderscores  s  (idx + 1)  (acc ++ "_" ++ ch)
+                camelInsertUnderscores s (idx + 1) (acc ++ "_" ++ ch)
             else
-                camelInsertUnderscores  s  (idx + 1)  (acc ++ ch)
+                camelInsertUnderscores s (idx + 1) (acc ++ ch)
 
 
 isStdlib : String -> Bool
 isStdlib modName =
-    String.startsWith  "Sky.Core."  modName ||
-    String.startsWith  "Sky.Http."  modName ||
-    String.startsWith  "Std."  modName ||
-    modName == "Sky.Core.Prelude" || modName == "Sky.Interop"
+    String.startsWith "Sky.Core." modName || String.startsWith "Sky.Http." modName || String.startsWith "Std." modName || modName == "Sky.Core.Prelude" || modName == "Sky.Interop"
 
 
 getStdlibExports : String -> List String
@@ -660,487 +551,428 @@ getStdlibExports modName =
 checkAllModules : ModuleGraph -> Result String ModuleGraph
 checkAllModules graph =
     let
-        checkResult =
-            checkModulesLoop  graph.modules  Env.empty  []
-        checkedModules =
-            fst  checkResult
-        diagnostics =
-            snd  checkResult
+        checkResult = checkModulesLoop graph.modules Env.empty []
+        checkedModules = fst checkResult
+        diagnostics = snd checkResult
     in
-        Ok
-         { graph
-         | modules =
-             checkedModules
-         , diagnostics =
-             List.append  graph.diagnostics  diagnostics
-         }
+        Ok { graph
+           | modules = checkedModules
+           , diagnostics = List.append graph.diagnostics diagnostics
+           }
 
 
 checkModulesLoop modules importedEnv diagnostics =
     case modules of
         
         [  ] ->
-            ( [] , diagnostics )
+            ([], diagnostics)
         
         mod :: rest ->
-            case Checker.checkModule  mod.ast  (Just  importedEnv) of
+            case Checker.checkModule mod.ast (Just importedEnv) of
                 
                 Ok result ->
                     let
-                        checkedMod =
-                            { mod | checkResult = Just  result }
-                        newImportedEnv =
-                            Env.union  result.env  importedEnv
+                        checkedMod = { mod | checkResult = Just result }
+                        newImportedEnv = Env.union result.env importedEnv
                         ( restModules , restDiags ) =
-                            checkModulesLoop  rest  newImportedEnv
-                             (List.append  diagnostics  result.diagnostics)
+                            checkModulesLoop rest newImportedEnv (
+                            List.append diagnostics result.diagnostics
+                            )
                     in
-                        ( checkedMod :: restModules , restDiags )
+                        (checkedMod :: restModules, restDiags)
                 
                 Err e ->
                     let
                         ( restModules , restDiags ) =
-                            checkModulesLoop  rest  importedEnv
-                             (List.append  diagnostics  [ e ])
+                            checkModulesLoop rest importedEnv (
+                            List.append diagnostics [ e ]
+                            )
                     in
-                        ( mod :: restModules , restDiags )
+                        (mod :: restModules, restDiags)
 
 
 buildStdlibEnv : Env.TypeEnv
 buildStdlibEnv =
     let
-        prelude =
-            Env.createPreludeEnv
+        prelude = Env.createPreludeEnv
         stdFunctions =
-            Dict.fromList
-             [ ( "String.toUpper"
-            , mono  (TFun  (TConst  "String")  (TConst  "String"))
-            )
-            , ( "String.toLower"
-            , mono  (TFun  (TConst  "String")  (TConst  "String"))
-            )
-            , ( "String.length"
-            , mono  (TFun  (TConst  "String")  (TConst  "Int"))
-            )
-            , ( "String.fromInt"
-            , mono  (TFun  (TConst  "Int")  (TConst  "String"))
-            )
-            , ( "String.fromFloat"
-            , mono  (TFun  (TConst  "Float")  (TConst  "String"))
-            )
-            , ( "String.join"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (
-              TFun  (TApp  (TConst  "List")  [ TConst  "String" ])
-               (TConst  "String")
-              )
-              )
-            )
-            , ( "String.split"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (
-              TFun  (TConst  "String")
-               (TApp  (TConst  "List")  [ TConst  "String" ])
-              )
-              )
-            )
-            , ( "String.contains"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (TFun  (TConst  "String")  (TConst  "Bool"))
-              )
-            )
-            , ( "String.startsWith"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (TFun  (TConst  "String")  (TConst  "Bool"))
-              )
-            )
-            , ( "String.trim"
-            , mono  (TFun  (TConst  "String")  (TConst  "String"))
-            )
-            , ( "String.isEmpty"
-            , mono  (TFun  (TConst  "String")  (TConst  "Bool"))
-            )
-            , ( "String.slice"
-            , mono
-               (
-              TFun  (TConst  "Int")
-               (
-              TFun  (TConst  "Int")
-               (TFun  (TConst  "String")  (TConst  "String"))
-              )
-              )
-            )
-            , ( "String.append"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (TFun  (TConst  "String")  (TConst  "String"))
-              )
-            )
-            , ( "List.map"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun  (TFun  (TVar  0  (Just  "a"))  (TVar  1  (Just  "b")))
-                   (
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TApp  (TConst  "List")  [ TVar  1  (Just  "b") ])
-                  )
-              }
-            )
-            , ( "List.filter"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TFun  (TVar  0  (Just  "a"))  (TConst  "Bool"))
-                   (
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                  )
-              }
-            )
-            , ( "List.foldl"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun
-                   (
-                  TFun  (TVar  0  (Just  "a"))
-                   (TFun  (TVar  1  (Just  "b"))  (TVar  1  (Just  "b")))
-                  )
-                   (
-                  TFun  (TVar  1  (Just  "b"))
-                   (
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TVar  1  (Just  "b"))
-                  )
-                  )
-              }
-            )
-            , ( "List.foldr"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun
-                   (
-                  TFun  (TVar  0  (Just  "a"))
-                   (TFun  (TVar  1  (Just  "b"))  (TVar  1  (Just  "b")))
-                  )
-                   (
-                  TFun  (TVar  1  (Just  "b"))
-                   (
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TVar  1  (Just  "b"))
-                  )
-                  )
-              }
-            )
-            , ( "List.head"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TApp  (TConst  "Maybe")  [ TVar  0  (Just  "a") ])
-              }
-            )
-            , ( "List.length"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TConst  "Int")
-              }
-            )
-            , ( "List.reverse"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-              }
-            )
-            , ( "List.isEmpty"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TConst  "Bool")
-              }
-            )
-            , ( "List.append"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                  )
-              }
-            )
-            , ( "List.concatMap"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun
-                   (
-                  TFun  (TVar  0  (Just  "a"))
-                   (TApp  (TConst  "List")  [ TVar  1  (Just  "b") ])
-                  )
-                   (
-                  TFun  (TApp  (TConst  "List")  [ TVar  0  (Just  "a") ])
-                   (TApp  (TConst  "List")  [ TVar  1  (Just  "b") ])
-                  )
-              }
-            )
-            , ( "Dict.empty"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TApp  (TConst  "Dict")
-                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
-              }
-            )
-            , ( "Dict.insert"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun  (TVar  0  (Just  "k"))
-                   (
-                  TFun  (TVar  1  (Just  "v"))
-                   (
-                  TFun
-                   (
-                  TApp  (TConst  "Dict")
-                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
-                  )
-                   (
-                  TApp  (TConst  "Dict")
-                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
-                  )
-                  )
-                  )
-              }
-            )
-            , ( "Dict.get"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun  (TVar  0  (Just  "k"))
-                   (
-                  TFun
-                   (
-                  TApp  (TConst  "Dict")
-                   [ TVar  0  (Just  "k") , TVar  1  (Just  "v") ]
-                  )
-                   (TApp  (TConst  "Maybe")  [ TVar  1  (Just  "v") ])
-                  )
-              }
-            )
-            , ( "Log.println"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TConst  "String")
-                   (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
-              }
-            )
-            , ( "println"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TConst  "String")
-                   (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
-              }
-            )
-            , ( "Process.exit"
-            , mono  (TFun  (TConst  "Int")  (TConst  "Unit"))
-            )
-            , ( "File.readFile"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (
-              TApp  (TConst  "Result")  [ TConst  "String" , TConst  "String" ]
-              )
-              )
-            )
-            , ( "File.writeFile"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (
-              TFun  (TConst  "String")
-               (TApp  (TConst  "Result")  [ TConst  "String" , TConst  "Unit" ])
-              )
-              )
-            )
-            , ( "File.mkdirAll"
-            , mono
-               (
-              TFun  (TConst  "String")
-               (TApp  (TConst  "Result")  [ TConst  "String" , TConst  "Unit" ])
-              )
-            )
-            , ( "Args.getArgs"
-            , mono
-               (
-              TFun  (TConst  "Unit")
-               (TApp  (TConst  "List")  [ TConst  "String" ])
-              )
-            )
-            , ( "Args.getArg"
-            , mono
-               (
-              TFun  (TConst  "Int")
-               (TApp  (TConst  "Maybe")  [ TConst  "String" ])
-              )
-            )
-            , ( "Ref.new"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TVar  0  (Just  "a"))
-                   (TApp  (TConst  "Ref")  [ TVar  0  (Just  "a") ])
-              }
-            )
-            , ( "Ref.get"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TApp  (TConst  "Ref")  [ TVar  0  (Just  "a") ])
-                   (TVar  0  (Just  "a"))
-              }
-            )
-            , ( "Ref.set"
-            , { quantified =
-                  [ 0 ]
-              , type_ =
-                  TFun  (TVar  0  (Just  "a"))
-                   (
-                  TFun  (TApp  (TConst  "Ref")  [ TVar  0  (Just  "a") ])
-                   (TConst  "Unit")
-                  )
-              }
-            )
-            , ( "Task.succeed"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun  (TVar  0  (Just  "a"))
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  1  (Just  "err") , TVar  0  (Just  "a") ]
-                  )
-              }
-            )
-            , ( "Task.fail"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun  (TVar  0  (Just  "err"))
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
-                  )
-              }
-            )
-            , ( "Task.andThen"
-            , { quantified =
-                  [ 0 , 1 , 2 ]
-              , type_ =
-                  TFun
-                   (
-                  TFun  (TVar  0  (Just  "a"))
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  2  (Just  "err") , TVar  1  (Just  "b") ]
-                  )
-                  )
-                   (
-                  TFun
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  2  (Just  "err") , TVar  0  (Just  "a") ]
-                  )
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  2  (Just  "err") , TVar  1  (Just  "b") ]
-                  )
-                  )
-              }
-            )
-            , ( "Task.map"
-            , { quantified =
-                  [ 0 , 1 , 2 ]
-              , type_ =
-                  TFun  (TFun  (TVar  0  (Just  "a"))  (TVar  1  (Just  "b")))
-                   (
-                  TFun
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  2  (Just  "err") , TVar  0  (Just  "a") ]
-                  )
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  2  (Just  "err") , TVar  1  (Just  "b") ]
-                  )
-                  )
-              }
-            )
-            , ( "Task.perform"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
-                  )
-                   (
-                  TApp  (TConst  "Result")
-                   [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
-                  )
-              }
-            )
-            , ( "Task.sequence"
-            , { quantified =
-                  [ 0 , 1 ]
-              , type_ =
-                  TFun
-                   (
-                  TApp  (TConst  "List")
-                   [ TApp  (TConst  "Task")
-                      [ TVar  0  (Just  "err") , TVar  1  (Just  "a") ]
-                  ]
-                  )
-                   (
-                  TApp  (TConst  "Task")
-                   [ TVar  0  (Just  "err")
-                  , TApp  (TConst  "List")  [ TVar  1  (Just  "a") ]
-                  ]
-                  )
-              }
-            )
+            Dict.fromList [ ("String.toUpper", mono (
+                                               TFun (TConst "String") (
+                                               TConst "String"
+                                               )
+                                               ))
+            , ("String.toLower", mono (TFun (TConst "String") (TConst "String")))
+            , ("String.length", mono (TFun (TConst "String") (TConst "Int")))
+            , ("String.fromInt", mono (TFun (TConst "Int") (TConst "String")))
+            , ("String.fromFloat", mono (
+                                   TFun (TConst "Float") (TConst "String")
+                                   ))
+            , ("String.join", mono (
+                              TFun (TConst "String") (
+                              TFun (TApp (TConst "List") [ TConst "String" ]) (
+                              TConst "String"
+                              )
+                              )
+                              ))
+            , ("String.split", mono (
+                               TFun (TConst "String") (
+                               TFun (TConst "String") (
+                               TApp (TConst "List") [ TConst "String" ]
+                               )
+                               )
+                               ))
+            , ("String.contains", mono (
+                                  TFun (TConst "String") (
+                                  TFun (TConst "String") (TConst "Bool")
+                                  )
+                                  ))
+            , ("String.startsWith", mono (
+                                    TFun (TConst "String") (
+                                    TFun (TConst "String") (TConst "Bool")
+                                    )
+                                    ))
+            , ("String.trim", mono (TFun (TConst "String") (TConst "String")))
+            , ("String.isEmpty", mono (TFun (TConst "String") (TConst "Bool")))
+            , ("String.slice", mono (
+                               TFun (TConst "Int") (
+                               TFun (TConst "Int") (
+                               TFun (TConst "String") (TConst "String")
+                               )
+                               )
+                               ))
+            , ("String.append", mono (
+                                TFun (TConst "String") (
+                                TFun (TConst "String") (TConst "String")
+                                )
+                                ))
+            , ("List.map", { quantified = [ 0 , 1 ]
+                           , type_ = TFun (
+                                     TFun (TVar 0 (Just "a")) (
+                                     TVar 1 (Just "b")
+                                     )
+                                     ) (
+                                     TFun (
+                                     TApp (TConst "List") [ TVar 0 (Just "a") ]
+                                     ) (
+                                     TApp (TConst "List") [ TVar 1 (Just "b") ]
+                                     )
+                                     )
+                           })
+            , ("List.filter", { quantified = [ 0 ]
+                              , type_ = TFun (
+                                        TFun (TVar 0 (Just "a")) (TConst "Bool")
+                                        ) (
+                                        TFun (
+                                        TApp (TConst "List") [ TVar 0 (Just "a")
+                                        ]
+                                        ) (
+                                        TApp (TConst "List") [ TVar 0 (Just "a")
+                                        ]
+                                        )
+                                        )
+                              })
+            , ("List.foldl", { quantified = [ 0 , 1 ]
+                             , type_ = TFun (
+                                       TFun (TVar 0 (Just "a")) (
+                                       TFun (TVar 1 (Just "b")) (
+                                       TVar 1 (Just "b")
+                                       )
+                                       )
+                                       ) (
+                                       TFun (TVar 1 (Just "b")) (
+                                       TFun (
+                                       TApp (TConst "List") [ TVar 0 (Just "a")
+                                       ]
+                                       ) (TVar 1 (Just "b"))
+                                       )
+                                       )
+                             })
+            , ("List.foldr", { quantified = [ 0 , 1 ]
+                             , type_ = TFun (
+                                       TFun (TVar 0 (Just "a")) (
+                                       TFun (TVar 1 (Just "b")) (
+                                       TVar 1 (Just "b")
+                                       )
+                                       )
+                                       ) (
+                                       TFun (TVar 1 (Just "b")) (
+                                       TFun (
+                                       TApp (TConst "List") [ TVar 0 (Just "a")
+                                       ]
+                                       ) (TVar 1 (Just "b"))
+                                       )
+                                       )
+                             })
+            , ("List.head", { quantified = [ 0 ]
+                            , type_ = TFun (
+                                      TApp (TConst "List") [ TVar 0 (Just "a") ]
+                                      ) (
+                                      TApp (TConst "Maybe") [ TVar 0 (Just "a")
+                                      ]
+                                      )
+                            })
+            , ("List.length", { quantified = [ 0 ]
+                              , type_ = TFun (
+                                        TApp (TConst "List") [ TVar 0 (Just "a")
+                                        ]
+                                        ) (TConst "Int")
+                              })
+            , ("List.reverse", { quantified = [ 0 ]
+                               , type_ = TFun (
+                                         TApp (TConst "List") [ TVar 0 (
+                                                                Just "a"
+                                                                )
+                                         ]
+                                         ) (
+                                         TApp (TConst "List") [ TVar 0 (
+                                                                Just "a"
+                                                                )
+                                         ]
+                                         )
+                               })
+            , ("List.isEmpty", { quantified = [ 0 ]
+                               , type_ = TFun (
+                                         TApp (TConst "List") [ TVar 0 (
+                                                                Just "a"
+                                                                )
+                                         ]
+                                         ) (TConst "Bool")
+                               })
+            , ("List.append", { quantified = [ 0 ]
+                              , type_ = TFun (
+                                        TApp (TConst "List") [ TVar 0 (Just "a")
+                                        ]
+                                        ) (
+                                        TFun (
+                                        TApp (TConst "List") [ TVar 0 (Just "a")
+                                        ]
+                                        ) (
+                                        TApp (TConst "List") [ TVar 0 (Just "a")
+                                        ]
+                                        )
+                                        )
+                              })
+            , ("List.concatMap", { quantified = [ 0 , 1 ]
+                                 , type_ = TFun (
+                                           TFun (TVar 0 (Just "a")) (
+                                           TApp (TConst "List") [ TVar 1 (
+                                                                  Just "b"
+                                                                  )
+                                           ]
+                                           )
+                                           ) (
+                                           TFun (
+                                           TApp (TConst "List") [ TVar 0 (
+                                                                  Just "a"
+                                                                  )
+                                           ]
+                                           ) (
+                                           TApp (TConst "List") [ TVar 1 (
+                                                                  Just "b"
+                                                                  )
+                                           ]
+                                           )
+                                           )
+                                 })
+            , ("Dict.empty", { quantified = [ 0 , 1 ]
+                             , type_ = TApp (TConst "Dict") [ TVar 0 (Just "k")
+                                       , TVar 1 (Just "v")
+                                       ]
+                             })
+            , ("Dict.insert", { quantified = [ 0 , 1 ]
+                              , type_ = TFun (TVar 0 (Just "k")) (
+                                        TFun (TVar 1 (Just "v")) (
+                                        TFun (
+                                        TApp (TConst "Dict") [ TVar 0 (Just "k")
+                                        , TVar 1 (Just "v")
+                                        ]
+                                        ) (
+                                        TApp (TConst "Dict") [ TVar 0 (Just "k")
+                                        , TVar 1 (Just "v")
+                                        ]
+                                        )
+                                        )
+                                        )
+                              })
+            , ("Dict.get", { quantified = [ 0 , 1 ]
+                           , type_ = TFun (TVar 0 (Just "k")) (
+                                     TFun (
+                                     TApp (TConst "Dict") [ TVar 0 (Just "k")
+                                     , TVar 1 (Just "v")
+                                     ]
+                                     ) (
+                                     TApp (TConst "Maybe") [ TVar 1 (Just "v") ]
+                                     )
+                                     )
+                           })
+            , ("Log.println", { quantified = [ 0 ]
+                              , type_ = TFun (TConst "String") (
+                                        TFun (TVar 0 (Just "a")) (TConst "Unit")
+                                        )
+                              })
+            , ("println", { quantified = [ 0 ]
+                          , type_ = TFun (TConst "String") (
+                                    TFun (TVar 0 (Just "a")) (TConst "Unit")
+                                    )
+                          })
+            , ("Process.exit", mono (TFun (TConst "Int") (TConst "Unit")))
+            , ("File.readFile", mono (
+                                TFun (TConst "String") (
+                                TApp (TConst "Result") [ TConst "String"
+                                , TConst "String"
+                                ]
+                                )
+                                ))
+            , ("File.writeFile", mono (
+                                 TFun (TConst "String") (
+                                 TFun (TConst "String") (
+                                 TApp (TConst "Result") [ TConst "String"
+                                 , TConst "Unit"
+                                 ]
+                                 )
+                                 )
+                                 ))
+            , ("File.mkdirAll", mono (
+                                TFun (TConst "String") (
+                                TApp (TConst "Result") [ TConst "String"
+                                , TConst "Unit"
+                                ]
+                                )
+                                ))
+            , ("Args.getArgs", mono (
+                               TFun (TConst "Unit") (
+                               TApp (TConst "List") [ TConst "String" ]
+                               )
+                               ))
+            , ("Args.getArg", mono (
+                              TFun (TConst "Int") (
+                              TApp (TConst "Maybe") [ TConst "String" ]
+                              )
+                              ))
+            , ("Ref.new", { quantified = [ 0 ]
+                          , type_ = TFun (TVar 0 (Just "a")) (
+                                    TApp (TConst "Ref") [ TVar 0 (Just "a") ]
+                                    )
+                          })
+            , ("Ref.get", { quantified = [ 0 ]
+                          , type_ = TFun (
+                                    TApp (TConst "Ref") [ TVar 0 (Just "a") ]
+                                    ) (TVar 0 (Just "a"))
+                          })
+            , ("Ref.set", { quantified = [ 0 ]
+                          , type_ = TFun (TVar 0 (Just "a")) (
+                                    TFun (
+                                    TApp (TConst "Ref") [ TVar 0 (Just "a") ]
+                                    ) (TConst "Unit")
+                                    )
+                          })
+            , ("Task.succeed", { quantified = [ 0 , 1 ]
+                               , type_ = TFun (TVar 0 (Just "a")) (
+                                         TApp (TConst "Task") [ TVar 1 (
+                                                                Just "err"
+                                                                )
+                                         , TVar 0 (Just "a")
+                                         ]
+                                         )
+                               })
+            , ("Task.fail", { quantified = [ 0 , 1 ]
+                            , type_ = TFun (TVar 0 (Just "err")) (
+                                      TApp (TConst "Task") [ TVar 0 (Just "err")
+                                      , TVar 1 (Just "a")
+                                      ]
+                                      )
+                            })
+            , ("Task.andThen", { quantified = [ 0 , 1 , 2 ]
+                               , type_ = TFun (
+                                         TFun (TVar 0 (Just "a")) (
+                                         TApp (TConst "Task") [ TVar 2 (
+                                                                Just "err"
+                                                                )
+                                         , TVar 1 (Just "b")
+                                         ]
+                                         )
+                                         ) (
+                                         TFun (
+                                         TApp (TConst "Task") [ TVar 2 (
+                                                                Just "err"
+                                                                )
+                                         , TVar 0 (Just "a")
+                                         ]
+                                         ) (
+                                         TApp (TConst "Task") [ TVar 2 (
+                                                                Just "err"
+                                                                )
+                                         , TVar 1 (Just "b")
+                                         ]
+                                         )
+                                         )
+                               })
+            , ("Task.map", { quantified = [ 0 , 1 , 2 ]
+                           , type_ = TFun (
+                                     TFun (TVar 0 (Just "a")) (
+                                     TVar 1 (Just "b")
+                                     )
+                                     ) (
+                                     TFun (
+                                     TApp (TConst "Task") [ TVar 2 (Just "err")
+                                     , TVar 0 (Just "a")
+                                     ]
+                                     ) (
+                                     TApp (TConst "Task") [ TVar 2 (Just "err")
+                                     , TVar 1 (Just "b")
+                                     ]
+                                     )
+                                     )
+                           })
+            , ("Task.perform", { quantified = [ 0 , 1 ]
+                               , type_ = TFun (
+                                         TApp (TConst "Task") [ TVar 0 (
+                                                                Just "err"
+                                                                )
+                                         , TVar 1 (Just "a")
+                                         ]
+                                         ) (
+                                         TApp (TConst "Result") [ TVar 0 (
+                                                                  Just "err"
+                                                                  )
+                                         , TVar 1 (Just "a")
+                                         ]
+                                         )
+                               })
+            , ("Task.sequence", { quantified = [ 0 , 1 ]
+                                , type_ = TFun (
+                                          TApp (TConst "List") [ TApp (
+                                                                 TConst "Task"
+                                                                 ) [ TVar 0 (
+                                                                     Just "err"
+                                                                     )
+                                                                 , TVar 1 (
+                                                                   Just "a"
+                                                                   )
+                                                                 ]
+                                          ]
+                                          ) (
+                                          TApp (TConst "Task") [ TVar 0 (
+                                                                 Just "err"
+                                                                 )
+                                          , TApp (TConst "List") [ TVar 1 (
+                                                                   Just "a"
+                                                                   )
+                                            ]
+                                          ]
+                                          )
+                                })
             ]
     in
-        Env.union  stdFunctions  prelude
+        Env.union stdFunctions prelude
 
 
-buildDepTypeEnv : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> Env.TypeEnv
+buildDepTypeEnv : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> Env.TypeEnv
 buildDepTypeEnv entryImports loadedModules =
-    buildDepTypeEnvLoop  entryImports  loadedModules  Env.empty
+    buildDepTypeEnvLoop entryImports loadedModules Env.empty
 
 
-buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> Env.TypeEnv -> Env.TypeEnv
+buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> Env.TypeEnv -> Env.TypeEnv
 buildDepTypeEnvLoop entryImports modules env =
     case modules of
         
@@ -1148,21 +980,21 @@ buildDepTypeEnvLoop entryImports modules env =
             env
         
         pair :: rest ->
-            buildDepTypeEnvLoop  entryImports  rest
-             (addOneModuleTypes  entryImports  pair  env)
+            buildDepTypeEnvLoop entryImports rest (
+            addOneModuleTypes entryImports pair env
+            )
 
 
-addOneModuleTypes : (List Ast.ImportDecl) -> ( String , Ast.Module ) -> Env.TypeEnv -> Env.TypeEnv
+addOneModuleTypes : (List Ast.ImportDecl) -> (String, Ast.Module) -> Env.TypeEnv -> Env.TypeEnv
 addOneModuleTypes entryImports pair env =
-    addOneModuleTypesInner  entryImports  (fst  pair)  (snd  pair)  env
+    addOneModuleTypesInner entryImports (fst pair) (snd pair) env
 
 
 addOneModuleTypesInner : (List Ast.ImportDecl) -> String -> Ast.Module -> Env.TypeEnv -> Env.TypeEnv
 addOneModuleTypesInner entryImports modName mod env =
-    addAnnotationsToEnv  (findImportAlias  entryImports  modName)
-     (findExposedNames  entryImports  modName)
-     (collectModuleAnnotations  mod.declarations)
-     env
+    addAnnotationsToEnv (findImportAlias entryImports modName) (
+    findExposedNames entryImports modName
+    ) (collectModuleAnnotations mod.declarations) env
 
 
 findImportAlias : (List Ast.ImportDecl) -> String -> String
@@ -1170,23 +1002,22 @@ findImportAlias imports modName =
     case imports of
         
         [  ] ->
-            lastPart  modName
+            lastPart modName
         
         imp :: rest ->
             let
-                name =
-                    String.join  "."  imp.moduleName
+                name = String.join "." imp.moduleName
             in
                 if name == modName then
-                    computeAlias  imp
+                    computeAlias imp
                 else
-                    findImportAlias  rest  modName
+                    findImportAlias rest modName
 
 
 computeAlias : Ast.ImportDecl -> String
 computeAlias imp =
-    if String.isEmpty  imp.alias_ then
-        case List.reverse  imp.moduleName of
+    if String.isEmpty imp.alias_ then
+        case List.reverse imp.moduleName of
             
             last :: _ ->
                 last
@@ -1199,7 +1030,7 @@ computeAlias imp =
 
 lastPart : String -> String
 lastPart modName =
-    case List.reverse  (String.split  "."  modName) of
+    case List.reverse (String.split "." modName) of
         
         last :: _ ->
             last
@@ -1217,13 +1048,12 @@ findExposedNames imports modName =
         
         imp :: rest ->
             let
-                name =
-                    String.join  "."  imp.moduleName
+                name = String.join "." imp.moduleName
             in
                 if name == modName then
-                    getExposedList  imp.exposing_
+                    getExposedList imp.exposing_
                 else
-                    findExposedNames  rest  modName
+                    findExposedNames rest modName
 
 
 getExposedList : ExposingClause -> List String
@@ -1240,35 +1070,33 @@ getExposedList clause =
             []
 
 
-collectModuleAnnotations : (List Declaration) -> List ( String , TypeExpr )
-collectModuleAnnotations decls =
-    collectModuleAnnotationsLoop  decls  []
+collectModuleAnnotations : (List Declaration) -> List (String, TypeExpr)
+collectModuleAnnotations decls = collectModuleAnnotationsLoop decls []
 
 
-collectModuleAnnotationsLoop : (List Declaration) -> (List ( String , TypeExpr )) -> List ( String , TypeExpr )
+collectModuleAnnotationsLoop : (List Declaration) -> (List (String, TypeExpr)) -> List (String, TypeExpr)
 collectModuleAnnotationsLoop decls acc =
     case decls of
         
         [  ] ->
-            List.reverse  acc
+            List.reverse acc
         
         decl :: rest ->
-            collectModuleAnnotationsLoop  rest
-             (collectOneAnnotation  decl  acc)
+            collectModuleAnnotationsLoop rest (collectOneAnnotation decl acc)
 
 
-collectOneAnnotation : Declaration -> (List ( String , TypeExpr )) -> List ( String , TypeExpr )
+collectOneAnnotation : Declaration -> (List (String, TypeExpr)) -> List (String, TypeExpr)
 collectOneAnnotation decl acc =
     case decl of
         
         TypeAnnotDecl name typeExpr _ ->
-            ( name , typeExpr ) :: acc
+            (name, typeExpr) :: acc
         
         _ ->
             acc
 
 
-addAnnotationsToEnv : String -> (List String) -> (List ( String , TypeExpr )) -> Env.TypeEnv -> Env.TypeEnv
+addAnnotationsToEnv : String -> (List String) -> (List (String, TypeExpr)) -> Env.TypeEnv -> Env.TypeEnv
 addAnnotationsToEnv qualPrefix exposed annotations env =
     case annotations of
         
@@ -1276,27 +1104,25 @@ addAnnotationsToEnv qualPrefix exposed annotations env =
             env
         
         ann :: rest ->
-            addAnnotationsToEnv  qualPrefix  exposed  rest
-             (addOneAnnotation  qualPrefix  exposed  ann  env)
+            addAnnotationsToEnv qualPrefix exposed rest (
+            addOneAnnotation qualPrefix exposed ann env
+            )
 
 
-addOneAnnotation : String -> (List String) -> ( String , TypeExpr ) -> Env.TypeEnv -> Env.TypeEnv
+addOneAnnotation : String -> (List String) -> (String, TypeExpr) -> Env.TypeEnv -> Env.TypeEnv
 addOneAnnotation qualPrefix exposed ann env =
-    addOneAnnotationInner  qualPrefix  exposed  (fst  ann)  (snd  ann)  env
+    addOneAnnotationInner qualPrefix exposed (fst ann) (snd ann) env
 
 
 addOneAnnotationInner : String -> (List String) -> String -> TypeExpr -> Env.TypeEnv -> Env.TypeEnv
 addOneAnnotationInner qualPrefix exposed funcName texpr env =
     let
-        scheme =
-            typeExprToScheme  texpr
-        qualName =
-            qualPrefix ++ "." ++ funcName
-        envWithQual =
-            Env.extend  qualName  scheme  env
+        scheme = typeExprToScheme texpr
+        qualName = qualPrefix ++ "." ++ funcName
+        envWithQual = Env.extend qualName scheme env
     in
-        if isExposed  funcName  exposed then
-            Env.extend  funcName  scheme  envWithQual
+        if isExposed funcName exposed then
+            Env.extend funcName scheme envWithQual
         else
             envWithQual
 
@@ -1312,29 +1138,23 @@ isExposed funcName exposed =
             if name == "*" || name == funcName then
                 True
             else
-                isExposed  funcName  rest
+                isExposed funcName rest
 
 
 typeExprToScheme : TypeExpr -> Scheme
 typeExprToScheme texpr =
     let
-        startId =
-            0 - 1
-        varNames =
-            Set.toList  (collectTypeVarNames  texpr)
-        varPairs =
-            assignVarIds  varNames  startId  []
-        paramMap =
-            buildParamMap  varPairs  Dict.empty
-        resolvedType =
-            Adt.resolveTypeExpr  paramMap  texpr
-        quantified =
-            List.map  snd  varPairs
+        startId = 0 - 1
+        varNames = Set.toList (collectTypeVarNames texpr)
+        varPairs = assignVarIds varNames startId []
+        paramMap = buildParamMap varPairs Dict.empty
+        resolvedType = Adt.resolveTypeExpr paramMap texpr
+        quantified = List.map snd varPairs
     in
         { quantified = quantified , type_ = resolvedType }
 
 
-buildParamMap : (List ( String , Int )) -> (Dict.Dict String Type) -> Dict.Dict String Type
+buildParamMap : (List (String, Int)) -> (Dict.Dict String Type) -> Dict.Dict String Type
 buildParamMap pairs acc =
     case pairs of
         
@@ -1342,22 +1162,20 @@ buildParamMap pairs acc =
             acc
         
         pair :: rest ->
-            buildParamMap  rest
-             (
-            Dict.insert  (fst  pair)  (TVar  (snd  pair)  (Just  (fst  pair)))
-             acc
+            buildParamMap rest (
+            Dict.insert (fst pair) (TVar (snd pair) (Just (fst pair))) acc
             )
 
 
-assignVarIds : (List String) -> Int -> (List ( String , Int )) -> List ( String , Int )
+assignVarIds : (List String) -> Int -> (List (String, Int)) -> List (String, Int)
 assignVarIds names nextId acc =
     case names of
         
         [  ] ->
-            List.reverse  acc
+            List.reverse acc
         
         name :: rest ->
-            assignVarIds  rest  (nextId - 1)  (( name , nextId ) :: acc)
+            assignVarIds rest (nextId - 1) ((name, nextId) :: acc)
 
 
 collectTypeVarNames : TypeExpr -> Set.Set String
@@ -1365,27 +1183,19 @@ collectTypeVarNames texpr =
     case texpr of
         
         TypeVar name _ ->
-            Set.singleton  name
+            Set.singleton name
         
         FunType fromT toT _ ->
-            Set.union  (collectTypeVarNames  fromT)  (collectTypeVarNames  toT)
+            Set.union (collectTypeVarNames fromT) (collectTypeVarNames toT)
         
         TypeRef _ args _ ->
-            List.foldl  (\arg acc -> Set.union  (collectTypeVarNames  arg)  acc)
-             Set.empty
-             args
+            List.foldl (\arg acc -> Set.union (collectTypeVarNames arg) acc) Set.empty args
         
         TupleTypeExpr items _ ->
-            List.foldl
-             (\item acc -> Set.union  (collectTypeVarNames  item)  acc)
-             Set.empty
-             items
+            List.foldl (\item acc -> Set.union (collectTypeVarNames item) acc) Set.empty items
         
         RecordTypeExpr fields _ ->
-            List.foldl
-             (\f acc -> Set.union  (collectTypeVarNames  f.type_)  acc)
-             Set.empty
-             fields
+            List.foldl (\f acc -> Set.union (collectTypeVarNames f.type_) acc) Set.empty fields
         
         UnitTypeExpr _ ->
             Set.empty
@@ -1397,10 +1207,9 @@ collectTypeVarNames texpr =
 isFfiBinding : String -> String -> Bool
 isFfiBinding projectRoot modName =
     let
-        skyiPath =
-            resolveBindingPath  projectRoot  modName
+        skyiPath = resolveBindingPath projectRoot modName
     in
-        case File.readFile  skyiPath of
+        case File.readFile skyiPath of
             
             Ok _ ->
                 True
@@ -1412,100 +1221,87 @@ isFfiBinding projectRoot modName =
 moduleNameToGoPath : String -> String
 moduleNameToGoPath modName =
     let
-        parts =
-            String.split  "."  modName
-        lowerParts =
-            List.map  String.toLower  parts
+        parts = String.split "." modName
+        lowerParts = List.map String.toLower parts
     in
-        String.join  "/"  lowerParts
+        String.join "/" lowerParts
 
 
 moduleNameToSafeName : String -> String
 moduleNameToSafeName modName =
     let
-        parts =
-            String.split  "."  modName
-        lowerParts =
-            List.map  String.toLower  parts
+        parts = String.split "." modName
+        lowerParts = List.map String.toLower parts
     in
-        String.join  "_"  lowerParts
+        String.join "_" lowerParts
 
 
 resolveWrapperPath : String -> String
 resolveWrapperPath modName =
     let
-        safeName =
-            moduleNameToSafeName  modName
+        safeName = moduleNameToSafeName modName
     in
         ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
 
 
-collectForeignImports : String -> (List Ast.ImportDecl) -> List ( String , String , Bool )
+collectForeignImports : String -> (List Ast.ImportDecl) -> List (String, String, Bool)
 collectForeignImports projectRoot imports =
-    List.filterMap
-     (
+    List.filterMap (
     \imp ->
         let
-            modName =
-                String.join  "."  imp.moduleName
+            modName = String.join "." imp.moduleName
         in
-            if isStdlib  modName then
+            if isStdlib modName then
                 Nothing
             else if imp.alias_ == "_" then
-                Just  ( modName , moduleNameToGoPath  modName , True )
-            else if isFfiBinding  projectRoot  modName then
-                Just  ( modName , moduleNameToGoPath  modName , False )
+                Just (modName, moduleNameToGoPath modName, True)
+            else if isFfiBinding projectRoot modName then
+                Just (modName, moduleNameToGoPath modName, False)
             else
                 Nothing
-    )
-     imports
+    ) imports
 
 
-collectAllForeignImports : String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , String , Bool )
+collectAllForeignImports : String -> (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> List (String, String, Bool)
 collectAllForeignImports projectRoot entryImports loadedModules =
     let
-        entryForeign =
-            collectForeignImports  projectRoot  entryImports
+        entryForeign = collectForeignImports projectRoot entryImports
         depForeign =
-            List.concatMap
-             (
+            List.concatMap (
             \pair ->
                 let
-                    mod =
-                        snd  pair
+                    mod = snd pair
                 in
-                    collectForeignImports  projectRoot  mod.imports
-            )
-             loadedModules
+                    collectForeignImports projectRoot mod.imports
+            ) loadedModules
     in
-        deduplicateForeignImports  (List.append  entryForeign  depForeign)
+        deduplicateForeignImports (List.append entryForeign depForeign)
 
 
-deduplicateForeignImports : (List ( String , String , Bool )) -> List ( String , String , Bool )
-deduplicateForeignImports imports =
-    deduplicateForeignLoop  imports  Set.empty  []
+deduplicateForeignImports : (List (String, String, Bool)) -> List (String, String, Bool)
+deduplicateForeignImports imports = deduplicateForeignLoop imports Set.empty []
 
 
-deduplicateForeignLoop : (List ( String , String , Bool )) -> (Set.Set String) -> (List ( String , String , Bool )) -> List ( String , String , Bool )
+deduplicateForeignLoop : (List (String, String, Bool)) -> (Set.Set String) -> (List (String, String, Bool)) -> List (String, String, Bool)
 deduplicateForeignLoop imports seen acc =
     case imports of
         
         [  ] ->
-            List.reverse  acc
+            List.reverse acc
         
         item :: rest ->
             let
-                modName =
-                    tripleFirst  item
+                modName = tripleFirst item
             in
-                if Set.member  modName  seen then
-                    deduplicateForeignLoop  rest  seen  acc
+                if Set.member modName seen then
+                    deduplicateForeignLoop rest seen acc
                 else
-                    deduplicateForeignLoop  rest  (Set.insert  modName  seen)
-                     (item :: acc)
+                    deduplicateForeignLoop rest (Set.insert modName seen) (
+                    item :: acc
+                    )
 
 
-tripleFirst : ( String , String , Bool ) -> String
+tripleFirst : (String, String, Bool) -> String
 tripleFirst triple =
     case triple of
         
@@ -1513,7 +1309,7 @@ tripleFirst triple =
             a
 
 
-tripleSecond : ( String , String , Bool ) -> String
+tripleSecond : (String, String, Bool) -> String
 tripleSecond triple =
     case triple of
         
@@ -1521,7 +1317,7 @@ tripleSecond triple =
             b
 
 
-tripleThird : ( String , String , Bool ) -> Bool
+tripleThird : (String, String, Bool) -> Bool
 tripleThird triple =
     case triple of
         

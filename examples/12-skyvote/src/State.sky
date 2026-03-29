@@ -2,7 +2,6 @@ module State exposing (..)
 
 import Sky.Core.Maybe exposing (..)
 
-
 type Page
     = BoardPage
     | DetailPage
@@ -12,6 +11,7 @@ type Page
     | AboutPage
     | RoadmapPage
     | NotFoundPage
+
 
 type alias Model =
     { page : Page
@@ -33,6 +33,7 @@ type alias Model =
     , authError : String
     , notification : String
     }
+
 
 type Msg
     = Navigate Page

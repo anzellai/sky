@@ -47,28 +47,12 @@ type alias Diagnostic =
 
 
 emptySpan : SourceSpan
-
 emptySpan =
-    { start =
-        { offset = 0 , line = 0 , column = 0 }
-    , end =
-        { offset = 0 , line = 0 , column = 0 }
+    { start = { offset = 0 , line = 0 , column = 0 }
+    , end = { offset = 0 , line = 0 , column = 0 }
     }
 
 
 isKeyword : String -> Bool
-
 isKeyword word =
-    word == "module" ||
-    word == "exposing" ||
-    word == "import" ||
-    word == "as" ||
-    word == "type" ||
-    word == "alias" ||
-    word == "let" ||
-    word == "in" ||
-    word == "if" ||
-    word == "then" ||
-    word == "else" ||
-    word == "case" ||
-    word == "of" || word == "foreign" || word == "port" || word == "from"
+    word == "module" || word == "exposing" || word == "import" || word == "as" || word == "type" || word == "alias" || word == "let" || word == "in" || word == "if" || word == "then" || word == "else" || word == "case" || word == "of" || word == "foreign" || word == "port" || word == "from"

@@ -16,124 +16,125 @@ import Counter exposing (Counter)
 type Page
     = MainPage
 
+
 -- ══════════════════════════════════════════════════════
 -- MSG — CounterMsg wraps Counter.Msg (auto-wired!)
 -- ══════════════════════════════════════════════════════
 type alias Model =
     { page : Page , title : String , myCounter : Counter }
 
+
 type Msg
     = Navigate Page
     | UpdateTitle String
     | CounterMsg Counter.Msg
 
+
 -- ══════════════════════════════════════════════════════
 -- INIT
 -- ══════════════════════════════════════════════════════
-init : a -> ( Model, Cmd Msg )
+init : a -> (Model, Cmd Msg)
 init _req =
-    ( { page = MainPage
-      , title = "My App"
-      , myCounter = Counter.initWith "Clicks"
-      }
-    , Cmd.none
-    )
+    ({ page = MainPage
+     , title = "My App"
+     , myCounter = Counter.initWith "Clicks"
+     }, Cmd.none)
+
 
 -- ══════════════════════════════════════════════════════
 -- UPDATE — no CounterMsg case needed! Auto-wired by compiler.
 -- ══════════════════════════════════════════════════════
-update : Msg -> Model -> ( Model, Cmd Msg )
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
+        
         Navigate page ->
-            ( { model | page = page } , Cmd.none )
+            ({ model | page = page }, Cmd.none)
         
         UpdateTitle t ->
-            ( { model | title = t } , Cmd.none )
+            ({ model | title = t }, Cmd.none)
         
         _ ->
-            ( model , Cmd.none )
+            (model, Cmd.none)
+
 
 -- ══════════════════════════════════════════════════════
 -- VIEW
 -- ══════════════════════════════════════════════════════
 view : Model -> VNode
 view model =
-    div []
-        [ styleNode [] pageStyles
-        , div [ class "app" ]
-            [ h1 [] [ text model.title ]
-            , p []
-                [ text
-                    "The counter below is a separate component. Its messages are auto-wired by the compiler."
-                ]
-            , Counter.view CounterMsg model.myCounter
-            , p [ class "total" ]
-                [ text
-                    (
-                    "Total: " ++
-                    String.fromInt (Counter.getCount model.myCounter)
-                    )
-                ]
-            ]
+    div [] [ styleNode [] pageStyles
+    , div [ class "app" ] [ h1 [] [ text model.title ]
+      , p [] [ text "The counter below is a separate component. Its messages are auto-wired by the compiler."
         ]
+      , Counter.view CounterMsg model.myCounter
+      , p [ class "total" ] [ text (
+                              "Total: " ++ String.fromInt (
+                                           Counter.getCount model.myCounter
+                                           )
+                              )
+        ]
+      ]
+    ]
+
 
 pageStyles =
-    stylesheet
-        [ rule "*, *::before, *::after"
-            [ property "box-sizing" "border-box" , margin "0" , padding "0" ]
-        , rule "body"
-            [ fontFamily
-                "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-            , property "background" "#f5f5f5"
-            , color (hex "333")
-            ]
-        , rule ".app"
-            [ maxWidth (px 500) , margin2 (rem 2.0) "auto" , padding (rem 2.0) ]
-        , rule ".app h1" [ property "margin-bottom" "0.5rem" ]
-        , rule ".app p"
-            [ property "margin-bottom" "1.5rem" , color (hex "666") ]
-        , rule ".counter-component"
-            [ property "background" "white"
-            , borderRadius (px 12)
-            , padding (rem 1.5)
-            , property "box-shadow" "0 2px 8px rgba(0,0,0,0.1)"
-            , margin2 (rem 1.0) "0"
-            ]
-        , rule ".counter-component h3"
-            [ property "margin-bottom" "1rem" , color (hex "333") ]
-        , rule ".counter-display" [ textAlign "center" , margin2 (rem 1.0) "0" ]
-        , rule ".count"
-            [ fontSize (rem 3.0) , fontWeight "bold" , color (hex "2563eb") ]
-        , rule ".counter-buttons"
-            [ display "flex" , gap (rem 0.5) , justifyContent "center" ]
-        , rule ".btn"
-            [ padding2 (rem 0.5) (rem 1.5)
-            , border "none"
-            , property "background" "#2563eb"
-            , color (hex "ffffff")
-            , borderRadius (px 6)
-            , fontSize (rem 1.0)
-            , cursor "pointer"
-            ]
-        , rule ".btn:hover" [ property "background" "#1d4ed8" ]
-        , rule ".btn:active" [ transform "scale(0.95)" ]
-        , rule ".btn-sm"
-            [ property "background" "#6b7280" , fontSize (rem 0.85) ]
-        , rule ".btn-sm:hover" [ property "background" "#4b5563" ]
-        , rule ".total"
-            [ fontWeight "bold"
-            , color (hex "333")
-            , property "margin-top" "1rem"
-            ]
-        ]
+    stylesheet [ rule "*, *::before, *::after" [ property "box-sizing" "border-box"
+                 , margin "0"
+                 , padding "0"
+                 ]
+    , rule "body" [ fontFamily "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+      , property "background" "#f5f5f5"
+      , color (hex "333")
+      ]
+    , rule ".app" [ maxWidth (px 500)
+      , margin2 (rem 2.0) "auto"
+      , padding (rem 2.0)
+      ]
+    , rule ".app h1" [ property "margin-bottom" "0.5rem" ]
+    , rule ".app p" [ property "margin-bottom" "1.5rem" , color (hex "666") ]
+    , rule ".counter-component" [ property "background" "white"
+      , borderRadius (px 12)
+      , padding (rem 1.5)
+      , property "box-shadow" "0 2px 8px rgba(0,0,0,0.1)"
+      , margin2 (rem 1.0) "0"
+      ]
+    , rule ".counter-component h3" [ property "margin-bottom" "1rem"
+      , color (hex "333")
+      ]
+    , rule ".counter-display" [ textAlign "center" , margin2 (rem 1.0) "0" ]
+    , rule ".count" [ fontSize (rem 3.0)
+      , fontWeight "bold"
+      , color (hex "2563eb")
+      ]
+    , rule ".counter-buttons" [ display "flex"
+      , gap (rem 0.5)
+      , justifyContent "center"
+      ]
+    , rule ".btn" [ padding2 (rem 0.5) (rem 1.5)
+      , border "none"
+      , property "background" "#2563eb"
+      , color (hex "ffffff")
+      , borderRadius (px 6)
+      , fontSize (rem 1.0)
+      , cursor "pointer"
+      ]
+    , rule ".btn:hover" [ property "background" "#1d4ed8" ]
+    , rule ".btn:active" [ transform "scale(0.95)" ]
+    , rule ".btn-sm" [ property "background" "#6b7280" , fontSize (rem 0.85) ]
+    , rule ".btn-sm:hover" [ property "background" "#4b5563" ]
+    , rule ".total" [ fontWeight "bold"
+      , color (hex "333")
+      , property "margin-top" "1rem"
+      ]
+    ]
+
 
 -- ══════════════════════════════════════════════════════
 -- APP
 -- ══════════════════════════════════════════════════════
 main =
-    app
-        { init = init
+    app { init = init
         , update = update
         , view = view
         , subscriptions = \_ -> ()

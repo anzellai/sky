@@ -20,7 +20,7 @@ import Ffi.BindingGen as BindingGen
 main =
     let
         command =
-            case Args.getArg  1 of
+            case Args.getArg 1 of
                 
                 Just cmd ->
                     cmd
@@ -28,70 +28,66 @@ main =
                 Nothing ->
                     "help"
     in
-        runCommand  command
+        runCommand command
 
 
 runCommand : String -> ()
 runCommand command =
     if command == "build" then
-        cmdBuild  ()
+        cmdBuild ()
     else if command == "run" then
-        cmdRun  ()
+        cmdRun ()
     else if command == "check" then
-        cmdCheck  ()
+        cmdCheck ()
     else if command == "fmt" then
-        cmdFmt  ()
+        cmdFmt ()
     else if command == "clean" then
-        cmdClean  ()
+        cmdClean ()
     else if command == "lsp" then
-        LspServer.startServer  ()
+        LspServer.startServer ()
     else if command == "add" then
-        cmdAdd  ()
+        cmdAdd ()
     else if command == "install" then
-        cmdInstall  ()
+        cmdInstall ()
     else if command == "remove" then
-        cmdRemove  ()
+        cmdRemove ()
     else if command == "update" then
-        cmdUpdate  ()
+        cmdUpdate ()
     else if command == "upgrade" then
-        cmdUpgrade  ()
+        cmdUpgrade ()
     else if command == "version" || command == "--version" || command == "-v" then
-        println  ("sky " ++ Args.skyVersion)
+        println ("sky " ++ Args.skyVersion)
     else
-        cmdHelp  ()
+        cmdHelp ()
 
 
 cmdBuild : () -> ()
 cmdBuild _ =
     let
         entryFile =
-            case Args.getArg  2 of
+            case Args.getArg 2 of
                 
                 Just f ->
                     f
                 
                 Nothing ->
                     "src/Main.sky"
-        outDir =
-            "sky-out"
+        outDir = "sky-out"
     in
-        case Pipeline.compile  entryFile  outDir of
+        case Pipeline.compile entryFile outDir of
             
             Err e ->
                 let
-                    _ =
-                        println  ("Error: " ++ e)
+                    _ = println ("Error: " ++ e)
                 in
-                    Process.exit  1
+                    Process.exit 1
             
             Ok code ->
                 let
-                    goModPath =
-                        outDir ++ "/go.mod"
-                    goSumPath =
-                        outDir ++ "/go.sum"
+                    goModPath = outDir ++ "/go.mod"
+                    goSumPath = outDir ++ "/go.sum"
                     goModExists =
-                        case File.readFile  goModPath of
+                        case File.readFile goModPath of
                             
                             Ok _ ->
                                 True
@@ -100,26 +96,21 @@ cmdBuild _ =
                                 False
                     _ =
                         if goModExists then
-                            Ok  ""
+                            Ok ""
                         else
-                            File.writeFile  goModPath
-                             "module sky-app\n\ngo 1.26.0\n"
+                            File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
                     hasFfiWrappers =
-                        case Process.run  "sh"
-                              [ "-c"
-                             , "ls " ++
-                             outDir ++
-                             "/sky_*.go " ++
-                             outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
+                        case Process.run "sh" [ "-c"
+                             , "ls " ++ outDir ++ "/sky_*.go " ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
                              ] of
                             
                             Ok output ->
-                                not  (String.isEmpty  (String.trim  output))
+                                not (String.isEmpty (String.trim output))
                             
                             Err _ ->
                                 False
                     goSumExists =
-                        case File.readFile  goSumPath of
+                        case File.readFile goSumPath of
                             
                             Ok _ ->
                                 True
@@ -127,68 +118,59 @@ cmdBuild _ =
                             Err _ ->
                                 False
                     _ =
-                        if hasFfiWrappers && not  goSumExists then
+                        if hasFfiWrappers && not goSumExists then
                             let
-                                _ =
-                                    println  "Running go mod tidy..."
+                                _ = println "Running go mod tidy..."
                             in
-                                Process.run  "sh"
-                                 [ "-c"
+                                Process.run "sh" [ "-c"
                                 , "cd " ++ outDir ++ " && go mod tidy 2>&1"
                                 ]
                         else
-                            Ok  ""
-                    _ =
-                        println  "Running go build..."
+                            Ok ""
+                    _ = println "Running go build..."
                     buildResult =
-                        Process.run  "sh"
-                         [ "-c"
-                        , "cd " ++
-                        outDir ++
-                        " && go build -gcflags=all=-l -ldflags='-X main.skyVersion=" ++
-                        Args.skyVersion ++ "' -o app"
+                        Process.run "sh" [ "-c"
+                        , "cd " ++ outDir ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion=" ++ Args.skyVersion ++ "' -o app"
                         ]
                 in
                     case buildResult of
                         
                         Ok _ ->
-                            println  ("Build complete: " ++ outDir ++ "/app")
+                            println ("Build complete: " ++ outDir ++ "/app")
                         
                         Err e ->
                             let
                                 _ =
-                                    println
-                                     ("go build failed: " ++ errorToString  e)
+                                    println (
+                                    "go build failed: " ++ errorToString e
+                                    )
                             in
-                                Process.exit  1
+                                Process.exit 1
 
 
 cmdRun : () -> ()
 cmdRun _ =
     let
-        _ =
-            cmdBuild  ()
-        runResult =
-            Process.run  "sh"  [ "-c" , "./sky-out/app" ]
+        _ = cmdBuild ()
+        runResult = Process.run "sh" [ "-c" , "./sky-out/app" ]
     in
         case runResult of
             
             Ok output ->
-                println  output
+                println output
             
             Err e ->
                 let
-                    _ =
-                        println  (errorToString  e)
+                    _ = println (errorToString e)
                 in
-                    Process.exit  1
+                    Process.exit 1
 
 
 cmdCheck : () -> ()
 cmdCheck _ =
     let
         entryFile =
-            case Args.getArg  2 of
+            case Args.getArg 2 of
                 
                 Just f ->
                     f
@@ -196,133 +178,83 @@ cmdCheck _ =
                 Nothing ->
                     "src/Main.sky"
     in
-        case File.readFile  entryFile of
+        case File.readFile entryFile of
             
             Err readErr ->
                 let
-                    _ =
-                        println  ("Cannot read: " ++ entryFile)
+                    _ = println ("Cannot read: " ++ entryFile)
                 in
-                    Process.exit  1
+                    Process.exit 1
             
             Ok source ->
                 let
-                    lexResult =
-                        Lexer.lex  source
+                    lexResult = Lexer.lex source
                 in
-                    case Parser.parse  lexResult.tokens of
+                    case Parser.parse lexResult.tokens of
                         
                         Err e ->
                             let
-                                _ =
-                                    println  ("Parse error: " ++ e)
+                                _ = println ("Parse error: " ++ e)
                             in
-                                Process.exit  1
+                                Process.exit 1
                         
                         Ok mod ->
                             let
                                 combinedEnv =
-                                    Pipeline.buildCheckEnv  entryFile  mod
+                                    Pipeline.buildCheckEnv entryFile mod
                                 checkResult =
-                                    Checker.checkModule  mod
-                                     (Just  combinedEnv)
+                                    Checker.checkModule mod (Just combinedEnv)
                             in
                                 case checkResult of
                                     
                                     Ok result ->
-                                        if List.isEmpty  result.diagnostics then
-                                            println
-                                             (
+                                        if List.isEmpty result.diagnostics then
+                                            println (
                                             "Type check passed: " ++ entryFile
                                             )
                                         else
                                             let
                                                 _ =
-                                                    List.map
-                                                     (
+                                                    List.map (
                                                     \d ->
-                                                        println  ("  ⚠ " ++ d)
-                                                    )
-                                                     result.diagnostics
-                                                _ =
-                                                    println  ""
+                                                        println ("  ⚠ " ++ d)
+                                                    ) result.diagnostics
+                                                _ = println ""
                                             in
                                                 let
                                                     _ =
-                                                        println
-                                                         (
-                                                        "Type check failed with " ++
-                                                        String.fromInt
-                                                         (
-                                                        List.length
-                                                         result.diagnostics
-                                                        ) ++
-                                                        " error(s): " ++
-                                                        entryFile
+                                                        println (
+                                                        "Type check failed with " ++ String.fromInt (
+                                                                                     List.length result.diagnostics
+                                                                                     ) ++ " error(s): " ++ entryFile
                                                         )
                                                 in
-                                                    Process.exit  1
+                                                    Process.exit 1
                                     
                                     Err e ->
                                         let
-                                            _ =
-                                                println  ("Type error: " ++ e)
+                                            _ = println ("Type error: " ++ e)
                                         in
-                                            Process.exit  1
+                                            Process.exit 1
 
 
 isGoStdlib : String -> Bool
 isGoStdlib name =
-    name == "archive" ||
-    name == "bufio" ||
-    name == "bytes" ||
-    name == "compress" ||
-    name == "container" ||
-    name == "context" ||
-    name == "crypto" ||
-    name == "database" ||
-    name == "debug" ||
-    name == "embed" ||
-    name == "encoding" ||
-    name == "errors" ||
-    name == "flag" ||
-    name == "fmt" ||
-    name == "go" ||
-    name == "hash" ||
-    name == "html" ||
-    name == "image" ||
-    name == "io" ||
-    name == "log" ||
-    name == "math" ||
-    name == "mime" ||
-    name == "net" ||
-    name == "os" ||
-    name == "path" ||
-    name == "reflect" ||
-    name == "regexp" ||
-    name == "runtime" ||
-    name == "sort" ||
-    name == "strconv" ||
-    name == "strings" ||
-    name == "sync" ||
-    name == "syscall" ||
-    name == "testing" ||
-    name == "text" || name == "time" || name == "unicode" || name == "unsafe"
+    name == "archive" || name == "bufio" || name == "bytes" || name == "compress" || name == "container" || name == "context" || name == "crypto" || name == "database" || name == "debug" || name == "embed" || name == "encoding" || name == "errors" || name == "flag" || name == "fmt" || name == "go" || name == "hash" || name == "html" || name == "image" || name == "io" || name == "log" || name == "math" || name == "mime" || name == "net" || name == "os" || name == "path" || name == "reflect" || name == "regexp" || name == "runtime" || name == "sort" || name == "strconv" || name == "strings" || name == "sync" || name == "syscall" || name == "testing" || name == "text" || name == "time" || name == "unicode" || name == "unsafe"
 
 
 cmdAdd : () -> ()
 cmdAdd _ =
-    case Args.getArg  2 of
+    case Args.getArg 2 of
         
         Nothing ->
-            println  "Usage: sky add <package>"
+            println "Usage: sky add <package>"
         
         Just pkg ->
             let
-                _ =
-                    println  ("Adding " ++ pkg ++ "...")
+                _ = println ("Adding " ++ pkg ++ "...")
                 firstPart =
-                    case String.split  "/"  pkg of
+                    case String.split "/" pkg of
                         
                         first :: _ ->
                             first
@@ -330,48 +262,45 @@ cmdAdd _ =
                         [  ] ->
                             pkg
             in
-                if isGoStdlib  firstPart || isGoStdlib  pkg then
+                if isGoStdlib firstPart || isGoStdlib pkg then
                     let
                         cacheDir =
-                            ".skycache/go/" ++
-                            String.replace  "-"  "_"
-                             (
-                            String.replace  "/"  "_"
-                             (String.replace  "."  "_"  pkg)
-                            )
-                        _ =
-                            File.mkdirAll  cacheDir
-                        _ =
-                            ensureGoModDir  ()
+                            ".skycache/go/" ++ String.replace "-" "_" (
+                                               String.replace "/" "_" (
+                                               String.replace "." "_" pkg
+                                               )
+                                               )
+                        _ = File.mkdirAll cacheDir
+                        _ = ensureGoModDir ()
                     in
-                        generateGoBindings  pkg  cacheDir
-                else if String.contains  "."  firstPart then
-                    detectAndInstall  pkg
+                        generateGoBindings pkg cacheDir
+                else if String.contains "." firstPart then
+                    detectAndInstall pkg
                 else
-                    println
-                     (
-                    "Unknown package: " ++
-                    pkg ++ ". Use github.com/owner/repo format."
+                    println (
+                    "Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format."
                     )
 
 
 detectAndInstall : String -> ()
 detectAndInstall pkg =
     let
-        tmpDir =
-            ".skycache/detect_" ++ String.replace  "/"  "_"  pkg
-        _ =
-            File.mkdirAll  ".skycache"
+        tmpDir = ".skycache/detect_" ++ String.replace "/" "_" pkg
+        _ = File.mkdirAll ".skycache"
         cloneResult =
-            Process.run  "git"
-             [ "clone" , "--depth" , "1" , "https://" ++ pkg , tmpDir ]
+            Process.run "git" [ "clone"
+            , "--depth"
+            , "1"
+            , "https://" ++ pkg
+            , tmpDir
+            ]
     in
         case cloneResult of
             
             Ok _ ->
                 let
                     hasSkyToml =
-                        case File.readFile  (tmpDir ++ "/sky.toml") of
+                        case File.readFile (tmpDir ++ "/sky.toml") of
                             
                             Ok _ ->
                                 True
@@ -380,115 +309,101 @@ detectAndInstall pkg =
                                 False
                 in
                     if hasSkyToml then
-                        installAsSkyPackage  pkg  tmpDir
+                        installAsSkyPackage pkg tmpDir
                     else
-                        installAsGoPackage  pkg  tmpDir
+                        installAsGoPackage pkg tmpDir
             
             Err _ ->
-                installAsGoPackage  pkg  ""
+                installAsGoPackage pkg ""
 
 
 installAsSkyPackage : String -> String -> ()
 installAsSkyPackage pkg tmpDir =
     let
-        targetDir =
-            ".skydeps/" ++ pkg
-        _ =
-            File.mkdirAll  ".skydeps"
-        _ =
-            Process.run  "rm"  [ "-rf" , targetDir ]
-        _ =
-            Process.run  "mv"  [ tmpDir , targetDir ]
+        targetDir = ".skydeps/" ++ pkg
+        _ = File.mkdirAll ".skydeps"
+        _ = Process.run "rm" [ "-rf" , targetDir ]
+        _ = Process.run "mv" [ tmpDir , targetDir ]
     in
-        println  ("Added Sky package: " ++ pkg)
+        println ("Added Sky package: " ++ pkg)
 
 
 installAsGoPackage : String -> String -> ()
 installAsGoPackage pkg tmpDir =
     let
         _ =
-            if String.isEmpty  tmpDir then
+            if String.isEmpty tmpDir then
                 ()
             else
-                Process.run  "rm"  [ "-rf" , tmpDir ]
-        _ =
-            ensureGoModDir  ()
+                Process.run "rm" [ "-rf" , tmpDir ]
+        _ = ensureGoModDir ()
         getResult =
-            Process.run  "sh"
-             [ "-c" , "cd .skycache/gomod && go get " ++ pkg ++ "@latest" ]
+            Process.run "sh" [ "-c"
+            , "cd .skycache/gomod && go get " ++ pkg ++ "@latest"
+            ]
     in
         case getResult of
             
             Ok _ ->
                 let
-                    _ =
-                        println  ("Added Go package: " ++ pkg)
+                    _ = println ("Added Go package: " ++ pkg)
                     cacheDir =
-                        ".skycache/go/" ++
-                        String.replace  "-"  "_"
-                         (
-                        String.replace  "/"  "_"
-                         (String.replace  "."  "_"  pkg)
-                        )
-                    _ =
-                        File.mkdirAll  cacheDir
+                        ".skycache/go/" ++ String.replace "-" "_" (
+                                           String.replace "/" "_" (
+                                           String.replace "." "_" pkg
+                                           )
+                                           )
+                    _ = File.mkdirAll cacheDir
                 in
-                    generateGoBindings  pkg  cacheDir
+                    generateGoBindings pkg cacheDir
             
             Err e ->
                 let
                     _ =
-                        println
-                         ("Failed to add " ++ pkg ++ ": " ++ errorToString  e)
+                        println (
+                        "Failed to add " ++ pkg ++ ": " ++ errorToString e
+                        )
                 in
-                    Process.exit  1
+                    Process.exit 1
 
 
 generateGoBindings : String -> String -> ()
 generateGoBindings pkg cacheDir =
-    case BindingGen.generateBindings  pkg  cacheDir of
+    case BindingGen.generateBindings pkg cacheDir of
         
         Ok content ->
-            println  ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+            println ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
         
         Err e ->
-            println  ("Warning: binding generation failed: " ++ e)
+            println ("Warning: binding generation failed: " ++ e)
 
 
 ensureGoModDir : () -> ()
 ensureGoModDir _ =
     let
-        _ =
-            File.mkdirAll  ".skycache/gomod"
-        goModPath =
-            ".skycache/gomod/go.mod"
+        _ = File.mkdirAll ".skycache/gomod"
+        goModPath = ".skycache/gomod/go.mod"
     in
-        case File.readFile  goModPath of
+        case File.readFile goModPath of
             
             Ok _ ->
                 ()
             
             Err _ ->
-                File.writeFile  goModPath  "module skycache\n\ngo 1.26.0\n"
+                File.writeFile goModPath "module skycache\n\ngo 1.26.0\n"
 
 
 cmdInstall : () -> ()
 cmdInstall _ =
     let
-        _ =
-            println  "Installing dependencies..."
-        _ =
-            ensureGoModDir  ()
-        _ =
-            installFromSkyToml  ()
-        _ =
-            installFromSkyToml  ()
-        _ =
-            autoGenerateBindings  ()
-        _ =
-            preFilterBindings  ()
+        _ = println "Installing dependencies..."
+        _ = ensureGoModDir ()
+        _ = installFromSkyToml ()
+        _ = installFromSkyToml ()
+        _ = autoGenerateBindings ()
+        _ = preFilterBindings ()
         tidyResult =
-            Process.run  "sh"  [ "-c" , "cd .skycache/gomod && go mod tidy" ]
+            Process.run "sh" [ "-c" , "cd .skycache/gomod && go mod tidy" ]
         _ =
             case tidyResult of
                 
@@ -496,26 +411,24 @@ cmdInstall _ =
                     ()
                 
                 Err e ->
-                    println  ("Install warning: " ++ errorToString  e)
-        _ =
-            checkForUpdates  ()
+                    println ("Install warning: " ++ errorToString e)
+        _ = checkForUpdates ()
     in
-        println  "Install complete."
+        println "Install complete."
 
 
 installFromSkyToml : () -> ()
 installFromSkyToml _ =
-    case File.readFile  "sky.toml" of
+    case File.readFile "sky.toml" of
         
         Err _ ->
             ()
         
         Ok content ->
             let
-                lines =
-                    String.split  "\n"  content
+                lines = String.split "\n" content
             in
-                installTomlDeps  lines  False
+                installTomlDeps lines False
 
 
 installTomlDeps : (List String) -> Bool -> ()
@@ -527,26 +440,21 @@ installTomlDeps lines inGoDeps =
         
         line :: rest ->
             let
-                trimmed =
-                    String.trim  line
+                trimmed = String.trim line
                 isGoDepsHeader =
-                    trimmed == "[\"go.dependencies\"]" ||
-                    trimmed == "[go.dependencies]"
+                    trimmed == "[\"go.dependencies\"]" || trimmed == "[go.dependencies]"
             in
                 if isGoDepsHeader then
-                    installTomlDeps  rest  True
-                else if String.startsWith  "["  trimmed && not  isGoDepsHeader then
-                    installTomlDeps  rest  False
-                else if inGoDeps && String.contains  "="  trimmed then
+                    installTomlDeps rest True
+                else if String.startsWith "[" trimmed && not isGoDepsHeader then
+                    installTomlDeps rest False
+                else if inGoDeps && String.contains "=" trimmed then
                     let
                         pkg =
-                            String.trim
-                             (
-                            String.replace  "\""  ""
-                             (
-                            String.trim
-                             (
-                            case String.split  "="  trimmed of
+                            String.trim (
+                            String.replace "\"" "" (
+                            String.trim (
+                            case String.split "=" trimmed of
                                 
                                 key :: _ ->
                                     key
@@ -557,23 +465,21 @@ installTomlDeps lines inGoDeps =
                             )
                             )
                         safeName =
-                            String.replace  "-"  "_"
-                             (
-                            String.replace  "/"  "_"
-                             (String.replace  "."  "_"  pkg)
+                            String.replace "-" "_" (
+                            String.replace "/" "_" (String.replace "." "_" pkg)
                             )
                         bindingPath =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
-                        case File.readFile  bindingPath of
+                        case File.readFile bindingPath of
                             
                             Ok _ ->
-                                installTomlDeps  rest  True
+                                installTomlDeps rest True
                             
                             Err _ ->
                                 let
                                     firstPart =
-                                        case String.split  "/"  pkg of
+                                        case String.split "/" pkg of
                                             
                                             first :: _ ->
                                                 first
@@ -581,50 +487,44 @@ installTomlDeps lines inGoDeps =
                                             [  ] ->
                                                 pkg
                                     _ =
-                                        println
-                                         (
-                                        "   Generating bindings for " ++
-                                        pkg ++ "..."
+                                        println (
+                                        "   Generating bindings for " ++ pkg ++ "..."
                                         )
                                 in
-                                    if isGoStdlib  firstPart || isGoStdlib  pkg then
+                                    if isGoStdlib firstPart || isGoStdlib pkg then
                                         let
                                             cacheDir =
                                                 ".skycache/go/" ++ safeName
-                                            _ =
-                                                File.mkdirAll  cacheDir
+                                            _ = File.mkdirAll cacheDir
                                         in
                                             let
                                                 _ =
-                                                    generateGoBindings  pkg
-                                                     cacheDir
+                                                    generateGoBindings pkg cacheDir
                                             in
-                                                installTomlDeps  rest  True
-                                    else if String.contains  "."  firstPart then
+                                                installTomlDeps rest True
+                                    else if String.contains "." firstPart then
                                         let
-                                            _ =
-                                                detectAndInstall  pkg
+                                            _ = detectAndInstall pkg
                                         in
-                                            installTomlDeps  rest  True
+                                            installTomlDeps rest True
                                     else
-                                        installTomlDeps  rest  True
+                                        installTomlDeps rest True
                 else
-                    installTomlDeps  rest  inGoDeps
+                    installTomlDeps rest inGoDeps
 
 
 installFromSkyToml : () -> ()
 installFromSkyToml _ =
-    case File.readFile  "sky.toml" of
+    case File.readFile "sky.toml" of
         
         Err _ ->
             ()
         
         Ok content ->
             let
-                lines =
-                    String.split  "\n"  content
+                lines = String.split "\n" content
             in
-                installTomlDeps  lines  False
+                installTomlDeps lines False
 
 
 installTomlDeps : (List String) -> Bool -> ()
@@ -636,26 +536,21 @@ installTomlDeps lines inGoDeps =
         
         line :: rest ->
             let
-                trimmed =
-                    String.trim  line
+                trimmed = String.trim line
                 isGoDepsHeader =
-                    trimmed == "[\"go.dependencies\"]" ||
-                    trimmed == "[go.dependencies]"
+                    trimmed == "[\"go.dependencies\"]" || trimmed == "[go.dependencies]"
             in
                 if isGoDepsHeader then
-                    installTomlDeps  rest  True
-                else if String.startsWith  "["  trimmed && not  isGoDepsHeader then
-                    installTomlDeps  rest  False
-                else if inGoDeps && String.contains  "="  trimmed then
+                    installTomlDeps rest True
+                else if String.startsWith "[" trimmed && not isGoDepsHeader then
+                    installTomlDeps rest False
+                else if inGoDeps && String.contains "=" trimmed then
                     let
                         pkg =
-                            String.trim
-                             (
-                            String.replace  "\""  ""
-                             (
-                            String.trim
-                             (
-                            case String.split  "="  trimmed of
+                            String.trim (
+                            String.replace "\"" "" (
+                            String.trim (
+                            case String.split "=" trimmed of
                                 
                                 key :: _ ->
                                     key
@@ -666,23 +561,21 @@ installTomlDeps lines inGoDeps =
                             )
                             )
                         safeName =
-                            String.replace  "-"  "_"
-                             (
-                            String.replace  "/"  "_"
-                             (String.replace  "."  "_"  pkg)
+                            String.replace "-" "_" (
+                            String.replace "/" "_" (String.replace "." "_" pkg)
                             )
                         bindingPath =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
-                        case File.readFile  bindingPath of
+                        case File.readFile bindingPath of
                             
                             Ok _ ->
-                                installTomlDeps  rest  True
+                                installTomlDeps rest True
                             
                             Err _ ->
                                 let
                                     firstPart =
-                                        case String.split  "/"  pkg of
+                                        case String.split "/" pkg of
                                             
                                             first :: _ ->
                                                 first
@@ -690,52 +583,47 @@ installTomlDeps lines inGoDeps =
                                             [  ] ->
                                                 pkg
                                     _ =
-                                        println
-                                         (
-                                        "   Generating bindings for " ++
-                                        pkg ++ "..."
+                                        println (
+                                        "   Generating bindings for " ++ pkg ++ "..."
                                         )
                                 in
-                                    if isGoStdlib  firstPart || isGoStdlib  pkg then
+                                    if isGoStdlib firstPart || isGoStdlib pkg then
                                         let
                                             cacheDir =
                                                 ".skycache/go/" ++ safeName
-                                            _ =
-                                                File.mkdirAll  cacheDir
-                                            _ =
-                                                generateGoBindings  pkg
-                                                 cacheDir
+                                            _ = File.mkdirAll cacheDir
+                                            _ = generateGoBindings pkg cacheDir
                                         in
-                                            installTomlDeps  rest  True
-                                    else if String.contains  "."  firstPart then
+                                            installTomlDeps rest True
+                                    else if String.contains "." firstPart then
                                         let
-                                            _ =
-                                                detectAndInstall  pkg
+                                            _ = detectAndInstall pkg
                                         in
-                                            installTomlDeps  rest  True
+                                            installTomlDeps rest True
                                     else
-                                        installTomlDeps  rest  True
+                                        installTomlDeps rest True
                 else
-                    installTomlDeps  rest  inGoDeps
+                    installTomlDeps rest inGoDeps
 
 
 autoGenerateBindings : () -> ()
 autoGenerateBindings _ =
     let
         findResult =
-            Process.run  "sh"
-             [ "-c" , "find src/ -name '*.sky' 2>/dev/null | head -100" ]
+            Process.run "sh" [ "-c"
+            , "find src/ -name '*.sky' 2>/dev/null | head -100"
+            ]
     in
         case findResult of
             
             Ok output ->
                 let
                     files =
-                        List.filter
-                         (\f -> not  (String.isEmpty  (String.trim  f)))
-                         (String.split  "\n"  output)
+                        List.filter (\f -> not (String.isEmpty (String.trim f))) (
+                        String.split "\n" output
+                        )
                 in
-                    List.map  (\f -> scanFileForFfiImports  f)  files
+                    List.map (\f -> scanFileForFfiImports f) files
             
             Err _ ->
                 ()
@@ -743,40 +631,42 @@ autoGenerateBindings _ =
 
 scanFileForFfiImports : String -> ()
 scanFileForFfiImports filePath =
-    case File.readFile  filePath of
+    case File.readFile filePath of
         
         Err _ ->
             ()
         
         Ok source ->
             let
-                lines =
-                    String.split  "\n"  source
+                lines = String.split "\n" source
                 importLines =
-                    List.filter
-                     (
+                    List.filter (
                     \l ->
-                        String.startsWith  "import "  l &&
-                        not  (String.contains  "Sky.Core"  l) &&
-                        not  (String.contains  "Std."  l) &&
-                        not  (String.contains  "Compiler."  l) &&
-                        not  (String.contains  "Formatter."  l) &&
-                        not  (String.contains  "Lsp."  l) &&
-                        not  (String.contains  "Ffi."  l)
-                    )
-                     lines
+                        String.startsWith "import " l && not (
+                                                         String.contains "Sky.Core" l
+                                                         ) && not (
+                                                              String.contains "Std." l
+                                                              ) && not (
+                                                                   String.contains "Compiler." l
+                                                                   ) && not (
+                                                                        String.contains "Formatter." l
+                                                                        ) && not (
+                                                                             String.contains "Lsp." l
+                                                                             ) && not (
+                                                                                  String.contains "Ffi." l
+                                                                                  )
+                    ) lines
             in
-                List.map  (\l -> processImportLine  l)  importLines
+                List.map (\l -> processImportLine l) importLines
 
 
 processImportLine : String -> ()
 processImportLine line =
     let
-        parts =
-            String.split  " "  (String.trim  line)
+        parts = String.split " " (String.trim line)
         modName =
-            if List.length  parts >= 2 then
-                case List.head  (List.drop  1  parts) of
+            if List.length parts >= 2 then
+                case List.head (List.drop 1 parts) of
                     
                     Just n ->
                         n
@@ -786,21 +676,18 @@ processImportLine line =
             else
                 ""
     in
-        if String.isEmpty  modName || Resolver.isStdlib  modName then
+        if String.isEmpty modName || Resolver.isStdlib modName then
             ()
         else
             let
-                goPath =
-                    Resolver.moduleNameToGoPath  modName
+                goPath = Resolver.moduleNameToGoPath modName
                 safeName =
-                    String.replace  "-"  "_"
-                     (
-                    String.replace  "/"  "_"  (String.replace  "."  "_"  goPath)
+                    String.replace "-" "_" (
+                    String.replace "/" "_" (String.replace "." "_" goPath)
                     )
-                bindingPath =
-                    ".skycache/go/" ++ safeName ++ "/bindings.skyi"
+                bindingPath = ".skycache/go/" ++ safeName ++ "/bindings.skyi"
             in
-                case File.readFile  bindingPath of
+                case File.readFile bindingPath of
                     
                     Ok _ ->
                         ()
@@ -808,12 +695,11 @@ processImportLine line =
                     Err _ ->
                         let
                             _ =
-                                println
-                                 (
+                                println (
                                 "   Generating bindings for " ++ goPath ++ "..."
                                 )
                             firstPart =
-                                case String.split  "/"  goPath of
+                                case String.split "/" goPath of
                                     
                                     first :: _ ->
                                         first
@@ -821,38 +707,28 @@ processImportLine line =
                                     [  ] ->
                                         ""
                         in
-                            if isGoStdlib  firstPart || isGoStdlib  goPath then
+                            if isGoStdlib firstPart || isGoStdlib goPath then
                                 let
-                                    cacheDir =
-                                        ".skycache/go/" ++ safeName
-                                    _ =
-                                        File.mkdirAll  cacheDir
-                                    _ =
-                                        ensureGoModDir  ()
+                                    cacheDir = ".skycache/go/" ++ safeName
+                                    _ = File.mkdirAll cacheDir
+                                    _ = ensureGoModDir ()
                                 in
-                                    generateGoBindings  goPath  cacheDir
-                            else if String.contains  "."  firstPart then
-                                detectAndInstall  goPath
+                                    generateGoBindings goPath cacheDir
+                            else if String.contains "." firstPart then
+                                detectAndInstall goPath
                             else
                                 ()
 
 
 preFilterBindings : () -> ()
 preFilterBindings _ =
-    case Process.run  "sh"
-          [ "-c"
-         , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do " ++
-         "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); " ++
-         "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then " ++
-         "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++
-         "out=\"${f%.skyi}.filtered.skyi\"; " ++
-         "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++
-         "echo \"   Pre-filtered $f\"; " ++ "fi; done"
+    case Process.run "sh" [ "-c"
+         , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do " ++ "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); " ++ "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then " ++ "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++ "out=\"${f%.skyi}.filtered.skyi\"; " ++ "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++ "echo \"   Pre-filtered $f\"; " ++ "fi; done"
          ] of
         
         Ok output ->
-            if not  (String.isEmpty  (String.trim  output)) then
-                println  (String.trim  output)
+            if not (String.isEmpty (String.trim output)) then
+                println (String.trim output)
             else
                 ()
         
@@ -862,170 +738,142 @@ preFilterBindings _ =
 
 cmdUpdate : () -> ()
 cmdUpdate _ =
-    case File.readFile  "sky.toml" of
+    case File.readFile "sky.toml" of
         
         Err _ ->
-            println  "No sky.toml found. Nothing to update."
+            println "No sky.toml found. Nothing to update."
         
         Ok content ->
             let
-                _ =
-                    println  "Updating dependencies..."
-                lines =
-                    String.split  "\n"  content
-                _ =
-                    updateDependencies  lines
+                _ = println "Updating dependencies..."
+                lines = String.split "\n" content
+                _ = updateDependencies lines
             in
-                println  "Update complete."
+                println "Update complete."
 
 
 updateDependencies : (List String) -> ()
-updateDependencies lines =
-    updateDepsLoop  lines  False
+updateDependencies lines = updateDepsLoop lines False
 
 
 updateDepsLoop : (List String) -> Bool -> ()
 updateDepsLoop lines inDeps =
-    if List.isEmpty  lines then
-        println  ""
+    if List.isEmpty lines then
+        println ""
     else
         let
             line =
-                case List.head  lines of
+                case List.head lines of
                     
                     Just l ->
                         l
                     
                     Nothing ->
                         ""
-            rest =
-                List.drop  1  lines
-            trimmed =
-                String.trim  line
+            rest = List.drop 1 lines
+            trimmed = String.trim line
         in
             if trimmed == "[dependencies]" then
-                updateDepsLoop  rest  True
-            else if String.startsWith  "["  trimmed &&
-            trimmed /= "[dependencies]" then
-                updateDepsLoop  rest  False
-            else if inDeps && String.contains  "="  trimmed then
+                updateDepsLoop rest True
+            else if String.startsWith "[" trimmed && trimmed /= "[dependencies]" then
+                updateDepsLoop rest False
+            else if inDeps && String.contains "=" trimmed then
                 let
-                    _ =
-                        updateOneDep  trimmed
+                    _ = updateOneDep trimmed
                 in
-                    updateDepsLoop  rest  True
+                    updateDepsLoop rest True
             else
-                updateDepsLoop  rest  inDeps
+                updateDepsLoop rest inDeps
 
 
 updateOneDep : String -> ()
 updateOneDep depLine =
     let
-        parts =
-            String.split  "="  depLine
+        parts = String.split "=" depLine
         pkgName =
             case parts of
                 
                 name :: _ ->
-                    String.trim  name
+                    String.trim name
                 
                 _ ->
                     ""
     in
-        if String.isEmpty  pkgName then
-            println  ""
+        if String.isEmpty pkgName then
+            println ""
         else
             let
+                _ = println ("   Updating " ++ pkgName ++ "...")
+                _ = ensureGoModDir ""
                 _ =
-                    println  ("   Updating " ++ pkgName ++ "...")
-                _ =
-                    ensureGoModDir  ""
-                _ =
-                    Process.run  "sh"
-                     [ "-c"
-                    , "cd .skycache/gomod && go get " ++
-                    pkgName ++ "@latest 2>/dev/null"
+                    Process.run "sh" [ "-c"
+                    , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null"
                     ]
             in
-                println  ""
+                println ""
 
 
 cmdUpgrade : () -> ()
 cmdUpgrade _ =
     let
-        _ =
-            println  "Checking for latest Sky release..."
-        latestTag =
-            fetchLatestVersion  True
+        _ = println "Checking for latest Sky release..."
+        latestTag = fetchLatestVersion True
     in
-        if String.isEmpty  latestTag then
-            println  "Could not determine latest version."
+        if String.isEmpty latestTag then
+            println "Could not determine latest version."
         else if latestTag == Args.skyVersion then
-            println  ("Already at latest version: " ++ latestTag)
+            println ("Already at latest version: " ++ latestTag)
         else
-            performUpgrade  latestTag
+            performUpgrade latestTag
 
 
 performUpgrade : String -> ()
 performUpgrade tag =
     let
-        _ =
-            println  ("Upgrading to " ++ tag ++ "...")
+        _ = println ("Upgrading to " ++ tag ++ "...")
         skyBin =
-            case Process.run  "which"  [ "sky" ] of
+            case Process.run "which" [ "sky" ] of
                 
                 Ok path ->
-                    String.trim  path
+                    String.trim path
                 
                 Err _ ->
                     ""
     in
-        if String.isEmpty  skyBin then
-            println  "Could not find sky binary path. Please upgrade manually."
+        if String.isEmpty skyBin then
+            println "Could not find sky binary path. Please upgrade manually."
         else
             let
-                artifact =
-                    detectPlatformArtifact  ()
+                artifact = detectPlatformArtifact ()
                 url =
-                    "https://github.com/anzellai/sky/releases/download/" ++
-                    tag ++ "/" ++ artifact
-                _ =
-                    println  ("   Downloading " ++ url)
+                    "https://github.com/anzellai/sky/releases/download/" ++ tag ++ "/" ++ artifact
+                _ = println ("   Downloading " ++ url)
                 downloadResult =
-                    Process.run  "sh"
-                     [ "-c"
-                    , "curl -fsSL '" ++
-                    url ++
-                    "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade " ++
-                    skyBin
+                    Process.run "sh" [ "-c"
+                    , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade " ++ skyBin
                     ]
             in
                 case downloadResult of
                     
                     Ok _ ->
-                        println  ("Upgraded to " ++ tag ++ " successfully!")
+                        println ("Upgraded to " ++ tag ++ " successfully!")
                     
                     Err e ->
-                        println
-                         (
-                        "Upgrade failed: " ++
-                        errorToString  e ++
-                        "\nDownload manually from: https://github.com/anzellai/sky/releases"
+                        println (
+                        "Upgrade failed: " ++ errorToString e ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
                         )
 
 
 detectPlatformArtifact : () -> String
 detectPlatformArtifact _ =
     let
-        osResult =
-            Process.run  "uname"  [ "-s" ]
-        archResult =
-            Process.run  "uname"  [ "-m" ]
+        osResult = Process.run "uname" [ "-s" ]
+        archResult = Process.run "uname" [ "-m" ]
         os =
             case osResult of
                 
                 Ok o ->
-                    String.toLower  (String.trim  o)
+                    String.toLower (String.trim o)
                 
                 Err _ ->
                     "linux"
@@ -1033,7 +881,7 @@ detectPlatformArtifact _ =
             case archResult of
                 
                 Ok a ->
-                    String.trim  a
+                    String.trim a
                 
                 Err _ ->
                     "x86_64"
@@ -1057,51 +905,40 @@ fetchLatestVersion : Bool -> String
 fetchLatestVersion forceRefresh =
     let
         cacheDir =
-            case Process.run  "sh"  [ "-c" , "echo $HOME" ] of
+            case Process.run "sh" [ "-c" , "echo $HOME" ] of
                 
                 Ok home ->
-                    String.trim  home ++ "/.sky"
+                    String.trim home ++ "/.sky"
                 
                 Err _ ->
                     "/tmp/.sky"
-        cachePath =
-            cacheDir ++ "/last-update-check.json"
+        cachePath = cacheDir ++ "/last-update-check.json"
     in
-        if not  forceRefresh then
-            case Process.run  "sh"
-                  [ "-c"
-                 , "if [ -f " ++
-                 cachePath ++
-                 " ] && [ $(( $(date +%s) - $(stat -f %m " ++
-                 cachePath ++
-                 " 2>/dev/null || stat -c %Y " ++
-                 cachePath ++
-                 " 2>/dev/null || echo 0) )) -lt 86400 ]; then cat " ++
-                 cachePath ++ "; fi"
+        if not forceRefresh then
+            case Process.run "sh" [ "-c"
+                 , "if [ -f " ++ cachePath ++ " ] && [ $(( $(date +%s) - $(stat -f %m " ++ cachePath ++ " 2>/dev/null || stat -c %Y " ++ cachePath ++ " 2>/dev/null || echo 0) )) -lt 86400 ]; then cat " ++ cachePath ++ "; fi"
                  ] of
                 
                 Ok cached ->
                     let
-                        trimmed =
-                            String.trim  cached
+                        trimmed = String.trim cached
                     in
-                        if not  (String.isEmpty  trimmed) then
+                        if not (String.isEmpty trimmed) then
                             trimmed
                         else
-                            fetchAndCacheVersion  cacheDir  cachePath
+                            fetchAndCacheVersion cacheDir cachePath
                 
                 Err _ ->
-                    fetchAndCacheVersion  cacheDir  cachePath
+                    fetchAndCacheVersion cacheDir cachePath
         else
-            fetchAndCacheVersion  cacheDir  cachePath
+            fetchAndCacheVersion cacheDir cachePath
 
 
 fetchAndCacheVersion : String -> String -> String
 fetchAndCacheVersion cacheDir cachePath =
     let
         result =
-            Process.run  "sh"
-             [ "-c"
+            Process.run "sh" [ "-c"
             , "curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"\\(v[^\"]*\\)\".*/\\1/'"
             ]
     in
@@ -1109,15 +946,13 @@ fetchAndCacheVersion cacheDir cachePath =
             
             Ok output ->
                 let
-                    tag =
-                        String.trim  output
+                    tag = String.trim output
                     _ =
-                        if not  (String.isEmpty  tag) then
+                        if not (String.isEmpty tag) then
                             let
-                                _ =
-                                    File.mkdirAll  cacheDir
+                                _ = File.mkdirAll cacheDir
                             in
-                                File.writeFile  cachePath  tag
+                                File.writeFile cachePath tag
                         else
                             ()
                 in
@@ -1130,273 +965,233 @@ fetchAndCacheVersion cacheDir cachePath =
 checkForUpdates : () -> ()
 checkForUpdates _ =
     let
-        latestTag =
-            fetchLatestVersion  False
+        latestTag = fetchLatestVersion False
     in
-        if not  (String.isEmpty  latestTag) && latestTag /= Args.skyVersion then
+        if not (String.isEmpty latestTag) && latestTag /= Args.skyVersion then
             let
+                _ = println ""
                 _ =
-                    println  ""
-                _ =
-                    println
-                     (
-                    "   A newer version of Sky is available: " ++
-                    latestTag ++ " (current: " ++ Args.skyVersion ++ ")"
+                    println (
+                    "   A newer version of Sky is available: " ++ latestTag ++ " (current: " ++ Args.skyVersion ++ ")"
                     )
             in
-                println  "   Run 'sky upgrade' to update."
+                println "   Run 'sky upgrade' to update."
         else
             ()
 
 
 cmdRemove : () -> ()
 cmdRemove _ =
-    case Args.getArg  2 of
+    case Args.getArg 2 of
         
         Nothing ->
-            println  "Usage: sky remove <package>"
+            println "Usage: sky remove <package>"
         
         Just pkg ->
             let
-                _ =
-                    println  ("Removing " ++ pkg ++ "...")
-                skyDepDir =
-                    ".skydeps/" ++ pkg
-                goDepDir =
-                    ".skycache/go/" ++ String.toLower  pkg
-                _ =
-                    Process.run  "rm"  [ "-rf" , skyDepDir ]
-                _ =
-                    Process.run  "rm"  [ "-rf" , goDepDir ]
+                _ = println ("Removing " ++ pkg ++ "...")
+                skyDepDir = ".skydeps/" ++ pkg
+                goDepDir = ".skycache/go/" ++ String.toLower pkg
+                _ = Process.run "rm" [ "-rf" , skyDepDir ]
+                _ = Process.run "rm" [ "-rf" , goDepDir ]
             in
-                println  ("Removed: " ++ pkg)
+                println ("Removed: " ++ pkg)
 
 
 cmdFmt : () -> ()
 cmdFmt _ =
     let
         filePath =
-            case Args.getArg  2 of
+            case Args.getArg 2 of
                 
                 Just f ->
                     f
                 
                 Nothing ->
                     "src/Main.sky"
-        useStdin =
-            filePath == "--stdin" || filePath == "-"
+        useStdin = filePath == "--stdin" || filePath == "-"
     in
         if useStdin then
-            fmtStdin  ()
+            fmtStdin ()
         else
-            case File.readFile  filePath of
+            case File.readFile filePath of
                 
                 Err e ->
                     let
-                        _ =
-                            println  ("Cannot read: " ++ filePath)
+                        _ = println ("Cannot read: " ++ filePath)
                     in
-                        Process.exit  1
+                        Process.exit 1
                 
                 Ok source ->
                     let
-                        lexResult =
-                            Lexer.lex  source
+                        lexResult = Lexer.lex source
                     in
-                        case Parser.parse  lexResult.tokens of
+                        case Parser.parse lexResult.tokens of
                             
                             Err e ->
                                 let
-                                    _ =
-                                        println  ("Parse error: " ++ e)
+                                    _ = println ("Parse error: " ++ e)
                                 in
-                                    Process.exit  1
+                                    Process.exit 1
                             
                             Ok mod ->
                                 let
-                                    formatted =
-                                        Format.formatModule  mod
+                                    formatted = Format.formatModule mod
                                     withComments =
-                                        reinsertComments  source  formatted
-                                    _ =
-                                        File.writeFile  filePath  withComments
+                                        reinsertComments source formatted
+                                    _ = File.writeFile filePath withComments
                                 in
-                                    println  ("Formatted: " ++ filePath)
+                                    println ("Formatted: " ++ filePath)
 
 
 reinsertComments : String -> String -> String
 reinsertComments original formatted =
     let
-        commentGroups =
-            collectCommentGroups  (String.split  "\n"  original)  []  []
-        fmtLines =
-            String.split  "\n"  formatted
+        commentGroups = collectCommentGroups (String.split "\n" original) [] []
+        fmtLines = String.split "\n" formatted
     in
-        String.join  "\n"
-         (insertCommentGroups  commentGroups  fmtLines  [])
+        String.join "\n" (insertCommentGroups commentGroups fmtLines [])
 
 
 isCommentLine : String -> Bool
 isCommentLine trimmed =
-    String.startsWith  "--"  trimmed || String.startsWith  "{-"  trimmed
+    String.startsWith "--" trimmed || String.startsWith "{-" trimmed
 
 
-collectCommentGroups : (List String) -> (List String) -> (List ( List String, String )) -> List ( List String, String )
+collectCommentGroups : (List String) -> (List String) -> (List (List String, String)) -> List (List String, String)
 collectCommentGroups lines currentComments acc =
     case lines of
-
-        [] ->
-            if List.isEmpty  currentComments then
-                List.reverse  acc
+        
+        [  ] ->
+            if List.isEmpty currentComments then
+                List.reverse acc
             else
-                List.reverse  (( List.reverse  currentComments, "" ) :: acc)
-
+                List.reverse ((List.reverse currentComments, "") :: acc)
+        
         line :: rest ->
             let
-                trimmed =
-                    String.trim  line
+                trimmed = String.trim line
             in
-                if isCommentLine  trimmed then
-                    collectCommentGroups  rest  (line :: currentComments)  acc
-                else if String.isEmpty  trimmed then
-                    collectCommentGroups  rest  currentComments  acc
-                else if not  (List.isEmpty  currentComments) then
+                if isCommentLine trimmed then
+                    collectCommentGroups rest (line :: currentComments) acc
+                else if String.isEmpty trimmed then
+                    collectCommentGroups rest currentComments acc
+                else if not (List.isEmpty currentComments) then
                     let
-                        anchorWord =
-                            extractAnchorWord  trimmed
+                        anchorWord = extractAnchorWord trimmed
                     in
-                        collectCommentGroups  rest  []
-                         (( List.reverse  currentComments, anchorWord ) :: acc)
+                        collectCommentGroups rest [] (
+                        (List.reverse currentComments, anchorWord) :: acc
+                        )
                 else
-                    collectCommentGroups  rest  []  acc
+                    collectCommentGroups rest [] acc
 
 
 extractAnchorWord : String -> String
 extractAnchorWord line =
-    case String.split  " "  line of
-
+    case String.split " " line of
+        
         word :: _ ->
             word
-
-        [] ->
+        
+        [  ] ->
             line
 
 
-insertCommentGroups : (List ( List String, String )) -> (List String) -> (List String) -> List String
+insertCommentGroups : (List (List String, String)) -> (List String) -> (List String) -> List String
 insertCommentGroups groups fmtLines acc =
     case groups of
-
-        [] ->
-            List.append  acc  fmtLines
-
+        
+        [  ] ->
+            List.append acc fmtLines
+        
         group :: restGroups ->
             let
-                comments =
-                    fst  group
-                anchor =
-                    snd  group
+                comments = fst group
+                anchor = snd group
             in
-                if String.isEmpty  anchor then
-                    insertCommentGroups  restGroups  fmtLines
-                     (List.append  acc  comments)
+                if String.isEmpty anchor then
+                    insertCommentGroups restGroups fmtLines (
+                    List.append acc comments
+                    )
                 else
-                    insertBeforeAnchorOnce  comments  anchor
-                     restGroups  fmtLines  acc
+                    insertBeforeAnchorOnce comments anchor restGroups fmtLines acc
 
 
-insertBeforeAnchorOnce : (List String) -> String -> (List ( List String, String )) -> (List String) -> (List String) -> List String
+insertBeforeAnchorOnce : (List String) -> String -> (List (List String, String)) -> (List String) -> (List String) -> List String
 insertBeforeAnchorOnce comments anchor restGroups fmtLines acc =
     case fmtLines of
-
-        [] ->
-            insertCommentGroups  restGroups  []
-             (List.append  acc  comments)
-
+        
+        [  ] ->
+            insertCommentGroups restGroups [] (List.append acc comments)
+        
         fmtLine :: fmtRest ->
-            if String.startsWith  anchor  (String.trim  fmtLine) then
-                insertCommentGroups  restGroups  fmtRest
-                 (List.concat  [ acc, comments, [ fmtLine ] ])
+            if String.startsWith anchor (String.trim fmtLine) then
+                insertCommentGroups restGroups fmtRest (
+                List.concat [ acc , comments , [ fmtLine ] ]
+                )
             else
-                insertBeforeAnchorOnce  comments  anchor
-                 restGroups  fmtRest  (List.append  acc  [ fmtLine ])
+                insertBeforeAnchorOnce comments anchor restGroups fmtRest (
+                List.append acc [ fmtLine ]
+                )
 
 
 fmtStdin : () -> ()
 fmtStdin _ =
-    case Io.readAllStdin  () of
+    case Io.readAllStdin () of
         
         Ok source ->
             let
-                lexResult =
-                    Lexer.lex  source
+                lexResult = Lexer.lex source
             in
-                case Parser.parse  lexResult.tokens of
+                case Parser.parse lexResult.tokens of
                     
                     Err e ->
                         let
-                            _ =
-                                Io.writeStderr  ("Parse error: " ++ e)
+                            _ = Io.writeStderr ("Parse error: " ++ e)
                         in
-                            Process.exit  1
+                            Process.exit 1
                     
                     Ok mod ->
-                        Io.writeStdout
-                         (reinsertComments  source  (Format.formatModule  mod))
+                        Io.writeStdout (
+                        reinsertComments source (Format.formatModule mod)
+                        )
                     
                     Err e ->
                         let
-                            _ =
-                                Io.writeStderr  ("Cannot read stdin")
+                            _ = Io.writeStderr ("Cannot read stdin")
                         in
-                            Process.exit  1
+                            Process.exit 1
 
 
 cmdClean : () -> ()
 cmdClean _ =
     let
-        _ =
-            Process.run  "rm"  [ "-rf" , "dist" ]
-        _ =
-            Process.run  "rm"  [ "-rf" , "sky-out" ]
+        _ = Process.run "rm" [ "-rf" , "dist" ]
+        _ = Process.run "rm" [ "-rf" , "sky-out" ]
     in
-        println  "Cleaned."
+        println "Cleaned."
 
 
 cmdHelp : () -> ()
 cmdHelp _ =
     let
+        _ = println ("Sky Programming Language " ++ Args.skyVersion)
+        _ = println ""
+        _ = println "Usage: sky <command> [args]"
+        _ = println ""
+        _ = println "Commands:"
+        _ = println "  build [file]    Compile to Go binary"
+        _ = println "  run [file]      Build and run"
+        _ = println "  check [file]    Type-check only"
+        _ = println "  fmt [file]      Format Sky source code"
+        _ = println "  add <package>   Add Go or Sky dependency"
         _ =
-            println  ("Sky Programming Language " ++ Args.skyVersion)
-        _ =
-            println  ""
-        _ =
-            println  "Usage: sky <command> [args]"
-        _ =
-            println  ""
-        _ =
-            println  "Commands:"
-        _ =
-            println  "  build [file]    Compile to Go binary"
-        _ =
-            println  "  run [file]      Build and run"
-        _ =
-            println  "  check [file]    Type-check only"
-        _ =
-            println  "  fmt [file]      Format Sky source code"
-        _ =
-            println  "  add <package>   Add Go or Sky dependency"
-        _ =
-            println
-             "  install         Install all dependencies + generate bindings"
-        _ =
-            println  "  remove <pkg>    Remove a dependency"
-        _ =
-            println  "  update          Update sky.toml dependencies to latest"
-        _ =
-            println  "  upgrade         Upgrade Sky compiler to latest release"
-        _ =
-            println  "  clean           Remove build artifacts"
-        _ =
-            println  "  version         Show version"
+            println "  install         Install all dependencies + generate bindings"
+        _ = println "  remove <pkg>    Remove a dependency"
+        _ = println "  update          Update sky.toml dependencies to latest"
+        _ = println "  upgrade         Upgrade Sky compiler to latest release"
+        _ = println "  clean           Remove build artifacts"
+        _ = println "  version         Show version"
     in
         ()

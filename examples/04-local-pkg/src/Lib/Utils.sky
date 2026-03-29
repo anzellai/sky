@@ -4,9 +4,8 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 
 add : Int -> Int -> Int
-add a b =
-    a + b
+add a b = a + b
+
 
 formatMessage : String -> Int -> String
-formatMessage msg count =
-    msg ++ " count is: " ++ (String.fromInt count)
+formatMessage msg count = msg ++ " count is: " ++ (String.fromInt count)

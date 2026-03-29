@@ -25,6 +25,7 @@ type Page
     | TermsPage
     | NotFoundPage
 
+
 -- ══════════════════════════════════════════════════════
 -- MESSAGES
 -- ══════════════════════════════════════════════════════
@@ -63,6 +64,7 @@ type Msg
     | FirebaseAuth String
     | Tick
     | NoOp
+
 
 -- ══════════════════════════════════════════════════════
 -- MODEL
@@ -103,6 +105,7 @@ type alias Model =
     , notificationType : String
     , signOutPending : Bool
     }
+
 
 -- ══════════════════════════════════════════════════════
 -- INITIAL MODEL
@@ -145,6 +148,7 @@ emptyModel =
     , signOutPending = False
     }
 
+
 -- ══════════════════════════════════════════════════════
 -- CONSTANTS
 -- ══════════════════════════════════════════════════════
@@ -159,6 +163,7 @@ allCategories =
     , "Wallet And Small Items"
     ]
 
+
 allCartStates =
     [ "ongoing"
     , "pending"
@@ -169,5 +174,5 @@ allCartStates =
     , "refunded"
     ]
 
-allCurrencies =
-    [ "GBP" , "HKD" , "USD" ]
+
+allCurrencies = [ "GBP" , "HKD" , "USD" ]

@@ -7,10 +7,10 @@ type GoExpr
     | GoCallExpr GoExpr (List GoExpr)
     | GoSelectorExpr GoExpr String
     | GoSliceLit (List GoExpr)
-    | GoMapLit (List ( GoExpr , GoExpr ))
+    | GoMapLit (List (GoExpr, GoExpr))
     | GoFuncLit (List GoParam) GoExpr
     | GoRawExpr String
-    | GoCompositeLit String (List ( String , GoExpr ))
+    | GoCompositeLit String (List (String, GoExpr))
     | GoBinaryExpr String GoExpr GoExpr
     | GoUnaryExpr String GoExpr
     | GoIndexExpr GoExpr GoExpr

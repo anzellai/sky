@@ -8,318 +8,251 @@ import Compiler.Token exposing (..)
 import Compiler.Ast exposing (..)
 import Compiler.ParserCore exposing (..)
 
-parsePatternExpr : ParserState -> Result String ( Pattern , ParserState )
-
+parsePatternExpr : ParserState -> Result String (Pattern, ParserState)
 parsePatternExpr state =
-    case parsePrimaryPattern  state of
+    case parsePrimaryPattern state of
         
         Err e ->
-            Err  e
+            Err e
         
         Ok pair ->
             let
-                pat =
-                    fst  pair
-                s1 =
-                    snd  pair
+                pat = fst pair
+                s1 = snd pair
             in
-                if matchKind  TkOperator  s1 && peekLexeme  s1 == "::" then
+                if matchKind TkOperator s1 && peekLexeme s1 == "::" then
                     let
-                        advResult =
-                            advance  s1
-                        s2 =
-                            snd  advResult
+                        advResult = advance s1
+                        s2 = snd advResult
                     in
-                        case parsePatternExpr  s2 of
+                        case parsePatternExpr s2 of
                             
                             Err e ->
-                                Err  e
+                                Err e
                             
                             Ok pair2 ->
                                 let
-                                    tail =
-                                        fst  pair2
-                                    s3 =
-                                        snd  pair2
+                                    tail = fst pair2
+                                    s3 = snd pair2
                                 in
-                                    Ok  ( PCons  pat  tail  emptySpan , s3 )
-                else if matchKindLex  TkKeyword  "as"  s1 then
+                                    Ok (PCons pat tail emptySpan, s3)
+                else if matchKindLex TkKeyword "as" s1 then
                     let
-                        advResult =
-                            advance  s1
-                        s2 =
-                            snd  advResult
-                        advResult2 =
-                            advance  s2
-                        nameTok =
-                            fst  advResult2
-                        s3 =
-                            snd  advResult2
+                        advResult = advance s1
+                        s2 = snd advResult
+                        advResult2 = advance s2
+                        nameTok = fst advResult2
+                        s3 = snd advResult2
                     in
-                        Ok  ( PAs  pat  nameTok.lexeme  emptySpan , s3 )
+                        Ok (PAs pat nameTok.lexeme emptySpan, s3)
                 else
-                    Ok  ( pat , s1 )
+                    Ok (pat, s1)
 
 
-parsePrimaryPattern : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPattern : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPattern state =
-    if matchKind  TkUpperIdentifier  state then
-        parsePrimaryPatternUpper  state
-    else if matchKind  TkIdentifier  state then
-        parsePrimaryPatternIdent  state
-    else if matchKind  TkInteger  state then
-        parsePrimaryPatternInt  state
-    else if matchKind  TkString  state then
-        parsePrimaryPatternString  state
-    else if matchKind  TkLParen  state then
-        parsePrimaryPatternParen  state
-    else if matchKind  TkLBracket  state then
-        parsePrimaryPatternBracket  state
+    if matchKind TkUpperIdentifier state then
+        parsePrimaryPatternUpper state
+    else if matchKind TkIdentifier state then
+        parsePrimaryPatternIdent state
+    else if matchKind TkInteger state then
+        parsePrimaryPatternInt state
+    else if matchKind TkString state then
+        parsePrimaryPatternString state
+    else if matchKind TkLParen state then
+        parsePrimaryPatternParen state
+    else if matchKind TkLBracket state then
+        parsePrimaryPatternBracket state
     else
-        Err  ("Unexpected token in pattern: " ++ peekLexeme  state)
+        Err ("Unexpected token in pattern: " ++ peekLexeme state)
 
 
-parsePrimaryPatternUpper : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternUpper : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternUpper state =
     let
-        advResult =
-            advance  state
-        id =
-            fst  advResult
-        s1 =
-            snd  advResult
-        qualResult =
-            parseQualifiedParts  [ id.lexeme ]  s1
-        parts =
-            fst  qualResult
-        s2 =
-            snd  qualResult
-        argsResult =
-            parsePatternArgs  s2
-        args =
-            fst  argsResult
-        s3 =
-            snd  argsResult
+        advResult = advance state
+        id = fst advResult
+        s1 = snd advResult
+        qualResult = parseQualifiedParts [ id.lexeme ] s1
+        parts = fst qualResult
+        s2 = snd qualResult
+        argsResult = parsePatternArgs s2
+        args = fst argsResult
+        s3 = snd argsResult
     in
-        Ok  ( PConstructor  parts  args  emptySpan , s3 )
+        Ok (PConstructor parts args emptySpan, s3)
 
 
-parsePrimaryPatternIdent : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternIdent : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternIdent state =
     let
-        advResult =
-            advance  state
-        id =
-            fst  advResult
-        s1 =
-            snd  advResult
+        advResult = advance state
+        id = fst advResult
+        s1 = snd advResult
     in
         if id.lexeme == "_" then
-            Ok  ( PWildcard  emptySpan , s1 )
+            Ok (PWildcard emptySpan, s1)
         else
-            Ok  ( PVariable  id.lexeme  emptySpan , s1 )
+            Ok (PVariable id.lexeme emptySpan, s1)
 
 
-parsePrimaryPatternInt : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternInt : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternInt state =
     let
-        advResult =
-            advance  state
-        tok =
-            fst  advResult
-        s1 =
-            snd  advResult
+        advResult = advance state
+        tok = fst advResult
+        s1 = snd advResult
     in
-        case String.toInt  tok.lexeme of
+        case String.toInt tok.lexeme of
             
             Just n ->
-                Ok  ( PLiteral  (LitInt  n)  emptySpan , s1 )
+                Ok (PLiteral (LitInt n) emptySpan, s1)
             
             Nothing ->
-                Ok  ( PLiteral  (LitInt  0)  emptySpan , s1 )
+                Ok (PLiteral (LitInt 0) emptySpan, s1)
 
 
-parsePrimaryPatternString : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternString : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternString state =
     let
-        advResult =
-            advance  state
-        tok =
-            fst  advResult
-        s1 =
-            snd  advResult
+        advResult = advance state
+        tok = fst advResult
+        s1 = snd advResult
     in
-        Ok  ( PLiteral  (LitString  tok.lexeme)  emptySpan , s1 )
+        Ok (PLiteral (LitString tok.lexeme) emptySpan, s1)
 
 
-parsePrimaryPatternParen : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternParen : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternParen state =
     let
-        advResult =
-            advance  state
-        s1 =
-            snd  advResult
+        advResult = advance state
+        s1 = snd advResult
     in
-        if matchKind  TkRParen  s1 then
+        if matchKind TkRParen s1 then
             let
-                advResult2 =
-                    advance  s1
-                s2 =
-                    snd  advResult2
+                advResult2 = advance s1
+                s2 = snd advResult2
             in
-                Ok  ( PLiteral  (LitString  "()")  emptySpan , s2 )
+                Ok (PLiteral (LitString "()") emptySpan, s2)
         else
-            case parsePatternExpr  s1 of
+            case parsePatternExpr s1 of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok pair ->
-                    parsePrimaryPatternParenCont  (fst  pair)  (snd  pair)
+                    parsePrimaryPatternParenCont (fst pair) (snd pair)
 
 
-parsePrimaryPatternParenCont : Pattern -> ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternParenCont : Pattern -> ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternParenCont first s2 =
-    if matchKind  TkComma  s2 then
-        parseTuplePatternRest  [ first ]  s2
+    if matchKind TkComma s2 then
+        parseTuplePatternRest [ first ] s2
     else
-        case consume  TkRParen  s2 of
+        case consume TkRParen s2 of
             
             Err e ->
-                Err  e
+                Err e
             
             Ok pair ->
-                Ok  ( first , snd  pair )
+                Ok (first, snd pair)
 
 
-parsePrimaryPatternBracket : ParserState -> Result String ( Pattern , ParserState )
-
+parsePrimaryPatternBracket : ParserState -> Result String (Pattern, ParserState)
 parsePrimaryPatternBracket state =
     let
-        advResult =
-            advance  state
-        s1 =
-            snd  advResult
+        advResult = advance state
+        s1 = snd advResult
     in
-        if matchKind  TkRBracket  s1 then
+        if matchKind TkRBracket s1 then
             let
-                advResult2 =
-                    advance  s1
-                s2 =
-                    snd  advResult2
+                advResult2 = advance s1
+                s2 = snd advResult2
             in
-                Ok  ( PList  []  emptySpan , s2 )
+                Ok (PList [] emptySpan, s2)
         else
             let
-                listResult =
-                    parsePatternList  s1
-                items =
-                    fst  listResult
-                s2 =
-                    snd  listResult
+                listResult = parsePatternList s1
+                items = fst listResult
+                s2 = snd listResult
             in
-                case consume  TkRBracket  s2 of
+                case consume TkRBracket s2 of
                     
                     Err e ->
-                        Err  e
+                        Err e
                     
                     Ok pair ->
-                        Ok  ( PList  items  emptySpan , snd  pair )
+                        Ok (PList items emptySpan, snd pair)
 
 
-parsePatternArgs : ParserState -> ( List Pattern , ParserState )
-
+parsePatternArgs : ParserState -> (List Pattern, ParserState)
 parsePatternArgs state =
-    if matchKind  TkIdentifier  state ||
-    matchKind  TkUpperIdentifier  state || matchKind  TkLParen  state then
-        if matchKind  TkArrow  state || peekColumn  state <= 1 then
-            ( [] , state )
+    if matchKind TkIdentifier state || matchKind TkUpperIdentifier state || matchKind TkLParen state then
+        if matchKind TkArrow state || peekColumn state <= 1 then
+            ([], state)
         else
-            case parsePrimaryPattern  state of
+            case parsePrimaryPattern state of
                 
                 Ok pair ->
                     let
-                        pat =
-                            fst  pair
-                        s1 =
-                            snd  pair
-                        restResult =
-                            parsePatternArgs  s1
-                        rest =
-                            fst  restResult
-                        s2 =
-                            snd  restResult
+                        pat = fst pair
+                        s1 = snd pair
+                        restResult = parsePatternArgs s1
+                        rest = fst restResult
+                        s2 = snd restResult
                     in
-                        ( pat :: rest , s2 )
+                        (pat :: rest, s2)
                 
                 Err _ ->
-                    ( [] , state )
+                    ([], state)
     else
-        ( [] , state )
+        ([], state)
 
 
-parseTuplePatternRest : (List Pattern) -> ParserState -> Result String ( Pattern , ParserState )
-
+parseTuplePatternRest : (List Pattern) -> ParserState -> Result String (Pattern, ParserState)
 parseTuplePatternRest items state =
-    if matchKind  TkComma  state then
+    if matchKind TkComma state then
         let
-            advResult =
-                advance  state
-            s1 =
-                snd  advResult
+            advResult = advance state
+            s1 = snd advResult
         in
-            case parsePatternExpr  s1 of
+            case parsePatternExpr s1 of
                 
                 Err e ->
-                    Err  e
+                    Err e
                 
                 Ok pair ->
-                    parseTuplePatternRest  (items ++ [ fst  pair ])  (snd  pair)
+                    parseTuplePatternRest (items ++ [ fst pair ]) (snd pair)
     else
-        case consume  TkRParen  state of
+        case consume TkRParen state of
             
             Err e ->
-                Err  e
+                Err e
             
             Ok pair ->
-                Ok  ( PTuple  items  emptySpan , snd  pair )
+                Ok (PTuple items emptySpan, snd pair)
 
 
-parsePatternList : ParserState -> ( List Pattern , ParserState )
-
+parsePatternList : ParserState -> (List Pattern, ParserState)
 parsePatternList state =
-    case parsePatternExpr  state of
+    case parsePatternExpr state of
         
         Err _ ->
-            ( [] , state )
+            ([], state)
         
         Ok pair ->
             let
-                item =
-                    fst  pair
-                s1 =
-                    snd  pair
+                item = fst pair
+                s1 = snd pair
             in
-                if matchKind  TkComma  s1 then
+                if matchKind TkComma s1 then
                     let
-                        advResult =
-                            advance  s1
-                        s2 =
-                            snd  advResult
-                        restResult =
-                            parsePatternList  s2
-                        rest =
-                            fst  restResult
-                        s3 =
-                            snd  restResult
+                        advResult = advance s1
+                        s2 = snd advResult
+                        restResult = parsePatternList s2
+                        rest = fst restResult
+                        s3 = snd restResult
                     in
-                        ( item :: rest , s3 )
+                        (item :: rest, s3)
                 else
-                    ( [ item ] , s1 )
+                    ([ item ], s1)

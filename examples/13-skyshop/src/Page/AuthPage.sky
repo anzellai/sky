@@ -8,71 +8,85 @@ import Ui.Layout as Layout
 import Lib.Translation as Tr
 import Tailwind exposing (..)
 
-
 viewSignIn model =
     let
-        lang =
-            model.lang
+        lang = model.lang
     in
-        Layout.page model
-            (div [ tw [ maxWSm , mxAuto , py12 ] ]
-                [ div [ tw [ bgWhite , roundedXl , shadow , p8 ] ]
-                    [ h1 [ tw [ text2xl , fontBold , mb6 , textCenter ] ]
-                        [ text (Tr.t lang "auth.welcome") ]
-                    , div
-                        [ id "auth-error"
-                        , tw [ bgRed50 , textRed700 , p3 , roundedMd , mb4 , textSm ]
-                        , style "display:none"
-                        ]
-                        [ text (model.authError) ]
-                    , div [ tw [ flexCol , gap4 ] ]
-                        [ button
-                            [ attribute "onclick" "skySignIn('google')"
-                            , tw
-                                [ wFull
-                                , bgWhite
-                                , textGray700
-                                , py3
-                                , px4
-                                , roundedLg
-                                , fontSemibold
-                                , textCenter
-                                , border
-                                , borderGray300
-                                , flex
-                                , itemsCenter
-                                , justifyCenter
-                                , gap3
-                                , hover bgGray50
-                                , transitionColors
-                                , cursorPointer
-                                ]
-                            ]
-                            [ text "Sign in with Google" ]
-                        , button
-                            [ attribute "onclick" "skySignIn('facebook')"
-                            , tw
-                                [ wFull
-                                , bgBlue600
-                                , textWhite
-                                , py3
-                                , px4
-                                , roundedLg
-                                , fontSemibold
-                                , textCenter
-                                , flex
-                                , itemsCenter
-                                , justifyCenter
-                                , gap3
-                                , hover bgBlue700
-                                , transitionColors
-                                , cursorPointer
-                                ]
-                            ]
-                            [ text "Sign in with Facebook" ]
-                        ]
-                    , p [ tw [ textCenter , textSm , textGray500 , mt6 ] ]
-                        [ text (Tr.t lang "auth.terms_notice") ]
-                    ]
-                ]
-            )
+        Layout.page model (
+        div [ tw [ maxWSm , mxAuto , py12 ] ] [ div [ tw [ bgWhite
+                                                      , roundedXl
+                                                      , shadow
+                                                      , p8
+                                                      ]
+                                                ] [ h1 [ tw [ text2xl
+                                                         , fontBold
+                                                         , mb6
+                                                         , textCenter
+                                                         ]
+                                                    ] [ text (
+                                                        Tr.t lang "auth.welcome"
+                                                        )
+                                                    ]
+                                                , div [ id "auth-error"
+                                                  , tw [ bgRed50
+                                                    , textRed700
+                                                    , p3
+                                                    , roundedMd
+                                                    , mb4
+                                                    , textSm
+                                                    ]
+                                                  , style "display:none"
+                                                  ] [ text (model.authError) ]
+                                                , div [ tw [ flexCol , gap4 ] ] [ button [ attribute "onclick" "skySignIn('google')"
+                                                                                  , tw [ wFull
+                                                                                    , bgWhite
+                                                                                    , textGray700
+                                                                                    , py3
+                                                                                    , px4
+                                                                                    , roundedLg
+                                                                                    , fontSemibold
+                                                                                    , textCenter
+                                                                                    , border
+                                                                                    , borderGray300
+                                                                                    , flex
+                                                                                    , itemsCenter
+                                                                                    , justifyCenter
+                                                                                    , gap3
+                                                                                    , hover bgGray50
+                                                                                    , transitionColors
+                                                                                    , cursorPointer
+                                                                                    ]
+                                                                                  ] [ text "Sign in with Google"
+                                                                                  ]
+                                                  , button [ attribute "onclick" "skySignIn('facebook')"
+                                                    , tw [ wFull
+                                                      , bgBlue600
+                                                      , textWhite
+                                                      , py3
+                                                      , px4
+                                                      , roundedLg
+                                                      , fontSemibold
+                                                      , textCenter
+                                                      , flex
+                                                      , itemsCenter
+                                                      , justifyCenter
+                                                      , gap3
+                                                      , hover bgBlue700
+                                                      , transitionColors
+                                                      , cursorPointer
+                                                      ]
+                                                    ] [ text "Sign in with Facebook"
+                                                    ]
+                                                  ]
+                                                , p [ tw [ textCenter
+                                                      , textSm
+                                                      , textGray500
+                                                      , mt6
+                                                      ]
+                                                  ] [ text (
+                                                      Tr.t lang "auth.terms_notice"
+                                                      )
+                                                  ]
+                                                ]
+        ]
+        )

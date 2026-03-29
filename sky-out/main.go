@@ -5186,7 +5186,7 @@ func Formatter_Format_FormatLambda(params any, body any) any {
 }
 
 func Formatter_Format_FormatBinary(op any, leftExpr any, rightExpr any) any {
-	return func() any { if sky_asBool(sky_asBool(sky_equal(op, "|>")) || sky_asBool(sky_equal(op, "<|"))) { return concat([]any{Formatter_Format_FormatExpr(leftExpr), indent(concat([]any{hardline, text(op), text(" "), Formatter_Format_FormatExpr(rightExpr)}))}) }; return group(concat([]any{Formatter_Format_FormatExpr(leftExpr), text(" "), text(op), line, Formatter_Format_FormatExpr(rightExpr)})) }()
+	return func() any { if sky_asBool(sky_asBool(sky_equal(op, "|>")) || sky_asBool(sky_equal(op, "<|"))) { return concat([]any{Formatter_Format_FormatExpr(leftExpr), indent(concat([]any{hardline, text(op), text(" "), Formatter_Format_FormatExpr(rightExpr)}))}) }; return concat([]any{Formatter_Format_FormatExpr(leftExpr), text(" "), text(op), text(" "), Formatter_Format_FormatExpr(rightExpr)}) }()
 }
 
 func Formatter_Format_FormatIf(condition any, thenBranch any, elseBranch any) any {
@@ -5276,15 +5276,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 7, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 7, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 1, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
