@@ -836,6 +836,10 @@ lowerQualified ctx parts =
             GoIdent "sky_listZip"
         else if qualName == "List.range" then
             GoIdent "sky_listRange"
+        else if qualName == "List.find" then
+            GoIdent "sky_listFind"
+        else if qualName == "List.minimum" then
+            GoIdent "sky_listMinimum"
         else if qualName == "List.any" then
             GoIdent "sky_listAny"
         else if qualName == "List.all" then
@@ -892,6 +896,12 @@ lowerQualified ctx parts =
             GoIdent "sky_timePosixToMillis"
         else if qualName == "Http.getString" then
             GoIdent "sky_httpGetString"
+        else if qualName == "Http.get" then
+            GoIdent "sky_httpGet"
+        else if qualName == "Http.post" then
+            GoIdent "sky_httpPost"
+        else if qualName == "Http.request" then
+            GoIdent "sky_httpRequest"
         else if qualName == "Encode.string" then
             GoIdent "sky_jsonEncString"
         else if qualName == "Encode.int" then
@@ -2358,6 +2368,10 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_listRange(from any) any { return func(to any) any { f, t := sky_asInt(from), sky_asInt(to); result := make([]any, 0); for i := f; i <= t; i++ { result = append(result, i) }; return result } }"
     , GoDeclRaw
+          "func sky_listFind(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return SkyJust(item) } }; return SkyNothing() } }"
+    , GoDeclRaw
+          "func sky_listMinimum(list any) any { items := sky_asList(list); if len(items) == 0 { return SkyNothing() }; min := sky_asInt(items[0]); for _, v := range items[1:] { if sky_asInt(v) < min { min = sky_asInt(v) } }; return SkyJust(min) }"
+    , GoDeclRaw
           "func sky_listAny(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return true } }; return false } }"
     , GoDeclRaw
           "func sky_listAll(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if !sky_asBool(fn.(func(any) any)(item)) { return false } }; return true } }"
@@ -2408,6 +2422,9 @@ generateHelperDecls =
     , GoDeclRaw "func sky_timePosixToMillis(t any) any { return sky_asInt(t) }"
     , GoDeclRaw
           "func sky_httpGetString(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(body)) } }"
+    , GoDeclRaw "func sky_httpGet(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"
+    , GoDeclRaw "func sky_httpPost(url any) any { return func(body any) any { return func() any { resp, err := net_http.Post(sky_asString(url), \"application/json\", strings.NewReader(sky_asString(body))); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); b, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(b), \"headers\": hdrs}) } } }"
+    , GoDeclRaw "func sky_httpRequest(opts any) any { return func() any { m := sky_asMap(opts); method := sky_asString(m[\"method\"]); url := sky_asString(m[\"url\"]); reqBody := sky_asString(m[\"body\"]); req, err := net_http.NewRequest(method, url, strings.NewReader(reqBody)); if err != nil { return SkyErr(err.Error()) }; for _, h := range sky_asList(m[\"headers\"]) { t := h.(SkyTuple2); req.Header.Set(sky_asString(t.V0), sky_asString(t.V1)) }; client := &net_http.Client{}; resp, err := client.Do(req); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"
     , GoDeclRaw "func sky_jsonEncString(v any) any { return sky_asString(v) }"
     , GoDeclRaw "func sky_jsonEncInt(v any) any { return sky_asInt(v) }"
     , GoDeclRaw "func sky_jsonEncFloat(v any) any { return sky_asFloat(v) }"
