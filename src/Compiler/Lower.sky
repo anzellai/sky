@@ -1461,7 +1461,7 @@ lowerLet ctx bindings body =
         returnStmt = [ GoReturn (lowerExpr bodyCtx body) ]
         allStmts = List.append stmts returnStmt
     in
-        GoRawExpr ("func() any { " ++ stmtsToGoString allStmts ++ " }()")
+        GoRawExpr (String.join "" [ "func() any { " , stmtsToGoString allStmts , " }()" ])
 
 
 extractBindingName : LetBinding -> Maybe String
@@ -1594,18 +1594,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
     let
         subjectCode = emitGoExprInline subjectExpr
     in
-        "func() any { __subject := " ++ subjectCode ++ "; " ++ String.join " "
-                                                                   (
-                                                                   List.map
-                                                                       (
-                                                                       emitBranchCode
-                                                                           ctx
-                                                                       )
-                                                                       (
-                                                                       zipIndex
-                                                                           branches
-                                                                       )
-                                                                   ) ++ " return nil }()"
+        String.join "" [ "func() any { __subject := " , subjectCode , "; " , String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) , " return nil }()" ]
 
 
 emitBranchCode : LowerCtx -> (Int, CaseBranch) -> String
@@ -1621,7 +1610,7 @@ emitBranchCode ctx pair =
         bindings = patternToBindings branchCtx "__subject" branch.pattern
         bodyCode = exprToGoString branchCtx branch.body
     in
-        "if " ++ condition ++ " { " ++ bindings ++ "return " ++ bodyCode ++ " }; "
+        String.join "" [ "if " , condition , " { " , bindings , "return " , bodyCode , " }; " ]
 
 
 patternToCondition : LowerCtx -> String -> Pattern -> String
@@ -1642,15 +1631,15 @@ patternToCondition ctx varName pat =
                 ctorName = lastPartOf parts
                 baseCond =
                     if ctorName == "Ok" || ctorName == "Err" then
-                        "sky_asSkyResult(" ++ varName ++ ").SkyName == \"" ++ ctorName ++ "\""
+                        String.join "" [ "sky_asSkyResult(" , varName , ").SkyName == \"" , ctorName , "\"" ]
                     else if ctorName == "Just" || ctorName == "Nothing" then
-                        "sky_asSkyMaybe(" ++ varName ++ ").SkyName == \"" ++ ctorName ++ "\""
+                        String.join "" [ "sky_asSkyMaybe(" , varName , ").SkyName == \"" , ctorName , "\"" ]
                     else if ctorName == "True" then
-                        "sky_asBool(" ++ varName ++ ") == true"
+                        String.join "" [ "sky_asBool(" , varName , ") == true" ]
                     else if ctorName == "False" then
-                        "sky_asBool(" ++ varName ++ ") == false"
+                        String.join "" [ "sky_asBool(" , varName , ") == false" ]
                     else
-                        "sky_asMap(" ++ varName ++ ")[\"SkyName\"] == \"" ++ ctorName ++ "\""
+                        String.join "" [ "sky_asMap(" , varName , ")[\"SkyName\"] == \"" , ctorName , "\"" ]
                 subConds = subPatternConditions ctx varName ctorName args 0
             in
                 if String.isEmpty subConds then
@@ -1662,21 +1651,21 @@ patternToCondition ctx varName pat =
             "true"
         
         PList items _ ->
-            "len(sky_asList(" ++ varName ++ ")) == " ++ String.fromInt
-                                                            (List.length items)
-        
+            String.join "" [ "len(sky_asList(" , varName , ")) == " , String.fromInt (List.length items) ]
+
         PCons head tail _ ->
             let
                 tailCond = patternToCondition ctx "__cons_tail" tail
+                lenCheck = String.join "" [ "len(sky_asList(" , varName , "))" ]
             in
                 if String.contains "== 0" tailCond then
-                    "len(sky_asList(" ++ varName ++ ")) == 1"
+                    lenCheck ++ " == 1"
                 else if String.contains "== 1" tailCond then
-                    "len(sky_asList(" ++ varName ++ ")) == 2"
+                    lenCheck ++ " == 2"
                 else if String.contains "== 2" tailCond then
-                    "len(sky_asList(" ++ varName ++ ")) == 3"
+                    lenCheck ++ " == 3"
                 else
-                    "len(sky_asList(" ++ varName ++ ")) > 0"
+                    lenCheck ++ " > 0"
         
         PAs inner _ _ ->
             patternToCondition ctx varName inner
@@ -1896,62 +1885,28 @@ lowerBinary ctx op left right =
         else if op == "::" then
             GoCallExpr (GoIdent "append")
                 [ GoSliceLit [ goLeft ]
-                , GoRawExpr
-                      ("sky_asList(" ++ emitGoExprInline goRight ++ ")...")
+                , GoRawExpr (String.join "" [ "sky_asList(" , emitGoExprInline goRight , ")..." ])
                 ]
         else if op == "++" then
-            GoRawExpr
-                (
-                "sky_concat(" ++ emitGoExprInline goLeft ++ ", " ++ emitGoExprInline
-                                                                        goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_concat(" , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
         else if op == "+" || op == "-" || op == "*" || op == "%" then
-            GoRawExpr
-                (
-                "sky_asInt(" ++ emitGoExprInline goLeft ++ ") " ++ op ++ " sky_asInt(" ++ emitGoExprInline
-                                                                                              goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_asInt(" , emitGoExprInline goLeft , ") " , op , " sky_asInt(" , emitGoExprInline goRight , ")" ])
         else if op == "/" then
-            GoRawExpr
-                (
-                "sky_asFloat(" ++ emitGoExprInline goLeft ++ ") / sky_asFloat(" ++ emitGoExprInline
-                                                                                       goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_asFloat(" , emitGoExprInline goLeft , ") / sky_asFloat(" , emitGoExprInline goRight , ")" ])
         else if op == "//" then
-            GoRawExpr
-                (
-                "sky_asInt(" ++ emitGoExprInline goLeft ++ ") / sky_asInt(" ++ emitGoExprInline
-                                                                                   goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_asInt(" , emitGoExprInline goLeft , ") / sky_asInt(" , emitGoExprInline goRight , ")" ])
         else if op == "/=" then
-            GoRawExpr
-                (
-                "!sky_equal(" ++ emitGoExprInline goLeft ++ ", " ++ emitGoExprInline
-                                                                        goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "!sky_equal(" , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
         else if op == "==" then
             GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ]
         else if op == "!=" then
-            GoUnaryExpr "!"
-                (GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ])
+            GoUnaryExpr "!" (GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ])
         else if op == "<" || op == "<=" || op == ">" || op == ">=" then
-            GoRawExpr
-                (
-                "sky_asInt(" ++ emitGoExprInline goLeft ++ ") " ++ op ++ " sky_asInt(" ++ emitGoExprInline
-                                                                                              goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_asInt(" , emitGoExprInline goLeft , ") " , op , " sky_asInt(" , emitGoExprInline goRight , ")" ])
         else if op == "&&" then
-            GoRawExpr
-                (
-                "sky_asBool(" ++ emitGoExprInline goLeft ++ ") && sky_asBool(" ++ emitGoExprInline
-                                                                                      goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_asBool(" , emitGoExprInline goLeft , ") && sky_asBool(" , emitGoExprInline goRight , ")" ])
         else if op == "||" then
-            GoRawExpr
-                (
-                "sky_asBool(" ++ emitGoExprInline goLeft ++ ") || sky_asBool(" ++ emitGoExprInline
-                                                                                      goRight ++ ")"
-                )
+            GoRawExpr (String.join "" [ "sky_asBool(" , emitGoExprInline goLeft , ") || sky_asBool(" , emitGoExprInline goRight , ")" ])
         else
             GoBinaryExpr op goLeft goRight
 
@@ -2907,16 +2862,16 @@ zipIndexLoop idx items =
 emitGoExprInline : GoExpr -> String
 emitGoExprInline expr =
     case expr of
-        
+
         GoIdent name ->
             name
-        
+
         GoBasicLit val ->
             val
-        
+
         GoStringLit s ->
-            "\"" ++ s ++ "\""
-        
+            String.join "" [ "\"" , s , "\"" ]
+
         GoCallExpr fn args ->
             let
                 fnStr = emitGoExprInline fn
@@ -2926,47 +2881,35 @@ emitGoExprInline expr =
                     else
                         fnStr
             in
-                calleeStr ++ "(" ++ String.join ", "
-                                        (List.map emitGoExprInline args) ++ ")"
-        
+                String.join "" [ calleeStr , "(" , String.join ", " (List.map emitGoExprInline args) , ")" ]
+
         GoSelectorExpr target sel ->
-            emitGoExprInline target ++ "." ++ sel
-        
+            String.join "" [ emitGoExprInline target , "." , sel ]
+
         GoSliceLit items ->
-            "[]any{" ++ String.join ", " (List.map emitGoExprInline items) ++ "}"
-        
+            String.join "" [ "[]any{" , String.join ", " (List.map emitGoExprInline items) , "}" ]
+
         GoMapLit entries ->
-            "map[string]any{" ++ String.join ", "
-                                     (List.map emitMapEntry entries) ++ "}"
-        
+            String.join "" [ "map[string]any{" , String.join ", " (List.map emitMapEntry entries) , "}" ]
+
         GoFuncLit params body ->
-            "func(" ++ String.join ", " (List.map emitInlineParam params) ++ ") any { return " ++ emitGoExprInline
-                                                                                                      body ++ " }"
-        
+            String.join "" [ "func(" , String.join ", " (List.map emitInlineParam params) , ") any { return " , emitGoExprInline body , " }" ]
+
         GoRawExpr code ->
             code
-        
+
         GoCompositeLit typeName fields ->
-            typeName ++ "{" ++ String.join ", "
-                                   (
-                                   List.map
-                                       (
-                                       \pair ->
-                                           fst pair ++ ": " ++ emitGoExprInline
-                                                                   (snd pair)
-                                       )
-                                       fields
-                                   ) ++ "}"
-        
+            String.join "" [ typeName , "{" , String.join ", " (List.map (\pair -> String.join "" [ fst pair , ": " , emitGoExprInline (snd pair) ]) fields) , "}" ]
+
         GoBinaryExpr op left right ->
-            emitGoExprInline left ++ " " ++ op ++ " " ++ emitGoExprInline right
-        
+            String.join "" [ emitGoExprInline left , " " , op , " " , emitGoExprInline right ]
+
         GoUnaryExpr op operand ->
-            op ++ emitGoExprInline operand
-        
+            String.join "" [ op , emitGoExprInline operand ]
+
         GoIndexExpr target index ->
-            emitGoExprInline target ++ "[" ++ emitGoExprInline index ++ "]"
-        
+            String.join "" [ emitGoExprInline target , "[" , emitGoExprInline index , "]" ]
+
         GoNilExpr ->
             "nil"
 
