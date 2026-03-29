@@ -15,7 +15,7 @@ func Sky_encoding_base64_NewEncoding(arg0 any) any {
 		defer func() { recover() }()
 		result := base64.NewEncoding(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_CorruptInputErrorError(receiver any) any {
@@ -24,7 +24,7 @@ func Sky_encoding_base64_CorruptInputErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingAppendDecode(receiver any, arg0 any, arg1 any) any {
@@ -36,7 +36,7 @@ func Sky_encoding_base64_EncodingAppendDecode(receiver any, arg0 any, arg1 any) 
 		result, err := _receiver.AppendDecode(_arg0, _arg1)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingAppendEncode(receiver any, arg0 any, arg1 any) any {
@@ -47,7 +47,7 @@ func Sky_encoding_base64_EncodingAppendEncode(receiver any, arg0 any, arg1 any) 
 		defer func() { recover() }()
 		result := _receiver.AppendEncode(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingDecode(receiver any, arg0 any, arg1 any) any {
@@ -59,7 +59,7 @@ func Sky_encoding_base64_EncodingDecode(receiver any, arg0 any, arg1 any) any {
 		result, err := _receiver.Decode(_arg0, _arg1)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingDecodeString(receiver any, arg0 any) any {
@@ -70,7 +70,7 @@ func Sky_encoding_base64_EncodingDecodeString(receiver any, arg0 any) any {
 		result, err := _receiver.DecodeString(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingDecodedLen(receiver any, arg0 any) any {
@@ -80,7 +80,7 @@ func Sky_encoding_base64_EncodingDecodedLen(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		result := _receiver.DecodedLen(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingEncode(receiver any, arg0 any, arg1 any) any {
@@ -91,7 +91,7 @@ func Sky_encoding_base64_EncodingEncode(receiver any, arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		_receiver.Encode(_arg0, _arg1)
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingEncodeToString(receiver any, arg0 any) any {
@@ -101,7 +101,7 @@ func Sky_encoding_base64_EncodingEncodeToString(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		result := _receiver.EncodeToString(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingEncodedLen(receiver any, arg0 any) any {
@@ -111,7 +111,7 @@ func Sky_encoding_base64_EncodingEncodedLen(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		result := _receiver.EncodedLen(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_EncodingStrict(receiver any) any {
@@ -120,7 +120,7 @@ func Sky_encoding_base64_EncodingStrict(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Strict()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_base64_RawStdEncoding(_ any) any {

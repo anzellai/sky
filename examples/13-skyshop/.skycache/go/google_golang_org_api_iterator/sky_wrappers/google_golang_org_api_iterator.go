@@ -17,7 +17,7 @@ func Sky_google_golang_org_api_iterator_NewPager(arg0 any, arg1 any, arg2 any) a
 		defer func() { recover() }()
 		result := iterator.NewPager(_arg0, _arg1, _arg2)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_iterator_PageInfoRemaining(receiver any) any {
@@ -26,7 +26,7 @@ func Sky_google_golang_org_api_iterator_PageInfoRemaining(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Remaining()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_iterator_PageablePageInfo(receiver any) any {
@@ -35,7 +35,7 @@ func Sky_google_golang_org_api_iterator_PageablePageInfo(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.PageInfo()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_iterator_PagerNextPage(receiver any, arg0 any) any {
@@ -46,7 +46,7 @@ func Sky_google_golang_org_api_iterator_PagerNextPage(receiver any, arg0 any) an
 		result, err := _receiver.NextPage(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_iterator_FIELD_PageInfo_Token(receiver any) any {

@@ -1,0 +1,1487 @@
+{
+  "name": "time",
+  "path": "time",
+  "types": [
+    {
+      "name": "Duration",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "Abs",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Duration"
+            }
+          ]
+        },
+        {
+          "name": "Hours",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "float64"
+            }
+          ]
+        },
+        {
+          "name": "Microseconds",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "Milliseconds",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "Minutes",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "float64"
+            }
+          ]
+        },
+        {
+          "name": "Nanoseconds",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "Round",
+          "params": [
+            {
+              "name": "m",
+              "type": "time.Duration"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Duration"
+            }
+          ]
+        },
+        {
+          "name": "Seconds",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "float64"
+            }
+          ]
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Truncate",
+          "params": [
+            {
+              "name": "m",
+              "type": "time.Duration"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Duration"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Location",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Month",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "ParseError",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "Layout",
+          "type": "string"
+        },
+        {
+          "name": "Value",
+          "type": "string"
+        },
+        {
+          "name": "LayoutElem",
+          "type": "string"
+        },
+        {
+          "name": "ValueElem",
+          "type": "string"
+        },
+        {
+          "name": "Message",
+          "type": "string"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Error",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Ticker",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "C",
+          "type": "\u003c-chan time.Time"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Reset",
+          "params": [
+            {
+              "name": "d",
+              "type": "time.Duration"
+            }
+          ],
+          "results": null
+        },
+        {
+          "name": "Stop",
+          "params": null,
+          "results": null
+        }
+      ]
+    },
+    {
+      "name": "Time",
+      "kind": "struct",
+      "methods": [
+        {
+          "name": "Add",
+          "params": [
+            {
+              "name": "d",
+              "type": "time.Duration"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "AddDate",
+          "params": [
+            {
+              "name": "years",
+              "type": "int"
+            },
+            {
+              "name": "months",
+              "type": "int"
+            },
+            {
+              "name": "days",
+              "type": "int"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "After",
+          "params": [
+            {
+              "name": "u",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "AppendBinary",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "AppendFormat",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            },
+            {
+              "name": "layout",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            }
+          ]
+        },
+        {
+          "name": "AppendText",
+          "params": [
+            {
+              "name": "b",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Before",
+          "params": [
+            {
+              "name": "u",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Clock",
+          "params": null,
+          "results": [
+            {
+              "name": "hour",
+              "type": "int"
+            },
+            {
+              "name": "min",
+              "type": "int"
+            },
+            {
+              "name": "sec",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Compare",
+          "params": [
+            {
+              "name": "u",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Date",
+          "params": null,
+          "results": [
+            {
+              "name": "year",
+              "type": "int"
+            },
+            {
+              "name": "month",
+              "type": "time.Month"
+            },
+            {
+              "name": "day",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Day",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Equal",
+          "params": [
+            {
+              "name": "u",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Format",
+          "params": [
+            {
+              "name": "layout",
+              "type": "string"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "GoString",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "GobDecode",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "GobEncode",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Hour",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "ISOWeek",
+          "params": null,
+          "results": [
+            {
+              "name": "year",
+              "type": "int"
+            },
+            {
+              "name": "week",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "In",
+          "params": [
+            {
+              "name": "loc",
+              "type": "*time.Location"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "IsDST",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "IsZero",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Local",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "Location",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "*time.Location"
+            }
+          ]
+        },
+        {
+          "name": "MarshalBinary",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "MarshalJSON",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "MarshalText",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "[]byte"
+            },
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Minute",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Month",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Month"
+            }
+          ]
+        },
+        {
+          "name": "Nanosecond",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Round",
+          "params": [
+            {
+              "name": "d",
+              "type": "time.Duration"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "Second",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "Sub",
+          "params": [
+            {
+              "name": "u",
+              "type": "time.Time"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Duration"
+            }
+          ]
+        },
+        {
+          "name": "Truncate",
+          "params": [
+            {
+              "name": "d",
+              "type": "time.Duration"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "UTC",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Time"
+            }
+          ]
+        },
+        {
+          "name": "Unix",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "UnixMicro",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "UnixMilli",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "UnixNano",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int64"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalBinary",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalJSON",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "UnmarshalText",
+          "params": [
+            {
+              "name": "data",
+              "type": "[]byte"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "error"
+            }
+          ]
+        },
+        {
+          "name": "Weekday",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "time.Weekday"
+            }
+          ]
+        },
+        {
+          "name": "Year",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "YearDay",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "Zone",
+          "params": null,
+          "results": [
+            {
+              "name": "name",
+              "type": "string"
+            },
+            {
+              "name": "offset",
+              "type": "int"
+            }
+          ]
+        },
+        {
+          "name": "ZoneBounds",
+          "params": null,
+          "results": [
+            {
+              "name": "start",
+              "type": "time.Time"
+            },
+            {
+              "name": "end",
+              "type": "time.Time"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Timer",
+      "kind": "struct",
+      "fields": [
+        {
+          "name": "C",
+          "type": "\u003c-chan time.Time"
+        }
+      ],
+      "methods": [
+        {
+          "name": "Reset",
+          "params": [
+            {
+              "name": "d",
+              "type": "time.Duration"
+            }
+          ],
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        },
+        {
+          "name": "Stop",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "bool"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Weekday",
+      "kind": "other",
+      "methods": [
+        {
+          "name": "String",
+          "params": null,
+          "results": [
+            {
+              "name": "",
+              "type": "string"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "funcs": [
+    {
+      "name": "After",
+      "params": [
+        {
+          "name": "d",
+          "type": "time.Duration"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "\u003c-chan time.Time"
+        }
+      ]
+    },
+    {
+      "name": "AfterFunc",
+      "params": [
+        {
+          "name": "d",
+          "type": "time.Duration"
+        },
+        {
+          "name": "f",
+          "type": "func()"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*time.Timer"
+        }
+      ]
+    },
+    {
+      "name": "Date",
+      "params": [
+        {
+          "name": "year",
+          "type": "int"
+        },
+        {
+          "name": "month",
+          "type": "time.Month"
+        },
+        {
+          "name": "day",
+          "type": "int"
+        },
+        {
+          "name": "hour",
+          "type": "int"
+        },
+        {
+          "name": "min",
+          "type": "int"
+        },
+        {
+          "name": "sec",
+          "type": "int"
+        },
+        {
+          "name": "nsec",
+          "type": "int"
+        },
+        {
+          "name": "loc",
+          "type": "*time.Location"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        }
+      ]
+    },
+    {
+      "name": "FixedZone",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "offset",
+          "type": "int"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*time.Location"
+        }
+      ]
+    },
+    {
+      "name": "LoadLocation",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*time.Location"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "LoadLocationFromTZData",
+      "params": [
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "data",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*time.Location"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "NewTicker",
+      "params": [
+        {
+          "name": "d",
+          "type": "time.Duration"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*time.Ticker"
+        }
+      ]
+    },
+    {
+      "name": "NewTimer",
+      "params": [
+        {
+          "name": "d",
+          "type": "time.Duration"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "*time.Timer"
+        }
+      ]
+    },
+    {
+      "name": "Now",
+      "params": null,
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        }
+      ]
+    },
+    {
+      "name": "Parse",
+      "params": [
+        {
+          "name": "layout",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ParseDuration",
+      "params": [
+        {
+          "name": "s",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Duration"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "ParseInLocation",
+      "params": [
+        {
+          "name": "layout",
+          "type": "string"
+        },
+        {
+          "name": "value",
+          "type": "string"
+        },
+        {
+          "name": "loc",
+          "type": "*time.Location"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Since",
+      "params": [
+        {
+          "name": "t",
+          "type": "time.Time"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Duration"
+        }
+      ]
+    },
+    {
+      "name": "Sleep",
+      "params": [
+        {
+          "name": "d",
+          "type": "time.Duration"
+        }
+      ],
+      "results": null
+    },
+    {
+      "name": "Tick",
+      "params": [
+        {
+          "name": "d",
+          "type": "time.Duration"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "\u003c-chan time.Time"
+        }
+      ]
+    },
+    {
+      "name": "Unix",
+      "params": [
+        {
+          "name": "sec",
+          "type": "int64"
+        },
+        {
+          "name": "nsec",
+          "type": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        }
+      ]
+    },
+    {
+      "name": "UnixMicro",
+      "params": [
+        {
+          "name": "usec",
+          "type": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        }
+      ]
+    },
+    {
+      "name": "UnixMilli",
+      "params": [
+        {
+          "name": "msec",
+          "type": "int64"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Time"
+        }
+      ]
+    },
+    {
+      "name": "Until",
+      "params": [
+        {
+          "name": "t",
+          "type": "time.Time"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "time.Duration"
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "name": "Local",
+      "type": "*time.Location"
+    },
+    {
+      "name": "UTC",
+      "type": "*time.Location"
+    }
+  ],
+  "consts": [
+    {
+      "name": "ANSIC",
+      "type": "untyped string",
+      "value": "\"Mon Jan _2 15:04:05 2006\""
+    },
+    {
+      "name": "April",
+      "type": "time.Month",
+      "value": "4"
+    },
+    {
+      "name": "August",
+      "type": "time.Month",
+      "value": "8"
+    },
+    {
+      "name": "DateOnly",
+      "type": "untyped string",
+      "value": "\"2006-01-02\""
+    },
+    {
+      "name": "DateTime",
+      "type": "untyped string",
+      "value": "\"2006-01-02 15:04:05\""
+    },
+    {
+      "name": "December",
+      "type": "time.Month",
+      "value": "12"
+    },
+    {
+      "name": "February",
+      "type": "time.Month",
+      "value": "2"
+    },
+    {
+      "name": "Friday",
+      "type": "time.Weekday",
+      "value": "5"
+    },
+    {
+      "name": "Hour",
+      "type": "time.Duration",
+      "value": "3600000000000"
+    },
+    {
+      "name": "January",
+      "type": "time.Month",
+      "value": "1"
+    },
+    {
+      "name": "July",
+      "type": "time.Month",
+      "value": "7"
+    },
+    {
+      "name": "June",
+      "type": "time.Month",
+      "value": "6"
+    },
+    {
+      "name": "Kitchen",
+      "type": "untyped string",
+      "value": "\"3:04PM\""
+    },
+    {
+      "name": "Layout",
+      "type": "untyped string",
+      "value": "\"01/02 03:04:05PM '06 -0700\""
+    },
+    {
+      "name": "March",
+      "type": "time.Month",
+      "value": "3"
+    },
+    {
+      "name": "May",
+      "type": "time.Month",
+      "value": "5"
+    },
+    {
+      "name": "Microsecond",
+      "type": "time.Duration",
+      "value": "1000"
+    },
+    {
+      "name": "Millisecond",
+      "type": "time.Duration",
+      "value": "1000000"
+    },
+    {
+      "name": "Minute",
+      "type": "time.Duration",
+      "value": "60000000000"
+    },
+    {
+      "name": "Monday",
+      "type": "time.Weekday",
+      "value": "1"
+    },
+    {
+      "name": "Nanosecond",
+      "type": "time.Duration",
+      "value": "1"
+    },
+    {
+      "name": "November",
+      "type": "time.Month",
+      "value": "11"
+    },
+    {
+      "name": "October",
+      "type": "time.Month",
+      "value": "10"
+    },
+    {
+      "name": "RFC1123",
+      "type": "untyped string",
+      "value": "\"Mon, 02 Jan 2006 15:04:05 MST\""
+    },
+    {
+      "name": "RFC1123Z",
+      "type": "untyped string",
+      "value": "\"Mon, 02 Jan 2006 15:04:05 -0700\""
+    },
+    {
+      "name": "RFC3339",
+      "type": "untyped string",
+      "value": "\"2006-01-02T15:04:05Z07:00\""
+    },
+    {
+      "name": "RFC3339Nano",
+      "type": "untyped string",
+      "value": "\"2006-01-02T15:04:05.999999999Z07:00\""
+    },
+    {
+      "name": "RFC822",
+      "type": "untyped string",
+      "value": "\"02 Jan 06 15:04 MST\""
+    },
+    {
+      "name": "RFC822Z",
+      "type": "untyped string",
+      "value": "\"02 Jan 06 15:04 -0700\""
+    },
+    {
+      "name": "RFC850",
+      "type": "untyped string",
+      "value": "\"Monday, 02-Jan-06 15:04:05 MST\""
+    },
+    {
+      "name": "RubyDate",
+      "type": "untyped string",
+      "value": "\"Mon Jan 02 15:04:05 -0700 2006\""
+    },
+    {
+      "name": "Saturday",
+      "type": "time.Weekday",
+      "value": "6"
+    },
+    {
+      "name": "Second",
+      "type": "time.Duration",
+      "value": "1000000000"
+    },
+    {
+      "name": "September",
+      "type": "time.Month",
+      "value": "9"
+    },
+    {
+      "name": "Stamp",
+      "type": "untyped string",
+      "value": "\"Jan _2 15:04:05\""
+    },
+    {
+      "name": "StampMicro",
+      "type": "untyped string",
+      "value": "\"Jan _2 15:04:05.000000\""
+    },
+    {
+      "name": "StampMilli",
+      "type": "untyped string",
+      "value": "\"Jan _2 15:04:05.000\""
+    },
+    {
+      "name": "StampNano",
+      "type": "untyped string",
+      "value": "\"Jan _2 15:04:05.000000000\""
+    },
+    {
+      "name": "Sunday",
+      "type": "time.Weekday",
+      "value": "0"
+    },
+    {
+      "name": "Thursday",
+      "type": "time.Weekday",
+      "value": "4"
+    },
+    {
+      "name": "TimeOnly",
+      "type": "untyped string",
+      "value": "\"15:04:05\""
+    },
+    {
+      "name": "Tuesday",
+      "type": "time.Weekday",
+      "value": "2"
+    },
+    {
+      "name": "UnixDate",
+      "type": "untyped string",
+      "value": "\"Mon Jan _2 15:04:05 MST 2006\""
+    },
+    {
+      "name": "Wednesday",
+      "type": "time.Weekday",
+      "value": "3"
+    }
+  ]
+}

@@ -15,7 +15,7 @@ func Sky_strings_Clone(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.Clone(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Compare(arg0 any, arg1 any) any {
@@ -25,7 +25,7 @@ func Sky_strings_Compare(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Compare(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Contains(arg0 any, arg1 any) any {
@@ -35,7 +35,7 @@ func Sky_strings_Contains(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Contains(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ContainsAny(arg0 any, arg1 any) any {
@@ -45,7 +45,7 @@ func Sky_strings_ContainsAny(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.ContainsAny(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Count(arg0 any, arg1 any) any {
@@ -55,7 +55,7 @@ func Sky_strings_Count(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Count(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_CutPrefix(arg0 any, arg1 any) any {
@@ -65,7 +65,7 @@ func Sky_strings_CutPrefix(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		_r0, _r1 := strings.CutPrefix(_arg0, _arg1)
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_strings_CutSuffix(arg0 any, arg1 any) any {
@@ -75,7 +75,7 @@ func Sky_strings_CutSuffix(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		_r0, _r1 := strings.CutSuffix(_arg0, _arg1)
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_strings_EqualFold(arg0 any, arg1 any) any {
@@ -85,7 +85,7 @@ func Sky_strings_EqualFold(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.EqualFold(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Fields(arg0 any) any {
@@ -94,7 +94,7 @@ func Sky_strings_Fields(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.Fields(_arg0)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strings_FieldsSeq(arg0 any) any {
@@ -103,7 +103,7 @@ func Sky_strings_FieldsSeq(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.FieldsSeq(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_HasPrefix(arg0 any, arg1 any) any {
@@ -113,7 +113,7 @@ func Sky_strings_HasPrefix(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.HasPrefix(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_HasSuffix(arg0 any, arg1 any) any {
@@ -123,7 +123,7 @@ func Sky_strings_HasSuffix(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.HasSuffix(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Index(arg0 any, arg1 any) any {
@@ -133,7 +133,7 @@ func Sky_strings_Index(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Index(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_IndexAny(arg0 any, arg1 any) any {
@@ -143,7 +143,7 @@ func Sky_strings_IndexAny(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.IndexAny(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Join(arg0 any, arg1 any) any {
@@ -153,7 +153,7 @@ func Sky_strings_Join(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Join(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_LastIndex(arg0 any, arg1 any) any {
@@ -163,7 +163,7 @@ func Sky_strings_LastIndex(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.LastIndex(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_LastIndexAny(arg0 any, arg1 any) any {
@@ -173,7 +173,7 @@ func Sky_strings_LastIndexAny(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.LastIndexAny(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Lines(arg0 any) any {
@@ -182,7 +182,7 @@ func Sky_strings_Lines(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.Lines(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_NewReader(arg0 any) any {
@@ -191,7 +191,7 @@ func Sky_strings_NewReader(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.NewReader(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_NewReplacer(arg0 any) any {
@@ -200,7 +200,7 @@ func Sky_strings_NewReplacer(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.NewReplacer(_arg0...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Repeat(arg0 any, arg1 any) any {
@@ -210,7 +210,7 @@ func Sky_strings_Repeat(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Repeat(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Replace(arg0 any, arg1 any, arg2 any, arg3 any) any {
@@ -222,7 +222,7 @@ func Sky_strings_Replace(arg0 any, arg1 any, arg2 any, arg3 any) any {
 		defer func() { recover() }()
 		result := strings.Replace(_arg0, _arg1, _arg2, _arg3)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReplaceAll(arg0 any, arg1 any, arg2 any) any {
@@ -233,7 +233,7 @@ func Sky_strings_ReplaceAll(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := strings.ReplaceAll(_arg0, _arg1, _arg2)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Split(arg0 any, arg1 any) any {
@@ -243,7 +243,7 @@ func Sky_strings_Split(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Split(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strings_SplitAfter(arg0 any, arg1 any) any {
@@ -253,7 +253,7 @@ func Sky_strings_SplitAfter(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.SplitAfter(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strings_SplitAfterN(arg0 any, arg1 any, arg2 any) any {
@@ -264,7 +264,7 @@ func Sky_strings_SplitAfterN(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := strings.SplitAfterN(_arg0, _arg1, _arg2)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strings_SplitAfterSeq(arg0 any, arg1 any) any {
@@ -274,7 +274,7 @@ func Sky_strings_SplitAfterSeq(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.SplitAfterSeq(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_SplitN(arg0 any, arg1 any, arg2 any) any {
@@ -285,7 +285,7 @@ func Sky_strings_SplitN(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := strings.SplitN(_arg0, _arg1, _arg2)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strings_SplitSeq(arg0 any, arg1 any) any {
@@ -295,7 +295,7 @@ func Sky_strings_SplitSeq(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.SplitSeq(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Title(arg0 any) any {
@@ -304,7 +304,7 @@ func Sky_strings_Title(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.Title(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ToLower(arg0 any) any {
@@ -313,7 +313,7 @@ func Sky_strings_ToLower(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.ToLower(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ToTitle(arg0 any) any {
@@ -322,7 +322,7 @@ func Sky_strings_ToTitle(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.ToTitle(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ToUpper(arg0 any) any {
@@ -331,7 +331,7 @@ func Sky_strings_ToUpper(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.ToUpper(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ToValidUTF8(arg0 any, arg1 any) any {
@@ -341,7 +341,7 @@ func Sky_strings_ToValidUTF8(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.ToValidUTF8(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_Trim(arg0 any, arg1 any) any {
@@ -351,7 +351,7 @@ func Sky_strings_Trim(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.Trim(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_TrimLeft(arg0 any, arg1 any) any {
@@ -361,7 +361,7 @@ func Sky_strings_TrimLeft(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.TrimLeft(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_TrimPrefix(arg0 any, arg1 any) any {
@@ -371,7 +371,7 @@ func Sky_strings_TrimPrefix(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.TrimPrefix(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_TrimRight(arg0 any, arg1 any) any {
@@ -381,7 +381,7 @@ func Sky_strings_TrimRight(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.TrimRight(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_TrimSpace(arg0 any) any {
@@ -390,7 +390,7 @@ func Sky_strings_TrimSpace(arg0 any) any {
 		defer func() { recover() }()
 		result := strings.TrimSpace(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_TrimSuffix(arg0 any, arg1 any) any {
@@ -400,7 +400,7 @@ func Sky_strings_TrimSuffix(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strings.TrimSuffix(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_BuilderCap(receiver any) any {
@@ -409,7 +409,7 @@ func Sky_strings_BuilderCap(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Cap()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_BuilderGrow(receiver any, arg0 any) any {
@@ -419,7 +419,7 @@ func Sky_strings_BuilderGrow(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		_receiver.Grow(_arg0)
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_strings_BuilderLen(receiver any) any {
@@ -428,7 +428,7 @@ func Sky_strings_BuilderLen(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Len()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_BuilderReset(receiver any) any {
@@ -437,7 +437,7 @@ func Sky_strings_BuilderReset(receiver any) any {
 		defer func() { recover() }()
 		_receiver.Reset()
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_strings_BuilderString(receiver any) any {
@@ -446,7 +446,7 @@ func Sky_strings_BuilderString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_BuilderWrite(receiver any, arg0 any) any {
@@ -459,7 +459,7 @@ func Sky_strings_BuilderWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_BuilderWriteString(receiver any, arg0 any) any {
@@ -472,7 +472,7 @@ func Sky_strings_BuilderWriteString(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReaderLen(receiver any) any {
@@ -481,7 +481,7 @@ func Sky_strings_ReaderLen(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Len()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReaderRead(receiver any, arg0 any) any {
@@ -494,7 +494,7 @@ func Sky_strings_ReaderRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReaderReadAt(receiver any, arg0 any, arg1 any) any {
@@ -508,7 +508,7 @@ func Sky_strings_ReaderReadAt(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReaderReset(receiver any, arg0 any) any {
@@ -518,7 +518,7 @@ func Sky_strings_ReaderReset(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		_receiver.Reset(_arg0)
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_strings_ReaderSeek(receiver any, arg0 any, arg1 any) any {
@@ -532,7 +532,7 @@ func Sky_strings_ReaderSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReaderSize(receiver any) any {
@@ -541,7 +541,7 @@ func Sky_strings_ReaderSize(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Size()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strings_ReaderUnreadByte(receiver any) any {
@@ -553,7 +553,7 @@ func Sky_strings_ReaderUnreadByte(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_strings_ReaderUnreadRune(receiver any) any {
@@ -565,7 +565,7 @@ func Sky_strings_ReaderUnreadRune(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_strings_ReplacerReplace(receiver any, arg0 any) any {
@@ -575,5 +575,5 @@ func Sky_strings_ReplacerReplace(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		result := _receiver.Replace(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }

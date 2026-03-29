@@ -17,7 +17,7 @@ func Sky_google_golang_org_api_option_ImpersonateCredentials(arg0 any, arg1 any)
 		defer func() { recover() }()
 		result := option.ImpersonateCredentials(_arg0, _arg1...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithAPIKey(arg0 any) any {
@@ -26,7 +26,7 @@ func Sky_google_golang_org_api_option_WithAPIKey(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithAPIKey(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithAudiences(arg0 any) any {
@@ -35,7 +35,7 @@ func Sky_google_golang_org_api_option_WithAudiences(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithAudiences(_arg0...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithAuthCredentialsFile(arg0 any, arg1 any) any {
@@ -45,7 +45,7 @@ func Sky_google_golang_org_api_option_WithAuthCredentialsFile(arg0 any, arg1 any
 		defer func() { recover() }()
 		result := option.WithAuthCredentialsFile(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithAuthCredentialsJSON(arg0 any, arg1 any) any {
@@ -55,7 +55,7 @@ func Sky_google_golang_org_api_option_WithAuthCredentialsJSON(arg0 any, arg1 any
 		defer func() { recover() }()
 		result := option.WithAuthCredentialsJSON(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithClientCertSource(arg0 any) any {
@@ -64,7 +64,7 @@ func Sky_google_golang_org_api_option_WithClientCertSource(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithClientCertSource(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithCredentialsFile(arg0 any) any {
@@ -73,7 +73,7 @@ func Sky_google_golang_org_api_option_WithCredentialsFile(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithCredentialsFile(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithCredentialsJSON(arg0 any) any {
@@ -82,7 +82,7 @@ func Sky_google_golang_org_api_option_WithCredentialsJSON(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithCredentialsJSON(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithEndpoint(arg0 any) any {
@@ -91,7 +91,7 @@ func Sky_google_golang_org_api_option_WithEndpoint(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithEndpoint(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithGRPCConnectionPool(arg0 any) any {
@@ -100,7 +100,7 @@ func Sky_google_golang_org_api_option_WithGRPCConnectionPool(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithGRPCConnectionPool(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithQuotaProject(arg0 any) any {
@@ -109,7 +109,7 @@ func Sky_google_golang_org_api_option_WithQuotaProject(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithQuotaProject(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithRequestReason(arg0 any) any {
@@ -118,7 +118,7 @@ func Sky_google_golang_org_api_option_WithRequestReason(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithRequestReason(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithScopes(arg0 any) any {
@@ -127,7 +127,7 @@ func Sky_google_golang_org_api_option_WithScopes(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithScopes(_arg0...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithServiceAccountFile(arg0 any) any {
@@ -136,7 +136,7 @@ func Sky_google_golang_org_api_option_WithServiceAccountFile(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithServiceAccountFile(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithTelemetryDisabled(_ any) any {
@@ -145,7 +145,7 @@ func Sky_google_golang_org_api_option_WithTelemetryDisabled(_ any) any {
 		defer func() { recover() }()
 		result := option.WithTelemetryDisabled()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithUniverseDomain(arg0 any) any {
@@ -154,7 +154,7 @@ func Sky_google_golang_org_api_option_WithUniverseDomain(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithUniverseDomain(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithUserAgent(arg0 any) any {
@@ -163,7 +163,7 @@ func Sky_google_golang_org_api_option_WithUserAgent(arg0 any) any {
 		defer func() { recover() }()
 		result := option.WithUserAgent(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_google_golang_org_api_option_WithoutAuthentication(_ any) any {
@@ -172,5 +172,5 @@ func Sky_google_golang_org_api_option_WithoutAuthentication(_ any) any {
 		defer func() { recover() }()
 		result := option.WithoutAuthentication()
 		return SkyOk(result)
-	}
+	}()
 }

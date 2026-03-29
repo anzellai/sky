@@ -1,0 +1,587 @@
+module Os exposing (..)
+
+foreign import "os" exposing (..)
+
+chdir : String -> Result String ()
+chdir arg0 =
+    Sky_os_Chdir arg0
+
+chmod : String -> FileMode -> Result String ()
+chmod arg0 arg1 =
+    Sky_os_Chmod arg0 arg1
+
+chown : String -> Int -> Int -> Result String ()
+chown arg0 arg1 arg2 =
+    Sky_os_Chown arg0 arg1 arg2
+
+clearenv : () -> Result String ()
+clearenv _ =
+    Sky_os_Clearenv ()
+
+create : String -> Result String File
+create arg0 =
+    Sky_os_Create arg0
+
+createTemp : String -> String -> Result String File
+createTemp arg0 arg1 =
+    Sky_os_CreateTemp arg0 arg1
+
+environ : () -> Result String List String
+environ _ =
+    Sky_os_Environ ()
+
+executable : () -> Result String String
+executable _ =
+    Sky_os_Executable ()
+
+exit : Int -> Result String ()
+exit arg0 =
+    Sky_os_Exit arg0
+
+expandEnv : String -> Result String String
+expandEnv arg0 =
+    Sky_os_ExpandEnv arg0
+
+findProcess : Int -> Result String Process
+findProcess arg0 =
+    Sky_os_FindProcess arg0
+
+getegid : () -> Result String Int
+getegid _ =
+    Sky_os_Getegid ()
+
+getenv : String -> Result String String
+getenv arg0 =
+    Sky_os_Getenv arg0
+
+geteuid : () -> Result String Int
+geteuid _ =
+    Sky_os_Geteuid ()
+
+getgid : () -> Result String Int
+getgid _ =
+    Sky_os_Getgid ()
+
+getpagesize : () -> Result String Int
+getpagesize _ =
+    Sky_os_Getpagesize ()
+
+getpid : () -> Result String Int
+getpid _ =
+    Sky_os_Getpid ()
+
+getppid : () -> Result String Int
+getppid _ =
+    Sky_os_Getppid ()
+
+getuid : () -> Result String Int
+getuid _ =
+    Sky_os_Getuid ()
+
+getwd : () -> Result String String
+getwd _ =
+    Sky_os_Getwd ()
+
+hostname : () -> Result String String
+hostname _ =
+    Sky_os_Hostname ()
+
+isExist : Error -> Result String Bool
+isExist arg0 =
+    Sky_os_IsExist arg0
+
+isNotExist : Error -> Result String Bool
+isNotExist arg0 =
+    Sky_os_IsNotExist arg0
+
+isPathSeparator : Int -> Result String Bool
+isPathSeparator arg0 =
+    Sky_os_IsPathSeparator arg0
+
+isPermission : Error -> Result String Bool
+isPermission arg0 =
+    Sky_os_IsPermission arg0
+
+isTimeout : Error -> Result String Bool
+isTimeout arg0 =
+    Sky_os_IsTimeout arg0
+
+lchown : String -> Int -> Int -> Result String ()
+lchown arg0 arg1 arg2 =
+    Sky_os_Lchown arg0 arg1 arg2
+
+link : String -> String -> Result String ()
+link arg0 arg1 =
+    Sky_os_Link arg0 arg1
+
+lookupEnv : String -> Result String (String, Bool)
+lookupEnv arg0 =
+    Sky_os_LookupEnv arg0
+
+lstat : String -> Result String FileInfo
+lstat arg0 =
+    Sky_os_Lstat arg0
+
+mkdir : String -> FileMode -> Result String ()
+mkdir arg0 arg1 =
+    Sky_os_Mkdir arg0 arg1
+
+mkdirAll : String -> FileMode -> Result String ()
+mkdirAll arg0 arg1 =
+    Sky_os_MkdirAll arg0 arg1
+
+mkdirTemp : String -> String -> Result String String
+mkdirTemp arg0 arg1 =
+    Sky_os_MkdirTemp arg0 arg1
+
+newSyscallError : String -> Error -> Result String ()
+newSyscallError arg0 arg1 =
+    Sky_os_NewSyscallError arg0 arg1
+
+open : String -> Result String File
+open arg0 =
+    Sky_os_Open arg0
+
+openFile : String -> Int -> FileMode -> Result String File
+openFile arg0 arg1 arg2 =
+    Sky_os_OpenFile arg0 arg1 arg2
+
+openInRoot : String -> String -> Result String File
+openInRoot arg0 arg1 =
+    Sky_os_OpenInRoot arg0 arg1
+
+openRoot : String -> Result String Root
+openRoot arg0 =
+    Sky_os_OpenRoot arg0
+
+readDir : String -> Result String List Any
+readDir arg0 =
+    Sky_os_ReadDir arg0
+
+readFile : String -> Result String Bytes
+readFile arg0 =
+    Sky_os_ReadFile arg0
+
+readlink : String -> Result String String
+readlink arg0 =
+    Sky_os_Readlink arg0
+
+remove : String -> Result String ()
+remove arg0 =
+    Sky_os_Remove arg0
+
+removeAll : String -> Result String ()
+removeAll arg0 =
+    Sky_os_RemoveAll arg0
+
+rename : String -> String -> Result String ()
+rename arg0 arg1 =
+    Sky_os_Rename arg0 arg1
+
+sameFile : FileInfo -> FileInfo -> Result String Bool
+sameFile arg0 arg1 =
+    Sky_os_SameFile arg0 arg1
+
+setenv : String -> String -> Result String ()
+setenv arg0 arg1 =
+    Sky_os_Setenv arg0 arg1
+
+startProcess : String -> List String -> ProcAttr -> Result String Process
+startProcess arg0 arg1 arg2 =
+    Sky_os_StartProcess arg0 arg1 arg2
+
+stat : String -> Result String FileInfo
+stat arg0 =
+    Sky_os_Stat arg0
+
+symlink : String -> String -> Result String ()
+symlink arg0 arg1 =
+    Sky_os_Symlink arg0 arg1
+
+tempDir : () -> Result String String
+tempDir _ =
+    Sky_os_TempDir ()
+
+truncate : String -> Int -> Result String ()
+truncate arg0 arg1 =
+    Sky_os_Truncate arg0 arg1
+
+unsetenv : String -> Result String ()
+unsetenv arg0 =
+    Sky_os_Unsetenv arg0
+
+userCacheDir : () -> Result String String
+userCacheDir _ =
+    Sky_os_UserCacheDir ()
+
+userConfigDir : () -> Result String String
+userConfigDir _ =
+    Sky_os_UserConfigDir ()
+
+userHomeDir : () -> Result String String
+userHomeDir _ =
+    Sky_os_UserHomeDir ()
+
+writeFile : String -> Bytes -> FileMode -> Result String ()
+writeFile arg0 arg1 arg2 =
+    Sky_os_WriteFile arg0 arg1 arg2
+
+type File = File
+
+type LinkError = LinkError
+
+type ProcAttr = ProcAttr
+
+type Process = Process
+
+type ProcessState = ProcessState
+
+type Root = Root
+
+type Signal = Signal
+
+type SyscallError = SyscallError
+
+linkErrorOp : Any -> String
+linkErrorOp receiver =
+    Sky_os_FIELD_LinkError_Op receiver
+
+linkErrorOld : Any -> String
+linkErrorOld receiver =
+    Sky_os_FIELD_LinkError_Old receiver
+
+linkErrorNew : Any -> String
+linkErrorNew receiver =
+    Sky_os_FIELD_LinkError_New receiver
+
+linkErrorErr : Any -> Error
+linkErrorErr receiver =
+    Sky_os_FIELD_LinkError_Err receiver
+
+procAttrDir : Any -> String
+procAttrDir receiver =
+    Sky_os_FIELD_ProcAttr_Dir receiver
+
+procAttrEnv : Any -> List String
+procAttrEnv receiver =
+    Sky_os_FIELD_ProcAttr_Env receiver
+
+procAttrFiles : Any -> List Any
+procAttrFiles receiver =
+    Sky_os_FIELD_ProcAttr_Files receiver
+
+procAttrSys : Any -> SysProcAttr
+procAttrSys receiver =
+    Sky_os_FIELD_ProcAttr_Sys receiver
+
+processPid : Any -> Int
+processPid receiver =
+    Sky_os_FIELD_Process_Pid receiver
+
+syscallErrorSyscall : Any -> String
+syscallErrorSyscall receiver =
+    Sky_os_FIELD_SyscallError_Syscall receiver
+
+syscallErrorErr : Any -> Error
+syscallErrorErr receiver =
+    Sky_os_FIELD_SyscallError_Err receiver
+
+fileChdir : File -> Result String ()
+fileChdir receiver =
+    Sky_os_FileChdir receiver
+
+fileChmod : File -> FileMode -> Result String ()
+fileChmod receiver arg0 =
+    Sky_os_FileChmod receiver arg0
+
+fileChown : File -> Int -> Int -> Result String ()
+fileChown receiver arg0 arg1 =
+    Sky_os_FileChown receiver arg0 arg1
+
+fileClose : File -> Result String ()
+fileClose receiver =
+    Sky_os_FileClose receiver
+
+fileName : File -> Result String String
+fileName receiver =
+    Sky_os_FileName receiver
+
+fileRead : File -> Bytes -> Result String Int
+fileRead receiver arg0 =
+    Sky_os_FileRead receiver arg0
+
+fileReadAt : File -> Bytes -> Int -> Result String Int
+fileReadAt receiver arg0 arg1 =
+    Sky_os_FileReadAt receiver arg0 arg1
+
+fileReadDir : File -> Int -> Result String List Any
+fileReadDir receiver arg0 =
+    Sky_os_FileReadDir receiver arg0
+
+fileReaddir : File -> Int -> Result String List Any
+fileReaddir receiver arg0 =
+    Sky_os_FileReaddir receiver arg0
+
+fileReaddirnames : File -> Int -> Result String List String
+fileReaddirnames receiver arg0 =
+    Sky_os_FileReaddirnames receiver arg0
+
+fileSeek : File -> Int -> Int -> Result String Int
+fileSeek receiver arg0 arg1 =
+    Sky_os_FileSeek receiver arg0 arg1
+
+fileStat : File -> Result String FileInfo
+fileStat receiver =
+    Sky_os_FileStat receiver
+
+fileSync : File -> Result String ()
+fileSync receiver =
+    Sky_os_FileSync receiver
+
+fileSyscallConn : File -> Result String RawConn
+fileSyscallConn receiver =
+    Sky_os_FileSyscallConn receiver
+
+fileTruncate : File -> Int -> Result String ()
+fileTruncate receiver arg0 =
+    Sky_os_FileTruncate receiver arg0
+
+fileWrite : File -> Bytes -> Result String Int
+fileWrite receiver arg0 =
+    Sky_os_FileWrite receiver arg0
+
+fileWriteAt : File -> Bytes -> Int -> Result String Int
+fileWriteAt receiver arg0 arg1 =
+    Sky_os_FileWriteAt receiver arg0 arg1
+
+fileWriteString : File -> String -> Result String Int
+fileWriteString receiver arg0 =
+    Sky_os_FileWriteString receiver arg0
+
+linkErrorError : LinkError -> Result String String
+linkErrorError receiver =
+    Sky_os_LinkErrorError receiver
+
+linkErrorUnwrap : LinkError -> Result String ()
+linkErrorUnwrap receiver =
+    Sky_os_LinkErrorUnwrap receiver
+
+processKill : Process -> Result String ()
+processKill receiver =
+    Sky_os_ProcessKill receiver
+
+processRelease : Process -> Result String ()
+processRelease receiver =
+    Sky_os_ProcessRelease receiver
+
+processSignal : Process -> Signal -> Result String ()
+processSignal receiver arg0 =
+    Sky_os_ProcessSignal receiver arg0
+
+processWait : Process -> Result String ProcessState
+processWait receiver =
+    Sky_os_ProcessWait receiver
+
+processStateExitCode : ProcessState -> Result String Int
+processStateExitCode receiver =
+    Sky_os_ProcessStateExitCode receiver
+
+processStateExited : ProcessState -> Result String Bool
+processStateExited receiver =
+    Sky_os_ProcessStateExited receiver
+
+processStatePid : ProcessState -> Result String Int
+processStatePid receiver =
+    Sky_os_ProcessStatePid receiver
+
+processStateString : ProcessState -> Result String String
+processStateString receiver =
+    Sky_os_ProcessStateString receiver
+
+processStateSuccess : ProcessState -> Result String Bool
+processStateSuccess receiver =
+    Sky_os_ProcessStateSuccess receiver
+
+processStateSys : ProcessState -> Result String Any
+processStateSys receiver =
+    Sky_os_ProcessStateSys receiver
+
+processStateSysUsage : ProcessState -> Result String Any
+processStateSysUsage receiver =
+    Sky_os_ProcessStateSysUsage receiver
+
+rootChmod : Root -> String -> FileMode -> Result String ()
+rootChmod receiver arg0 arg1 =
+    Sky_os_RootChmod receiver arg0 arg1
+
+rootChown : Root -> String -> Int -> Int -> Result String ()
+rootChown receiver arg0 arg1 arg2 =
+    Sky_os_RootChown receiver arg0 arg1 arg2
+
+rootClose : Root -> Result String ()
+rootClose receiver =
+    Sky_os_RootClose receiver
+
+rootCreate : Root -> String -> Result String File
+rootCreate receiver arg0 =
+    Sky_os_RootCreate receiver arg0
+
+rootLchown : Root -> String -> Int -> Int -> Result String ()
+rootLchown receiver arg0 arg1 arg2 =
+    Sky_os_RootLchown receiver arg0 arg1 arg2
+
+rootLink : Root -> String -> String -> Result String ()
+rootLink receiver arg0 arg1 =
+    Sky_os_RootLink receiver arg0 arg1
+
+rootLstat : Root -> String -> Result String FileInfo
+rootLstat receiver arg0 =
+    Sky_os_RootLstat receiver arg0
+
+rootMkdir : Root -> String -> FileMode -> Result String ()
+rootMkdir receiver arg0 arg1 =
+    Sky_os_RootMkdir receiver arg0 arg1
+
+rootMkdirAll : Root -> String -> FileMode -> Result String ()
+rootMkdirAll receiver arg0 arg1 =
+    Sky_os_RootMkdirAll receiver arg0 arg1
+
+rootName : Root -> Result String String
+rootName receiver =
+    Sky_os_RootName receiver
+
+rootOpen : Root -> String -> Result String File
+rootOpen receiver arg0 =
+    Sky_os_RootOpen receiver arg0
+
+rootOpenFile : Root -> String -> Int -> FileMode -> Result String File
+rootOpenFile receiver arg0 arg1 arg2 =
+    Sky_os_RootOpenFile receiver arg0 arg1 arg2
+
+rootOpenRoot : Root -> String -> Result String Root
+rootOpenRoot receiver arg0 =
+    Sky_os_RootOpenRoot receiver arg0
+
+rootReadFile : Root -> String -> Result String Bytes
+rootReadFile receiver arg0 =
+    Sky_os_RootReadFile receiver arg0
+
+rootReadlink : Root -> String -> Result String String
+rootReadlink receiver arg0 =
+    Sky_os_RootReadlink receiver arg0
+
+rootRemove : Root -> String -> Result String ()
+rootRemove receiver arg0 =
+    Sky_os_RootRemove receiver arg0
+
+rootRemoveAll : Root -> String -> Result String ()
+rootRemoveAll receiver arg0 =
+    Sky_os_RootRemoveAll receiver arg0
+
+rootRename : Root -> String -> String -> Result String ()
+rootRename receiver arg0 arg1 =
+    Sky_os_RootRename receiver arg0 arg1
+
+rootStat : Root -> String -> Result String FileInfo
+rootStat receiver arg0 =
+    Sky_os_RootStat receiver arg0
+
+rootSymlink : Root -> String -> String -> Result String ()
+rootSymlink receiver arg0 arg1 =
+    Sky_os_RootSymlink receiver arg0 arg1
+
+rootWriteFile : Root -> String -> Bytes -> FileMode -> Result String ()
+rootWriteFile receiver arg0 arg1 arg2 =
+    Sky_os_RootWriteFile receiver arg0 arg1 arg2
+
+signalSignal : Signal -> Result String ()
+signalSignal receiver =
+    Sky_os_SignalSignal receiver
+
+signalString : Signal -> Result String String
+signalString receiver =
+    Sky_os_SignalString receiver
+
+syscallErrorError : SyscallError -> Result String String
+syscallErrorError receiver =
+    Sky_os_SyscallErrorError receiver
+
+syscallErrorTimeout : SyscallError -> Result String Bool
+syscallErrorTimeout receiver =
+    Sky_os_SyscallErrorTimeout receiver
+
+syscallErrorUnwrap : SyscallError -> Result String ()
+syscallErrorUnwrap receiver =
+    Sky_os_SyscallErrorUnwrap receiver
+
+args : () -> List String
+args _ =
+    Sky_os_Args
+
+interrupt : () -> Signal
+interrupt _ =
+    Sky_os_Interrupt
+
+kill : () -> Signal
+kill _ =
+    Sky_os_Kill
+
+stderr : () -> File
+stderr _ =
+    Sky_os_Stderr
+
+stdin : () -> File
+stdin _ =
+    Sky_os_Stdin
+
+stdout : () -> File
+stdout _ =
+    Sky_os_Stdout
+
+devNull : String
+devNull =
+    "/dev/null"
+
+o_APPEND : Int
+o_APPEND =
+    8
+
+o_CREATE : Int
+o_CREATE =
+    512
+
+o_EXCL : Int
+o_EXCL =
+    2048
+
+o_RDONLY : Int
+o_RDONLY =
+    0
+
+o_RDWR : Int
+o_RDWR =
+    2
+
+o_SYNC : Int
+o_SYNC =
+    128
+
+o_TRUNC : Int
+o_TRUNC =
+    1024
+
+o_WRONLY : Int
+o_WRONLY =
+    1
+
+sEEK_CUR : Int
+sEEK_CUR =
+    1
+
+sEEK_END : Int
+sEEK_END =
+    2
+
+sEEK_SET : Int
+sEEK_SET =
+    0

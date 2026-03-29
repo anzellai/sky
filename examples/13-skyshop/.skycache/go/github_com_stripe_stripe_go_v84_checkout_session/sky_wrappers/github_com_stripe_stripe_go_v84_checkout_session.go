@@ -26,7 +26,7 @@ func Sky_github_com_stripe_stripe_go_v84_checkout_session_IterErr(receiver any) 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_checkout_session_IterNext(receiver any) any {
@@ -48,7 +48,7 @@ func Sky_github_com_stripe_stripe_go_v84_checkout_session_LineItemIterErr(receiv
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_checkout_session_LineItemIterNext(receiver any) any {

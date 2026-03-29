@@ -1,0 +1,44 @@
+module Github.Com.Joho.Godotenv exposing (..)
+
+foreign import "github.com/joho/godotenv" exposing (..)
+
+exec : List String -> String -> List String -> Bool -> Result String ()
+exec arg0 arg1 arg2 arg3 =
+    Sky_github_com_joho_godotenv_Exec arg0 arg1 arg2 arg3
+
+load : List String -> Result String ()
+load arg0 =
+    Sky_github_com_joho_godotenv_Load arg0
+
+marshal : Any -> Result String String
+marshal arg0 =
+    Sky_github_com_joho_godotenv_Marshal arg0
+
+overload : List String -> Result String ()
+overload arg0 =
+    Sky_github_com_joho_godotenv_Overload arg0
+
+read : List String -> Result String Any
+read arg0 =
+    Sky_github_com_joho_godotenv_Read arg0
+
+unmarshal : String -> Result String Any
+unmarshal arg0 =
+    Sky_github_com_joho_godotenv_Unmarshal arg0
+
+unmarshalBytes : Bytes -> Result String Any
+unmarshalBytes arg0 =
+    Sky_github_com_joho_godotenv_UnmarshalBytes arg0
+
+write : Any -> String -> Result String ()
+write arg0 arg1 =
+    Sky_github_com_joho_godotenv_Write arg0 arg1
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,148 @@
+module Modernc.Org.Sqlite exposing (..)
+
+foreign import "modernc.org/sqlite" exposing (..)
+
+mustRegisterFunction : String -> FunctionImpl -> Result String ()
+mustRegisterFunction arg0 arg1 =
+    Sky_modernc_org_sqlite_MustRegisterFunction arg0 arg1
+
+registerConnectionHook : ConnectionHookFn -> Result String ()
+registerConnectionHook arg0 =
+    Sky_modernc_org_sqlite_RegisterConnectionHook arg0
+
+registerFunction : String -> FunctionImpl -> Result String ()
+registerFunction arg0 arg1 =
+    Sky_modernc_org_sqlite_RegisterFunction arg0 arg1
+
+type AggregateFunction = AggregateFunction
+
+type Backup = Backup
+
+type CommitHookFn = CommitHookFn
+
+type ConnectionHookFn = ConnectionHookFn
+
+type Driver = Driver
+
+type Error = Error
+
+type ExecQuerierContext = ExecQuerierContext
+
+type FileControl = FileControl
+
+type FunctionContext = FunctionContext
+
+type FunctionImpl = FunctionImpl
+
+type HookRegisterer = HookRegisterer
+
+type PreUpdateHookFn = PreUpdateHookFn
+
+type RollbackHookFn = RollbackHookFn
+
+type SQLitePreUpdateData = SQLitePreUpdateData
+
+functionImplNArgs : Any -> Int
+functionImplNArgs receiver =
+    Sky_modernc_org_sqlite_FIELD_FunctionImpl_NArgs receiver
+
+functionImplDeterministic : Any -> Bool
+functionImplDeterministic receiver =
+    Sky_modernc_org_sqlite_FIELD_FunctionImpl_Deterministic receiver
+
+functionImplScalar : Any -> Any
+functionImplScalar receiver =
+    Sky_modernc_org_sqlite_FIELD_FunctionImpl_Scalar receiver
+
+functionImplMakeAggregate : Any -> Any
+functionImplMakeAggregate receiver =
+    Sky_modernc_org_sqlite_FIELD_FunctionImpl_MakeAggregate receiver
+
+sQLitePreUpdateDataOp : Any -> Int
+sQLitePreUpdateDataOp receiver =
+    Sky_modernc_org_sqlite_FIELD_SQLitePreUpdateData_Op receiver
+
+sQLitePreUpdateDataDatabaseName : Any -> String
+sQLitePreUpdateDataDatabaseName receiver =
+    Sky_modernc_org_sqlite_FIELD_SQLitePreUpdateData_DatabaseName receiver
+
+sQLitePreUpdateDataTableName : Any -> String
+sQLitePreUpdateDataTableName receiver =
+    Sky_modernc_org_sqlite_FIELD_SQLitePreUpdateData_TableName receiver
+
+sQLitePreUpdateDataOldRowID : Any -> Int
+sQLitePreUpdateDataOldRowID receiver =
+    Sky_modernc_org_sqlite_FIELD_SQLitePreUpdateData_OldRowID receiver
+
+sQLitePreUpdateDataNewRowID : Any -> Int
+sQLitePreUpdateDataNewRowID receiver =
+    Sky_modernc_org_sqlite_FIELD_SQLitePreUpdateData_NewRowID receiver
+
+aggregateFunctionFinal : AggregateFunction -> FunctionContext -> Result String ()
+aggregateFunctionFinal receiver arg0 =
+    Sky_modernc_org_sqlite_AggregateFunctionFinal receiver arg0
+
+aggregateFunctionStep : AggregateFunction -> FunctionContext -> List Any -> Result String ()
+aggregateFunctionStep receiver arg0 arg1 =
+    Sky_modernc_org_sqlite_AggregateFunctionStep receiver arg0 arg1
+
+aggregateFunctionWindowInverse : AggregateFunction -> FunctionContext -> List Any -> Result String ()
+aggregateFunctionWindowInverse receiver arg0 arg1 =
+    Sky_modernc_org_sqlite_AggregateFunctionWindowInverse receiver arg0 arg1
+
+backupFinish : Backup -> Result String ()
+backupFinish receiver =
+    Sky_modernc_org_sqlite_BackupFinish receiver
+
+backupStep : Backup -> Int -> Result String Bool
+backupStep receiver arg0 =
+    Sky_modernc_org_sqlite_BackupStep receiver arg0
+
+driverRegisterConnectionHook : Driver -> ConnectionHookFn -> Result String ()
+driverRegisterConnectionHook receiver arg0 =
+    Sky_modernc_org_sqlite_DriverRegisterConnectionHook receiver arg0
+
+errorCode : Error -> Result String Int
+errorCode receiver =
+    Sky_modernc_org_sqlite_ErrorCode receiver
+
+errorError : Error -> Result String String
+errorError receiver =
+    Sky_modernc_org_sqlite_ErrorError receiver
+
+fileControlFileControlPersistWAL : FileControl -> String -> Int -> Result String Int
+fileControlFileControlPersistWAL receiver arg0 arg1 =
+    Sky_modernc_org_sqlite_FileControlFileControlPersistWAL receiver arg0 arg1
+
+hookRegistererRegisterCommitHook : HookRegisterer -> CommitHookFn -> Result String ()
+hookRegistererRegisterCommitHook receiver arg0 =
+    Sky_modernc_org_sqlite_HookRegistererRegisterCommitHook receiver arg0
+
+hookRegistererRegisterPreUpdateHook : HookRegisterer -> PreUpdateHookFn -> Result String ()
+hookRegistererRegisterPreUpdateHook receiver arg0 =
+    Sky_modernc_org_sqlite_HookRegistererRegisterPreUpdateHook receiver arg0
+
+hookRegistererRegisterRollbackHook : HookRegisterer -> RollbackHookFn -> Result String ()
+hookRegistererRegisterRollbackHook receiver arg0 =
+    Sky_modernc_org_sqlite_HookRegistererRegisterRollbackHook receiver arg0
+
+sQLitePreUpdateDataCount : SQLitePreUpdateData -> Result String Int
+sQLitePreUpdateDataCount receiver =
+    Sky_modernc_org_sqlite_SQLitePreUpdateDataCount receiver
+
+sQLitePreUpdateDataDepth : SQLitePreUpdateData -> Result String Int
+sQLitePreUpdateDataDepth receiver =
+    Sky_modernc_org_sqlite_SQLitePreUpdateDataDepth receiver
+
+sQLitePreUpdateDataNew : SQLitePreUpdateData -> List Any -> Result String ()
+sQLitePreUpdateDataNew receiver arg0 =
+    Sky_modernc_org_sqlite_SQLitePreUpdateDataNew receiver arg0
+
+sQLitePreUpdateDataOld : SQLitePreUpdateData -> List Any -> Result String ()
+sQLitePreUpdateDataOld receiver arg0 =
+    Sky_modernc_org_sqlite_SQLitePreUpdateDataOld receiver arg0
+
+errorCodeString : () -> Any
+errorCodeString _ =
+    Sky_modernc_org_sqlite_ErrorCodeString
+

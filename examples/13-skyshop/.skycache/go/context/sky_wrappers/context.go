@@ -15,7 +15,7 @@ func Sky_context_Background(_ any) any {
 		defer func() { recover() }()
 		result := context.Background()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_context_Cause(arg0 any) any {
@@ -27,7 +27,7 @@ func Sky_context_Cause(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_context_TODO(_ any) any {
@@ -36,7 +36,7 @@ func Sky_context_TODO(_ any) any {
 		defer func() { recover() }()
 		result := context.TODO()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_context_WithCancel(arg0 any) any {
@@ -45,7 +45,7 @@ func Sky_context_WithCancel(arg0 any) any {
 		defer func() { recover() }()
 		_r0, _r1 := context.WithCancel(_arg0)
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_context_WithCancelCause(arg0 any) any {
@@ -54,7 +54,7 @@ func Sky_context_WithCancelCause(arg0 any) any {
 		defer func() { recover() }()
 		_r0, _r1 := context.WithCancelCause(_arg0)
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_context_WithValue(arg0 any, arg1 any, arg2 any) any {
@@ -65,7 +65,7 @@ func Sky_context_WithValue(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := context.WithValue(_arg0, _arg1, _arg2)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_context_WithoutCancel(arg0 any) any {
@@ -74,7 +74,7 @@ func Sky_context_WithoutCancel(arg0 any) any {
 		defer func() { recover() }()
 		result := context.WithoutCancel(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_context_ContextErr(receiver any) any {
@@ -86,7 +86,7 @@ func Sky_context_ContextErr(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_context_ContextValue(receiver any, arg0 any) any {
@@ -96,5 +96,5 @@ func Sky_context_ContextValue(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		result := _receiver.Value(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }

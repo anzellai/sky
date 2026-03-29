@@ -20,7 +20,7 @@ func Sky_io_Copy(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_CopyBuffer(arg0 any, arg1 any, arg2 any) any {
@@ -34,7 +34,7 @@ func Sky_io_CopyBuffer(arg0 any, arg1 any, arg2 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_CopyN(arg0 any, arg1 any, arg2 any) any {
@@ -48,7 +48,7 @@ func Sky_io_CopyN(arg0 any, arg1 any, arg2 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_LimitReader(arg0 any, arg1 any) any {
@@ -58,7 +58,7 @@ func Sky_io_LimitReader(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := io.LimitReader(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_MultiReader(arg0 any) any {
@@ -67,7 +67,7 @@ func Sky_io_MultiReader(arg0 any) any {
 		defer func() { recover() }()
 		result := io.MultiReader()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_MultiWriter(arg0 any) any {
@@ -76,7 +76,7 @@ func Sky_io_MultiWriter(arg0 any) any {
 		defer func() { recover() }()
 		result := io.MultiWriter()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_NewOffsetWriter(arg0 any, arg1 any) any {
@@ -86,7 +86,7 @@ func Sky_io_NewOffsetWriter(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := io.NewOffsetWriter(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_NewSectionReader(arg0 any, arg1 any, arg2 any) any {
@@ -97,7 +97,7 @@ func Sky_io_NewSectionReader(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := io.NewSectionReader(_arg0, _arg1, _arg2)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_NopCloser(arg0 any) any {
@@ -106,7 +106,7 @@ func Sky_io_NopCloser(arg0 any) any {
 		defer func() { recover() }()
 		result := io.NopCloser(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_Pipe(_ any) any {
@@ -115,7 +115,7 @@ func Sky_io_Pipe(_ any) any {
 		defer func() { recover() }()
 		_r0, _r1 := io.Pipe()
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_io_ReadAll(arg0 any) any {
@@ -127,7 +127,7 @@ func Sky_io_ReadAll(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadAtLeast(arg0 any, arg1 any, arg2 any) any {
@@ -141,7 +141,7 @@ func Sky_io_ReadAtLeast(arg0 any, arg1 any, arg2 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadFull(arg0 any, arg1 any) any {
@@ -154,7 +154,7 @@ func Sky_io_ReadFull(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_TeeReader(arg0 any, arg1 any) any {
@@ -164,7 +164,7 @@ func Sky_io_TeeReader(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := io.TeeReader(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriteString(arg0 any, arg1 any) any {
@@ -177,7 +177,7 @@ func Sky_io_WriteString(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ByteScannerUnreadByte(receiver any) any {
@@ -189,7 +189,7 @@ func Sky_io_ByteScannerUnreadByte(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_CloserClose(receiver any) any {
@@ -201,7 +201,7 @@ func Sky_io_CloserClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_LimitedReaderRead(receiver any, arg0 any) any {
@@ -214,7 +214,7 @@ func Sky_io_LimitedReaderRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_OffsetWriterSeek(receiver any, arg0 any, arg1 any) any {
@@ -228,7 +228,7 @@ func Sky_io_OffsetWriterSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_OffsetWriterWrite(receiver any, arg0 any) any {
@@ -241,7 +241,7 @@ func Sky_io_OffsetWriterWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_OffsetWriterWriteAt(receiver any, arg0 any, arg1 any) any {
@@ -255,7 +255,7 @@ func Sky_io_OffsetWriterWriteAt(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_PipeReaderClose(receiver any) any {
@@ -267,7 +267,7 @@ func Sky_io_PipeReaderClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_PipeReaderCloseWithError(receiver any, arg0 any) any {
@@ -280,7 +280,7 @@ func Sky_io_PipeReaderCloseWithError(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_PipeReaderRead(receiver any, arg0 any) any {
@@ -293,7 +293,7 @@ func Sky_io_PipeReaderRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_PipeWriterClose(receiver any) any {
@@ -305,7 +305,7 @@ func Sky_io_PipeWriterClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_PipeWriterCloseWithError(receiver any, arg0 any) any {
@@ -318,7 +318,7 @@ func Sky_io_PipeWriterCloseWithError(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_PipeWriterWrite(receiver any, arg0 any) any {
@@ -331,7 +331,7 @@ func Sky_io_PipeWriterWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadCloserClose(receiver any) any {
@@ -343,7 +343,7 @@ func Sky_io_ReadCloserClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_ReadCloserRead(receiver any, arg0 any) any {
@@ -356,7 +356,7 @@ func Sky_io_ReadCloserRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadSeekCloserClose(receiver any) any {
@@ -368,7 +368,7 @@ func Sky_io_ReadSeekCloserClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_ReadSeekCloserRead(receiver any, arg0 any) any {
@@ -381,7 +381,7 @@ func Sky_io_ReadSeekCloserRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadSeekCloserSeek(receiver any, arg0 any, arg1 any) any {
@@ -395,7 +395,7 @@ func Sky_io_ReadSeekCloserSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadSeekerRead(receiver any, arg0 any) any {
@@ -408,7 +408,7 @@ func Sky_io_ReadSeekerRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadSeekerSeek(receiver any, arg0 any, arg1 any) any {
@@ -422,7 +422,7 @@ func Sky_io_ReadSeekerSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriteCloserClose(receiver any) any {
@@ -434,7 +434,7 @@ func Sky_io_ReadWriteCloserClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_ReadWriteCloserRead(receiver any, arg0 any) any {
@@ -447,7 +447,7 @@ func Sky_io_ReadWriteCloserRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriteCloserWrite(receiver any, arg0 any) any {
@@ -460,7 +460,7 @@ func Sky_io_ReadWriteCloserWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriteSeekerRead(receiver any, arg0 any) any {
@@ -473,7 +473,7 @@ func Sky_io_ReadWriteSeekerRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriteSeekerSeek(receiver any, arg0 any, arg1 any) any {
@@ -487,7 +487,7 @@ func Sky_io_ReadWriteSeekerSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriteSeekerWrite(receiver any, arg0 any) any {
@@ -500,7 +500,7 @@ func Sky_io_ReadWriteSeekerWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriterRead(receiver any, arg0 any) any {
@@ -513,7 +513,7 @@ func Sky_io_ReadWriterRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReadWriterWrite(receiver any, arg0 any) any {
@@ -526,7 +526,7 @@ func Sky_io_ReadWriterWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReaderRead(receiver any, arg0 any) any {
@@ -539,7 +539,7 @@ func Sky_io_ReaderRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReaderAtReadAt(receiver any, arg0 any, arg1 any) any {
@@ -553,7 +553,7 @@ func Sky_io_ReaderAtReadAt(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_ReaderFromReadFrom(receiver any, arg0 any) any {
@@ -566,7 +566,7 @@ func Sky_io_ReaderFromReadFrom(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_RuneScannerUnreadRune(receiver any) any {
@@ -578,7 +578,7 @@ func Sky_io_RuneScannerUnreadRune(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_SectionReaderRead(receiver any, arg0 any) any {
@@ -591,7 +591,7 @@ func Sky_io_SectionReaderRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_SectionReaderReadAt(receiver any, arg0 any, arg1 any) any {
@@ -605,7 +605,7 @@ func Sky_io_SectionReaderReadAt(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_SectionReaderSeek(receiver any, arg0 any, arg1 any) any {
@@ -619,7 +619,7 @@ func Sky_io_SectionReaderSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_SectionReaderSize(receiver any) any {
@@ -628,7 +628,7 @@ func Sky_io_SectionReaderSize(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Size()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_SeekerSeek(receiver any, arg0 any, arg1 any) any {
@@ -642,7 +642,7 @@ func Sky_io_SeekerSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_StringWriterWriteString(receiver any, arg0 any) any {
@@ -655,7 +655,7 @@ func Sky_io_StringWriterWriteString(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriteCloserClose(receiver any) any {
@@ -667,7 +667,7 @@ func Sky_io_WriteCloserClose(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_io_WriteCloserWrite(receiver any, arg0 any) any {
@@ -680,7 +680,7 @@ func Sky_io_WriteCloserWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriteSeekerSeek(receiver any, arg0 any, arg1 any) any {
@@ -694,7 +694,7 @@ func Sky_io_WriteSeekerSeek(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriteSeekerWrite(receiver any, arg0 any) any {
@@ -707,7 +707,7 @@ func Sky_io_WriteSeekerWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriterWrite(receiver any, arg0 any) any {
@@ -720,7 +720,7 @@ func Sky_io_WriterWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriterAtWriteAt(receiver any, arg0 any, arg1 any) any {
@@ -734,7 +734,7 @@ func Sky_io_WriterAtWriteAt(receiver any, arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_WriterToWriteTo(receiver any, arg0 any) any {
@@ -747,7 +747,7 @@ func Sky_io_WriterToWriteTo(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_io_FIELD_LimitedReader_R(receiver any) any {

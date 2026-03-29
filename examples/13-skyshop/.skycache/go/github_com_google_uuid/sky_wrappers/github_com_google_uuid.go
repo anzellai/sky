@@ -17,7 +17,7 @@ func Sky_github_com_google_uuid_ClockSequence(_ any) any {
 		defer func() { recover() }()
 		result := uuid.ClockSequence()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_DisableRandPool(_ any) any {
@@ -26,7 +26,7 @@ func Sky_github_com_google_uuid_DisableRandPool(_ any) any {
 		defer func() { recover() }()
 		uuid.DisableRandPool()
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_EnableRandPool(_ any) any {
@@ -35,7 +35,7 @@ func Sky_github_com_google_uuid_EnableRandPool(_ any) any {
 		defer func() { recover() }()
 		uuid.EnableRandPool()
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_FromBytes(arg0 any) any {
@@ -47,7 +47,7 @@ func Sky_github_com_google_uuid_FromBytes(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_IsInvalidLengthError(arg0 any) any {
@@ -56,7 +56,7 @@ func Sky_github_com_google_uuid_IsInvalidLengthError(arg0 any) any {
 		defer func() { recover() }()
 		result := uuid.IsInvalidLengthError(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_Must(arg0 any, arg1 any) any {
@@ -66,7 +66,7 @@ func Sky_github_com_google_uuid_Must(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := uuid.Must(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_MustParse(arg0 any) any {
@@ -75,7 +75,7 @@ func Sky_github_com_google_uuid_MustParse(arg0 any) any {
 		defer func() { recover() }()
 		result := uuid.MustParse(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_New(_ any) any {
@@ -84,7 +84,7 @@ func Sky_github_com_google_uuid_New(_ any) any {
 		defer func() { recover() }()
 		result := uuid.New()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewDCEGroup(_ any) any {
@@ -96,7 +96,7 @@ func Sky_github_com_google_uuid_NewDCEGroup(_ any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewDCEPerson(_ any) any {
@@ -108,7 +108,7 @@ func Sky_github_com_google_uuid_NewDCEPerson(_ any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewDCESecurity(arg0 any, arg1 any) any {
@@ -121,7 +121,7 @@ func Sky_github_com_google_uuid_NewDCESecurity(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewMD5(arg0 any, arg1 any) any {
@@ -131,7 +131,7 @@ func Sky_github_com_google_uuid_NewMD5(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := uuid.NewMD5(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewRandom(_ any) any {
@@ -143,7 +143,7 @@ func Sky_github_com_google_uuid_NewRandom(_ any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewSHA1(arg0 any, arg1 any) any {
@@ -153,7 +153,7 @@ func Sky_github_com_google_uuid_NewSHA1(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := uuid.NewSHA1(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewString(_ any) any {
@@ -162,7 +162,7 @@ func Sky_github_com_google_uuid_NewString(_ any) any {
 		defer func() { recover() }()
 		result := uuid.NewString()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewUUID(_ any) any {
@@ -174,7 +174,7 @@ func Sky_github_com_google_uuid_NewUUID(_ any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewV6(_ any) any {
@@ -186,7 +186,7 @@ func Sky_github_com_google_uuid_NewV6(_ any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NewV7(_ any) any {
@@ -198,7 +198,7 @@ func Sky_github_com_google_uuid_NewV7(_ any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NodeID(_ any) any {
@@ -207,7 +207,7 @@ func Sky_github_com_google_uuid_NodeID(_ any) any {
 		defer func() { recover() }()
 		result := uuid.NodeID()
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NodeInterface(_ any) any {
@@ -216,7 +216,7 @@ func Sky_github_com_google_uuid_NodeInterface(_ any) any {
 		defer func() { recover() }()
 		result := uuid.NodeInterface()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_Parse(arg0 any) any {
@@ -228,7 +228,7 @@ func Sky_github_com_google_uuid_Parse(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_ParseBytes(arg0 any) any {
@@ -240,7 +240,7 @@ func Sky_github_com_google_uuid_ParseBytes(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_SetClockSequence(arg0 any) any {
@@ -249,7 +249,7 @@ func Sky_github_com_google_uuid_SetClockSequence(arg0 any) any {
 		defer func() { recover() }()
 		uuid.SetClockSequence(_arg0)
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_SetNodeID(arg0 any) any {
@@ -258,7 +258,7 @@ func Sky_github_com_google_uuid_SetNodeID(arg0 any) any {
 		defer func() { recover() }()
 		result := uuid.SetNodeID(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_SetNodeInterface(arg0 any) any {
@@ -267,7 +267,7 @@ func Sky_github_com_google_uuid_SetNodeInterface(arg0 any) any {
 		defer func() { recover() }()
 		result := uuid.SetNodeInterface(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_Validate(arg0 any) any {
@@ -279,7 +279,7 @@ func Sky_github_com_google_uuid_Validate(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_DomainString(receiver any) any {
@@ -288,7 +288,7 @@ func Sky_github_com_google_uuid_DomainString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDMarshalBinary(receiver any) any {
@@ -300,7 +300,7 @@ func Sky_github_com_google_uuid_NullUUIDMarshalBinary(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDMarshalJSON(receiver any) any {
@@ -312,7 +312,7 @@ func Sky_github_com_google_uuid_NullUUIDMarshalJSON(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDMarshalText(receiver any) any {
@@ -324,7 +324,7 @@ func Sky_github_com_google_uuid_NullUUIDMarshalText(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDScan(receiver any, arg0 any) any {
@@ -337,7 +337,7 @@ func Sky_github_com_google_uuid_NullUUIDScan(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDUnmarshalBinary(receiver any, arg0 any) any {
@@ -350,7 +350,7 @@ func Sky_github_com_google_uuid_NullUUIDUnmarshalBinary(receiver any, arg0 any) 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDUnmarshalJSON(receiver any, arg0 any) any {
@@ -363,7 +363,7 @@ func Sky_github_com_google_uuid_NullUUIDUnmarshalJSON(receiver any, arg0 any) an
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_NullUUIDUnmarshalText(receiver any, arg0 any) any {
@@ -376,7 +376,7 @@ func Sky_github_com_google_uuid_NullUUIDUnmarshalText(receiver any, arg0 any) an
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_TimeUnixTime(receiver any) any {
@@ -385,7 +385,7 @@ func Sky_github_com_google_uuid_TimeUnixTime(receiver any) any {
 		defer func() { recover() }()
 		_r0, _r1 := _receiver.UnixTime()
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDClockSequence(receiver any) any {
@@ -394,7 +394,7 @@ func Sky_github_com_google_uuid_UUIDClockSequence(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.ClockSequence()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDDomain(receiver any) any {
@@ -403,7 +403,7 @@ func Sky_github_com_google_uuid_UUIDDomain(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Domain()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDID(receiver any) any {
@@ -412,7 +412,7 @@ func Sky_github_com_google_uuid_UUIDID(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.ID()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDMarshalBinary(receiver any) any {
@@ -424,7 +424,7 @@ func Sky_github_com_google_uuid_UUIDMarshalBinary(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDMarshalText(receiver any) any {
@@ -436,7 +436,7 @@ func Sky_github_com_google_uuid_UUIDMarshalText(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDNodeID(receiver any) any {
@@ -445,7 +445,7 @@ func Sky_github_com_google_uuid_UUIDNodeID(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.NodeID()
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDScan(receiver any, arg0 any) any {
@@ -458,7 +458,7 @@ func Sky_github_com_google_uuid_UUIDScan(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDString(receiver any) any {
@@ -467,7 +467,7 @@ func Sky_github_com_google_uuid_UUIDString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDTime(receiver any) any {
@@ -476,7 +476,7 @@ func Sky_github_com_google_uuid_UUIDTime(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Time()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDURN(receiver any) any {
@@ -485,7 +485,7 @@ func Sky_github_com_google_uuid_UUIDURN(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.URN()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDUnmarshalBinary(receiver any, arg0 any) any {
@@ -498,7 +498,7 @@ func Sky_github_com_google_uuid_UUIDUnmarshalBinary(receiver any, arg0 any) any 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDUnmarshalText(receiver any, arg0 any) any {
@@ -511,7 +511,7 @@ func Sky_github_com_google_uuid_UUIDUnmarshalText(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDVariant(receiver any) any {
@@ -520,7 +520,7 @@ func Sky_github_com_google_uuid_UUIDVariant(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Variant()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDVersion(receiver any) any {
@@ -529,7 +529,7 @@ func Sky_github_com_google_uuid_UUIDVersion(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Version()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_UUIDsStrings(receiver any) any {
@@ -538,7 +538,7 @@ func Sky_github_com_google_uuid_UUIDsStrings(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Strings()
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_VariantString(receiver any) any {
@@ -547,7 +547,7 @@ func Sky_github_com_google_uuid_VariantString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_VersionString(receiver any) any {
@@ -556,7 +556,7 @@ func Sky_github_com_google_uuid_VersionString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_google_uuid_FIELD_NullUUID_UUID(receiver any) any {

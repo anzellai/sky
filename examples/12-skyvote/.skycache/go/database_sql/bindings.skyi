@@ -1,0 +1,491 @@
+module Database.Sql exposing (..)
+
+foreign import "database/sql" exposing (..)
+
+drivers : () -> Result String List String
+drivers _ =
+    Sky_database_sql_Drivers ()
+
+named : String -> Any -> Result String NamedArg
+named arg0 arg1 =
+    Sky_database_sql_Named arg0 arg1
+
+open : String -> String -> Result String DB
+open arg0 arg1 =
+    Sky_database_sql_Open arg0 arg1
+
+type ColumnType = ColumnType
+
+type Conn = Conn
+
+type DB = DB
+
+type DBStats = DBStats
+
+type IsolationLevel = IsolationLevel
+
+type NamedArg = NamedArg
+
+type NullBool = NullBool
+
+type NullByte = NullByte
+
+type NullFloat64 = NullFloat64
+
+type NullInt16 = NullInt16
+
+type NullInt32 = NullInt32
+
+type NullInt64 = NullInt64
+
+type NullString = NullString
+
+type NullTime = NullTime
+
+type Out = Out
+
+type RawBytes = RawBytes
+
+type Result = Result
+
+type Row = Row
+
+type Rows = Rows
+
+type Scanner = Scanner
+
+type Stmt = Stmt
+
+type Tx = Tx
+
+type TxOptions = TxOptions
+
+dBStatsMaxOpenConnections : Any -> Int
+dBStatsMaxOpenConnections receiver =
+    Sky_database_sql_FIELD_DBStats_MaxOpenConnections receiver
+
+dBStatsOpenConnections : Any -> Int
+dBStatsOpenConnections receiver =
+    Sky_database_sql_FIELD_DBStats_OpenConnections receiver
+
+dBStatsInUse : Any -> Int
+dBStatsInUse receiver =
+    Sky_database_sql_FIELD_DBStats_InUse receiver
+
+dBStatsIdle : Any -> Int
+dBStatsIdle receiver =
+    Sky_database_sql_FIELD_DBStats_Idle receiver
+
+dBStatsWaitCount : Any -> Int
+dBStatsWaitCount receiver =
+    Sky_database_sql_FIELD_DBStats_WaitCount receiver
+
+dBStatsWaitDuration : Any -> Duration
+dBStatsWaitDuration receiver =
+    Sky_database_sql_FIELD_DBStats_WaitDuration receiver
+
+dBStatsMaxIdleClosed : Any -> Int
+dBStatsMaxIdleClosed receiver =
+    Sky_database_sql_FIELD_DBStats_MaxIdleClosed receiver
+
+dBStatsMaxIdleTimeClosed : Any -> Int
+dBStatsMaxIdleTimeClosed receiver =
+    Sky_database_sql_FIELD_DBStats_MaxIdleTimeClosed receiver
+
+dBStatsMaxLifetimeClosed : Any -> Int
+dBStatsMaxLifetimeClosed receiver =
+    Sky_database_sql_FIELD_DBStats_MaxLifetimeClosed receiver
+
+namedArgName : Any -> String
+namedArgName receiver =
+    Sky_database_sql_FIELD_NamedArg_Name receiver
+
+namedArgValue : Any -> Any
+namedArgValue receiver =
+    Sky_database_sql_FIELD_NamedArg_Value receiver
+
+nullBoolBool : Any -> Bool
+nullBoolBool receiver =
+    Sky_database_sql_FIELD_NullBool_Bool receiver
+
+nullBoolValid : Any -> Bool
+nullBoolValid receiver =
+    Sky_database_sql_FIELD_NullBool_Valid receiver
+
+nullByteByte : Any -> byte
+nullByteByte receiver =
+    Sky_database_sql_FIELD_NullByte_Byte receiver
+
+nullByteValid : Any -> Bool
+nullByteValid receiver =
+    Sky_database_sql_FIELD_NullByte_Valid receiver
+
+nullFloat64Float64 : Any -> Float
+nullFloat64Float64 receiver =
+    Sky_database_sql_FIELD_NullFloat64_Float64 receiver
+
+nullFloat64Valid : Any -> Bool
+nullFloat64Valid receiver =
+    Sky_database_sql_FIELD_NullFloat64_Valid receiver
+
+nullInt16Int16 : Any -> Int
+nullInt16Int16 receiver =
+    Sky_database_sql_FIELD_NullInt16_Int16 receiver
+
+nullInt16Valid : Any -> Bool
+nullInt16Valid receiver =
+    Sky_database_sql_FIELD_NullInt16_Valid receiver
+
+nullInt32Int32 : Any -> Int
+nullInt32Int32 receiver =
+    Sky_database_sql_FIELD_NullInt32_Int32 receiver
+
+nullInt32Valid : Any -> Bool
+nullInt32Valid receiver =
+    Sky_database_sql_FIELD_NullInt32_Valid receiver
+
+nullInt64Int64 : Any -> Int
+nullInt64Int64 receiver =
+    Sky_database_sql_FIELD_NullInt64_Int64 receiver
+
+nullInt64Valid : Any -> Bool
+nullInt64Valid receiver =
+    Sky_database_sql_FIELD_NullInt64_Valid receiver
+
+nullStringString : Any -> String
+nullStringString receiver =
+    Sky_database_sql_FIELD_NullString_String receiver
+
+nullStringValid : Any -> Bool
+nullStringValid receiver =
+    Sky_database_sql_FIELD_NullString_Valid receiver
+
+nullTimeTime : Any -> Time
+nullTimeTime receiver =
+    Sky_database_sql_FIELD_NullTime_Time receiver
+
+nullTimeValid : Any -> Bool
+nullTimeValid receiver =
+    Sky_database_sql_FIELD_NullTime_Valid receiver
+
+outDest : Any -> Any
+outDest receiver =
+    Sky_database_sql_FIELD_Out_Dest receiver
+
+outIn : Any -> Bool
+outIn receiver =
+    Sky_database_sql_FIELD_Out_In receiver
+
+txOptionsIsolation : Any -> IsolationLevel
+txOptionsIsolation receiver =
+    Sky_database_sql_FIELD_TxOptions_Isolation receiver
+
+txOptionsReadOnly : Any -> Bool
+txOptionsReadOnly receiver =
+    Sky_database_sql_FIELD_TxOptions_ReadOnly receiver
+
+columnTypeDatabaseTypeName : ColumnType -> Result String String
+columnTypeDatabaseTypeName receiver =
+    Sky_database_sql_ColumnTypeDatabaseTypeName receiver
+
+columnTypeLength : ColumnType -> Result String (Int, Bool)
+columnTypeLength receiver =
+    Sky_database_sql_ColumnTypeLength receiver
+
+columnTypeName : ColumnType -> Result String String
+columnTypeName receiver =
+    Sky_database_sql_ColumnTypeName receiver
+
+columnTypeNullable : ColumnType -> Result String (Bool, Bool)
+columnTypeNullable receiver =
+    Sky_database_sql_ColumnTypeNullable receiver
+
+connBeginTx : Conn -> Context -> TxOptions -> Result String Tx
+connBeginTx receiver arg0 arg1 =
+    Sky_database_sql_ConnBeginTx receiver arg0 arg1
+
+connClose : Conn -> Result String ()
+connClose receiver =
+    Sky_database_sql_ConnClose receiver
+
+connExecContext : Conn -> Context -> String -> List Any -> Result String Result
+connExecContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_ConnExecContext receiver arg0 arg1 arg2
+
+connPingContext : Conn -> Context -> Result String ()
+connPingContext receiver arg0 =
+    Sky_database_sql_ConnPingContext receiver arg0
+
+connPrepareContext : Conn -> Context -> String -> Result String Stmt
+connPrepareContext receiver arg0 arg1 =
+    Sky_database_sql_ConnPrepareContext receiver arg0 arg1
+
+connQueryContext : Conn -> Context -> String -> List Any -> Result String Rows
+connQueryContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_ConnQueryContext receiver arg0 arg1 arg2
+
+connQueryRowContext : Conn -> Context -> String -> List Any -> Result String Row
+connQueryRowContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_ConnQueryRowContext receiver arg0 arg1 arg2
+
+dBBegin : DB -> Result String Tx
+dBBegin receiver =
+    Sky_database_sql_DBBegin receiver
+
+dBBeginTx : DB -> Context -> TxOptions -> Result String Tx
+dBBeginTx receiver arg0 arg1 =
+    Sky_database_sql_DBBeginTx receiver arg0 arg1
+
+dBClose : DB -> Result String ()
+dBClose receiver =
+    Sky_database_sql_DBClose receiver
+
+dBConn : DB -> Context -> Result String Conn
+dBConn receiver arg0 =
+    Sky_database_sql_DBConn receiver arg0
+
+dBExec : DB -> String -> List Any -> Result String Result
+dBExec receiver arg0 arg1 =
+    Sky_database_sql_DBExec receiver arg0 arg1
+
+dBExecContext : DB -> Context -> String -> List Any -> Result String Result
+dBExecContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_DBExecContext receiver arg0 arg1 arg2
+
+dBPing : DB -> Result String ()
+dBPing receiver =
+    Sky_database_sql_DBPing receiver
+
+dBPingContext : DB -> Context -> Result String ()
+dBPingContext receiver arg0 =
+    Sky_database_sql_DBPingContext receiver arg0
+
+dBPrepare : DB -> String -> Result String Stmt
+dBPrepare receiver arg0 =
+    Sky_database_sql_DBPrepare receiver arg0
+
+dBPrepareContext : DB -> Context -> String -> Result String Stmt
+dBPrepareContext receiver arg0 arg1 =
+    Sky_database_sql_DBPrepareContext receiver arg0 arg1
+
+dBQuery : DB -> String -> List Any -> Result String Rows
+dBQuery receiver arg0 arg1 =
+    Sky_database_sql_DBQuery receiver arg0 arg1
+
+dBQueryContext : DB -> Context -> String -> List Any -> Result String Rows
+dBQueryContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_DBQueryContext receiver arg0 arg1 arg2
+
+dBQueryRow : DB -> String -> List Any -> Result String Row
+dBQueryRow receiver arg0 arg1 =
+    Sky_database_sql_DBQueryRow receiver arg0 arg1
+
+dBQueryRowContext : DB -> Context -> String -> List Any -> Result String Row
+dBQueryRowContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_DBQueryRowContext receiver arg0 arg1 arg2
+
+dBSetMaxIdleConns : DB -> Int -> Result String ()
+dBSetMaxIdleConns receiver arg0 =
+    Sky_database_sql_DBSetMaxIdleConns receiver arg0
+
+dBSetMaxOpenConns : DB -> Int -> Result String ()
+dBSetMaxOpenConns receiver arg0 =
+    Sky_database_sql_DBSetMaxOpenConns receiver arg0
+
+dBStats : DB -> Result String DBStats
+dBStats receiver =
+    Sky_database_sql_DBStats receiver
+
+isolationLevelString : IsolationLevel -> Result String String
+isolationLevelString receiver =
+    Sky_database_sql_IsolationLevelString receiver
+
+nullBoolScan : NullBool -> Any -> Result String ()
+nullBoolScan receiver arg0 =
+    Sky_database_sql_NullBoolScan receiver arg0
+
+nullByteScan : NullByte -> Any -> Result String ()
+nullByteScan receiver arg0 =
+    Sky_database_sql_NullByteScan receiver arg0
+
+nullFloat64Scan : NullFloat64 -> Any -> Result String ()
+nullFloat64Scan receiver arg0 =
+    Sky_database_sql_NullFloat64Scan receiver arg0
+
+nullInt16Scan : NullInt16 -> Any -> Result String ()
+nullInt16Scan receiver arg0 =
+    Sky_database_sql_NullInt16Scan receiver arg0
+
+nullInt32Scan : NullInt32 -> Any -> Result String ()
+nullInt32Scan receiver arg0 =
+    Sky_database_sql_NullInt32Scan receiver arg0
+
+nullInt64Scan : NullInt64 -> Any -> Result String ()
+nullInt64Scan receiver arg0 =
+    Sky_database_sql_NullInt64Scan receiver arg0
+
+nullStringScan : NullString -> Any -> Result String ()
+nullStringScan receiver arg0 =
+    Sky_database_sql_NullStringScan receiver arg0
+
+nullTimeScan : NullTime -> Any -> Result String ()
+nullTimeScan receiver arg0 =
+    Sky_database_sql_NullTimeScan receiver arg0
+
+resultLastInsertId : Result -> Result String Int
+resultLastInsertId receiver =
+    Sky_database_sql_ResultLastInsertId receiver
+
+resultRowsAffected : Result -> Result String Int
+resultRowsAffected receiver =
+    Sky_database_sql_ResultRowsAffected receiver
+
+rowErr : Row -> Result String ()
+rowErr receiver =
+    Sky_database_sql_RowErr receiver
+
+rowScan : Row -> List Any -> Result String ()
+rowScan receiver arg0 =
+    Sky_database_sql_RowScan receiver arg0
+
+rowsClose : Rows -> Result String ()
+rowsClose receiver =
+    Sky_database_sql_RowsClose receiver
+
+rowsColumnTypes : Rows -> Result String List Any
+rowsColumnTypes receiver =
+    Sky_database_sql_RowsColumnTypes receiver
+
+rowsColumns : Rows -> Result String List String
+rowsColumns receiver =
+    Sky_database_sql_RowsColumns receiver
+
+rowsErr : Rows -> Result String ()
+rowsErr receiver =
+    Sky_database_sql_RowsErr receiver
+
+rowsNext : Rows -> Result String Bool
+rowsNext receiver =
+    Sky_database_sql_RowsNext receiver
+
+rowsNextResultSet : Rows -> Result String Bool
+rowsNextResultSet receiver =
+    Sky_database_sql_RowsNextResultSet receiver
+
+rowsScan : Rows -> List Any -> Result String ()
+rowsScan receiver arg0 =
+    Sky_database_sql_RowsScan receiver arg0
+
+scannerScan : Scanner -> Any -> Result String ()
+scannerScan receiver arg0 =
+    Sky_database_sql_ScannerScan receiver arg0
+
+stmtClose : Stmt -> Result String ()
+stmtClose receiver =
+    Sky_database_sql_StmtClose receiver
+
+stmtExec : Stmt -> List Any -> Result String Result
+stmtExec receiver arg0 =
+    Sky_database_sql_StmtExec receiver arg0
+
+stmtExecContext : Stmt -> Context -> List Any -> Result String Result
+stmtExecContext receiver arg0 arg1 =
+    Sky_database_sql_StmtExecContext receiver arg0 arg1
+
+stmtQuery : Stmt -> List Any -> Result String Rows
+stmtQuery receiver arg0 =
+    Sky_database_sql_StmtQuery receiver arg0
+
+stmtQueryContext : Stmt -> Context -> List Any -> Result String Rows
+stmtQueryContext receiver arg0 arg1 =
+    Sky_database_sql_StmtQueryContext receiver arg0 arg1
+
+stmtQueryRow : Stmt -> List Any -> Result String Row
+stmtQueryRow receiver arg0 =
+    Sky_database_sql_StmtQueryRow receiver arg0
+
+stmtQueryRowContext : Stmt -> Context -> List Any -> Result String Row
+stmtQueryRowContext receiver arg0 arg1 =
+    Sky_database_sql_StmtQueryRowContext receiver arg0 arg1
+
+txCommit : Tx -> Result String ()
+txCommit receiver =
+    Sky_database_sql_TxCommit receiver
+
+txExec : Tx -> String -> List Any -> Result String Result
+txExec receiver arg0 arg1 =
+    Sky_database_sql_TxExec receiver arg0 arg1
+
+txExecContext : Tx -> Context -> String -> List Any -> Result String Result
+txExecContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_TxExecContext receiver arg0 arg1 arg2
+
+txPrepare : Tx -> String -> Result String Stmt
+txPrepare receiver arg0 =
+    Sky_database_sql_TxPrepare receiver arg0
+
+txPrepareContext : Tx -> Context -> String -> Result String Stmt
+txPrepareContext receiver arg0 arg1 =
+    Sky_database_sql_TxPrepareContext receiver arg0 arg1
+
+txQuery : Tx -> String -> List Any -> Result String Rows
+txQuery receiver arg0 arg1 =
+    Sky_database_sql_TxQuery receiver arg0 arg1
+
+txQueryContext : Tx -> Context -> String -> List Any -> Result String Rows
+txQueryContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_TxQueryContext receiver arg0 arg1 arg2
+
+txQueryRow : Tx -> String -> List Any -> Result String Row
+txQueryRow receiver arg0 arg1 =
+    Sky_database_sql_TxQueryRow receiver arg0 arg1
+
+txQueryRowContext : Tx -> Context -> String -> List Any -> Result String Row
+txQueryRowContext receiver arg0 arg1 arg2 =
+    Sky_database_sql_TxQueryRowContext receiver arg0 arg1 arg2
+
+txRollback : Tx -> Result String ()
+txRollback receiver =
+    Sky_database_sql_TxRollback receiver
+
+txStmt : Tx -> Stmt -> Result String Stmt
+txStmt receiver arg0 =
+    Sky_database_sql_TxStmt receiver arg0
+
+txStmtContext : Tx -> Context -> Stmt -> Result String Stmt
+txStmtContext receiver arg0 arg1 =
+    Sky_database_sql_TxStmtContext receiver arg0 arg1
+
+
+
+levelDefault : IsolationLevel
+levelDefault =
+    Sky_database_sql_LevelDefault
+
+levelLinearizable : IsolationLevel
+levelLinearizable =
+    Sky_database_sql_LevelLinearizable
+
+levelReadCommitted : IsolationLevel
+levelReadCommitted =
+    Sky_database_sql_LevelReadCommitted
+
+levelReadUncommitted : IsolationLevel
+levelReadUncommitted =
+    Sky_database_sql_LevelReadUncommitted
+
+levelRepeatableRead : IsolationLevel
+levelRepeatableRead =
+    Sky_database_sql_LevelRepeatableRead
+
+levelSerializable : IsolationLevel
+levelSerializable =
+    Sky_database_sql_LevelSerializable
+
+levelSnapshot : IsolationLevel
+levelSnapshot =
+    Sky_database_sql_LevelSnapshot
+
+levelWriteCommitted : IsolationLevel
+levelWriteCommitted =
+    Sky_database_sql_LevelWriteCommitted

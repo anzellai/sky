@@ -16,7 +16,7 @@ func Sky_fmt_Append(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := fmt.Append(_arg0, _arg1...)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_fmt_Appendf(arg0 any, arg1 any, arg2 any) any {
@@ -27,7 +27,7 @@ func Sky_fmt_Appendf(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := fmt.Appendf(_arg0, _arg1, _arg2...)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_fmt_Appendln(arg0 any, arg1 any) any {
@@ -37,7 +37,7 @@ func Sky_fmt_Appendln(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := fmt.Appendln(_arg0, _arg1...)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_fmt_Errorf(arg0 any, arg1 any) any {
@@ -50,7 +50,7 @@ func Sky_fmt_Errorf(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_fmt_Print(arg0 any) any {
@@ -62,7 +62,7 @@ func Sky_fmt_Print(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Printf(arg0 any, arg1 any) any {
@@ -75,7 +75,7 @@ func Sky_fmt_Printf(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Println(arg0 any) any {
@@ -87,7 +87,7 @@ func Sky_fmt_Println(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Scan(arg0 any) any {
@@ -99,7 +99,7 @@ func Sky_fmt_Scan(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Scanf(arg0 any, arg1 any) any {
@@ -112,7 +112,7 @@ func Sky_fmt_Scanf(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Scanln(arg0 any) any {
@@ -124,7 +124,7 @@ func Sky_fmt_Scanln(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Sprint(arg0 any) any {
@@ -133,7 +133,7 @@ func Sky_fmt_Sprint(arg0 any) any {
 		defer func() { recover() }()
 		result := fmt.Sprint(_arg0...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Sprintf(arg0 any, arg1 any) any {
@@ -143,7 +143,7 @@ func Sky_fmt_Sprintf(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := fmt.Sprintf(_arg0, _arg1...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Sprintln(arg0 any) any {
@@ -152,7 +152,7 @@ func Sky_fmt_Sprintln(arg0 any) any {
 		defer func() { recover() }()
 		result := fmt.Sprintln(_arg0...)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Sscan(arg0 any, arg1 any) any {
@@ -165,7 +165,7 @@ func Sky_fmt_Sscan(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Sscanf(arg0 any, arg1 any, arg2 any) any {
@@ -179,7 +179,7 @@ func Sky_fmt_Sscanf(arg0 any, arg1 any, arg2 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_Sscanln(arg0 any, arg1 any) any {
@@ -192,7 +192,7 @@ func Sky_fmt_Sscanln(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_GoStringerGoString(receiver any) any {
@@ -201,7 +201,7 @@ func Sky_fmt_GoStringerGoString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.GoString()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_ScanStateRead(receiver any, arg0 any) any {
@@ -214,7 +214,7 @@ func Sky_fmt_ScanStateRead(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_ScanStateSkipSpace(receiver any) any {
@@ -223,7 +223,7 @@ func Sky_fmt_ScanStateSkipSpace(receiver any) any {
 		defer func() { recover() }()
 		_receiver.SkipSpace()
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_fmt_ScanStateUnreadRune(receiver any) any {
@@ -235,7 +235,7 @@ func Sky_fmt_ScanStateUnreadRune(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_fmt_ScanStateWidth(receiver any) any {
@@ -244,7 +244,7 @@ func Sky_fmt_ScanStateWidth(receiver any) any {
 		defer func() { recover() }()
 		_r0, _r1 := _receiver.Width()
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_fmt_StateFlag(receiver any, arg0 any) any {
@@ -254,7 +254,7 @@ func Sky_fmt_StateFlag(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		result := _receiver.Flag(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_StatePrecision(receiver any) any {
@@ -263,7 +263,7 @@ func Sky_fmt_StatePrecision(receiver any) any {
 		defer func() { recover() }()
 		_r0, _r1 := _receiver.Precision()
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_fmt_StateWidth(receiver any) any {
@@ -272,7 +272,7 @@ func Sky_fmt_StateWidth(receiver any) any {
 		defer func() { recover() }()
 		_r0, _r1 := _receiver.Width()
 		return SkyOk(SkyTuple2{_r0, _r1})
-	}
+	}()
 }
 
 func Sky_fmt_StateWrite(receiver any, arg0 any) any {
@@ -285,7 +285,7 @@ func Sky_fmt_StateWrite(receiver any, arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_fmt_StringerString(receiver any) any {
@@ -294,5 +294,5 @@ func Sky_fmt_StringerString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }

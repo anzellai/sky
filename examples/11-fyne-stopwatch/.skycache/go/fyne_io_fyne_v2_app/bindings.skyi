@@ -1,0 +1,48 @@
+module Fyne.Io.Fyne.V2.App exposing (..)
+
+foreign import "fyne.io/fyne/v2/app" exposing (..)
+
+new : () -> Result String App
+new _ =
+    Sky_fyne_io_fyne_v2_app_New ()
+
+newWithID : String -> Result String App
+newWithID arg0 =
+    Sky_fyne_io_fyne_v2_app_NewWithID arg0
+
+setMetadata : AppMetadata -> Result String ()
+setMetadata arg0 =
+    Sky_fyne_io_fyne_v2_app_SetMetadata arg0
+
+type SettingsSchema = SettingsSchema
+
+settingsSchemaThemeName : Any -> String
+settingsSchemaThemeName receiver =
+    Sky_fyne_io_fyne_v2_app_FIELD_SettingsSchema_ThemeName receiver
+
+settingsSchemaScale : Any -> Float
+settingsSchemaScale receiver =
+    Sky_fyne_io_fyne_v2_app_FIELD_SettingsSchema_Scale receiver
+
+settingsSchemaPrimaryColor : Any -> String
+settingsSchemaPrimaryColor receiver =
+    Sky_fyne_io_fyne_v2_app_FIELD_SettingsSchema_PrimaryColor receiver
+
+settingsSchemaCloudName : Any -> String
+settingsSchemaCloudName receiver =
+    Sky_fyne_io_fyne_v2_app_FIELD_SettingsSchema_CloudName receiver
+
+settingsSchemaCloudConfig : Any -> String
+settingsSchemaCloudConfig receiver =
+    Sky_fyne_io_fyne_v2_app_FIELD_SettingsSchema_CloudConfig receiver
+
+settingsSchemaDisableAnimations : Any -> Bool
+settingsSchemaDisableAnimations receiver =
+    Sky_fyne_io_fyne_v2_app_FIELD_SettingsSchema_DisableAnimations receiver
+
+settingsSchemaStoragePath : SettingsSchema -> Result String String
+settingsSchemaStoragePath receiver =
+    Sky_fyne_io_fyne_v2_app_SettingsSchemaStoragePath receiver
+
+
+

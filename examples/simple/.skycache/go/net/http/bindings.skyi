@@ -1,0 +1,1877 @@
+module Net.Http exposing (..)
+
+type Error = Error
+
+type Any = Any
+
+type List a = List
+
+type Map k v = Map
+
+type Bytes = Bytes
+
+foreign import "net/http" exposing (DefaultMaxHeaderBytes)
+
+defaultMaxHeaderBytes : Untyped int
+defaultMaxHeaderBytes = DefaultMaxHeaderBytes
+
+foreign import "net/http" exposing (DefaultMaxIdleConnsPerHost)
+
+defaultMaxIdleConnsPerHost : Untyped int
+defaultMaxIdleConnsPerHost = DefaultMaxIdleConnsPerHost
+
+foreign import "net/http" exposing (MethodConnect)
+
+methodConnect : Untyped string
+methodConnect = MethodConnect
+
+foreign import "net/http" exposing (MethodDelete)
+
+methodDelete : Untyped string
+methodDelete = MethodDelete
+
+foreign import "net/http" exposing (MethodGet)
+
+methodGet : Untyped string
+methodGet = MethodGet
+
+foreign import "net/http" exposing (MethodHead)
+
+methodHead : Untyped string
+methodHead = MethodHead
+
+foreign import "net/http" exposing (MethodOptions)
+
+methodOptions : Untyped string
+methodOptions = MethodOptions
+
+foreign import "net/http" exposing (MethodPatch)
+
+methodPatch : Untyped string
+methodPatch = MethodPatch
+
+foreign import "net/http" exposing (MethodPost)
+
+methodPost : Untyped string
+methodPost = MethodPost
+
+foreign import "net/http" exposing (MethodPut)
+
+methodPut : Untyped string
+methodPut = MethodPut
+
+foreign import "net/http" exposing (MethodTrace)
+
+methodTrace : Untyped string
+methodTrace = MethodTrace
+
+foreign import "net/http" exposing (SameSiteDefaultMode)
+
+sameSiteDefaultMode : SameSite
+sameSiteDefaultMode = SameSiteDefaultMode
+
+foreign import "net/http" exposing (SameSiteLaxMode)
+
+sameSiteLaxMode : SameSite
+sameSiteLaxMode = SameSiteLaxMode
+
+foreign import "net/http" exposing (SameSiteNoneMode)
+
+sameSiteNoneMode : SameSite
+sameSiteNoneMode = SameSiteNoneMode
+
+foreign import "net/http" exposing (SameSiteStrictMode)
+
+sameSiteStrictMode : SameSite
+sameSiteStrictMode = SameSiteStrictMode
+
+foreign import "net/http" exposing (StateActive)
+
+stateActive : ConnState
+stateActive = StateActive
+
+foreign import "net/http" exposing (StateClosed)
+
+stateClosed : ConnState
+stateClosed = StateClosed
+
+foreign import "net/http" exposing (StateHijacked)
+
+stateHijacked : ConnState
+stateHijacked = StateHijacked
+
+foreign import "net/http" exposing (StateIdle)
+
+stateIdle : ConnState
+stateIdle = StateIdle
+
+foreign import "net/http" exposing (StateNew)
+
+stateNew : ConnState
+stateNew = StateNew
+
+foreign import "net/http" exposing (StatusAccepted)
+
+statusAccepted : Untyped int
+statusAccepted = StatusAccepted
+
+foreign import "net/http" exposing (StatusAlreadyReported)
+
+statusAlreadyReported : Untyped int
+statusAlreadyReported = StatusAlreadyReported
+
+foreign import "net/http" exposing (StatusBadGateway)
+
+statusBadGateway : Untyped int
+statusBadGateway = StatusBadGateway
+
+foreign import "net/http" exposing (StatusBadRequest)
+
+statusBadRequest : Untyped int
+statusBadRequest = StatusBadRequest
+
+foreign import "net/http" exposing (StatusConflict)
+
+statusConflict : Untyped int
+statusConflict = StatusConflict
+
+foreign import "net/http" exposing (StatusContinue)
+
+statusContinue : Untyped int
+statusContinue = StatusContinue
+
+foreign import "net/http" exposing (StatusCreated)
+
+statusCreated : Untyped int
+statusCreated = StatusCreated
+
+foreign import "net/http" exposing (StatusEarlyHints)
+
+statusEarlyHints : Untyped int
+statusEarlyHints = StatusEarlyHints
+
+foreign import "net/http" exposing (StatusExpectationFailed)
+
+statusExpectationFailed : Untyped int
+statusExpectationFailed = StatusExpectationFailed
+
+foreign import "net/http" exposing (StatusFailedDependency)
+
+statusFailedDependency : Untyped int
+statusFailedDependency = StatusFailedDependency
+
+foreign import "net/http" exposing (StatusForbidden)
+
+statusForbidden : Untyped int
+statusForbidden = StatusForbidden
+
+foreign import "net/http" exposing (StatusFound)
+
+statusFound : Untyped int
+statusFound = StatusFound
+
+foreign import "net/http" exposing (StatusGatewayTimeout)
+
+statusGatewayTimeout : Untyped int
+statusGatewayTimeout = StatusGatewayTimeout
+
+foreign import "net/http" exposing (StatusGone)
+
+statusGone : Untyped int
+statusGone = StatusGone
+
+foreign import "net/http" exposing (StatusHTTPVersionNotSupported)
+
+statusHTTPVersionNotSupported : Untyped int
+statusHTTPVersionNotSupported = StatusHTTPVersionNotSupported
+
+foreign import "net/http" exposing (StatusIMUsed)
+
+statusIMUsed : Untyped int
+statusIMUsed = StatusIMUsed
+
+foreign import "net/http" exposing (StatusInsufficientStorage)
+
+statusInsufficientStorage : Untyped int
+statusInsufficientStorage = StatusInsufficientStorage
+
+foreign import "net/http" exposing (StatusInternalServerError)
+
+statusInternalServerError : Untyped int
+statusInternalServerError = StatusInternalServerError
+
+foreign import "net/http" exposing (StatusLengthRequired)
+
+statusLengthRequired : Untyped int
+statusLengthRequired = StatusLengthRequired
+
+foreign import "net/http" exposing (StatusLocked)
+
+statusLocked : Untyped int
+statusLocked = StatusLocked
+
+foreign import "net/http" exposing (StatusLoopDetected)
+
+statusLoopDetected : Untyped int
+statusLoopDetected = StatusLoopDetected
+
+foreign import "net/http" exposing (StatusMethodNotAllowed)
+
+statusMethodNotAllowed : Untyped int
+statusMethodNotAllowed = StatusMethodNotAllowed
+
+foreign import "net/http" exposing (StatusMisdirectedRequest)
+
+statusMisdirectedRequest : Untyped int
+statusMisdirectedRequest = StatusMisdirectedRequest
+
+foreign import "net/http" exposing (StatusMovedPermanently)
+
+statusMovedPermanently : Untyped int
+statusMovedPermanently = StatusMovedPermanently
+
+foreign import "net/http" exposing (StatusMultiStatus)
+
+statusMultiStatus : Untyped int
+statusMultiStatus = StatusMultiStatus
+
+foreign import "net/http" exposing (StatusMultipleChoices)
+
+statusMultipleChoices : Untyped int
+statusMultipleChoices = StatusMultipleChoices
+
+foreign import "net/http" exposing (StatusNetworkAuthenticationRequired)
+
+statusNetworkAuthenticationRequired : Untyped int
+statusNetworkAuthenticationRequired = StatusNetworkAuthenticationRequired
+
+foreign import "net/http" exposing (StatusNoContent)
+
+statusNoContent : Untyped int
+statusNoContent = StatusNoContent
+
+foreign import "net/http" exposing (StatusNonAuthoritativeInfo)
+
+statusNonAuthoritativeInfo : Untyped int
+statusNonAuthoritativeInfo = StatusNonAuthoritativeInfo
+
+foreign import "net/http" exposing (StatusNotAcceptable)
+
+statusNotAcceptable : Untyped int
+statusNotAcceptable = StatusNotAcceptable
+
+foreign import "net/http" exposing (StatusNotExtended)
+
+statusNotExtended : Untyped int
+statusNotExtended = StatusNotExtended
+
+foreign import "net/http" exposing (StatusNotFound)
+
+statusNotFound : Untyped int
+statusNotFound = StatusNotFound
+
+foreign import "net/http" exposing (StatusNotImplemented)
+
+statusNotImplemented : Untyped int
+statusNotImplemented = StatusNotImplemented
+
+foreign import "net/http" exposing (StatusNotModified)
+
+statusNotModified : Untyped int
+statusNotModified = StatusNotModified
+
+foreign import "net/http" exposing (StatusOK)
+
+statusOK : Untyped int
+statusOK = StatusOK
+
+foreign import "net/http" exposing (StatusPartialContent)
+
+statusPartialContent : Untyped int
+statusPartialContent = StatusPartialContent
+
+foreign import "net/http" exposing (StatusPaymentRequired)
+
+statusPaymentRequired : Untyped int
+statusPaymentRequired = StatusPaymentRequired
+
+foreign import "net/http" exposing (StatusPermanentRedirect)
+
+statusPermanentRedirect : Untyped int
+statusPermanentRedirect = StatusPermanentRedirect
+
+foreign import "net/http" exposing (StatusPreconditionFailed)
+
+statusPreconditionFailed : Untyped int
+statusPreconditionFailed = StatusPreconditionFailed
+
+foreign import "net/http" exposing (StatusPreconditionRequired)
+
+statusPreconditionRequired : Untyped int
+statusPreconditionRequired = StatusPreconditionRequired
+
+foreign import "net/http" exposing (StatusProcessing)
+
+statusProcessing : Untyped int
+statusProcessing = StatusProcessing
+
+foreign import "net/http" exposing (StatusProxyAuthRequired)
+
+statusProxyAuthRequired : Untyped int
+statusProxyAuthRequired = StatusProxyAuthRequired
+
+foreign import "net/http" exposing (StatusRequestEntityTooLarge)
+
+statusRequestEntityTooLarge : Untyped int
+statusRequestEntityTooLarge = StatusRequestEntityTooLarge
+
+foreign import "net/http" exposing (StatusRequestHeaderFieldsTooLarge)
+
+statusRequestHeaderFieldsTooLarge : Untyped int
+statusRequestHeaderFieldsTooLarge = StatusRequestHeaderFieldsTooLarge
+
+foreign import "net/http" exposing (StatusRequestTimeout)
+
+statusRequestTimeout : Untyped int
+statusRequestTimeout = StatusRequestTimeout
+
+foreign import "net/http" exposing (StatusRequestURITooLong)
+
+statusRequestURITooLong : Untyped int
+statusRequestURITooLong = StatusRequestURITooLong
+
+foreign import "net/http" exposing (StatusRequestedRangeNotSatisfiable)
+
+statusRequestedRangeNotSatisfiable : Untyped int
+statusRequestedRangeNotSatisfiable = StatusRequestedRangeNotSatisfiable
+
+foreign import "net/http" exposing (StatusResetContent)
+
+statusResetContent : Untyped int
+statusResetContent = StatusResetContent
+
+foreign import "net/http" exposing (StatusSeeOther)
+
+statusSeeOther : Untyped int
+statusSeeOther = StatusSeeOther
+
+foreign import "net/http" exposing (StatusServiceUnavailable)
+
+statusServiceUnavailable : Untyped int
+statusServiceUnavailable = StatusServiceUnavailable
+
+foreign import "net/http" exposing (StatusSwitchingProtocols)
+
+statusSwitchingProtocols : Untyped int
+statusSwitchingProtocols = StatusSwitchingProtocols
+
+foreign import "net/http" exposing (StatusTeapot)
+
+statusTeapot : Untyped int
+statusTeapot = StatusTeapot
+
+foreign import "net/http" exposing (StatusTemporaryRedirect)
+
+statusTemporaryRedirect : Untyped int
+statusTemporaryRedirect = StatusTemporaryRedirect
+
+foreign import "net/http" exposing (StatusTooEarly)
+
+statusTooEarly : Untyped int
+statusTooEarly = StatusTooEarly
+
+foreign import "net/http" exposing (StatusTooManyRequests)
+
+statusTooManyRequests : Untyped int
+statusTooManyRequests = StatusTooManyRequests
+
+foreign import "net/http" exposing (StatusUnauthorized)
+
+statusUnauthorized : Untyped int
+statusUnauthorized = StatusUnauthorized
+
+foreign import "net/http" exposing (StatusUnavailableForLegalReasons)
+
+statusUnavailableForLegalReasons : Untyped int
+statusUnavailableForLegalReasons = StatusUnavailableForLegalReasons
+
+foreign import "net/http" exposing (StatusUnprocessableEntity)
+
+statusUnprocessableEntity : Untyped int
+statusUnprocessableEntity = StatusUnprocessableEntity
+
+foreign import "net/http" exposing (StatusUnsupportedMediaType)
+
+statusUnsupportedMediaType : Untyped int
+statusUnsupportedMediaType = StatusUnsupportedMediaType
+
+foreign import "net/http" exposing (StatusUpgradeRequired)
+
+statusUpgradeRequired : Untyped int
+statusUpgradeRequired = StatusUpgradeRequired
+
+foreign import "net/http" exposing (StatusUseProxy)
+
+statusUseProxy : Untyped int
+statusUseProxy = StatusUseProxy
+
+foreign import "net/http" exposing (StatusVariantAlsoNegotiates)
+
+statusVariantAlsoNegotiates : Untyped int
+statusVariantAlsoNegotiates = StatusVariantAlsoNegotiates
+
+foreign import "net/http" exposing (TimeFormat)
+
+timeFormat : Untyped string
+timeFormat = TimeFormat
+
+foreign import "net/http" exposing (TrailerPrefix)
+
+trailerPrefix : Untyped string
+trailerPrefix = TrailerPrefix
+
+foreign import "sky_wrappers" exposing (Sky_net_http_DefaultClient)
+
+defaultClient : () -> Client
+defaultClient arg0 = Sky_net_http_DefaultClient arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_DefaultServeMux)
+
+defaultServeMux : () -> ServeMux
+defaultServeMux arg0 = Sky_net_http_DefaultServeMux arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_DefaultTransport)
+
+defaultTransport : () -> RoundTripper
+defaultTransport arg0 = Sky_net_http_DefaultTransport arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrAbortHandler)
+
+errAbortHandler : () -> Error
+errAbortHandler arg0 = Sky_net_http_ErrAbortHandler arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrBodyNotAllowed)
+
+errBodyNotAllowed : () -> Error
+errBodyNotAllowed arg0 = Sky_net_http_ErrBodyNotAllowed arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrBodyReadAfterClose)
+
+errBodyReadAfterClose : () -> Error
+errBodyReadAfterClose arg0 = Sky_net_http_ErrBodyReadAfterClose arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrContentLength)
+
+errContentLength : () -> Error
+errContentLength arg0 = Sky_net_http_ErrContentLength arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrHandlerTimeout)
+
+errHandlerTimeout : () -> Error
+errHandlerTimeout arg0 = Sky_net_http_ErrHandlerTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrHeaderTooLong)
+
+errHeaderTooLong : () -> ProtocolError
+errHeaderTooLong arg0 = Sky_net_http_ErrHeaderTooLong arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrHijacked)
+
+errHijacked : () -> Error
+errHijacked arg0 = Sky_net_http_ErrHijacked arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrLineTooLong)
+
+errLineTooLong : () -> Error
+errLineTooLong arg0 = Sky_net_http_ErrLineTooLong arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrMissingBoundary)
+
+errMissingBoundary : () -> ProtocolError
+errMissingBoundary arg0 = Sky_net_http_ErrMissingBoundary arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrMissingContentLength)
+
+errMissingContentLength : () -> ProtocolError
+errMissingContentLength arg0 = Sky_net_http_ErrMissingContentLength arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrMissingFile)
+
+errMissingFile : () -> Error
+errMissingFile arg0 = Sky_net_http_ErrMissingFile arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrNoCookie)
+
+errNoCookie : () -> Error
+errNoCookie arg0 = Sky_net_http_ErrNoCookie arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrNoLocation)
+
+errNoLocation : () -> Error
+errNoLocation arg0 = Sky_net_http_ErrNoLocation arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrNotMultipart)
+
+errNotMultipart : () -> ProtocolError
+errNotMultipart arg0 = Sky_net_http_ErrNotMultipart arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrNotSupported)
+
+errNotSupported : () -> ProtocolError
+errNotSupported arg0 = Sky_net_http_ErrNotSupported arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrSchemeMismatch)
+
+errSchemeMismatch : () -> Error
+errSchemeMismatch arg0 = Sky_net_http_ErrSchemeMismatch arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrServerClosed)
+
+errServerClosed : () -> Error
+errServerClosed arg0 = Sky_net_http_ErrServerClosed arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrShortBody)
+
+errShortBody : () -> ProtocolError
+errShortBody arg0 = Sky_net_http_ErrShortBody arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrSkipAltProtocol)
+
+errSkipAltProtocol : () -> Error
+errSkipAltProtocol arg0 = Sky_net_http_ErrSkipAltProtocol arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrUnexpectedTrailer)
+
+errUnexpectedTrailer : () -> ProtocolError
+errUnexpectedTrailer arg0 = Sky_net_http_ErrUnexpectedTrailer arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrUseLastResponse)
+
+errUseLastResponse : () -> Error
+errUseLastResponse arg0 = Sky_net_http_ErrUseLastResponse arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ErrWriteAfterFlush)
+
+errWriteAfterFlush : () -> Error
+errWriteAfterFlush arg0 = Sky_net_http_ErrWriteAfterFlush arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_LocalAddrContextKey)
+
+localAddrContextKey : () -> Any
+localAddrContextKey arg0 = Sky_net_http_LocalAddrContextKey arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NoBody)
+
+noBody : () -> Any
+noBody arg0 = Sky_net_http_NoBody arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerContextKey)
+
+serverContextKey : () -> Any
+serverContextKey arg0 = Sky_net_http_ServerContextKey arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_AllowQuerySemicolons)
+
+allowQuerySemicolons : Handler -> Handler
+allowQuerySemicolons arg0 = Sky_net_http_AllowQuerySemicolons arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CanonicalHeaderKey)
+
+canonicalHeaderKey : String -> String
+canonicalHeaderKey arg0 = Sky_net_http_CanonicalHeaderKey arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_DetectContentType)
+
+detectContentType : Bytes -> String
+detectContentType arg0 = Sky_net_http_DetectContentType arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Error)
+
+error : ResponseWriter -> String -> Int -> Unit
+error arg0 arg1 arg2 = Sky_net_http_Error arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FS)
+
+fS : Io.Fs.FS -> FileSystem
+fS arg0 = Sky_net_http_FS arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FileServer)
+
+fileServer : FileSystem -> Handler
+fileServer arg0 = Sky_net_http_FileServer arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FileServerFS)
+
+fileServerFS : Io.Fs.FS -> Handler
+fileServerFS arg0 = Sky_net_http_FileServerFS arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Get)
+
+get : String -> Result Error Response
+get arg0 = Sky_net_http_Get arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Handle)
+
+handle : String -> Handler -> Unit
+handle arg0 arg1 = Sky_net_http_Handle arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HandleFunc)
+
+handleFunc : String -> Any -> Unit
+handleFunc arg0 arg1 = Sky_net_http_HandleFunc arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Head)
+
+head : String -> Result Error Response
+head arg0 = Sky_net_http_Head arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ListenAndServe)
+
+listenAndServe : String -> Handler -> Result Error Unit
+listenAndServe arg0 arg1 = Sky_net_http_ListenAndServe arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ListenAndServeTLS)
+
+listenAndServeTLS : String -> String -> String -> Handler -> Result Error Unit
+listenAndServeTLS arg0 arg1 arg2 arg3 = Sky_net_http_ListenAndServeTLS arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_MaxBytesHandler)
+
+maxBytesHandler : Handler -> Int -> Handler
+maxBytesHandler arg0 arg1 = Sky_net_http_MaxBytesHandler arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_MaxBytesReader)
+
+maxBytesReader : ResponseWriter -> Io.ReadCloser -> Int -> Io.ReadCloser
+maxBytesReader arg0 arg1 arg2 = Sky_net_http_MaxBytesReader arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewCrossOriginProtection)
+
+newCrossOriginProtection : () -> CrossOriginProtection
+newCrossOriginProtection arg0 = Sky_net_http_NewCrossOriginProtection arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewFileTransport)
+
+newFileTransport : FileSystem -> RoundTripper
+newFileTransport arg0 = Sky_net_http_NewFileTransport arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewFileTransportFS)
+
+newFileTransportFS : Io.Fs.FS -> RoundTripper
+newFileTransportFS arg0 = Sky_net_http_NewFileTransportFS arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewRequest)
+
+newRequest : String -> String -> Io.Reader -> Result Error Request
+newRequest arg0 arg1 arg2 = Sky_net_http_NewRequest arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewRequestWithContext)
+
+newRequestWithContext : Context.Context -> String -> String -> Io.Reader -> Result Error Request
+newRequestWithContext arg0 arg1 arg2 arg3 = Sky_net_http_NewRequestWithContext arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewResponseController)
+
+newResponseController : ResponseWriter -> ResponseController
+newResponseController arg0 = Sky_net_http_NewResponseController arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NewServeMux)
+
+newServeMux : () -> ServeMux
+newServeMux arg0 = Sky_net_http_NewServeMux arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NotFound)
+
+notFound : ResponseWriter -> Request -> Unit
+notFound arg0 arg1 = Sky_net_http_NotFound arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_NotFoundHandler)
+
+notFoundHandler : () -> Handler
+notFoundHandler arg0 = Sky_net_http_NotFoundHandler arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ParseCookie)
+
+parseCookie : String -> Result Error (List Cookie)
+parseCookie arg0 = Sky_net_http_ParseCookie arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ParseHTTPVersion)
+
+parseHTTPVersion : String -> Tuple3 Int Int Bool
+parseHTTPVersion arg0 = Sky_net_http_ParseHTTPVersion arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ParseSetCookie)
+
+parseSetCookie : String -> Result Error Cookie
+parseSetCookie arg0 = Sky_net_http_ParseSetCookie arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ParseTime)
+
+parseTime : String -> Result Error Time.Time
+parseTime arg0 = Sky_net_http_ParseTime arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Post)
+
+post : String -> String -> Io.Reader -> Result Error Response
+post arg0 arg1 arg2 = Sky_net_http_Post arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_PostForm)
+
+postForm : String -> Net.Url.Values -> Result Error Response
+postForm arg0 arg1 = Sky_net_http_PostForm arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProxyFromEnvironment)
+
+proxyFromEnvironment : Request -> Result Error Net.Url.URL
+proxyFromEnvironment arg0 = Sky_net_http_ProxyFromEnvironment arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProxyURL)
+
+proxyURL : Net.Url.URL -> Any
+proxyURL arg0 = Sky_net_http_ProxyURL arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ReadRequest)
+
+readRequest : Bufio.Reader -> Result Error Request
+readRequest arg0 = Sky_net_http_ReadRequest arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ReadResponse)
+
+readResponse : Bufio.Reader -> Request -> Result Error Response
+readResponse arg0 arg1 = Sky_net_http_ReadResponse arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Redirect)
+
+redirect : ResponseWriter -> Request -> String -> Int -> Unit
+redirect arg0 arg1 arg2 arg3 = Sky_net_http_Redirect arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RedirectHandler)
+
+redirectHandler : String -> Int -> Handler
+redirectHandler arg0 arg1 = Sky_net_http_RedirectHandler arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_Serve)
+
+serve : Net.Listener -> Handler -> Result Error Unit
+serve arg0 arg1 = Sky_net_http_Serve arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeContent)
+
+serveContent : ResponseWriter -> Request -> String -> Time.Time -> Io.ReadSeeker -> Unit
+serveContent arg0 arg1 arg2 arg3 arg4 = Sky_net_http_ServeContent arg0 arg1 arg2 arg3 arg4
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeFile)
+
+serveFile : ResponseWriter -> Request -> String -> Unit
+serveFile arg0 arg1 arg2 = Sky_net_http_ServeFile arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeFileFS)
+
+serveFileFS : ResponseWriter -> Request -> Io.Fs.FS -> String -> Unit
+serveFileFS arg0 arg1 arg2 arg3 = Sky_net_http_ServeFileFS arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeTLS)
+
+serveTLS : Net.Listener -> Handler -> String -> String -> Result Error Unit
+serveTLS arg0 arg1 arg2 arg3 = Sky_net_http_ServeTLS arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_SetCookie)
+
+setCookie : ResponseWriter -> Cookie -> Unit
+setCookie arg0 arg1 = Sky_net_http_SetCookie arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_StatusText)
+
+statusText : Int -> String
+statusText arg0 = Sky_net_http_StatusText arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_StripPrefix)
+
+stripPrefix : String -> Handler -> Handler
+stripPrefix arg0 arg1 = Sky_net_http_StripPrefix arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TimeoutHandler)
+
+timeoutHandler : Handler -> Time.Duration -> String -> Handler
+timeoutHandler arg0 arg1 arg2 = Sky_net_http_TimeoutHandler arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientCloseIdleConnections)
+
+clientCloseIdleConnections : Client -> Unit
+clientCloseIdleConnections arg0 = Sky_net_http_ClientCloseIdleConnections arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientDo)
+
+clientDo : Client -> Request -> Result Error Response
+clientDo arg0 arg1 = Sky_net_http_ClientDo arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientGet)
+
+clientGet : Client -> String -> Result Error Response
+clientGet arg0 arg1 = Sky_net_http_ClientGet arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientHead)
+
+clientHead : Client -> String -> Result Error Response
+clientHead arg0 arg1 = Sky_net_http_ClientHead arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientPost)
+
+clientPost : Client -> String -> String -> Io.Reader -> Result Error Response
+clientPost arg0 arg1 arg2 arg3 = Sky_net_http_ClientPost arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientPostForm)
+
+clientPostForm : Client -> String -> Net.Url.Values -> Result Error Response
+clientPostForm arg0 arg1 arg2 = Sky_net_http_ClientPostForm arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientTransport)
+
+clientTransport : Client -> RoundTripper
+clientTransport arg0 = Sky_net_http_ClientTransport arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientCheckRedirect)
+
+clientCheckRedirect : Client -> Any
+clientCheckRedirect arg0 = Sky_net_http_ClientCheckRedirect arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientJar)
+
+clientJar : Client -> CookieJar
+clientJar arg0 = Sky_net_http_ClientJar arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientTimeout)
+
+clientTimeout : Client -> Time.Duration
+clientTimeout arg0 = Sky_net_http_ClientTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnAvailable)
+
+clientConnAvailable : ClientConn -> Int
+clientConnAvailable arg0 = Sky_net_http_ClientConnAvailable arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnClose)
+
+clientConnClose : ClientConn -> Result Error Unit
+clientConnClose arg0 = Sky_net_http_ClientConnClose arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnErr)
+
+clientConnErr : ClientConn -> Result Error Unit
+clientConnErr arg0 = Sky_net_http_ClientConnErr arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnInFlight)
+
+clientConnInFlight : ClientConn -> Int
+clientConnInFlight arg0 = Sky_net_http_ClientConnInFlight arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnRelease)
+
+clientConnRelease : ClientConn -> Unit
+clientConnRelease arg0 = Sky_net_http_ClientConnRelease arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnReserve)
+
+clientConnReserve : ClientConn -> Result Error Unit
+clientConnReserve arg0 = Sky_net_http_ClientConnReserve arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnRoundTrip)
+
+clientConnRoundTrip : ClientConn -> Request -> Result Error Response
+clientConnRoundTrip arg0 arg1 = Sky_net_http_ClientConnRoundTrip arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ClientConnSetStateHook)
+
+clientConnSetStateHook : ClientConn -> Any -> Unit
+clientConnSetStateHook arg0 arg1 = Sky_net_http_ClientConnSetStateHook arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CloseNotifierCloseNotify)
+
+closeNotifierCloseNotify : CloseNotifier -> Channel Bool
+closeNotifierCloseNotify arg0 = Sky_net_http_CloseNotifierCloseNotify arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ConnStateString)
+
+connStateString : ConnState -> String
+connStateString arg0 = Sky_net_http_ConnStateString arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieString)
+
+cookieString : Cookie -> String
+cookieString arg0 = Sky_net_http_CookieString arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieValid)
+
+cookieValid : Cookie -> Result Error Unit
+cookieValid arg0 = Sky_net_http_CookieValid arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieName)
+
+cookieName : Cookie -> String
+cookieName arg0 = Sky_net_http_CookieName arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieValue)
+
+cookieValue : Cookie -> String
+cookieValue arg0 = Sky_net_http_CookieValue arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieQuoted)
+
+cookieQuoted : Cookie -> Bool
+cookieQuoted arg0 = Sky_net_http_CookieQuoted arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookiePath)
+
+cookiePath : Cookie -> String
+cookiePath arg0 = Sky_net_http_CookiePath arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieDomain)
+
+cookieDomain : Cookie -> String
+cookieDomain arg0 = Sky_net_http_CookieDomain arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieExpires)
+
+cookieExpires : Cookie -> Time.Time
+cookieExpires arg0 = Sky_net_http_CookieExpires arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieRawExpires)
+
+cookieRawExpires : Cookie -> String
+cookieRawExpires arg0 = Sky_net_http_CookieRawExpires arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieMaxAge)
+
+cookieMaxAge : Cookie -> Int
+cookieMaxAge arg0 = Sky_net_http_CookieMaxAge arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieSecure)
+
+cookieSecure : Cookie -> Bool
+cookieSecure arg0 = Sky_net_http_CookieSecure arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieHttpOnly)
+
+cookieHttpOnly : Cookie -> Bool
+cookieHttpOnly arg0 = Sky_net_http_CookieHttpOnly arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieSameSite)
+
+cookieSameSite : Cookie -> SameSite
+cookieSameSite arg0 = Sky_net_http_CookieSameSite arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookiePartitioned)
+
+cookiePartitioned : Cookie -> Bool
+cookiePartitioned arg0 = Sky_net_http_CookiePartitioned arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieRaw)
+
+cookieRaw : Cookie -> String
+cookieRaw arg0 = Sky_net_http_CookieRaw arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieUnparsed)
+
+cookieUnparsed : Cookie -> List String
+cookieUnparsed arg0 = Sky_net_http_CookieUnparsed arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieJarCookies)
+
+cookieJarCookies : CookieJar -> Net.Url.URL -> List Cookie
+cookieJarCookies arg0 arg1 = Sky_net_http_CookieJarCookies arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CookieJarSetCookies)
+
+cookieJarSetCookies : CookieJar -> Net.Url.URL -> (List Cookie) -> Unit
+cookieJarSetCookies arg0 arg1 arg2 = Sky_net_http_CookieJarSetCookies arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CrossOriginProtectionAddInsecureBypassPattern)
+
+crossOriginProtectionAddInsecureBypassPattern : CrossOriginProtection -> String -> Unit
+crossOriginProtectionAddInsecureBypassPattern arg0 arg1 = Sky_net_http_CrossOriginProtectionAddInsecureBypassPattern arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CrossOriginProtectionAddTrustedOrigin)
+
+crossOriginProtectionAddTrustedOrigin : CrossOriginProtection -> String -> Result Error Unit
+crossOriginProtectionAddTrustedOrigin arg0 arg1 = Sky_net_http_CrossOriginProtectionAddTrustedOrigin arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CrossOriginProtectionCheck)
+
+crossOriginProtectionCheck : CrossOriginProtection -> Request -> Result Error Unit
+crossOriginProtectionCheck arg0 arg1 = Sky_net_http_CrossOriginProtectionCheck arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CrossOriginProtectionHandler)
+
+crossOriginProtectionHandler : CrossOriginProtection -> Handler -> Handler
+crossOriginProtectionHandler arg0 arg1 = Sky_net_http_CrossOriginProtectionHandler arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_CrossOriginProtectionSetDenyHandler)
+
+crossOriginProtectionSetDenyHandler : CrossOriginProtection -> Handler -> Unit
+crossOriginProtectionSetDenyHandler arg0 arg1 = Sky_net_http_CrossOriginProtectionSetDenyHandler arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_DirOpen)
+
+dirOpen : Dir -> String -> Result Error File
+dirOpen arg0 arg1 = Sky_net_http_DirOpen arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FileReaddir)
+
+fileReaddir : File -> Int -> Result Error (List Io.Fs.FileInfo)
+fileReaddir arg0 arg1 = Sky_net_http_FileReaddir arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FileStat)
+
+fileStat : File -> Result Error Io.Fs.FileInfo
+fileStat arg0 = Sky_net_http_FileStat arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FileSystemOpen)
+
+fileSystemOpen : FileSystem -> String -> Result Error File
+fileSystemOpen arg0 arg1 = Sky_net_http_FileSystemOpen arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_FlusherFlush)
+
+flusherFlush : Flusher -> Unit
+flusherFlush arg0 = Sky_net_http_FlusherFlush arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigMaxConcurrentStreams)
+
+hTTP2ConfigMaxConcurrentStreams : HTTP2Config -> Int
+hTTP2ConfigMaxConcurrentStreams arg0 = Sky_net_http_HTTP2ConfigMaxConcurrentStreams arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigStrictMaxConcurrentRequests)
+
+hTTP2ConfigStrictMaxConcurrentRequests : HTTP2Config -> Bool
+hTTP2ConfigStrictMaxConcurrentRequests arg0 = Sky_net_http_HTTP2ConfigStrictMaxConcurrentRequests arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigMaxDecoderHeaderTableSize)
+
+hTTP2ConfigMaxDecoderHeaderTableSize : HTTP2Config -> Int
+hTTP2ConfigMaxDecoderHeaderTableSize arg0 = Sky_net_http_HTTP2ConfigMaxDecoderHeaderTableSize arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigMaxEncoderHeaderTableSize)
+
+hTTP2ConfigMaxEncoderHeaderTableSize : HTTP2Config -> Int
+hTTP2ConfigMaxEncoderHeaderTableSize arg0 = Sky_net_http_HTTP2ConfigMaxEncoderHeaderTableSize arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigMaxReadFrameSize)
+
+hTTP2ConfigMaxReadFrameSize : HTTP2Config -> Int
+hTTP2ConfigMaxReadFrameSize arg0 = Sky_net_http_HTTP2ConfigMaxReadFrameSize arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigMaxReceiveBufferPerConnection)
+
+hTTP2ConfigMaxReceiveBufferPerConnection : HTTP2Config -> Int
+hTTP2ConfigMaxReceiveBufferPerConnection arg0 = Sky_net_http_HTTP2ConfigMaxReceiveBufferPerConnection arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigMaxReceiveBufferPerStream)
+
+hTTP2ConfigMaxReceiveBufferPerStream : HTTP2Config -> Int
+hTTP2ConfigMaxReceiveBufferPerStream arg0 = Sky_net_http_HTTP2ConfigMaxReceiveBufferPerStream arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigSendPingTimeout)
+
+hTTP2ConfigSendPingTimeout : HTTP2Config -> Time.Duration
+hTTP2ConfigSendPingTimeout arg0 = Sky_net_http_HTTP2ConfigSendPingTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigPingTimeout)
+
+hTTP2ConfigPingTimeout : HTTP2Config -> Time.Duration
+hTTP2ConfigPingTimeout arg0 = Sky_net_http_HTTP2ConfigPingTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigWriteByteTimeout)
+
+hTTP2ConfigWriteByteTimeout : HTTP2Config -> Time.Duration
+hTTP2ConfigWriteByteTimeout arg0 = Sky_net_http_HTTP2ConfigWriteByteTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigPermitProhibitedCipherSuites)
+
+hTTP2ConfigPermitProhibitedCipherSuites : HTTP2Config -> Bool
+hTTP2ConfigPermitProhibitedCipherSuites arg0 = Sky_net_http_HTTP2ConfigPermitProhibitedCipherSuites arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HTTP2ConfigCountError)
+
+hTTP2ConfigCountError : HTTP2Config -> Any
+hTTP2ConfigCountError arg0 = Sky_net_http_HTTP2ConfigCountError arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HandlerServeHTTP)
+
+handlerServeHTTP : Handler -> ResponseWriter -> Request -> Unit
+handlerServeHTTP arg0 arg1 arg2 = Sky_net_http_HandlerServeHTTP arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HandlerFuncServeHTTP)
+
+handlerFuncServeHTTP : HandlerFunc -> ResponseWriter -> Request -> Unit
+handlerFuncServeHTTP arg0 arg1 arg2 = Sky_net_http_HandlerFuncServeHTTP arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderAdd)
+
+headerAdd : Header -> String -> String -> Unit
+headerAdd arg0 arg1 arg2 = Sky_net_http_HeaderAdd arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderClone)
+
+headerClone : Header -> Header
+headerClone arg0 = Sky_net_http_HeaderClone arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderDel)
+
+headerDel : Header -> String -> Unit
+headerDel arg0 arg1 = Sky_net_http_HeaderDel arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderGet)
+
+headerGet : Header -> String -> String
+headerGet arg0 arg1 = Sky_net_http_HeaderGet arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderSet)
+
+headerSet : Header -> String -> String -> Unit
+headerSet arg0 arg1 arg2 = Sky_net_http_HeaderSet arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderValues)
+
+headerValues : Header -> String -> List String
+headerValues arg0 arg1 = Sky_net_http_HeaderValues arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderWrite)
+
+headerWrite : Header -> Io.Writer -> Result Error Unit
+headerWrite arg0 arg1 = Sky_net_http_HeaderWrite arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HeaderWriteSubset)
+
+headerWriteSubset : Header -> Io.Writer -> (Map String Bool) -> Result Error Unit
+headerWriteSubset arg0 arg1 arg2 = Sky_net_http_HeaderWriteSubset arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_HijackerHijack)
+
+hijackerHijack : Hijacker -> Tuple3 Net.Conn Bufio.ReadWriter Error
+hijackerHijack arg0 = Sky_net_http_HijackerHijack arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_MaxBytesErrorError)
+
+maxBytesErrorError : MaxBytesError -> String
+maxBytesErrorError arg0 = Sky_net_http_MaxBytesErrorError arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_MaxBytesErrorLimit)
+
+maxBytesErrorLimit : MaxBytesError -> Int
+maxBytesErrorLimit arg0 = Sky_net_http_MaxBytesErrorLimit arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolErrorError)
+
+protocolErrorError : ProtocolError -> String
+protocolErrorError arg0 = Sky_net_http_ProtocolErrorError arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolErrorIs)
+
+protocolErrorIs : ProtocolError -> Error -> Bool
+protocolErrorIs arg0 arg1 = Sky_net_http_ProtocolErrorIs arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolErrorErrorString)
+
+protocolErrorErrorString : ProtocolError -> String
+protocolErrorErrorString arg0 = Sky_net_http_ProtocolErrorErrorString arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsHTTP1)
+
+protocolsHTTP1 : Protocols -> Bool
+protocolsHTTP1 arg0 = Sky_net_http_ProtocolsHTTP1 arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsHTTP2)
+
+protocolsHTTP2 : Protocols -> Bool
+protocolsHTTP2 arg0 = Sky_net_http_ProtocolsHTTP2 arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsSetHTTP1)
+
+protocolsSetHTTP1 : Protocols -> Bool -> Unit
+protocolsSetHTTP1 arg0 arg1 = Sky_net_http_ProtocolsSetHTTP1 arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsSetHTTP2)
+
+protocolsSetHTTP2 : Protocols -> Bool -> Unit
+protocolsSetHTTP2 arg0 arg1 = Sky_net_http_ProtocolsSetHTTP2 arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsSetUnencryptedHTTP2)
+
+protocolsSetUnencryptedHTTP2 : Protocols -> Bool -> Unit
+protocolsSetUnencryptedHTTP2 arg0 arg1 = Sky_net_http_ProtocolsSetUnencryptedHTTP2 arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsString)
+
+protocolsString : Protocols -> String
+protocolsString arg0 = Sky_net_http_ProtocolsString arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ProtocolsUnencryptedHTTP2)
+
+protocolsUnencryptedHTTP2 : Protocols -> Bool
+protocolsUnencryptedHTTP2 arg0 = Sky_net_http_ProtocolsUnencryptedHTTP2 arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_PushOptionsMethod)
+
+pushOptionsMethod : PushOptions -> String
+pushOptionsMethod arg0 = Sky_net_http_PushOptionsMethod arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_PushOptionsHeader)
+
+pushOptionsHeader : PushOptions -> Header
+pushOptionsHeader arg0 = Sky_net_http_PushOptionsHeader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_PusherPush)
+
+pusherPush : Pusher -> String -> PushOptions -> Result Error Unit
+pusherPush arg0 arg1 arg2 = Sky_net_http_PusherPush arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestAddCookie)
+
+requestAddCookie : Request -> Cookie -> Unit
+requestAddCookie arg0 arg1 = Sky_net_http_RequestAddCookie arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestBasicAuth)
+
+requestBasicAuth : Request -> Tuple3 String String Bool
+requestBasicAuth arg0 = Sky_net_http_RequestBasicAuth arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestClone)
+
+requestClone : Request -> Context.Context -> Request
+requestClone arg0 arg1 = Sky_net_http_RequestClone arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestContext)
+
+requestContext : Request -> Context.Context
+requestContext arg0 = Sky_net_http_RequestContext arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestCookie)
+
+requestCookie : Request -> String -> Result Error Cookie
+requestCookie arg0 arg1 = Sky_net_http_RequestCookie arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestCookies)
+
+requestCookies : Request -> List Cookie
+requestCookies arg0 = Sky_net_http_RequestCookies arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestCookiesNamed)
+
+requestCookiesNamed : Request -> String -> List Cookie
+requestCookiesNamed arg0 arg1 = Sky_net_http_RequestCookiesNamed arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestFormFile)
+
+requestFormFile : Request -> String -> Tuple3 Mime.Multipart.File Mime.Multipart.FileHeader Error
+requestFormFile arg0 arg1 = Sky_net_http_RequestFormFile arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestFormValue)
+
+requestFormValue : Request -> String -> String
+requestFormValue arg0 arg1 = Sky_net_http_RequestFormValue arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestMultipartReader)
+
+requestMultipartReader : Request -> Result Error Mime.Multipart.Reader
+requestMultipartReader arg0 = Sky_net_http_RequestMultipartReader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestParseForm)
+
+requestParseForm : Request -> Result Error Unit
+requestParseForm arg0 = Sky_net_http_RequestParseForm arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestParseMultipartForm)
+
+requestParseMultipartForm : Request -> Int -> Result Error Unit
+requestParseMultipartForm arg0 arg1 = Sky_net_http_RequestParseMultipartForm arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestPathValue)
+
+requestPathValue : Request -> String -> String
+requestPathValue arg0 arg1 = Sky_net_http_RequestPathValue arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestPostFormValue)
+
+requestPostFormValue : Request -> String -> String
+requestPostFormValue arg0 arg1 = Sky_net_http_RequestPostFormValue arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestProtoAtLeast)
+
+requestProtoAtLeast : Request -> Int -> Int -> Bool
+requestProtoAtLeast arg0 arg1 arg2 = Sky_net_http_RequestProtoAtLeast arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestReferer)
+
+requestReferer : Request -> String
+requestReferer arg0 = Sky_net_http_RequestReferer arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestSetBasicAuth)
+
+requestSetBasicAuth : Request -> String -> String -> Unit
+requestSetBasicAuth arg0 arg1 arg2 = Sky_net_http_RequestSetBasicAuth arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestSetPathValue)
+
+requestSetPathValue : Request -> String -> String -> Unit
+requestSetPathValue arg0 arg1 arg2 = Sky_net_http_RequestSetPathValue arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestUserAgent)
+
+requestUserAgent : Request -> String
+requestUserAgent arg0 = Sky_net_http_RequestUserAgent arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestWithContext)
+
+requestWithContext : Request -> Context.Context -> Request
+requestWithContext arg0 arg1 = Sky_net_http_RequestWithContext arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestWrite)
+
+requestWrite : Request -> Io.Writer -> Result Error Unit
+requestWrite arg0 arg1 = Sky_net_http_RequestWrite arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestWriteProxy)
+
+requestWriteProxy : Request -> Io.Writer -> Result Error Unit
+requestWriteProxy arg0 arg1 = Sky_net_http_RequestWriteProxy arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestMethod)
+
+requestMethod : Request -> String
+requestMethod arg0 = Sky_net_http_RequestMethod arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestURL)
+
+requestURL : Request -> Net.Url.URL
+requestURL arg0 = Sky_net_http_RequestURL arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestProto)
+
+requestProto : Request -> String
+requestProto arg0 = Sky_net_http_RequestProto arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestProtoMajor)
+
+requestProtoMajor : Request -> Int
+requestProtoMajor arg0 = Sky_net_http_RequestProtoMajor arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestProtoMinor)
+
+requestProtoMinor : Request -> Int
+requestProtoMinor arg0 = Sky_net_http_RequestProtoMinor arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestHeader)
+
+requestHeader : Request -> Header
+requestHeader arg0 = Sky_net_http_RequestHeader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestBody)
+
+requestBody : Request -> Io.ReadCloser
+requestBody arg0 = Sky_net_http_RequestBody arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestGetBody)
+
+requestGetBody : Request -> Any
+requestGetBody arg0 = Sky_net_http_RequestGetBody arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestContentLength)
+
+requestContentLength : Request -> Int
+requestContentLength arg0 = Sky_net_http_RequestContentLength arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestTransferEncoding)
+
+requestTransferEncoding : Request -> List String
+requestTransferEncoding arg0 = Sky_net_http_RequestTransferEncoding arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestClose)
+
+requestClose : Request -> Bool
+requestClose arg0 = Sky_net_http_RequestClose arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestHost)
+
+requestHost : Request -> String
+requestHost arg0 = Sky_net_http_RequestHost arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestForm)
+
+requestForm : Request -> Net.Url.Values
+requestForm arg0 = Sky_net_http_RequestForm arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestPostForm)
+
+requestPostForm : Request -> Net.Url.Values
+requestPostForm arg0 = Sky_net_http_RequestPostForm arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestMultipartForm)
+
+requestMultipartForm : Request -> Mime.Multipart.Form
+requestMultipartForm arg0 = Sky_net_http_RequestMultipartForm arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestTrailer)
+
+requestTrailer : Request -> Header
+requestTrailer arg0 = Sky_net_http_RequestTrailer arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestRemoteAddr)
+
+requestRemoteAddr : Request -> String
+requestRemoteAddr arg0 = Sky_net_http_RequestRemoteAddr arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestRequestURI)
+
+requestRequestURI : Request -> String
+requestRequestURI arg0 = Sky_net_http_RequestRequestURI arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestTLS)
+
+requestTLS : Request -> Crypto.Tls.ConnectionState
+requestTLS arg0 = Sky_net_http_RequestTLS arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestCancel)
+
+requestCancel : Request -> Channel Foreign
+requestCancel arg0 = Sky_net_http_RequestCancel arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestResponse)
+
+requestResponse : Request -> Response
+requestResponse arg0 = Sky_net_http_RequestResponse arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RequestPattern)
+
+requestPattern : Request -> String
+requestPattern arg0 = Sky_net_http_RequestPattern arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseCookies)
+
+responseCookies : Response -> List Cookie
+responseCookies arg0 = Sky_net_http_ResponseCookies arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseLocation)
+
+responseLocation : Response -> Result Error Net.Url.URL
+responseLocation arg0 = Sky_net_http_ResponseLocation arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseProtoAtLeast)
+
+responseProtoAtLeast : Response -> Int -> Int -> Bool
+responseProtoAtLeast arg0 arg1 arg2 = Sky_net_http_ResponseProtoAtLeast arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseWrite)
+
+responseWrite : Response -> Io.Writer -> Result Error Unit
+responseWrite arg0 arg1 = Sky_net_http_ResponseWrite arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseStatus)
+
+responseStatus : Response -> String
+responseStatus arg0 = Sky_net_http_ResponseStatus arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseStatusCode)
+
+responseStatusCode : Response -> Int
+responseStatusCode arg0 = Sky_net_http_ResponseStatusCode arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseProto)
+
+responseProto : Response -> String
+responseProto arg0 = Sky_net_http_ResponseProto arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseProtoMajor)
+
+responseProtoMajor : Response -> Int
+responseProtoMajor arg0 = Sky_net_http_ResponseProtoMajor arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseProtoMinor)
+
+responseProtoMinor : Response -> Int
+responseProtoMinor arg0 = Sky_net_http_ResponseProtoMinor arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseHeader)
+
+responseHeader : Response -> Header
+responseHeader arg0 = Sky_net_http_ResponseHeader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseBody)
+
+responseBody : Response -> Io.ReadCloser
+responseBody arg0 = Sky_net_http_ResponseBody arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseContentLength)
+
+responseContentLength : Response -> Int
+responseContentLength arg0 = Sky_net_http_ResponseContentLength arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseTransferEncoding)
+
+responseTransferEncoding : Response -> List String
+responseTransferEncoding arg0 = Sky_net_http_ResponseTransferEncoding arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseClose)
+
+responseClose : Response -> Bool
+responseClose arg0 = Sky_net_http_ResponseClose arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseUncompressed)
+
+responseUncompressed : Response -> Bool
+responseUncompressed arg0 = Sky_net_http_ResponseUncompressed arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseTrailer)
+
+responseTrailer : Response -> Header
+responseTrailer arg0 = Sky_net_http_ResponseTrailer arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseRequest)
+
+responseRequest : Response -> Request
+responseRequest arg0 = Sky_net_http_ResponseRequest arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseTLS)
+
+responseTLS : Response -> Crypto.Tls.ConnectionState
+responseTLS arg0 = Sky_net_http_ResponseTLS arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseControllerEnableFullDuplex)
+
+responseControllerEnableFullDuplex : ResponseController -> Result Error Unit
+responseControllerEnableFullDuplex arg0 = Sky_net_http_ResponseControllerEnableFullDuplex arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseControllerFlush)
+
+responseControllerFlush : ResponseController -> Result Error Unit
+responseControllerFlush arg0 = Sky_net_http_ResponseControllerFlush arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseControllerHijack)
+
+responseControllerHijack : ResponseController -> Tuple3 Net.Conn Bufio.ReadWriter Error
+responseControllerHijack arg0 = Sky_net_http_ResponseControllerHijack arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseControllerSetReadDeadline)
+
+responseControllerSetReadDeadline : ResponseController -> Time.Time -> Result Error Unit
+responseControllerSetReadDeadline arg0 arg1 = Sky_net_http_ResponseControllerSetReadDeadline arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseControllerSetWriteDeadline)
+
+responseControllerSetWriteDeadline : ResponseController -> Time.Time -> Result Error Unit
+responseControllerSetWriteDeadline arg0 arg1 = Sky_net_http_ResponseControllerSetWriteDeadline arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseWriterHeader)
+
+responseWriterHeader : ResponseWriter -> Header
+responseWriterHeader arg0 = Sky_net_http_ResponseWriterHeader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseWriterWrite)
+
+responseWriterWrite : ResponseWriter -> Bytes -> Result Error Int
+responseWriterWrite arg0 arg1 = Sky_net_http_ResponseWriterWrite arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ResponseWriterWriteHeader)
+
+responseWriterWriteHeader : ResponseWriter -> Int -> Unit
+responseWriterWriteHeader arg0 arg1 = Sky_net_http_ResponseWriterWriteHeader arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_RoundTripperRoundTrip)
+
+roundTripperRoundTrip : RoundTripper -> Request -> Result Error Response
+roundTripperRoundTrip arg0 arg1 = Sky_net_http_RoundTripperRoundTrip arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeMuxHandle)
+
+serveMuxHandle : ServeMux -> String -> Handler -> Unit
+serveMuxHandle arg0 arg1 arg2 = Sky_net_http_ServeMuxHandle arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeMuxHandleFunc)
+
+serveMuxHandleFunc : ServeMux -> String -> Any -> Unit
+serveMuxHandleFunc arg0 arg1 arg2 = Sky_net_http_ServeMuxHandleFunc arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeMuxHandler)
+
+serveMuxHandler : ServeMux -> Request -> Tuple2 Handler String
+serveMuxHandler arg0 arg1 = Sky_net_http_ServeMuxHandler arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServeMuxServeHTTP)
+
+serveMuxServeHTTP : ServeMux -> ResponseWriter -> Request -> Unit
+serveMuxServeHTTP arg0 arg1 arg2 = Sky_net_http_ServeMuxServeHTTP arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerClose)
+
+serverClose : Server -> Result Error Unit
+serverClose arg0 = Sky_net_http_ServerClose arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerListenAndServe)
+
+serverListenAndServe : Server -> Result Error Unit
+serverListenAndServe arg0 = Sky_net_http_ServerListenAndServe arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerListenAndServeTLS)
+
+serverListenAndServeTLS : Server -> String -> String -> Result Error Unit
+serverListenAndServeTLS arg0 arg1 arg2 = Sky_net_http_ServerListenAndServeTLS arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerRegisterOnShutdown)
+
+serverRegisterOnShutdown : Server -> Any -> Unit
+serverRegisterOnShutdown arg0 arg1 = Sky_net_http_ServerRegisterOnShutdown arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerServe)
+
+serverServe : Server -> Net.Listener -> Result Error Unit
+serverServe arg0 arg1 = Sky_net_http_ServerServe arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerServeTLS)
+
+serverServeTLS : Server -> Net.Listener -> String -> String -> Result Error Unit
+serverServeTLS arg0 arg1 arg2 arg3 = Sky_net_http_ServerServeTLS arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerSetKeepAlivesEnabled)
+
+serverSetKeepAlivesEnabled : Server -> Bool -> Unit
+serverSetKeepAlivesEnabled arg0 arg1 = Sky_net_http_ServerSetKeepAlivesEnabled arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerShutdown)
+
+serverShutdown : Server -> Context.Context -> Result Error Unit
+serverShutdown arg0 arg1 = Sky_net_http_ServerShutdown arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerAddr)
+
+serverAddr : Server -> String
+serverAddr arg0 = Sky_net_http_ServerAddr arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerHandler)
+
+serverHandler : Server -> Handler
+serverHandler arg0 = Sky_net_http_ServerHandler arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerDisableGeneralOptionsHandler)
+
+serverDisableGeneralOptionsHandler : Server -> Bool
+serverDisableGeneralOptionsHandler arg0 = Sky_net_http_ServerDisableGeneralOptionsHandler arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerTLSConfig)
+
+serverTLSConfig : Server -> Crypto.Tls.Config
+serverTLSConfig arg0 = Sky_net_http_ServerTLSConfig arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerReadTimeout)
+
+serverReadTimeout : Server -> Time.Duration
+serverReadTimeout arg0 = Sky_net_http_ServerReadTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerReadHeaderTimeout)
+
+serverReadHeaderTimeout : Server -> Time.Duration
+serverReadHeaderTimeout arg0 = Sky_net_http_ServerReadHeaderTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerWriteTimeout)
+
+serverWriteTimeout : Server -> Time.Duration
+serverWriteTimeout arg0 = Sky_net_http_ServerWriteTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerIdleTimeout)
+
+serverIdleTimeout : Server -> Time.Duration
+serverIdleTimeout arg0 = Sky_net_http_ServerIdleTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerMaxHeaderBytes)
+
+serverMaxHeaderBytes : Server -> Int
+serverMaxHeaderBytes arg0 = Sky_net_http_ServerMaxHeaderBytes arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerTLSNextProto)
+
+serverTLSNextProto : Server -> Map String Any
+serverTLSNextProto arg0 = Sky_net_http_ServerTLSNextProto arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerConnState)
+
+serverConnState : Server -> Any
+serverConnState arg0 = Sky_net_http_ServerConnState arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerErrorLog)
+
+serverErrorLog : Server -> Log.Logger
+serverErrorLog arg0 = Sky_net_http_ServerErrorLog arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerBaseContext)
+
+serverBaseContext : Server -> Any
+serverBaseContext arg0 = Sky_net_http_ServerBaseContext arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerConnContext)
+
+serverConnContext : Server -> Any
+serverConnContext arg0 = Sky_net_http_ServerConnContext arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerHTTP2)
+
+serverHTTP2 : Server -> HTTP2Config
+serverHTTP2 arg0 = Sky_net_http_ServerHTTP2 arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_ServerProtocols)
+
+serverProtocols : Server -> Protocols
+serverProtocols arg0 = Sky_net_http_ServerProtocols arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportCancelRequest)
+
+transportCancelRequest : Transport -> Request -> Unit
+transportCancelRequest arg0 arg1 = Sky_net_http_TransportCancelRequest arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportClone)
+
+transportClone : Transport -> Transport
+transportClone arg0 = Sky_net_http_TransportClone arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportCloseIdleConnections)
+
+transportCloseIdleConnections : Transport -> Unit
+transportCloseIdleConnections arg0 = Sky_net_http_TransportCloseIdleConnections arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportNewClientConn)
+
+transportNewClientConn : Transport -> Context.Context -> String -> String -> Result Error ClientConn
+transportNewClientConn arg0 arg1 arg2 arg3 = Sky_net_http_TransportNewClientConn arg0 arg1 arg2 arg3
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportRegisterProtocol)
+
+transportRegisterProtocol : Transport -> String -> RoundTripper -> Unit
+transportRegisterProtocol arg0 arg1 arg2 = Sky_net_http_TransportRegisterProtocol arg0 arg1 arg2
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportRoundTrip)
+
+transportRoundTrip : Transport -> Request -> Result Error Response
+transportRoundTrip arg0 arg1 = Sky_net_http_TransportRoundTrip arg0 arg1
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportProxy)
+
+transportProxy : Transport -> Any
+transportProxy arg0 = Sky_net_http_TransportProxy arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportOnProxyConnectResponse)
+
+transportOnProxyConnectResponse : Transport -> Any
+transportOnProxyConnectResponse arg0 = Sky_net_http_TransportOnProxyConnectResponse arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportDialContext)
+
+transportDialContext : Transport -> Any
+transportDialContext arg0 = Sky_net_http_TransportDialContext arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportDial)
+
+transportDial : Transport -> Any
+transportDial arg0 = Sky_net_http_TransportDial arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportDialTLSContext)
+
+transportDialTLSContext : Transport -> Any
+transportDialTLSContext arg0 = Sky_net_http_TransportDialTLSContext arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportDialTLS)
+
+transportDialTLS : Transport -> Any
+transportDialTLS arg0 = Sky_net_http_TransportDialTLS arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportTLSClientConfig)
+
+transportTLSClientConfig : Transport -> Crypto.Tls.Config
+transportTLSClientConfig arg0 = Sky_net_http_TransportTLSClientConfig arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportTLSHandshakeTimeout)
+
+transportTLSHandshakeTimeout : Transport -> Time.Duration
+transportTLSHandshakeTimeout arg0 = Sky_net_http_TransportTLSHandshakeTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportDisableKeepAlives)
+
+transportDisableKeepAlives : Transport -> Bool
+transportDisableKeepAlives arg0 = Sky_net_http_TransportDisableKeepAlives arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportDisableCompression)
+
+transportDisableCompression : Transport -> Bool
+transportDisableCompression arg0 = Sky_net_http_TransportDisableCompression arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportMaxIdleConns)
+
+transportMaxIdleConns : Transport -> Int
+transportMaxIdleConns arg0 = Sky_net_http_TransportMaxIdleConns arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportMaxIdleConnsPerHost)
+
+transportMaxIdleConnsPerHost : Transport -> Int
+transportMaxIdleConnsPerHost arg0 = Sky_net_http_TransportMaxIdleConnsPerHost arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportMaxConnsPerHost)
+
+transportMaxConnsPerHost : Transport -> Int
+transportMaxConnsPerHost arg0 = Sky_net_http_TransportMaxConnsPerHost arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportIdleConnTimeout)
+
+transportIdleConnTimeout : Transport -> Time.Duration
+transportIdleConnTimeout arg0 = Sky_net_http_TransportIdleConnTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportResponseHeaderTimeout)
+
+transportResponseHeaderTimeout : Transport -> Time.Duration
+transportResponseHeaderTimeout arg0 = Sky_net_http_TransportResponseHeaderTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportExpectContinueTimeout)
+
+transportExpectContinueTimeout : Transport -> Time.Duration
+transportExpectContinueTimeout arg0 = Sky_net_http_TransportExpectContinueTimeout arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportTLSNextProto)
+
+transportTLSNextProto : Transport -> Map String Any
+transportTLSNextProto arg0 = Sky_net_http_TransportTLSNextProto arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportProxyConnectHeader)
+
+transportProxyConnectHeader : Transport -> Header
+transportProxyConnectHeader arg0 = Sky_net_http_TransportProxyConnectHeader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportGetProxyConnectHeader)
+
+transportGetProxyConnectHeader : Transport -> Any
+transportGetProxyConnectHeader arg0 = Sky_net_http_TransportGetProxyConnectHeader arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportMaxResponseHeaderBytes)
+
+transportMaxResponseHeaderBytes : Transport -> Int
+transportMaxResponseHeaderBytes arg0 = Sky_net_http_TransportMaxResponseHeaderBytes arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportWriteBufferSize)
+
+transportWriteBufferSize : Transport -> Int
+transportWriteBufferSize arg0 = Sky_net_http_TransportWriteBufferSize arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportReadBufferSize)
+
+transportReadBufferSize : Transport -> Int
+transportReadBufferSize arg0 = Sky_net_http_TransportReadBufferSize arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportForceAttemptHTTP2)
+
+transportForceAttemptHTTP2 : Transport -> Bool
+transportForceAttemptHTTP2 arg0 = Sky_net_http_TransportForceAttemptHTTP2 arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportHTTP2)
+
+transportHTTP2 : Transport -> HTTP2Config
+transportHTTP2 arg0 = Sky_net_http_TransportHTTP2 arg0
+
+foreign import "sky_wrappers" exposing (Sky_net_http_TransportProtocols)
+
+transportProtocols : Transport -> Protocols
+transportProtocols arg0 = Sky_net_http_TransportProtocols arg0
+

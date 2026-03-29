@@ -22,7 +22,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_CreateFundingInstructions(arg0
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_Del(arg0 any, arg1 any) any {
@@ -35,7 +35,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_Del(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_DeleteDiscount(arg0 any, arg1 any) any {
@@ -48,7 +48,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_DeleteDiscount(arg0 any, arg1 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_Get(arg0 any, arg1 any) any {
@@ -61,7 +61,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_Get(arg0 any, arg1 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_List(arg0 any) any {
@@ -83,7 +83,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_New(arg0 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_RetrievePaymentMethod(arg0 any, arg1 any) any {
@@ -96,7 +96,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_RetrievePaymentMethod(arg0 any
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_Search(arg0 any) any {
@@ -114,7 +114,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_Update(arg0 any, arg1 any) any
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientCreateFundingInstructions(receiver any, arg0 any, arg1 any) any {
@@ -128,7 +128,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientCreateFundingInstruction
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientDel(receiver any, arg0 any, arg1 any) any {
@@ -142,7 +142,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientDel(receiver any, arg0 a
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientDeleteDiscount(receiver any, arg0 any, arg1 any) any {
@@ -156,7 +156,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientDeleteDiscount(receiver 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientGet(receiver any, arg0 any, arg1 any) any {
@@ -170,7 +170,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientGet(receiver any, arg0 a
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientList(receiver any, arg0 any) any {
@@ -195,7 +195,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientNew(receiver any, arg0 a
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientRetrievePaymentMethod(receiver any, arg0 any, arg1 any) any {
@@ -209,7 +209,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientRetrievePaymentMethod(re
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_ClientSearch(receiver any, arg0 any) any {
@@ -229,7 +229,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_ClientUpdate(receiver any, arg
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_IterCurrent(receiver any) any {
@@ -256,7 +256,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_IterErr(receiver any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_IterList(receiver any) any {
@@ -288,7 +288,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterErr(receiver 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_PaymentMethodIterList(receiver any) any {
@@ -340,7 +340,7 @@ func Sky_github_com_stripe_stripe_go_v84_customer_SearchIterErr(receiver any) an
 			return SkyErr(err.Error())
 		}
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_github_com_stripe_stripe_go_v84_customer_SearchIterMeta(receiver any) any {

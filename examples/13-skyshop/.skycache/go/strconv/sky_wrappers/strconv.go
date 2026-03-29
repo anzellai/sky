@@ -16,7 +16,7 @@ func Sky_strconv_AppendBool(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strconv.AppendBool(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strconv_AppendInt(arg0 any, arg1 any, arg2 any) any {
@@ -27,7 +27,7 @@ func Sky_strconv_AppendInt(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := strconv.AppendInt(_arg0, _arg1, _arg2)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strconv_AppendQuote(arg0 any, arg1 any) any {
@@ -37,7 +37,7 @@ func Sky_strconv_AppendQuote(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strconv.AppendQuote(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strconv_AppendQuoteToASCII(arg0 any, arg1 any) any {
@@ -47,7 +47,7 @@ func Sky_strconv_AppendQuoteToASCII(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strconv.AppendQuoteToASCII(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strconv_AppendQuoteToGraphic(arg0 any, arg1 any) any {
@@ -57,7 +57,7 @@ func Sky_strconv_AppendQuoteToGraphic(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strconv.AppendQuoteToGraphic(_arg0, _arg1)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strconv_AppendUint(arg0 any, arg1 any, arg2 any) any {
@@ -68,7 +68,7 @@ func Sky_strconv_AppendUint(arg0 any, arg1 any, arg2 any) any {
 		defer func() { recover() }()
 		result := strconv.AppendUint(_arg0, _arg1, _arg2)
 		return SkyOk(result[:])
-	}
+	}()
 }
 
 func Sky_strconv_Atoi(arg0 any) any {
@@ -78,7 +78,7 @@ func Sky_strconv_Atoi(arg0 any) any {
 		result, err := strconv.Atoi(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_CanBackquote(arg0 any) any {
@@ -87,7 +87,7 @@ func Sky_strconv_CanBackquote(arg0 any) any {
 		defer func() { recover() }()
 		result := strconv.CanBackquote(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_FormatBool(arg0 any) any {
@@ -96,7 +96,7 @@ func Sky_strconv_FormatBool(arg0 any) any {
 		defer func() { recover() }()
 		result := strconv.FormatBool(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_FormatInt(arg0 any, arg1 any) any {
@@ -106,7 +106,7 @@ func Sky_strconv_FormatInt(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strconv.FormatInt(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_FormatUint(arg0 any, arg1 any) any {
@@ -116,7 +116,7 @@ func Sky_strconv_FormatUint(arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		result := strconv.FormatUint(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_Itoa(arg0 any) any {
@@ -125,7 +125,7 @@ func Sky_strconv_Itoa(arg0 any) any {
 		defer func() { recover() }()
 		result := strconv.Itoa(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_ParseBool(arg0 any) any {
@@ -135,7 +135,7 @@ func Sky_strconv_ParseBool(arg0 any) any {
 		result, err := strconv.ParseBool(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_ParseFloat(arg0 any, arg1 any) any {
@@ -146,7 +146,7 @@ func Sky_strconv_ParseFloat(arg0 any, arg1 any) any {
 		result, err := strconv.ParseFloat(_arg0, _arg1)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_ParseInt(arg0 any, arg1 any, arg2 any) any {
@@ -158,7 +158,7 @@ func Sky_strconv_ParseInt(arg0 any, arg1 any, arg2 any) any {
 		result, err := strconv.ParseInt(_arg0, _arg1, _arg2)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_ParseUint(arg0 any, arg1 any, arg2 any) any {
@@ -170,7 +170,7 @@ func Sky_strconv_ParseUint(arg0 any, arg1 any, arg2 any) any {
 		result, err := strconv.ParseUint(_arg0, _arg1, _arg2)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_Quote(arg0 any) any {
@@ -179,7 +179,7 @@ func Sky_strconv_Quote(arg0 any) any {
 		defer func() { recover() }()
 		result := strconv.Quote(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_QuoteToASCII(arg0 any) any {
@@ -188,7 +188,7 @@ func Sky_strconv_QuoteToASCII(arg0 any) any {
 		defer func() { recover() }()
 		result := strconv.QuoteToASCII(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_QuoteToGraphic(arg0 any) any {
@@ -197,7 +197,7 @@ func Sky_strconv_QuoteToGraphic(arg0 any) any {
 		defer func() { recover() }()
 		result := strconv.QuoteToGraphic(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_QuotedPrefix(arg0 any) any {
@@ -207,7 +207,7 @@ func Sky_strconv_QuotedPrefix(arg0 any) any {
 		result, err := strconv.QuotedPrefix(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_Unquote(arg0 any) any {
@@ -217,7 +217,7 @@ func Sky_strconv_Unquote(arg0 any) any {
 		result, err := strconv.Unquote(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_NumErrorError(receiver any) any {
@@ -226,7 +226,7 @@ func Sky_strconv_NumErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_strconv_NumErrorUnwrap(receiver any) any {
@@ -236,7 +236,7 @@ func Sky_strconv_NumErrorUnwrap(receiver any) any {
 		err := _receiver.Unwrap()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_strconv_FIELD_NumError_Func(receiver any) any {

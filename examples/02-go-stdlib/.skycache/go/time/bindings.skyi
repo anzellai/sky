@@ -1,0 +1,555 @@
+module Time exposing (..)
+
+foreign import "time" exposing (..)
+
+after : Duration -> Result String Time
+after arg0 =
+    Sky_time_After arg0
+
+date : Int -> Month -> Int -> Int -> Int -> Int -> Int -> Location -> Result String Time
+date arg0 arg1 arg2 arg3 arg4 arg5 arg6 arg7 =
+    Sky_time_Date arg0 arg1 arg2 arg3 arg4 arg5 arg6 arg7
+
+fixedZone : String -> Int -> Result String Location
+fixedZone arg0 arg1 =
+    Sky_time_FixedZone arg0 arg1
+
+loadLocation : String -> Result String Location
+loadLocation arg0 =
+    Sky_time_LoadLocation arg0
+
+loadLocationFromTZData : String -> Bytes -> Result String Location
+loadLocationFromTZData arg0 arg1 =
+    Sky_time_LoadLocationFromTZData arg0 arg1
+
+newTicker : Duration -> Result String Ticker
+newTicker arg0 =
+    Sky_time_NewTicker arg0
+
+newTimer : Duration -> Result String Timer
+newTimer arg0 =
+    Sky_time_NewTimer arg0
+
+now : () -> Result String Time
+now _ =
+    Sky_time_Now ()
+
+parse : String -> String -> Result String Time
+parse arg0 arg1 =
+    Sky_time_Parse arg0 arg1
+
+parseDuration : String -> Result String Duration
+parseDuration arg0 =
+    Sky_time_ParseDuration arg0
+
+parseInLocation : String -> String -> Location -> Result String Time
+parseInLocation arg0 arg1 arg2 =
+    Sky_time_ParseInLocation arg0 arg1 arg2
+
+since : Time -> Result String Duration
+since arg0 =
+    Sky_time_Since arg0
+
+sleep : Duration -> Result String ()
+sleep arg0 =
+    Sky_time_Sleep arg0
+
+tick : Duration -> Result String Time
+tick arg0 =
+    Sky_time_Tick arg0
+
+unix : Int -> Int -> Result String Time
+unix arg0 arg1 =
+    Sky_time_Unix arg0 arg1
+
+unixMicro : Int -> Result String Time
+unixMicro arg0 =
+    Sky_time_UnixMicro arg0
+
+unixMilli : Int -> Result String Time
+unixMilli arg0 =
+    Sky_time_UnixMilli arg0
+
+until : Time -> Result String Duration
+until arg0 =
+    Sky_time_Until arg0
+
+type Duration = Duration
+
+type Location = Location
+
+type Month = Month
+
+type ParseError = ParseError
+
+type Ticker = Ticker
+
+type Time = Time
+
+type Timer = Timer
+
+type Weekday = Weekday
+
+parseErrorLayout : Any -> String
+parseErrorLayout receiver =
+    Sky_time_FIELD_ParseError_Layout receiver
+
+parseErrorValue : Any -> String
+parseErrorValue receiver =
+    Sky_time_FIELD_ParseError_Value receiver
+
+parseErrorLayoutElem : Any -> String
+parseErrorLayoutElem receiver =
+    Sky_time_FIELD_ParseError_LayoutElem receiver
+
+parseErrorValueElem : Any -> String
+parseErrorValueElem receiver =
+    Sky_time_FIELD_ParseError_ValueElem receiver
+
+parseErrorMessage : Any -> String
+parseErrorMessage receiver =
+    Sky_time_FIELD_ParseError_Message receiver
+
+tickerC : Any -> Time
+tickerC receiver =
+    Sky_time_FIELD_Ticker_C receiver
+
+timerC : Any -> Time
+timerC receiver =
+    Sky_time_FIELD_Timer_C receiver
+
+durationAbs : Duration -> Result String Duration
+durationAbs receiver =
+    Sky_time_DurationAbs receiver
+
+durationHours : Duration -> Result String Float
+durationHours receiver =
+    Sky_time_DurationHours receiver
+
+durationMicroseconds : Duration -> Result String Int
+durationMicroseconds receiver =
+    Sky_time_DurationMicroseconds receiver
+
+durationMilliseconds : Duration -> Result String Int
+durationMilliseconds receiver =
+    Sky_time_DurationMilliseconds receiver
+
+durationMinutes : Duration -> Result String Float
+durationMinutes receiver =
+    Sky_time_DurationMinutes receiver
+
+durationNanoseconds : Duration -> Result String Int
+durationNanoseconds receiver =
+    Sky_time_DurationNanoseconds receiver
+
+durationRound : Duration -> Duration -> Result String Duration
+durationRound receiver arg0 =
+    Sky_time_DurationRound receiver arg0
+
+durationSeconds : Duration -> Result String Float
+durationSeconds receiver =
+    Sky_time_DurationSeconds receiver
+
+durationString : Duration -> Result String String
+durationString receiver =
+    Sky_time_DurationString receiver
+
+durationTruncate : Duration -> Duration -> Result String Duration
+durationTruncate receiver arg0 =
+    Sky_time_DurationTruncate receiver arg0
+
+locationString : Location -> Result String String
+locationString receiver =
+    Sky_time_LocationString receiver
+
+monthString : Month -> Result String String
+monthString receiver =
+    Sky_time_MonthString receiver
+
+parseErrorError : ParseError -> Result String String
+parseErrorError receiver =
+    Sky_time_ParseErrorError receiver
+
+tickerReset : Ticker -> Duration -> Result String ()
+tickerReset receiver arg0 =
+    Sky_time_TickerReset receiver arg0
+
+tickerStop : Ticker -> Result String ()
+tickerStop receiver =
+    Sky_time_TickerStop receiver
+
+timeAdd : Time -> Duration -> Result String Time
+timeAdd receiver arg0 =
+    Sky_time_TimeAdd receiver arg0
+
+timeAddDate : Time -> Int -> Int -> Int -> Result String Time
+timeAddDate receiver arg0 arg1 arg2 =
+    Sky_time_TimeAddDate receiver arg0 arg1 arg2
+
+timeAfter : Time -> Time -> Result String Bool
+timeAfter receiver arg0 =
+    Sky_time_TimeAfter receiver arg0
+
+timeAppendBinary : Time -> Bytes -> Result String Bytes
+timeAppendBinary receiver arg0 =
+    Sky_time_TimeAppendBinary receiver arg0
+
+timeAppendFormat : Time -> Bytes -> String -> Result String Bytes
+timeAppendFormat receiver arg0 arg1 =
+    Sky_time_TimeAppendFormat receiver arg0 arg1
+
+timeAppendText : Time -> Bytes -> Result String Bytes
+timeAppendText receiver arg0 =
+    Sky_time_TimeAppendText receiver arg0
+
+timeBefore : Time -> Time -> Result String Bool
+timeBefore receiver arg0 =
+    Sky_time_TimeBefore receiver arg0
+
+timeCompare : Time -> Time -> Result String Int
+timeCompare receiver arg0 =
+    Sky_time_TimeCompare receiver arg0
+
+timeDay : Time -> Result String Int
+timeDay receiver =
+    Sky_time_TimeDay receiver
+
+timeEqual : Time -> Time -> Result String Bool
+timeEqual receiver arg0 =
+    Sky_time_TimeEqual receiver arg0
+
+timeFormat : Time -> String -> Result String String
+timeFormat receiver arg0 =
+    Sky_time_TimeFormat receiver arg0
+
+timeGoString : Time -> Result String String
+timeGoString receiver =
+    Sky_time_TimeGoString receiver
+
+timeGobDecode : Time -> Bytes -> Result String ()
+timeGobDecode receiver arg0 =
+    Sky_time_TimeGobDecode receiver arg0
+
+timeGobEncode : Time -> Result String Bytes
+timeGobEncode receiver =
+    Sky_time_TimeGobEncode receiver
+
+timeHour : Time -> Result String Int
+timeHour receiver =
+    Sky_time_TimeHour receiver
+
+timeISOWeek : Time -> Result String (Int, Int)
+timeISOWeek receiver =
+    Sky_time_TimeISOWeek receiver
+
+timeIn : Time -> Location -> Result String Time
+timeIn receiver arg0 =
+    Sky_time_TimeIn receiver arg0
+
+timeIsDST : Time -> Result String Bool
+timeIsDST receiver =
+    Sky_time_TimeIsDST receiver
+
+timeIsZero : Time -> Result String Bool
+timeIsZero receiver =
+    Sky_time_TimeIsZero receiver
+
+timeLocal : Time -> Result String Time
+timeLocal receiver =
+    Sky_time_TimeLocal receiver
+
+timeLocation : Time -> Result String Location
+timeLocation receiver =
+    Sky_time_TimeLocation receiver
+
+timeMarshalBinary : Time -> Result String Bytes
+timeMarshalBinary receiver =
+    Sky_time_TimeMarshalBinary receiver
+
+timeMarshalJSON : Time -> Result String Bytes
+timeMarshalJSON receiver =
+    Sky_time_TimeMarshalJSON receiver
+
+timeMarshalText : Time -> Result String Bytes
+timeMarshalText receiver =
+    Sky_time_TimeMarshalText receiver
+
+timeMinute : Time -> Result String Int
+timeMinute receiver =
+    Sky_time_TimeMinute receiver
+
+timeMonth : Time -> Result String Month
+timeMonth receiver =
+    Sky_time_TimeMonth receiver
+
+timeNanosecond : Time -> Result String Int
+timeNanosecond receiver =
+    Sky_time_TimeNanosecond receiver
+
+timeRound : Time -> Duration -> Result String Time
+timeRound receiver arg0 =
+    Sky_time_TimeRound receiver arg0
+
+timeSecond : Time -> Result String Int
+timeSecond receiver =
+    Sky_time_TimeSecond receiver
+
+timeString : Time -> Result String String
+timeString receiver =
+    Sky_time_TimeString receiver
+
+timeSub : Time -> Time -> Result String Duration
+timeSub receiver arg0 =
+    Sky_time_TimeSub receiver arg0
+
+timeTruncate : Time -> Duration -> Result String Time
+timeTruncate receiver arg0 =
+    Sky_time_TimeTruncate receiver arg0
+
+timeUTC : Time -> Result String Time
+timeUTC receiver =
+    Sky_time_TimeUTC receiver
+
+timeUnix : Time -> Result String Int
+timeUnix receiver =
+    Sky_time_TimeUnix receiver
+
+timeUnixMicro : Time -> Result String Int
+timeUnixMicro receiver =
+    Sky_time_TimeUnixMicro receiver
+
+timeUnixMilli : Time -> Result String Int
+timeUnixMilli receiver =
+    Sky_time_TimeUnixMilli receiver
+
+timeUnixNano : Time -> Result String Int
+timeUnixNano receiver =
+    Sky_time_TimeUnixNano receiver
+
+timeUnmarshalBinary : Time -> Bytes -> Result String ()
+timeUnmarshalBinary receiver arg0 =
+    Sky_time_TimeUnmarshalBinary receiver arg0
+
+timeUnmarshalJSON : Time -> Bytes -> Result String ()
+timeUnmarshalJSON receiver arg0 =
+    Sky_time_TimeUnmarshalJSON receiver arg0
+
+timeUnmarshalText : Time -> Bytes -> Result String ()
+timeUnmarshalText receiver arg0 =
+    Sky_time_TimeUnmarshalText receiver arg0
+
+timeWeekday : Time -> Result String Weekday
+timeWeekday receiver =
+    Sky_time_TimeWeekday receiver
+
+timeYear : Time -> Result String Int
+timeYear receiver =
+    Sky_time_TimeYear receiver
+
+timeYearDay : Time -> Result String Int
+timeYearDay receiver =
+    Sky_time_TimeYearDay receiver
+
+timeZone : Time -> Result String (String, Int)
+timeZone receiver =
+    Sky_time_TimeZone receiver
+
+timeZoneBounds : Time -> Result String (Time, Time)
+timeZoneBounds receiver =
+    Sky_time_TimeZoneBounds receiver
+
+timerReset : Timer -> Duration -> Result String Bool
+timerReset receiver arg0 =
+    Sky_time_TimerReset receiver arg0
+
+timerStop : Timer -> Result String Bool
+timerStop receiver =
+    Sky_time_TimerStop receiver
+
+weekdayString : Weekday -> Result String String
+weekdayString receiver =
+    Sky_time_WeekdayString receiver
+
+local : () -> Location
+local _ =
+    Sky_time_Local
+
+uTC : () -> Location
+uTC _ =
+    Sky_time_UTC
+
+aNSIC : String
+aNSIC =
+    "Mon Jan _2 15:04:05 2006"
+
+april : Month
+april =
+    Sky_time_April
+
+august : Month
+august =
+    Sky_time_August
+
+dateOnly : String
+dateOnly =
+    "2006-01-02"
+
+dateTime : String
+dateTime =
+    "2006-01-02 15:04:05"
+
+december : Month
+december =
+    Sky_time_December
+
+february : Month
+february =
+    Sky_time_February
+
+friday : Weekday
+friday =
+    Sky_time_Friday
+
+hour : Duration
+hour =
+    Sky_time_Hour
+
+january : Month
+january =
+    Sky_time_January
+
+july : Month
+july =
+    Sky_time_July
+
+june : Month
+june =
+    Sky_time_June
+
+kitchen : String
+kitchen =
+    "3:04PM"
+
+layout : String
+layout =
+    "01/02 03:04:05PM '06 -0700"
+
+march : Month
+march =
+    Sky_time_March
+
+may : Month
+may =
+    Sky_time_May
+
+microsecond : Duration
+microsecond =
+    Sky_time_Microsecond
+
+millisecond : Duration
+millisecond =
+    Sky_time_Millisecond
+
+minute : Duration
+minute =
+    Sky_time_Minute
+
+monday : Weekday
+monday =
+    Sky_time_Monday
+
+nanosecond : Duration
+nanosecond =
+    Sky_time_Nanosecond
+
+november : Month
+november =
+    Sky_time_November
+
+october : Month
+october =
+    Sky_time_October
+
+rFC1123 : String
+rFC1123 =
+    "Mon, 02 Jan 2006 15:04:05 MST"
+
+rFC1123Z : String
+rFC1123Z =
+    "Mon, 02 Jan 2006 15:04:05 -0700"
+
+rFC3339 : String
+rFC3339 =
+    "2006-01-02T15:04:05Z07:00"
+
+rFC3339Nano : String
+rFC3339Nano =
+    "2006-01-02T15:04:05.999999999Z07:00"
+
+rFC822 : String
+rFC822 =
+    "02 Jan 06 15:04 MST"
+
+rFC822Z : String
+rFC822Z =
+    "02 Jan 06 15:04 -0700"
+
+rFC850 : String
+rFC850 =
+    "Monday, 02-Jan-06 15:04:05 MST"
+
+rubyDate : String
+rubyDate =
+    "Mon Jan 02 15:04:05 -0700 2006"
+
+saturday : Weekday
+saturday =
+    Sky_time_Saturday
+
+second : Duration
+second =
+    Sky_time_Second
+
+september : Month
+september =
+    Sky_time_September
+
+stamp : String
+stamp =
+    "Jan _2 15:04:05"
+
+stampMicro : String
+stampMicro =
+    "Jan _2 15:04:05.000000"
+
+stampMilli : String
+stampMilli =
+    "Jan _2 15:04:05.000"
+
+stampNano : String
+stampNano =
+    "Jan _2 15:04:05.000000000"
+
+sunday : Weekday
+sunday =
+    Sky_time_Sunday
+
+thursday : Weekday
+thursday =
+    Sky_time_Thursday
+
+timeOnly : String
+timeOnly =
+    "15:04:05"
+
+tuesday : Weekday
+tuesday =
+    Sky_time_Tuesday
+
+unixDate : String
+unixDate =
+    "Mon Jan _2 15:04:05 MST 2006"
+
+wednesday : Weekday
+wednesday =
+    Sky_time_Wednesday

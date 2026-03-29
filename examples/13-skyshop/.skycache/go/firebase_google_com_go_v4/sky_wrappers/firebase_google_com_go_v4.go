@@ -22,7 +22,7 @@ func Sky_firebase_google_com_go_v4_NewApp(arg0 any, arg1 any, arg2 any) any {
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_firebase_google_com_go_v4_FIELD_Config_AuthOverride(receiver any) any {

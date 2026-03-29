@@ -22,7 +22,7 @@ func Sky_firebase_google_com_go_v4_auth_ClientVerifyIDToken(receiver any, arg0 a
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_firebase_google_com_go_v4_auth_FIELD_Token_UID(receiver any) any {

@@ -17,7 +17,7 @@ func Sky_cloud_google_com_go_firestore_Merge(arg0 any) any {
 		defer func() { recover() }()
 		result := firestore.Merge()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_NewClient(arg0 any, arg1 any, arg2 any) any {
@@ -30,7 +30,7 @@ func Sky_cloud_google_com_go_firestore_NewClient(arg0 any, arg1 any, arg2 any) a
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_ClientCollection(receiver any, arg0 any) any {
@@ -40,7 +40,7 @@ func Sky_cloud_google_com_go_firestore_ClientCollection(receiver any, arg0 any) 
 		defer func() { recover() }()
 		result := _receiver.Collection(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_CollectionRefDoc(receiver any, arg0 any) any {
@@ -50,7 +50,7 @@ func Sky_cloud_google_com_go_firestore_CollectionRefDoc(receiver any, arg0 any) 
 		defer func() { recover() }()
 		result := _receiver.Doc(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_CollectionRefDocuments(receiver any, arg0 any) any {
@@ -60,7 +60,7 @@ func Sky_cloud_google_com_go_firestore_CollectionRefDocuments(receiver any, arg0
 		defer func() { recover() }()
 		result := _receiver.Documents(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_CollectionRefWhere(receiver any, arg0 any, arg1 any, arg2 any) any {
@@ -72,7 +72,7 @@ func Sky_cloud_google_com_go_firestore_CollectionRefWhere(receiver any, arg0 any
 		defer func() { recover() }()
 		result := _receiver.Where(_arg0, _arg1, _arg2)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_DocumentIteratorGetAll(receiver any) any {
@@ -84,7 +84,7 @@ func Sky_cloud_google_com_go_firestore_DocumentIteratorGetAll(receiver any) any 
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_DocumentRefDelete(receiver any, arg0 any, arg1 any) any {
@@ -97,7 +97,7 @@ func Sky_cloud_google_com_go_firestore_DocumentRefDelete(receiver any, arg0 any,
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_DocumentRefGet(receiver any, arg0 any) any {
@@ -110,7 +110,7 @@ func Sky_cloud_google_com_go_firestore_DocumentRefGet(receiver any, arg0 any) an
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_DocumentRefSet(receiver any, arg0 any, arg1 any, arg2 any) any {
@@ -124,7 +124,7 @@ func Sky_cloud_google_com_go_firestore_DocumentRefSet(receiver any, arg0 any, ar
 			return SkyErr(err.Error())
 		}
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_DocumentSnapshotData(receiver any) any {
@@ -133,7 +133,7 @@ func Sky_cloud_google_com_go_firestore_DocumentSnapshotData(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Data()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_DocumentSnapshotExists(receiver any) any {
@@ -142,7 +142,7 @@ func Sky_cloud_google_com_go_firestore_DocumentSnapshotExists(receiver any) any 
 		defer func() { recover() }()
 		result := _receiver.Exists()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_QueryDocuments(receiver any, arg0 any) any {
@@ -152,7 +152,7 @@ func Sky_cloud_google_com_go_firestore_QueryDocuments(receiver any, arg0 any) an
 		defer func() { recover() }()
 		result := _receiver.Documents(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_QueryOrderBy(receiver any, arg0 any, arg1 any) any {
@@ -163,7 +163,7 @@ func Sky_cloud_google_com_go_firestore_QueryOrderBy(receiver any, arg0 any, arg1
 		defer func() { recover() }()
 		result := _receiver.OrderBy(_arg0, _arg1)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_cloud_google_com_go_firestore_FIELD_DocumentRef_ID(receiver any) any {

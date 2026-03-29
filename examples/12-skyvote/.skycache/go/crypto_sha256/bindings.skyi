@@ -1,0 +1,20 @@
+module Crypto.Sha256 exposing (..)
+
+foreign import "crypto/sha256" exposing (..)
+
+sum224 : Bytes -> Result String Bytes
+sum224 arg0 =
+    Sky_crypto_sha256_Sum224 arg0
+
+sum256 : Bytes -> Result String Bytes
+sum256 arg0 =
+    Sky_crypto_sha256_Sum256 arg0
+
+
+
+
+
+
+
+
+

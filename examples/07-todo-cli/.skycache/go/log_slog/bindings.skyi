@@ -1,0 +1,545 @@
+module Log.Slog exposing (..)
+
+foreign import "log/slog" exposing (..)
+
+any : String -> Any -> Result String Attr
+any arg0 arg1 =
+    Sky_log_slog_Any arg0 arg1
+
+anyValue : Any -> Result String Value
+anyValue arg0 =
+    Sky_log_slog_AnyValue arg0
+
+bool : String -> Bool -> Result String Attr
+bool arg0 arg1 =
+    Sky_log_slog_Bool arg0 arg1
+
+boolValue : Bool -> Result String Value
+boolValue arg0 =
+    Sky_log_slog_BoolValue arg0
+
+debug : String -> List Any -> Result String ()
+debug arg0 arg1 =
+    Sky_log_slog_Debug arg0 arg1
+
+debugContext : Context -> String -> List Any -> Result String ()
+debugContext arg0 arg1 arg2 =
+    Sky_log_slog_DebugContext arg0 arg1 arg2
+
+default : () -> Result String Logger
+default _ =
+    Sky_log_slog_Default ()
+
+error : String -> List Any -> Result String ()
+error arg0 arg1 =
+    Sky_log_slog_Error arg0 arg1
+
+errorContext : Context -> String -> List Any -> Result String ()
+errorContext arg0 arg1 arg2 =
+    Sky_log_slog_ErrorContext arg0 arg1 arg2
+
+float64 : String -> Float -> Result String Attr
+float64 arg0 arg1 =
+    Sky_log_slog_Float64 arg0 arg1
+
+float64Value : Float -> Result String Value
+float64Value arg0 =
+    Sky_log_slog_Float64Value arg0
+
+group : String -> List Any -> Result String Attr
+group arg0 arg1 =
+    Sky_log_slog_Group arg0 arg1
+
+groupAttrs : String -> List Any -> Result String Attr
+groupAttrs arg0 arg1 =
+    Sky_log_slog_GroupAttrs arg0 arg1
+
+groupValue : List Any -> Result String Value
+groupValue arg0 =
+    Sky_log_slog_GroupValue arg0
+
+info : String -> List Any -> Result String ()
+info arg0 arg1 =
+    Sky_log_slog_Info arg0 arg1
+
+infoContext : Context -> String -> List Any -> Result String ()
+infoContext arg0 arg1 arg2 =
+    Sky_log_slog_InfoContext arg0 arg1 arg2
+
+int : String -> Int -> Result String Attr
+int arg0 arg1 =
+    Sky_log_slog_Int arg0 arg1
+
+int64 : String -> Int -> Result String Attr
+int64 arg0 arg1 =
+    Sky_log_slog_Int64 arg0 arg1
+
+int64Value : Int -> Result String Value
+int64Value arg0 =
+    Sky_log_slog_Int64Value arg0
+
+intValue : Int -> Result String Value
+intValue arg0 =
+    Sky_log_slog_IntValue arg0
+
+log : Context -> Level -> String -> List Any -> Result String ()
+log arg0 arg1 arg2 arg3 =
+    Sky_log_slog_Log arg0 arg1 arg2 arg3
+
+logAttrs : Context -> Level -> String -> List Any -> Result String ()
+logAttrs arg0 arg1 arg2 arg3 =
+    Sky_log_slog_LogAttrs arg0 arg1 arg2 arg3
+
+new : Handler -> Result String Logger
+new arg0 =
+    Sky_log_slog_New arg0
+
+newMultiHandler : List Any -> Result String MultiHandler
+newMultiHandler arg0 =
+    Sky_log_slog_NewMultiHandler arg0
+
+setDefault : Logger -> Result String ()
+setDefault arg0 =
+    Sky_log_slog_SetDefault arg0
+
+setLogLoggerLevel : Level -> Result String Level
+setLogLoggerLevel arg0 =
+    Sky_log_slog_SetLogLoggerLevel arg0
+
+string : String -> String -> Result String Attr
+string arg0 arg1 =
+    Sky_log_slog_String arg0 arg1
+
+stringValue : String -> Result String Value
+stringValue arg0 =
+    Sky_log_slog_StringValue arg0
+
+uint64 : String -> Int -> Result String Attr
+uint64 arg0 arg1 =
+    Sky_log_slog_Uint64 arg0 arg1
+
+uint64Value : Int -> Result String Value
+uint64Value arg0 =
+    Sky_log_slog_Uint64Value arg0
+
+warn : String -> List Any -> Result String ()
+warn arg0 arg1 =
+    Sky_log_slog_Warn arg0 arg1
+
+warnContext : Context -> String -> List Any -> Result String ()
+warnContext arg0 arg1 arg2 =
+    Sky_log_slog_WarnContext arg0 arg1 arg2
+
+with : List Any -> Result String Logger
+with arg0 =
+    Sky_log_slog_With arg0
+
+type Attr = Attr
+
+type Handler = Handler
+
+type HandlerOptions = HandlerOptions
+
+type JSONHandler = JSONHandler
+
+type Kind = Kind
+
+type Level = Level
+
+type LevelVar = LevelVar
+
+type Leveler = Leveler
+
+type LogValuer = LogValuer
+
+type Logger = Logger
+
+type MultiHandler = MultiHandler
+
+type Record = Record
+
+type Source = Source
+
+type TextHandler = TextHandler
+
+type Value = Value
+
+attrKey : Any -> String
+attrKey receiver =
+    Sky_log_slog_FIELD_Attr_Key receiver
+
+attrValue : Any -> Value
+attrValue receiver =
+    Sky_log_slog_FIELD_Attr_Value receiver
+
+handlerOptionsAddSource : Any -> Bool
+handlerOptionsAddSource receiver =
+    Sky_log_slog_FIELD_HandlerOptions_AddSource receiver
+
+handlerOptionsLevel : Any -> Leveler
+handlerOptionsLevel receiver =
+    Sky_log_slog_FIELD_HandlerOptions_Level receiver
+
+handlerOptionsReplaceAttr : Any -> Any
+handlerOptionsReplaceAttr receiver =
+    Sky_log_slog_FIELD_HandlerOptions_ReplaceAttr receiver
+
+recordTime : Any -> Time
+recordTime receiver =
+    Sky_log_slog_FIELD_Record_Time receiver
+
+recordMessage : Any -> String
+recordMessage receiver =
+    Sky_log_slog_FIELD_Record_Message receiver
+
+recordLevel : Any -> Level
+recordLevel receiver =
+    Sky_log_slog_FIELD_Record_Level receiver
+
+recordPC : Any -> uintptr
+recordPC receiver =
+    Sky_log_slog_FIELD_Record_PC receiver
+
+sourceFunction : Any -> String
+sourceFunction receiver =
+    Sky_log_slog_FIELD_Source_Function receiver
+
+sourceFile : Any -> String
+sourceFile receiver =
+    Sky_log_slog_FIELD_Source_File receiver
+
+sourceLine : Any -> Int
+sourceLine receiver =
+    Sky_log_slog_FIELD_Source_Line receiver
+
+attrEqual : Attr -> Attr -> Result String Bool
+attrEqual receiver arg0 =
+    Sky_log_slog_AttrEqual receiver arg0
+
+attrString : Attr -> Result String String
+attrString receiver =
+    Sky_log_slog_AttrString receiver
+
+handlerEnabled : Handler -> Context -> Level -> Result String Bool
+handlerEnabled receiver arg0 arg1 =
+    Sky_log_slog_HandlerEnabled receiver arg0 arg1
+
+handlerHandle : Handler -> Context -> Record -> Result String ()
+handlerHandle receiver arg0 arg1 =
+    Sky_log_slog_HandlerHandle receiver arg0 arg1
+
+handlerWithAttrs : Handler -> List Any -> Result String Handler
+handlerWithAttrs receiver arg0 =
+    Sky_log_slog_HandlerWithAttrs receiver arg0
+
+handlerWithGroup : Handler -> String -> Result String Handler
+handlerWithGroup receiver arg0 =
+    Sky_log_slog_HandlerWithGroup receiver arg0
+
+jSONHandlerEnabled : JSONHandler -> Context -> Level -> Result String Bool
+jSONHandlerEnabled receiver arg0 arg1 =
+    Sky_log_slog_JSONHandlerEnabled receiver arg0 arg1
+
+jSONHandlerHandle : JSONHandler -> Context -> Record -> Result String ()
+jSONHandlerHandle receiver arg0 arg1 =
+    Sky_log_slog_JSONHandlerHandle receiver arg0 arg1
+
+jSONHandlerWithAttrs : JSONHandler -> List Any -> Result String Handler
+jSONHandlerWithAttrs receiver arg0 =
+    Sky_log_slog_JSONHandlerWithAttrs receiver arg0
+
+jSONHandlerWithGroup : JSONHandler -> String -> Result String Handler
+jSONHandlerWithGroup receiver arg0 =
+    Sky_log_slog_JSONHandlerWithGroup receiver arg0
+
+kindString : Kind -> Result String String
+kindString receiver =
+    Sky_log_slog_KindString receiver
+
+levelAppendText : Level -> Bytes -> Result String Bytes
+levelAppendText receiver arg0 =
+    Sky_log_slog_LevelAppendText receiver arg0
+
+levelLevel : Level -> Result String Level
+levelLevel receiver =
+    Sky_log_slog_LevelLevel receiver
+
+levelMarshalJSON : Level -> Result String Bytes
+levelMarshalJSON receiver =
+    Sky_log_slog_LevelMarshalJSON receiver
+
+levelMarshalText : Level -> Result String Bytes
+levelMarshalText receiver =
+    Sky_log_slog_LevelMarshalText receiver
+
+levelString : Level -> Result String String
+levelString receiver =
+    Sky_log_slog_LevelString receiver
+
+levelUnmarshalJSON : Level -> Bytes -> Result String ()
+levelUnmarshalJSON receiver arg0 =
+    Sky_log_slog_LevelUnmarshalJSON receiver arg0
+
+levelUnmarshalText : Level -> Bytes -> Result String ()
+levelUnmarshalText receiver arg0 =
+    Sky_log_slog_LevelUnmarshalText receiver arg0
+
+levelVarAppendText : LevelVar -> Bytes -> Result String Bytes
+levelVarAppendText receiver arg0 =
+    Sky_log_slog_LevelVarAppendText receiver arg0
+
+levelVarLevel : LevelVar -> Result String Level
+levelVarLevel receiver =
+    Sky_log_slog_LevelVarLevel receiver
+
+levelVarMarshalText : LevelVar -> Result String Bytes
+levelVarMarshalText receiver =
+    Sky_log_slog_LevelVarMarshalText receiver
+
+levelVarSet : LevelVar -> Level -> Result String ()
+levelVarSet receiver arg0 =
+    Sky_log_slog_LevelVarSet receiver arg0
+
+levelVarString : LevelVar -> Result String String
+levelVarString receiver =
+    Sky_log_slog_LevelVarString receiver
+
+levelVarUnmarshalText : LevelVar -> Bytes -> Result String ()
+levelVarUnmarshalText receiver arg0 =
+    Sky_log_slog_LevelVarUnmarshalText receiver arg0
+
+levelerLevel : Leveler -> Result String Level
+levelerLevel receiver =
+    Sky_log_slog_LevelerLevel receiver
+
+logValuerLogValue : LogValuer -> Result String Value
+logValuerLogValue receiver =
+    Sky_log_slog_LogValuerLogValue receiver
+
+loggerDebug : Logger -> String -> List Any -> Result String ()
+loggerDebug receiver arg0 arg1 =
+    Sky_log_slog_LoggerDebug receiver arg0 arg1
+
+loggerDebugContext : Logger -> Context -> String -> List Any -> Result String ()
+loggerDebugContext receiver arg0 arg1 arg2 =
+    Sky_log_slog_LoggerDebugContext receiver arg0 arg1 arg2
+
+loggerEnabled : Logger -> Context -> Level -> Result String Bool
+loggerEnabled receiver arg0 arg1 =
+    Sky_log_slog_LoggerEnabled receiver arg0 arg1
+
+loggerError : Logger -> String -> List Any -> Result String ()
+loggerError receiver arg0 arg1 =
+    Sky_log_slog_LoggerError receiver arg0 arg1
+
+loggerErrorContext : Logger -> Context -> String -> List Any -> Result String ()
+loggerErrorContext receiver arg0 arg1 arg2 =
+    Sky_log_slog_LoggerErrorContext receiver arg0 arg1 arg2
+
+loggerHandler : Logger -> Result String Handler
+loggerHandler receiver =
+    Sky_log_slog_LoggerHandler receiver
+
+loggerInfo : Logger -> String -> List Any -> Result String ()
+loggerInfo receiver arg0 arg1 =
+    Sky_log_slog_LoggerInfo receiver arg0 arg1
+
+loggerInfoContext : Logger -> Context -> String -> List Any -> Result String ()
+loggerInfoContext receiver arg0 arg1 arg2 =
+    Sky_log_slog_LoggerInfoContext receiver arg0 arg1 arg2
+
+loggerLog : Logger -> Context -> Level -> String -> List Any -> Result String ()
+loggerLog receiver arg0 arg1 arg2 arg3 =
+    Sky_log_slog_LoggerLog receiver arg0 arg1 arg2 arg3
+
+loggerLogAttrs : Logger -> Context -> Level -> String -> List Any -> Result String ()
+loggerLogAttrs receiver arg0 arg1 arg2 arg3 =
+    Sky_log_slog_LoggerLogAttrs receiver arg0 arg1 arg2 arg3
+
+loggerWarn : Logger -> String -> List Any -> Result String ()
+loggerWarn receiver arg0 arg1 =
+    Sky_log_slog_LoggerWarn receiver arg0 arg1
+
+loggerWarnContext : Logger -> Context -> String -> List Any -> Result String ()
+loggerWarnContext receiver arg0 arg1 arg2 =
+    Sky_log_slog_LoggerWarnContext receiver arg0 arg1 arg2
+
+loggerWith : Logger -> List Any -> Result String Logger
+loggerWith receiver arg0 =
+    Sky_log_slog_LoggerWith receiver arg0
+
+loggerWithGroup : Logger -> String -> Result String Logger
+loggerWithGroup receiver arg0 =
+    Sky_log_slog_LoggerWithGroup receiver arg0
+
+multiHandlerEnabled : MultiHandler -> Context -> Level -> Result String Bool
+multiHandlerEnabled receiver arg0 arg1 =
+    Sky_log_slog_MultiHandlerEnabled receiver arg0 arg1
+
+multiHandlerHandle : MultiHandler -> Context -> Record -> Result String ()
+multiHandlerHandle receiver arg0 arg1 =
+    Sky_log_slog_MultiHandlerHandle receiver arg0 arg1
+
+multiHandlerWithAttrs : MultiHandler -> List Any -> Result String Handler
+multiHandlerWithAttrs receiver arg0 =
+    Sky_log_slog_MultiHandlerWithAttrs receiver arg0
+
+multiHandlerWithGroup : MultiHandler -> String -> Result String Handler
+multiHandlerWithGroup receiver arg0 =
+    Sky_log_slog_MultiHandlerWithGroup receiver arg0
+
+recordAdd : Record -> List Any -> Result String ()
+recordAdd receiver arg0 =
+    Sky_log_slog_RecordAdd receiver arg0
+
+recordAddAttrs : Record -> List Any -> Result String ()
+recordAddAttrs receiver arg0 =
+    Sky_log_slog_RecordAddAttrs receiver arg0
+
+recordClone : Record -> Result String Record
+recordClone receiver =
+    Sky_log_slog_RecordClone receiver
+
+recordNumAttrs : Record -> Result String Int
+recordNumAttrs receiver =
+    Sky_log_slog_RecordNumAttrs receiver
+
+recordSource : Record -> Result String Source
+recordSource receiver =
+    Sky_log_slog_RecordSource receiver
+
+textHandlerEnabled : TextHandler -> Context -> Level -> Result String Bool
+textHandlerEnabled receiver arg0 arg1 =
+    Sky_log_slog_TextHandlerEnabled receiver arg0 arg1
+
+textHandlerHandle : TextHandler -> Context -> Record -> Result String ()
+textHandlerHandle receiver arg0 arg1 =
+    Sky_log_slog_TextHandlerHandle receiver arg0 arg1
+
+textHandlerWithAttrs : TextHandler -> List Any -> Result String Handler
+textHandlerWithAttrs receiver arg0 =
+    Sky_log_slog_TextHandlerWithAttrs receiver arg0
+
+textHandlerWithGroup : TextHandler -> String -> Result String Handler
+textHandlerWithGroup receiver arg0 =
+    Sky_log_slog_TextHandlerWithGroup receiver arg0
+
+valueAny : Value -> Result String Any
+valueAny receiver =
+    Sky_log_slog_ValueAny receiver
+
+valueBool : Value -> Result String Bool
+valueBool receiver =
+    Sky_log_slog_ValueBool receiver
+
+valueEqual : Value -> Value -> Result String Bool
+valueEqual receiver arg0 =
+    Sky_log_slog_ValueEqual receiver arg0
+
+valueFloat64 : Value -> Result String Float
+valueFloat64 receiver =
+    Sky_log_slog_ValueFloat64 receiver
+
+valueGroup : Value -> Result String List Any
+valueGroup receiver =
+    Sky_log_slog_ValueGroup receiver
+
+valueInt64 : Value -> Result String Int
+valueInt64 receiver =
+    Sky_log_slog_ValueInt64 receiver
+
+valueKind : Value -> Result String Kind
+valueKind receiver =
+    Sky_log_slog_ValueKind receiver
+
+valueLogValuer : Value -> Result String LogValuer
+valueLogValuer receiver =
+    Sky_log_slog_ValueLogValuer receiver
+
+valueResolve : Value -> Result String Value
+valueResolve receiver =
+    Sky_log_slog_ValueResolve receiver
+
+valueString : Value -> Result String String
+valueString receiver =
+    Sky_log_slog_ValueString receiver
+
+valueUint64 : Value -> Result String Int
+valueUint64 receiver =
+    Sky_log_slog_ValueUint64 receiver
+
+discardHandler : () -> Handler
+discardHandler _ =
+    Sky_log_slog_DiscardHandler
+
+kindAny : Kind
+kindAny =
+    Sky_log_slog_KindAny
+
+kindBool : Kind
+kindBool =
+    Sky_log_slog_KindBool
+
+kindDuration : Kind
+kindDuration =
+    Sky_log_slog_KindDuration
+
+kindFloat64 : Kind
+kindFloat64 =
+    Sky_log_slog_KindFloat64
+
+kindGroup : Kind
+kindGroup =
+    Sky_log_slog_KindGroup
+
+kindInt64 : Kind
+kindInt64 =
+    Sky_log_slog_KindInt64
+
+kindLogValuer : Kind
+kindLogValuer =
+    Sky_log_slog_KindLogValuer
+
+kindString : Kind
+kindString =
+    Sky_log_slog_KindString
+
+kindTime : Kind
+kindTime =
+    Sky_log_slog_KindTime
+
+kindUint64 : Kind
+kindUint64 =
+    Sky_log_slog_KindUint64
+
+levelDebug : Level
+levelDebug =
+    Sky_log_slog_LevelDebug
+
+levelError : Level
+levelError =
+    Sky_log_slog_LevelError
+
+levelInfo : Level
+levelInfo =
+    Sky_log_slog_LevelInfo
+
+levelKey : String
+levelKey =
+    "level"
+
+levelWarn : Level
+levelWarn =
+    Sky_log_slog_LevelWarn
+
+messageKey : String
+messageKey =
+    "msg"
+
+sourceKey : String
+sourceKey =
+    "source"
+
+timeKey : String
+timeKey =
+    "time"

@@ -15,5 +15,5 @@ func Sky_os_Getenv(arg0 any) any {
 		defer func() { recover() }()
 		result := os.Getenv(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }

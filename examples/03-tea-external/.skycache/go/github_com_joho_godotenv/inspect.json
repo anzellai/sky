@@ -1,0 +1,183 @@
+{
+  "name": "godotenv",
+  "path": "github.com/joho/godotenv",
+  "types": null,
+  "funcs": [
+    {
+      "name": "Exec",
+      "params": [
+        {
+          "name": "filenames",
+          "type": "[]string"
+        },
+        {
+          "name": "cmd",
+          "type": "string"
+        },
+        {
+          "name": "cmdArgs",
+          "type": "[]string"
+        },
+        {
+          "name": "overload",
+          "type": "bool"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Load",
+      "params": [
+        {
+          "name": "filenames",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "variadic": true
+    },
+    {
+      "name": "Marshal",
+      "params": [
+        {
+          "name": "envMap",
+          "type": "map[string]string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Overload",
+      "params": [
+        {
+          "name": "filenames",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "variadic": true
+    },
+    {
+      "name": "Parse",
+      "params": [
+        {
+          "name": "r",
+          "type": "io.Reader"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "map[string]string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Read",
+      "params": [
+        {
+          "name": "filenames",
+          "type": "[]string"
+        }
+      ],
+      "results": [
+        {
+          "name": "envMap",
+          "type": "map[string]string"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ],
+      "variadic": true
+    },
+    {
+      "name": "Unmarshal",
+      "params": [
+        {
+          "name": "str",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "envMap",
+          "type": "map[string]string"
+        },
+        {
+          "name": "err",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "UnmarshalBytes",
+      "params": [
+        {
+          "name": "src",
+          "type": "[]byte"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "map[string]string"
+        },
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    },
+    {
+      "name": "Write",
+      "params": [
+        {
+          "name": "envMap",
+          "type": "map[string]string"
+        },
+        {
+          "name": "filename",
+          "type": "string"
+        }
+      ],
+      "results": [
+        {
+          "name": "",
+          "type": "error"
+        }
+      ]
+    }
+  ],
+  "vars": null,
+  "consts": null
+}

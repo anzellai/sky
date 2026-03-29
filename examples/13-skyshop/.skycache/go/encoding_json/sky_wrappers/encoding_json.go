@@ -16,7 +16,7 @@ func Sky_encoding_json_Marshal(arg0 any) any {
 		result, err := json.Marshal(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_MarshalIndent(arg0 any, arg1 any, arg2 any) any {
@@ -28,7 +28,7 @@ func Sky_encoding_json_MarshalIndent(arg0 any, arg1 any, arg2 any) any {
 		result, err := json.MarshalIndent(_arg0, _arg1, _arg2)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_Unmarshal(arg0 any, arg1 any) any {
@@ -39,7 +39,7 @@ func Sky_encoding_json_Unmarshal(arg0 any, arg1 any) any {
 		err := json.Unmarshal(_arg0, _arg1)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_Valid(arg0 any) any {
@@ -48,7 +48,7 @@ func Sky_encoding_json_Valid(arg0 any) any {
 		defer func() { recover() }()
 		result := json.Valid(_arg0)
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_DecoderDecode(receiver any, arg0 any) any {
@@ -59,7 +59,7 @@ func Sky_encoding_json_DecoderDecode(receiver any, arg0 any) any {
 		err := _receiver.Decode(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_DecoderDisallowUnknownFields(receiver any) any {
@@ -68,7 +68,7 @@ func Sky_encoding_json_DecoderDisallowUnknownFields(receiver any) any {
 		defer func() { recover() }()
 		_receiver.DisallowUnknownFields()
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_DecoderInputOffset(receiver any) any {
@@ -77,7 +77,7 @@ func Sky_encoding_json_DecoderInputOffset(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.InputOffset()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_DecoderMore(receiver any) any {
@@ -86,7 +86,7 @@ func Sky_encoding_json_DecoderMore(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.More()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_DecoderToken(receiver any) any {
@@ -96,7 +96,7 @@ func Sky_encoding_json_DecoderToken(receiver any) any {
 		result, err := _receiver.Token()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_DecoderUseNumber(receiver any) any {
@@ -105,7 +105,7 @@ func Sky_encoding_json_DecoderUseNumber(receiver any) any {
 		defer func() { recover() }()
 		_receiver.UseNumber()
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_DelimString(receiver any) any {
@@ -114,7 +114,7 @@ func Sky_encoding_json_DelimString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_EncoderEncode(receiver any, arg0 any) any {
@@ -125,7 +125,7 @@ func Sky_encoding_json_EncoderEncode(receiver any, arg0 any) any {
 		err := _receiver.Encode(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_EncoderSetEscapeHTML(receiver any, arg0 any) any {
@@ -135,7 +135,7 @@ func Sky_encoding_json_EncoderSetEscapeHTML(receiver any, arg0 any) any {
 		defer func() { recover() }()
 		_receiver.SetEscapeHTML(_arg0)
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_EncoderSetIndent(receiver any, arg0 any, arg1 any) any {
@@ -146,7 +146,7 @@ func Sky_encoding_json_EncoderSetIndent(receiver any, arg0 any, arg1 any) any {
 		defer func() { recover() }()
 		_receiver.SetIndent(_arg0, _arg1)
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_InvalidUTF8ErrorError(receiver any) any {
@@ -155,7 +155,7 @@ func Sky_encoding_json_InvalidUTF8ErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_InvalidUnmarshalErrorError(receiver any) any {
@@ -164,7 +164,7 @@ func Sky_encoding_json_InvalidUnmarshalErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_MarshalerMarshalJSON(receiver any) any {
@@ -174,7 +174,7 @@ func Sky_encoding_json_MarshalerMarshalJSON(receiver any) any {
 		result, err := _receiver.MarshalJSON()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_MarshalerErrorError(receiver any) any {
@@ -183,7 +183,7 @@ func Sky_encoding_json_MarshalerErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_MarshalerErrorUnwrap(receiver any) any {
@@ -193,7 +193,7 @@ func Sky_encoding_json_MarshalerErrorUnwrap(receiver any) any {
 		err := _receiver.Unwrap()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_NumberFloat64(receiver any) any {
@@ -203,7 +203,7 @@ func Sky_encoding_json_NumberFloat64(receiver any) any {
 		result, err := _receiver.Float64()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_NumberInt64(receiver any) any {
@@ -213,7 +213,7 @@ func Sky_encoding_json_NumberInt64(receiver any) any {
 		result, err := _receiver.Int64()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_NumberString(receiver any) any {
@@ -222,7 +222,7 @@ func Sky_encoding_json_NumberString(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.String()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_RawMessageMarshalJSON(receiver any) any {
@@ -232,7 +232,7 @@ func Sky_encoding_json_RawMessageMarshalJSON(receiver any) any {
 		result, err := _receiver.MarshalJSON()
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_RawMessageUnmarshalJSON(receiver any, arg0 any) any {
@@ -243,7 +243,7 @@ func Sky_encoding_json_RawMessageUnmarshalJSON(receiver any, arg0 any) any {
 		err := _receiver.UnmarshalJSON(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_SyntaxErrorError(receiver any) any {
@@ -252,7 +252,7 @@ func Sky_encoding_json_SyntaxErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_UnmarshalFieldErrorError(receiver any) any {
@@ -261,7 +261,7 @@ func Sky_encoding_json_UnmarshalFieldErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_UnmarshalTypeErrorError(receiver any) any {
@@ -270,7 +270,7 @@ func Sky_encoding_json_UnmarshalTypeErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_UnmarshalerUnmarshalJSON(receiver any, arg0 any) any {
@@ -281,7 +281,7 @@ func Sky_encoding_json_UnmarshalerUnmarshalJSON(receiver any, arg0 any) any {
 		err := _receiver.UnmarshalJSON(_arg0)
 		if err != nil { return SkyErr(err.Error()) }
 		return SkyOk(struct{}{})
-	}
+	}()
 }
 
 func Sky_encoding_json_UnsupportedTypeErrorError(receiver any) any {
@@ -290,7 +290,7 @@ func Sky_encoding_json_UnsupportedTypeErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_UnsupportedValueErrorError(receiver any) any {
@@ -299,7 +299,7 @@ func Sky_encoding_json_UnsupportedValueErrorError(receiver any) any {
 		defer func() { recover() }()
 		result := _receiver.Error()
 		return SkyOk(result)
-	}
+	}()
 }
 
 func Sky_encoding_json_FIELD_InvalidUTF8Error_S(receiver any) any {
