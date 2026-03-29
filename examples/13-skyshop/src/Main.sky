@@ -750,9 +750,9 @@ update msg model =
                 
                 Err e ->
                     let
-                        _ = println ("[AUTH] Error: " ++ e)
+                        _ = println ("[AUTH] Error: " ++ e ++ " — signing out to self-heal")
                     in
-                        ({ model | authError = e }, Cmd.none)
+                        handleSignOut { model | authError = e }
                 
                 DoSignOut ->
                     handleSignOut model
