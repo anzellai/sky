@@ -167,7 +167,7 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         depDecls =
             List.concat
                 (List.parallelMap
-                    (compileDependencyModule stdlibEnv loadedModules ffiNames)
+                    (compileDependencyModule combinedEnv loadedModules ffiNames)
                     loadedModules
                 )
         projectRoot = dirOfPath srcRoot
@@ -1900,7 +1900,7 @@ compileDependencyModule stdlibEnv allModules ffiNames pair =
         if Set.member modName ffiNames then
             compileFfiModuleLight allModules pair
         else
-            compileDependencyModuleFull stdlibEnv allModules pair
+            compileDependencyModuleCached stdlibEnv allModules pair
 
 
 compileDependencyModuleCached : Env.TypeEnv -> (List (String, Ast.Module)) -> (String, Ast.Module) -> List GoDecl
@@ -2121,7 +2121,7 @@ compileDependencyModuleFull stdlibEnv allModules pair =
         mod = snd pair
         prefix = String.replace "." "_" modName
         registry =
-            case Checker.checkModule mod Nothing of
+            case Checker.checkModule mod (Just stdlibEnv) of
                 
                 Ok result ->
                     result.registry
