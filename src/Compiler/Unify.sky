@@ -51,9 +51,11 @@ unifyConst nameA t1 t2 =
             if isUniversalUnifier nameA then
                 Ok emptySub
             else
-                Err (
-                "Cannot unify " ++ formatType t1 ++ " with " ++ formatType t2
-                )
+                Err
+                    (
+                    "Cannot unify " ++ formatType t1 ++ " with " ++ formatType
+                                                                        t2
+                    )
 
 
 unifyFun : Type -> Type -> Type -> Result String Substitution
@@ -70,14 +72,18 @@ unifyFun fromA toA t2 =
             if isUniversalUnifier name then
                 Ok emptySub
             else
-                Err (
-                "Cannot unify " ++ formatType (TFun fromA toA) ++ " with " ++ formatType t2
-                )
+                Err
+                    (
+                    "Cannot unify " ++ formatType (TFun fromA toA) ++ " with " ++ formatType
+                                                                                      t2
+                    )
         
         _ ->
-            Err (
-            "Cannot unify " ++ formatType (TFun fromA toA) ++ " with " ++ formatType t2
-            )
+            Err
+                (
+                "Cannot unify " ++ formatType (TFun fromA toA) ++ " with " ++ formatType
+                                                                                  t2
+                )
 
 
 unifyFunParts : Type -> Type -> Type -> Type -> Result String Substitution
@@ -116,14 +122,18 @@ unifyApp ctorA argsA t2 =
             if isUniversalUnifier name then
                 Ok emptySub
             else
-                Err (
-                "Cannot unify " ++ formatType (TApp ctorA argsA) ++ " with " ++ formatType t2
-                )
+                Err
+                    (
+                    "Cannot unify " ++ formatType (TApp ctorA argsA) ++ " with " ++ formatType
+                                                                                        t2
+                    )
         
         _ ->
-            Err (
-            "Cannot unify " ++ formatType (TApp ctorA argsA) ++ " with " ++ formatType t2
-            )
+            Err
+                (
+                "Cannot unify " ++ formatType (TApp ctorA argsA) ++ " with " ++ formatType
+                                                                                    t2
+                )
 
 
 unifyAppParts : Type -> (List Type) -> Type -> (List Type) -> Result String Substitution
@@ -134,9 +144,9 @@ unifyAppParts ctorA argsA ctorB argsB =
             Err e
         
         Ok s0 ->
-            unifyList (List.map (\x -> applySub s0 x) argsA) (
-            List.map (\x -> applySub s0 x) argsB
-            ) s0
+            unifyList (List.map (\x -> applySub s0 x) argsA)
+                (List.map (\x -> applySub s0 x) argsB)
+                s0
 
 
 unifyTuple : (List Type) -> Type -> Result String Substitution
@@ -148,11 +158,15 @@ unifyTuple itemsA t2 =
         
         TTuple itemsB ->
             if List.length itemsA /= List.length itemsB then
-                Err (
-                "Tuple arity mismatch: " ++ String.fromInt (List.length itemsA) ++ " vs " ++ String.fromInt (
-                                                                                             List.length itemsB
-                                                                                             )
-                )
+                Err
+                    (
+                    "Tuple arity mismatch: " ++ String.fromInt
+                                                    (List.length itemsA) ++ " vs " ++ String.fromInt
+                                                                                          (
+                                                                                          List.length
+                                                                                              itemsB
+                                                                                          )
+                    )
             else
                 unifyList itemsA itemsB emptySub
         
@@ -160,14 +174,18 @@ unifyTuple itemsA t2 =
             if isUniversalUnifier name then
                 Ok emptySub
             else
-                Err (
-                "Cannot unify " ++ formatType (TTuple itemsA) ++ " with " ++ formatType t2
-                )
+                Err
+                    (
+                    "Cannot unify " ++ formatType (TTuple itemsA) ++ " with " ++ formatType
+                                                                                     t2
+                    )
         
         _ ->
-            Err (
-            "Cannot unify " ++ formatType (TTuple itemsA) ++ " with " ++ formatType t2
-            )
+            Err
+                (
+                "Cannot unify " ++ formatType (TTuple itemsA) ++ " with " ++ formatType
+                                                                                 t2
+                )
 
 
 unifyRecord : (Dict.Dict String Type) -> Type -> Result String Substitution
@@ -184,14 +202,18 @@ unifyRecord fieldsA t2 =
             if isUniversalUnifier name then
                 Ok emptySub
             else
-                Err (
-                "Cannot unify " ++ formatType (TRecord fieldsA) ++ " with " ++ formatType t2
-                )
+                Err
+                    (
+                    "Cannot unify " ++ formatType (TRecord fieldsA) ++ " with " ++ formatType
+                                                                                       t2
+                    )
         
         _ ->
-            Err (
-            "Cannot unify " ++ formatType (TRecord fieldsA) ++ " with " ++ formatType t2
-            )
+            Err
+                (
+                "Cannot unify " ++ formatType (TRecord fieldsA) ++ " with " ++ formatType
+                                                                                   t2
+                )
 
 
 bindVar : Int -> Type -> Result String Substitution
@@ -206,9 +228,11 @@ bindVar id t =
         
         _ ->
             if Set.member id (freeVars t) then
-                Err (
-                "Infinite type: t" ++ String.fromInt id ++ " occurs in " ++ formatType t
-                )
+                Err
+                    (
+                    "Infinite type: t" ++ String.fromInt id ++ " occurs in " ++ formatType
+                                                                                    t
+                    )
             else
                 Ok (Dict.insert id t Dict.empty)
 
@@ -243,9 +267,8 @@ unifyList ts1 ts2 sub =
                             Err "Type argument count mismatch"
                         
                         t2head :: rest2 ->
-                            case unify (applySub sub t1head) (
-                                 applySub sub t2head
-                                 ) of
+                            case unify (applySub sub t1head)
+                                     (applySub sub t2head) of
                                 
                                 Err e ->
                                     Err e
@@ -258,11 +281,11 @@ unifyRecords : (Dict.Dict String Type) -> (Dict.Dict String Type) -> Result Stri
 unifyRecords fieldsA fieldsB =
     let
         allKeys =
-            Set.toList (
-            Set.union (Set.fromList (Dict.keys fieldsA)) (
-            Set.fromList (Dict.keys fieldsB)
-            )
-            )
+            Set.toList
+                (
+                Set.union (Set.fromList (Dict.keys fieldsA))
+                    (Set.fromList (Dict.keys fieldsB))
+                )
     in
         unifyRecordFields allKeys fieldsA fieldsB emptySub
 
@@ -285,22 +308,23 @@ unifyRecordFields keys fieldsA fieldsB sub =
                         case valB of
                             
                             Just typeB ->
-                                case unify (applySub sub typeA) (
-                                     applySub sub typeB
-                                     ) of
+                                case unify (applySub sub typeA)
+                                         (applySub sub typeB) of
                                     
                                     Err e ->
-                                        Err (
-                                        "In record field '" ++ key ++ "': " ++ e
-                                        )
+                                        Err
+                                            (
+                                            "In record field '" ++ key ++ "': " ++ e
+                                            )
                                     
                                     Ok s ->
-                                        unifyRecordFields rest fieldsA fieldsB (
-                                        composeSubs s sub
-                                        )
+                                        unifyRecordFields rest fieldsA fieldsB
+                                            (composeSubs s sub)
                                     
                                     Nothing ->
-                                        unifyRecordFields rest fieldsA fieldsB sub
+                                        unifyRecordFields rest fieldsA fieldsB
+                                            sub
                                     
                                     Nothing ->
-                                        unifyRecordFields rest fieldsA fieldsB sub
+                                        unifyRecordFields rest fieldsA fieldsB
+                                            sub

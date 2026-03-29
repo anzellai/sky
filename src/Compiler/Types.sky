@@ -104,15 +104,17 @@ freeVars t =
             Set.union (freeVars fromT) (freeVars toT)
         
         TApp ctor args ->
-            List.foldl (\arg acc -> Set.union (freeVars arg) acc) (
-            freeVars ctor
-            ) args
+            List.foldl (\arg acc -> Set.union (freeVars arg) acc)
+                (freeVars ctor)
+                args
         
         TTuple items ->
-            List.foldl (\item acc -> Set.union (freeVars item) acc) Set.empty items
+            List.foldl (\item acc -> Set.union (freeVars item) acc) Set.empty
+                items
         
         TRecord fields ->
-            Dict.foldl (\kk v acc -> Set.union (freeVars v) acc) Set.empty fields
+            Dict.foldl (\kk v acc -> Set.union (freeVars v) acc) Set.empty
+                fields
         
         _ ->
             Set.empty
@@ -131,13 +133,16 @@ instantiate : (Ref.Ref Int) -> Scheme -> Type
 instantiate counter scheme =
     let
         sub =
-            List.foldl (
-            \qv s ->
-                let
-                    fresh = freshVar counter Nothing
-                in
-                    Dict.insert qv fresh s
-            ) emptySub scheme.quantified
+            List.foldl
+                (
+                \qv s ->
+                    let
+                        fresh = freshVar counter Nothing
+                    in
+                        Dict.insert qv fresh s
+                )
+                emptySub
+                scheme.quantified
     in
         applySub sub scheme.type_
 
@@ -147,9 +152,10 @@ generalize env t =
     let
         typeVars = freeVars t
         envVars =
-            Dict.foldl (
-            \kk scheme acc -> Set.union (freeVarsInScheme scheme) acc
-            ) Set.empty env
+            Dict.foldl
+                (\kk scheme acc -> Set.union (freeVarsInScheme scheme) acc)
+                Set.empty
+                env
         quantified = Set.toList (Set.diff typeVars envVars)
     in
         { quantified = quantified , type_ = t }
@@ -181,9 +187,9 @@ formatType t =
         TRecord fields ->
             let
                 fieldStrs =
-                    List.map (
-                    \pair -> fst pair ++ " : " ++ formatType (snd pair)
-                    ) (Dict.toList fields)
+                    List.map
+                        (\pair -> fst pair ++ " : " ++ formatType (snd pair))
+                        (Dict.toList fields)
             in
                 "{ " ++ String.join " , " fieldStrs ++ " }"
         

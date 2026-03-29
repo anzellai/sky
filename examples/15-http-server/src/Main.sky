@@ -7,29 +7,33 @@ import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
 
 main =
-    Server.listen 8080 [ Server.get "/" handleHome
-    , Server.get "/hello/:name" handleHello
-    , Server.get "/api/status" handleStatus
-    , Server.post "/api/echo" handleEcho
-    , Server.get "/cookie-demo" handleCookieDemo
-    , Server.get "/redirect" handleRedirect
-    ]
+    Server.listen 8080
+        [ Server.get "/" handleHome
+        , Server.get "/hello/:name" handleHello
+        , Server.get "/api/status" handleStatus
+        , Server.post "/api/echo" handleEcho
+        , Server.get "/cookie-demo" handleCookieDemo
+        , Server.get "/redirect" handleRedirect
+        ]
 
 
 handleHome : Request -> Task String Response
 handleHome req =
-    Task.succeed (
-    Server.html (
-    String.join "" [ "<h1>Sky HTTP Server</h1>"
-    , "<ul>"
-    , "<li><a href='/hello/world'>Hello World</a></li>"
-    , "<li><a href='/api/status'>API Status</a></li>"
-    , "<li><a href='/cookie-demo'>Cookie Demo</a></li>"
-    , "<li><a href='/redirect'>Redirect</a></li>"
-    , "</ul>"
-    ]
-    )
-    )
+    Task.succeed
+        (
+        Server.html
+            (
+            String.join ""
+                [ "<h1>Sky HTTP Server</h1>"
+                , "<ul>"
+                , "<li><a href='/hello/world'>Hello World</a></li>"
+                , "<li><a href='/api/status'>API Status</a></li>"
+                , "<li><a href='/cookie-demo'>Cookie Demo</a></li>"
+                , "<li><a href='/redirect'>Redirect</a></li>"
+                , "</ul>"
+                ]
+            )
+        )
 
 
 handleHello : Request -> Task String Response
@@ -54,10 +58,11 @@ handleStatus req =
 
 handleEcho : Request -> Task String Response
 handleEcho req =
-    Task.succeed (
-    Server.json req.body
-        |> Server.withHeader "X-Echo" "true"
-    )
+    Task.succeed
+        (
+        Server.json req.body
+            |> Server.withHeader "X-Echo" "true"
+        )
 
 
 handleCookieDemo : Request -> Task String Response
@@ -79,12 +84,14 @@ handleCookieDemo req =
                             1
         visitCookie = Server.cookie "visits" (String.fromInt visitCount)
     in
-        Task.succeed (
-        Server.html (
-        "<h1>Visit #" ++ String.fromInt visitCount ++ "</h1><p>Refresh to increment!</p>"
-        )
-            |> Server.withCookie visitCookie
-        )
+        Task.succeed
+            (
+            Server.html
+                (
+                "<h1>Visit #" ++ String.fromInt visitCount ++ "</h1><p>Refresh to increment!</p>"
+                )
+                |> Server.withCookie visitCookie
+            )
 
 
 handleRedirect : Request -> Task String Response

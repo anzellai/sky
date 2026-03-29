@@ -58,19 +58,17 @@ update msg counter =
 -- The toMsg function wraps internal Msgs for the parent's event system.
 view : (Msg -> parentMsg) -> Counter -> VNode
 view toMsg counter =
-    div [ class "counter-component" ] [ h3 [] [ text counter.label ]
-    , div [ class "counter-display" ] [ span [ class "count" ] [ text (
-                                                                 String.fromInt counter.count
-                                                                 )
-                                        ]
-      ]
-    , div [ class "counter-buttons" ] [ button [ onClick (toMsg Decrement)
-                                        , class "btn"
-                                        ] [ text "-" ]
-      , button [ onClick (toMsg Reset) , class "btn btn-sm" ] [ text "Reset" ]
-      , button [ onClick (toMsg Increment) , class "btn" ] [ text "+" ]
-      ]
-    ]
+    div [ class "counter-component" ]
+        [ h3 [] [ text counter.label ]
+        , div [ class "counter-display" ]
+              [ span [ class "count" ] [ text (String.fromInt counter.count) ] ]
+        , div [ class "counter-buttons" ]
+              [ button [ onClick (toMsg Decrement) , class "btn" ] [ text "-" ]
+              , button [ onClick (toMsg Reset) , class "btn btn-sm" ]
+                    [ text "Reset" ]
+              , button [ onClick (toMsg Increment) , class "btn" ] [ text "+" ]
+              ]
+        ]
 
 
 -- Query functions

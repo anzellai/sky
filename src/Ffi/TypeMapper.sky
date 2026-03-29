@@ -112,7 +112,8 @@ goTypeToAssertion goType =
         "sky_asError"
     else if goType == "interface{}" || goType == "any" then
         ""
-    else if String.startsWith "func(" goType && String.contains "ResponseWriter" goType then
+    else if String.startsWith "func(" goType && String.contains "ResponseWriter"
+                                                    goType then
         "sky_asHttpHandler"
     else if String.startsWith "func(" goType then
         ""
@@ -183,4 +184,5 @@ lowerCamelCase s =
     if String.isEmpty s then
         ""
     else
-        String.toLower (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+        String.toLower (String.slice 0 1 s) ++ String.slice 1 (String.length s)
+                                                   s

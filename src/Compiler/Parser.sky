@@ -18,7 +18,8 @@ dispatchDeclaration first second state =
         parseTypeAlias state
     else if first == "type" then
         parseTypeDecl state
-    else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkColon then
+    else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state)
+                                                TkColon then
         parseTypeAnnot state
     else if matchKind TkIdentifier state then
         parseFunDecl state
@@ -28,7 +29,11 @@ dispatchDeclaration first second state =
 
 parseVariantFields : ParserState -> (List TypeExpr, ParserState)
 parseVariantFields state =
-    if matchKind TkUpperIdentifier state || matchKind TkIdentifier state || matchKind TkLParen state || matchKind TkLBrace state then
+    if matchKind TkUpperIdentifier state || matchKind TkIdentifier state || matchKind
+                                                                                TkLParen
+                                                                                state || matchKind
+                                                                                             TkLBrace
+                                                                                             state then
         if peekColumn state == 1 || matchKind TkPipe state then
             ([], state)
         else
@@ -48,8 +53,13 @@ parseVariantFields state =
 
 parseTypeArgs : ParserState -> (List TypeExpr, ParserState)
 parseTypeArgs state =
-    if matchKind TkUpperIdentifier state || matchKind TkIdentifier state || matchKind TkLParen state || matchKind TkLBrace state then
-        if peekColumn state == 1 || matchKind TkEquals state || matchKind TkPipe state then
+    if matchKind TkUpperIdentifier state || matchKind TkIdentifier state || matchKind
+                                                                                TkLParen
+                                                                                state || matchKind
+                                                                                             TkLBrace
+                                                                                             state then
+        if peekColumn state == 1 || matchKind TkEquals state || matchKind TkPipe
+                                                                    state then
             ([], state)
         else
             case parseTypePrimary state of
@@ -99,12 +109,13 @@ parseModule state =
                         ( imports , s4 ) = parseImports s3
                         ( decls , s5 ) = parseDeclarations s4
                     in
-                        Ok ({ name = name
-                            , exposing_ = exposing_
-                            , imports = imports
-                            , declarations = decls
-                            , span = emptySpan
-                            }, s5)
+                        Ok
+                            ({ name = name
+                             , exposing_ = exposing_
+                             , imports = imports
+                             , declarations = decls
+                             , span = emptySpan
+                             }, s5)
 
 
 parseModuleName : ParserState -> Result String (List String, ParserState)
@@ -248,11 +259,12 @@ parseImport state =
                                 ("", s2)
                         ( exposing_ , s4 ) = parseOptionalExposing s3
                     in
-                        Ok ({ moduleName = modName
-                            , alias_ = alias_
-                            , exposing_ = exposing_
-                            , span = emptySpan
-                            }, s4)
+                        Ok
+                            ({ moduleName = modName
+                             , alias_ = alias_
+                             , exposing_ = exposing_
+                             , span = emptySpan
+                             }, s4)
 
 
 getLexemeAt1 : ParserState -> String
@@ -309,7 +321,8 @@ parseForeignImport state =
             Ok ( pkgToken , s3 ) ->
                 let
                     pkgName =
-                        String.slice 1 (String.length pkgToken.lexeme - 1) pkgToken.lexeme
+                        String.slice 1 (String.length pkgToken.lexeme - 1)
+                            pkgToken.lexeme
                     ( exposing_ , s4 ) = parseOptionalExposing s3
                     names =
                         case exposing_ of
@@ -326,7 +339,8 @@ parseForeignImport state =
                                 Ok (ForeignImportDecl n pkgName n emptySpan, s4)
                             
                             Nothing ->
-                                Err "Foreign import must expose at least one name"
+                                Err
+                                    "Foreign import must expose at least one name"
                 in
                     firstDecl
 
@@ -358,7 +372,10 @@ parseTypeAlias state =
                                     Err e
                                 
                                 Ok ( typeExpr , s6 ) ->
-                                    Ok (TypeAliasDecl name.lexeme params typeExpr emptySpan, s6)
+                                    Ok
+                                        (TypeAliasDecl name.lexeme params
+                                             typeExpr
+                                             emptySpan, s6)
 
 
 parseTypeDecl : ParserState -> Result String (Declaration, ParserState)
@@ -384,7 +401,9 @@ parseTypeDecl state =
                             let
                                 ( variants , s5 ) = parseTypeVariants s4
                             in
-                                Ok (TypeDecl name.lexeme params variants emptySpan, s5)
+                                Ok
+                                    (TypeDecl name.lexeme params variants
+                                         emptySpan, s5)
 
 
 parseTypeParams : ParserState -> (List String, ParserState)
@@ -417,10 +436,9 @@ buildVariant name s1 = finishVariant name.lexeme (parseVariantFields s1)
 finishVariant : String -> (List TypeExpr, ParserState) -> (List TypeVariant, ParserState)
 finishVariant variantName fieldResult =
     if matchKind TkPipe (snd fieldResult) then
-        prependVariant { name = variantName
-                       , fields = fst fieldResult
-                       , span = emptySpan
-                       } (parseTypeVariants (snd (advance (snd fieldResult))))
+        prependVariant
+            { name = variantName , fields = fst fieldResult , span = emptySpan }
+            (parseTypeVariants (snd (advance (snd fieldResult))))
     else
         ([ { name = variantName , fields = fst fieldResult , span = emptySpan }
         ], snd fieldResult)

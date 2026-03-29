@@ -28,7 +28,8 @@ parseExprLoop minPrec left state =
         Ok (left, state)
     else if matchKind TkPipe state then
         Ok (left, state)
-    else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkColon then
+    else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state)
+                                                TkColon then
         Ok (left, state)
     else if matchKind TkOperator state then
         let
@@ -62,9 +63,12 @@ parseExprLoop minPrec left state =
                                         Err e
                                     
                                     Ok ( right , s2 ) ->
-                                        parseExprLoop minPrec (
-                                        BinaryExpr opToken.lexeme left right emptySpan
-                                        ) s2
+                                        parseExprLoop minPrec
+                                            (
+                                            BinaryExpr opToken.lexeme left right
+                                                emptySpan
+                                            )
+                                            s2
     else
         Ok (left, state)
 
@@ -116,7 +120,8 @@ parseApplicationArgs fnCol fn state =
             Ok (fn, state)
         else if peekColumn state < fnCol then
             Ok (fn, state)
-        else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkEquals then
+        else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state)
+                                                    TkEquals then
             Ok (fn, state)
         else if matchKind TkIdentifier state && peekColumn state <= 1 then
             Ok (fn, state)
@@ -124,7 +129,8 @@ parseApplicationArgs fnCol fn state =
             Ok (fn, state)
         else if matchKind TkPipe state then
             Ok (fn, state)
-        else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state) TkColon then
+        else if matchKind TkIdentifier state && tokenKindEq (peekAt1Kind state)
+                                                    TkColon then
             Ok (fn, state)
         else
             case parsePrimary state of
@@ -133,14 +139,40 @@ parseApplicationArgs fnCol fn state =
                     Ok (fn, state)
                 
                 Ok ( arg , s1 ) ->
-                    parseApplicationArgs fnCol (CallExpr fn [ arg ] emptySpan) s1
+                    parseApplicationArgs fnCol (CallExpr fn [ arg ] emptySpan)
+                        s1
     else
         Ok (fn, state)
 
 
 isStartOfPrimary : ParserState -> Bool
 isStartOfPrimary state =
-    matchKind TkIdentifier state || matchKind TkUpperIdentifier state || matchKind TkInteger state || matchKind TkFloat state || matchKind TkString state || matchKind TkChar state || matchKind TkLParen state || matchKind TkLBrace state || matchKind TkLBracket state || matchKind TkBackslash state || matchKindLex TkKeyword "case" state || matchKindLex TkKeyword "if" state || matchKindLex TkKeyword "let" state
+    matchKind TkIdentifier state || matchKind TkUpperIdentifier state || matchKind
+                                                                             TkInteger
+                                                                             state || matchKind
+                                                                                          TkFloat
+                                                                                          state || matchKind
+                                                                                                       TkString
+                                                                                                       state || matchKind
+                                                                                                                    TkChar
+                                                                                                                    state || matchKind
+                                                                                                                                 TkLParen
+                                                                                                                                 state || matchKind
+                                                                                                                                              TkLBrace
+                                                                                                                                              state || matchKind
+                                                                                                                                                           TkLBracket
+                                                                                                                                                           state || matchKind
+                                                                                                                                                                        TkBackslash
+                                                                                                                                                                        state || matchKindLex
+                                                                                                                                                                                     TkKeyword
+                                                                                                                                                                                     "case"
+                                                                                                                                                                                     state || matchKindLex
+                                                                                                                                                                                                  TkKeyword
+                                                                                                                                                                                                  "if"
+                                                                                                                                                                                                  state || matchKindLex
+                                                                                                                                                                                                               TkKeyword
+                                                                                                                                                                                                               "let"
+                                                                                                                                                                                                               state
 
 
 parsePrimary : ParserState -> Result String (Expression, ParserState)
@@ -176,12 +208,13 @@ parsePrimary state =
         let
             ( tok , s1 ) = advance state
         in
-            if matchKind TkDot s1 && matchKind TkIdentifier (
-                                     let
-                                         ( _ , s ) = advance s1
-                                     in
-                                         s
-                                     ) then
+            if matchKind TkDot s1 && matchKind TkIdentifier
+                                         (
+                                         let
+                                             ( _ , s ) = advance s1
+                                         in
+                                             s
+                                         ) then
                 parseFieldAccess tok s1
             else
                 Ok (IdentifierExpr tok.lexeme tok.span, s1)
@@ -319,7 +352,10 @@ parseIfExpr state =
                                                 Err e
                                             
                                             Ok ( elseExpr , s6 ) ->
-                                                Ok (IfExpr cond thenExpr elseExpr emptySpan, s6)
+                                                Ok
+                                                    (IfExpr cond thenExpr
+                                                         elseExpr
+                                                         emptySpan, s6)
 
 
 parseLetExpr : ParserState -> Result String (Expression, ParserState)
@@ -428,9 +464,11 @@ parseRecordOrUpdate state =
                         Err e
                     
                     Ok ( _ , s5 ) ->
-                        Ok (RecordUpdateExpr (
-                            IdentifierExpr base.lexeme base.span
-                            ) fields emptySpan, s5)
+                        Ok
+                            (RecordUpdateExpr
+                                 (IdentifierExpr base.lexeme base.span)
+                                 fields
+                                 emptySpan, s5)
         else
             let
                 ( fields , s2 ) = parseRecordFields s1
@@ -592,4 +630,6 @@ parseFieldAccess base state =
         ( _ , s1 ) = advance state
         ( field , s2 ) = advance s1
     in
-        Ok (FieldAccessExpr (IdentifierExpr base.lexeme base.span) field.lexeme emptySpan, s2)
+        Ok
+            (FieldAccessExpr (IdentifierExpr base.lexeme base.span) field.lexeme
+                 emptySpan, s2)

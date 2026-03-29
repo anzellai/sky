@@ -11,34 +11,46 @@ import Net.Http as Http
 
 main =
     Time.now ()
-        |> Task.andThen (
-           \now ->
-               let
-                   _ = println "Current time:" now
-                   data = "Hello, Sky!"
-               in
-                   Sha256.sum256 (String.toBytes data)
-                       |> Task.andThen (
-                          \hash ->
-                              Hex.encodeToString hash
-                                  |> Task.andThen (
-                                     \hashStr ->
-                                         let
-                                             _ =
-                                                 println "SHA256 of 'Hello, Sky!':" hashStr
-                                             _ =
-                                                 println "Sending HTTP request..."
-                                         in
-                                             Http.get "https://httpbin.org/get"
-                                                 |> Task.andThen (
-                                                    \resp ->
-                                                        Task.succeed (
-                                                        println "HTTP status:" (
-                                                        Http.responseStatusCode resp
-                                                        )
-                                                        )
-                                                    )
-                                     )
-                          )
-           )
+        |> Task.andThen
+               (
+               \now ->
+                   let
+                       _ = println "Current time:" now
+                       data = "Hello, Sky!"
+                   in
+                       Sha256.sum256 (String.toBytes data)
+                           |> Task.andThen
+                                  (
+                                  \hash ->
+                                      Hex.encodeToString hash
+                                          |> Task.andThen
+                                                 (
+                                                 \hashStr ->
+                                                     let
+                                                         _ =
+                                                             println
+                                                                 "SHA256 of 'Hello, Sky!':"
+                                                                 hashStr
+                                                         _ =
+                                                             println
+                                                                 "Sending HTTP request..."
+                                                     in
+                                                         Http.get
+                                                             "https://httpbin.org/get"
+                                                             |> Task.andThen
+                                                                    (
+                                                                    \resp ->
+                                                                        Task.succeed
+                                                                            (
+                                                                            println
+                                                                                "HTTP status:"
+                                                                                (
+                                                                                Http.responseStatusCode
+                                                                                    resp
+                                                                                )
+                                                                            )
+                                                                    )
+                                                 )
+                                  )
+               )
         |> Task.perform

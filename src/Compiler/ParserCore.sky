@@ -92,9 +92,13 @@ consume kind state =
                 sp = t.span
                 st = sp.start
             in
-                Err (
-                "Expected " ++ tokenKindStr kind ++ " but got " ++ tokenKindStr t.kind ++ " '" ++ t.lexeme ++ "' at " ++ String.fromInt st.line ++ ":" ++ String.fromInt st.column
-                )
+                Err
+                    (
+                    "Expected " ++ tokenKindStr kind ++ " but got " ++ tokenKindStr
+                                                                           t.kind ++ " '" ++ t.lexeme ++ "' at " ++ String.fromInt
+                                                                                                                        st.line ++ ":" ++ String.fromInt
+                                                                                                                                              st.column
+                    )
 
 
 consumeLex : TokenKind -> String -> ParserState -> Result String (Token, ParserState)
@@ -109,9 +113,12 @@ consumeLex kind lex state =
                 sp = t.span
                 st = sp.start
             in
-                Err (
-                "Expected " ++ lex ++ " but got '" ++ t.lexeme ++ "' at " ++ String.fromInt st.line ++ ":" ++ String.fromInt st.column
-                )
+                Err
+                    (
+                    "Expected " ++ lex ++ " but got '" ++ t.lexeme ++ "' at " ++ String.fromInt
+                                                                                     st.line ++ ":" ++ String.fromInt
+                                                                                                           st.column
+                    )
 
 
 tokenKindEq : TokenKind -> TokenKind -> Bool
@@ -260,19 +267,21 @@ unescapeString s =
 
 filterLayout : (List Token) -> List Token
 filterLayout tokens =
-    List.filter (
-    \t ->
-        case t.kind of
-            
-            TkNewline ->
-                False
-            
-            TkIndent ->
-                False
-            
-            TkDedent ->
-                False
-            
-            _ ->
-                True
-    ) tokens
+    List.filter
+        (
+        \t ->
+            case t.kind of
+                
+                TkNewline ->
+                    False
+                
+                TkIndent ->
+                    False
+                
+                TkDedent ->
+                    False
+                
+                _ ->
+                    True
+        )
+        tokens

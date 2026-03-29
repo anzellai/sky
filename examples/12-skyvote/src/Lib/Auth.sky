@@ -27,20 +27,19 @@ createUser username email password =
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash = hashPassword password
         result =
-            Db.exec "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)" [ id
-            , username
-            , email
-            , passHash
-            ]
+            Db.exec
+                "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
+                [ id , username , email , passHash ]
     in
         case result of
             
             Ok _ ->
                 let
                     _ =
-                        println (
-                        "[AUTH] User created: " ++ username ++ " (" ++ email ++ ")"
-                        )
+                        println
+                            (
+                            "[AUTH] User created: " ++ username ++ " (" ++ email ++ ")"
+                            )
                 in
                     Ok id
             
@@ -51,8 +50,9 @@ createUser username email password =
 authenticateUser email password =
     let
         rows =
-            Db.queryRows "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1" [ email
-            ]
+            Db.queryRows
+                "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
+                [ email ]
         userRows = Result.withDefault [] rows
         maybeUser = List.head userRows
     in
@@ -70,9 +70,10 @@ authenticateUser email password =
                     else
                         let
                             _ =
-                                println (
-                                "[AUTH] Sign-in failed (bad password): " ++ email
-                                )
+                                println
+                                    (
+                                    "[AUTH] Sign-in failed (bad password): " ++ email
+                                    )
                         in
                             Err "Invalid email or password."
             
@@ -86,8 +87,9 @@ authenticateUser email password =
 getUserById userId =
     let
         rows =
-            Db.queryRows "SELECT id, username, email FROM users WHERE id = ? LIMIT 1" [ userId
-            ]
+            Db.queryRows
+                "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
+                [ userId ]
         userRows = Result.withDefault [] rows
     in
         List.head userRows

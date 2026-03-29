@@ -54,42 +54,41 @@ ideaCard idea userId =
             else
                 ""
     in
-        div [ class "idea-card" ] [ div [] [ button [ onClick (
-                                                      ToggleVote ideaId
-                                                      )
-                                             , class "vote-btn"
-                                             ] [ span [ class "vote-count" ] [ text voteCount
-                                                 ]
-                                             , span [ class "vote-label" ] [ text "votes"
-                                               ]
-                                             ]
-                                    ]
-        , div [ class "idea-content" ] [ div [] [ button [ onClick (
-                                                           ViewIdea ideaId
-                                                           )
-                                                  , class "idea-title-btn"
-                                                  ] [ text (
-                                                      Db.getField "title" idea
-                                                      )
-                                                  ]
-                                         ]
-          , p [ class "idea-desc" ] [ text (Db.getField "description" idea) ]
-          , div [ class "idea-meta" ] [ categoryBadge category
-            , statusBadge status
-            , span [] [ text ("by " ++ authorName) ]
-            , span [] [ text (commentCount ++ " comments") ]
+        div [ class "idea-card" ]
+            [ div []
+                  [ button [ onClick (ToggleVote ideaId) , class "vote-btn" ]
+                        [ span [ class "vote-count" ] [ text voteCount ]
+                        , span [ class "vote-label" ] [ text "votes" ]
+                        ]
+                  ]
+            , div [ class "idea-content" ]
+                  [ div []
+                        [ button
+                              [ onClick (ViewIdea ideaId)
+                              , class "idea-title-btn"
+                              ]
+                              [ text (Db.getField "title" idea) ]
+                        ]
+                  , p [ class "idea-desc" ]
+                        [ text (Db.getField "description" idea) ]
+                  , div [ class "idea-meta" ]
+                        [ categoryBadge category
+                        , statusBadge status
+                        , span [] [ text ("by " ++ authorName) ]
+                        , span [] [ text (commentCount ++ " comments") ]
+                        ]
+                  ]
             ]
-          ]
-        ]
 
 
 -- ══════════════════════════════════════════════════════
 -- STAT CARD
 -- ══════════════════════════════════════════════════════
 statCard label value =
-    div [ class "stat-card" ] [ div [ class "stat-value" ] [ text value ]
-    , div [ class "stat-label" ] [ text label ]
-    ]
+    div [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text value ]
+        , div [ class "stat-label" ] [ text label ]
+        ]
 
 
 -- ══════════════════════════════════════════════════════

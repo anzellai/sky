@@ -105,10 +105,11 @@ skipWhitespace state =
             ch = charAt state.source state.offset
         in
             if ch == ' ' || ch == '\t' then
-                skipWhitespace { state
-                               | offset = state.offset + 1
-                               , column = state.column + 1
-                               }
+                skipWhitespace
+                    { state
+                    | offset = state.offset + 1
+                    , column = state.column + 1
+                    }
             else
                 state
 
@@ -124,10 +125,11 @@ skipLineComment state =
             if ch == '\n' then
                 state
             else
-                skipLineComment { state
-                                | offset = state.offset + 1
-                                , column = state.column + 1
-                                }
+                skipLineComment
+                    { state
+                    | offset = state.offset + 1
+                    , column = state.column + 1
+                    }
 
 
 lexString : LexerState -> LexerState
@@ -167,15 +169,17 @@ lexStringBody state =
             if ch == '"' then
                 state
             else if ch == '\\' then
-                lexStringBody { state
-                              | offset = state.offset + 2
-                              , column = state.column + 2
-                              }
+                lexStringBody
+                    { state
+                    | offset = state.offset + 2
+                    , column = state.column + 2
+                    }
             else
-                lexStringBody { state
-                              | offset = state.offset + 1
-                              , column = state.column + 1
-                              }
+                lexStringBody
+                    { state
+                    | offset = state.offset + 1
+                    , column = state.column + 1
+                    }
 
 
 lexChar : LexerState -> LexerState
@@ -218,10 +222,11 @@ lexNumber state =
             if s1.offset < String.length s1.source && charAt s1.source s1.offset == '.' then
                 let
                     s2 =
-                        consumeDigits { s1
-                                      | offset = s1.offset + 1
-                                      , column = s1.column + 1
-                                      }
+                        consumeDigits
+                            { s1
+                            | offset = s1.offset + 1
+                            , column = s1.column + 1
+                            }
                 in
                     (s2, TkFloat)
             else
@@ -251,10 +256,8 @@ consumeDigits state =
     if state.offset >= String.length state.source then
         state
     else if Char.isDigit (charAt state.source state.offset) then
-        consumeDigits { state
-                      | offset = state.offset + 1
-                      , column = state.column + 1
-                      }
+        consumeDigits
+            { state | offset = state.offset + 1 , column = state.column + 1 }
     else
         state
 
@@ -299,10 +302,11 @@ consumeIdentChars state =
             ch = charAt state.source state.offset
         in
             if Char.isAlphaNum ch || ch == '_' then
-                consumeIdentChars { state
-                                  | offset = state.offset + 1
-                                  , column = state.column + 1
-                                  }
+                consumeIdentChars
+                    { state
+                    | offset = state.offset + 1
+                    , column = state.column + 1
+                    }
             else
                 state
 

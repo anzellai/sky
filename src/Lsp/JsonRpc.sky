@@ -136,9 +136,9 @@ jsonGetString key json =
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (
-                    String.length json
-                    ) json
+                    String.slice (keyIdx + String.length searchKey)
+                        (String.length json)
+                        json
                 colonIdx = findInString ":" afterKey 0
             in
                 if colonIdx < 0 then
@@ -146,14 +146,20 @@ jsonGetString key json =
                 else
                     let
                         afterColon =
-                            String.trim (
-                            String.slice (colonIdx + 1) (String.length afterKey) afterKey
-                            )
+                            String.trim
+                                (
+                                String.slice (colonIdx + 1)
+                                    (String.length afterKey)
+                                    afterKey
+                                )
                     in
                         if String.startsWith "\"" afterColon then
-                            extractQuotedString (
-                            String.slice 1 (String.length afterColon) afterColon
-                            ) ""
+                            extractQuotedString
+                                (
+                                String.slice 1 (String.length afterColon)
+                                    afterColon
+                                )
+                                ""
                         else
                             takeUntilDelimiter afterColon ""
 
@@ -169,9 +175,9 @@ jsonGetRaw key json =
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (
-                    String.length json
-                    ) json
+                    String.slice (keyIdx + String.length searchKey)
+                        (String.length json)
+                        json
                 colonIdx = findInString ":" afterKey 0
             in
                 if colonIdx < 0 then
@@ -179,14 +185,21 @@ jsonGetRaw key json =
                 else
                     let
                         afterColon =
-                            String.trim (
-                            String.slice (colonIdx + 1) (String.length afterKey) afterKey
-                            )
+                            String.trim
+                                (
+                                String.slice (colonIdx + 1)
+                                    (String.length afterKey)
+                                    afterKey
+                                )
                     in
                         if String.startsWith "\"" afterColon then
-                            "\"" ++ extractQuotedString (
-                                    String.slice 1 (String.length afterColon) afterColon
-                                    ) "" ++ "\""
+                            "\"" ++ extractQuotedString
+                                        (
+                                        String.slice 1
+                                            (String.length afterColon)
+                                            afterColon
+                                        )
+                                        "" ++ "\""
                         else
                             takeUntilDelimiter afterColon ""
 
@@ -202,9 +215,9 @@ jsonGetInt key json =
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (
-                    String.length json
-                    ) json
+                    String.slice (keyIdx + String.length searchKey)
+                        (String.length json)
+                        json
                 colonIdx = findInString ":" afterKey 0
             in
                 if colonIdx < 0 then
@@ -212,9 +225,12 @@ jsonGetInt key json =
                 else
                     let
                         afterColon =
-                            String.trim (
-                            String.slice (colonIdx + 1) (String.length afterKey) afterKey
-                            )
+                            String.trim
+                                (
+                                String.slice (colonIdx + 1)
+                                    (String.length afterKey)
+                                    afterKey
+                                )
                         numStr = takeWhileDigit afterColon ""
                     in
                         case String.toInt numStr of
@@ -237,9 +253,9 @@ jsonGetObject key json =
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (
-                    String.length json
-                    ) json
+                    String.slice (keyIdx + String.length searchKey)
+                        (String.length json)
+                        json
                 colonIdx = findInString ":" afterKey 0
             in
                 if colonIdx < 0 then
@@ -247,9 +263,12 @@ jsonGetObject key json =
                 else
                     let
                         afterColon =
-                            String.trim (
-                            String.slice (colonIdx + 1) (String.length afterKey) afterKey
-                            )
+                            String.trim
+                                (
+                                String.slice (colonIdx + 1)
+                                    (String.length afterKey)
+                                    afterKey
+                                )
                     in
                         if String.startsWith "{" afterColon then
                             extractBraced afterColon 0 0
@@ -268,9 +287,9 @@ jsonGetArrayRaw key json =
         else
             let
                 afterKey =
-                    String.slice (keyIdx + String.length searchKey) (
-                    String.length json
-                    ) json
+                    String.slice (keyIdx + String.length searchKey)
+                        (String.length json)
+                        json
                 colonIdx = findInString ":" afterKey 0
             in
                 if colonIdx < 0 then
@@ -278,9 +297,12 @@ jsonGetArrayRaw key json =
                 else
                     let
                         afterColon =
-                            String.trim (
-                            String.slice (colonIdx + 1) (String.length afterKey) afterKey
-                            )
+                            String.trim
+                                (
+                                String.slice (colonIdx + 1)
+                                    (String.length afterKey)
+                                    afterKey
+                                )
                     in
                         if String.startsWith "[" afterColon then
                             extractBracketed afterColon 0 0
@@ -367,9 +389,8 @@ splitJsonElements s idx start depth acc =
                 let
                     element = String.trim (String.slice start idx s)
                 in
-                    splitJsonElements s (idx + 1) (idx + 1) depth (
-                    List.append acc [ element ]
-                    )
+                    splitJsonElements s (idx + 1) (idx + 1) depth
+                        (List.append acc [ element ])
             else
                 splitJsonElements s (idx + 1) start depth acc
 
@@ -416,9 +437,9 @@ extractQuotedString remaining acc =
                         else
                             escaped
                 in
-                    extractQuotedString (
-                    String.slice 1 (String.length rest) rest
-                    ) (acc ++ decoded)
+                    extractQuotedString
+                        (String.slice 1 (String.length rest) rest)
+                        (acc ++ decoded)
             else
                 extractQuotedString rest (acc ++ ch)
 
@@ -432,9 +453,9 @@ takeWhileDigit remaining acc =
             ch = String.slice 0 1 remaining
         in
             if ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9" then
-                takeWhileDigit (
-                String.slice 1 (String.length remaining) remaining
-                ) (acc ++ ch)
+                takeWhileDigit
+                    (String.slice 1 (String.length remaining) remaining)
+                    (acc ++ ch)
             else
                 acc
 
@@ -450,9 +471,9 @@ takeUntilDelimiter remaining acc =
             if ch == "," || ch == "}" || ch == "]" || ch == " " || ch == "\n" || ch == "\r" then
                 acc
             else
-                takeUntilDelimiter (
-                String.slice 1 (String.length remaining) remaining
-                ) (acc ++ ch)
+                takeUntilDelimiter
+                    (String.slice 1 (String.length remaining) remaining)
+                    (acc ++ ch)
 
 
 extractBraced : String -> Int -> Int -> String

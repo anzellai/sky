@@ -98,11 +98,13 @@ cmdBuild _ =
                         if goModExists then
                             Ok ""
                         else
-                            File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
+                            File.writeFile goModPath
+                                "module sky-app\n\ngo 1.26.0\n"
                     hasFfiWrappers =
-                        case Process.run "sh" [ "-c"
-                             , "ls " ++ outDir ++ "/sky_*.go " ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
-                             ] of
+                        case Process.run "sh"
+                                 [ "-c"
+                                 , "ls " ++ outDir ++ "/sky_*.go " ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
+                                 ] of
                             
                             Ok output ->
                                 not (String.isEmpty (String.trim output))
@@ -122,16 +124,18 @@ cmdBuild _ =
                             let
                                 _ = println "Running go mod tidy..."
                             in
-                                Process.run "sh" [ "-c"
-                                , "cd " ++ outDir ++ " && go mod tidy 2>&1"
-                                ]
+                                Process.run "sh"
+                                    [ "-c"
+                                    , "cd " ++ outDir ++ " && go mod tidy 2>&1"
+                                    ]
                         else
                             Ok ""
                     _ = println "Running go build..."
                     buildResult =
-                        Process.run "sh" [ "-c"
-                        , "cd " ++ outDir ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion=" ++ Args.skyVersion ++ "' -o app"
-                        ]
+                        Process.run "sh"
+                            [ "-c"
+                            , "cd " ++ outDir ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion=" ++ Args.skyVersion ++ "' -o app"
+                            ]
                 in
                     case buildResult of
                         
@@ -141,9 +145,8 @@ cmdBuild _ =
                         Err e ->
                             let
                                 _ =
-                                    println (
-                                    "go build failed: " ++ errorToString e
-                                    )
+                                    println
+                                        ("go build failed: " ++ errorToString e)
                             in
                                 Process.exit 1
 
@@ -209,25 +212,32 @@ cmdCheck _ =
                                     
                                     Ok result ->
                                         if List.isEmpty result.diagnostics then
-                                            println (
-                                            "Type check passed: " ++ entryFile
-                                            )
+                                            println
+                                                (
+                                                "Type check passed: " ++ entryFile
+                                                )
                                         else
                                             let
                                                 _ =
-                                                    List.map (
-                                                    \d ->
-                                                        println ("  ⚠ " ++ d)
-                                                    ) result.diagnostics
+                                                    List.map
+                                                        (
+                                                        \d ->
+                                                            println
+                                                                ("  ⚠ " ++ d)
+                                                        )
+                                                        result.diagnostics
                                                 _ = println ""
                                             in
                                                 let
                                                     _ =
-                                                        println (
-                                                        "Type check failed with " ++ String.fromInt (
-                                                                                     List.length result.diagnostics
-                                                                                     ) ++ " error(s): " ++ entryFile
-                                                        )
+                                                        println
+                                                            (
+                                                            "Type check failed with " ++ String.fromInt
+                                                                                             (
+                                                                                             List.length
+                                                                                                 result.diagnostics
+                                                                                             ) ++ " error(s): " ++ entryFile
+                                                            )
                                                 in
                                                     Process.exit 1
                                     
@@ -265,11 +275,14 @@ cmdAdd _ =
                 if isGoStdlib firstPart || isGoStdlib pkg then
                     let
                         cacheDir =
-                            ".skycache/go/" ++ String.replace "-" "_" (
-                                               String.replace "/" "_" (
-                                               String.replace "." "_" pkg
-                                               )
-                                               )
+                            ".skycache/go/" ++ String.replace "-" "_"
+                                                   (
+                                                   String.replace "/" "_"
+                                                       (
+                                                       String.replace "." "_"
+                                                           pkg
+                                                       )
+                                                   )
                         _ = File.mkdirAll cacheDir
                         _ = ensureGoModDir ()
                     in
@@ -277,9 +290,10 @@ cmdAdd _ =
                 else if String.contains "." firstPart then
                     detectAndInstall pkg
                 else
-                    println (
-                    "Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format."
-                    )
+                    println
+                        (
+                        "Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format."
+                        )
 
 
 detectAndInstall : String -> ()
@@ -288,12 +302,8 @@ detectAndInstall pkg =
         tmpDir = ".skycache/detect_" ++ String.replace "/" "_" pkg
         _ = File.mkdirAll ".skycache"
         cloneResult =
-            Process.run "git" [ "clone"
-            , "--depth"
-            , "1"
-            , "https://" ++ pkg
-            , tmpDir
-            ]
+            Process.run "git"
+                [ "clone" , "--depth" , "1" , "https://" ++ pkg , tmpDir ]
     in
         case cloneResult of
             
@@ -338,9 +348,8 @@ installAsGoPackage pkg tmpDir =
                 Process.run "rm" [ "-rf" , tmpDir ]
         _ = ensureGoModDir ()
         getResult =
-            Process.run "sh" [ "-c"
-            , "cd .skycache/gomod && go get " ++ pkg ++ "@latest"
-            ]
+            Process.run "sh"
+                [ "-c" , "cd .skycache/gomod && go get " ++ pkg ++ "@latest" ]
     in
         case getResult of
             
@@ -348,11 +357,11 @@ installAsGoPackage pkg tmpDir =
                 let
                     _ = println ("Added Go package: " ++ pkg)
                     cacheDir =
-                        ".skycache/go/" ++ String.replace "-" "_" (
-                                           String.replace "/" "_" (
-                                           String.replace "." "_" pkg
-                                           )
-                                           )
+                        ".skycache/go/" ++ String.replace "-" "_"
+                                               (
+                                               String.replace "/" "_"
+                                                   (String.replace "." "_" pkg)
+                                               )
                     _ = File.mkdirAll cacheDir
                 in
                     generateGoBindings pkg cacheDir
@@ -360,9 +369,8 @@ installAsGoPackage pkg tmpDir =
             Err e ->
                 let
                     _ =
-                        println (
-                        "Failed to add " ++ pkg ++ ": " ++ errorToString e
-                        )
+                        println
+                            ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
                 in
                     Process.exit 1
 
@@ -451,23 +459,28 @@ installTomlDeps lines inGoDeps =
                 else if inGoDeps && String.contains "=" trimmed then
                     let
                         pkg =
-                            String.trim (
-                            String.replace "\"" "" (
-                            String.trim (
-                            case String.split "=" trimmed of
-                                
-                                key :: _ ->
-                                    key
-                                
-                                [  ] ->
-                                    ""
-                            )
-                            )
-                            )
+                            String.trim
+                                (
+                                String.replace "\"" ""
+                                    (
+                                    String.trim
+                                        (
+                                        case String.split "=" trimmed of
+                                            
+                                            key :: _ ->
+                                                key
+                                            
+                                            [  ] ->
+                                                ""
+                                        )
+                                    )
+                                )
                         safeName =
-                            String.replace "-" "_" (
-                            String.replace "/" "_" (String.replace "." "_" pkg)
-                            )
+                            String.replace "-" "_"
+                                (
+                                String.replace "/" "_"
+                                    (String.replace "." "_" pkg)
+                                )
                         bindingPath =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
@@ -487,9 +500,10 @@ installTomlDeps lines inGoDeps =
                                             [  ] ->
                                                 pkg
                                     _ =
-                                        println (
-                                        "   Generating bindings for " ++ pkg ++ "..."
-                                        )
+                                        println
+                                            (
+                                            "   Generating bindings for " ++ pkg ++ "..."
+                                            )
                                 in
                                     if isGoStdlib firstPart || isGoStdlib pkg then
                                         let
@@ -499,7 +513,8 @@ installTomlDeps lines inGoDeps =
                                         in
                                             let
                                                 _ =
-                                                    generateGoBindings pkg cacheDir
+                                                    generateGoBindings pkg
+                                                        cacheDir
                                             in
                                                 installTomlDeps rest True
                                     else if String.contains "." firstPart then
@@ -547,23 +562,28 @@ installTomlDeps lines inGoDeps =
                 else if inGoDeps && String.contains "=" trimmed then
                     let
                         pkg =
-                            String.trim (
-                            String.replace "\"" "" (
-                            String.trim (
-                            case String.split "=" trimmed of
-                                
-                                key :: _ ->
-                                    key
-                                
-                                [  ] ->
-                                    ""
-                            )
-                            )
-                            )
+                            String.trim
+                                (
+                                String.replace "\"" ""
+                                    (
+                                    String.trim
+                                        (
+                                        case String.split "=" trimmed of
+                                            
+                                            key :: _ ->
+                                                key
+                                            
+                                            [  ] ->
+                                                ""
+                                        )
+                                    )
+                                )
                         safeName =
-                            String.replace "-" "_" (
-                            String.replace "/" "_" (String.replace "." "_" pkg)
-                            )
+                            String.replace "-" "_"
+                                (
+                                String.replace "/" "_"
+                                    (String.replace "." "_" pkg)
+                                )
                         bindingPath =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
@@ -583,9 +603,10 @@ installTomlDeps lines inGoDeps =
                                             [  ] ->
                                                 pkg
                                     _ =
-                                        println (
-                                        "   Generating bindings for " ++ pkg ++ "..."
-                                        )
+                                        println
+                                            (
+                                            "   Generating bindings for " ++ pkg ++ "..."
+                                            )
                                 in
                                     if isGoStdlib firstPart || isGoStdlib pkg then
                                         let
@@ -610,18 +631,16 @@ autoGenerateBindings : () -> ()
 autoGenerateBindings _ =
     let
         findResult =
-            Process.run "sh" [ "-c"
-            , "find src/ -name '*.sky' 2>/dev/null | head -100"
-            ]
+            Process.run "sh"
+                [ "-c" , "find src/ -name '*.sky' 2>/dev/null | head -100" ]
     in
         case findResult of
             
             Ok output ->
                 let
                     files =
-                        List.filter (\f -> not (String.isEmpty (String.trim f))) (
-                        String.split "\n" output
-                        )
+                        List.filter (\f -> not (String.isEmpty (String.trim f)))
+                            (String.split "\n" output)
                 in
                     List.map (\f -> scanFileForFfiImports f) files
             
@@ -640,22 +659,42 @@ scanFileForFfiImports filePath =
             let
                 lines = String.split "\n" source
                 importLines =
-                    List.filter (
-                    \l ->
-                        String.startsWith "import " l && not (
-                                                         String.contains "Sky.Core" l
-                                                         ) && not (
-                                                              String.contains "Std." l
-                                                              ) && not (
-                                                                   String.contains "Compiler." l
-                                                                   ) && not (
-                                                                        String.contains "Formatter." l
-                                                                        ) && not (
-                                                                             String.contains "Lsp." l
-                                                                             ) && not (
-                                                                                  String.contains "Ffi." l
-                                                                                  )
-                    ) lines
+                    List.filter
+                        (
+                        \l ->
+                            String.startsWith "import " l && not
+                                                                 (
+                                                                 String.contains
+                                                                     "Sky.Core"
+                                                                     l
+                                                                 ) && not
+                                                                          (
+                                                                          String.contains
+                                                                              "Std."
+                                                                              l
+                                                                          ) && not
+                                                                                   (
+                                                                                   String.contains
+                                                                                       "Compiler."
+                                                                                       l
+                                                                                   ) && not
+                                                                                            (
+                                                                                            String.contains
+                                                                                                "Formatter."
+                                                                                                l
+                                                                                            ) && not
+                                                                                                     (
+                                                                                                     String.contains
+                                                                                                         "Lsp."
+                                                                                                         l
+                                                                                                     ) && not
+                                                                                                              (
+                                                                                                              String.contains
+                                                                                                                  "Ffi."
+                                                                                                                  l
+                                                                                                              )
+                        )
+                        lines
             in
                 List.map (\l -> processImportLine l) importLines
 
@@ -682,9 +721,8 @@ processImportLine line =
             let
                 goPath = Resolver.moduleNameToGoPath modName
                 safeName =
-                    String.replace "-" "_" (
-                    String.replace "/" "_" (String.replace "." "_" goPath)
-                    )
+                    String.replace "-" "_"
+                        (String.replace "/" "_" (String.replace "." "_" goPath))
                 bindingPath = ".skycache/go/" ++ safeName ++ "/bindings.skyi"
             in
                 case File.readFile bindingPath of
@@ -695,9 +733,10 @@ processImportLine line =
                     Err _ ->
                         let
                             _ =
-                                println (
-                                "   Generating bindings for " ++ goPath ++ "..."
-                                )
+                                println
+                                    (
+                                    "   Generating bindings for " ++ goPath ++ "..."
+                                    )
                             firstPart =
                                 case String.split "/" goPath of
                                     
@@ -722,9 +761,10 @@ processImportLine line =
 
 preFilterBindings : () -> ()
 preFilterBindings _ =
-    case Process.run "sh" [ "-c"
-         , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do " ++ "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); " ++ "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then " ++ "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++ "out=\"${f%.skyi}.filtered.skyi\"; " ++ "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++ "echo \"   Pre-filtered $f\"; " ++ "fi; done"
-         ] of
+    case Process.run "sh"
+             [ "-c"
+             , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do " ++ "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); " ++ "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then " ++ "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++ "out=\"${f%.skyi}.filtered.skyi\"; " ++ "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++ "echo \"   Pre-filtered $f\"; " ++ "fi; done"
+             ] of
         
         Ok output ->
             if not (String.isEmpty (String.trim output)) then
@@ -806,9 +846,10 @@ updateOneDep depLine =
                 _ = println ("   Updating " ++ pkgName ++ "...")
                 _ = ensureGoModDir ""
                 _ =
-                    Process.run "sh" [ "-c"
-                    , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null"
-                    ]
+                    Process.run "sh"
+                        [ "-c"
+                        , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null"
+                        ]
             in
                 println ""
 
@@ -849,9 +890,10 @@ performUpgrade tag =
                     "https://github.com/anzellai/sky/releases/download/" ++ tag ++ "/" ++ artifact
                 _ = println ("   Downloading " ++ url)
                 downloadResult =
-                    Process.run "sh" [ "-c"
-                    , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade " ++ skyBin
-                    ]
+                    Process.run "sh"
+                        [ "-c"
+                        , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade " ++ skyBin
+                        ]
             in
                 case downloadResult of
                     
@@ -859,9 +901,10 @@ performUpgrade tag =
                         println ("Upgraded to " ++ tag ++ " successfully!")
                     
                     Err e ->
-                        println (
-                        "Upgrade failed: " ++ errorToString e ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
-                        )
+                        println
+                            (
+                            "Upgrade failed: " ++ errorToString e ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
+                            )
 
 
 detectPlatformArtifact : () -> String
@@ -915,9 +958,10 @@ fetchLatestVersion forceRefresh =
         cachePath = cacheDir ++ "/last-update-check.json"
     in
         if not forceRefresh then
-            case Process.run "sh" [ "-c"
-                 , "if [ -f " ++ cachePath ++ " ] && [ $(( $(date +%s) - $(stat -f %m " ++ cachePath ++ " 2>/dev/null || stat -c %Y " ++ cachePath ++ " 2>/dev/null || echo 0) )) -lt 86400 ]; then cat " ++ cachePath ++ "; fi"
-                 ] of
+            case Process.run "sh"
+                     [ "-c"
+                     , "if [ -f " ++ cachePath ++ " ] && [ $(( $(date +%s) - $(stat -f %m " ++ cachePath ++ " 2>/dev/null || stat -c %Y " ++ cachePath ++ " 2>/dev/null || echo 0) )) -lt 86400 ]; then cat " ++ cachePath ++ "; fi"
+                     ] of
                 
                 Ok cached ->
                     let
@@ -938,9 +982,10 @@ fetchAndCacheVersion : String -> String -> String
 fetchAndCacheVersion cacheDir cachePath =
     let
         result =
-            Process.run "sh" [ "-c"
-            , "curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"\\(v[^\"]*\\)\".*/\\1/'"
-            ]
+            Process.run "sh"
+                [ "-c"
+                , "curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"\\(v[^\"]*\\)\".*/\\1/'"
+                ]
     in
         case result of
             
@@ -971,9 +1016,10 @@ checkForUpdates _ =
             let
                 _ = println ""
                 _ =
-                    println (
-                    "   A newer version of Sky is available: " ++ latestTag ++ " (current: " ++ Args.skyVersion ++ ")"
-                    )
+                    println
+                        (
+                        "   A newer version of Sky is available: " ++ latestTag ++ " (current: " ++ Args.skyVersion ++ ")"
+                        )
             in
                 println "   Run 'sky upgrade' to update."
         else
@@ -1080,9 +1126,8 @@ collectCommentGroups lines currentComments acc =
                     let
                         anchorWord = extractAnchorWord trimmed
                     in
-                        collectCommentGroups rest [] (
-                        (List.reverse currentComments, anchorWord) :: acc
-                        )
+                        collectCommentGroups rest []
+                            ((List.reverse currentComments, anchorWord) :: acc)
                 else
                     collectCommentGroups rest [] acc
 
@@ -1111,11 +1156,11 @@ insertCommentGroups groups fmtLines acc =
                 anchor = snd group
             in
                 if String.isEmpty anchor then
-                    insertCommentGroups restGroups fmtLines (
-                    List.append acc comments
-                    )
+                    insertCommentGroups restGroups fmtLines
+                        (List.append acc comments)
                 else
-                    insertBeforeAnchorOnce comments anchor restGroups fmtLines acc
+                    insertBeforeAnchorOnce comments anchor restGroups fmtLines
+                        acc
 
 
 insertBeforeAnchorOnce : (List String) -> String -> (List (List String, String)) -> (List String) -> (List String) -> List String
@@ -1127,13 +1172,11 @@ insertBeforeAnchorOnce comments anchor restGroups fmtLines acc =
         
         fmtLine :: fmtRest ->
             if String.startsWith anchor (String.trim fmtLine) then
-                insertCommentGroups restGroups fmtRest (
-                List.concat [ acc , comments , [ fmtLine ] ]
-                )
+                insertCommentGroups restGroups fmtRest
+                    (List.concat [ acc , comments , [ fmtLine ] ])
             else
-                insertBeforeAnchorOnce comments anchor restGroups fmtRest (
-                List.append acc [ fmtLine ]
-                )
+                insertBeforeAnchorOnce comments anchor restGroups fmtRest
+                    (List.append acc [ fmtLine ])
 
 
 fmtStdin : () -> ()
@@ -1153,9 +1196,8 @@ fmtStdin _ =
                             Process.exit 1
                     
                     Ok mod ->
-                        Io.writeStdout (
-                        reinsertComments source (Format.formatModule mod)
-                        )
+                        Io.writeStdout
+                            (reinsertComments source (Format.formatModule mod))
                     
                     Err e ->
                         let
@@ -1187,7 +1229,8 @@ cmdHelp _ =
         _ = println "  fmt [file]      Format Sky source code"
         _ = println "  add <package>   Add Go or Sky dependency"
         _ =
-            println "  install         Install all dependencies + generate bindings"
+            println
+                "  install         Install all dependencies + generate bindings"
         _ = println "  remove <pkg>    Remove a dependency"
         _ = println "  update          Update sky.toml dependencies to latest"
         _ = println "  upgrade         Upgrade Sky compiler to latest release"

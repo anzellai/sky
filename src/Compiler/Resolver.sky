@@ -59,19 +59,21 @@ resolveProject entryPath srcRoot =
                                 , checkResult = Nothing
                                 }
                             resolveResult =
-                                resolveImports srcRoot entryMod.imports [ entryLoaded
-                                ] Set.empty []
+                                resolveImports srcRoot entryMod.imports
+                                    [ entryLoaded ]
+                                    Set.empty
+                                    []
                             allModules = fst resolveResult
                             diags = snd resolveResult
                             order =
-                                List.map (\m -> m.name) (
-                                List.reverse allModules
-                                )
+                                List.map (\m -> m.name)
+                                    (List.reverse allModules)
                         in
-                            Ok { modules = List.reverse allModules
-                               , order = order
-                               , diagnostics = diags
-                               }
+                            Ok
+                                { modules = List.reverse allModules
+                                , order = order
+                                , diagnostics = diags
+                                }
 
 
 resolveImports srcRoot imports loaded visited diagnostics =
@@ -87,9 +89,9 @@ resolveImports srcRoot imports loaded visited diagnostics =
                 if Set.member modName visited || isStdlib modName then
                     resolveImports srcRoot rest loaded visited diagnostics
                 else if imp.alias_ == "_" then
-                    resolveImports srcRoot rest loaded (
-                    Set.insert modName visited
-                    ) diagnostics
+                    resolveImports srcRoot rest loaded
+                        (Set.insert modName visited)
+                        diagnostics
                 else
                     let
                         filePath = resolveModulePath srcRoot imp.moduleName
@@ -107,7 +109,8 @@ resolveImports srcRoot imports loaded visited diagnostics =
                                                 skyiLexResult =
                                                     Lexer.lex skyiSource
                                             in
-                                                case Parser.parse skyiLexResult.tokens of
+                                                case Parser.parse
+                                                         skyiLexResult.tokens of
                                                     
                                                     Ok skyiMod ->
                                                         let
@@ -119,42 +122,67 @@ resolveImports srcRoot imports loaded visited diagnostics =
                                                                 , checkResult = Nothing
                                                                 }
                                                         in
-                                                            resolveImports srcRoot rest (
-                                                            loaded2 :: loaded
-                                                            ) (
-                                                            Set.insert modName visited
-                                                            ) diagnostics
+                                                            resolveImports
+                                                                srcRoot
+                                                                rest
+                                                                (
+                                                                loaded2 :: loaded
+                                                                )
+                                                                (
+                                                                Set.insert
+                                                                    modName
+                                                                    visited
+                                                                )
+                                                                diagnostics
                                                     
                                                     Err e ->
-                                                        resolveImports srcRoot rest loaded (
-                                                        Set.insert modName visited
-                                                        ) (
-                                                        diagnostics ++ [ "Parse error in binding " ++ modName ++ ": " ++ e
-                                                        ]
-                                                        )
+                                                        resolveImports srcRoot
+                                                            rest
+                                                            loaded
+                                                            (
+                                                            Set.insert modName
+                                                                visited
+                                                            )
+                                                            (
+                                                            diagnostics ++ [ "Parse error in binding " ++ modName ++ ": " ++ e
+                                                            ]
+                                                            )
                                                     
                                                     Err _ ->
-                                                        resolveImports srcRoot rest loaded (
-                                                        Set.insert modName visited
-                                                        ) (
-                                                        diagnostics ++ [ "Module not found: " ++ modName ++ " (looked at " ++ filePath ++ " and " ++ skyiPath ++ ")"
-                                                        ]
-                                                        )
+                                                        resolveImports srcRoot
+                                                            rest
+                                                            loaded
+                                                            (
+                                                            Set.insert modName
+                                                                visited
+                                                            )
+                                                            (
+                                                            diagnostics ++ [ "Module not found: " ++ modName ++ " (looked at " ++ filePath ++ " and " ++ skyiPath ++ ")"
+                                                            ]
+                                                            )
                                                     
                                                     Ok source ->
                                                         let
                                                             lexResult =
                                                                 Lexer.lex source
                                                         in
-                                                            case Parser.parse lexResult.tokens of
+                                                            case Parser.parse
+                                                                     lexResult.tokens of
                                                                 
                                                                 Err e ->
-                                                                    resolveImports srcRoot rest loaded (
-                                                                    Set.insert modName visited
-                                                                    ) (
-                                                                    diagnostics ++ [ "Parse error in " ++ modName ++ ": " ++ e
-                                                                    ]
-                                                                    )
+                                                                    resolveImports
+                                                                        srcRoot
+                                                                        rest
+                                                                        loaded
+                                                                        (
+                                                                        Set.insert
+                                                                            modName
+                                                                            visited
+                                                                        )
+                                                                        (
+                                                                        diagnostics ++ [ "Parse error in " ++ modName ++ ": " ++ e
+                                                                        ]
+                                                                        )
                                                                 
                                                                 Ok modAst ->
                                                                     let
@@ -166,17 +194,31 @@ resolveImports srcRoot imports loaded visited diagnostics =
                                                                             , checkResult = Nothing
                                                                             }
                                                                         newVisited =
-                                                                            Set.insert modName visited
+                                                                            Set.insert
+                                                                                modName
+                                                                                visited
                                                                         depResult =
-                                                                            resolveImports srcRoot modAst.imports (
-                                                                            newLoaded :: loaded
-                                                                            ) newVisited diagnostics
+                                                                            resolveImports
+                                                                                srcRoot
+                                                                                modAst.imports
+                                                                                (
+                                                                                newLoaded :: loaded
+                                                                                )
+                                                                                newVisited
+                                                                                diagnostics
                                                                     in
-                                                                        resolveImports srcRoot rest (
-                                                                        fst depResult
-                                                                        ) newVisited (
-                                                                        snd depResult
-                                                                        )
+                                                                        resolveImports
+                                                                            srcRoot
+                                                                            rest
+                                                                            (
+                                                                            fst
+                                                                                depResult
+                                                                            )
+                                                                            newVisited
+                                                                            (
+                                                                            snd
+                                                                                depResult
+                                                                            )
 
 
 resolveModulePath : String -> (List String) -> String
@@ -197,14 +239,12 @@ resolveBindingPath projectRoot modName =
                 projectRoot ++ "/"
         primaryPath = prefix ++ ".skycache/go/" ++ safeName ++ "/bindings.skyi"
         altPath =
-            prefix ++ ".skycache/go/" ++ String.join "/" (
-                                         List.map String.toLower pkgParts
-                                         ) ++ "/bindings.skyi"
+            prefix ++ ".skycache/go/" ++ String.join "/"
+                                             (List.map String.toLower pkgParts) ++ "/bindings.skyi"
         cwdPrimary = ".skycache/go/" ++ safeName ++ "/bindings.skyi"
         cwdAlt =
-            ".skycache/go/" ++ String.join "/" (
-                               List.map String.toLower pkgParts
-                               ) ++ "/bindings.skyi"
+            ".skycache/go/" ++ String.join "/"
+                                   (List.map String.toLower pkgParts) ++ "/bindings.skyi"
     in
         case File.readFile primaryPath of
             
@@ -252,7 +292,10 @@ camelInsertUnderscores s idx acc =
 
 isStdlib : String -> Bool
 isStdlib modName =
-    String.startsWith "Sky.Core." modName || String.startsWith "Sky.Http." modName || String.startsWith "Std." modName || modName == "Sky.Core.Prelude" || modName == "Sky.Interop"
+    String.startsWith "Sky.Core." modName || String.startsWith "Sky.Http."
+                                                 modName || String.startsWith
+                                                                "Std."
+                                                                modName || modName == "Sky.Core.Prelude" || modName == "Sky.Interop"
 
 
 getStdlibExports : String -> List String
@@ -555,10 +598,11 @@ checkAllModules graph =
         checkedModules = fst checkResult
         diagnostics = snd checkResult
     in
-        Ok { graph
-           | modules = checkedModules
-           , diagnostics = List.append graph.diagnostics diagnostics
-           }
+        Ok
+            { graph
+            | modules = checkedModules
+            , diagnostics = List.append graph.diagnostics diagnostics
+            }
 
 
 checkModulesLoop modules importedEnv diagnostics =
@@ -575,18 +619,16 @@ checkModulesLoop modules importedEnv diagnostics =
                         checkedMod = { mod | checkResult = Just result }
                         newImportedEnv = Env.union result.env importedEnv
                         ( restModules , restDiags ) =
-                            checkModulesLoop rest newImportedEnv (
-                            List.append diagnostics result.diagnostics
-                            )
+                            checkModulesLoop rest newImportedEnv
+                                (List.append diagnostics result.diagnostics)
                     in
                         (checkedMod :: restModules, restDiags)
                 
                 Err e ->
                     let
                         ( restModules , restDiags ) =
-                            checkModulesLoop rest importedEnv (
-                            List.append diagnostics [ e ]
-                            )
+                            checkModulesLoop rest importedEnv
+                                (List.append diagnostics [ e ])
                     in
                         (mod :: restModules, restDiags)
 
@@ -596,373 +638,480 @@ buildStdlibEnv =
     let
         prelude = Env.createPreludeEnv
         stdFunctions =
-            Dict.fromList [ ("String.toUpper", mono (
-                                               TFun (TConst "String") (
-                                               TConst "String"
-                                               )
-                                               ))
-            , ("String.toLower", mono (TFun (TConst "String") (TConst "String")))
-            , ("String.length", mono (TFun (TConst "String") (TConst "Int")))
-            , ("String.fromInt", mono (TFun (TConst "Int") (TConst "String")))
-            , ("String.fromFloat", mono (
-                                   TFun (TConst "Float") (TConst "String")
-                                   ))
-            , ("String.join", mono (
-                              TFun (TConst "String") (
-                              TFun (TApp (TConst "List") [ TConst "String" ]) (
-                              TConst "String"
-                              )
-                              )
-                              ))
-            , ("String.split", mono (
-                               TFun (TConst "String") (
-                               TFun (TConst "String") (
-                               TApp (TConst "List") [ TConst "String" ]
-                               )
-                               )
-                               ))
-            , ("String.contains", mono (
-                                  TFun (TConst "String") (
-                                  TFun (TConst "String") (TConst "Bool")
-                                  )
-                                  ))
-            , ("String.startsWith", mono (
-                                    TFun (TConst "String") (
-                                    TFun (TConst "String") (TConst "Bool")
-                                    )
-                                    ))
-            , ("String.trim", mono (TFun (TConst "String") (TConst "String")))
-            , ("String.isEmpty", mono (TFun (TConst "String") (TConst "Bool")))
-            , ("String.slice", mono (
-                               TFun (TConst "Int") (
-                               TFun (TConst "Int") (
-                               TFun (TConst "String") (TConst "String")
-                               )
-                               )
-                               ))
-            , ("String.append", mono (
-                                TFun (TConst "String") (
-                                TFun (TConst "String") (TConst "String")
-                                )
-                                ))
-            , ("List.map", { quantified = [ 0 , 1 ]
-                           , type_ = TFun (
-                                     TFun (TVar 0 (Just "a")) (
-                                     TVar 1 (Just "b")
-                                     )
-                                     ) (
-                                     TFun (
-                                     TApp (TConst "List") [ TVar 0 (Just "a") ]
-                                     ) (
-                                     TApp (TConst "List") [ TVar 1 (Just "b") ]
-                                     )
-                                     )
-                           })
-            , ("List.filter", { quantified = [ 0 ]
-                              , type_ = TFun (
-                                        TFun (TVar 0 (Just "a")) (TConst "Bool")
-                                        ) (
-                                        TFun (
-                                        TApp (TConst "List") [ TVar 0 (Just "a")
-                                        ]
-                                        ) (
-                                        TApp (TConst "List") [ TVar 0 (Just "a")
-                                        ]
-                                        )
-                                        )
-                              })
-            , ("List.foldl", { quantified = [ 0 , 1 ]
-                             , type_ = TFun (
-                                       TFun (TVar 0 (Just "a")) (
-                                       TFun (TVar 1 (Just "b")) (
-                                       TVar 1 (Just "b")
-                                       )
-                                       )
-                                       ) (
-                                       TFun (TVar 1 (Just "b")) (
-                                       TFun (
-                                       TApp (TConst "List") [ TVar 0 (Just "a")
-                                       ]
-                                       ) (TVar 1 (Just "b"))
-                                       )
-                                       )
-                             })
-            , ("List.foldr", { quantified = [ 0 , 1 ]
-                             , type_ = TFun (
-                                       TFun (TVar 0 (Just "a")) (
-                                       TFun (TVar 1 (Just "b")) (
-                                       TVar 1 (Just "b")
-                                       )
-                                       )
-                                       ) (
-                                       TFun (TVar 1 (Just "b")) (
-                                       TFun (
-                                       TApp (TConst "List") [ TVar 0 (Just "a")
-                                       ]
-                                       ) (TVar 1 (Just "b"))
-                                       )
-                                       )
-                             })
-            , ("List.head", { quantified = [ 0 ]
-                            , type_ = TFun (
-                                      TApp (TConst "List") [ TVar 0 (Just "a") ]
-                                      ) (
-                                      TApp (TConst "Maybe") [ TVar 0 (Just "a")
-                                      ]
-                                      )
-                            })
-            , ("List.length", { quantified = [ 0 ]
-                              , type_ = TFun (
-                                        TApp (TConst "List") [ TVar 0 (Just "a")
-                                        ]
-                                        ) (TConst "Int")
-                              })
-            , ("List.reverse", { quantified = [ 0 ]
-                               , type_ = TFun (
-                                         TApp (TConst "List") [ TVar 0 (
-                                                                Just "a"
-                                                                )
-                                         ]
-                                         ) (
-                                         TApp (TConst "List") [ TVar 0 (
-                                                                Just "a"
-                                                                )
-                                         ]
-                                         )
-                               })
-            , ("List.isEmpty", { quantified = [ 0 ]
-                               , type_ = TFun (
-                                         TApp (TConst "List") [ TVar 0 (
-                                                                Just "a"
-                                                                )
-                                         ]
-                                         ) (TConst "Bool")
-                               })
-            , ("List.append", { quantified = [ 0 ]
-                              , type_ = TFun (
-                                        TApp (TConst "List") [ TVar 0 (Just "a")
-                                        ]
-                                        ) (
-                                        TFun (
-                                        TApp (TConst "List") [ TVar 0 (Just "a")
-                                        ]
-                                        ) (
-                                        TApp (TConst "List") [ TVar 0 (Just "a")
-                                        ]
-                                        )
-                                        )
-                              })
-            , ("List.concatMap", { quantified = [ 0 , 1 ]
-                                 , type_ = TFun (
-                                           TFun (TVar 0 (Just "a")) (
-                                           TApp (TConst "List") [ TVar 1 (
-                                                                  Just "b"
-                                                                  )
-                                           ]
-                                           )
-                                           ) (
-                                           TFun (
-                                           TApp (TConst "List") [ TVar 0 (
-                                                                  Just "a"
-                                                                  )
-                                           ]
-                                           ) (
-                                           TApp (TConst "List") [ TVar 1 (
-                                                                  Just "b"
-                                                                  )
-                                           ]
-                                           )
-                                           )
-                                 })
-            , ("Dict.empty", { quantified = [ 0 , 1 ]
-                             , type_ = TApp (TConst "Dict") [ TVar 0 (Just "k")
-                                       , TVar 1 (Just "v")
-                                       ]
-                             })
-            , ("Dict.insert", { quantified = [ 0 , 1 ]
-                              , type_ = TFun (TVar 0 (Just "k")) (
-                                        TFun (TVar 1 (Just "v")) (
-                                        TFun (
-                                        TApp (TConst "Dict") [ TVar 0 (Just "k")
-                                        , TVar 1 (Just "v")
-                                        ]
-                                        ) (
-                                        TApp (TConst "Dict") [ TVar 0 (Just "k")
-                                        , TVar 1 (Just "v")
-                                        ]
-                                        )
-                                        )
-                                        )
-                              })
-            , ("Dict.get", { quantified = [ 0 , 1 ]
-                           , type_ = TFun (TVar 0 (Just "k")) (
-                                     TFun (
-                                     TApp (TConst "Dict") [ TVar 0 (Just "k")
-                                     , TVar 1 (Just "v")
-                                     ]
-                                     ) (
-                                     TApp (TConst "Maybe") [ TVar 1 (Just "v") ]
-                                     )
-                                     )
-                           })
-            , ("Log.println", { quantified = [ 0 ]
-                              , type_ = TFun (TConst "String") (
-                                        TFun (TVar 0 (Just "a")) (TConst "Unit")
-                                        )
-                              })
-            , ("println", { quantified = [ 0 ]
-                          , type_ = TFun (TConst "String") (
-                                    TFun (TVar 0 (Just "a")) (TConst "Unit")
-                                    )
-                          })
-            , ("Process.exit", mono (TFun (TConst "Int") (TConst "Unit")))
-            , ("File.readFile", mono (
-                                TFun (TConst "String") (
-                                TApp (TConst "Result") [ TConst "String"
-                                , TConst "String"
-                                ]
-                                )
-                                ))
-            , ("File.writeFile", mono (
-                                 TFun (TConst "String") (
-                                 TFun (TConst "String") (
-                                 TApp (TConst "Result") [ TConst "String"
-                                 , TConst "Unit"
-                                 ]
-                                 )
-                                 )
-                                 ))
-            , ("File.mkdirAll", mono (
-                                TFun (TConst "String") (
-                                TApp (TConst "Result") [ TConst "String"
-                                , TConst "Unit"
-                                ]
-                                )
-                                ))
-            , ("Args.getArgs", mono (
-                               TFun (TConst "Unit") (
-                               TApp (TConst "List") [ TConst "String" ]
-                               )
-                               ))
-            , ("Args.getArg", mono (
-                              TFun (TConst "Int") (
-                              TApp (TConst "Maybe") [ TConst "String" ]
-                              )
-                              ))
-            , ("Ref.new", { quantified = [ 0 ]
-                          , type_ = TFun (TVar 0 (Just "a")) (
-                                    TApp (TConst "Ref") [ TVar 0 (Just "a") ]
-                                    )
-                          })
-            , ("Ref.get", { quantified = [ 0 ]
-                          , type_ = TFun (
-                                    TApp (TConst "Ref") [ TVar 0 (Just "a") ]
-                                    ) (TVar 0 (Just "a"))
-                          })
-            , ("Ref.set", { quantified = [ 0 ]
-                          , type_ = TFun (TVar 0 (Just "a")) (
-                                    TFun (
-                                    TApp (TConst "Ref") [ TVar 0 (Just "a") ]
-                                    ) (TConst "Unit")
-                                    )
-                          })
-            , ("Task.succeed", { quantified = [ 0 , 1 ]
-                               , type_ = TFun (TVar 0 (Just "a")) (
-                                         TApp (TConst "Task") [ TVar 1 (
-                                                                Just "err"
-                                                                )
-                                         , TVar 0 (Just "a")
-                                         ]
-                                         )
-                               })
-            , ("Task.fail", { quantified = [ 0 , 1 ]
-                            , type_ = TFun (TVar 0 (Just "err")) (
-                                      TApp (TConst "Task") [ TVar 0 (Just "err")
-                                      , TVar 1 (Just "a")
-                                      ]
-                                      )
-                            })
-            , ("Task.andThen", { quantified = [ 0 , 1 , 2 ]
-                               , type_ = TFun (
-                                         TFun (TVar 0 (Just "a")) (
-                                         TApp (TConst "Task") [ TVar 2 (
-                                                                Just "err"
-                                                                )
-                                         , TVar 1 (Just "b")
-                                         ]
-                                         )
-                                         ) (
-                                         TFun (
-                                         TApp (TConst "Task") [ TVar 2 (
-                                                                Just "err"
-                                                                )
-                                         , TVar 0 (Just "a")
-                                         ]
-                                         ) (
-                                         TApp (TConst "Task") [ TVar 2 (
-                                                                Just "err"
-                                                                )
-                                         , TVar 1 (Just "b")
-                                         ]
-                                         )
-                                         )
-                               })
-            , ("Task.map", { quantified = [ 0 , 1 , 2 ]
-                           , type_ = TFun (
-                                     TFun (TVar 0 (Just "a")) (
-                                     TVar 1 (Just "b")
-                                     )
-                                     ) (
-                                     TFun (
-                                     TApp (TConst "Task") [ TVar 2 (Just "err")
-                                     , TVar 0 (Just "a")
-                                     ]
-                                     ) (
-                                     TApp (TConst "Task") [ TVar 2 (Just "err")
-                                     , TVar 1 (Just "b")
-                                     ]
-                                     )
-                                     )
-                           })
-            , ("Task.perform", { quantified = [ 0 , 1 ]
-                               , type_ = TFun (
-                                         TApp (TConst "Task") [ TVar 0 (
-                                                                Just "err"
-                                                                )
-                                         , TVar 1 (Just "a")
-                                         ]
-                                         ) (
-                                         TApp (TConst "Result") [ TVar 0 (
-                                                                  Just "err"
-                                                                  )
-                                         , TVar 1 (Just "a")
-                                         ]
-                                         )
-                               })
-            , ("Task.sequence", { quantified = [ 0 , 1 ]
-                                , type_ = TFun (
-                                          TApp (TConst "List") [ TApp (
-                                                                 TConst "Task"
-                                                                 ) [ TVar 0 (
-                                                                     Just "err"
-                                                                     )
-                                                                 , TVar 1 (
-                                                                   Just "a"
-                                                                   )
-                                                                 ]
-                                          ]
-                                          ) (
-                                          TApp (TConst "Task") [ TVar 0 (
-                                                                 Just "err"
-                                                                 )
-                                          , TApp (TConst "List") [ TVar 1 (
-                                                                   Just "a"
-                                                                   )
-                                            ]
-                                          ]
+            Dict.fromList
+                [ ("String.toUpper", mono
+                                         (
+                                         TFun (TConst "String")
+                                             (TConst "String")
+                                         ))
+                , ("String.toLower", mono
+                                         (
+                                         TFun (TConst "String")
+                                             (TConst "String")
+                                         ))
+                , ("String.length", mono (TFun (TConst "String") (TConst "Int")))
+                , ("String.fromInt", mono
+                                         (TFun (TConst "Int") (TConst "String")))
+                , ("String.fromFloat", mono
+                                           (
+                                           TFun (TConst "Float")
+                                               (TConst "String")
+                                           ))
+                , ("String.join", mono
+                                      (
+                                      TFun (TConst "String")
+                                          (
+                                          TFun
+                                              (
+                                              TApp (TConst "List")
+                                                  [ TConst "String" ]
+                                              )
+                                              (TConst "String")
                                           )
+                                      ))
+                , ("String.split", mono
+                                       (
+                                       TFun (TConst "String")
+                                           (
+                                           TFun (TConst "String")
+                                               (
+                                               TApp (TConst "List")
+                                                   [ TConst "String" ]
+                                               )
+                                           )
+                                       ))
+                , ("String.contains", mono
+                                          (
+                                          TFun (TConst "String")
+                                              (
+                                              TFun (TConst "String")
+                                                  (TConst "Bool")
+                                              )
+                                          ))
+                , ("String.startsWith", mono
+                                            (
+                                            TFun (TConst "String")
+                                                (
+                                                TFun (TConst "String")
+                                                    (TConst "Bool")
+                                                )
+                                            ))
+                , ("String.trim", mono
+                                      (TFun (TConst "String") (TConst "String")))
+                , ("String.isEmpty", mono
+                                         (
+                                         TFun (TConst "String") (TConst "Bool")
+                                         ))
+                , ("String.slice", mono
+                                       (
+                                       TFun (TConst "Int")
+                                           (
+                                           TFun (TConst "Int")
+                                               (
+                                               TFun (TConst "String")
+                                                   (TConst "String")
+                                               )
+                                           )
+                                       ))
+                , ("String.append", mono
+                                        (
+                                        TFun (TConst "String")
+                                            (
+                                            TFun (TConst "String")
+                                                (TConst "String")
+                                            )
+                                        ))
+                , ("List.map", { quantified = [ 0 , 1 ]
+                               , type_ = TFun
+                                             (
+                                             TFun (TVar 0 (Just "a"))
+                                                 (TVar 1 (Just "b"))
+                                             )
+                                             (
+                                             TFun
+                                                 (
+                                                 TApp (TConst "List")
+                                                     [ TVar 0 (Just "a") ]
+                                                 )
+                                                 (
+                                                 TApp (TConst "List")
+                                                     [ TVar 1 (Just "b") ]
+                                                 )
+                                             )
+                               })
+                , ("List.filter", { quantified = [ 0 ]
+                                  , type_ = TFun
+                                                (
+                                                TFun (TVar 0 (Just "a"))
+                                                    (TConst "Bool")
+                                                )
+                                                (
+                                                TFun
+                                                    (
+                                                    TApp (TConst "List")
+                                                        [ TVar 0 (Just "a") ]
+                                                    )
+                                                    (
+                                                    TApp (TConst "List")
+                                                        [ TVar 0 (Just "a") ]
+                                                    )
+                                                )
+                                  })
+                , ("List.foldl", { quantified = [ 0 , 1 ]
+                                 , type_ = TFun
+                                               (
+                                               TFun (TVar 0 (Just "a"))
+                                                   (
+                                                   TFun (TVar 1 (Just "b"))
+                                                       (TVar 1 (Just "b"))
+                                                   )
+                                               )
+                                               (
+                                               TFun (TVar 1 (Just "b"))
+                                                   (
+                                                   TFun
+                                                       (
+                                                       TApp (TConst "List")
+                                                           [ TVar 0 (Just "a") ]
+                                                       )
+                                                       (TVar 1 (Just "b"))
+                                                   )
+                                               )
+                                 })
+                , ("List.foldr", { quantified = [ 0 , 1 ]
+                                 , type_ = TFun
+                                               (
+                                               TFun (TVar 0 (Just "a"))
+                                                   (
+                                                   TFun (TVar 1 (Just "b"))
+                                                       (TVar 1 (Just "b"))
+                                                   )
+                                               )
+                                               (
+                                               TFun (TVar 1 (Just "b"))
+                                                   (
+                                                   TFun
+                                                       (
+                                                       TApp (TConst "List")
+                                                           [ TVar 0 (Just "a") ]
+                                                       )
+                                                       (TVar 1 (Just "b"))
+                                                   )
+                                               )
+                                 })
+                , ("List.head", { quantified = [ 0 ]
+                                , type_ = TFun
+                                              (
+                                              TApp (TConst "List")
+                                                  [ TVar 0 (Just "a") ]
+                                              )
+                                              (
+                                              TApp (TConst "Maybe")
+                                                  [ TVar 0 (Just "a") ]
+                                              )
                                 })
-            ]
+                , ("List.length", { quantified = [ 0 ]
+                                  , type_ = TFun
+                                                (
+                                                TApp (TConst "List")
+                                                    [ TVar 0 (Just "a") ]
+                                                )
+                                                (TConst "Int")
+                                  })
+                , ("List.reverse", { quantified = [ 0 ]
+                                   , type_ = TFun
+                                                 (
+                                                 TApp (TConst "List")
+                                                     [ TVar 0 (Just "a") ]
+                                                 )
+                                                 (
+                                                 TApp (TConst "List")
+                                                     [ TVar 0 (Just "a") ]
+                                                 )
+                                   })
+                , ("List.isEmpty", { quantified = [ 0 ]
+                                   , type_ = TFun
+                                                 (
+                                                 TApp (TConst "List")
+                                                     [ TVar 0 (Just "a") ]
+                                                 )
+                                                 (TConst "Bool")
+                                   })
+                , ("List.append", { quantified = [ 0 ]
+                                  , type_ = TFun
+                                                (
+                                                TApp (TConst "List")
+                                                    [ TVar 0 (Just "a") ]
+                                                )
+                                                (
+                                                TFun
+                                                    (
+                                                    TApp (TConst "List")
+                                                        [ TVar 0 (Just "a") ]
+                                                    )
+                                                    (
+                                                    TApp (TConst "List")
+                                                        [ TVar 0 (Just "a") ]
+                                                    )
+                                                )
+                                  })
+                , ("List.concatMap", { quantified = [ 0 , 1 ]
+                                     , type_ = TFun
+                                                   (
+                                                   TFun (TVar 0 (Just "a"))
+                                                       (
+                                                       TApp (TConst "List")
+                                                           [ TVar 1 (Just "b") ]
+                                                       )
+                                                   )
+                                                   (
+                                                   TFun
+                                                       (
+                                                       TApp (TConst "List")
+                                                           [ TVar 0 (Just "a") ]
+                                                       )
+                                                       (
+                                                       TApp (TConst "List")
+                                                           [ TVar 1 (Just "b") ]
+                                                       )
+                                                   )
+                                     })
+                , ("Dict.empty", { quantified = [ 0 , 1 ]
+                                 , type_ = TApp (TConst "Dict")
+                                               [ TVar 0 (Just "k")
+                                               , TVar 1 (Just "v")
+                                               ]
+                                 })
+                , ("Dict.insert", { quantified = [ 0 , 1 ]
+                                  , type_ = TFun (TVar 0 (Just "k"))
+                                                (
+                                                TFun (TVar 1 (Just "v"))
+                                                    (
+                                                    TFun
+                                                        (
+                                                        TApp (TConst "Dict")
+                                                            [ TVar 0 (Just "k")
+                                                            , TVar 1 (Just "v")
+                                                            ]
+                                                        )
+                                                        (
+                                                        TApp (TConst "Dict")
+                                                            [ TVar 0 (Just "k")
+                                                            , TVar 1 (Just "v")
+                                                            ]
+                                                        )
+                                                    )
+                                                )
+                                  })
+                , ("Dict.get", { quantified = [ 0 , 1 ]
+                               , type_ = TFun (TVar 0 (Just "k"))
+                                             (
+                                             TFun
+                                                 (
+                                                 TApp (TConst "Dict")
+                                                     [ TVar 0 (Just "k")
+                                                     , TVar 1 (Just "v")
+                                                     ]
+                                                 )
+                                                 (
+                                                 TApp (TConst "Maybe")
+                                                     [ TVar 1 (Just "v") ]
+                                                 )
+                                             )
+                               })
+                , ("Log.println", { quantified = [ 0 ]
+                                  , type_ = TFun (TConst "String")
+                                                (
+                                                TFun (TVar 0 (Just "a"))
+                                                    (TConst "Unit")
+                                                )
+                                  })
+                , ("println", { quantified = [ 0 ]
+                              , type_ = TFun (TConst "String")
+                                            (
+                                            TFun (TVar 0 (Just "a"))
+                                                (TConst "Unit")
+                                            )
+                              })
+                , ("Process.exit", mono (TFun (TConst "Int") (TConst "Unit")))
+                , ("File.readFile", mono
+                                        (
+                                        TFun (TConst "String")
+                                            (
+                                            TApp (TConst "Result")
+                                                [ TConst "String"
+                                                , TConst "String"
+                                                ]
+                                            )
+                                        ))
+                , ("File.writeFile", mono
+                                         (
+                                         TFun (TConst "String")
+                                             (
+                                             TFun (TConst "String")
+                                                 (
+                                                 TApp (TConst "Result")
+                                                     [ TConst "String"
+                                                     , TConst "Unit"
+                                                     ]
+                                                 )
+                                             )
+                                         ))
+                , ("File.mkdirAll", mono
+                                        (
+                                        TFun (TConst "String")
+                                            (
+                                            TApp (TConst "Result")
+                                                [ TConst "String"
+                                                , TConst "Unit"
+                                                ]
+                                            )
+                                        ))
+                , ("Args.getArgs", mono
+                                       (
+                                       TFun (TConst "Unit")
+                                           (
+                                           TApp (TConst "List")
+                                               [ TConst "String" ]
+                                           )
+                                       ))
+                , ("Args.getArg", mono
+                                      (
+                                      TFun (TConst "Int")
+                                          (
+                                          TApp (TConst "Maybe")
+                                              [ TConst "String" ]
+                                          )
+                                      ))
+                , ("Ref.new", { quantified = [ 0 ]
+                              , type_ = TFun (TVar 0 (Just "a"))
+                                            (
+                                            TApp (TConst "Ref")
+                                                [ TVar 0 (Just "a") ]
+                                            )
+                              })
+                , ("Ref.get", { quantified = [ 0 ]
+                              , type_ = TFun
+                                            (
+                                            TApp (TConst "Ref")
+                                                [ TVar 0 (Just "a") ]
+                                            )
+                                            (TVar 0 (Just "a"))
+                              })
+                , ("Ref.set", { quantified = [ 0 ]
+                              , type_ = TFun (TVar 0 (Just "a"))
+                                            (
+                                            TFun
+                                                (
+                                                TApp (TConst "Ref")
+                                                    [ TVar 0 (Just "a") ]
+                                                )
+                                                (TConst "Unit")
+                                            )
+                              })
+                , ("Task.succeed", { quantified = [ 0 , 1 ]
+                                   , type_ = TFun (TVar 0 (Just "a"))
+                                                 (
+                                                 TApp (TConst "Task")
+                                                     [ TVar 1 (Just "err")
+                                                     , TVar 0 (Just "a")
+                                                     ]
+                                                 )
+                                   })
+                , ("Task.fail", { quantified = [ 0 , 1 ]
+                                , type_ = TFun (TVar 0 (Just "err"))
+                                              (
+                                              TApp (TConst "Task")
+                                                  [ TVar 0 (Just "err")
+                                                  , TVar 1 (Just "a")
+                                                  ]
+                                              )
+                                })
+                , ("Task.andThen", { quantified = [ 0 , 1 , 2 ]
+                                   , type_ = TFun
+                                                 (
+                                                 TFun (TVar 0 (Just "a"))
+                                                     (
+                                                     TApp (TConst "Task")
+                                                         [ TVar 2 (Just "err")
+                                                         , TVar 1 (Just "b")
+                                                         ]
+                                                     )
+                                                 )
+                                                 (
+                                                 TFun
+                                                     (
+                                                     TApp (TConst "Task")
+                                                         [ TVar 2 (Just "err")
+                                                         , TVar 0 (Just "a")
+                                                         ]
+                                                     )
+                                                     (
+                                                     TApp (TConst "Task")
+                                                         [ TVar 2 (Just "err")
+                                                         , TVar 1 (Just "b")
+                                                         ]
+                                                     )
+                                                 )
+                                   })
+                , ("Task.map", { quantified = [ 0 , 1 , 2 ]
+                               , type_ = TFun
+                                             (
+                                             TFun (TVar 0 (Just "a"))
+                                                 (TVar 1 (Just "b"))
+                                             )
+                                             (
+                                             TFun
+                                                 (
+                                                 TApp (TConst "Task")
+                                                     [ TVar 2 (Just "err")
+                                                     , TVar 0 (Just "a")
+                                                     ]
+                                                 )
+                                                 (
+                                                 TApp (TConst "Task")
+                                                     [ TVar 2 (Just "err")
+                                                     , TVar 1 (Just "b")
+                                                     ]
+                                                 )
+                                             )
+                               })
+                , ("Task.perform", { quantified = [ 0 , 1 ]
+                                   , type_ = TFun
+                                                 (
+                                                 TApp (TConst "Task")
+                                                     [ TVar 0 (Just "err")
+                                                     , TVar 1 (Just "a")
+                                                     ]
+                                                 )
+                                                 (
+                                                 TApp (TConst "Result")
+                                                     [ TVar 0 (Just "err")
+                                                     , TVar 1 (Just "a")
+                                                     ]
+                                                 )
+                                   })
+                , ("Task.sequence", { quantified = [ 0 , 1 ]
+                                    , type_ = TFun
+                                                  (
+                                                  TApp (TConst "List")
+                                                      [ TApp (TConst "Task")
+                                                            [ TVar 0
+                                                                  (Just "err")
+                                                            , TVar 1 (Just "a")
+                                                            ]
+                                                      ]
+                                                  )
+                                                  (
+                                                  TApp (TConst "Task")
+                                                      [ TVar 0 (Just "err")
+                                                      , TApp (TConst "List")
+                                                            [ TVar 1 (Just "a")
+                                                            ]
+                                                      ]
+                                                  )
+                                    })
+                ]
     in
         Env.union stdFunctions prelude
 
@@ -980,9 +1129,8 @@ buildDepTypeEnvLoop entryImports modules env =
             env
         
         pair :: rest ->
-            buildDepTypeEnvLoop entryImports rest (
-            addOneModuleTypes entryImports pair env
-            )
+            buildDepTypeEnvLoop entryImports rest
+                (addOneModuleTypes entryImports pair env)
 
 
 addOneModuleTypes : (List Ast.ImportDecl) -> (String, Ast.Module) -> Env.TypeEnv -> Env.TypeEnv
@@ -992,9 +1140,10 @@ addOneModuleTypes entryImports pair env =
 
 addOneModuleTypesInner : (List Ast.ImportDecl) -> String -> Ast.Module -> Env.TypeEnv -> Env.TypeEnv
 addOneModuleTypesInner entryImports modName mod env =
-    addAnnotationsToEnv (findImportAlias entryImports modName) (
-    findExposedNames entryImports modName
-    ) (collectModuleAnnotations mod.declarations) env
+    addAnnotationsToEnv (findImportAlias entryImports modName)
+        (findExposedNames entryImports modName)
+        (collectModuleAnnotations mod.declarations)
+        env
 
 
 findImportAlias : (List Ast.ImportDecl) -> String -> String
@@ -1104,9 +1253,8 @@ addAnnotationsToEnv qualPrefix exposed annotations env =
             env
         
         ann :: rest ->
-            addAnnotationsToEnv qualPrefix exposed rest (
-            addOneAnnotation qualPrefix exposed ann env
-            )
+            addAnnotationsToEnv qualPrefix exposed rest
+                (addOneAnnotation qualPrefix exposed ann env)
 
 
 addOneAnnotation : String -> (List String) -> (String, TypeExpr) -> Env.TypeEnv -> Env.TypeEnv
@@ -1162,9 +1310,8 @@ buildParamMap pairs acc =
             acc
         
         pair :: rest ->
-            buildParamMap rest (
-            Dict.insert (fst pair) (TVar (snd pair) (Just (fst pair))) acc
-            )
+            buildParamMap rest
+                (Dict.insert (fst pair) (TVar (snd pair) (Just (fst pair))) acc)
 
 
 assignVarIds : (List String) -> Int -> (List (String, Int)) -> List (String, Int)
@@ -1189,13 +1336,19 @@ collectTypeVarNames texpr =
             Set.union (collectTypeVarNames fromT) (collectTypeVarNames toT)
         
         TypeRef _ args _ ->
-            List.foldl (\arg acc -> Set.union (collectTypeVarNames arg) acc) Set.empty args
+            List.foldl (\arg acc -> Set.union (collectTypeVarNames arg) acc)
+                Set.empty
+                args
         
         TupleTypeExpr items _ ->
-            List.foldl (\item acc -> Set.union (collectTypeVarNames item) acc) Set.empty items
+            List.foldl (\item acc -> Set.union (collectTypeVarNames item) acc)
+                Set.empty
+                items
         
         RecordTypeExpr fields _ ->
-            List.foldl (\f acc -> Set.union (collectTypeVarNames f.type_) acc) Set.empty fields
+            List.foldl (\f acc -> Set.union (collectTypeVarNames f.type_) acc)
+                Set.empty
+                fields
         
         UnitTypeExpr _ ->
             Set.empty
@@ -1246,20 +1399,22 @@ resolveWrapperPath modName =
 
 collectForeignImports : String -> (List Ast.ImportDecl) -> List (String, String, Bool)
 collectForeignImports projectRoot imports =
-    List.filterMap (
-    \imp ->
-        let
-            modName = String.join "." imp.moduleName
-        in
-            if isStdlib modName then
-                Nothing
-            else if imp.alias_ == "_" then
-                Just (modName, moduleNameToGoPath modName, True)
-            else if isFfiBinding projectRoot modName then
-                Just (modName, moduleNameToGoPath modName, False)
-            else
-                Nothing
-    ) imports
+    List.filterMap
+        (
+        \imp ->
+            let
+                modName = String.join "." imp.moduleName
+            in
+                if isStdlib modName then
+                    Nothing
+                else if imp.alias_ == "_" then
+                    Just (modName, moduleNameToGoPath modName, True)
+                else if isFfiBinding projectRoot modName then
+                    Just (modName, moduleNameToGoPath modName, False)
+                else
+                    Nothing
+        )
+        imports
 
 
 collectAllForeignImports : String -> (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> List (String, String, Bool)
@@ -1267,13 +1422,15 @@ collectAllForeignImports projectRoot entryImports loadedModules =
     let
         entryForeign = collectForeignImports projectRoot entryImports
         depForeign =
-            List.concatMap (
-            \pair ->
-                let
-                    mod = snd pair
-                in
-                    collectForeignImports projectRoot mod.imports
-            ) loadedModules
+            List.concatMap
+                (
+                \pair ->
+                    let
+                        mod = snd pair
+                    in
+                        collectForeignImports projectRoot mod.imports
+                )
+                loadedModules
     in
         deduplicateForeignImports (List.append entryForeign depForeign)
 
@@ -1296,9 +1453,8 @@ deduplicateForeignLoop imports seen acc =
                 if Set.member modName seen then
                     deduplicateForeignLoop rest seen acc
                 else
-                    deduplicateForeignLoop rest (Set.insert modName seen) (
-                    item :: acc
-                    )
+                    deduplicateForeignLoop rest (Set.insert modName seen)
+                        (item :: acc)
 
 
 tripleFirst : (String, String, Bool) -> String

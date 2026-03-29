@@ -61,9 +61,11 @@ generateBindingsNative pkgName outDir =
                 File.readFile (outDir ++ "/bindings.skyi")
             
             Err e ->
-                Err (
-                "Native FFI gen failed for " ++ pkgName ++ ": " ++ errorToString e
-                )
+                Err
+                    (
+                    "Native FFI gen failed for " ++ pkgName ++ ": " ++ errorToString
+                                                                           e
+                    )
 
 
 generateSkyiFile : String -> String -> String
@@ -77,22 +79,23 @@ generateSkyiFile pkgName inspectJson =
         varLines = extractVarBindings pkgName inspectJson
         constLines = extractConstBindings pkgName inspectJson
     in
-        String.join "\n" [ "module " ++ moduleName ++ " exposing (..)"
-        , ""
-        , "foreign import \"" ++ pkgName ++ "\" exposing (..)"
-        , ""
-        , String.join "\n\n" funcLines
-        , ""
-        , String.join "\n\n" typeLines
-        , ""
-        , String.join "\n\n" fieldLines
-        , ""
-        , String.join "\n\n" methodLines
-        , ""
-        , String.join "\n\n" varLines
-        , ""
-        , String.join "\n\n" constLines
-        ]
+        String.join "\n"
+            [ "module " ++ moduleName ++ " exposing (..)"
+            , ""
+            , "foreign import \"" ++ pkgName ++ "\" exposing (..)"
+            , ""
+            , String.join "\n\n" funcLines
+            , ""
+            , String.join "\n\n" typeLines
+            , ""
+            , String.join "\n\n" fieldLines
+            , ""
+            , String.join "\n\n" methodLines
+            , ""
+            , String.join "\n\n" varLines
+            , ""
+            , String.join "\n\n" constLines
+            ]
 
 
 pkgToModuleName : String -> String
@@ -100,9 +103,8 @@ pkgToModuleName pkgPath =
     let
         slashParts = String.split "/" pkgPath
         allParts =
-            List.concatMap (\seg -> String.split "." seg) (
-            List.map (\seg -> hyphenToCamel seg) slashParts
-            )
+            List.concatMap (\seg -> String.split "." seg)
+                (List.map (\seg -> hyphenToCamel seg) slashParts)
         capitalized = List.map capitalizeFirst allParts
     in
         String.join "." capitalized
@@ -116,9 +118,8 @@ extractFieldBindings pkgName json =
     in
         let
             safePkg =
-                String.replace "-" "_" (
-                String.replace "/" "_" (String.replace "." "_" pkgName)
-                )
+                String.replace "-" "_"
+                    (String.replace "/" "_" (String.replace "." "_" pkgName))
         in
             List.concatMap (\t -> extractFieldsForType safePkg t) typeElements
 
@@ -132,7 +133,8 @@ extractFieldsForType safePkg typeJson =
         fieldElements = Json.jsonSplitArray fieldsArrayStr
     in
         if kind == "struct" && not (isGenericTypeBinding typeJson) then
-            List.filterMap (\f -> generateFieldBinding safePkg typeName f) fieldElements
+            List.filterMap (\f -> generateFieldBinding safePkg typeName f)
+                fieldElements
         else
             []
 
@@ -160,9 +162,10 @@ generateFieldBinding safePkg typeName fieldJson =
         if String.isEmpty fieldName || not (isSafeFieldType fieldType) then
             Nothing
         else
-            Just (
-            skyFieldName ++ " : Any -> " ++ skyType ++ "\n" ++ skyFieldName ++ " receiver =\n" ++ "    " ++ wrapperName ++ " receiver"
-            )
+            Just
+                (
+                skyFieldName ++ " : Any -> " ++ skyType ++ "\n" ++ skyFieldName ++ " receiver =\n" ++ "    " ++ wrapperName ++ " receiver"
+                )
 
 
 isSafeFieldType : String -> Bool
@@ -175,11 +178,11 @@ extractConstBindings pkgName json =
         constsArrayStr = Json.jsonGetArrayRaw "consts" json
         constElements = Json.jsonSplitArray constsArrayStr
         safePkg =
-            String.replace "-" "_" (
-            String.replace "/" "_" (String.replace "." "_" pkgName)
-            )
+            String.replace "-" "_"
+                (String.replace "/" "_" (String.replace "." "_" pkgName))
     in
-        List.filterMap (\c -> generateConstBinding pkgName safePkg c) constElements
+        List.filterMap (\c -> generateConstBinding pkgName safePkg c)
+            constElements
 
 
 generateConstBinding : String -> String -> String -> Maybe String
@@ -198,13 +201,15 @@ generateConstBinding pkgName safePkg constJson =
             let
                 wrapperName = "Sky_" ++ safePkg ++ "_" ++ name
             in
-                Just (
-                skyName ++ " : " ++ TypeMapper.mapGoTypeToSky constType ++ "\n" ++ skyName ++ " =\n" ++ "    " ++ wrapperName
-                )
+                Just
+                    (
+                    skyName ++ " : " ++ TypeMapper.mapGoTypeToSky constType ++ "\n" ++ skyName ++ " =\n" ++ "    " ++ wrapperName
+                    )
         else if constType == "string" || String.endsWith "string" constType then
-            Just (
-            skyName ++ " : String\n" ++ skyName ++ " =\n" ++ "    " ++ value
-            )
+            Just
+                (
+                skyName ++ " : String\n" ++ skyName ++ " =\n" ++ "    " ++ value
+                )
         else if constType == "int" || constType == "int64" then
             Just (skyName ++ " : Int\n" ++ skyName ++ " =\n" ++ "    " ++ value)
         else
@@ -217,9 +222,8 @@ extractVarBindings pkgName json =
         varsArrayStr = Json.jsonGetArrayRaw "vars" json
         varElements = Json.jsonSplitArray varsArrayStr
         safePkg =
-            String.replace "-" "_" (
-            String.replace "/" "_" (String.replace "." "_" pkgName)
-            )
+            String.replace "-" "_"
+                (String.replace "/" "_" (String.replace "." "_" pkgName))
     in
         List.filterMap (\v -> generateVarBinding pkgName safePkg v) varElements
 
@@ -240,13 +244,15 @@ generateVarBinding pkgName safePkg varJson =
                 setterName = "set" ++ name
                 setterWrapper = "Sky_" ++ safePkg ++ "_Set" ++ name
             in
-                Just (
-                skyName ++ " : () -> " ++ skyType ++ "\n" ++ skyName ++ " _ =\n" ++ "    " ++ wrapperName ++ "\n\n" ++ setterName ++ " : " ++ skyType ++ " -> ()\n" ++ setterName ++ " val =\n" ++ "    " ++ setterWrapper ++ " val"
-                )
+                Just
+                    (
+                    skyName ++ " : () -> " ++ skyType ++ "\n" ++ skyName ++ " _ =\n" ++ "    " ++ wrapperName ++ "\n\n" ++ setterName ++ " : " ++ skyType ++ " -> ()\n" ++ setterName ++ " val =\n" ++ "    " ++ setterWrapper ++ " val"
+                    )
         else
-            Just (
-            skyName ++ " : () -> " ++ skyType ++ "\n" ++ skyName ++ " _ =\n" ++ "    " ++ wrapperName
-            )
+            Just
+                (
+                skyName ++ " : () -> " ++ skyType ++ "\n" ++ skyName ++ " _ =\n" ++ "    " ++ wrapperName
+                )
 
 
 extractMethodBindings : String -> String -> List String
@@ -268,7 +274,8 @@ extractMethodsForType pkgName typeJson =
         if isGenericTypeBinding typeJson then
             []
         else
-            List.filterMap (\m -> generateMethodBinding pkgName typeName m) methodElements
+            List.filterMap (\m -> generateMethodBinding pkgName typeName m)
+                methodElements
 
 
 generateMethodBinding : String -> String -> String -> Maybe String
@@ -283,7 +290,8 @@ generateMethodBinding pkgName typeName methodJson =
         resultTypes = List.map (\r -> Json.jsonGetString "type" r) results
         variadic = Json.jsonGetBool "variadic" methodJson
     in
-        if String.isEmpty name || List.length results > 2 || TypeMapper.lowerCamelCase name == "type" then
+        if String.isEmpty name || List.length results > 2 || TypeMapper.lowerCamelCase
+                                                                 name == "type" then
             Nothing
         else if not (allMethodParamsSafe pkgName paramTypes variadic) then
             Nothing
@@ -292,17 +300,18 @@ generateMethodBinding pkgName typeName methodJson =
         else
             let
                 safePkg =
-                    String.replace "-" "_" (
-                    String.replace "/" "_" (String.replace "." "_" pkgName)
-                    )
+                    String.replace "-" "_"
+                        (
+                        String.replace "/" "_" (String.replace "." "_" pkgName)
+                        )
                 skyName = TypeMapper.lowerCamelCase typeName ++ name
                 wrapperName = "Sky_" ++ safePkg ++ "_" ++ typeName ++ name
                 skyParamTypes =
                     List.map (\t -> TypeMapper.mapGoTypeToSky t) paramTypes
                 skyReturnType = buildReturnType resultTypes
                 allTypes =
-                    List.append ([ typeName ] ++ skyParamTypes) [ skyReturnType
-                    ]
+                    List.append ([ typeName ] ++ skyParamTypes)
+                        [ skyReturnType ]
                 typeSignature = String.join " -> " allTypes
                 paramNames =
                     List.indexedMap (\i _ -> "arg" ++ String.fromInt i) params
@@ -310,9 +319,10 @@ generateMethodBinding pkgName typeName methodJson =
                 paramStr = String.join " " allParamNames
                 callArgs = String.join " " allParamNames
             in
-                Just (
-                skyName ++ " : " ++ typeSignature ++ "\n" ++ skyName ++ " " ++ paramStr ++ " =\n" ++ "    " ++ wrapperName ++ " " ++ callArgs
-                )
+                Just
+                    (
+                    skyName ++ " : " ++ typeSignature ++ "\n" ++ skyName ++ " " ++ paramStr ++ " =\n" ++ "    " ++ wrapperName ++ " " ++ callArgs
+                    )
 
 
 hyphenToCamel : String -> String
@@ -334,7 +344,8 @@ capitalizeFirst s =
     if String.isEmpty s then
         ""
     else
-        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s)
+                                                   s
 
 
 extractFuncBindings : String -> String -> List String
@@ -343,9 +354,8 @@ extractFuncBindings pkgName json =
         funcsArrayStr = Json.jsonGetArrayRaw "funcs" json
         elements = Json.jsonSplitArray funcsArrayStr
     in
-        List.filterMap (\e -> generateFuncBinding pkgName e) (
-        List.filter (\f -> isSupportedFuncForPkg pkgName f) elements
-        )
+        List.filterMap (\e -> generateFuncBinding pkgName e)
+            (List.filter (\f -> isSupportedFuncForPkg pkgName f) elements)
 
 
 isSupportedFuncForPkg : String -> String -> Bool
@@ -363,21 +373,30 @@ isSupportedFuncForPkg pkgName funcJson =
             variadic = Json.jsonGetBool "variadic" funcJson
             paramCount = List.length paramTypes
         in
-            List.length results <= 2 && List.all (
-                                        \pair ->
-                                            let
-                                                idx = fst pair
-                                                t = snd pair
-                                            in
-                                                if variadic && idx == paramCount - 1 then
-                                                    True
-                                                else
-                                                    isSafeTypeForPkg pkgName t
-                                        ) (
-                                        List.indexedMap (\i t -> (i, t)) paramTypes
-                                        ) && List.all (
-                                             \t -> isSafeTypeForPkg pkgName t
-                                             ) resultTypes
+            List.length results <= 2 && List.all
+                                            (
+                                            \pair ->
+                                                let
+                                                    idx = fst pair
+                                                    t = snd pair
+                                                in
+                                                    if variadic && idx == paramCount - 1 then
+                                                        True
+                                                    else
+                                                        isSafeTypeForPkg pkgName
+                                                            t
+                                            )
+                                            (
+                                            List.indexedMap (\i t -> (i, t))
+                                                paramTypes
+                                            ) && List.all
+                                                     (
+                                                     \t ->
+                                                         isSafeTypeForPkg
+                                                             pkgName
+                                                             t
+                                                     )
+                                                     resultTypes
 
 
 allMethodParamsSafe : String -> (List String) -> Bool -> Bool
@@ -403,9 +422,11 @@ allMethodParamsLoop pkgName params variadic idx total =
 
 isSafeTypeForPkg : String -> String -> Bool
 isSafeTypeForPkg pkgName goType =
-    if String.startsWith "func(" goType && not (
-                                           String.contains "ResponseWriter" goType
-                                           ) then
+    if String.startsWith "func(" goType && not
+                                               (
+                                               String.contains "ResponseWriter"
+                                                   goType
+                                               ) then
         False
     else if String.startsWith "map[" goType && goType /= "map[string]interface{}" && goType /= "map[string]any" && goType /= "map[string]string" then
         False
@@ -418,7 +439,8 @@ isSafeTypeForPkg pkgName goType =
                 else
                     elemType
         in
-            String.startsWith (pkgName ++ ".") innerType || String.contains "." innerType
+            String.startsWith (pkgName ++ ".") innerType || String.contains "."
+                                                                innerType
     else
         let
             parts = String.split "/" pkgName
@@ -440,45 +462,56 @@ isSafeTypeForPkg pkgName goType =
                         ""
             isExternal = String.contains "." firstPart
             candidateParent =
-                String.join "/" (
-                List.reverse (List.drop 1 (List.reverse parts))
-                )
+                String.join "/"
+                    (List.reverse (List.drop 1 (List.reverse parts)))
             parentParts = String.split "/" candidateParent
             isSubPkg =
-                isExternal && List.length parentParts >= 3 && not (
-                                                              String.startsWith "v" lastPart && String.length lastPart <= 3
-                                                              )
+                isExternal && List.length parentParts >= 3 && not
+                                                                  (
+                                                                  String.startsWith
+                                                                      "v"
+                                                                      lastPart && String.length
+                                                                                      lastPart <= 3
+                                                                  )
             parentPkg =
                 if isSubPkg then
                     candidateParent
                 else
                     ""
         in
-            isSafeType goType || String.startsWith (pkgName ++ ".") goType || String.startsWith (
-                                                                              "*" ++ pkgName ++ "."
-                                                                              ) goType || (
-            not (String.isEmpty parentPkg) && String.startsWith (
-                                              parentPkg ++ "."
-                                              ) goType
+            isSafeType goType || String.startsWith (pkgName ++ ".") goType || String.startsWith
+                                                                                  (
+                                                                                  "*" ++ pkgName ++ "."
+                                                                                  )
+                                                                                  goType || (
+            not (String.isEmpty parentPkg) && String.startsWith
+                                                  (parentPkg ++ ".")
+                                                  goType
             ) || (
-            not (String.isEmpty parentPkg) && String.startsWith (
-                                              "*" ++ parentPkg ++ "."
-                                              ) goType
+            not (String.isEmpty parentPkg) && String.startsWith
+                                                  ("*" ++ parentPkg ++ ".")
+                                                  goType
             )
 
 
 isSafeType : String -> Bool
 isSafeType goType =
-    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool" || String.startsWith "[" goType || (
+    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool" || String.startsWith
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     "["
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     goType || (
     String.contains "." goType && not (needsExtraImportBinding goType)
     ) || (
-    String.startsWith "*" goType && isSafeType (
-                                    String.slice 1 (String.length goType) goType
-                                    )
+    String.startsWith "*" goType && isSafeType
+                                        (
+                                        String.slice 1 (String.length goType)
+                                            goType
+                                        )
     ) || (
-    String.startsWith "[]" goType && isSafeType (
-                                     String.slice 2 (String.length goType) goType
-                                     )
+    String.startsWith "[]" goType && isSafeType
+                                         (
+                                         String.slice 2 (String.length goType)
+                                             goType
+                                         )
     ) || String.startsWith "func(" goType || String.startsWith "map[" goType
 
 
@@ -491,7 +524,59 @@ needsExtraImportBinding goType =
             else
                 goType
     in
-        String.contains "/" t || String.startsWith "io." t || String.startsWith "hash." t || String.startsWith "context." t || String.startsWith "sync." t || String.startsWith "net." t || String.startsWith "crypto." t || String.startsWith "encoding." t || String.startsWith "reflect." t || String.startsWith "testing." t || String.startsWith "log." t || String.startsWith "regexp." t || String.startsWith "mime." t || String.startsWith "html." t || String.startsWith "text." t || String.startsWith "bufio." t || String.startsWith "fs." t || String.startsWith "os." t || String.startsWith "time." t || String.startsWith "fmt." t || String.startsWith "sort." t || String.startsWith "math." t || String.startsWith "strings." t || String.startsWith "bytes." t || String.startsWith "strconv." t || String.startsWith "database." t || String.startsWith "sql." t || String.startsWith "unicode." t
+        String.contains "/" t || String.startsWith "io." t || String.startsWith
+                                                                  "hash."
+                                                                  t || String.startsWith
+                                                                           "context."
+                                                                           t || String.startsWith
+                                                                                    "sync."
+                                                                                    t || String.startsWith
+                                                                                             "net."
+                                                                                             t || String.startsWith
+                                                                                                      "crypto."
+                                                                                                      t || String.startsWith
+                                                                                                               "encoding."
+                                                                                                               t || String.startsWith
+                                                                                                                        "reflect."
+                                                                                                                        t || String.startsWith
+                                                                                                                                 "testing."
+                                                                                                                                 t || String.startsWith
+                                                                                                                                          "log."
+                                                                                                                                          t || String.startsWith
+                                                                                                                                                   "regexp."
+                                                                                                                                                   t || String.startsWith
+                                                                                                                                                            "mime."
+                                                                                                                                                            t || String.startsWith
+                                                                                                                                                                     "html."
+                                                                                                                                                                     t || String.startsWith
+                                                                                                                                                                              "text."
+                                                                                                                                                                              t || String.startsWith
+                                                                                                                                                                                       "bufio."
+                                                                                                                                                                                       t || String.startsWith
+                                                                                                                                                                                                "fs."
+                                                                                                                                                                                                t || String.startsWith
+                                                                                                                                                                                                         "os."
+                                                                                                                                                                                                         t || String.startsWith
+                                                                                                                                                                                                                  "time."
+                                                                                                                                                                                                                  t || String.startsWith
+                                                                                                                                                                                                                           "fmt."
+                                                                                                                                                                                                                           t || String.startsWith
+                                                                                                                                                                                                                                    "sort."
+                                                                                                                                                                                                                                    t || String.startsWith
+                                                                                                                                                                                                                                             "math."
+                                                                                                                                                                                                                                             t || String.startsWith
+                                                                                                                                                                                                                                                      "strings."
+                                                                                                                                                                                                                                                      t || String.startsWith
+                                                                                                                                                                                                                                                               "bytes."
+                                                                                                                                                                                                                                                               t || String.startsWith
+                                                                                                                                                                                                                                                                        "strconv."
+                                                                                                                                                                                                                                                                        t || String.startsWith
+                                                                                                                                                                                                                                                                                 "database."
+                                                                                                                                                                                                                                                                                 t || String.startsWith
+                                                                                                                                                                                                                                                                                          "sql."
+                                                                                                                                                                                                                                                                                          t || String.startsWith
+                                                                                                                                                                                                                                                                                                   "unicode."
+                                                                                                                                                                                                                                                                                                   t
 
 
 generateFuncBinding : String -> String -> Maybe String
@@ -510,31 +595,34 @@ generateFuncBinding pkgName funcJson =
                 else
                     let
                         safePkg =
-                            String.replace "-" "_" (
-                            String.replace "/" "_" (
-                            String.replace "." "_" pkgName
-                            )
-                            )
+                            String.replace "-" "_"
+                                (
+                                String.replace "/" "_"
+                                    (String.replace "." "_" pkgName)
+                                )
                         wrapperName = "Sky_" ++ safePkg ++ "_" ++ name
                         paramsArrayStr = Json.jsonGetArrayRaw "params" funcJson
                         paramElements = Json.jsonSplitArray paramsArrayStr
                         paramTypes =
-                            List.map (
-                            \p ->
-                                TypeMapper.mapGoTypeToSky (
-                                Json.jsonGetString "type" p
+                            List.map
+                                (
+                                \p ->
+                                    TypeMapper.mapGoTypeToSky
+                                        (Json.jsonGetString "type" p)
                                 )
-                            ) paramElements
+                                paramElements
                         resultsArrayStr =
                             Json.jsonGetArrayRaw "results" funcJson
                         resultElements = Json.jsonSplitArray resultsArrayStr
                         resultTypes =
-                            List.map (\r -> Json.jsonGetString "type" r) resultElements
+                            List.map (\r -> Json.jsonGetString "type" r)
+                                resultElements
                         skyReturnType = buildReturnType resultTypes
                         allTypes = List.append paramTypes [ skyReturnType ]
                         typeSignature = String.join " -> " allTypes
                         paramNames =
-                            List.indexedMap (\i _ -> "arg" ++ String.fromInt i) paramElements
+                            List.indexedMap (\i _ -> "arg" ++ String.fromInt i)
+                                paramElements
                         paramStr = String.join " " paramNames
                         callArgs = String.join " " paramNames
                         hasParams = not (List.isEmpty paramElements)
@@ -549,14 +637,15 @@ generateFuncBinding pkgName funcJson =
                             else
                                 "() -> " ++ skyReturnType
                     in
-                        Just (
-                        skyName ++ " : " ++ finalTypeSignature ++ "\n" ++ skyName ++ " " ++ finalParamStr ++ " =\n" ++ "    " ++ wrapperName ++ (
-                        if hasParams then
-                            " " ++ callArgs
-                        else
-                            " ()"
-                        )
-                        )
+                        Just
+                            (
+                            skyName ++ " : " ++ finalTypeSignature ++ "\n" ++ skyName ++ " " ++ finalParamStr ++ " =\n" ++ "    " ++ wrapperName ++ (
+                            if hasParams then
+                                " " ++ callArgs
+                            else
+                                " ()"
+                            )
+                            )
 
 
 buildReturnType : (List String) -> String
@@ -598,11 +687,12 @@ buildReturnType results =
                     [  ] ->
                         "Result String ()"
             else
-                "Result String (" ++ String.join ", " (
-                                     List.map (
-                                     \r -> TypeMapper.mapGoTypeToSky r
-                                     ) results
-                                     ) ++ ")"
+                "Result String (" ++ String.join ", "
+                                         (
+                                         List.map
+                                             (\r -> TypeMapper.mapGoTypeToSky r)
+                                             results
+                                         ) ++ ")"
 
 
 extractTypeBindings : String -> List String

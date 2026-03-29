@@ -4,5 +4,4 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Io as Io
 import Lsp.Server as Server
 
-main =
-    Server.startServer  ()
+main = Server.startServer ()

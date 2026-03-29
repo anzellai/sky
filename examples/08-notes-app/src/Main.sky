@@ -20,11 +20,17 @@ import Lib.View as View
 initDb _ =
     let
         _ =
-            Db.exec "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, verified INTEGER DEFAULT 0, verification_token TEXT, created_at TEXT DEFAULT (datetime('now')))" []
+            Db.exec
+                "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, verified INTEGER DEFAULT 0, verification_token TEXT, created_at TEXT DEFAULT (datetime('now')))"
+                []
         _ =
-            Db.exec "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))" []
+            Db.exec
+                "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))"
+                []
         _ =
-            Db.exec "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT '')" []
+            Db.exec
+                "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT '')"
+                []
     in
         ()
 
@@ -55,7 +61,8 @@ requireAuth req onUser =
                 
                 Nothing ->
                     Server.redirect "/auth/sign-in"
-                        |> Server.withCookie "session" "" "Path=/; HttpOnly; Max-Age=0"
+                        |> Server.withCookie "session" ""
+                               "Path=/; HttpOnly; Max-Age=0"
 
 
 -- ============================================================
@@ -88,10 +95,13 @@ handleSignIn _ req =
                         case Auth.createSession userId of
                             
                             Ok sessionToken ->
-                                Task.succeed (
-                                Server.redirect "/notes"
-                                    |> Server.withCookie "session" sessionToken "Path=/; HttpOnly; SameSite=Lax"
-                                )
+                                Task.succeed
+                                    (
+                                    Server.redirect "/notes"
+                                        |> Server.withCookie "session"
+                                               sessionToken
+                                               "Path=/; HttpOnly; SameSite=Lax"
+                                    )
                             
                             Err msg ->
                                 Task.succeed (Server.html (View.signInPage msg))
@@ -111,15 +121,17 @@ handleSignUp _ req =
             confirm = Server.formValue "confirm_password" req
         in
             if password /= confirm then
-                Task.succeed (
-                Server.html (View.signUpPage "Passwords do not match.")
-                )
+                Task.succeed
+                    (Server.html (View.signUpPage "Passwords do not match."))
             else if String.length password < 8 then
-                Task.succeed (
-                Server.html (
-                View.signUpPage "Password must be at least 8 characters."
-                )
-                )
+                Task.succeed
+                    (
+                    Server.html
+                        (
+                        View.signUpPage
+                            "Password must be at least 8 characters."
+                        )
+                    )
             else
                 case Auth.createUser email password of
                     
@@ -127,11 +139,14 @@ handleSignUp _ req =
                         Task.succeed (Server.html (View.signUpSuccessPage ()))
                     
                     Err _ ->
-                        Task.succeed (
-                        Server.html (
-                        View.signUpPage "That email is already registered, or a server error occurred."
-                        )
-                        )
+                        Task.succeed
+                            (
+                            Server.html
+                                (
+                                View.signUpPage
+                                    "That email is already registered, or a server error occurred."
+                                )
+                            )
     else
         Task.succeed (Server.html (View.signUpPage ""))
 
@@ -169,10 +184,11 @@ handleSignOut _ req =
         token = getSessionToken req
         _ = Db.exec "DELETE FROM sessions WHERE token = ?" [ token ]
     in
-        Task.succeed (
-        Server.redirect "/"
-            |> Server.withCookie "session" "" "Path=/; HttpOnly; Max-Age=0"
-        )
+        Task.succeed
+            (
+            Server.redirect "/"
+                |> Server.withCookie "session" "" "Path=/; HttpOnly; Max-Age=0"
+            )
 
 
 -- ============================================================
@@ -180,106 +196,119 @@ handleSignOut _ req =
 -- ============================================================
 handleNotesList : a -> Request -> Task String Response
 handleNotesList _ req =
-    Task.succeed (
-    requireAuth req (
-    \user email ->
-        let
-            userId = Db.getField "id" user
-            notes = Result.withDefault [] (Notes.getNotes userId)
-        in
-            Server.html (View.notesListPage email notes)
-    )
-    )
+    Task.succeed
+        (
+        requireAuth req
+            (
+            \user email ->
+                let
+                    userId = Db.getField "id" user
+                    notes = Result.withDefault [] (Notes.getNotes userId)
+                in
+                    Server.html (View.notesListPage email notes)
+            )
+        )
 
 
 handleNewNote : a -> Request -> Task String Response
 handleNewNote _ req =
-    Task.succeed (
-    requireAuth req (
-    \user email ->
-        let
-            userId = Db.getField "id" user
-        in
-            if Server.method req == "POST" then
+    Task.succeed
+        (
+        requireAuth req
+            (
+            \user email ->
                 let
-                    title = Server.formValue "title" req
-                    content = Server.formValue "content" req
-                    _ = Notes.createNote userId title content
+                    userId = Db.getField "id" user
                 in
-                    Server.redirect "/notes"
-            else
-                Server.html (View.noteFormPage email "" "" "" False)
-    )
-    )
+                    if Server.method req == "POST" then
+                        let
+                            title = Server.formValue "title" req
+                            content = Server.formValue "content" req
+                            _ = Notes.createNote userId title content
+                        in
+                            Server.redirect "/notes"
+                    else
+                        Server.html (View.noteFormPage email "" "" "" False)
+            )
+        )
 
 
 handleViewNote : a -> Request -> Task String Response
 handleViewNote _ req =
-    Task.succeed (
-    requireAuth req (
-    \user email ->
-        let
-            userId = Db.getField "id" user
-            noteId = Server.queryParam "id" req
-        in
-            case Notes.getNote noteId userId of
-                
-                Just note ->
-                    Server.html (View.noteViewPage email note)
-                
-                Nothing ->
-                    Server.html (View.errorPage "Note not found.")
-    )
-    )
+    Task.succeed
+        (
+        requireAuth req
+            (
+            \user email ->
+                let
+                    userId = Db.getField "id" user
+                    noteId = Server.queryParam "id" req
+                in
+                    case Notes.getNote noteId userId of
+                        
+                        Just note ->
+                            Server.html (View.noteViewPage email note)
+                        
+                        Nothing ->
+                            Server.html (View.errorPage "Note not found.")
+            )
+        )
 
 
 handleEditNote : a -> Request -> Task String Response
 handleEditNote _ req =
-    Task.succeed (
-    requireAuth req (
-    \user email ->
-        let
-            userId = Db.getField "id" user
-            noteId = Server.queryParam "id" req
-        in
-            if Server.method req == "POST" then
+    Task.succeed
+        (
+        requireAuth req
+            (
+            \user email ->
                 let
-                    title = Server.formValue "title" req
-                    content = Server.formValue "content" req
-                    _ = Notes.updateNote noteId userId title content
+                    userId = Db.getField "id" user
+                    noteId = Server.queryParam "id" req
                 in
-                    Server.redirect ("/notes/view?id=" ++ noteId)
-            else
-                case Notes.getNote noteId userId of
-                    
-                    Just note ->
+                    if Server.method req == "POST" then
                         let
-                            title = Db.getField "title" note
-                            content = Db.getField "content" note
+                            title = Server.formValue "title" req
+                            content = Server.formValue "content" req
+                            _ = Notes.updateNote noteId userId title content
                         in
-                            Server.html (
-                            View.noteFormPage email title content noteId True
-                            )
-                    
-                    Nothing ->
-                        Server.html (View.errorPage "Note not found.")
-    )
-    )
+                            Server.redirect ("/notes/view?id=" ++ noteId)
+                    else
+                        case Notes.getNote noteId userId of
+                            
+                            Just note ->
+                                let
+                                    title = Db.getField "title" note
+                                    content = Db.getField "content" note
+                                in
+                                    Server.html
+                                        (
+                                        View.noteFormPage email title content
+                                            noteId
+                                            True
+                                        )
+                            
+                            Nothing ->
+                                Server.html (View.errorPage "Note not found.")
+            )
+        )
 
 
 handleDeleteNote : a -> Request -> Task String Response
 handleDeleteNote _ req =
-    Task.succeed (
-    requireAuth req (
-    \user email ->
-        let
-            userId = Db.getField "id" user
-            noteId = Server.formValue "id" req
-            _ = Notes.deleteNote noteId userId
-        in
-            Server.redirect "/notes"
-    )
-    )
+    Task.succeed
+        (
+        requireAuth req
+            (
+            \user email ->
+                let
+                    userId = Db.getField "id" user
+                    noteId = Server.formValue "id" req
+                    _ = Notes.deleteNote noteId userId
+                in
+                    Server.redirect "/notes"
+            )
+        )
 
 
 -- ============================================================
@@ -295,16 +324,17 @@ main =
         _ = println "==========================================="
         _ = println ""
     in
-        Server.listen 4000 [ Server.any "/" handleLanding
-        , Server.any "/auth/sign-in" handleSignIn
-        , Server.any "/auth/sign-up" handleSignUp
-        , Server.any "/auth/forgot-password" handleForgotPassword
-        , Server.any "/auth/verify" handleVerify
-        , Server.any "/auth/sign-out" handleSignOut
-        , Server.any "/notes" handleNotesList
-        , Server.any "/notes/new" handleNewNote
-        , Server.any "/notes/view" handleViewNote
-        , Server.any "/notes/edit" handleEditNote
-        , Server.any "/notes/delete" handleDeleteNote
-        ]
+        Server.listen 4000
+            [ Server.any "/" handleLanding
+            , Server.any "/auth/sign-in" handleSignIn
+            , Server.any "/auth/sign-up" handleSignUp
+            , Server.any "/auth/forgot-password" handleForgotPassword
+            , Server.any "/auth/verify" handleVerify
+            , Server.any "/auth/sign-out" handleSignOut
+            , Server.any "/notes" handleNotesList
+            , Server.any "/notes/new" handleNewNote
+            , Server.any "/notes/view" handleViewNote
+            , Server.any "/notes/edit" handleEditNote
+            , Server.any "/notes/delete" handleDeleteNote
+            ]
             |> Task.perform

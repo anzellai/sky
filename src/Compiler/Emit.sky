@@ -23,13 +23,15 @@ emitImports : (List GoImport) -> String
 emitImports imports =
     let
         lines =
-            List.map (
-            \imp ->
-                if imp.alias_ == "" then
-                    "\t\"" ++ imp.path ++ "\""
-                else
-                    "\t" ++ imp.alias_ ++ " \"" ++ imp.path ++ "\""
-            ) imports
+            List.map
+                (
+                \imp ->
+                    if imp.alias_ == "" then
+                        "\t\"" ++ imp.path ++ "\""
+                    else
+                        "\t" ++ imp.alias_ ++ " \"" ++ imp.path ++ "\""
+                )
+                imports
     in
         "import (\n" ++ String.join "\n" lines ++ "\n)\n"
 
@@ -124,9 +126,12 @@ emitExpr expr =
         GoMapLit entries ->
             let
                 pairs =
-                    List.map (
-                    \pair -> emitExpr (fst pair) ++ ": " ++ emitExpr (snd pair)
-                    ) entries
+                    List.map
+                        (
+                        \pair ->
+                            emitExpr (fst pair) ++ ": " ++ emitExpr (snd pair)
+                        )
+                        entries
             in
                 "map[string]any{" ++ String.join ", " pairs ++ "}"
         
@@ -142,7 +147,8 @@ emitExpr expr =
         GoCompositeLit typeName fields ->
             let
                 fs =
-                    List.map (\pair -> fst pair ++ ": " ++ emitExpr (snd pair)) fields
+                    List.map (\pair -> fst pair ++ ": " ++ emitExpr (snd pair))
+                        fields
             in
                 typeName ++ "{" ++ String.join ", " fs ++ "}"
         

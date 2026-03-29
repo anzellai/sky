@@ -60,11 +60,9 @@ init _req =
 -- HELPERS (defined before update so they are in scope)
 -- ══════════════════════════════════════════════════════
 logActivity event targetId userId =
-    Db.exec "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)" [ event ++ "-" ++ targetId
-    , event
-    , targetId
-    , userId
-    ]
+    Db.exec
+        "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
+        [ event ++ "-" ++ targetId , event , targetId , userId ]
 
 
 refreshCurrentView : Model -> (Model, Cmd Msg)
@@ -74,7 +72,8 @@ refreshCurrentView model =
         BoardPage ->
             let
                 ideas =
-                    Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
+                    Ideas.getIdeas model.sortBy model.filterCategory
+                        model.searchQuery
             in
                 ({ model | ideas = ideas }, Cmd.none)
         
@@ -212,7 +211,9 @@ doCreateIdea user model =
     let
         userId = Db.getField "id" user
         _ =
-            Ideas.createIdea model.submitTitle model.submitDescription model.submitCategory userId
+            Ideas.createIdea model.submitTitle model.submitDescription
+                model.submitCategory
+                userId
         _ = logActivity "submit" "" userId
         ideas =
             Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
@@ -449,7 +450,8 @@ subscriptions model =
 -- APP
 -- ══════════════════════════════════════════════════════
 main =
-    app { init = init
+    app
+        { init = init
         , update = update
         , view = view
         , subscriptions = subscriptions

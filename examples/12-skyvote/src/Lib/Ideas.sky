@@ -13,12 +13,9 @@ createIdea title description category authorId =
     let
         id = String.slice 0 12 (Crypto.sha256 (title ++ ":" ++ authorId))
         result =
-            Db.exec "INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)" [ id
-            , title
-            , description
-            , category
-            , authorId
-            ]
+            Db.exec
+                "INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)"
+                [ id , title , description , category , authorId ]
         _ = println ("[IDEA] Created: " ++ title ++ " by " ++ authorId)
     in
         case result of
@@ -59,55 +56,56 @@ getIdeas sortBy filterCategory searchQuery =
 getIdea ideaId =
     let
         rows =
-            Db.queryRows "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1" [ ideaId
-            ]
+            Db.queryRows
+                "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1"
+                [ ideaId ]
         ideaRows = Result.withDefault [] rows
     in
         List.head ideaRows
 
 
 getIdeasByStatus status =
-    Result.withDefault [] (
-    Db.queryRows "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC" [ status
-    ]
-    )
+    Result.withDefault []
+        (
+        Db.queryRows
+            "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC"
+            [ status ]
+        )
 
 
 toggleVote ideaId userId =
     let
         existingRows =
-            Result.withDefault [] (
-            Db.queryRows "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?" [ ideaId
-            , userId
-            ]
-            )
+            Result.withDefault []
+                (
+                Db.queryRows
+                    "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
+                    [ ideaId , userId ]
+                )
     in
         case List.head existingRows of
             
             Just _ ->
                 let
                     _ =
-                        Db.exec "DELETE FROM votes WHERE idea_id = ? AND user_id = ?" [ ideaId
-                        , userId
-                        ]
+                        Db.exec
+                            "DELETE FROM votes WHERE idea_id = ? AND user_id = ?"
+                            [ ideaId , userId ]
                     _ =
-                        println (
-                        "[VOTE] Removed: " ++ userId ++ " on " ++ ideaId
-                        )
+                        println
+                            ("[VOTE] Removed: " ++ userId ++ " on " ++ ideaId)
                 in
                     ()
             
             Nothing ->
                 let
                     voteId =
-                        String.slice 0 12 (
-                        Crypto.sha256 (ideaId ++ ":" ++ userId)
-                        )
+                        String.slice 0 12
+                            (Crypto.sha256 (ideaId ++ ":" ++ userId))
                     _ =
-                        Db.exec "INSERT INTO votes (id, idea_id, user_id) VALUES (?, ?, ?)" [ voteId
-                        , ideaId
-                        , userId
-                        ]
+                        Db.exec
+                            "INSERT INTO votes (id, idea_id, user_id) VALUES (?, ?, ?)"
+                            [ voteId , ideaId , userId ]
                     _ = println ("[VOTE] Added: " ++ userId ++ " on " ++ ideaId)
                 in
                     ()
@@ -116,11 +114,12 @@ toggleVote ideaId userId =
 hasVoted ideaId userId =
     let
         rows =
-            Result.withDefault [] (
-            Db.queryRows "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?" [ ideaId
-            , userId
-            ]
-            )
+            Result.withDefault []
+                (
+                Db.queryRows
+                    "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
+                    [ ideaId , userId ]
+                )
     in
         case List.head rows of
             
@@ -134,10 +133,12 @@ hasVoted ideaId userId =
 getVoteCount ideaId =
     let
         rows =
-            Result.withDefault [] (
-            Db.queryRows "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?" [ ideaId
-            ]
-            )
+            Result.withDefault []
+                (
+                Db.queryRows
+                    "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?"
+                    [ ideaId ]
+                )
     in
         case List.head rows of
             
@@ -151,9 +152,9 @@ getVoteCount ideaId =
 updateStatus ideaId newStatus =
     let
         _ =
-            Db.exec "UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?" [ newStatus
-            , ideaId
-            ]
+            Db.exec
+                "UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?"
+                [ newStatus , ideaId ]
         _ = println ("[IDEA] Status changed: " ++ ideaId ++ " -> " ++ newStatus)
     in
         ()

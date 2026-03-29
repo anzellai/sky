@@ -93,284 +93,316 @@ cardShadow _ = Css.shadow 0 1 3 (Css.rgba 0 0 0 0.1)
 -- Stylesheet
 -- ============================================================
 appStyles _ =
-    Css.stylesheet [ Css.rule "*" [ Css.margin (Css.zero ())
+    Css.stylesheet
+        [ Css.rule "*"
+              [ Css.margin (Css.zero ())
         -- Layout
-                     , Css.padding (Css.zero ())
+              , Css.padding (Css.zero ())
         -- Navigation
-                     , Css.boxSizingBorderBox ()
-                     ]
+              , Css.boxSizingBorderBox ()
+              ]
         -- Buttons
-    , Css.rule "body" [ Css.fontFamily (Css.systemFont ())
+        , Css.rule "body"
+              [ Css.fontFamily (Css.systemFont ())
         -- Forms
-      , Css.backgroundColor (pageBg ())
+              , Css.backgroundColor (pageBg ())
         -- Alerts
-      , Css.color (textColor ())
+              , Css.color (textColor ())
         -- Note cards
-      , Css.lineHeight "1.6"
-      ]
+              , Css.lineHeight "1.6"
+              ]
         -- Headings & links
-    , Css.rule ".container" [ Css.maxWidth (Css.px 800)
+        , Css.rule ".container"
+              [ Css.maxWidth (Css.px 800)
         -- Hero
-      , Css.margin2 (Css.zero ()) (Css.auto ())
+              , Css.margin2 (Css.zero ()) (Css.auto ())
         -- Features grid
-      , Css.padding (sp 6)
-      ]
+              , Css.padding (sp 6)
+              ]
         -- Split view (editor + preview)
-    , Css.rule ".card" [ Css.backgroundColor (cardBg ())
+        , Css.rule ".card"
+              [ Css.backgroundColor (cardBg ())
         -- Markdown rendered content
-      , Css.borderRadius (radiusLg ())
+              , Css.borderRadius (radiusLg ())
         -- Auth pages
-      , Css.padding (sp 8)
+              , Css.padding (sp 8)
         -- Utility classes
-      , cardShadow ()
+              , cardShadow ()
         -- Responsive
-      , Css.marginBottom (sp 5)
-      ]
-    , Css.rule ".nav" [ Css.backgroundColor (navBg ())
-      , Css.padding2 (sp 3) (sp 6)
-      ]
-    , Css.rule ".nav-inner" [ Css.maxWidth (Css.px 800)
-      , Css.margin2 (Css.zero ()) (Css.auto ())
-      , Css.display "flex"
-      , Css.justifyContent "space-between"
-      , Css.alignItems "center"
-      ]
-    , Css.rule ".nav a" [ Css.color (Css.hex "fff")
-      , Css.textDecoration "none"
-      , Css.marginLeft (sp 4)
-      , Css.fontSize (Css.px 14)
-      ]
-    , Css.rule ".nav a:hover" [ Css.opacity 0.8 ]
-    , Css.rule ".nav-brand" [ Css.fontWeight "700"
-      , Css.fontSize (Css.em 1.2)
-      , Css.marginLeft (Css.zero ())
-      ]
-    , Css.rule ".btn" [ Css.display "inline-block"
-      , Css.padding2 (sp 2) (sp 6)
-      , Css.backgroundColor (primaryColor ())
-      , Css.color (Css.hex "fff")
-      , Css.border (Css.none ())
-      , Css.borderRadius (radius ())
-      , Css.cursor "pointer"
-      , Css.fontSize (Css.px 14)
-      , Css.textDecoration "none"
-      , Css.fontWeight "500"
-      , Css.transitionProp "background" 0.2 "ease"
-      ]
-    , Css.rule ".btn:hover" [ Css.backgroundColor (primaryDark ()) ]
-    , Css.rule ".btn-outline" [ Css.backgroundColor (Css.transparent ())
-      , Css.border ("2px solid " ++ primaryColor ())
-      , Css.color (primaryColor ())
-      ]
-    , Css.rule ".btn-outline:hover" [ Css.backgroundColor (primaryColor ())
-      , Css.color (Css.hex "fff")
-      ]
-    , Css.rule ".btn-danger" [ Css.backgroundColor (dangerColor ()) ]
-    , Css.rule ".btn-danger:hover" [ Css.backgroundColor (dangerDark ()) ]
-    , Css.rule ".btn-sm" [ Css.padding2 (Css.px 6) (sp 4)
-      , Css.fontSize (Css.px 13)
-      ]
-    , Css.rule "input,textarea" [ Css.width (Css.pct 100)
-      , Css.padding (sp 3)
-      , Css.border ("1px solid " ++ inputBorder ())
-      , Css.borderRadius (radius ())
-      , Css.fontSize (Css.px 14)
-      , Css.marginTop (Css.px 4)
-      , Css.transitionProp "border-color" 0.2 "ease"
-      ]
-    , Css.rule "input:focus,textarea:focus" [ Css.outline (Css.none ())
-      , Css.borderColor (primaryColor ())
-      , Css.boxShadow ("0 0 0 3px " ++ Css.rgba 37 99 235 0.1)
-      ]
-    , Css.rule "textarea" [ Css.minHeight (Css.px 300)
-      , Css.fontFamily (Css.monoFont ())
-      , Css.fontSize (Css.px 13)
-      , Css.property "resize" "vertical"
-      , Css.lineHeight "1.5"
-      ]
-    , Css.rule ".form-group" [ Css.marginBottom (sp 5) ]
-    , Css.rule "label" [ Css.display "block"
-      , Css.fontWeight "600"
-      , Css.fontSize (Css.px 14)
-      , Css.color (Css.hex "374151")
-      , Css.marginBottom (Css.px 2)
-      ]
-    , Css.rule ".error" [ Css.backgroundColor (errorBg ())
-      , Css.color (dangerColor ())
-      , Css.padding2 (sp 3) (sp 4)
-      , Css.borderRadius (radius ())
-      , Css.marginBottom (sp 5)
-      , Css.border ("1px solid " ++ errorBorder ())
-      ]
-    , Css.rule ".success" [ Css.backgroundColor (successBg ())
-      , Css.color (successColor ())
-      , Css.padding2 (sp 3) (sp 4)
-      , Css.borderRadius (radius ())
-      , Css.marginBottom (sp 5)
-      , Css.border ("1px solid " ++ successBorder ())
-      ]
-    , Css.rule ".note-card" [ Css.borderLeft ("4px solid " ++ primaryColor ())
-      , Css.transition "transform .2s,box-shadow .2s"
-      ]
-    , Css.rule ".note-card:hover" [ Css.transform "translateY(-2px)"
-      , Css.boxShadow (Css.shadow 0 4 12 (Css.rgba 0 0 0 0.1))
-      ]
-    , Css.rule ".note-card a" [ Css.color (Css.inherit ())
-      , Css.textDecoration "none"
-      , Css.display "block"
-      ]
-    , Css.rule ".note-meta" [ Css.color (textMuted ())
-      , Css.fontSize (Css.px 13)
-      , Css.marginTop (Css.px 4)
-      ]
-    , Css.rule ".note-preview" [ Css.color (textLight ())
-      , Css.fontSize (Css.px 14)
-      , Css.marginTop (sp 2)
-      , Css.overflow "hidden"
-      , Css.property "display" "-webkit-box"
-      , Css.property "-webkit-line-clamp" "2"
-      , Css.property "-webkit-box-orient" "vertical"
-      ]
-    , Css.rule "h1" [ Css.fontSize (Css.em 1.75) ]
-    , Css.rule "h2" [ Css.fontSize (Css.em 1.5) , Css.marginBottom (sp 5) ]
-    , Css.rule "a" [ Css.color (primaryColor ()) ]
-    , Css.rule ".hero" [ Css.textAlign "center"
-      , Css.padding2 (Css.px 80) (sp 5)
-      ]
-    , Css.rule ".hero h1" [ Css.fontSize (Css.em 3.0)
-      , Css.marginBottom (sp 3)
-      , Css.background (
-        Css.linearGradient "135deg" [ navBg () , Css.hex "7c3aed" ]
-        )
-      , Css.property "-webkit-background-clip" "text"
-      , Css.property "-webkit-text-fill-color" "transparent"
-      , Css.property "background-clip" "text"
-      ]
-    , Css.rule ".hero p" [ Css.fontSize (Css.em 1.25)
-      , Css.color (textLight ())
-      , Css.marginBottom (sp 8)
-      ]
-    , Css.rule ".features" [ Css.display "grid"
-      , Css.gridTemplateColumns (Css.repeat 3 (Css.fr 1))
-      , Css.gap (sp 6)
-      , Css.marginTop (sp 12)
-      ]
-    , Css.rule ".feature" [ Css.textAlign "center"
-      , Css.padding (sp 6)
-      , Css.backgroundColor (cardBg ())
-      , Css.borderRadius (radiusLg ())
-      , Css.boxShadow (Css.shadow 0 1 3 (Css.rgba 0 0 0 0.05))
-      ]
-    , Css.rule ".feature-icon" [ Css.fontSize (Css.em 2.0)
-      , Css.marginBottom (sp 3)
-      ]
-    , Css.rule ".feature h3" [ Css.marginBottom (sp 2) , Css.color (navBg ()) ]
-    , Css.rule ".feature p" [ Css.color (textLight ())
-      , Css.fontSize (Css.px 14)
-      ]
-    , Css.rule ".split-view" [ Css.display "grid"
-      , Css.gridTemplateColumns "1fr 1fr"
-      , Css.gap (sp 5)
-      , Css.marginTop (Css.px 4)
-      ]
-    , Css.rule ".preview-pane" [ Css.border ("1px solid " ++ borderColor ())
-      , Css.borderRadius (radius ())
-      , Css.padding (sp 4)
-      , Css.minHeight (Css.px 300)
-      , Css.overflowY "auto"
-      , Css.backgroundColor (Css.hex "fafafa")
-      ]
-    , Css.rule ".preview-label" [ Css.fontSize (Css.px 12)
-      , Css.textTransform "uppercase"
-      , Css.letterSpacing ".05em"
-      , Css.color (textMuted ())
-      , Css.marginBottom (Css.px 4)
-      , Css.fontWeight "600"
-      ]
-    , Css.rule ".md h1,.md h2,.md h3" [ Css.margin4 (sp 4) (Css.zero ()) (sp 2) (
-                                        Css.zero ()
-                                        )
-      , Css.color (textColor ())
-      ]
-    , Css.rule ".md h1" [ Css.fontSize (Css.em 1.5)
-      , Css.borderBottom ("1px solid " ++ borderColor ())
-      , Css.paddingBottom (sp 2)
-      ]
-    , Css.rule ".md h2" [ Css.fontSize (Css.em 1.3) ]
-    , Css.rule ".md h3" [ Css.fontSize (Css.em 1.1) ]
-    , Css.rule ".md p" [ Css.marginBottom (sp 3) ]
-    , Css.rule ".md code" [ Css.backgroundColor (Css.hex "f1f5f9")
-      , Css.padding2 (Css.px 2) (Css.px 6)
-      , Css.borderRadius (Css.px 4)
-      , Css.fontSize (Css.px 13)
-      , Css.fontFamily (Css.monoFont ())
-      ]
-    , Css.rule ".md pre" [ Css.backgroundColor (textColor ())
-      , Css.color (Css.hex "e2e8f0")
-      , Css.padding (sp 4)
-      , Css.borderRadius (radius ())
-      , Css.overflowX "auto"
-      , Css.marginBottom (sp 4)
-      ]
-    , Css.rule ".md pre code" [ Css.backgroundColor (Css.transparent ())
-      , Css.padding (Css.zero ())
-      , Css.color (Css.inherit ())
-      ]
-    , Css.rule ".md ul,.md ol" [ Css.marginLeft (sp 6)
-      , Css.marginBottom (sp 3)
-      ]
-    , Css.rule ".md li" [ Css.marginBottom (Css.px 4) ]
-    , Css.rule ".md blockquote" [ Css.borderLeft (
-                                  "4px solid " ++ primaryColor ()
-                                  )
-      , Css.paddingLeft (sp 4)
-      , Css.color (textLight ())
-      , Css.marginBottom (sp 3)
-      , Css.fontStyle "italic"
-      ]
-    , Css.rule ".md img" [ Css.maxWidth (Css.pct 100)
-      , Css.borderRadius (radius ())
-      ]
-    , Css.rule ".md a" [ Css.color (primaryColor ()) ]
-    , Css.rule ".md hr" [ Css.border (Css.none ())
-      , Css.borderTop ("1px solid " ++ borderColor ())
-      , Css.margin2 (sp 6) (Css.zero ())
-      ]
-    , Css.rule ".md table" [ Css.borderCollapse "collapse"
-      , Css.width (Css.pct 100)
-      , Css.marginBottom (sp 4)
-      ]
-    , Css.rule ".md th,.md td" [ Css.border ("1px solid " ++ borderColor ())
-      , Css.padding2 (sp 2) (sp 3)
-      , Css.textAlign "left"
-      ]
-    , Css.rule ".md th" [ Css.backgroundColor (pageBg ())
-      , Css.fontWeight "600"
-      ]
-    , Css.rule ".auth-card" [ Css.maxWidth (Css.px 420)
-      , Css.margin2 (Css.px 40) (Css.auto ())
-      ]
-    , Css.rule ".auth-footer" [ Css.marginTop (sp 5)
-      , Css.textAlign "center"
-      , Css.fontSize (Css.px 14)
-      , Css.color (textMuted ())
-      ]
-    , Css.rule ".auth-footer a" [ Css.margin2 (Css.zero ()) (Css.px 4) ]
-    , Css.rule ".header-row" [ Css.display "flex"
-      , Css.justifyContent "space-between"
-      , Css.alignItems "center"
-      , Css.marginBottom (sp 6)
-      ]
-    , Css.rule ".empty-state" [ Css.textAlign "center"
-      , Css.padding2 (sp 12) (sp 5)
-      , Css.color (textMuted ())
-      ]
-    , Css.media "(max-width:768px)" [ Css.rule ".split-view" [ Css.gridTemplateColumns "1fr"
-                                      ]
-      , Css.rule ".features" [ Css.gridTemplateColumns "1fr" ]
-      , Css.rule ".hero h1" [ Css.fontSize (Css.em 2.0) ]
-      ]
-    ]
+              , Css.marginBottom (sp 5)
+              ]
+        , Css.rule ".nav"
+              [ Css.backgroundColor (navBg ()) , Css.padding2 (sp 3) (sp 6) ]
+        , Css.rule ".nav-inner"
+              [ Css.maxWidth (Css.px 800)
+              , Css.margin2 (Css.zero ()) (Css.auto ())
+              , Css.display "flex"
+              , Css.justifyContent "space-between"
+              , Css.alignItems "center"
+              ]
+        , Css.rule ".nav a"
+              [ Css.color (Css.hex "fff")
+              , Css.textDecoration "none"
+              , Css.marginLeft (sp 4)
+              , Css.fontSize (Css.px 14)
+              ]
+        , Css.rule ".nav a:hover" [ Css.opacity 0.8 ]
+        , Css.rule ".nav-brand"
+              [ Css.fontWeight "700"
+              , Css.fontSize (Css.em 1.2)
+              , Css.marginLeft (Css.zero ())
+              ]
+        , Css.rule ".btn"
+              [ Css.display "inline-block"
+              , Css.padding2 (sp 2) (sp 6)
+              , Css.backgroundColor (primaryColor ())
+              , Css.color (Css.hex "fff")
+              , Css.border (Css.none ())
+              , Css.borderRadius (radius ())
+              , Css.cursor "pointer"
+              , Css.fontSize (Css.px 14)
+              , Css.textDecoration "none"
+              , Css.fontWeight "500"
+              , Css.transitionProp "background" 0.2 "ease"
+              ]
+        , Css.rule ".btn:hover" [ Css.backgroundColor (primaryDark ()) ]
+        , Css.rule ".btn-outline"
+              [ Css.backgroundColor (Css.transparent ())
+              , Css.border ("2px solid " ++ primaryColor ())
+              , Css.color (primaryColor ())
+              ]
+        , Css.rule ".btn-outline:hover"
+              [ Css.backgroundColor (primaryColor ())
+              , Css.color (Css.hex "fff")
+              ]
+        , Css.rule ".btn-danger" [ Css.backgroundColor (dangerColor ()) ]
+        , Css.rule ".btn-danger:hover" [ Css.backgroundColor (dangerDark ()) ]
+        , Css.rule ".btn-sm"
+              [ Css.padding2 (Css.px 6) (sp 4) , Css.fontSize (Css.px 13) ]
+        , Css.rule "input,textarea"
+              [ Css.width (Css.pct 100)
+              , Css.padding (sp 3)
+              , Css.border ("1px solid " ++ inputBorder ())
+              , Css.borderRadius (radius ())
+              , Css.fontSize (Css.px 14)
+              , Css.marginTop (Css.px 4)
+              , Css.transitionProp "border-color" 0.2 "ease"
+              ]
+        , Css.rule "input:focus,textarea:focus"
+              [ Css.outline (Css.none ())
+              , Css.borderColor (primaryColor ())
+              , Css.boxShadow ("0 0 0 3px " ++ Css.rgba 37 99 235 0.1)
+              ]
+        , Css.rule "textarea"
+              [ Css.minHeight (Css.px 300)
+              , Css.fontFamily (Css.monoFont ())
+              , Css.fontSize (Css.px 13)
+              , Css.property "resize" "vertical"
+              , Css.lineHeight "1.5"
+              ]
+        , Css.rule ".form-group" [ Css.marginBottom (sp 5) ]
+        , Css.rule "label"
+              [ Css.display "block"
+              , Css.fontWeight "600"
+              , Css.fontSize (Css.px 14)
+              , Css.color (Css.hex "374151")
+              , Css.marginBottom (Css.px 2)
+              ]
+        , Css.rule ".error"
+              [ Css.backgroundColor (errorBg ())
+              , Css.color (dangerColor ())
+              , Css.padding2 (sp 3) (sp 4)
+              , Css.borderRadius (radius ())
+              , Css.marginBottom (sp 5)
+              , Css.border ("1px solid " ++ errorBorder ())
+              ]
+        , Css.rule ".success"
+              [ Css.backgroundColor (successBg ())
+              , Css.color (successColor ())
+              , Css.padding2 (sp 3) (sp 4)
+              , Css.borderRadius (radius ())
+              , Css.marginBottom (sp 5)
+              , Css.border ("1px solid " ++ successBorder ())
+              ]
+        , Css.rule ".note-card"
+              [ Css.borderLeft ("4px solid " ++ primaryColor ())
+              , Css.transition "transform .2s,box-shadow .2s"
+              ]
+        , Css.rule ".note-card:hover"
+              [ Css.transform "translateY(-2px)"
+              , Css.boxShadow (Css.shadow 0 4 12 (Css.rgba 0 0 0 0.1))
+              ]
+        , Css.rule ".note-card a"
+              [ Css.color (Css.inherit ())
+              , Css.textDecoration "none"
+              , Css.display "block"
+              ]
+        , Css.rule ".note-meta"
+              [ Css.color (textMuted ())
+              , Css.fontSize (Css.px 13)
+              , Css.marginTop (Css.px 4)
+              ]
+        , Css.rule ".note-preview"
+              [ Css.color (textLight ())
+              , Css.fontSize (Css.px 14)
+              , Css.marginTop (sp 2)
+              , Css.overflow "hidden"
+              , Css.property "display" "-webkit-box"
+              , Css.property "-webkit-line-clamp" "2"
+              , Css.property "-webkit-box-orient" "vertical"
+              ]
+        , Css.rule "h1" [ Css.fontSize (Css.em 1.75) ]
+        , Css.rule "h2" [ Css.fontSize (Css.em 1.5) , Css.marginBottom (sp 5) ]
+        , Css.rule "a" [ Css.color (primaryColor ()) ]
+        , Css.rule ".hero"
+              [ Css.textAlign "center" , Css.padding2 (Css.px 80) (sp 5) ]
+        , Css.rule ".hero h1"
+              [ Css.fontSize (Css.em 3.0)
+              , Css.marginBottom (sp 3)
+              , Css.background
+                    (
+                    Css.linearGradient "135deg" [ navBg () , Css.hex "7c3aed" ]
+                    )
+              , Css.property "-webkit-background-clip" "text"
+              , Css.property "-webkit-text-fill-color" "transparent"
+              , Css.property "background-clip" "text"
+              ]
+        , Css.rule ".hero p"
+              [ Css.fontSize (Css.em 1.25)
+              , Css.color (textLight ())
+              , Css.marginBottom (sp 8)
+              ]
+        , Css.rule ".features"
+              [ Css.display "grid"
+              , Css.gridTemplateColumns (Css.repeat 3 (Css.fr 1))
+              , Css.gap (sp 6)
+              , Css.marginTop (sp 12)
+              ]
+        , Css.rule ".feature"
+              [ Css.textAlign "center"
+              , Css.padding (sp 6)
+              , Css.backgroundColor (cardBg ())
+              , Css.borderRadius (radiusLg ())
+              , Css.boxShadow (Css.shadow 0 1 3 (Css.rgba 0 0 0 0.05))
+              ]
+        , Css.rule ".feature-icon"
+              [ Css.fontSize (Css.em 2.0) , Css.marginBottom (sp 3) ]
+        , Css.rule ".feature h3"
+              [ Css.marginBottom (sp 2) , Css.color (navBg ()) ]
+        , Css.rule ".feature p"
+              [ Css.color (textLight ()) , Css.fontSize (Css.px 14) ]
+        , Css.rule ".split-view"
+              [ Css.display "grid"
+              , Css.gridTemplateColumns "1fr 1fr"
+              , Css.gap (sp 5)
+              , Css.marginTop (Css.px 4)
+              ]
+        , Css.rule ".preview-pane"
+              [ Css.border ("1px solid " ++ borderColor ())
+              , Css.borderRadius (radius ())
+              , Css.padding (sp 4)
+              , Css.minHeight (Css.px 300)
+              , Css.overflowY "auto"
+              , Css.backgroundColor (Css.hex "fafafa")
+              ]
+        , Css.rule ".preview-label"
+              [ Css.fontSize (Css.px 12)
+              , Css.textTransform "uppercase"
+              , Css.letterSpacing ".05em"
+              , Css.color (textMuted ())
+              , Css.marginBottom (Css.px 4)
+              , Css.fontWeight "600"
+              ]
+        , Css.rule ".md h1,.md h2,.md h3"
+              [ Css.margin4 (sp 4) (Css.zero ()) (sp 2) (Css.zero ())
+              , Css.color (textColor ())
+              ]
+        , Css.rule ".md h1"
+              [ Css.fontSize (Css.em 1.5)
+              , Css.borderBottom ("1px solid " ++ borderColor ())
+              , Css.paddingBottom (sp 2)
+              ]
+        , Css.rule ".md h2" [ Css.fontSize (Css.em 1.3) ]
+        , Css.rule ".md h3" [ Css.fontSize (Css.em 1.1) ]
+        , Css.rule ".md p" [ Css.marginBottom (sp 3) ]
+        , Css.rule ".md code"
+              [ Css.backgroundColor (Css.hex "f1f5f9")
+              , Css.padding2 (Css.px 2) (Css.px 6)
+              , Css.borderRadius (Css.px 4)
+              , Css.fontSize (Css.px 13)
+              , Css.fontFamily (Css.monoFont ())
+              ]
+        , Css.rule ".md pre"
+              [ Css.backgroundColor (textColor ())
+              , Css.color (Css.hex "e2e8f0")
+              , Css.padding (sp 4)
+              , Css.borderRadius (radius ())
+              , Css.overflowX "auto"
+              , Css.marginBottom (sp 4)
+              ]
+        , Css.rule ".md pre code"
+              [ Css.backgroundColor (Css.transparent ())
+              , Css.padding (Css.zero ())
+              , Css.color (Css.inherit ())
+              ]
+        , Css.rule ".md ul,.md ol"
+              [ Css.marginLeft (sp 6) , Css.marginBottom (sp 3) ]
+        , Css.rule ".md li" [ Css.marginBottom (Css.px 4) ]
+        , Css.rule ".md blockquote"
+              [ Css.borderLeft ("4px solid " ++ primaryColor ())
+              , Css.paddingLeft (sp 4)
+              , Css.color (textLight ())
+              , Css.marginBottom (sp 3)
+              , Css.fontStyle "italic"
+              ]
+        , Css.rule ".md img"
+              [ Css.maxWidth (Css.pct 100) , Css.borderRadius (radius ()) ]
+        , Css.rule ".md a" [ Css.color (primaryColor ()) ]
+        , Css.rule ".md hr"
+              [ Css.border (Css.none ())
+              , Css.borderTop ("1px solid " ++ borderColor ())
+              , Css.margin2 (sp 6) (Css.zero ())
+              ]
+        , Css.rule ".md table"
+              [ Css.borderCollapse "collapse"
+              , Css.width (Css.pct 100)
+              , Css.marginBottom (sp 4)
+              ]
+        , Css.rule ".md th,.md td"
+              [ Css.border ("1px solid " ++ borderColor ())
+              , Css.padding2 (sp 2) (sp 3)
+              , Css.textAlign "left"
+              ]
+        , Css.rule ".md th"
+              [ Css.backgroundColor (pageBg ()) , Css.fontWeight "600" ]
+        , Css.rule ".auth-card"
+              [ Css.maxWidth (Css.px 420)
+              , Css.margin2 (Css.px 40) (Css.auto ())
+              ]
+        , Css.rule ".auth-footer"
+              [ Css.marginTop (sp 5)
+              , Css.textAlign "center"
+              , Css.fontSize (Css.px 14)
+              , Css.color (textMuted ())
+              ]
+        , Css.rule ".auth-footer a" [ Css.margin2 (Css.zero ()) (Css.px 4) ]
+        , Css.rule ".header-row"
+              [ Css.display "flex"
+              , Css.justifyContent "space-between"
+              , Css.alignItems "center"
+              , Css.marginBottom (sp 6)
+              ]
+        , Css.rule ".empty-state"
+              [ Css.textAlign "center"
+              , Css.padding2 (sp 12) (sp 5)
+              , Css.color (textMuted ())
+              ]
+        , Css.media "(max-width:768px)"
+              [ Css.rule ".split-view" [ Css.gridTemplateColumns "1fr" ]
+              , Css.rule ".features" [ Css.gridTemplateColumns "1fr" ]
+              , Css.rule ".hero h1" [ Css.fontSize (Css.em 2.0) ]
+              ]
+        ]
 
 
 -- ============================================================
@@ -382,11 +414,12 @@ fullWidth _ = Attr.style (Css.styles [ Css.width (Css.pct 100) ])
 fullWidthBlock _ =
     let
         s =
-            Css.styles [ Css.width (Css.pct 100)
-            , Css.textAlign "center"
-            , Css.marginTop (sp 5)
-            , Css.display "block"
-            ]
+            Css.styles
+                [ Css.width (Css.pct 100)
+                , Css.textAlign "center"
+                , Css.marginTop (sp 5)
+                , Css.display "block"
+                ]
     in
         Attr.style s
 
@@ -395,71 +428,74 @@ fullWidthBlock _ =
 -- Layout
 -- ============================================================
 layout title navEl content =
-    doctype () ++ render (
-                  htmlNode [ Attr.lang "en" ] [ headNode [] [ meta [ Attr.charset "UTF-8"
-                                                              ]
-                                                , meta [ Attr.name "viewport"
-                                                  , Attr.content "width=device-width,initial-scale=1.0"
-                                                  ]
-                                                , titleNode (
-                                                  title ++ " - SkyNotes"
-                                                  )
-                                                , styleNode [] (appStyles ())
-                                                ]
-                  , body [] [ navEl
-                    , div [ Attr.class "container" ] [ content ]
-                    ]
-                  ]
-                  )
+    doctype () ++ render
+                      (
+                      htmlNode [ Attr.lang "en" ]
+                          [ headNode []
+                                [ meta [ Attr.charset "UTF-8" ]
+                                , meta
+                                      [ Attr.name "viewport"
+                                      , Attr.content
+                                            "width=device-width,initial-scale=1.0"
+                                      ]
+                                , titleNode (title ++ " - SkyNotes")
+                                , styleNode [] (appStyles ())
+                                ]
+                          , body []
+                                [ navEl
+                                , div [ Attr.class "container" ] [ content ]
+                                ]
+                          ]
+                      )
 
 
 -- ============================================================
 -- Navigation
 -- ============================================================
 navGuest _ =
-    nav [ Attr.class "nav" ] [ div [ Attr.class "nav-inner" ] [ a [ Attr.href "/"
-                                                                , Attr.class "nav-brand"
-                                                                ] [ text "SkyNotes"
-                                                                ]
-                               , div [] [ a [ Attr.href "/auth/sign-in" ] [ text "Sign In"
-                                          ]
-                                 , a [ Attr.href "/auth/sign-up" ] [ text "Sign Up"
-                                   ]
-                                 ]
-                               ]
-    ]
+    nav [ Attr.class "nav" ]
+        [ div [ Attr.class "nav-inner" ]
+              [ a [ Attr.href "/" , Attr.class "nav-brand" ] [ text "SkyNotes" ]
+              , div []
+                    [ a [ Attr.href "/auth/sign-in" ] [ text "Sign In" ]
+                    , a [ Attr.href "/auth/sign-up" ] [ text "Sign Up" ]
+                    ]
+              ]
+        ]
 
 
 navAuth email =
-    nav [ Attr.class "nav" ] [ div [ Attr.class "nav-inner" ] [ a [ Attr.href "/notes"
-                                                                , Attr.class "nav-brand"
-                                                                ] [ text "SkyNotes"
-                                                                ]
-                               , div [] [ span [ Attr.style (
-                                                 Css.styles [ Css.color (
-                                                              Css.rgba 255 255 255 0.7
-                                                              )
-                                                 , Css.fontSize (Css.px 14)
-                                                 , Css.marginRight (sp 2)
-                                                 ]
-                                                 )
-                                          ] [ text email ]
-                                 , a [ Attr.href "/auth/sign-out" ] [ text "Sign Out"
-                                   ]
-                                 ]
-                               ]
-    ]
+    nav [ Attr.class "nav" ]
+        [ div [ Attr.class "nav-inner" ]
+              [ a [ Attr.href "/notes" , Attr.class "nav-brand" ]
+                    [ text "SkyNotes" ]
+              , div []
+                    [ span
+                          [ Attr.style
+                                (
+                                Css.styles
+                                    [ Css.color (Css.rgba 255 255 255 0.7)
+                                    , Css.fontSize (Css.px 14)
+                                    , Css.marginRight (sp 2)
+                                    ]
+                                )
+                          ]
+                          [ text email ]
+                    , a [ Attr.href "/auth/sign-out" ] [ text "Sign Out" ]
+                    ]
+              ]
+        ]
 
 
 -- ============================================================
 -- Reusable components
 -- ============================================================
 featureCard icon title description =
-    div [ Attr.class "feature" ] [ div [ Attr.class "feature-icon" ] [ text icon
-                                   ]
-    , h3 [] [ text title ]
-    , p [] [ text description ]
-    ]
+    div [ Attr.class "feature" ]
+        [ div [ Attr.class "feature-icon" ] [ text icon ]
+        , h3 [] [ text title ]
+        , p [] [ text description ]
+        ]
 
 
 formGroup labelText inputEl =
@@ -472,165 +508,241 @@ formGroup labelText inputEl =
 landingPage _ =
     let
         heroBtnStyle =
-            Attr.style (
-            Css.styles [ Css.padding2 (Css.px 14) (sp 8)
-            , Css.fontSize (Css.px 16)
-            ]
-            )
+            Attr.style
+                (
+                Css.styles
+                    [ Css.padding2 (Css.px 14) (sp 8)
+                    , Css.fontSize (Css.px 16)
+                    ]
+                )
     in
-        layout "Welcome" (navGuest ()) (
-        div [ Attr.class "hero" ] [ h1 [] [ text "SkyNotes" ]
-        , p [] [ text "A markdown note-taking app built with the Sky language" ]
-        , div [] [ a [ Attr.href "/auth/sign-up"
-                   , Attr.class "btn"
-                   , heroBtnStyle
-                   , Attr.style (Css.styles [ Css.marginRight (sp 3) ])
-                   ] [ text "Get Started" ]
-          , a [ Attr.href "/auth/sign-in"
-            , Attr.class "btn btn-outline"
-            , heroBtnStyle
-            ] [ text "Sign In" ]
-          ]
-        , div [ Attr.class "features" ] [ featureCard "M" "Markdown" "Write in Markdown with live preview. Supports headings, code blocks, lists, and more."
-          , featureCard "S" "Secure" "SHA-256 password hashing with email verification to protect your account."
-          , featureCard "F" "Fast" "Built with Sky, compiled to native Go. Backed by SQLite for reliable storage."
-          ]
-        ]
-        )
+        layout "Welcome" (navGuest ())
+            (
+            div [ Attr.class "hero" ]
+                [ h1 [] [ text "SkyNotes" ]
+                , p []
+                      [ text
+                            "A markdown note-taking app built with the Sky language"
+                      ]
+                , div []
+                      [ a
+                            [ Attr.href "/auth/sign-up"
+                            , Attr.class "btn"
+                            , heroBtnStyle
+                            , Attr.style (Css.styles [ Css.marginRight (sp 3) ])
+                            ]
+                            [ text "Get Started" ]
+                      , a
+                            [ Attr.href "/auth/sign-in"
+                            , Attr.class "btn btn-outline"
+                            , heroBtnStyle
+                            ]
+                            [ text "Sign In" ]
+                      ]
+                , div [ Attr.class "features" ]
+                      [ featureCard "M" "Markdown"
+                            "Write in Markdown with live preview. Supports headings, code blocks, lists, and more."
+                      , featureCard "S" "Secure"
+                            "SHA-256 password hashing with email verification to protect your account."
+                      , featureCard "F" "Fast"
+                            "Built with Sky, compiled to native Go. Backed by SQLite for reliable storage."
+                      ]
+                ]
+            )
 
 
 signInPage errorMsg =
-    layout "Sign In" (navGuest ()) (
-    div [ Attr.class "card auth-card" ] [ h2 [] [ text "Sign In" ]
-    , errorBanner errorMsg
-    , form [ Attr.method "POST" , Attr.action "/auth/sign-in" ] [ formGroup "Email" (
-                                                                  input [ Attr.type_ "email"
-                                                                  , Attr.name "email"
-                                                                  , Attr.placeholder "you@example.com"
-                                                                  , (
-                                                                  Attr.required ()
-                                                                  )
-                                                                  ]
-                                                                  )
-      , formGroup "Password" (
-        input [ Attr.type_ "password"
-        , Attr.name "password"
-        , Attr.placeholder "Your password"
-        , (Attr.required ())
-        ]
+    layout "Sign In" (navGuest ())
+        (
+        div [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Sign In" ]
+            , errorBanner errorMsg
+            , form [ Attr.method "POST" , Attr.action "/auth/sign-in" ]
+                  [ formGroup "Email"
+                        (
+                        input
+                            [ Attr.type_ "email"
+                            , Attr.name "email"
+                            , Attr.placeholder "you@example.com"
+                            , (Attr.required ())
+                            ]
+                        )
+                  , formGroup "Password"
+                        (
+                        input
+                            [ Attr.type_ "password"
+                            , Attr.name "password"
+                            , Attr.placeholder "Your password"
+                            , (Attr.required ())
+                            ]
+                        )
+                  , button
+                        [ Attr.type_ "submit"
+                        , Attr.class "btn"
+                        , fullWidth ()
+                        ]
+                        [ text "Sign In" ]
+                  ]
+            , div [ Attr.class "auth-footer" ]
+                  [ a [ Attr.href "/auth/forgot-password" ]
+                        [ text "Forgot password?" ]
+                  , span [] [ text " | " ]
+                  , a [ Attr.href "/auth/sign-up" ] [ text "Create account" ]
+                  ]
+            ]
         )
-      , button [ Attr.type_ "submit" , Attr.class "btn" , fullWidth () ] [ text "Sign In"
-        ]
-      ]
-    , div [ Attr.class "auth-footer" ] [ a [ Attr.href "/auth/forgot-password" ] [ text "Forgot password?"
-                                         ]
-      , span [] [ text " | " ]
-      , a [ Attr.href "/auth/sign-up" ] [ text "Create account" ]
-      ]
-    ]
-    )
 
 
 signUpPage errorMsg =
-    layout "Sign Up" (navGuest ()) (
-    div [ Attr.class "card auth-card" ] [ h2 [] [ text "Create Account" ]
-    , errorBanner errorMsg
-    , form [ Attr.method "POST" , Attr.action "/auth/sign-up" ] [ formGroup "Email" (
-                                                                  input [ Attr.type_ "email"
-                                                                  , Attr.name "email"
-                                                                  , Attr.placeholder "you@example.com"
-                                                                  , (
-                                                                  Attr.required ()
-                                                                  )
-                                                                  ]
-                                                                  )
-      , formGroup "Password" (
-        input [ Attr.type_ "password"
-        , Attr.name "password"
-        , Attr.placeholder "Min 8 characters"
-        , Attr.minlength 8
-        , (Attr.required ())
-        ]
+    layout "Sign Up" (navGuest ())
+        (
+        div [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Create Account" ]
+            , errorBanner errorMsg
+            , form [ Attr.method "POST" , Attr.action "/auth/sign-up" ]
+                  [ formGroup "Email"
+                        (
+                        input
+                            [ Attr.type_ "email"
+                            , Attr.name "email"
+                            , Attr.placeholder "you@example.com"
+                            , (Attr.required ())
+                            ]
+                        )
+                  , formGroup "Password"
+                        (
+                        input
+                            [ Attr.type_ "password"
+                            , Attr.name "password"
+                            , Attr.placeholder "Min 8 characters"
+                            , Attr.minlength 8
+                            , (Attr.required ())
+                            ]
+                        )
+                  , formGroup "Confirm Password"
+                        (
+                        input
+                            [ Attr.type_ "password"
+                            , Attr.name "confirm_password"
+                            , Attr.placeholder "Repeat your password"
+                            , (Attr.required ())
+                            ]
+                        )
+                  , button
+                        [ Attr.type_ "submit"
+                        , Attr.class "btn"
+                        , fullWidth ()
+                        ]
+                        [ text "Create Account" ]
+                  ]
+            , div [ Attr.class "auth-footer" ]
+                  [ text "Already have an account? "
+                  , a [ Attr.href "/auth/sign-in" ] [ text "Sign in" ]
+                  ]
+            ]
         )
-      , formGroup "Confirm Password" (
-        input [ Attr.type_ "password"
-        , Attr.name "confirm_password"
-        , Attr.placeholder "Repeat your password"
-        , (Attr.required ())
-        ]
-        )
-      , button [ Attr.type_ "submit" , Attr.class "btn" , fullWidth () ] [ text "Create Account"
-        ]
-      ]
-    , div [ Attr.class "auth-footer" ] [ text "Already have an account? "
-      , a [ Attr.href "/auth/sign-in" ] [ text "Sign in" ]
-      ]
-    ]
-    )
 
 
 signUpSuccessPage _ =
-    layout "Account Created" (navGuest ()) (
-    div [ Attr.class "card auth-card" ] [ h2 [] [ text "Account Created!" ]
-    , div [ Attr.class "success" ] [ text "Your account has been created. Check the server console for your email verification link."
-      ]
-    , p [ Attr.style (
-          Css.styles [ Css.marginTop (sp 4)
-          , Css.color (textMuted ())
-          , Css.fontSize (Css.px 14)
-          ]
-          )
-      ] [ text "Once verified, you can sign in to start taking notes." ]
-    , a [ Attr.href "/auth/sign-in" , Attr.class "btn" , fullWidthBlock () ] [ text "Go to Sign In"
-      ]
-    ]
-    )
+    layout "Account Created" (navGuest ())
+        (
+        div [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Account Created!" ]
+            , div [ Attr.class "success" ]
+                  [ text
+                        "Your account has been created. Check the server console for your email verification link."
+                  ]
+            , p
+                  [ Attr.style
+                        (
+                        Css.styles
+                            [ Css.marginTop (sp 4)
+                            , Css.color (textMuted ())
+                            , Css.fontSize (Css.px 14)
+                            ]
+                        )
+                  ]
+                  [ text "Once verified, you can sign in to start taking notes."
+                  ]
+            , a
+                  [ Attr.href "/auth/sign-in"
+                  , Attr.class "btn"
+                  , fullWidthBlock ()
+                  ]
+                  [ text "Go to Sign In" ]
+            ]
+        )
 
 
 forgotPasswordPage errorMsg =
-    layout "Forgot Password" (navGuest ()) (
-    div [ Attr.class "card auth-card" ] [ h2 [] [ text "Forgot Password" ]
-    , p [ Attr.style (
-          Css.styles [ Css.color (textMuted ()) , Css.marginBottom (sp 5) ]
-          )
-      ] [ text "Enter your email and we'll send you a reset link." ]
-    , errorBanner errorMsg
-    , form [ Attr.method "POST" , Attr.action "/auth/forgot-password" ] [ formGroup "Email" (
-                                                                          input [ Attr.type_ "email"
-                                                                          , Attr.name "email"
-                                                                          , Attr.placeholder "you@example.com"
-                                                                          , (
-                                                                          Attr.required ()
-                                                                          )
-                                                                          ]
-                                                                          )
-      , button [ Attr.type_ "submit" , Attr.class "btn" , fullWidth () ] [ text "Send Reset Link"
-        ]
-      ]
-    , div [ Attr.class "auth-footer" ] [ a [ Attr.href "/auth/sign-in" ] [ text "Back to Sign In"
-                                         ]
-      ]
-    ]
-    )
+    layout "Forgot Password" (navGuest ())
+        (
+        div [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Forgot Password" ]
+            , p
+                  [ Attr.style
+                        (
+                        Css.styles
+                            [ Css.color (textMuted ())
+                            , Css.marginBottom (sp 5)
+                            ]
+                        )
+                  ]
+                  [ text "Enter your email and we'll send you a reset link." ]
+            , errorBanner errorMsg
+            , form [ Attr.method "POST" , Attr.action "/auth/forgot-password" ]
+                  [ formGroup "Email"
+                        (
+                        input
+                            [ Attr.type_ "email"
+                            , Attr.name "email"
+                            , Attr.placeholder "you@example.com"
+                            , (Attr.required ())
+                            ]
+                        )
+                  , button
+                        [ Attr.type_ "submit"
+                        , Attr.class "btn"
+                        , fullWidth ()
+                        ]
+                        [ text "Send Reset Link" ]
+                  ]
+            , div [ Attr.class "auth-footer" ]
+                  [ a [ Attr.href "/auth/sign-in" ] [ text "Back to Sign In" ] ]
+            ]
+        )
 
 
 forgotPasswordSentPage _ =
-    layout "Reset Link Sent" (navGuest ()) (
-    div [ Attr.class "card auth-card" ] [ h2 [] [ text "Check Your Console" ]
-    , div [ Attr.class "success" ] [ text "If an account exists with that email, a password reset link has been logged to the server console."
-      ]
-    , p [ Attr.style (
-          Css.styles [ Css.marginTop (sp 4)
-          , Css.color (textMuted ())
-          , Css.fontSize (Css.px 14)
-          ]
-          )
-      ] [ text "This is a demo app — in production, an email would be sent instead."
-      ]
-    , a [ Attr.href "/auth/sign-in" , Attr.class "btn" , fullWidthBlock () ] [ text "Back to Sign In"
-      ]
-    ]
-    )
+    layout "Reset Link Sent" (navGuest ())
+        (
+        div [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Check Your Console" ]
+            , div [ Attr.class "success" ]
+                  [ text
+                        "If an account exists with that email, a password reset link has been logged to the server console."
+                  ]
+            , p
+                  [ Attr.style
+                        (
+                        Css.styles
+                            [ Css.marginTop (sp 4)
+                            , Css.color (textMuted ())
+                            , Css.fontSize (Css.px 14)
+                            ]
+                        )
+                  ]
+                  [ text
+                        "This is a demo app — in production, an email would be sent instead."
+                  ]
+            , a
+                  [ Attr.href "/auth/sign-in"
+                  , Attr.class "btn"
+                  , fullWidthBlock ()
+                  ]
+                  [ text "Back to Sign In" ]
+            ]
+        )
 
 
 verifyResultPage isSuccess message =
@@ -641,14 +753,19 @@ verifyResultPage isSuccess message =
             else
                 "error"
     in
-        layout "Email Verification" (navGuest ()) (
-        div [ Attr.class "card auth-card" ] [ h2 [] [ text "Email Verification"
-                                              ]
-        , div [ Attr.class msgClass ] [ text message ]
-        , a [ Attr.href "/auth/sign-in" , Attr.class "btn" , fullWidthBlock () ] [ text "Go to Sign In"
-          ]
-        ]
-        )
+        layout "Email Verification" (navGuest ())
+            (
+            div [ Attr.class "card auth-card" ]
+                [ h2 [] [ text "Email Verification" ]
+                , div [ Attr.class msgClass ] [ text message ]
+                , a
+                      [ Attr.href "/auth/sign-in"
+                      , Attr.class "btn"
+                      , fullWidthBlock ()
+                      ]
+                      [ text "Go to Sign In" ]
+                ]
+            )
 
 
 -- ============================================================
@@ -666,61 +783,67 @@ noteCard note =
             else
                 content
     in
-        render (
-        div [ Attr.class "card note-card" ] [ a [ Attr.href (
-                                                  "/notes/view?id=" ++ noteId
-                                                  )
-                                              ] [ h3 [ Attr.style (
-                                                       Css.styles [ Css.marginBottom (
-                                                                    Css.px 4
-                                                                    )
-                                                       ]
-                                                       )
-                                                  ] [ text noteTitle ]
-                                              , p [ Attr.class "note-meta" ] [ text (
-                                                                               "Created " ++ date
-                                                                               )
-                                                ]
-                                              , p [ Attr.class "note-preview" ] [ text preview
-                                                ]
-                                              ]
-        ]
-        )
+        render
+            (
+            div [ Attr.class "card note-card" ]
+                [ a [ Attr.href ("/notes/view?id=" ++ noteId) ]
+                      [ h3
+                            [ Attr.style
+                                  (Css.styles [ Css.marginBottom (Css.px 4) ])
+                            ]
+                            [ text noteTitle ]
+                      , p [ Attr.class "note-meta" ]
+                            [ text ("Created " ++ date) ]
+                      , p [ Attr.class "note-preview" ] [ text preview ]
+                      ]
+                ]
+            )
 
 
 notesListPage email notes =
     let
         noteCards = String.join "" (List.map noteCard notes)
         headerRow =
-            render (
-            div [ Attr.class "header-row" ] [ h1 [] [ text "My Notes" ]
-            , a [ Attr.href "/notes/new" , Attr.class "btn" ] [ text "+ New Note"
-              ]
-            ]
-            )
+            render
+                (
+                div [ Attr.class "header-row" ]
+                    [ h1 [] [ text "My Notes" ]
+                    , a [ Attr.href "/notes/new" , Attr.class "btn" ]
+                          [ text "+ New Note" ]
+                    ]
+                )
         content =
             if List.isEmpty notes then
-                headerRow ++ render (
-                             div [ Attr.class "card empty-state" ] [ p [ Attr.style (
-                                                                         Css.styles [ Css.fontSize (
-                                                                                      Css.em 1.2
-                                                                                      )
-                                                                         , Css.marginBottom (
-                                                                           sp 2
-                                                                           )
-                                                                         ]
-                                                                         )
-                                                                     ] [ text "No notes yet"
-                                                                     ]
-                             , p [ Attr.style (
-                                   Css.styles [ Css.marginBottom (sp 5) ]
-                                   )
-                               ] [ text "Create your first markdown note to get started."
-                               ]
-                             , a [ Attr.href "/notes/new" , Attr.class "btn" ] [ text "Create Your First Note"
-                               ]
-                             ]
-                             )
+                headerRow ++ render
+                                 (
+                                 div [ Attr.class "card empty-state" ]
+                                     [ p
+                                           [ Attr.style
+                                                 (
+                                                 Css.styles
+                                                     [ Css.fontSize (Css.em 1.2)
+                                                     , Css.marginBottom (sp 2)
+                                                     ]
+                                                 )
+                                           ]
+                                           [ text "No notes yet" ]
+                                     , p
+                                           [ Attr.style
+                                                 (
+                                                 Css.styles
+                                                     [ Css.marginBottom (sp 5) ]
+                                                 )
+                                           ]
+                                           [ text
+                                                 "Create your first markdown note to get started."
+                                           ]
+                                     , a
+                                           [ Attr.href "/notes/new"
+                                           , Attr.class "btn"
+                                           ]
+                                           [ text "Create Your First Note" ]
+                                     ]
+                                 )
             else
                 headerRow ++ noteCards
     in
@@ -740,54 +863,63 @@ noteViewPage email note =
             else
                 "Updated " ++ updated
     in
-        layout noteTitle (navAuth email) (
-        div [ Attr.class "card" ] [ div [ Attr.class "header-row" ] [ div [] [ h1 [] [ text noteTitle
-                                                                               ]
-                                                                      , p [ Attr.class "note-meta"
-                                                                        ] [ text dateDisplay
-                                                                        ]
-                                                                      ]
-                                    , div [] [ a [ Attr.href (
-                                                   "/notes/edit?id=" ++ noteId
-                                                   )
-                                               , Attr.class "btn btn-sm"
-                                               , Attr.style (
-                                                 Css.styles [ Css.marginRight (
-                                                              sp 2
-                                                              )
-                                                 ]
-                                                 )
-                                               ] [ text "Edit" ]
-                                      , form [ Attr.method "POST"
-                                        , Attr.action (
-                                          "/notes/delete?id=" ++ noteId
-                                          )
-                                        , Attr.style (
-                                          Css.styles [ Css.display "inline" ]
-                                          )
-                                        , Events.onSubmit "return confirm('Delete this note?')"
-                                        ] [ button [ Attr.type_ "submit"
-                                            , Attr.class "btn btn-sm btn-danger"
-                                            ] [ text "Delete" ]
+        layout noteTitle (navAuth email)
+            (
+            div [ Attr.class "card" ]
+                [ div [ Attr.class "header-row" ]
+                      [ div []
+                            [ h1 [] [ text noteTitle ]
+                            , p [ Attr.class "note-meta" ] [ text dateDisplay ]
+                            ]
+                      , div []
+                            [ a
+                                  [ Attr.href ("/notes/edit?id=" ++ noteId)
+                                  , Attr.class "btn btn-sm"
+                                  , Attr.style
+                                        (Css.styles [ Css.marginRight (sp 2) ])
+                                  ]
+                                  [ text "Edit" ]
+                            , form
+                                  [ Attr.method "POST"
+                                  , Attr.action ("/notes/delete?id=" ++ noteId)
+                                  , Attr.style
+                                        (Css.styles [ Css.display "inline" ])
+                                  , Events.onSubmit
+                                        "return confirm('Delete this note?')"
+                                  ]
+                                  [ button
+                                        [ Attr.type_ "submit"
+                                        , Attr.class "btn btn-sm btn-danger"
                                         ]
-                                      ]
-                                    ]
-        , hr [ Attr.style (
-               Css.styles [ Css.border (Css.none ())
-               , Css.borderTop ("1px solid " ++ borderColor ())
-               , Css.margin2 (sp 5) (Css.zero ())
-               ]
-               )
-          ]
-        , textarea [ Attr.id "raw-md"
-          , Attr.style (Css.styles [ Css.display "none" ])
-          ] [ text content ]
-        , div [ Attr.id "rendered" , Attr.class "md" ] []
-        , script [ Attr.src "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
-          ] ""
-        , script [] "document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);"
-        ]
-        )
+                                        [ text "Delete" ]
+                                  ]
+                            ]
+                      ]
+                , hr
+                      [ Attr.style
+                            (
+                            Css.styles
+                                [ Css.border (Css.none ())
+                                , Css.borderTop ("1px solid " ++ borderColor ())
+                                , Css.margin2 (sp 5) (Css.zero ())
+                                ]
+                            )
+                      ]
+                , textarea
+                      [ Attr.id "raw-md"
+                      , Attr.style (Css.styles [ Css.display "none" ])
+                      ]
+                      [ text content ]
+                , div [ Attr.id "rendered" , Attr.class "md" ] []
+                , script
+                      [ Attr.src
+                            "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+                      ]
+                      ""
+                , script []
+                      "document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);"
+                ]
+            )
 
 
 noteFormPage email noteTitle content noteId isEdit =
@@ -805,59 +937,83 @@ noteFormPage email noteTitle content noteId isEdit =
         placeholderText =
             "# My Note\n\nWrite your thoughts in **Markdown**.\n\n## Features\n- Lists\n- *Italic* and **bold**\n- `code` blocks\n- [Links](https://example.com)\n"
     in
-        layout pageTitle (navAuth email) (
-        div [ Attr.class "card" ] [ h1 [ Attr.style (
-                                         Css.styles [ Css.marginBottom (sp 6) ]
-                                         )
-                                    ] [ text pageTitle ]
-        , form [ Attr.method "POST" , Attr.action formAction ] [ formGroup "Title" (
-                                                                 input [ Attr.type_ "text"
-                                                                 , Attr.name "title"
-                                                                 , Attr.value noteTitle
-                                                                 , Attr.placeholder "Note title"
-                                                                 , (
-                                                                 Attr.required ()
-                                                                 )
-                                                                 ]
-                                                                 )
-          , div [ Attr.class "form-group" ] [ label [] [ text "Content (Markdown)"
+        layout pageTitle (navAuth email)
+            (
+            div [ Attr.class "card" ]
+                [ h1 [ Attr.style (Css.styles [ Css.marginBottom (sp 6) ]) ]
+                      [ text pageTitle ]
+                , form [ Attr.method "POST" , Attr.action formAction ]
+                      [ formGroup "Title"
+                            (
+                            input
+                                [ Attr.type_ "text"
+                                , Attr.name "title"
+                                , Attr.value noteTitle
+                                , Attr.placeholder "Note title"
+                                , (Attr.required ())
+                                ]
+                            )
+                      , div [ Attr.class "form-group" ]
+                            [ label [] [ text "Content (Markdown)" ]
+                            , div [ Attr.class "split-view" ]
+                                  [ div []
+                                        [ textarea
+                                              [ Attr.id "editor"
+                                              , Attr.name "content"
+                                              , Attr.placeholder placeholderText
+                                              , (Attr.required ())
                                               ]
-            , div [ Attr.class "split-view" ] [ div [] [ textarea [ Attr.id "editor"
-                                                         , Attr.name "content"
-                                                         , Attr.placeholder placeholderText
-                                                         , (Attr.required ())
-                                                         ] [ text content ]
-                                                ]
-              , div [] [ div [ Attr.class "preview-label" ] [ text "Preview" ]
-                , div [ Attr.id "preview" , Attr.class "preview-pane md" ] []
+                                              [ text content ]
+                                        ]
+                                  , div []
+                                        [ div [ Attr.class "preview-label" ]
+                                              [ text "Preview" ]
+                                        , div
+                                              [ Attr.id "preview"
+                                              , Attr.class "preview-pane md"
+                                              ]
+                                              []
+                                        ]
+                                  ]
+                            ]
+                      , div [ Attr.style (Css.styles [ Css.marginTop (sp 5) ]) ]
+                            [ button [ Attr.type_ "submit" , Attr.class "btn" ]
+                                  [ text "Save Note" ]
+                            , a
+                                  [ Attr.href "/notes"
+                                  , Attr.style
+                                        (
+                                        Css.styles
+                                            [ Css.marginLeft (sp 4)
+                                            , Css.color (textMuted ())
+                                            ]
+                                        )
+                                  ]
+                                  [ text "Cancel" ]
+                            ]
+                      ]
+                , script
+                      [ Attr.src
+                            "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+                      ]
+                      ""
+                , script []
+                      "var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();"
                 ]
-              ]
-            ]
-          , div [ Attr.style (Css.styles [ Css.marginTop (sp 5) ]) ] [ button [ Attr.type_ "submit"
-                                                                       , Attr.class "btn"
-                                                                       ] [ text "Save Note"
-                                                                       ]
-            , a [ Attr.href "/notes"
-              , Attr.style (
-                Css.styles [ Css.marginLeft (sp 4) , Css.color (textMuted ()) ]
-                )
-              ] [ text "Cancel" ]
-            ]
-          ]
-        , script [ Attr.src "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
-          ] ""
-        , script [] "var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();"
-        ]
-        )
+            )
 
 
 errorPage message =
-    layout "Error" (navGuest ()) (
-    div [ Attr.class "card auth-card" ] [ h2 [] [ text "Something Went Wrong" ]
-    , div [ Attr.class "error" ] [ text message ]
-    , a [ Attr.href "/"
-      , Attr.class "btn"
-      , Attr.style (Css.styles [ Css.marginTop (sp 3) ])
-      ] [ text "Go Home" ]
-    ]
-    )
+    layout "Error" (navGuest ())
+        (
+        div [ Attr.class "card auth-card" ]
+            [ h2 [] [ text "Something Went Wrong" ]
+            , div [ Attr.class "error" ] [ text message ]
+            , a
+                  [ Attr.href "/"
+                  , Attr.class "btn"
+                  , Attr.style (Css.styles [ Css.marginTop (sp 3) ])
+                  ]
+                  [ text "Go Home" ]
+            ]
+        )

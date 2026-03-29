@@ -24,7 +24,9 @@ import Std.Log exposing (println)
 -- Database setup
 -- ============================================================
 initDb _ =
-    Db.exec "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)" []
+    Db.exec
+        "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
+        []
 
 
 -- ============================================================
@@ -40,9 +42,10 @@ addTodo title =
 listTodos _ =
     let
         rows =
-            Result.withDefault [] (
-            Db.queryRows "SELECT id, title, done FROM todos ORDER BY id" []
-            )
+            Result.withDefault []
+                (
+                Db.queryRows "SELECT id, title, done FROM todos ORDER BY id" []
+                )
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""

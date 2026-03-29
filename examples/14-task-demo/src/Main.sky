@@ -8,22 +8,22 @@ main =
     let
         pipeline =
             Task.succeed "Sky"
-                |> Task.andThen (
-                   \name -> Task.succeed ("Hello, " ++ name ++ "!")
-                   )
-                |> Task.andThen (
-                   \greeting ->
-                       Task.succeed (
-                       greeting ++ " Task is the effect boundary."
+                |> Task.andThen
+                       (\name -> Task.succeed ("Hello, " ++ name ++ "!"))
+                |> Task.andThen
+                       (
+                       \greeting ->
+                           Task.succeed
+                               (greeting ++ " Task is the effect boundary.")
                        )
-                   )
         result = Task.perform pipeline
         _ = println result
         failResult =
-            Task.run (
-            Task.fail "intentional"
-                |> Task.andThen (\_ -> Task.succeed "unreachable")
-            )
+            Task.run
+                (
+                Task.fail "intentional"
+                    |> Task.andThen (\_ -> Task.succeed "unreachable")
+                )
     in
         case failResult of
             

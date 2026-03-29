@@ -83,11 +83,11 @@ registerAdtsLoop counter decls registry env diagnostics =
                 TypeDecl name params variants _ ->
                     let
                         ( newRegistry , newEnv , newDiags ) =
-                            registerOneAdt counter name params variants registry env
+                            registerOneAdt counter name params variants registry
+                                env
                     in
-                        registerAdtsLoop counter rest newRegistry newEnv (
-                        List.append diagnostics newDiags
-                        )
+                        registerAdtsLoop counter rest newRegistry newEnv
+                            (List.append diagnostics newDiags)
                 
                 _ ->
                     registerAdtsLoop counter rest registry env diagnostics
@@ -98,18 +98,24 @@ registerOneAdt counter typeName typeParams variants registry env =
     let
         arity = List.length typeParams
         ctorSchemes =
-            List.foldl (
-            \variant acc ->
-                let
-                    scheme =
-                        buildConstructorScheme counter typeName typeParams variant
-                in
-                    Dict.insert variant.name scheme acc
-            ) Dict.empty variants
+            List.foldl
+                (
+                \variant acc ->
+                    let
+                        scheme =
+                            buildConstructorScheme counter typeName typeParams
+                                variant
+                    in
+                        Dict.insert variant.name scheme acc
+                )
+                Dict.empty
+                variants
         adt = { name = typeName , arity = arity , constructors = ctorSchemes }
         newRegistry = Dict.insert typeName adt registry
         newEnv =
-            Dict.foldl (\ctorName scheme acc -> Env.extend ctorName scheme acc) env ctorSchemes
+            Dict.foldl (\ctorName scheme acc -> Env.extend ctorName scheme acc)
+                env
+                ctorSchemes
     in
         (newRegistry, newEnv, [])
 
@@ -186,10 +192,15 @@ resolveTypeExpr paramMap texpr =
         RecordTypeExpr fields _ ->
             let
                 fieldDict =
-                    List.foldl (
-                    \f acc ->
-                        Dict.insert f.name (resolveTypeExpr paramMap f.type_) acc
-                    ) Dict.empty fields
+                    List.foldl
+                        (
+                        \f acc ->
+                            Dict.insert f.name
+                                (resolveTypeExpr paramMap f.type_)
+                                acc
+                        )
+                        Dict.empty
+                        fields
             in
                 TRecord fieldDict
         

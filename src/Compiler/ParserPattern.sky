@@ -187,7 +187,9 @@ parsePrimaryPatternBracket state =
 
 parsePatternArgs : ParserState -> (List Pattern, ParserState)
 parsePatternArgs state =
-    if matchKind TkIdentifier state || matchKind TkUpperIdentifier state || matchKind TkLParen state then
+    if matchKind TkIdentifier state || matchKind TkUpperIdentifier state || matchKind
+                                                                                TkLParen
+                                                                                state then
         if matchKind TkArrow state || peekColumn state <= 1 then
             ([], state)
         else

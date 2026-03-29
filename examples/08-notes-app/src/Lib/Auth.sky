@@ -38,10 +38,9 @@ createUser email password =
         _ = println "=========================================="
         _ = println ""
         result =
-            Db.exec "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)" [ email
-            , passHash
-            , token
-            ]
+            Db.exec
+                "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
+                [ email , passHash , token ]
     in
         case result of
             
@@ -61,7 +60,8 @@ checkUserCredentials email password user =
             if verified == "1" then
                 Ok user
             else
-                Err "Email not verified yet. Please check the server console for your verification link."
+                Err
+                    "Email not verified yet. Please check the server console for your verification link."
         else
             Err "Invalid email or password."
 
@@ -69,8 +69,9 @@ checkUserCredentials email password user =
 authenticateUser email password =
     let
         rows =
-            Db.queryRows "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1" [ email
-            ]
+            Db.queryRows
+                "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
+                [ email ]
         userRows = Result.withDefault [] rows
         maybeUser = List.head userRows
     in
@@ -87,9 +88,8 @@ createSession userId =
     let
         token = generateToken ()
         result =
-            Db.exec "INSERT INTO sessions (user_id, token) VALUES (?, ?)" [ userId
-            , token
-            ]
+            Db.exec "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
+                [ userId , token ]
     in
         case result of
             
@@ -103,8 +103,9 @@ createSession userId =
 getSessionUser sessionToken =
     let
         rows =
-            Db.queryRows "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1" [ sessionToken
-            ]
+            Db.queryRows
+                "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
+                [ sessionToken ]
         userRows = Result.withDefault [] rows
     in
         List.head userRows
@@ -113,8 +114,9 @@ getSessionUser sessionToken =
 verifyEmail token =
     let
         result =
-            Db.exec "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0" [ token
-            ]
+            Db.exec
+                "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
+                [ token ]
     in
         case result of
             
