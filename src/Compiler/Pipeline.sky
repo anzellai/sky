@@ -858,7 +858,6 @@ makeGoPackage decls =
     , { path = "strings" , alias_ = "" }
     , { path = "sort" , alias_ = "" }
     , { path = "math" , alias_ = "" }
-    , { path = "database/sql" , alias_ = "" }
     , { path = "crypto/sha256" , alias_ = "crypto_sha256" }
     , { path = "crypto/md5" , alias_ = "crypto_md5" }
     , { path = "encoding/hex" , alias_ = "hex" }
@@ -1901,7 +1900,7 @@ compileDependencyModule stdlibEnv allModules ffiNames pair =
         if Set.member modName ffiNames then
             compileFfiModuleLight allModules pair
         else
-            compileDependencyModuleCached stdlibEnv allModules pair
+            compileDependencyModuleFull stdlibEnv allModules pair
 
 
 compileDependencyModuleCached : Env.TypeEnv -> (List (String, Ast.Module)) -> (String, Ast.Module) -> List GoDecl

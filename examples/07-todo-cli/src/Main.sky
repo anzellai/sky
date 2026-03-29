@@ -109,13 +109,50 @@ showUsage =
 getArg args = Maybe.withDefault "" (List.head args)
 
 
+runCommand cmd arg =
+    case cmd of
+        
+        "add" ->
+            if arg == "" then
+                println "Usage: ./app add <title>"
+            else
+                addTodo arg
+        
+        "list" ->
+            listTodos ()
+        
+        "done" ->
+            if arg == "" then
+                println "Usage: ./app done <id>"
+            else
+                markDone arg
+        
+        "undone" ->
+            if arg == "" then
+                println "Usage: ./app undone <id>"
+            else
+                markUndone arg
+        
+        "remove" ->
+            if arg == "" then
+                println "Usage: ./app remove <id>"
+            else
+                removeTodo arg
+        
+        "clear" ->
+            clearDone ()
+        
+        "help" ->
+            showUsage
+        
+        _ ->
+            showUsage
+
+
 -- ============================================================
 -- Main — dispatch command
 -- ============================================================
-runCommand cmd arg = case cmd of "" add
-
-
-showUsage main =
+main =
     let
         _ = initDb ()
         userArgs = List.drop 1 (Os.args ())

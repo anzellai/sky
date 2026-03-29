@@ -1,0 +1,71 @@
+module Firebase.Google.Com.Go.V4.Auth exposing (..)
+
+foreign import "firebase.google.com/go/v4/auth" exposing (..)
+
+type ActionCodeSettings = ActionCodeSettings
+type Client = Client
+type DeleteUsersErrorInfo = DeleteUsersErrorInfo
+type DeleteUsersResult = DeleteUsersResult
+type EmailIdentifier = EmailIdentifier
+type ErrorInfo = ErrorInfo
+type ExportedUserRecord = ExportedUserRecord
+type Expression = Expression
+type FirebaseInfo = FirebaseInfo
+type GetUsersResult = GetUsersResult
+type MultiFactorConfig = MultiFactorConfig
+type MultiFactorConfigState = MultiFactorConfigState
+type MultiFactorInfo = MultiFactorInfo
+type MultiFactorSettings = MultiFactorSettings
+type OIDCProviderConfig = OIDCProviderConfig
+type OIDCProviderConfigIterator = OIDCProviderConfigIterator
+type OIDCProviderConfigToCreate = OIDCProviderConfigToCreate
+type OIDCProviderConfigToUpdate = OIDCProviderConfigToUpdate
+type Order = Order
+type PhoneIdentifier = PhoneIdentifier
+type PhoneMultiFactorInfo = PhoneMultiFactorInfo
+type ProjectConfig = ProjectConfig
+type ProjectConfigToUpdate = ProjectConfigToUpdate
+type ProviderConfig = ProviderConfig
+type ProviderIdentifier = ProviderIdentifier
+type QueryUserInfoResponse = QueryUserInfoResponse
+type QueryUsersRequest = QueryUsersRequest
+type SAMLProviderConfig = SAMLProviderConfig
+type SAMLProviderConfigIterator = SAMLProviderConfigIterator
+type SAMLProviderConfigToCreate = SAMLProviderConfigToCreate
+type SAMLProviderConfigToUpdate = SAMLProviderConfigToUpdate
+type SortBy = SortBy
+type TOTPInfo = TOTPInfo
+type TOTPMultiFactorInfo = TOTPMultiFactorInfo
+type TOTPProviderConfig = TOTPProviderConfig
+type Tenant = Tenant
+type TenantClient = TenantClient
+type TenantIterator = TenantIterator
+type TenantManager = TenantManager
+type TenantToCreate = TenantToCreate
+type TenantToUpdate = TenantToUpdate
+type Token = Token
+type UIDIdentifier = UIDIdentifier
+type UserIdentifier = UserIdentifier
+type UserImportHash = UserImportHash
+type UserImportOption = UserImportOption
+type UserImportResult = UserImportResult
+type UserInfo = UserInfo
+type UserIterator = UserIterator
+type UserMetadata = UserMetadata
+type UserProvider = UserProvider
+type UserRecord = UserRecord
+type UserToCreate = UserToCreate
+type UserToImport = UserToImport
+type UserToUpdate = UserToUpdate
+tokenUID : Any -> String
+tokenUID receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_UID receiver
+
+tokenClaims : Any -> Any
+tokenClaims receiver =
+    Sky_firebase_google_com_go_v4_auth_FIELD_Token_Claims receiver
+
+clientVerifyIDToken : Client -> Context -> String -> Result String Token
+clientVerifyIDToken receiver arg0 arg1 =
+    Sky_firebase_google_com_go_v4_auth_ClientVerifyIDToken receiver arg0 arg1
+

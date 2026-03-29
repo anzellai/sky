@@ -1,0 +1,153 @@
+module Cloud.Google.Com.Go.Firestore exposing (..)
+
+foreign import "cloud.google.com/go/firestore" exposing (..)
+
+newClient : Context -> String -> List Any -> Result String Client
+newClient arg0 arg1 arg2 =
+    Sky_cloud_google_com_go_firestore_NewClient arg0 arg1 arg2
+
+type AggregateFunction = AggregateFunction
+type AggregateSpec = AggregateSpec
+type AggregationQuery = AggregationQuery
+type AggregationResponse = AggregationResponse
+type AggregationResult = AggregationResult
+type AliasedAggregate = AliasedAggregate
+type AliasedExpression = AliasedExpression
+type AndFilter = AndFilter
+type BooleanExpression = BooleanExpression
+type BulkWriter = BulkWriter
+type BulkWriterJob = BulkWriterJob
+type Client = Client
+type CollectionGroupOption = CollectionGroupOption
+type CollectionGroupRef = CollectionGroupRef
+type CollectionHints = CollectionHints
+type CollectionIterator = CollectionIterator
+type CollectionOption = CollectionOption
+type CollectionRef = CollectionRef
+type CommitResponse = CommitResponse
+type CompositeFilter = CompositeFilter
+type Direction = Direction
+type DistanceMeasure = DistanceMeasure
+type DocumentChange = DocumentChange
+type DocumentChangeKind = DocumentChangeKind
+type DocumentIterator = DocumentIterator
+type DocumentRef = DocumentRef
+type DocumentRefIterator = DocumentRefIterator
+type DocumentSnapshot = DocumentSnapshot
+type DocumentSnapshotIterator = DocumentSnapshotIterator
+type EntityFilter = EntityFilter
+type ExecuteOption = ExecuteOption
+type ExecutionStats = ExecutionStats
+type ExplainMetrics = ExplainMetrics
+type ExplainMode = ExplainMode
+type ExplainOptions = ExplainOptions
+type ExplainStats = ExplainStats
+type Expression = Expression
+type FieldNotFoundError = FieldNotFoundError
+type FieldPath = FieldPath
+type FindNearestOptions = FindNearestOptions
+type FunctionExpression = FunctionExpression
+type OrFilter = OrFilter
+type Ordering = Ordering
+type OrderingDirection = OrderingDirection
+type Pipeline = Pipeline
+type PipelineDistanceMeasure = PipelineDistanceMeasure
+type PipelineFindNearestOptions = PipelineFindNearestOptions
+type PipelineResult = PipelineResult
+type PipelineResultIterator = PipelineResultIterator
+type PipelineSnapshot = PipelineSnapshot
+type PipelineSource = PipelineSource
+type PlanSummary = PlanSummary
+type Precondition = Precondition
+type PropertyFilter = PropertyFilter
+type PropertyPathFilter = PropertyPathFilter
+type Query = Query
+type QuerySnapshot = QuerySnapshot
+type QuerySnapshotIterator = QuerySnapshotIterator
+type Queryer = Queryer
+type RawStage = RawStage
+type RawStageOptions = RawStageOptions
+type ReadOption = ReadOption
+type RunOption = RunOption
+type SampleMode = SampleMode
+type SampleSpec = SampleSpec
+type Selectable = Selectable
+type SetOption = SetOption
+type SimpleFilter = SimpleFilter
+type Transaction = Transaction
+type TransactionOption = TransactionOption
+type UnnestOptions = UnnestOptions
+type Update = Update
+type Vector32 = Vector32
+type Vector64 = Vector64
+type VectorQuery = VectorQuery
+type WriteBatch = WriteBatch
+type WriteResult = WriteResult
+documentRefID : Any -> String
+documentRefID receiver =
+    Sky_cloud_google_com_go_firestore_FIELD_DocumentRef_ID receiver
+
+documentSnapshotRef : Any -> DocumentRef
+documentSnapshotRef receiver =
+    Sky_cloud_google_com_go_firestore_FIELD_DocumentSnapshot_Ref receiver
+
+clientCollection : Client -> String -> Result String CollectionRef
+clientCollection receiver arg0 =
+    Sky_cloud_google_com_go_firestore_ClientCollection receiver arg0
+
+collectionRefDoc : CollectionRef -> String -> Result String DocumentRef
+collectionRefDoc receiver arg0 =
+    Sky_cloud_google_com_go_firestore_CollectionRefDoc receiver arg0
+
+collectionRefDocuments : CollectionRef -> Context -> Result String DocumentIterator
+collectionRefDocuments receiver arg0 =
+    Sky_cloud_google_com_go_firestore_CollectionRefDocuments receiver arg0
+
+collectionRefWhere : CollectionRef -> String -> String -> Any -> Result String Query
+collectionRefWhere receiver arg0 arg1 arg2 =
+    Sky_cloud_google_com_go_firestore_CollectionRefWhere receiver arg0 arg1 arg2
+
+documentIteratorGetAll : DocumentIterator -> Result String List Any
+documentIteratorGetAll receiver =
+    Sky_cloud_google_com_go_firestore_DocumentIteratorGetAll receiver
+
+documentRefDelete : DocumentRef -> Context -> List Any -> Result String WriteResult
+documentRefDelete receiver arg0 arg1 =
+    Sky_cloud_google_com_go_firestore_DocumentRefDelete receiver arg0 arg1
+
+documentRefGet : DocumentRef -> Context -> Result String DocumentSnapshot
+documentRefGet receiver arg0 =
+    Sky_cloud_google_com_go_firestore_DocumentRefGet receiver arg0
+
+documentRefSet : DocumentRef -> Context -> Any -> List Any -> Result String WriteResult
+documentRefSet receiver arg0 arg1 arg2 =
+    Sky_cloud_google_com_go_firestore_DocumentRefSet receiver arg0 arg1 arg2
+
+documentSnapshotData : DocumentSnapshot -> Result String Any
+documentSnapshotData receiver =
+    Sky_cloud_google_com_go_firestore_DocumentSnapshotData receiver
+
+documentSnapshotExists : DocumentSnapshot -> Result String Bool
+documentSnapshotExists receiver =
+    Sky_cloud_google_com_go_firestore_DocumentSnapshotExists receiver
+
+queryDocuments : Query -> Context -> Result String DocumentIterator
+queryDocuments receiver arg0 =
+    Sky_cloud_google_com_go_firestore_QueryDocuments receiver arg0
+
+queryOrderBy : Query -> String -> Direction -> Result String Query
+queryOrderBy receiver arg0 arg1 =
+    Sky_cloud_google_com_go_firestore_QueryOrderBy receiver arg0 arg1
+
+mergeAll : () -> SetOption
+mergeAll _ =
+    Sky_cloud_google_com_go_firestore_MergeAll
+
+asc : Direction
+asc =
+    Sky_cloud_google_com_go_firestore_Asc
+
+desc : Direction
+desc =
+    Sky_cloud_google_com_go_firestore_Desc
+

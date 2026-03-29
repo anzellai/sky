@@ -2035,8 +2035,6 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_stringToBytes(s any) any { return []byte(sky_asString(s)) }"
     , GoDeclRaw
-          "func sky_sqlRowsToList(v any) any { rows, ok := v.(*sql.Rows); if !ok { return []any{} }; defer rows.Close(); cols, err := rows.Columns(); if err != nil { return []any{} }; var result []any; for rows.Next() { vals := make([]any, len(cols)); ptrs := make([]any, len(cols)); for i := range vals { ptrs[i] = &vals[i] }; if rows.Scan(ptrs...) != nil { continue }; row := make(map[string]any); for i, c := range cols { switch tv := vals[i].(type) { case []byte: row[c] = string(tv); case int64: row[c] = fmt.Sprintf(\"%d\", tv); default: row[c] = fmt.Sprintf(\"%v\", tv) } }; result = append(result, row) }; return result }"
-    , GoDeclRaw
           "func sky_stringFromBytes(b any) any { return string(sky_asBytes(b)) }"
     , GoDeclRaw
           "func sky_asMapStringAny(v any) map[string]interface{} { if m, ok := v.(map[string]interface{}); ok { return m }; return sky_asMap(v) }"
@@ -2268,7 +2266,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_taskPerform(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok { if sr.Tag == 0 { return sr.OkValue }; return r }; return r }"
     , GoDeclRaw
-          "func sky_taskRun(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok && sr.Tag == 0 { if _, isRows := sr.OkValue.(*sql.Rows); isRows { return SkyOk(sky_sqlRowsToList(sr.OkValue)) }; return r }; return r }"
+          "func sky_taskRun(task any) any { r := sky_runTask(task); return r }"
     , GoDeclRaw
           "func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"
     , GoDeclRaw

@@ -56,7 +56,6 @@ dBExec : DB -> String -> List Any -> Result String Result
 dBExec receiver arg0 arg1 =
     Sky_database_sql_DBExec receiver arg0 arg1
 
-dBQuery : DB -> String -> List Any -> Result String Rows
-dBQuery receiver arg0 arg1 =
-    Sky_database_sql_DBQuery receiver arg0 arg1
-
+queryToMaps : DB -> String -> List Any -> Result String (List Any)
+queryToMaps receiver arg0 arg1 =
+    Sky_database_sql_QueryToMaps receiver arg0 arg1
