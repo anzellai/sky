@@ -28749,7 +28749,7 @@ func State_FirebaseAuth(v0 any) any {
 }
 
 func State_EmptyModel() any {
-	return map[string]any{"page": map[string]any{"Tag": 0, "SkyName": "HomePage"}, "lang": "en", "user": SkyNothing(), "authError": "", "products": []any{}, "product": SkyNothing(), "productImages": []any{}, "search": "", "categoryFilter": "all", "sortBy": "newest", "sortDir": "desc", "cart": SkyNothing(), "cartItems": []any{}, "cartRemarks": "", "checkoutUrl": "", "orders": []any{}, "order": SkyNothing(), "orderItems": []any{}, "editProductId": "", "editTitle": "", "editSummary": "", "editCategory": "Miscellaneous", "editPrice": 0, "editDiscount": 0, "editCurrency": "GBP", "editStock": -1, "editPublished": false, "editImageData": "", "adminOrders": []any{}, "adminOrderFilter": "all", "quantity": 1, "notification": "", "notificationType": "", "signOutPending": false}
+	return map[string]any{"page": map[string]any{"Tag": 3, "SkyName": "HomePage"}, "lang": "en", "user": SkyNothing(), "authError": "", "products": []any{}, "product": SkyNothing(), "productImages": []any{}, "search": "", "categoryFilter": "all", "sortBy": "newest", "sortDir": "desc", "cart": SkyNothing(), "cartItems": []any{}, "cartRemarks": "", "checkoutUrl": "", "orders": []any{}, "order": SkyNothing(), "orderItems": []any{}, "editProductId": "", "editTitle": "", "editSummary": "", "editCategory": "Miscellaneous", "editPrice": 0, "editDiscount": 0, "editCurrency": "GBP", "editStock": -1, "editPublished": false, "editImageData": "", "adminOrders": []any{}, "adminOrderFilter": "all", "quantity": 1, "notification": "", "notificationType": "", "signOutPending": false}
 }
 
 func State_AllCategories() any {

@@ -808,6 +808,10 @@ lowerQualified ctx parts =
             GoIdent "sky_taskSequence"
         else if qualName == "Task.lazy" then
             GoIdent "sky_taskLazy"
+        else if qualName == "Task.parallel" then
+            GoIdent "sky_taskParallel"
+        else if qualName == "List.parallelMap" then
+            GoIdent "sky_parallelMap"
         else if qualName == "Result.map" then
             GoIdent "sky_resultMap"
         else if qualName == "Result.withDefault" then

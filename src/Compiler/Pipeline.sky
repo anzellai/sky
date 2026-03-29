@@ -165,9 +165,11 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         combinedEnv = Env.union depTypeEnv stdlibEnv
         ffiNames = Set.fromList (List.map fst ffiModules)
         depDecls =
-            List.concatMap
-                (compileDependencyModule stdlibEnv loadedModules ffiNames)
-                loadedModules
+            List.concat
+                (List.parallelMap
+                    (compileDependencyModule stdlibEnv loadedModules ffiNames)
+                    loadedModules
+                )
         projectRoot = dirOfPath srcRoot
     in
         compileMultiModuleEntry outDir projectRoot entryMod aliasMap combinedEnv
@@ -286,12 +288,25 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
                 copyLiveRuntime outDir
             else
                 ()
+        _ = writeParallelHelpers outDir goCode
         _ = copyFfiWrappers outDir projectRoot imports goCode
         _ = runNativeDce outDir goCode
         _ = println ""
         _ = println ("✓ Compilation successful")
     in
         Ok goCode
+
+
+writeParallelHelpers : String -> String -> ()
+writeParallelHelpers outDir goCode =
+    if String.contains "sky_taskParallel" goCode || String.contains "sky_parallelMap" goCode then
+        let
+            helperCode = "package main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc sky_taskParallel(tasks any) any {\n\treturn func() any {\n\t\titems := sky_asList(tasks)\n\t\tn := len(items)\n\t\tresults := make([]any, n)\n\t\terrs := make([]any, n)\n\t\tvar wg sync.WaitGroup\n\t\twg.Add(n)\n\t\tfor i, t := range items {\n\t\t\tgo func(idx int, task any) {\n\t\t\t\tdefer wg.Done()\n\t\t\t\tdefer func() {\n\t\t\t\t\tif r := recover(); r != nil {\n\t\t\t\t\t\terrs[idx] = fmt.Sprintf(\"Task panic: %v\", r)\n\t\t\t\t\t}\n\t\t\t\t}()\n\t\t\t\tr := sky_runTask(task)\n\t\t\t\tsr := sky_asSkyResult(r)\n\t\t\t\tif sr.Tag == 1 {\n\t\t\t\t\terrs[idx] = sr.ErrValue\n\t\t\t\t} else {\n\t\t\t\t\tresults[idx] = sr.OkValue\n\t\t\t\t}\n\t\t\t}(i, t)\n\t\t}\n\t\twg.Wait()\n\t\tfor i := 0; i < n; i++ {\n\t\t\tif errs[i] != nil {\n\t\t\t\treturn SkyErr(errs[i])\n\t\t\t}\n\t\t}\n\t\treturn SkyOk(results)\n\t}\n}\n\nfunc sky_parallelMap(f any) any {\n\treturn func(items any) any {\n\t\tlist := sky_asList(items)\n\t\tn := len(list)\n\t\tresults := make([]any, n)\n\t\tvar wg sync.WaitGroup\n\t\twg.Add(n)\n\t\tfor i, item := range list {\n\t\t\tgo func(idx int, it any) {\n\t\t\t\tdefer wg.Done()\n\t\t\t\tfn := f.(func(any) any)\n\t\t\t\tresults[idx] = fn(it)\n\t\t\t}(i, item)\n\t\t}\n\t\twg.Wait()\n\t\treturn results\n\t}\n}\n"
+            _ = File.writeFile (outDir ++ "/sky_parallel.go") helperCode
+        in
+            ()
+    else
+        ()
 
 
 runNativeDce : String -> String -> ()
@@ -2411,6 +2426,7 @@ compileCheckedModule filePath outDir mod result =
                 copyLiveRuntime outDir
             else
                 ()
+        _ = writeParallelHelpers outDir goCode
         _ = dceMainGo outDir goCode
         _ = println ""
         _ = println ("✓ Compilation successful")
