@@ -4,4 +4,4 @@ import Sky.Core.Prelude exposing (..)
 import Std.Log exposing (println)
 
 main =
-    println "Hello from Sky!"
+    println  "Hello from Sky!"

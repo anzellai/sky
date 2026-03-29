@@ -18,7 +18,6 @@ type alias LexerState =
 
 
 lex : String -> { tokens : List Token , diagnostics : List Diagnostic }
-
 lex source =
     let
         initial =
@@ -44,7 +43,6 @@ lex source =
 
 
 lexLoop : LexerState -> LexerState
-
 lexLoop state =
     if state.offset >= String.length  state.source then
         state
@@ -73,7 +71,6 @@ lexLoop state =
 
 
 handleNewline : LexerState -> LexerState
-
 handleNewline state =
     let
         newState =
@@ -103,7 +100,6 @@ handleNewline state =
 
 
 countIndent : String -> Int -> Int
-
 countIndent source offset =
     if offset >= String.length  source then
         0
@@ -121,7 +117,6 @@ countIndent source offset =
 
 
 skipWhitespace : LexerState -> LexerState
-
 skipWhitespace state =
     if state.offset >= String.length  state.source then
         state
@@ -143,7 +138,6 @@ skipWhitespace state =
 
 
 skipLineComment : LexerState -> LexerState
-
 skipLineComment state =
     if state.offset >= String.length  state.source then
         state
@@ -165,7 +159,6 @@ skipLineComment state =
 
 
 lexString : LexerState -> LexerState
-
 lexString state =
     let
         startOffset =
@@ -203,7 +196,6 @@ lexString state =
 
 
 lexStringBody : LexerState -> LexerState
-
 lexStringBody state =
     if state.offset >= String.length  state.source then
         state
@@ -233,7 +225,6 @@ lexStringBody state =
 
 
 lexChar : LexerState -> LexerState
-
 lexChar state =
     let
         startOffset =
@@ -274,7 +265,6 @@ lexChar state =
 
 
 lexNumber : LexerState -> LexerState
-
 lexNumber state =
     let
         startOffset =
@@ -334,7 +324,6 @@ lexNumber state =
 
 
 consumeDigits : LexerState -> LexerState
-
 consumeDigits state =
     if state.offset >= String.length  state.source then
         state
@@ -346,7 +335,6 @@ consumeDigits state =
 
 
 lexIdentifier : LexerState -> LexerState
-
 lexIdentifier state =
     let
         startOffset =
@@ -387,7 +375,6 @@ lexIdentifier state =
 
 
 consumeIdentChars : LexerState -> LexerState
-
 consumeIdentChars state =
     if state.offset >= String.length  state.source then
         state
@@ -409,7 +396,6 @@ consumeIdentChars state =
 
 
 lexOperatorOrPunctuation : LexerState -> LexerState
-
 lexOperatorOrPunctuation state =
     let
         ch =
@@ -485,7 +471,6 @@ lexOperatorOrPunctuation state =
 
 
 consumeOperator : String -> Int -> Int
-
 consumeOperator source offset =
     if offset >= String.length  source then
         0
@@ -501,7 +486,6 @@ consumeOperator source offset =
 
 
 isOperatorChar : Char -> Bool
-
 isOperatorChar ch =
     ch == '+' ||
     ch == '-' ||
@@ -515,7 +499,6 @@ isOperatorChar ch =
 
 
 charAt : String -> Int -> Char
-
 charAt s i =
     let
         c =
@@ -528,13 +511,11 @@ charAt s i =
 
 
 peekChar : String -> Int -> Char
-
 peekChar s i =
     charAt  s  i
 
 
 makeSpan : LexerState -> SourceSpan
-
 makeSpan state =
     { start =
         { offset = state.offset , line = state.line , column = state.column }

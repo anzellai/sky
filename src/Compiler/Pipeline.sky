@@ -22,7 +22,6 @@ import Compiler.Lower as Lower
 import Compiler.Resolver as Resolver
 
 findCharIdx : Char -> String -> Int -> Int
-
 findCharIdx ch str idx =
     if idx >= String.length  str then
         -1
@@ -33,7 +32,6 @@ findCharIdx ch str idx =
 
 
 findLastSlash : String -> Int -> Int
-
 findLastSlash path idx =
     if idx < 0 then
         -1
@@ -44,7 +42,6 @@ findLastSlash path idx =
 
 
 compile : String -> String -> Result String String
-
 compile filePath outDir =
     let
         _ =
@@ -101,7 +98,6 @@ compile filePath outDir =
 
 
 buildCheckEnv : String -> Ast.Module -> Env.TypeEnv
-
 buildCheckEnv entryFilePath mod =
     let
         srcRoot =
@@ -142,7 +138,6 @@ buildCheckEnv entryFilePath mod =
 
 
 compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
-
 compileMultiModule entryPath outDir srcRoot entryMod =
     let
         localImports =
@@ -221,7 +216,6 @@ compileMultiModule entryPath outDir srcRoot entryMod =
 
 
 compileMultiModuleEntry : String -> String -> Ast.Module -> (Dict.Dict String String) -> Env.TypeEnv -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
-
 compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls loadedModules =
     let
         entryCheckResult =
@@ -261,7 +255,6 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
 
 
 emitMultiModuleGo : String -> String -> Ast.Module -> Adt.AdtRegistry -> (Dict.Dict String String) -> (List GoDecl) -> (List ( String , Ast.Module )) -> Result String String
-
 emitMultiModuleGo outDir projectRoot entryMod entryRegistry aliasMap depDecls loadedModules =
     let
         baseCtx =
@@ -321,7 +314,6 @@ emitMultiModuleGo outDir projectRoot entryMod entryRegistry aliasMap depDecls lo
 
 
 writeMultiModuleOutput : String -> String -> (List GoDecl) -> (List Ast.ImportDecl) -> Result String String
-
 writeMultiModuleOutput outDir projectRoot allDecls imports =
     let
         blankImports =
@@ -369,7 +361,6 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
 
 
 runNativeDce : String -> String -> ()
-
 runNativeDce outDir goCode =
     case Process.run  "sky-dce"  [ outDir ] of
         
@@ -384,7 +375,6 @@ runNativeDce outDir goCode =
 
 
 copyLiveRuntime : String -> ()
-
 copyLiveRuntime outDir =
     let
         skyBinDir =
@@ -413,7 +403,6 @@ copyLiveRuntime outDir =
 
 
 findStdlibDir : (List String) -> String
-
 findStdlibDir candidates =
     case candidates of
         
@@ -431,7 +420,6 @@ findStdlibDir candidates =
 
 
 optimiseJsonFunctions : String -> String
-
 optimiseJsonFunctions code =
     let
         s1 =
@@ -459,7 +447,6 @@ optimiseJsonFunctions code =
 
 
 writeNativeJsonFile : String -> ()
-
 writeNativeJsonFile outDir =
     let
         _ =
@@ -481,7 +468,6 @@ writeNativeJsonFile outDir =
 
 
 nativeJsonHelperCode : String
-
 nativeJsonHelperCode =
     "package main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\n" ++
     "func sky_nativeFindInString(needle any, haystack any, idx any) any {\n" ++
@@ -515,13 +501,11 @@ nativeJsonHelperCode =
 
 
 fixUnusedVars : String -> String
-
 fixUnusedVars code =
     code
 
 
 eliminateDeadCode : String -> String -> ()
-
 eliminateDeadCode outDir mainGoCode =
     let
         listResult =
@@ -569,7 +553,6 @@ eliminateDeadCode outDir mainGoCode =
 
 
 countFuncsInFile : String -> Int
-
 countFuncsInFile filePath =
     case File.readFile  filePath of
         
@@ -586,7 +569,6 @@ countFuncsInFile filePath =
 
 
 trimWrapperFile : String -> String -> ()
-
 trimWrapperFile filePath mainGoCode =
     case File.readFile  filePath of
         
@@ -623,7 +605,6 @@ trimWrapperFile filePath mainGoCode =
 
 
 trimWrapperImports : String -> ()
-
 trimWrapperImports filePath =
     let
         _ =
@@ -639,7 +620,6 @@ trimWrapperImports filePath =
 
 
 trimWrapperContent : String -> String -> String
-
 trimWrapperContent wrapperCode mainGoCode =
     let
         sections =
@@ -665,7 +645,6 @@ trimWrapperContent wrapperCode mainGoCode =
 
 
 isWrapperUsed : String -> String -> Bool
-
 isWrapperUsed funcBlock mainGoCode =
     let
         funcName =
@@ -678,7 +657,6 @@ isWrapperUsed funcBlock mainGoCode =
 
 
 isHelperFunc : String -> Bool
-
 isHelperFunc funcBlock =
     let
         funcName =
@@ -693,7 +671,6 @@ isHelperFunc funcBlock =
 
 
 extractWrapperFuncName : String -> String
-
 extractWrapperFuncName block =
     if String.startsWith  "func "  block then
         let
@@ -715,7 +692,6 @@ type alias WrapperSections =
 
 
 splitWrapperSections : String -> WrapperSections
-
 splitWrapperSections code =
     let
         lines =
@@ -727,7 +703,6 @@ splitWrapperSections code =
 
 
 splitWrapperLoop : (List String) -> String -> (List String) -> String -> Bool -> WrapperSections
-
 splitWrapperLoop lines header funcs currentFunc inFunc =
     case lines of
         
@@ -762,7 +737,6 @@ splitWrapperLoop lines header funcs currentFunc inFunc =
 
 
 dceMainGo : String -> String -> ()
-
 dceMainGo outDir goCode =
     let
         sections =
@@ -898,7 +872,6 @@ dceMainGo outDir goCode =
 
 
 trimUnusedImports : String -> String -> String
-
 trimUnusedImports header bodyCode =
     let
         _ =
@@ -921,7 +894,6 @@ trimUnusedImports header bodyCode =
 
 
 buildReachableSet : (List String) -> (Dict.Dict String Bool) -> (Dict.Dict String String) -> Dict.Dict String Bool
-
 buildReachableSet pending visited funcMap =
     case pending of
         
@@ -961,7 +933,6 @@ buildReachableSet pending visited funcMap =
 
 
 collectBlankImports : (List Ast.ImportDecl) -> List GoImport
-
 collectBlankImports imports =
     List.filterMap
      (
@@ -979,7 +950,6 @@ collectBlankImports imports =
 
 
 makeGoPackageWithImports : (List GoDecl) -> (List GoImport) -> GoPackage
-
 makeGoPackageWithImports decls extraImports =
     let
         base =
@@ -989,7 +959,6 @@ makeGoPackageWithImports decls extraImports =
 
 
 shortFuncName : String -> String
-
 shortFuncName fullName =
     case List.reverse  (String.split  "_"  fullName) of
         
@@ -1009,7 +978,6 @@ shortFuncName fullName =
 
 
 makeGoPackage : (List GoDecl) -> GoPackage
-
 makeGoPackage decls =
     { name =
         "main"
@@ -1039,7 +1007,6 @@ makeGoPackage decls =
 
 
 loadLocalModules : String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 loadLocalModules srcRoot imports acc =
     case imports of
         
@@ -1102,7 +1069,6 @@ loadLocalModules srcRoot imports acc =
 
 
 loadFromSkydepsOrSkip : String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 loadFromSkydepsOrSkip srcRoot modName moduleParts rest acc =
     let
         candidates =
@@ -1113,7 +1079,6 @@ loadFromSkydepsOrSkip srcRoot modName moduleParts rest acc =
 
 
 loadFromCandidatesOrSkip : String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 loadFromCandidatesOrSkip srcRoot modName candidates rest acc =
     if List.isEmpty  candidates then
         loadLocalModules  srcRoot  rest  acc
@@ -1122,7 +1087,6 @@ loadFromCandidatesOrSkip srcRoot modName candidates rest acc =
 
 
 tryOneSkydepCandidate : String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 tryOneSkydepCandidate srcRoot modName candidates rest acc =
     let
         firstPath =
@@ -1153,7 +1117,6 @@ tryOneSkydepCandidate srcRoot modName candidates rest acc =
 
 
 parseAndLoadSkydep : String -> String -> String -> (List String) -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 parseAndLoadSkydep srcRoot modName source restCandidates rest acc =
     let
         lexResult =
@@ -1187,7 +1150,6 @@ parseAndLoadSkydep srcRoot modName source restCandidates rest acc =
 
 
 findSkydepCandidates : String -> (List String) -> List String
-
 findSkydepCandidates skydepsDir moduleParts =
     let
         moduleFile =
@@ -1214,7 +1176,6 @@ findSkydepCandidates skydepsDir moduleParts =
 
 
 skydepSrcRoot : String -> String -> String
-
 skydepSrcRoot srcRoot modName =
     let
         projectRoot =
@@ -1252,14 +1213,12 @@ skydepSrcRoot srcRoot modName =
 
 
 loadFfiForTypeCheck : String -> (List Ast.ImportDecl) -> List ( String , Ast.Module )
-
 loadFfiForTypeCheck srcRoot imports =
     List.filterMap  (\imp -> loadOneFfiRaw  srcRoot  imp)
      (deduplicateFfiImports  imports  Dict.empty)
 
 
 loadOneFfiRaw : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
-
 loadOneFfiRaw srcRoot imp =
     let
         modName =
@@ -1294,14 +1253,12 @@ loadOneFfiRaw srcRoot imp =
 
 
 loadFfiBindings : String -> (List Ast.ImportDecl) -> List ( String , Ast.Module )
-
 loadFfiBindings srcRoot imports =
     List.filterMap  (\imp -> loadOneFfiBinding  srcRoot  imp)
      (deduplicateFfiImports  imports  Dict.empty)
 
 
 deduplicateFfiImports : (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List Ast.ImportDecl
-
 deduplicateFfiImports imports seen =
     case imports of
         
@@ -1313,7 +1270,6 @@ deduplicateFfiImports imports seen =
 
 
 deduplicateOneImport : Ast.ImportDecl -> (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List Ast.ImportDecl
-
 deduplicateOneImport imp rest seen =
     let
         modName =
@@ -1327,7 +1283,6 @@ deduplicateOneImport imp rest seen =
 
 
 loadOneFfiBinding : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
-
 loadOneFfiBinding srcRoot imp =
     let
         modName =
@@ -1389,7 +1344,6 @@ loadOneFfiBinding srcRoot imp =
 
 
 filterFfiModule : String -> String -> Ast.Module -> Ast.Module
-
 filterFfiModule projectRoot modName mod =
     let
         safeName =
@@ -1445,7 +1399,6 @@ filterFfiModule projectRoot modName mod =
 
 
 declHasWrapper : String -> Ast.Declaration -> Bool
-
 declHasWrapper wrapperContent decl =
     case decl of
         
@@ -1464,7 +1417,6 @@ declHasWrapper wrapperContent decl =
 
 
 extractWrapperName : Ast.Expression -> String
-
 extractWrapperName expr =
     case expr of
         
@@ -1482,7 +1434,6 @@ extractWrapperName expr =
 
 
 tryLoadBinding : String -> String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 tryLoadBinding srcRoot modName rest acc =
     let
         projectRoot =
@@ -1543,7 +1494,6 @@ tryLoadBinding srcRoot modName rest acc =
 
 
 copyFfiWrappers : String -> String -> (List Ast.ImportDecl) -> String -> ()
-
 copyFfiWrappers outDir projectRoot imports mainGoCode =
     let
         allModNames =
@@ -1577,7 +1527,6 @@ copyFfiWrappers outDir projectRoot imports mainGoCode =
 
 
 copyProjectWrappers : String -> String -> String -> ()
-
 copyProjectWrappers outDir projectRoot mainGoCode =
     let
         prefix =
@@ -1593,7 +1542,6 @@ copyProjectWrappers outDir projectRoot mainGoCode =
 
 
 copyWrapperDir : String -> String -> String -> ()
-
 copyWrapperDir outDir wrapperDir mainGoCode =
     case Process.run  "sh"
           [ "-c" , "ls " ++ wrapperDir ++ "/*.go 2>/dev/null" ] of
@@ -1646,7 +1594,6 @@ copyWrapperDir outDir wrapperDir mainGoCode =
 
 
 copyOneFfiWrapper : String -> String -> String -> String -> ()
-
 copyOneFfiWrapper outDir projectRoot modName mainGoCode =
     let
         safeName =
@@ -1732,19 +1679,16 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
 
 
 buildAliasMap : (List Ast.ImportDecl) -> Dict.Dict String String
-
 buildAliasMap imports =
     List.foldl  addImportAlias  Dict.empty  imports
 
 
 generatePrefixAliases : String -> (List GoDecl) -> List GoDecl
-
 generatePrefixAliases prefix decls =
     List.filterMap  (makePrefixAlias  prefix)  decls
 
 
 makePrefixAlias : String -> GoDecl -> Maybe GoDecl
-
 makePrefixAlias prefix decl =
     let
         fullName =
@@ -1773,13 +1717,11 @@ makePrefixAlias prefix decl =
 
 
 isCommonName : String -> Bool
-
 isCommonName name =
     name == "main" || name == "_"
 
 
 isSharedValue : String -> Bool
-
 isSharedValue name =
     name == "emptySub" ||
     name == "emptySpan" ||
@@ -1883,13 +1825,11 @@ isSharedValue name =
 
 
 deduplicateDecls : (List GoDecl) -> List GoDecl
-
 deduplicateDecls decls =
     deduplicateDeclsLoop  decls  Dict.empty  []
 
 
 deduplicateDeclsLoop : (List GoDecl) -> (Dict.Dict String String) -> (List GoDecl) -> List GoDecl
-
 deduplicateDeclsLoop decls seen acc =
     case decls of
         
@@ -1916,7 +1856,6 @@ deduplicateDeclsLoop decls seen acc =
 
 
 getDeclName : GoDecl -> String
-
 getDeclName decl =
     case decl of
         
@@ -1938,7 +1877,6 @@ getDeclName decl =
 
 
 extractVarName : String -> String
-
 extractVarName code =
     let
         afterVar =
@@ -1953,7 +1891,6 @@ extractVarName code =
 
 
 extractFuncName : String -> String
-
 extractFuncName code =
     let
         afterFunc =
@@ -1968,7 +1905,6 @@ extractFuncName code =
 
 
 extractTypeName : String -> String
-
 extractTypeName code =
     let
         afterType =
@@ -1983,13 +1919,11 @@ extractTypeName code =
 
 
 generateImportAliases : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List GoDecl
-
 generateImportAliases imports allModules =
     List.concatMap  (generateAliasesForImport  allModules)  imports
 
 
 generateAliasesForImport : (List ( String , Ast.Module )) -> Ast.ImportDecl -> List GoDecl
-
 generateAliasesForImport allModules imp =
     let
         modName =
@@ -2002,7 +1936,6 @@ generateAliasesForImport allModules imp =
 
 
 generateAliasesFromModule : String -> (List ( String , Ast.Module )) -> List GoDecl
-
 generateAliasesFromModule modName allModules =
     case findModule  modName  allModules of
         
@@ -2014,7 +1947,6 @@ generateAliasesFromModule modName allModules =
 
 
 isFfiModule : String -> Ast.Module -> Bool
-
 isFfiModule modName mod =
     List.foldl
      (
@@ -2035,7 +1967,6 @@ isFfiModule modName mod =
 
 
 exprHasWrapperCall : Ast.Expression -> Bool
-
 exprHasWrapperCall expr =
     case expr of
         
@@ -2059,7 +1990,6 @@ exprHasWrapperCall expr =
 
 
 generateAliasesFromModuleInner : String -> Ast.Module -> List GoDecl
-
 generateAliasesFromModuleInner modName mod =
     let
         prefix =
@@ -2100,13 +2030,11 @@ generateAliasesFromModuleInner modName mod =
 
 
 isExposingAll : Ast.ExposingClause -> Bool
-
 isExposingAll clause =
     not  (isExposingNone  clause) && List.isEmpty  (getExposeNames  clause)
 
 
 isExposingNone : Ast.ExposingClause -> Bool
-
 isExposingNone clause =
     case clause of
         
@@ -2118,7 +2046,6 @@ isExposingNone clause =
 
 
 getExposeNames : Ast.ExposingClause -> List String
-
 getExposeNames clause =
     case clause of
         
@@ -2130,7 +2057,6 @@ getExposeNames clause =
 
 
 isZeroArityInModule : String -> Ast.Module -> Bool
-
 isZeroArityInModule name mod =
     List.foldl
      (
@@ -2151,7 +2077,6 @@ isZeroArityInModule name mod =
 
 
 findModule : String -> (List ( String , Ast.Module )) -> Maybe Ast.Module
-
 findModule modName modules =
     case modules of
         
@@ -2166,13 +2091,11 @@ findModule modName modules =
 
 
 extractExportedNames : Ast.Module -> List String
-
 extractExportedNames mod =
     List.concatMap  extractDeclNames  mod.declarations
 
 
 extractDeclNames : Ast.Declaration -> List String
-
 extractDeclNames decl =
     case decl of
         
@@ -2193,13 +2116,11 @@ extractDeclNames decl =
 
 
 collectAllFunctionNames : (List Ast.Declaration) -> List String
-
 collectAllFunctionNames decls =
     deduplicateStringList  (List.filterMap  extractDeclNameForFn  decls)
 
 
 extractDeclNameForFn : Ast.Declaration -> Maybe String
-
 extractDeclNameForFn d =
     case d of
         
@@ -2211,13 +2132,11 @@ extractDeclNameForFn d =
 
 
 deduplicateStringList : (List String) -> List String
-
 deduplicateStringList items =
     deduplicateStringsLoop  items  Dict.empty  []
 
 
 deduplicateStringsLoop : (List String) -> (Dict.Dict String String) -> (List String) -> List String
-
 deduplicateStringsLoop items seen acc =
     case items of
         
@@ -2236,13 +2155,11 @@ deduplicateStringsLoop items seen acc =
 
 
 isModuleLoaded : String -> (List ( String , Ast.Module )) -> Bool
-
 isModuleLoaded modName loaded =
     List.foldl  (\pair acc -> acc || fst  pair == modName)  False  loaded
 
 
 deduplicateFfiModules : (List ( String , Ast.Module )) -> (List ( String , Ast.Module )) -> List ( String , Ast.Module )
-
 deduplicateFfiModules modules acc =
     case modules of
         
@@ -2257,7 +2174,6 @@ deduplicateFfiModules modules acc =
 
 
 addImportAlias : Ast.ImportDecl -> (Dict.Dict String String) -> Dict.Dict String String
-
 addImportAlias imp acc =
     let
         modName =
@@ -2270,7 +2186,6 @@ addImportAlias imp acc =
 
 
 importAlias : Ast.ImportDecl -> String
-
 importAlias imp =
     if String.isEmpty  imp.alias_ then
         case List.reverse  imp.moduleName of
@@ -2285,13 +2200,11 @@ importAlias imp =
 
 
 compileDependencyModule : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
-
 compileDependencyModule stdlibEnv allModules pair =
     compileDependencyModuleFull  stdlibEnv  allModules  pair
 
 
 compileFfiModuleLight : (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
-
 compileFfiModuleLight allModules pair =
     let
         modName =
@@ -2324,7 +2237,6 @@ compileFfiModuleLight allModules pair =
 
 
 makeFfiWrapperVar : String -> Ast.Declaration -> Maybe GoDecl
-
 makeFfiWrapperVar prefix decl =
     case decl of
         
@@ -2336,7 +2248,6 @@ makeFfiWrapperVar prefix decl =
 
 
 buildFfiVarDecl : String -> String -> (List Ast.Pattern) -> Ast.Expression -> Maybe GoDecl
-
 buildFfiVarDecl prefix name params body =
     let
         wrapperName =
@@ -2351,7 +2262,6 @@ buildFfiVarDecl prefix name params body =
 
 
 buildFfiDeclString : String -> String -> (List Ast.Pattern) -> Ast.Expression -> String -> String
-
 buildFfiDeclString prefix name params body wrapperName =
     let
         goName =
@@ -2368,13 +2278,11 @@ buildFfiDeclString prefix name params body wrapperName =
 
 
 countWrapperArgs : Ast.Expression -> Int
-
 countWrapperArgs expr =
     countWrapperArgsAcc  expr  0
 
 
 countWrapperArgsAcc : Ast.Expression -> Int -> Int
-
 countWrapperArgsAcc expr acc =
     case expr of
         
@@ -2386,7 +2294,6 @@ countWrapperArgsAcc expr acc =
 
 
 makeFfiFunc : String -> String -> Int -> Int -> String
-
 makeFfiFunc goName wrapperName skyArgCount wrapperArgCount =
     let
         argNames =
@@ -2406,7 +2313,6 @@ makeFfiFunc goName wrapperName skyArgCount wrapperArgCount =
 
 
 extractWrapperNameFromBody : Ast.Expression -> String
-
 extractWrapperNameFromBody expr =
     case expr of
         
@@ -2437,7 +2343,6 @@ extractWrapperNameFromBody expr =
 
 
 compileDependencyModuleFull : Env.TypeEnv -> (List ( String , Ast.Module )) -> ( String , Ast.Module ) -> List GoDecl
-
 compileDependencyModuleFull stdlibEnv allModules pair =
     let
         modName =
@@ -2499,13 +2404,11 @@ compileDependencyModuleFull stdlibEnv allModules pair =
 
 
 generateConstructorAliases : String -> (List GoDecl) -> List GoDecl
-
 generateConstructorAliases prefix decls =
     List.filterMap  (makeConstructorAlias  prefix)  decls
 
 
 makeConstructorAlias : String -> GoDecl -> Maybe GoDecl
-
 makeConstructorAlias prefix decl =
     let
         fullName =
@@ -2544,13 +2447,11 @@ makeConstructorAlias prefix decl =
 
 
 generateOriginalAliases : String -> (List GoDecl) -> List GoDecl
-
 generateOriginalAliases prefix decls =
     List.filterMap  (makeOriginalAlias  prefix)  decls
 
 
 makeOriginalAlias : String -> GoDecl -> Maybe GoDecl
-
 makeOriginalAlias prefix decl =
     let
         name =
@@ -2568,7 +2469,6 @@ makeOriginalAlias prefix decl =
 
 
 isExportableDecl : GoDecl -> Bool
-
 isExportableDecl decl =
     case decl of
         
@@ -2583,7 +2483,6 @@ isExportableDecl decl =
 
 
 dirOfPath : String -> String
-
 dirOfPath path =
     let
         lastSlash =
@@ -2596,7 +2495,6 @@ dirOfPath path =
 
 
 needsStdlibWrapper : String -> Bool
-
 needsStdlibWrapper modName =
     String.startsWith  "Sky.Core.Json"  modName ||
     String.startsWith  "Std.Html"  modName ||
@@ -2611,7 +2509,6 @@ needsStdlibWrapper modName =
 
 
 buildStdlibGoImports : (List Ast.ImportDecl) -> List GoImport
-
 buildStdlibGoImports imports =
     let
         stdImports =
@@ -2622,7 +2519,6 @@ buildStdlibGoImports imports =
 
 
 importToGoImport : Ast.ImportDecl -> Maybe GoImport
-
 importToGoImport imp =
     let
         modName =
@@ -2642,7 +2538,6 @@ importToGoImport imp =
 
 
 skyModuleToGoImport : String -> String
-
 skyModuleToGoImport modName =
     let
         parts =
@@ -2652,7 +2547,6 @@ skyModuleToGoImport modName =
 
 
 skyModuleToGoImportLoop : (List String) -> (List String) -> Bool -> String
-
 skyModuleToGoImportLoop parts acc pastTld =
     case parts of
         
@@ -2675,7 +2569,6 @@ skyModuleToGoImportLoop parts acc pastTld =
 
 
 isTld : String -> Bool
-
 isTld s =
     s == "com" ||
     s == "org" ||
@@ -2683,7 +2576,6 @@ isTld s =
 
 
 copyStdlibGo : String -> Result String ()
-
 copyStdlibGo outDir =
     let
         cpResult =
@@ -2700,7 +2592,6 @@ copyStdlibGo outDir =
 
 
 capitalizeFirst : String -> String
-
 capitalizeFirst s =
     if String.isEmpty  s then
         ""
@@ -2710,19 +2601,16 @@ capitalizeFirst s =
 
 
 ffiPascalPart : String -> String
-
 ffiPascalPart s =
     s
 
 
 ffiSafePart : String -> String
-
 ffiSafePart s =
     ffiSafePartLoop  s  0  ""
 
 
 ffiSafePartLoop : String -> Int -> String -> String
-
 ffiSafePartLoop s idx acc =
     if idx >= String.length  s then
         String.toLower  acc
@@ -2742,7 +2630,6 @@ ffiSafePartLoop s idx acc =
 
 
 prefixDecl : String -> GoDecl -> GoDecl
-
 prefixDecl prefix decl =
     case decl of
         
@@ -2767,7 +2654,6 @@ prefixDecl prefix decl =
 
 
 compileSource : String -> String -> String -> Result String String
-
 compileSource filePath outDir source =
     let
         _ =
@@ -2805,7 +2691,6 @@ compileSource filePath outDir source =
 
 
 compileModule : String -> String -> Ast.Module -> Result String String
-
 compileModule filePath outDir mod =
     let
         counter =
@@ -2842,7 +2727,6 @@ compileModule filePath outDir mod =
 
 
 compileCheckedModule : String -> String -> Ast.Module -> Checker.CheckResult -> Result String String
-
 compileCheckedModule filePath outDir mod result =
     let
         _ =
@@ -2889,7 +2773,6 @@ compileCheckedModule filePath outDir mod result =
 
 
 compileProject : String -> String -> Result String String
-
 compileProject entryPath outDir =
     let
         srcRoot =
@@ -2938,7 +2821,6 @@ compileProject entryPath outDir =
 
 
 inferSrcRoot : String -> (List String) -> String
-
 inferSrcRoot filePath moduleName =
     let
         modulePath =
@@ -2962,7 +2844,6 @@ inferSrcRoot filePath moduleName =
 
 
 inferSrcRootFromEntry : String -> String
-
 inferSrcRootFromEntry entryPath =
     if String.contains  "/src/"  entryPath then
         let
@@ -2975,13 +2856,11 @@ inferSrcRootFromEntry entryPath =
 
 
 findSubstring : String -> String -> Int
-
 findSubstring needle haystack =
     findSubstringAt  needle  haystack  0
 
 
 findSubstringAt : String -> String -> Int -> Int
-
 findSubstringAt needle haystack idx =
     if idx >= String.length  haystack then
         0
@@ -2993,7 +2872,6 @@ findSubstringAt needle haystack idx =
 
 
 printDiagnostics : (List String) -> Unit
-
 printDiagnostics diags =
     case diags of
         
@@ -3015,7 +2893,6 @@ printDiagnostics diags =
 
 
 printTypedDecls : (List Checker.TypedDecl) -> Unit
-
 printTypedDecls decls =
     let
         _ =

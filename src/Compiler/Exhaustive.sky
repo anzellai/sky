@@ -10,7 +10,6 @@ import Compiler.Ast as Ast exposing (..)
 import Compiler.Adt as Adt exposing (AdtRegistry, RegisteredAdt)
 
 checkExhaustiveness : AdtRegistry -> Type -> (List CaseBranch) -> Maybe String
-
 checkExhaustiveness registry subjectType branches =
     let
         patterns =
@@ -23,7 +22,6 @@ checkExhaustiveness registry subjectType branches =
 
 
 hasCatchAll : (List Pattern) -> Bool
-
 hasCatchAll patterns =
     case patterns of
         
@@ -38,7 +36,6 @@ hasCatchAll patterns =
 
 
 isCatchAll : Pattern -> Bool
-
 isCatchAll pat =
     case pat of
         
@@ -56,7 +53,6 @@ isCatchAll pat =
 
 
 checkTypeExhaustiveness : AdtRegistry -> Type -> (List Pattern) -> Maybe String
-
 checkTypeExhaustiveness registry subjectType patterns =
     case subjectType of
         
@@ -86,7 +82,6 @@ checkTypeExhaustiveness registry subjectType patterns =
 
 
 checkBoolExhaustiveness : (List Pattern) -> Maybe String
-
 checkBoolExhaustiveness patterns =
     let
         covered =
@@ -107,7 +102,6 @@ checkBoolExhaustiveness patterns =
 
 
 collectBoolPatterns : (List Pattern) -> (Set.Set String) -> Set.Set String
-
 collectBoolPatterns patterns acc =
     case patterns of
         
@@ -135,7 +129,6 @@ collectBoolPatterns patterns acc =
 
 
 checkAdtExhaustiveness : RegisteredAdt -> (List Pattern) -> Maybe String
-
 checkAdtExhaustiveness adt patterns =
     let
         allCtors =
@@ -156,7 +149,6 @@ checkAdtExhaustiveness adt patterns =
 
 
 collectConstructorPatterns : (List Pattern) -> (Set.Set String) -> Set.Set String
-
 collectConstructorPatterns patterns acc =
     case patterns of
         
@@ -182,7 +174,6 @@ collectConstructorPatterns patterns acc =
 
 
 lastPart : (List String) -> String
-
 lastPart parts =
     case List.reverse  parts of
         

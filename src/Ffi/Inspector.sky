@@ -60,7 +60,6 @@ type alias ConstInfo =
 
 
 inspectPackage : String -> Result String String
-
 inspectPackage pkgName =
     let
         cacheDir =
@@ -69,19 +68,18 @@ inspectPackage pkgName =
             cacheDir ++ "/inspect.json"
     in
         case File.readFile  cachePath of
-
+            
             Ok cached ->
                 if String.length  cached > 100000 then
                     runInspectorMinimal  pkgName  cacheDir  cachePath
                 else
                     Ok  cached
-
+            
             Err _ ->
                 runInspector  pkgName  cacheDir  cachePath
 
 
 runInspectorMinimal : String -> String -> String -> Result String String
-
 runInspectorMinimal pkgName cacheDir cachePath =
     let
         gomodDir =
@@ -98,32 +96,38 @@ runInspectorMinimal pkgName cacheDir cachePath =
         _ =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
+            , "cd " ++
+            inspectorDir ++
+            " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
             ]
         _ =
             Process.run  "cp"
-             [ inspectorDir ++ "/inspector"
-            , gomodDir ++ "/inspector"
-            ]
+             [ inspectorDir ++ "/inspector" , gomodDir ++ "/inspector" ]
         absCache =
             "../../" ++ cachePath
         result =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+            , "cd " ++
+            gomodDir ++
+            " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++
+            pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
             ]
     in
         case result of
-
+            
             Ok _ ->
                 File.readFile  cachePath
-
+            
             Err e ->
-                Err  ("Failed to inspect (minimal) " ++ pkgName ++ ": " ++ errorToString  e)
+                Err
+                 (
+                "Failed to inspect (minimal) " ++
+                pkgName ++ ": " ++ errorToString  e
+                )
 
 
 runInspector : String -> String -> String -> Result String String
-
 runInspector pkgName cacheDir cachePath =
     let
         inspectorDir =
@@ -142,20 +146,22 @@ runInspector pkgName cacheDir cachePath =
         buildResult =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
+            , "cd " ++
+            inspectorDir ++
+            " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
             ]
     in
         case buildResult of
-
+            
             Err e ->
                 Err  ("Failed to build Go inspector: " ++ errorToString  e)
-
+            
             Ok _ ->
-                runInspectorAfterBuild  pkgName  cachePath  gomodDir  inspectorDir
+                runInspectorAfterBuild  pkgName  cachePath  gomodDir
+                 inspectorDir
 
 
 runInspectorAfterBuild : String -> String -> String -> String -> Result String String
-
 runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
     let
         _ =
@@ -165,14 +171,13 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
             ]
         _ =
             Process.run  "cp"
-             [ inspectorDir ++ "/inspector"
-            , gomodDir ++ "/inspector"
-            ]
+             [ inspectorDir ++ "/inspector" , gomodDir ++ "/inspector" ]
         _ =
             if isLargePackage  pkgName then
                 Process.run  "sh"
                  [ "-c"
-                , "cd " ++ gomodDir ++ " && go build " ++ pkgName ++ " 2>/dev/null"
+                , "cd " ++
+                gomodDir ++ " && go build " ++ pkgName ++ " 2>/dev/null"
                 ]
             else
                 Ok  ""
@@ -188,39 +193,47 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
         runResult =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector" ++ flag ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+            , "cd " ++
+            gomodDir ++
+            " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector" ++
+            flag ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
             ]
     in
         case runResult of
-
+            
             Ok _ ->
                 File.readFile  cachePath
-
+            
             Err _ ->
                 runInspectorRetry  pkgName  cachePath  gomodDir  absCache
 
 
 runInspectorRetry : String -> String -> String -> String -> Result String String
-
 runInspectorRetry pkgName cachePath gomodDir absCache =
     let
         retryResult =
             Process.run  "sh"
              [ "-c"
-            , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+            , "cd " ++
+            gomodDir ++
+            " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++
+            pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
             ]
     in
         case retryResult of
-
+            
             Ok _ ->
                 File.readFile  cachePath
-
+            
             Err e2 ->
-                Err  ("Failed to inspect package " ++ pkgName ++ ": " ++ errorToString  e2)
+                Err
+                 (
+                "Failed to inspect package " ++
+                pkgName ++ ": " ++ errorToString  e2
+                )
 
 
 isLargePackage : String -> Bool
-
 isLargePackage pkgName =
     String.contains  "stripe"  pkgName ||
     String.contains  "aws-sdk"  pkgName ||
@@ -229,14 +242,12 @@ isLargePackage pkgName =
 
 
 safePkgName : String -> String
-
 safePkgName name =
     String.replace  "-"  "_"
      (String.replace  "/"  "_"  (String.replace  "."  "_"  name))
 
 
 inspectorGoCode : String
-
 inspectorGoCode =
     String.join  "\n"
      [ "package main"

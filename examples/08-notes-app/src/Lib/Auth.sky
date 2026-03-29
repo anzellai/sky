@@ -57,10 +57,10 @@ createUser email password =
              [ email , passHash , token ]
     in
         case result of
-
+            
             Ok _ ->
                 Ok  token
-
+            
             Err e ->
                 Err  e
 
@@ -94,10 +94,10 @@ authenticateUser email password =
             List.head  userRows
     in
         case maybeUser of
-
+            
             Just user ->
                 checkUserCredentials  email  password  user
-
+            
             Nothing ->
                 Err  "Invalid email or password."
 
@@ -111,10 +111,10 @@ createSession userId =
              [ userId , token ]
     in
         case result of
-
+            
             Ok _ ->
                 Ok  token
-
+            
             Err _ ->
                 Err  "Failed to create session."
 
@@ -139,12 +139,12 @@ verifyEmail token =
              [ token ]
     in
         case result of
-
+            
             Ok rowsAffected ->
                 if rowsAffected == 0 then
                     Err  "Invalid or already used verification link."
                 else
                     Ok  "Your email has been verified! You can now sign in."
-
+            
             Err _ ->
                 Err  "A database error occurred during verification."

@@ -8,7 +8,6 @@ import Sky.Core.String as String
 import Compiler.Types exposing (..)
 
 unify : Type -> Type -> Result String Substitution
-
 unify t1 t2 =
     case t1 of
         
@@ -32,7 +31,6 @@ unify t1 t2 =
 
 
 unifyConst : String -> Type -> Type -> Result String Substitution
-
 unifyConst nameA t1 t2 =
     case t2 of
         
@@ -60,16 +58,15 @@ unifyConst nameA t1 t2 =
 
 
 unifyFun : Type -> Type -> Type -> Result String Substitution
-
 unifyFun fromA toA t2 =
     case t2 of
-
+        
         TVar id2 _ ->
             bindVar  id2  (TFun  fromA  toA)
-
+        
         TFun fromB toB ->
             unifyFunParts  fromA  toA  fromB  toB
-
+        
         TConst name ->
             if isUniversalUnifier  name then
                 Ok  emptySub
@@ -77,54 +74,49 @@ unifyFun fromA toA t2 =
                 Err
                  (
                 "Cannot unify " ++
-                formatType  (TFun  fromA  toA) ++
-                " with " ++ formatType  t2
+                formatType  (TFun  fromA  toA) ++ " with " ++ formatType  t2
                 )
-
+        
         _ ->
             Err
              (
             "Cannot unify " ++
-            formatType  (TFun  fromA  toA) ++
-            " with " ++ formatType  t2
+            formatType  (TFun  fromA  toA) ++ " with " ++ formatType  t2
             )
 
 
 unifyFunParts : Type -> Type -> Type -> Type -> Result String Substitution
-
 unifyFunParts fromA toA fromB toB =
     case unify  fromA  fromB of
-
+        
         Err e ->
             Err  e
-
+        
         Ok s1 ->
             unifyFunReturn  s1  toA  toB
 
 
 unifyFunReturn : Substitution -> Type -> Type -> Result String Substitution
-
 unifyFunReturn s1 toA toB =
     case unify  (applySub  s1  toA)  (applySub  s1  toB) of
-
+        
         Err e ->
             Err  e
-
+        
         Ok s2 ->
             Ok  (composeSubs  s2  s1)
 
 
 unifyApp : Type -> (List Type) -> Type -> Result String Substitution
-
 unifyApp ctorA argsA t2 =
     case t2 of
-
+        
         TVar id2 _ ->
             bindVar  id2  (TApp  ctorA  argsA)
-
+        
         TApp ctorB argsB ->
             unifyAppParts  ctorA  argsA  ctorB  argsB
-
+        
         TConst name ->
             if isUniversalUnifier  name then
                 Ok  emptySub
@@ -132,27 +124,24 @@ unifyApp ctorA argsA t2 =
                 Err
                  (
                 "Cannot unify " ++
-                formatType  (TApp  ctorA  argsA) ++
-                " with " ++ formatType  t2
+                formatType  (TApp  ctorA  argsA) ++ " with " ++ formatType  t2
                 )
-
+        
         _ ->
             Err
              (
             "Cannot unify " ++
-            formatType  (TApp  ctorA  argsA) ++
-            " with " ++ formatType  t2
+            formatType  (TApp  ctorA  argsA) ++ " with " ++ formatType  t2
             )
 
 
 unifyAppParts : Type -> (List Type) -> Type -> (List Type) -> Result String Substitution
-
 unifyAppParts ctorA argsA ctorB argsB =
     case unify  ctorA  ctorB of
-
+        
         Err e ->
             Err  e
-
+        
         Ok s0 ->
             unifyList  (List.map  (\x -> applySub  s0  x)  argsA)
              (List.map  (\x -> applySub  s0  x)  argsB)
@@ -160,7 +149,6 @@ unifyAppParts ctorA argsA ctorB argsB =
 
 
 unifyTuple : (List Type) -> Type -> Result String Substitution
-
 unifyTuple itemsA t2 =
     case t2 of
         
@@ -197,7 +185,6 @@ unifyTuple itemsA t2 =
 
 
 unifyRecord : (Dict.Dict String Type) -> Type -> Result String Substitution
-
 unifyRecord fieldsA t2 =
     case t2 of
         
@@ -226,7 +213,6 @@ unifyRecord fieldsA t2 =
 
 
 bindVar : Int -> Type -> Result String Substitution
-
 bindVar id t =
     case t of
         
@@ -248,19 +234,16 @@ bindVar id t =
 
 
 isUniversalUnifier : String -> Bool
-
 isUniversalUnifier name =
     name == "JsValue" || name == "Foreign" || name == "Any"
 
 
 isNumericCoercion : String -> String -> Bool
-
 isNumericCoercion nameA nameB =
     (nameA == "Int" && nameB == "Float") || (nameA == "Float" && nameB == "Int")
 
 
 unifyList : (List Type) -> (List Type) -> Substitution -> Result String Substitution
-
 unifyList ts1 ts2 sub =
     case ts1 of
         
@@ -292,7 +275,6 @@ unifyList ts1 ts2 sub =
 
 
 unifyRecords : (Dict.Dict String Type) -> (Dict.Dict String Type) -> Result String Substitution
-
 unifyRecords fieldsA fieldsB =
     let
         allKeys =
@@ -306,7 +288,6 @@ unifyRecords fieldsA fieldsB =
 
 
 unifyRecordFields : (List String) -> (Dict.Dict String Type) -> (Dict.Dict String Type) -> Substitution -> Result String Substitution
-
 unifyRecordFields keys fieldsA fieldsB sub =
     case keys of
         

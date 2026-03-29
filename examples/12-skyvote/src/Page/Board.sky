@@ -14,106 +14,114 @@ import Ui.Components exposing (ideaCard, emptyState)
 
 getUserId model =
     case model.currentUser of
+        
         Just user ->
-            Db.getField "id" user
+            Db.getField  "id"  user
         
         Nothing ->
             ""
 
+
 viewSubmitButton model =
     case model.currentUser of
+        
         Just _ ->
             a
-                [ href "/submit"
-                , attribute "sky-nav" ""
-                , class "btn btn-primary"
-                ]
-                [ text "+ Submit Idea" ]
+             [ href  "/submit"
+            , attribute  "sky-nav"  ""
+            , class  "btn btn-primary"
+            ]
+             [ text  "+ Submit Idea" ]
         
         Nothing ->
             a
-                [ href "/auth/signin"
-                , attribute "sky-nav" ""
-                , class "btn btn-secondary"
-                ]
-                [ text "Sign in to vote" ]
+             [ href  "/auth/signin"
+            , attribute  "sky-nav"  ""
+            , class  "btn btn-secondary"
+            ]
+             [ text  "Sign in to vote" ]
+
 
 viewBoard model =
     let
         userId =
-            getUserId model
+            getUserId  model
     in
-        Layout.page model
-            (
-            div []
-                [ div [ class "board-header" ]
-                    [ div []
-                        [ h1 [ class "page-title" ] [ text "Feature Board" ]
-                        , p [ class "page-subtitle" ]
-                            [ text
-                                "Vote on ideas you care about. The best ones rise to the top."
-                            ]
-                        ]
-                    , viewSubmitButton model
-                    ]
-                , viewToolbar model
-                , viewIdeaList model userId
+        Layout.page  model
+         (
+        div  []
+         [ div  [ class  "board-header" ]
+            [ div  []
+               [ h1  [ class  "page-title" ]  [ text  "Feature Board" ]
+              , p  [ class  "page-subtitle" ]
+                 [ text
+                    "Vote on ideas you care about. The best ones rise to the top."
                 ]
-            )
-
-viewIdeaList model userId =
-    div [ class "idea-list" ]
-        (
-        if List.isEmpty model.ideas then
-            [ emptyState "No ideas yet. Be the first to submit one!" ]
-        else
-            List.map (\idea -> ideaCard idea userId) model.ideas
+              ]
+           , viewSubmitButton  model
+           ]
+        , viewToolbar  model
+        , viewIdeaList  model  userId
+        ]
         )
 
+
+viewIdeaList model userId =
+    div  [ class  "idea-list" ]
+     (
+    if List.isEmpty  model.ideas then
+        [ emptyState  "No ideas yet. Be the first to submit one!" ]
+    else
+        List.map  (\idea -> ideaCard  idea  userId)  model.ideas
+    )
+
+
 viewToolbar model =
-    div [ class "toolbar" ]
-        [ input
-            [ type_ "text"
-            , class "search-input"
-            , placeholder "Search ideas..."
-            , value model.searchQuery
-            , onInput SetSearch
-            ]
-        , div [ class "filter-group" ]
-            [ filterBtn "all" "All" model.filterCategory
-            , filterBtn "feature" "Features" model.filterCategory
-            , filterBtn "bug" "Bugs" model.filterCategory
-            , filterBtn "improvement" "Improvements" model.filterCategory
-            ]
-        , div [ class "filter-group" ]
-            [ sortBtn "newest" "Newest" model.sortBy
-            , sortBtn "votes" "Top Voted" model.sortBy
-            , sortBtn "comments" "Most Discussed" model.sortBy
-            ]
-        ]
+    div  [ class  "toolbar" ]
+     [ input
+        [ type_  "text"
+       , class  "search-input"
+       , placeholder  "Search ideas..."
+       , value  model.searchQuery
+       , onInput  SetSearch
+       ]
+    , div  [ class  "filter-group" ]
+       [ filterBtn  "all"  "All"  model.filterCategory
+      , filterBtn  "feature"  "Features"  model.filterCategory
+      , filterBtn  "bug"  "Bugs"  model.filterCategory
+      , filterBtn  "improvement"  "Improvements"  model.filterCategory
+      ]
+    , div  [ class  "filter-group" ]
+       [ sortBtn  "newest"  "Newest"  model.sortBy
+      , sortBtn  "votes"  "Top Voted"  model.sortBy
+      , sortBtn  "comments"  "Most Discussed"  model.sortBy
+      ]
+    ]
+
 
 filterBtn filterValue label activeFilter =
     button
-        [ onClick (SetFilter filterValue)
-        , class
-            (
-            if activeFilter == filterValue then
-                "filter-btn active"
-            else
-                "filter-btn"
-            )
-        ]
-        [ text label ]
+     [ onClick  (SetFilter  filterValue)
+    , class
+       (
+      if activeFilter == filterValue then
+          "filter-btn active"
+      else
+          "filter-btn"
+      )
+    ]
+     [ text  label ]
+
 
 sortBtn sortValue label activeSort =
     button
-        [ onClick (SetSort sortValue)
-        , class
-            (
-            if activeSort == sortValue then
-                "filter-btn active"
-            else
-                "filter-btn"
-            )
-        ]
-        [ text label ]
+     [ onClick  (SetSort  sortValue)
+    , class
+       (
+      if activeSort == sortValue then
+          "filter-btn active"
+      else
+          "filter-btn"
+      )
+    ]
+     [ text  label ]

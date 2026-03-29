@@ -32,7 +32,6 @@ main =
 
 
 runCommand : String -> ()
-
 runCommand command =
     if command == "build" then
         cmdBuild  ()
@@ -63,7 +62,6 @@ runCommand command =
 
 
 cmdBuild : () -> ()
-
 cmdBuild _ =
     let
         entryFile =
@@ -166,7 +164,6 @@ cmdBuild _ =
 
 
 cmdRun : () -> ()
-
 cmdRun _ =
     let
         _ =
@@ -188,7 +185,6 @@ cmdRun _ =
 
 
 cmdCheck : () -> ()
-
 cmdCheck _ =
     let
         entryFile =
@@ -276,7 +272,6 @@ cmdCheck _ =
 
 
 isGoStdlib : String -> Bool
-
 isGoStdlib name =
     name == "archive" ||
     name == "bufio" ||
@@ -316,7 +311,6 @@ isGoStdlib name =
 
 
 cmdAdd : () -> ()
-
 cmdAdd _ =
     case Args.getArg  2 of
         
@@ -362,7 +356,6 @@ cmdAdd _ =
 
 
 detectAndInstall : String -> ()
-
 detectAndInstall pkg =
     let
         tmpDir =
@@ -396,7 +389,6 @@ detectAndInstall pkg =
 
 
 installAsSkyPackage : String -> String -> ()
-
 installAsSkyPackage pkg tmpDir =
     let
         targetDir =
@@ -412,7 +404,6 @@ installAsSkyPackage pkg tmpDir =
 
 
 installAsGoPackage : String -> String -> ()
-
 installAsGoPackage pkg tmpDir =
     let
         _ =
@@ -454,7 +445,6 @@ installAsGoPackage pkg tmpDir =
 
 
 generateGoBindings : String -> String -> ()
-
 generateGoBindings pkg cacheDir =
     case BindingGen.generateBindings  pkg  cacheDir of
         
@@ -466,7 +456,6 @@ generateGoBindings pkg cacheDir =
 
 
 ensureGoModDir : () -> ()
-
 ensureGoModDir _ =
     let
         _ =
@@ -484,7 +473,6 @@ ensureGoModDir _ =
 
 
 cmdInstall : () -> ()
-
 cmdInstall _ =
     let
         _ =
@@ -516,7 +504,6 @@ cmdInstall _ =
 
 
 installFromSkyToml : () -> ()
-
 installFromSkyToml _ =
     case File.readFile  "sky.toml" of
         
@@ -532,7 +519,6 @@ installFromSkyToml _ =
 
 
 installTomlDeps : (List String) -> Bool -> ()
-
 installTomlDeps lines inGoDeps =
     case lines of
         
@@ -627,7 +613,6 @@ installTomlDeps lines inGoDeps =
 
 
 installFromSkyToml : () -> ()
-
 installFromSkyToml _ =
     case File.readFile  "sky.toml" of
         
@@ -643,7 +628,6 @@ installFromSkyToml _ =
 
 
 installTomlDeps : (List String) -> Bool -> ()
-
 installTomlDeps lines inGoDeps =
     case lines of
         
@@ -736,7 +720,6 @@ installTomlDeps lines inGoDeps =
 
 
 autoGenerateBindings : () -> ()
-
 autoGenerateBindings _ =
     let
         findResult =
@@ -759,7 +742,6 @@ autoGenerateBindings _ =
 
 
 scanFileForFfiImports : String -> ()
-
 scanFileForFfiImports filePath =
     case File.readFile  filePath of
         
@@ -788,7 +770,6 @@ scanFileForFfiImports filePath =
 
 
 processImportLine : String -> ()
-
 processImportLine line =
     let
         parts =
@@ -857,7 +838,6 @@ processImportLine line =
 
 
 preFilterBindings : () -> ()
-
 preFilterBindings _ =
     case Process.run  "sh"
           [ "-c"
@@ -881,7 +861,6 @@ preFilterBindings _ =
 
 
 cmdUpdate : () -> ()
-
 cmdUpdate _ =
     case File.readFile  "sky.toml" of
         
@@ -901,13 +880,11 @@ cmdUpdate _ =
 
 
 updateDependencies : (List String) -> ()
-
 updateDependencies lines =
     updateDepsLoop  lines  False
 
 
 updateDepsLoop : (List String) -> Bool -> ()
-
 updateDepsLoop lines inDeps =
     if List.isEmpty  lines then
         println  ""
@@ -942,7 +919,6 @@ updateDepsLoop lines inDeps =
 
 
 updateOneDep : String -> ()
-
 updateOneDep depLine =
     let
         parts =
@@ -975,7 +951,6 @@ updateOneDep depLine =
 
 
 cmdUpgrade : () -> ()
-
 cmdUpgrade _ =
     let
         _ =
@@ -992,7 +967,6 @@ cmdUpgrade _ =
 
 
 performUpgrade : String -> ()
-
 performUpgrade tag =
     let
         _ =
@@ -1041,7 +1015,6 @@ performUpgrade tag =
 
 
 detectPlatformArtifact : () -> String
-
 detectPlatformArtifact _ =
     let
         osResult =
@@ -1081,7 +1054,6 @@ detectPlatformArtifact _ =
 
 
 fetchLatestVersion : Bool -> String
-
 fetchLatestVersion forceRefresh =
     let
         cacheDir =
@@ -1125,7 +1097,6 @@ fetchLatestVersion forceRefresh =
 
 
 fetchAndCacheVersion : String -> String -> String
-
 fetchAndCacheVersion cacheDir cachePath =
     let
         result =
@@ -1157,7 +1128,6 @@ fetchAndCacheVersion cacheDir cachePath =
 
 
 checkForUpdates : () -> ()
-
 checkForUpdates _ =
     let
         latestTag =
@@ -1180,7 +1150,6 @@ checkForUpdates _ =
 
 
 cmdRemove : () -> ()
-
 cmdRemove _ =
     case Args.getArg  2 of
         
@@ -1204,7 +1173,6 @@ cmdRemove _ =
 
 
 cmdFmt : () -> ()
-
 cmdFmt _ =
     let
         filePath =
@@ -1257,51 +1225,44 @@ cmdFmt _ =
 
 
 reinsertComments : String -> String -> String
-
 reinsertComments original formatted =
     let
         commentPairs =
             extractCommentPairs  (String.split  "\n"  original)  []
     in
-        insertCommentPairs  commentPairs
-         (String.split  "\n"  formatted)
+        insertCommentPairs  commentPairs  (String.split  "\n"  formatted)
 
 
-extractCommentPairs : (List String) -> (List ( String, String )) -> List ( String, String )
-
+extractCommentPairs : (List String) -> (List ( String , String )) -> List ( String , String )
 extractCommentPairs lines acc =
     case lines of
-
-        [] ->
+        
+        [  ] ->
             List.reverse  acc
-
+        
         line :: rest ->
             if isCommentLine  (String.trim  line) then
                 let
                     anchor =
                         findNextNonComment  rest
                 in
-                    extractCommentPairs  rest
-                     (( line, anchor ) :: acc)
+                    extractCommentPairs  rest  (( line , anchor ) :: acc)
             else
                 extractCommentPairs  rest  acc
 
 
 isCommentLine : String -> Bool
-
 isCommentLine trimmed =
-    String.startsWith  "--"  trimmed ||
-    String.startsWith  "{-"  trimmed
+    String.startsWith  "--"  trimmed || String.startsWith  "{-"  trimmed
 
 
 findNextNonComment : (List String) -> String
-
 findNextNonComment lines =
     case lines of
-
-        [] ->
+        
+        [  ] ->
             ""
-
+        
         line :: rest ->
             let
                 trimmed =
@@ -1315,21 +1276,17 @@ findNextNonComment lines =
                     trimmed
 
 
-insertCommentPairs : (List ( String, String )) -> (List String) -> String
-
+insertCommentPairs : (List ( String , String )) -> (List String) -> String
 insertCommentPairs pairs outputLines =
     let
         result =
-            List.foldl
-             (\pair lines -> insertOnePair  pair  lines)
-             outputLines
+            List.foldl  (\pair lines -> insertOnePair  pair  lines)  outputLines
              pairs
     in
         String.join  "\n"  result
 
 
-insertOnePair : ( String, String ) -> (List String) -> List String
-
+insertOnePair : ( String , String ) -> (List String) -> List String
 insertOnePair pair lines =
     let
         comment =
@@ -1344,26 +1301,20 @@ insertOnePair pair lines =
 
 
 insertBeforeAnchor : String -> String -> (List String) -> (List String) -> List String
-
 insertBeforeAnchor comment anchor lines acc =
     case lines of
-
-        [] ->
+        
+        [  ] ->
             List.append  (List.reverse  acc)  [ comment ]
-
+        
         line :: rest ->
             if String.trim  line == anchor then
-                List.concat
-                 [ List.reverse  acc
-                , [ comment, line ]
-                , rest
-                ]
+                List.concat  [ List.reverse  acc , [ comment , line ] , rest ]
             else
                 insertBeforeAnchor  comment  anchor  rest  (line :: acc)
 
 
 fmtStdin : () -> ()
-
 fmtStdin _ =
     case Io.readAllStdin  () of
         
@@ -1393,7 +1344,6 @@ fmtStdin _ =
 
 
 cmdClean : () -> ()
-
 cmdClean _ =
     let
         _ =
@@ -1405,7 +1355,6 @@ cmdClean _ =
 
 
 cmdHelp : () -> ()
-
 cmdHelp _ =
     let
         _ =

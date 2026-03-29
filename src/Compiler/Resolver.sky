@@ -33,7 +33,6 @@ type alias LoadedModule =
 
 
 resolveProject : String -> String -> Result String ModuleGraph
-
 resolveProject entryPath srcRoot =
     case File.readFile  entryPath of
         
@@ -258,13 +257,11 @@ resolveImports srcRoot imports loaded visited diagnostics =
 
 
 resolveModulePath : String -> (List String) -> String
-
 resolveModulePath srcRoot parts =
     srcRoot ++ "/" ++ String.join  "/"  parts ++ ".sky"
 
 
 resolveBindingPath : String -> String -> String
-
 resolveBindingPath projectRoot modName =
     let
         pkgParts =
@@ -317,13 +314,11 @@ resolveBindingPath projectRoot modName =
 
 
 camelToUnderscore : String -> String
-
 camelToUnderscore s =
     String.toLower  (camelInsertUnderscores  s  0  "")
 
 
 camelInsertUnderscores : String -> Int -> String -> String
-
 camelInsertUnderscores s idx acc =
     if idx >= String.length  s then
         acc
@@ -362,7 +357,6 @@ camelInsertUnderscores s idx acc =
 
 
 isStdlib : String -> Bool
-
 isStdlib modName =
     String.startsWith  "Sky.Core."  modName ||
     String.startsWith  "Sky.Http."  modName ||
@@ -371,7 +365,6 @@ isStdlib modName =
 
 
 getStdlibExports : String -> List String
-
 getStdlibExports modName =
     if modName == "Std.Html" then
         [ "text"
@@ -665,7 +658,6 @@ getStdlibExports modName =
 
 
 checkAllModules : ModuleGraph -> Result String ModuleGraph
-
 checkAllModules graph =
     let
         checkResult =
@@ -715,7 +707,6 @@ checkModulesLoop modules importedEnv diagnostics =
 
 
 buildStdlibEnv : Env.TypeEnv
-
 buildStdlibEnv =
     let
         prelude =
@@ -1145,13 +1136,11 @@ buildStdlibEnv =
 
 
 buildDepTypeEnv : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> Env.TypeEnv
-
 buildDepTypeEnv entryImports loadedModules =
     buildDepTypeEnvLoop  entryImports  loadedModules  Env.empty
 
 
 buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> Env.TypeEnv -> Env.TypeEnv
-
 buildDepTypeEnvLoop entryImports modules env =
     case modules of
         
@@ -1164,13 +1153,11 @@ buildDepTypeEnvLoop entryImports modules env =
 
 
 addOneModuleTypes : (List Ast.ImportDecl) -> ( String , Ast.Module ) -> Env.TypeEnv -> Env.TypeEnv
-
 addOneModuleTypes entryImports pair env =
     addOneModuleTypesInner  entryImports  (fst  pair)  (snd  pair)  env
 
 
 addOneModuleTypesInner : (List Ast.ImportDecl) -> String -> Ast.Module -> Env.TypeEnv -> Env.TypeEnv
-
 addOneModuleTypesInner entryImports modName mod env =
     addAnnotationsToEnv  (findImportAlias  entryImports  modName)
      (findExposedNames  entryImports  modName)
@@ -1179,7 +1166,6 @@ addOneModuleTypesInner entryImports modName mod env =
 
 
 findImportAlias : (List Ast.ImportDecl) -> String -> String
-
 findImportAlias imports modName =
     case imports of
         
@@ -1198,7 +1184,6 @@ findImportAlias imports modName =
 
 
 computeAlias : Ast.ImportDecl -> String
-
 computeAlias imp =
     if String.isEmpty  imp.alias_ then
         case List.reverse  imp.moduleName of
@@ -1213,7 +1198,6 @@ computeAlias imp =
 
 
 lastPart : String -> String
-
 lastPart modName =
     case List.reverse  (String.split  "."  modName) of
         
@@ -1225,7 +1209,6 @@ lastPart modName =
 
 
 findExposedNames : (List Ast.ImportDecl) -> String -> List String
-
 findExposedNames imports modName =
     case imports of
         
@@ -1244,7 +1227,6 @@ findExposedNames imports modName =
 
 
 getExposedList : ExposingClause -> List String
-
 getExposedList clause =
     case clause of
         
@@ -1259,13 +1241,11 @@ getExposedList clause =
 
 
 collectModuleAnnotations : (List Declaration) -> List ( String , TypeExpr )
-
 collectModuleAnnotations decls =
     collectModuleAnnotationsLoop  decls  []
 
 
 collectModuleAnnotationsLoop : (List Declaration) -> (List ( String , TypeExpr )) -> List ( String , TypeExpr )
-
 collectModuleAnnotationsLoop decls acc =
     case decls of
         
@@ -1278,7 +1258,6 @@ collectModuleAnnotationsLoop decls acc =
 
 
 collectOneAnnotation : Declaration -> (List ( String , TypeExpr )) -> List ( String , TypeExpr )
-
 collectOneAnnotation decl acc =
     case decl of
         
@@ -1290,7 +1269,6 @@ collectOneAnnotation decl acc =
 
 
 addAnnotationsToEnv : String -> (List String) -> (List ( String , TypeExpr )) -> Env.TypeEnv -> Env.TypeEnv
-
 addAnnotationsToEnv qualPrefix exposed annotations env =
     case annotations of
         
@@ -1303,13 +1281,11 @@ addAnnotationsToEnv qualPrefix exposed annotations env =
 
 
 addOneAnnotation : String -> (List String) -> ( String , TypeExpr ) -> Env.TypeEnv -> Env.TypeEnv
-
 addOneAnnotation qualPrefix exposed ann env =
     addOneAnnotationInner  qualPrefix  exposed  (fst  ann)  (snd  ann)  env
 
 
 addOneAnnotationInner : String -> (List String) -> String -> TypeExpr -> Env.TypeEnv -> Env.TypeEnv
-
 addOneAnnotationInner qualPrefix exposed funcName texpr env =
     let
         scheme =
@@ -1326,7 +1302,6 @@ addOneAnnotationInner qualPrefix exposed funcName texpr env =
 
 
 isExposed : String -> (List String) -> Bool
-
 isExposed funcName exposed =
     case exposed of
         
@@ -1341,7 +1316,6 @@ isExposed funcName exposed =
 
 
 typeExprToScheme : TypeExpr -> Scheme
-
 typeExprToScheme texpr =
     let
         startId =
@@ -1361,7 +1335,6 @@ typeExprToScheme texpr =
 
 
 buildParamMap : (List ( String , Int )) -> (Dict.Dict String Type) -> Dict.Dict String Type
-
 buildParamMap pairs acc =
     case pairs of
         
@@ -1377,7 +1350,6 @@ buildParamMap pairs acc =
 
 
 assignVarIds : (List String) -> Int -> (List ( String , Int )) -> List ( String , Int )
-
 assignVarIds names nextId acc =
     case names of
         
@@ -1389,7 +1361,6 @@ assignVarIds names nextId acc =
 
 
 collectTypeVarNames : TypeExpr -> Set.Set String
-
 collectTypeVarNames texpr =
     case texpr of
         
@@ -1424,7 +1395,6 @@ collectTypeVarNames texpr =
 
 
 isFfiBinding : String -> String -> Bool
-
 isFfiBinding projectRoot modName =
     let
         skyiPath =
@@ -1440,7 +1410,6 @@ isFfiBinding projectRoot modName =
 
 
 moduleNameToGoPath : String -> String
-
 moduleNameToGoPath modName =
     let
         parts =
@@ -1452,7 +1421,6 @@ moduleNameToGoPath modName =
 
 
 moduleNameToSafeName : String -> String
-
 moduleNameToSafeName modName =
     let
         parts =
@@ -1464,7 +1432,6 @@ moduleNameToSafeName modName =
 
 
 resolveWrapperPath : String -> String
-
 resolveWrapperPath modName =
     let
         safeName =
@@ -1474,7 +1441,6 @@ resolveWrapperPath modName =
 
 
 collectForeignImports : String -> (List Ast.ImportDecl) -> List ( String , String , Bool )
-
 collectForeignImports projectRoot imports =
     List.filterMap
      (
@@ -1496,7 +1462,6 @@ collectForeignImports projectRoot imports =
 
 
 collectAllForeignImports : String -> (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> List ( String , String , Bool )
-
 collectAllForeignImports projectRoot entryImports loadedModules =
     let
         entryForeign =
@@ -1517,13 +1482,11 @@ collectAllForeignImports projectRoot entryImports loadedModules =
 
 
 deduplicateForeignImports : (List ( String , String , Bool )) -> List ( String , String , Bool )
-
 deduplicateForeignImports imports =
     deduplicateForeignLoop  imports  Set.empty  []
 
 
 deduplicateForeignLoop : (List ( String , String , Bool )) -> (Set.Set String) -> (List ( String , String , Bool )) -> List ( String , String , Bool )
-
 deduplicateForeignLoop imports seen acc =
     case imports of
         
@@ -1543,7 +1506,6 @@ deduplicateForeignLoop imports seen acc =
 
 
 tripleFirst : ( String , String , Bool ) -> String
-
 tripleFirst triple =
     case triple of
         
@@ -1552,7 +1514,6 @@ tripleFirst triple =
 
 
 tripleSecond : ( String , String , Bool ) -> String
-
 tripleSecond triple =
     case triple of
         
@@ -1561,7 +1522,6 @@ tripleSecond triple =
 
 
 tripleThird : ( String , String , Bool ) -> Bool
-
 tripleThird triple =
     case triple of
         

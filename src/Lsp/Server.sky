@@ -39,7 +39,6 @@ type alias ServerState =
 
 
 emptyState : ServerState
-
 emptyState =
     { documents =
         Dict.empty
@@ -53,7 +52,6 @@ emptyState =
 
 
 startServer : () -> ()
-
 startServer _ =
     let
         stateRef =
@@ -63,7 +61,6 @@ startServer _ =
 
 
 serverLoop : (Ref.Ref ServerState) -> ()
-
 serverLoop stateRef =
     case readMessage  () of
         
@@ -87,7 +84,6 @@ serverLoop stateRef =
 
 
 handleMessage : ServerState -> String -> String -> String -> ServerState
-
 handleMessage state id method body =
     if method == "initialize" then
         handleInitialize  state  id
@@ -112,7 +108,6 @@ handleMessage state id method body =
 
 
 sendAndReturn : String -> ServerState -> ServerState
-
 sendAndReturn msg state =
     let
         _ =
@@ -122,7 +117,6 @@ sendAndReturn msg state =
 
 
 sendNotifyAndReturn : String -> ServerState -> ServerState
-
 sendNotifyAndReturn msg state =
     let
         _ =
@@ -132,7 +126,6 @@ sendNotifyAndReturn msg state =
 
 
 handleInitialize : ServerState -> String -> ServerState
-
 handleInitialize state id =
     let
         capabilities =
@@ -161,7 +154,6 @@ handleInitialize state id =
 
 
 handleDidOpen : ServerState -> String -> ServerState
-
 handleDidOpen state body =
     let
         params =
@@ -183,7 +175,6 @@ handleDidOpen state body =
 
 
 handleDidChange : ServerState -> String -> ServerState
-
 handleDidChange state body =
     let
         params =
@@ -218,7 +209,6 @@ handleDidChange state body =
 
 
 analyzeAndPublishDiagnostics : ServerState -> String -> String -> ServerState
-
 analyzeAndPublishDiagnostics state uri text =
     let
         lexResult =
@@ -272,7 +262,6 @@ analyzeAndPublishDiagnostics state uri text =
 
 
 publishAndUpdateState : ServerState -> String -> Module -> (Result String Checker.CheckResult) -> (List String) -> ServerState
-
 publishAndUpdateState state uri mod checkResult diagnostics =
     let
         _ =
@@ -301,7 +290,6 @@ publishAndUpdateState state uri mod checkResult diagnostics =
 
 
 resolveAndCacheImports : ServerState -> String -> (List ImportDecl) -> ServerState
-
 resolveAndCacheImports state uri imports =
     let
         fp =
@@ -337,7 +325,6 @@ resolveAndCacheImports state uri imports =
 
 
 resolveImportsLoop : String -> String -> (List ImportDecl) -> ServerState -> ServerState
-
 resolveImportsLoop srcRoot projectRoot imports st =
     if List.isEmpty  imports then
         st
@@ -372,7 +359,6 @@ resolveImportsLoop srcRoot projectRoot imports st =
 
 
 resolveOneImportInline : String -> String -> String -> (List String) -> String -> ServerState -> ServerState
-
 resolveOneImportInline sr pr mn mp ra st =
     if Resolver.isStdlib  mn then
         st
@@ -400,7 +386,6 @@ resolveOneImportInline sr pr mn mp ra st =
 
 
 addDepFromFile : String -> String -> String -> (List String) -> String -> ServerState -> ServerState
-
 addDepFromFile sr pr mn mp al st =
     let
         lp =
@@ -416,7 +401,6 @@ addDepFromFile sr pr mn mp al st =
 
 
 tryAddFfiDep : String -> String -> String -> ServerState -> ServerState
-
 tryAddFfiDep pr al mn st =
     let
         bindingPath =
@@ -426,7 +410,6 @@ tryAddFfiDep pr al mn st =
 
 
 tryReadAndParse : String -> String -> String -> ServerState -> ServerState
-
 tryReadAndParse path al mn st =
     case File.readFile  path of
         
@@ -438,7 +421,6 @@ tryReadAndParse path al mn st =
 
 
 tryReadAndParseCwd : String -> String -> ServerState -> ServerState
-
 tryReadAndParseCwd al mn st =
     let
         cwdPath =
@@ -454,7 +436,6 @@ tryReadAndParseCwd al mn st =
 
 
 addParsedDep : String -> String -> String -> String -> ServerState -> ServerState
-
 addParsedDep fp al mn src st =
     let
         lexResult =
@@ -468,7 +449,6 @@ addParsedDep fp al mn src st =
 
 
 insertDepIfParsed : String -> String -> String -> (Result String Module) -> ServerState -> ServerState
-
 insertDepIfParsed fp al mn parseResult st =
     case parseResult of
         
@@ -484,7 +464,6 @@ insertDepIfParsed fp al mn parseResult st =
 
 
 insertDep : String -> String -> String -> (List ExportedDecl) -> ServerState -> ServerState
-
 insertDep fp al mn exps st =
     { st
     | depCache =
@@ -495,7 +474,6 @@ insertDep fp al mn exps st =
 
 
 extractExports : Module -> List ExportedDecl
-
 extractExports mod =
     let
         allDecls =
@@ -514,7 +492,6 @@ extractExports mod =
 
 
 extractAllDecls : (List Declaration) -> (List ExportedDecl) -> List ExportedDecl
-
 extractAllDecls decls acc =
     case decls of
         
@@ -561,19 +538,16 @@ extractAllDecls decls acc =
 
 
 makeExportedDecl : String -> String -> Int -> ExportedDecl
-
 makeExportedDecl n s l =
     { name = n , signature = s , defLine = l }
 
 
 getSpanLine : SourceSpan -> Int
-
 getSpanLine sp =
     sp.start
 
 
 inferSigFromParams : (List Pattern) -> String
-
 inferSigFromParams params =
     let
         vars =
@@ -589,31 +563,26 @@ inferSigFromParams params =
 
 
 hasAnnotation : String -> (List ExportedDecl) -> Bool
-
 hasAnnotation name decls =
     List.foldl  (\d acc -> acc || d.name == name)  False  decls
 
 
 listContainsStr : String -> (List String) -> Bool
-
 listContainsStr s xs =
     List.foldl  (\x acc -> acc || x == s)  False  xs
 
 
 renderTypeExpr : TypeExpr -> String
-
 renderTypeExpr texpr =
     renderTE  texpr
 
 
 renderTE : TypeExpr -> String
-
 renderTE te =
     renderTEDispatch  te
 
 
 renderTEDispatch : TypeExpr -> String
-
 renderTEDispatch te =
     case te of
         
@@ -635,7 +604,6 @@ renderTEDispatch te =
 
 
 renderTEWildcard : TypeExpr -> String
-
 renderTEWildcard te =
     case te of
         
@@ -659,7 +627,6 @@ renderTEWildcard te =
 
 
 renderRecordFields : (List ( String , TypeExpr )) -> String
-
 renderRecordFields fields =
     let
         renderField =
@@ -676,7 +643,6 @@ renderRecordFields fields =
 
 
 renderTypeRef : String -> (List TypeExpr) -> String
-
 renderTypeRef base args =
     if List.isEmpty  args then
         base
@@ -692,7 +658,6 @@ to =
 
 
 uriToFilePath : String -> String
-
 uriToFilePath uri =
     if String.startsWith  "file://"  uri then
         String.slice  7  (String.length  uri)  uri
@@ -701,13 +666,11 @@ uriToFilePath uri =
 
 
 filePathToUri : String -> String
-
 filePathToUri path =
     "file://" ++ path
 
 
 deriveSrcRoot : String -> String
-
 deriveSrcRoot filePath =
     let
         parts =
@@ -728,7 +691,6 @@ deriveSrcRoot filePath =
 
 
 findLastSrcIdx : (List String) -> Int -> Int -> Int
-
 findLastSrcIdx parts idx lastFound =
     case parts of
         
@@ -743,7 +705,6 @@ findLastSrcIdx parts idx lastFound =
 
 
 deriveProjectRoot : String -> String
-
 deriveProjectRoot srcRoot =
     case List.reverse  (String.split  "/"  srcRoot) of
         
@@ -755,13 +716,11 @@ deriveProjectRoot srcRoot =
 
 
 lookupDepExport : ServerState -> String -> String -> Maybe ExportedDecl
-
 lookupDepExport st al fn =
     lookupInDepCache  (Dict.get  al  st.depCache)  fn
 
 
 lookupInDepCache : (Maybe DepModule) -> String -> Maybe ExportedDecl
-
 lookupInDepCache maybeDep fn =
     case maybeDep of
         
@@ -773,7 +732,6 @@ lookupInDepCache maybeDep fn =
 
 
 findExport : String -> (List ExportedDecl) -> Maybe ExportedDecl
-
 findExport name exports =
     case exports of
         
@@ -788,7 +746,6 @@ findExport name exports =
 
 
 makeDiagnostic : Int -> String -> String
-
 makeDiagnostic severity msg =
     jsonObject
      [ ( "range" , makeRange  0  0  0  1 )
@@ -798,7 +755,6 @@ makeDiagnostic severity msg =
 
 
 makeRange : Int -> Int -> Int -> Int -> String
-
 makeRange startLine startChar endLine endChar =
     jsonObject
      [ ( "start"
@@ -815,7 +771,6 @@ makeRange startLine startChar endLine endChar =
 
 
 handleHover : ServerState -> String -> String -> ServerState
-
 handleHover state id body =
     let
         params =
@@ -837,7 +792,6 @@ handleHover state id body =
 
 
 getHoverForPosition : ServerState -> String -> Int -> Int -> String
-
 getHoverForPosition state uri line character =
     case Dict.get  uri  state.documents of
         
@@ -872,7 +826,6 @@ getHoverForPosition state uri line character =
 
 
 lookupTypeInfo : ServerState -> String -> String -> String -> String
-
 lookupTypeInfo state uri word source =
     let
         isQualified =
@@ -926,10 +879,10 @@ lookupTypeInfo state uri word source =
         fromTypeCheck =
             if String.isEmpty  fromAnnotation then
                 case Dict.get  uri  state.typeCache of
-
+                    
                     Just checkResult ->
                         lookupInTypedDecls  word  checkResult.declarations
-
+                    
                     Nothing ->
                         ""
             else
@@ -937,10 +890,10 @@ lookupTypeInfo state uri word source =
         fromAst =
             if String.isEmpty  fromTypeCheck then
                 case Dict.get  uri  state.astCache of
-
+                    
                     Just mod ->
                         inferFromAst  word  mod.declarations
-
+                    
                     Nothing ->
                         ""
             else
@@ -955,7 +908,6 @@ lookupTypeInfo state uri word source =
 
 
 lookupStdlibType : String -> String
-
 lookupStdlibType name =
     case Dict.get  name  stdlibTypeMap of
         
@@ -967,7 +919,6 @@ lookupStdlibType name =
 
 
 stdlibTypeMap : Dict.Dict String String
-
 stdlibTypeMap =
     Dict.fromList
      [ ( "identity" , "a -> a" )
@@ -1089,13 +1040,12 @@ stdlibTypeMap =
 
 
 lookupInTypedDecls : String -> (List Checker.TypedDecl) -> String
-
 lookupInTypedDecls name decls =
     case decls of
-
+        
         [  ] ->
             ""
-
+        
         td :: rest ->
             if td.name == name then
                 name ++ " : " ++ td.prettyType
@@ -1104,7 +1054,6 @@ lookupInTypedDecls name decls =
 
 
 inferFromAst : String -> (List Declaration) -> String
-
 inferFromAst name decls =
     case decls of
         
@@ -1153,7 +1102,6 @@ inferFromAst name decls =
 
 
 inferLocalBinding : ServerState -> String -> String -> String -> Int -> String
-
 inferLocalBinding state uri word source line =
     let
         assignmentLine =
@@ -1168,7 +1116,6 @@ inferLocalBinding state uri word source line =
 
 
 findAssignmentLine : String -> String -> Int -> String
-
 findAssignmentLine word source cursorLine =
     let
         lines =
@@ -1180,23 +1127,23 @@ findAssignmentLine word source cursorLine =
 
 
 findAssignmentLineLoop : (List String) -> String -> Int -> Int -> String
-
 findAssignmentLineLoop lines pattern idx cursorLine =
     case lines of
-
-        [] ->
+        
+        [  ] ->
             ""
-
+        
         line :: rest ->
-            if idx <= cursorLine && String.contains  pattern  (String.trim  line) then
+            if idx <= cursorLine &&
+            String.contains  pattern  (String.trim  line) then
                 let
                     nextLine =
                         case rest of
-
+                            
                             next :: _ ->
                                 String.trim  next
-
-                            [] ->
+                            
+                            [  ] ->
                                 ""
                 in
                     if String.isEmpty  nextLine then
@@ -1208,23 +1155,21 @@ findAssignmentLineLoop lines pattern idx cursorLine =
 
 
 extractRhsExpr : String -> String
-
 extractRhsExpr line =
     String.trim  line
 
 
 inferRhsType : ServerState -> String -> String -> String -> String
-
 inferRhsType state uri expr source =
     let
         parts =
             String.split  " "  expr
         callee =
             case List.head  parts of
-
+                
                 Just c ->
                     c
-
+                
                 Nothing ->
                     ""
     in
@@ -1235,35 +1180,34 @@ inferRhsType state uri expr source =
 
 
 inferQualifiedCallType : ServerState -> String -> String -> String -> String
-
 inferQualifiedCallType state uri qualName source =
     let
         callParts =
             String.split  "."  qualName
         modAlias =
             case List.head  callParts of
-
+                
                 Just m ->
                     m
-
+                
                 Nothing ->
                     ""
         funcName =
             case List.reverse  callParts of
-
+                
                 f :: _ ->
                     f
-
-                [] ->
+                
+                [  ] ->
                     ""
         depResult =
             lookupDepExport  state  modAlias  funcName
     in
         case depResult of
-
+            
             Just exp ->
                 extractReturnType  exp.signature
-
+            
             Nothing ->
                 let
                     annotResult =
@@ -1276,32 +1220,31 @@ inferQualifiedCallType state uri qualName source =
 
 
 extractReturnType : String -> String
-
 extractReturnType sig =
     let
         parts =
             String.split  " -> "  sig
         lastPart =
             case List.reverse  parts of
-
+                
                 l :: _ ->
                     l
-
-                [] ->
+                
+                [  ] ->
                     sig
     in
         lastPart
 
 
 extractReturnTypeFromAnnot : String -> String
-
 extractReturnTypeFromAnnot annot =
     let
         colonIdx =
             findCharInString  ':'  annot  0
         typePart =
             if colonIdx > 0 then
-                String.trim  (String.slice  (colonIdx + 1)  (String.length  annot)  annot)
+                String.trim
+                 (String.slice  (colonIdx + 1)  (String.length  annot)  annot)
             else
                 annot
     in
@@ -1309,7 +1252,6 @@ extractReturnTypeFromAnnot annot =
 
 
 findCharInString : Char -> String -> Int -> Int
-
 findCharInString ch str idx =
     if idx >= String.length  str then
         -1
@@ -1320,13 +1262,11 @@ findCharInString ch str idx =
 
 
 getLineAt : Int -> String -> String
-
 getLineAt lineNum source =
     getLineAtLoop  lineNum  source  0  0
 
 
 getLineAtLoop : Int -> String -> Int -> Int -> String
-
 getLineAtLoop target source currentLine idx =
     if idx >= String.length  source then
         ""
@@ -1353,13 +1293,11 @@ getLineAtLoop target source currentLine idx =
 
 
 findLineStart : Int -> String -> Int -> Int
-
 findLineStart lineNum source endIdx =
     findLineStartLoop  source  (endIdx - 1)
 
 
 findLineStartLoop : String -> Int -> Int
-
 findLineStartLoop source idx =
     if idx < 0 then
         0
@@ -1375,7 +1313,6 @@ findLineStartLoop source idx =
 
 
 getWordAt : Int -> String -> String
-
 getWordAt col lineText =
     let
         len =
@@ -1399,7 +1336,6 @@ getWordAt col lineText =
 
 
 findWordStart : String -> Int -> Int
-
 findWordStart text idx =
     if idx <= 0 then
         0
@@ -1415,7 +1351,6 @@ findWordStart text idx =
 
 
 findWordEnd : String -> Int -> Int
-
 findWordEnd text idx =
     if idx >= String.length  text then
         idx
@@ -1431,7 +1366,6 @@ findWordEnd text idx =
 
 
 isIdentChar : String -> Bool
-
 isIdentChar ch =
     ch == "_" ||
     ch == "a" ||
@@ -1494,13 +1428,11 @@ isIdentChar ch =
 
 
 findAnnotationInSource : String -> String -> String
-
 findAnnotationInSource name source =
     findAnnotationLoop  name  source  0
 
 
 findAnnotationLoop : String -> String -> Int -> String
-
 findAnnotationLoop name source idx =
     let
         searchFor =
@@ -1537,7 +1469,6 @@ findAnnotationLoop name source idx =
 
 
 extractUntilNewline : String -> Int -> String
-
 extractUntilNewline source idx =
     if idx >= String.length  source then
         ""
@@ -1553,7 +1484,6 @@ extractUntilNewline source idx =
 
 
 handleCompletion : ServerState -> String -> String -> ServerState
-
 handleCompletion state id body =
     let
         params =
@@ -1661,7 +1591,6 @@ handleCompletion state id body =
 
 
 getCompletionPrefix : Int -> String -> String
-
 getCompletionPrefix col lineText =
     let
         len =
@@ -1683,7 +1612,6 @@ getCompletionPrefix col lineText =
 
 
 findCompletionStart : String -> Int -> Int
-
 findCompletionStart text idx =
     if idx <= 0 then
         0
@@ -1699,7 +1627,6 @@ findCompletionStart text idx =
 
 
 completionsFromAst : (List Declaration) -> String -> List String
-
 completionsFromAst decls prefix =
     List.filterMap
      (
@@ -1765,7 +1692,6 @@ completionsFromAst decls prefix =
 
 
 completionsFromStdlib : String -> List String
-
 completionsFromStdlib prefix =
     let
         preludeNames =
@@ -1808,7 +1734,6 @@ completionsFromStdlib prefix =
 
 
 completionsForModule : ServerState -> String -> List String
-
 completionsForModule state modulePart =
     let
         prefix =
@@ -1850,7 +1775,6 @@ completionsForModule state modulePart =
 
 
 makeCompletionItem : String -> String -> Int -> String
-
 makeCompletionItem label detail kind =
     jsonObject
      [ ( "label" , jsonString  label )
@@ -1860,7 +1784,6 @@ makeCompletionItem label detail kind =
 
 
 handleDefinition : ServerState -> String -> String -> ServerState
-
 handleDefinition state id body =
     let
         params =
@@ -1882,7 +1805,6 @@ handleDefinition state id body =
 
 
 findDefinitionForPosition : ServerState -> String -> Int -> Int -> String
-
 findDefinitionForPosition state uri line character =
     case Dict.get  uri  state.documents of
         
@@ -1905,7 +1827,6 @@ findDefinitionForPosition state uri line character =
 
 
 findDefinitionInDep : ServerState -> String -> String -> String -> String
-
 findDefinitionInDep state word source uri =
     let
         parts =
@@ -1943,7 +1864,6 @@ findDefinitionInDep state word source uri =
 
 
 findDefinitionInDepFile : String -> String -> String
-
 findDefinitionInDepFile name filePath =
     case File.readFile  filePath of
         
@@ -1959,7 +1879,6 @@ findDefinitionInDepFile name filePath =
 
 
 findDefinitionInSource : String -> String -> String -> String
-
 findDefinitionInSource name source uri =
     let
         defLine =
@@ -1979,7 +1898,6 @@ findDefinitionInSource name source uri =
 
 
 findDefLineInSource : String -> String -> Int -> Int -> Int
-
 findDefLineInSource name source lineNum idx =
     if idx >= String.length  source then
         -1
@@ -2048,6 +1966,5 @@ findDefLineInSource name source lineNum idx =
 
 
 handleFormatting : ServerState -> String -> String -> ServerState
-
 handleFormatting state id body =
     sendAndReturn  (makeResponse  id  (jsonArray  []))  state

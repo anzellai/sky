@@ -32,7 +32,6 @@ type alias CtorInfo =
 
 
 emptyCtx : LowerCtx
-
 emptyCtx =
     { registry =
         Adt.emptyRegistry
@@ -58,7 +57,6 @@ emptyCtx =
 
 
 buildExposedStdlib : (List Ast.ImportDecl) -> Dict.Dict String String
-
 buildExposedStdlib imports =
     List.foldl
      (
@@ -79,7 +77,6 @@ buildExposedStdlib imports =
 
 
 getExposedNames : Ast.ImportDecl -> List String
-
 getExposedNames imp =
     let
         modName =
@@ -100,7 +97,6 @@ getExposedNames imp =
 
 
 lowerModule : AdtRegistry -> Module -> GoPackage
-
 lowerModule registry mod =
     let
         exposed =
@@ -154,13 +150,11 @@ lowerModule registry mod =
 
 
 lowerDeclarations : LowerCtx -> (List Declaration) -> List GoDecl
-
 lowerDeclarations ctx decls =
     List.filterMap  (lowerDecl  ctx)  decls
 
 
 lowerDecl : LowerCtx -> Declaration -> Maybe GoDecl
-
 lowerDecl ctx decl =
     case decl of
         
@@ -172,7 +166,6 @@ lowerDecl ctx decl =
 
 
 lowerFunction : LowerCtx -> String -> (List Pattern) -> Expression -> GoDecl
-
 lowerFunction ctx name params body =
     let
         isMain =
@@ -227,13 +220,11 @@ lowerFunction ctx name params body =
 
 
 generateParamBindings : LowerCtx -> (List Pattern) -> List GoStmt
-
 generateParamBindings ctx params =
     List.concatMap  (generateOneParamBinding  ctx)  params
 
 
 generateOneParamBinding : LowerCtx -> Pattern -> List GoStmt
-
 generateOneParamBinding ctx pat =
     case pat of
         
@@ -260,7 +251,6 @@ generateOneParamBinding ctx pat =
 
 
 lowerParam : Pattern -> GoParam
-
 lowerParam pat =
     case pat of
         
@@ -275,7 +265,6 @@ lowerParam pat =
 
 
 lowerExpr : LowerCtx -> Expression -> GoExpr
-
 lowerExpr ctx expr =
     case expr of
         
@@ -379,7 +368,6 @@ lowerExpr ctx expr =
 
 
 lowerIdentifier : LowerCtx -> String -> GoExpr
-
 lowerIdentifier ctx name =
     case Dict.get  name  ctx.importedConstructors of
         
@@ -450,7 +438,6 @@ lowerIdentifier ctx name =
 
 
 lowerStdlibExposed : String -> String -> GoExpr
-
 lowerStdlibExposed modPath name =
     if modPath == "Std.Html" then
         if name == "doctype" then
@@ -594,13 +581,11 @@ lowerStdlibExposed modPath name =
 
 
 cssNameToProperty : String -> String
-
 cssNameToProperty name =
     cssNameToPropertyLoop  name  0  ""
 
 
 cssNameToPropertyLoop : String -> Int -> String -> String
-
 cssNameToPropertyLoop name idx acc =
     if idx >= String.length  name then
         acc
@@ -640,7 +625,6 @@ cssNameToPropertyLoop name idx acc =
 
 
 lowerConstructorValue : String -> CtorInfo -> GoExpr
-
 lowerConstructorValue name info =
     GoMapLit
      [ ( GoStringLit  "Tag" , GoBasicLit  (String.fromInt  info.tagIndex) )
@@ -649,7 +633,6 @@ lowerConstructorValue name info =
 
 
 lowerQualified : LowerCtx -> (List String) -> GoExpr
-
 lowerQualified ctx parts =
     let
         qualName =
@@ -1178,7 +1161,6 @@ lowerQualified ctx parts =
 
 
 lowerCall : LowerCtx -> Expression -> (List Expression) -> GoExpr
-
 lowerCall ctx callee args =
     let
         flatResult =
@@ -1264,7 +1246,6 @@ lowerCall ctx callee args =
 
 
 isDynamicCallee : LowerCtx -> Expression -> Bool
-
 isDynamicCallee ctx expr =
     case expr of
         
@@ -1276,7 +1257,6 @@ isDynamicCallee ctx expr =
 
 
 extractPatternVarNames : Pattern -> List String
-
 extractPatternVarNames pat =
     case pat of
         
@@ -1301,7 +1281,6 @@ extractPatternVarNames pat =
 
 
 extractPatternName : Pattern -> Maybe String
-
 extractPatternName pat =
     case pat of
         
@@ -1316,7 +1295,6 @@ extractPatternName pat =
 
 
 isWellKnownIdent : String -> Bool
-
 isWellKnownIdent name =
     name == "Ok" ||
     name == "Err" ||
@@ -1341,7 +1319,6 @@ isWellKnownIdent name =
 
 
 isUpperStart : String -> Bool
-
 isUpperStart s =
     if String.isEmpty  s then
         False
@@ -1378,7 +1355,6 @@ type alias PartialApp =
 
 
 checkPartialApplication : LowerCtx -> Expression -> Int -> Maybe PartialApp
-
 checkPartialApplication ctx callee argCount =
     case callee of
         
@@ -1408,7 +1384,6 @@ checkPartialApplication ctx callee argCount =
 
 
 generatePartialClosure : PartialApp -> (List GoExpr) -> Int -> GoExpr
-
 generatePartialClosure partial providedArgs providedCount =
     let
         remainingCount =
@@ -1431,7 +1406,6 @@ generatePartialClosure partial providedArgs providedCount =
 
 
 buildCurriedClosure : (List String) -> String -> String
-
 buildCurriedClosure params innerCall =
     case params of
         
@@ -1446,7 +1420,6 @@ buildCurriedClosure params innerCall =
 
 
 listRange : Int -> Int -> List Int
-
 listRange start end =
     if start > end then
         []
@@ -1455,7 +1428,6 @@ listRange start end =
 
 
 flattenCall : LowerCtx -> Expression -> (List Expression) -> ( Expression , List Expression )
-
 flattenCall ctx callee args =
     case callee of
         
@@ -1500,7 +1472,6 @@ flattenCall ctx callee args =
 
 
 lowerLambda : LowerCtx -> (List Pattern) -> Expression -> GoExpr
-
 lowerLambda ctx params body =
     let
         lambdaParamNames =
@@ -1559,7 +1530,6 @@ lowerLambda ctx params body =
 
 
 lowerIf : LowerCtx -> Expression -> Expression -> Expression -> GoExpr
-
 lowerIf ctx condition thenBranch elseBranch =
     GoRawExpr
      (
@@ -1569,7 +1539,6 @@ lowerIf ctx condition thenBranch elseBranch =
 
 
 flattenIfElse : LowerCtx -> Expression -> Expression -> Expression -> String
-
 flattenIfElse ctx condition thenBranch elseBranch =
     let
         ifPart =
@@ -1587,7 +1556,6 @@ flattenIfElse ctx condition thenBranch elseBranch =
 
 
 lowerLet : LowerCtx -> (List LetBinding) -> Expression -> GoExpr
-
 lowerLet ctx bindings body =
     let
         boundNames =
@@ -1608,7 +1576,6 @@ lowerLet ctx bindings body =
 
 
 extractBindingName : LetBinding -> Maybe String
-
 extractBindingName binding =
     case binding.pattern of
         
@@ -1620,7 +1587,6 @@ extractBindingName binding =
 
 
 lowerLetBinding : LowerCtx -> LetBinding -> List GoStmt
-
 lowerLetBinding ctx binding =
     case binding.pattern of
         
@@ -1654,7 +1620,6 @@ lowerLetBinding ctx binding =
 
 
 lambdaTupleBindings : Pattern -> String
-
 lambdaTupleBindings pat =
     case pat of
         
@@ -1697,7 +1662,6 @@ lambdaTupleBindings pat =
 
 
 extractTupleBindings : String -> (List Pattern) -> Int -> Int -> List GoStmt
-
 extractTupleBindings tmpName items idx tupleSize =
     case items of
         
@@ -1741,7 +1705,6 @@ extractTupleBindings tmpName items idx tupleSize =
 
 
 lowerCase : LowerCtx -> Expression -> (List CaseBranch) -> GoExpr
-
 lowerCase ctx subject branches =
     let
         subjectExpr =
@@ -1753,7 +1716,6 @@ lowerCase ctx subject branches =
 
 
 lowerCaseToSwitch : LowerCtx -> GoExpr -> (List CaseBranch) -> String
-
 lowerCaseToSwitch ctx subjectExpr branches =
     let
         subjectCode =
@@ -1768,7 +1730,6 @@ lowerCaseToSwitch ctx subjectExpr branches =
 
 
 emitBranchCode : LowerCtx -> ( Int , CaseBranch ) -> String
-
 emitBranchCode ctx pair =
     let
         branch =
@@ -1792,7 +1753,6 @@ emitBranchCode ctx pair =
 
 
 patternToCondition : LowerCtx -> String -> Pattern -> String
-
 patternToCondition ctx varName pat =
     case pat of
         
@@ -1863,7 +1823,6 @@ patternToCondition ctx varName pat =
 
 
 subPatternConditions : LowerCtx -> String -> String -> (List Pattern) -> Int -> String
-
 subPatternConditions ctx varName ctorName args idx =
     case args of
         
@@ -1922,7 +1881,6 @@ literalCondition varName lit =
 
 
 patternToBindings : LowerCtx -> String -> Pattern -> String
-
 patternToBindings ctx varName pat =
     case pat of
         
@@ -1997,7 +1955,6 @@ patternToBindings ctx varName pat =
 
 
 bindConstructorArgs : LowerCtx -> String -> String -> String -> (List Pattern) -> String
-
 bindConstructorArgs ctx varName wrapperFn fieldName argPats =
     case argPats of
         
@@ -2011,7 +1968,6 @@ bindConstructorArgs ctx varName wrapperFn fieldName argPats =
 
 
 bindAdtConstructorArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
-
 bindAdtConstructorArgs ctx varName argPats idx =
     case argPats of
         
@@ -2030,7 +1986,6 @@ bindAdtConstructorArgs ctx varName argPats idx =
 
 
 bindTupleArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
-
 bindTupleArgs ctx varName items idx =
     let
         totalItems =
@@ -2060,7 +2015,6 @@ bindTupleArgs ctx varName items idx =
 
 
 bindListArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
-
 bindListArgs ctx varName items idx =
     case items of
         
@@ -2079,7 +2033,6 @@ bindListArgs ctx varName items idx =
 
 
 lowerBinary : LowerCtx -> String -> Expression -> Expression -> GoExpr
-
 lowerBinary ctx op left right =
     let
         goLeft =
@@ -2160,7 +2113,6 @@ lowerBinary ctx op left right =
 
 
 lowerRecordUpdate : LowerCtx -> Expression -> (List NamedExpr) -> GoExpr
-
 lowerRecordUpdate ctx base fields =
     let
         goBase =
@@ -2176,13 +2128,11 @@ lowerRecordUpdate ctx base fields =
 
 
 generateConstructorDecls : AdtRegistry -> (List Declaration) -> List GoDecl
-
 generateConstructorDecls registry decls =
     List.concatMap  (generateCtorsForDecl  registry)  decls
 
 
 generateCtorsForDecl : AdtRegistry -> Declaration -> List GoDecl
-
 generateCtorsForDecl registry decl =
     case decl of
         
@@ -2194,7 +2144,6 @@ generateCtorsForDecl registry decl =
 
 
 generateCtorFunc : String -> Int -> TypeVariant -> GoDecl
-
 generateCtorFunc typeName tagIndex variant =
     let
         arity =
@@ -2251,7 +2200,6 @@ generateCtorFunc typeName tagIndex variant =
 
 
 generateHelperDecls : List GoDecl
-
 generateHelperDecls =
     [ GoDeclRaw  "var skyVersion = \"dev\""
     , GoDeclRaw  "type SkyTuple2 struct { V0, V1 any }"
@@ -2820,7 +2768,6 @@ generateHelperDecls =
 
 
 collectLocalFunctions : (List Declaration) -> List String
-
 collectLocalFunctions decls =
     List.filterMap
      (
@@ -2837,7 +2784,6 @@ collectLocalFunctions decls =
 
 
 collectLocalFunctionArities : (List Declaration) -> Dict.Dict String Int
-
 collectLocalFunctionArities decls =
     List.foldl
      (
@@ -2855,7 +2801,6 @@ collectLocalFunctionArities decls =
 
 
 buildConstructorMap : AdtRegistry -> Dict.Dict String CtorInfo
-
 buildConstructorMap registry =
     Dict.foldl
      (
@@ -2871,7 +2816,6 @@ buildConstructorMap registry =
 
 
 addCtorsFromList : String -> (List ( String , Scheme )) -> Int -> (Dict.Dict String CtorInfo) -> Dict.Dict String CtorInfo
-
 addCtorsFromList typeName entries idx acc =
     case entries of
         
@@ -2893,7 +2837,6 @@ addCtorsFromList typeName entries idx acc =
 
 
 countFunArgs : Type -> Int
-
 countFunArgs t =
     case t of
         
@@ -2905,7 +2848,6 @@ countFunArgs t =
 
 
 sanitizeGoIdent : String -> String
-
 sanitizeGoIdent name =
     if isGoKeyword  name then
         name ++ "_"
@@ -2914,7 +2856,6 @@ sanitizeGoIdent name =
 
 
 isGoKeyword : String -> Bool
-
 isGoKeyword name =
     name == "go" ||
     name == "type" ||
@@ -2978,7 +2919,6 @@ isGoKeyword name =
 
 
 isStdlibCallee : Expression -> Bool
-
 isStdlibCallee expr =
     case expr of
         
@@ -3028,13 +2968,11 @@ isStdlibCallee expr =
 
 
 makeTupleKey : (List Pattern) -> String
-
 makeTupleKey items =
     String.join  "_"  (List.filterMap  getPatVarName  items)
 
 
 getPatVarName : Pattern -> Maybe String
-
 getPatVarName pat =
     case pat of
         
@@ -3049,7 +2987,6 @@ getPatVarName pat =
 
 
 isParamOrBuiltin : String -> Bool
-
 isParamOrBuiltin name =
     String.length  name <= 2 ||
     name == "acc" ||
@@ -3282,7 +3219,6 @@ isParamOrBuiltin name =
 
 
 lowerArgExpr : LowerCtx -> Expression -> GoExpr
-
 lowerArgExpr ctx expr =
     case expr of
         
@@ -3308,7 +3244,6 @@ lowerArgExpr ctx expr =
 
 
 isZeroArityFn : String -> LowerCtx -> Bool
-
 isZeroArityFn name ctx =
     case Dict.get  name  ctx.localFunctionArity of
         
@@ -3320,7 +3255,6 @@ isZeroArityFn name ctx =
 
 
 getFnArity : String -> LowerCtx -> Int
-
 getFnArity name ctx =
     case Dict.get  name  ctx.localFunctionArity of
         
@@ -3332,7 +3266,6 @@ getFnArity name ctx =
 
 
 makeCurryWrapper : String -> Int -> GoExpr
-
 makeCurryWrapper goName arity =
     if arity == 2 then
         GoRawExpr
@@ -3357,7 +3290,6 @@ makeCurryWrapper goName arity =
 
 
 listContains : String -> (List String) -> Bool
-
 listContains needle haystack =
     List.foldl
      (
@@ -3372,7 +3304,6 @@ listContains needle haystack =
 
 
 isLocalFn : String -> (Dict.Dict String Bool) -> Bool
-
 isLocalFn name fns =
     case Dict.get  name  fns of
         
@@ -3384,7 +3315,6 @@ isLocalFn name fns =
 
 
 isLocalFunction : String -> LowerCtx -> Bool
-
 isLocalFunction name ctx =
     case Dict.get  name  ctx.localFunctionArity of
         
@@ -3396,7 +3326,6 @@ isLocalFunction name ctx =
 
 
 goQuote : String -> String
-
 goQuote s =
     let
         escaped =
@@ -3406,7 +3335,6 @@ goQuote s =
 
 
 capitalizeFirst : String -> String
-
 capitalizeFirst s =
     if String.isEmpty  s then
         ""
@@ -3416,7 +3344,6 @@ capitalizeFirst s =
 
 
 lastPartOf : (List String) -> String
-
 lastPartOf parts =
     case List.reverse  parts of
         
@@ -3428,7 +3355,6 @@ lastPartOf parts =
 
 
 listGet : Int -> (List a) -> a
-
 listGet idx items =
     case List.head  (List.drop  idx  items) of
         
@@ -3440,13 +3366,11 @@ listGet idx items =
 
 
 zipIndex : (List a) -> List ( Int , a )
-
 zipIndex items =
     zipIndexLoop  0  items
 
 
 zipIndexLoop : Int -> (List a) -> List ( Int , a )
-
 zipIndexLoop idx items =
     case items of
         
@@ -3458,7 +3382,6 @@ zipIndexLoop idx items =
 
 
 emitGoExprInline : GoExpr -> String
-
 emitGoExprInline expr =
     case expr of
         
@@ -3530,7 +3453,6 @@ emitGoExprInline expr =
 
 
 emitMapEntry : ( GoExpr , GoExpr ) -> String
-
 emitMapEntry pair =
     let
         key =
@@ -3542,25 +3464,21 @@ emitMapEntry pair =
 
 
 emitInlineParam : GoParam -> String
-
 emitInlineParam p =
     p.name ++ " " ++ p.type_
 
 
 exprToGoString : LowerCtx -> Expression -> String
-
 exprToGoString ctx expr =
     emitGoExprInline  (lowerExpr  ctx  expr)
 
 
 lowerExprToStmts : LowerCtx -> Expression -> List GoStmt
-
 lowerExprToStmts ctx expr =
     [ GoExprStmt  (lowerExpr  ctx  expr) ]
 
 
 stmtsToGoString : (List GoStmt) -> String
-
 stmtsToGoString stmts =
     let
         raw =
@@ -3570,13 +3488,11 @@ stmtsToGoString stmts =
 
 
 fixCurriedCalls : String -> String
-
 fixCurriedCalls code =
     code
 
 
 stmtToGoString : GoStmt -> String
-
 stmtToGoString stmt =
     case stmt of
         

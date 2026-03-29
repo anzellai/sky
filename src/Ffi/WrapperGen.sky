@@ -8,7 +8,6 @@ import Lsp.JsonRpc as Json
 import Ffi.TypeMapper as TypeMapper
 
 generateWrappers : String -> String -> String -> Result String String
-
 generateWrappers pkgName inspectJson outDir =
     let
         safePkg =
@@ -44,7 +43,6 @@ type FuncKind
 
 
 classifyFunc : (List String) -> String -> FuncKind
-
 classifyFunc results funcName =
     case results of
         
@@ -75,13 +73,11 @@ classifyFunc results funcName =
 
 
 isEffectfulName : String -> Bool
-
 isEffectfulName name =
     True
 
 
 generateWrapperFile : String -> String -> (List FuncEntry) -> (List MethodEntry) -> (List String) -> String
-
 generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
     let
         safeFuncs =
@@ -189,7 +185,6 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
 
 
 canWrapFuncForPkg : String -> FuncEntry -> Bool
-
 canWrapFuncForPkg pkgName func =
     if func.hasTypeParams then
         False
@@ -222,7 +217,6 @@ canWrapFuncForPkg pkgName func =
 
 
 zipIndex : (List a) -> Int -> List ( Int , a )
-
 zipIndex items idx =
     case items of
         
@@ -234,7 +228,6 @@ zipIndex items idx =
 
 
 canWrapMethodForPkg : String -> MethodEntry -> Bool
-
 canWrapMethodForPkg pkgName method =
     if method.hasTypeParams then
         False
@@ -267,7 +260,6 @@ canWrapMethodForPkg pkgName method =
 
 
 isSupportedTypeForPkg : String -> String -> Bool
-
 isSupportedTypeForPkg pkgName goType =
     if String.startsWith  "func("  goType && not  (isAdaptableFuncType  goType) then
         False
@@ -342,7 +334,6 @@ isSupportedTypeForPkg pkgName goType =
 
 
 isSupportedType : String -> Bool
-
 isSupportedType goType =
     goType == "string" ||
     goType == "bool" ||
@@ -381,7 +372,6 @@ isSupportedType goType =
 
 
 needsExtraImport : String -> Bool
-
 needsExtraImport goType =
     let
         t =
@@ -420,14 +410,12 @@ needsExtraImport goType =
 
 
 isAdaptableFuncType : String -> Bool
-
 isAdaptableFuncType goType =
     String.contains  "ResponseWriter"  goType &&
     String.contains  "Request"  goType
 
 
 isSupportedResultType : String -> Bool
-
 isSupportedResultType goType =
     isSupportedType  goType || goType == "error"
 
@@ -453,7 +441,6 @@ type alias MethodEntry =
 
 
 generateFuncWrapper : String -> String -> FuncEntry -> String
-
 generateFuncWrapper safePkg pkgName func =
     let
         wrapperName =
@@ -523,7 +510,6 @@ generateFuncWrapper safePkg pkgName func =
 
 
 generateMethodWrapper : String -> String -> MethodEntry -> String
-
 generateMethodWrapper safePkg pkgName method =
     let
         wrapperName =
@@ -598,7 +584,6 @@ generateMethodWrapper safePkg pkgName method =
 
 
 generateArgCast : Int -> ( String , String ) -> String
-
 generateArgCast idx param =
     let
         goType =
@@ -612,7 +597,6 @@ generateArgCast idx param =
 
 
 wrapReturn : FuncKind -> (List String) -> String -> String
-
 wrapReturn kind results goCall =
     case kind of
         
@@ -627,7 +611,6 @@ wrapReturn kind results goCall =
 
 
 wrapPureReturn : (List String) -> String -> String
-
 wrapPureReturn results goCall =
     case results of
         
@@ -659,7 +642,6 @@ wrapPureReturn results goCall =
 
 
 wrapFallibleReturn : (List String) -> String -> String
-
 wrapFallibleReturn results goCall =
     let
         hasValueReturn =
@@ -684,7 +666,6 @@ wrapFallibleReturn results goCall =
 
 
 wrapEffectfulReturn : (List String) -> String -> String
-
 wrapEffectfulReturn results goCall =
     case results of
         
@@ -709,7 +690,7 @@ wrapEffectfulReturn results goCall =
                 "result := " ++
                 goCall ++
                 "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}()"
-
+        
         _ ->
             let
                 n =
@@ -732,7 +713,6 @@ wrapEffectfulReturn results goCall =
 
 
 shortPkgName : String -> String
-
 shortPkgName pkgPath =
     case List.reverse  (String.split  "/"  pkgPath) of
         
@@ -744,7 +724,6 @@ shortPkgName pkgPath =
 
 
 extractFunctions : String -> List FuncEntry
-
 extractFunctions json =
     let
         funcsArrayStr =
@@ -756,7 +735,6 @@ extractFunctions json =
 
 
 parseFuncEntry : String -> Maybe FuncEntry
-
 parseFuncEntry json =
     let
         name =
@@ -797,13 +775,11 @@ parseFuncEntry json =
 
 
 parseParamPair : String -> ( String , String )
-
 parseParamPair json =
     ( Json.jsonGetString  "name"  json , Json.jsonGetString  "type"  json )
 
 
 extractMethods : String -> List MethodEntry
-
 extractMethods json =
     let
         typesArrayStr =
@@ -815,7 +791,6 @@ extractMethods json =
 
 
 extractFieldAccessors : String -> String -> List String
-
 extractFieldAccessors safePkg json =
     let
         typesArrayStr =
@@ -827,7 +802,6 @@ extractFieldAccessors safePkg json =
 
 
 extractFieldsFromType : String -> String -> List String
-
 extractFieldsFromType safePkg typeJson =
     let
         typeName =
@@ -847,7 +821,6 @@ extractFieldsFromType safePkg typeJson =
 
 
 generateFieldAccessor : String -> String -> String -> Maybe String
-
 generateFieldAccessor safePkg typeName fieldJson =
     let
         fieldName =
@@ -879,13 +852,11 @@ generateFieldAccessor safePkg typeName fieldJson =
 
 
 isSafeFieldType : String -> Bool
-
 isSafeFieldType _ =
     True
 
 
 varTypeCast : String -> String
-
 varTypeCast goType =
     if goType == "string" then
         "sky_asString"
@@ -900,7 +871,6 @@ varTypeCast goType =
 
 
 extractConstAccessors : String -> String -> String -> List String
-
 extractConstAccessors safePkg pkgName json =
     let
         constsArrayStr =
@@ -916,7 +886,6 @@ extractConstAccessors safePkg pkgName json =
 
 
 generateConstAccessor : String -> String -> String -> String -> Maybe String
-
 generateConstAccessor safePkg shortPkg pkgName constJson =
     let
         name =
@@ -932,14 +901,14 @@ generateConstAccessor safePkg shortPkg pkgName constJson =
             "func Sky_" ++
             safePkg ++
             "_" ++
-            name ++ "(_ any) any {\n\treturn " ++ shortPkg ++ "." ++ name ++ "\n}"
+            name ++
+            "(_ any) any {\n\treturn " ++ shortPkg ++ "." ++ name ++ "\n}"
             )
         else
             Nothing
 
 
 extractVarAccessors : String -> String -> List String
-
 extractVarAccessors pkgName json =
     let
         varsArrayStr =
@@ -957,7 +926,6 @@ extractVarAccessors pkgName json =
 
 
 generateVarAccessor : String -> String -> String -> Maybe String
-
 generateVarAccessor safePkg shortPkg varJson =
     let
         name =
@@ -1023,7 +991,6 @@ generateVarAccessor safePkg shortPkg varJson =
 
 
 isGenericType : String -> Bool
-
 isGenericType typeJson =
     let
         fieldsStr =
@@ -1037,7 +1004,6 @@ isGenericType typeJson =
 
 
 extractMethodsFromType : String -> List MethodEntry
-
 extractMethodsFromType typeJson =
     let
         typeName =
@@ -1058,7 +1024,6 @@ extractMethodsFromType typeJson =
 
 
 parseMethodEntry : String -> Bool -> String -> Maybe MethodEntry
-
 parseMethodEntry typeName isIface json =
     let
         name =

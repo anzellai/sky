@@ -25,7 +25,6 @@ type alias Substitution =
 
 
 freshVar : (Ref.Ref Int) -> (Maybe String) -> Type
-
 freshVar counter name =
     let
         id =
@@ -37,13 +36,11 @@ freshVar counter name =
 
 
 emptySub : Substitution
-
 emptySub =
     Dict.empty
 
 
 applySub : Substitution -> Type -> Type
-
 applySub sub t =
     case t of
         
@@ -67,7 +64,6 @@ applySub sub t =
 
 
 applySubVar : Substitution -> Type -> Int -> Type
-
 applySubVar sub t id =
     case Dict.get  id  sub of
         
@@ -82,7 +78,6 @@ applySubVar sub t id =
 
 
 applySubToScheme : Substitution -> Scheme -> Scheme
-
 applySubToScheme sub scheme =
     let
         filtered =
@@ -92,7 +87,6 @@ applySubToScheme sub scheme =
 
 
 composeSubs : Substitution -> Substitution -> Substitution
-
 composeSubs s1 s2 =
     let
         applied =
@@ -102,7 +96,6 @@ composeSubs s1 s2 =
 
 
 freeVars : Type -> Set.Set Int
-
 freeVars t =
     case t of
         
@@ -134,7 +127,6 @@ freeVars t =
 
 
 freeVarsInScheme : Scheme -> Set.Set Int
-
 freeVarsInScheme scheme =
     let
         typeVars =
@@ -146,7 +138,6 @@ freeVarsInScheme scheme =
 
 
 instantiate : (Ref.Ref Int) -> Scheme -> Type
-
 instantiate counter scheme =
     let
         sub =
@@ -166,7 +157,6 @@ instantiate counter scheme =
 
 
 generalize : (Dict.Dict String Scheme) -> Type -> Scheme
-
 generalize env t =
     let
         typeVars =
@@ -183,13 +173,11 @@ generalize env t =
 
 
 mono : Type -> Scheme
-
 mono t =
     { quantified = [] , type_ = t }
 
 
 formatType : Type -> String
-
 formatType t =
     case t of
         
@@ -223,7 +211,6 @@ formatType t =
 
 
 formatVarName : Int -> (Maybe String) -> String
-
 formatVarName id name =
     case name of
         
@@ -235,7 +222,6 @@ formatVarName id name =
 
 
 formatFunFrom : Type -> String
-
 formatFunFrom fromT =
     case fromT of
         

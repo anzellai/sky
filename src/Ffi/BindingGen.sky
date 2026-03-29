@@ -10,22 +10,20 @@ import Ffi.TypeMapper as TypeMapper
 import Ffi.WrapperGen as WrapperGen
 import Lsp.JsonRpc as Json
 
-
 generateBindings : String -> String -> Result String String
-
 generateBindings pkgName outDir =
     case Inspector.inspectPackage  pkgName of
-
+        
         Err e ->
             Err  e
-
+        
         Ok inspectJson ->
             if String.length  inspectJson > 50000 then
                 case generateBindingsNative  pkgName  outDir of
-
+                    
                     Ok content ->
                         Ok  content
-
+                    
                     Err _ ->
                         generateBindingsFromJson  pkgName  outDir  inspectJson
             else
@@ -33,7 +31,6 @@ generateBindings pkgName outDir =
 
 
 generateBindingsFromJson : String -> String -> String -> Result String String
-
 generateBindingsFromJson pkgName outDir inspectJson =
     let
         skyiContent =
@@ -48,16 +45,15 @@ generateBindingsFromJson pkgName outDir inspectJson =
             WrapperGen.generateWrappers  pkgName  inspectJson  outDir
     in
         case wrapperResult of
-
+            
             Ok _ ->
                 Ok  skyiContent
-
+            
             Err e ->
                 Err  e
 
 
 generateBindingsNative : String -> String -> Result String String
-
 generateBindingsNative pkgName outDir =
     let
         inspectPath =
@@ -68,16 +64,19 @@ generateBindingsNative pkgName outDir =
             Process.run  "sky-ffi-gen"  [ pkgName , inspectPath , outDir ]
     in
         case result of
-
+            
             Ok _ ->
                 File.readFile  (outDir ++ "/bindings.skyi")
-
+            
             Err e ->
-                Err  ("Native FFI gen failed for " ++ pkgName ++ ": " ++ errorToString  e)
+                Err
+                 (
+                "Native FFI gen failed for " ++
+                pkgName ++ ": " ++ errorToString  e
+                )
 
 
 generateSkyiFile : String -> String -> String
-
 generateSkyiFile pkgName inspectJson =
     let
         moduleName =
@@ -115,7 +114,6 @@ generateSkyiFile pkgName inspectJson =
 
 
 pkgToModuleName : String -> String
-
 pkgToModuleName pkgPath =
     let
         slashParts =
@@ -130,7 +128,6 @@ pkgToModuleName pkgPath =
 
 
 extractFieldBindings : String -> String -> List String
-
 extractFieldBindings pkgName json =
     let
         typesArrayStr =
@@ -148,7 +145,6 @@ extractFieldBindings pkgName json =
 
 
 extractFieldsForType : String -> String -> List String
-
 extractFieldsForType safePkg typeJson =
     let
         typeName =
@@ -168,7 +164,6 @@ extractFieldsForType safePkg typeJson =
 
 
 isGenericTypeBinding : String -> Bool
-
 isGenericTypeBinding typeJson =
     let
         fieldsStr =
@@ -182,7 +177,6 @@ isGenericTypeBinding typeJson =
 
 
 generateFieldBinding : String -> String -> String -> Maybe String
-
 generateFieldBinding safePkg typeName fieldJson =
     let
         fieldName =
@@ -211,13 +205,11 @@ generateFieldBinding safePkg typeName fieldJson =
 
 
 isSafeFieldType : String -> Bool
-
 isSafeFieldType _ =
     True
 
 
 extractConstBindings : String -> String -> List String
-
 extractConstBindings pkgName json =
     let
         constsArrayStr =
@@ -233,7 +225,6 @@ extractConstBindings pkgName json =
 
 
 generateConstBinding : String -> String -> String -> Maybe String
-
 generateConstBinding pkgName safePkg constJson =
     let
         name =
@@ -278,7 +269,6 @@ generateConstBinding pkgName safePkg constJson =
 
 
 extractVarBindings : String -> String -> List String
-
 extractVarBindings pkgName json =
     let
         varsArrayStr =
@@ -294,7 +284,6 @@ extractVarBindings pkgName json =
 
 
 generateVarBinding : String -> String -> String -> Maybe String
-
 generateVarBinding pkgName safePkg varJson =
     let
         name =
@@ -344,7 +333,6 @@ generateVarBinding pkgName safePkg varJson =
 
 
 extractMethodBindings : String -> String -> List String
-
 extractMethodBindings pkgName json =
     let
         typesArrayStr =
@@ -356,7 +344,6 @@ extractMethodBindings pkgName json =
 
 
 extractMethodsForType : String -> String -> List String
-
 extractMethodsForType pkgName typeJson =
     let
         typeName =
@@ -374,7 +361,6 @@ extractMethodsForType pkgName typeJson =
 
 
 generateMethodBinding : String -> String -> String -> Maybe String
-
 generateMethodBinding pkgName typeName methodJson =
     let
         name =
@@ -446,7 +432,6 @@ generateMethodBinding pkgName typeName methodJson =
 
 
 hyphenToCamel : String -> String
-
 hyphenToCamel s =
     let
         parts =
@@ -462,7 +447,6 @@ hyphenToCamel s =
 
 
 capitalizeFirst : String -> String
-
 capitalizeFirst s =
     if String.isEmpty  s then
         ""
@@ -472,7 +456,6 @@ capitalizeFirst s =
 
 
 extractFuncBindings : String -> String -> List String
-
 extractFuncBindings pkgName json =
     let
         funcsArrayStr =
@@ -485,7 +468,6 @@ extractFuncBindings pkgName json =
 
 
 isSupportedFuncForPkg : String -> String -> Bool
-
 isSupportedFuncForPkg pkgName funcJson =
     if Json.jsonGetBool  "hasTypeParams"  funcJson then
         False
@@ -528,14 +510,12 @@ isSupportedFuncForPkg pkgName funcJson =
 
 
 allMethodParamsSafe : String -> (List String) -> Bool -> Bool
-
 allMethodParamsSafe pkgName paramTypes variadic =
     allMethodParamsLoop  pkgName  paramTypes  variadic  0
      (List.length  paramTypes)
 
 
 allMethodParamsLoop : String -> (List String) -> Bool -> Int -> Int -> Bool
-
 allMethodParamsLoop pkgName params variadic idx total =
     case params of
         
@@ -552,7 +532,6 @@ allMethodParamsLoop pkgName params variadic idx total =
 
 
 isSafeTypeForPkg : String -> String -> Bool
-
 isSafeTypeForPkg pkgName goType =
     if String.startsWith  "func("  goType &&
     not  (String.contains  "ResponseWriter"  goType) then
@@ -628,7 +607,6 @@ isSafeTypeForPkg pkgName goType =
 
 
 isSafeType : String -> Bool
-
 isSafeType goType =
     goType == "string" ||
     goType == "bool" ||
@@ -667,7 +645,6 @@ isSafeType goType =
 
 
 needsExtraImportBinding : String -> Bool
-
 needsExtraImportBinding goType =
     let
         t =
@@ -706,7 +683,6 @@ needsExtraImportBinding goType =
 
 
 generateFuncBinding : String -> String -> Maybe String
-
 generateFuncBinding pkgName funcJson =
     let
         name =
@@ -810,7 +786,6 @@ generateFuncBinding pkgName funcJson =
 
 
 buildReturnType : (List String) -> String
-
 buildReturnType results =
     if List.isEmpty  results then
         "Result String ()"
@@ -856,7 +831,6 @@ buildReturnType results =
 
 
 extractTypeBindings : String -> List String
-
 extractTypeBindings json =
     let
         typesArrayStr =
@@ -868,7 +842,6 @@ extractTypeBindings json =
 
 
 generateTypeBinding : String -> Maybe String
-
 generateTypeBinding typeJson =
     let
         name =

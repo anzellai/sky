@@ -25,13 +25,11 @@ type alias TypedDecl =
 
 
 makeTypedDecl : String -> Scheme -> Type -> TypedDecl
-
 makeTypedDecl n s t =
     { name = n , scheme = s , prettyType = formatType  t }
 
 
 checkModule : Module -> (Maybe Env.TypeEnv) -> Result String CheckResult
-
 checkModule mod imports =
     let
         counter =
@@ -75,7 +73,6 @@ checkModule mod imports =
 
 
 registerTypeAliases : (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
-
 registerTypeAliases decls env =
     case decls of
         
@@ -93,13 +90,11 @@ registerTypeAliases decls env =
 
 
 collectAnnotations : (List Declaration) -> Dict.Dict String TypeExpr
-
 collectAnnotations decls =
     collectAnnotationsLoop  decls  Dict.empty
 
 
 collectAnnotationsLoop : (List Declaration) -> (Dict.Dict String TypeExpr) -> Dict.Dict String TypeExpr
-
 collectAnnotationsLoop decls acc =
     case decls of
         
@@ -118,7 +113,6 @@ collectAnnotationsLoop decls acc =
 
 
 preRegisterFunctions : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
-
 preRegisterFunctions counter decls env =
     case decls of
         
@@ -146,13 +140,11 @@ preRegisterOneFunction counter decl rest env =
 
 
 inferAllDeclarations : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> ( List TypedDecl , Env.TypeEnv , List String )
-
 inferAllDeclarations counter registry env decls annotations =
     inferDeclsLoop  counter  registry  env  decls  annotations  []  []
 
 
 inferDeclsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (List TypedDecl) -> (List String) -> ( List TypedDecl , Env.TypeEnv , List String )
-
 inferDeclsLoop counter registry env decls annotations typedDecls diagnostics =
     case decls of
         
@@ -186,11 +178,14 @@ inferOneFunDecl counter registry env fnName decl rest annotations typedDecls dia
             Dict.get  fnName  annotations
     in
         case Infer.inferDeclaration  counter  registry  env  decl  annotation of
-
+            
             Ok inferResult ->
                 addTypedDeclAndContinue  counter  registry  env  rest
-                 annotations  typedDecls  diagnostics  inferResult
-
+                 annotations
+                 typedDecls
+                 diagnostics
+                 inferResult
+            
             Err e ->
                 inferDeclsLoop  counter  registry  env  rest  annotations
                  typedDecls
@@ -214,18 +209,16 @@ addTypedDeclAndContinue counter registry env rest annotations typedDecls diagnos
         newDiags =
             List.append  diagnostics  inferResult.diagnostics
     in
-        inferDeclsLoop  counter  registry  newEnv  rest  annotations
-         newDecls  newDiags
+        inferDeclsLoop  counter  registry  newEnv  rest  annotations  newDecls
+         newDiags
 
 
 checkAllExhaustiveness : AdtRegistry -> (List Declaration) -> List String
-
 checkAllExhaustiveness registry decls =
     List.concatMap  (checkDeclExhaustiveness  registry)  decls
 
 
 checkDeclExhaustiveness : AdtRegistry -> Declaration -> List String
-
 checkDeclExhaustiveness registry decl =
     case decl of
         
@@ -237,7 +230,6 @@ checkDeclExhaustiveness registry decl =
 
 
 checkExprExhaustiveness : AdtRegistry -> Expression -> List String
-
 checkExprExhaustiveness registry expr =
     case expr of
         

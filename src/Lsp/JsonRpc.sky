@@ -18,7 +18,6 @@ type alias Notification =
 
 
 readMessage : () -> Maybe String
-
 readMessage _ =
     case Io.readLine  () of
         
@@ -37,7 +36,6 @@ readMessage _ =
 
 
 readMessageBody : Int -> Maybe String
-
 readMessageBody len =
     case Io.readLine  () of
         
@@ -49,7 +47,6 @@ readMessageBody len =
 
 
 parseContentLength : String -> Int
-
 parseContentLength header =
     if String.startsWith  "Content-Length: "  header then
         let
@@ -70,7 +67,6 @@ parseContentLength header =
 
 
 writeMessage : String -> ()
-
 writeMessage json =
     let
         len =
@@ -82,32 +78,27 @@ writeMessage json =
 
 
 makeResponse : String -> String -> String
-
 makeResponse id resultJson =
     "{\"jsonrpc\":\"2.0\",\"id\":" ++ id ++ ",\"result\":" ++ resultJson ++ "}"
 
 
 makeNotification : String -> String -> String
-
 makeNotification method paramsJson =
     "{\"jsonrpc\":\"2.0\",\"method\":\"" ++
     method ++ "\",\"params\":" ++ paramsJson ++ "}"
 
 
 jsonString : String -> String
-
 jsonString s =
     "\"" ++ escapeJson  s ++ "\""
 
 
 jsonInt : Int -> String
-
 jsonInt n =
     String.fromInt  n
 
 
 jsonBool : Bool -> String
-
 jsonBool b =
     if b then
         "true"
@@ -116,31 +107,26 @@ jsonBool b =
 
 
 jsonNull : String
-
 jsonNull =
     "null"
 
 
 jsonObject : (List ( String , String )) -> String
-
 jsonObject fields =
     "{" ++ String.join  ","  (List.map  formatField  fields) ++ "}"
 
 
 formatField : ( String , String ) -> String
-
 formatField pair =
     jsonString  (fst  pair) ++ ":" ++ snd  pair
 
 
 jsonArray : (List String) -> String
-
 jsonArray items =
     "[" ++ String.join  ","  items ++ "]"
 
 
 escapeJson : String -> String
-
 escapeJson s =
     let
         s1 =
@@ -156,7 +142,6 @@ escapeJson s =
 
 
 jsonGetString : String -> String -> String
-
 jsonGetString key json =
     let
         searchKey =
@@ -199,7 +184,6 @@ jsonGetString key json =
 
 
 jsonGetRaw : String -> String -> String
-
 jsonGetRaw key json =
     let
         searchKey =
@@ -244,7 +228,6 @@ jsonGetRaw key json =
 
 
 jsonGetInt : String -> String -> Int
-
 jsonGetInt key json =
     let
         searchKey =
@@ -287,7 +270,6 @@ jsonGetInt key json =
 
 
 jsonGetObject : String -> String -> String
-
 jsonGetObject key json =
     let
         searchKey =
@@ -325,7 +307,6 @@ jsonGetObject key json =
 
 
 jsonGetArrayRaw : String -> String -> String
-
 jsonGetArrayRaw key json =
     let
         searchKey =
@@ -363,7 +344,6 @@ jsonGetArrayRaw key json =
 
 
 extractBracketed : String -> Int -> Int -> String
-
 extractBracketed remaining depth idx =
     if idx >= String.length  remaining then
         remaining
@@ -390,7 +370,6 @@ extractBracketed remaining depth idx =
 
 
 skipQuotedString : String -> Int -> Int
-
 skipQuotedString s idx =
     if idx >= String.length  s then
         idx
@@ -408,7 +387,6 @@ skipQuotedString s idx =
 
 
 jsonSplitArray : String -> List String
-
 jsonSplitArray arrayStr =
     let
         inner =
@@ -422,7 +400,6 @@ jsonSplitArray arrayStr =
 
 
 splitJsonElements : String -> Int -> Int -> Int -> (List String) -> List String
-
 splitJsonElements s idx start depth acc =
     if idx >= String.length  s then
         let
@@ -460,7 +437,6 @@ splitJsonElements s idx start depth acc =
 
 
 jsonGetBool : String -> String -> Bool
-
 jsonGetBool key json =
     let
         val =
@@ -470,7 +446,6 @@ jsonGetBool key json =
 
 
 findInString : String -> String -> Int -> Int
-
 findInString needle haystack idx =
     if idx + String.length  needle > String.length  haystack then
         -1
@@ -481,7 +456,6 @@ findInString needle haystack idx =
 
 
 extractQuotedString : String -> String -> String
-
 extractQuotedString remaining acc =
     if String.isEmpty  remaining then
         acc
@@ -516,7 +490,6 @@ extractQuotedString remaining acc =
 
 
 takeWhileDigit : String -> String -> String
-
 takeWhileDigit remaining acc =
     if String.isEmpty  remaining then
         acc
@@ -539,7 +512,6 @@ takeWhileDigit remaining acc =
 
 
 takeUntilDelimiter : String -> String -> String
-
 takeUntilDelimiter remaining acc =
     if String.isEmpty  remaining then
         acc
@@ -558,7 +530,6 @@ takeUntilDelimiter remaining acc =
 
 
 extractBraced : String -> Int -> Int -> String
-
 extractBraced remaining depth idx =
     if idx >= String.length  remaining then
         remaining

@@ -11,13 +11,14 @@ showStatus done =
     else
         "[ ]"
 
+
 formatTodo row =
     let
         id =
-            Db.getField "id" row
+            Db.getField  "id"  row
         title =
-            Db.getField "title" row
+            Db.getField  "title"  row
         done =
-            Db.getField "done" row
+            Db.getField  "done"  row
     in
-        "  " ++ id ++ ". " ++ showStatus done ++ " " ++ title
+        "  " ++ id ++ ". " ++ showStatus  done ++ " " ++ title

@@ -83,17 +83,13 @@ firebaseAuthScript =
         "function skySignOut(){" ++
         "if(_fbReady){firebase.auth().signOut();}" ++ "}" ++ "</script>"
 
-handleAuthCallback token =
-    Auth.verifyToken token
 
+handleAuthCallback token =
+    Auth.verifyToken  token
 
             -- Load Firebase SDK dynamically into <head>
-
             -- Listen for auth state changes (sign-in, sign-out, token refresh)
-
             -- Send token to Sky.Live server as a FirebaseAuth Msg
             -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
-
             -- Sign-in function called by buttons
-
             -- Sign-out function

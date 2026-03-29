@@ -25,6 +25,7 @@ type Page
     | TermsPage
     | NotFoundPage
 
+
 -- ══════════════════════════════════════════════════════
 -- MESSAGES
 -- ══════════════════════════════════════════════════════
@@ -63,6 +64,7 @@ type Msg
     | FirebaseAuth String
     | Tick
     | NoOp
+
 
 -- ══════════════════════════════════════════════════════
 -- MODEL
@@ -104,46 +106,82 @@ type alias Model =
     , signOutPending : Bool
     }
 
+
 -- ══════════════════════════════════════════════════════
 -- INITIAL MODEL
 -- ══════════════════════════════════════════════════════
 emptyModel : Model
 emptyModel =
-    { page = HomePage
-    , lang = "en"
-    , user = Nothing
-    , authError = ""
-    , products = []
-    , product = Nothing
-    , productImages = []
-    , search = ""
-    , categoryFilter = "all"
-    , sortBy = "newest"
-    , sortDir = "desc"
-    , cart = Nothing
-    , cartItems = []
-    , cartRemarks = ""
-    , checkoutUrl = ""
-    , orders = []
-    , order = Nothing
-    , orderItems = []
-    , editProductId = ""
-    , editTitle = ""
-    , editSummary = ""
-    , editCategory = "Miscellaneous"
-    , editPrice = 0
-    , editDiscount = 0
-    , editCurrency = "GBP"
-    , editStock = -1
-    , editPublished = False
-    , editImageData = ""
-    , adminOrders = []
-    , adminOrderFilter = "all"
-    , quantity = 1
-    , notification = ""
-    , notificationType = ""
-    , signOutPending = False
+    { page =
+        HomePage
+    , lang =
+        "en"
+    , user =
+        Nothing
+    , authError =
+        ""
+    , products =
+        []
+    , product =
+        Nothing
+    , productImages =
+        []
+    , search =
+        ""
+    , categoryFilter =
+        "all"
+    , sortBy =
+        "newest"
+    , sortDir =
+        "desc"
+    , cart =
+        Nothing
+    , cartItems =
+        []
+    , cartRemarks =
+        ""
+    , checkoutUrl =
+        ""
+    , orders =
+        []
+    , order =
+        Nothing
+    , orderItems =
+        []
+    , editProductId =
+        ""
+    , editTitle =
+        ""
+    , editSummary =
+        ""
+    , editCategory =
+        "Miscellaneous"
+    , editPrice =
+        0
+    , editDiscount =
+        0
+    , editCurrency =
+        "GBP"
+    , editStock =
+        -1
+    , editPublished =
+        False
+    , editImageData =
+        ""
+    , adminOrders =
+        []
+    , adminOrderFilter =
+        "all"
+    , quantity =
+        1
+    , notification =
+        ""
+    , notificationType =
+        ""
+    , signOutPending =
+        False
     }
+
 
 -- ══════════════════════════════════════════════════════
 -- CONSTANTS
@@ -159,6 +197,7 @@ allCategories =
     , "Wallet And Small Items"
     ]
 
+
 allCartStates =
     [ "ongoing"
     , "pending"
@@ -168,6 +207,7 @@ allCartStates =
     , "cancelled"
     , "refunded"
     ]
+
 
 allCurrencies =
     [ "GBP" , "HKD" , "USD" ]

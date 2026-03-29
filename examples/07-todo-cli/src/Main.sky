@@ -25,8 +25,9 @@ import Std.Log exposing (println)
 -- ============================================================
 initDb _ =
     Db.exec
-        "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
-        []
+     "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
+     []
+
 
 -- ============================================================
 -- Commands
@@ -34,130 +35,137 @@ initDb _ =
 addTodo title =
     let
         _ =
-            Db.exec "INSERT INTO todos (title) VALUES (?)" [ title ]
+            Db.exec  "INSERT INTO todos (title) VALUES (?)"  [ title ]
     in
-        Slog.info "Action" [ "Added:" , title ]
+        Slog.info  "Action"  [ "Added:" , title ]
+
 
 listTodos _ =
     let
         rows =
-            Result.withDefault []
-                (
-                Db.queryRows "SELECT id, title, done FROM todos ORDER BY id"
-                    []
-                )
+            Result.withDefault  []
+             (Db.queryRows  "SELECT id, title, done FROM todos ORDER BY id"  [])
     in
-        if List.isEmpty rows then
-            println "No todos yet. Add one with: ./app add \"My task\""
+        if List.isEmpty  rows then
+            println  "No todos yet. Add one with: ./app add \"My task\""
         else
             let
                 _ =
-                    println "Your TODOs:"
+                    println  "Your TODOs:"
                 _ =
-                    List.map (\row -> println (Todo.formatTodo row)) rows
+                    List.map  (\row -> println  (Todo.formatTodo  row))  rows
             in
-                println ""
+                println  ""
+
 
 markDone idStr =
     let
         id =
-            Db.parseInt idStr
+            Db.parseInt  idStr
         _ =
-            Db.exec "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
+            Db.exec  "UPDATE todos SET done = 1 WHERE id = ?"  [ id ]
     in
-        println "Marked as done:" idStr
+        println  "Marked as done:"  idStr
+
 
 markUndone idStr =
     let
         id =
-            Db.parseInt idStr
+            Db.parseInt  idStr
         _ =
-            Db.exec "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
+            Db.exec  "UPDATE todos SET done = 0 WHERE id = ?"  [ id ]
     in
-        println "Marked as not done:" idStr
+        println  "Marked as not done:"  idStr
+
 
 removeTodo idStr =
     let
         id =
-            Db.parseInt idStr
+            Db.parseInt  idStr
         _ =
-            Db.exec "DELETE FROM todos WHERE id = ?" [ id ]
+            Db.exec  "DELETE FROM todos WHERE id = ?"  [ id ]
     in
-        println "Removed todo:" idStr
+        println  "Removed todo:"  idStr
+
 
 clearDone _ =
     let
         _ =
-            Db.exec "DELETE FROM todos WHERE done = 1" []
+            Db.exec  "DELETE FROM todos WHERE done = 1"  []
     in
-        println "Cleared completed todos"
+        println  "Cleared completed todos"
+
 
 showUsage =
     let
         _ =
-            Slog.info "Sky TODO - A simple todo manager" []
+            Slog.info  "Sky TODO - A simple todo manager"  []
         _ =
-            println ""
+            println  ""
         _ =
-            println "Usage:"
+            println  "Usage:"
         _ =
-            println "  ./app add <title>     Add a new todo"
+            println  "  ./app add <title>     Add a new todo"
         _ =
-            println "  ./app list            List all todos"
+            println  "  ./app list            List all todos"
         _ =
-            println "  ./app done <id>       Mark a todo as done"
+            println  "  ./app done <id>       Mark a todo as done"
         _ =
-            println "  ./app undone <id>     Mark a todo as not done"
+            println  "  ./app undone <id>     Mark a todo as not done"
         _ =
-            println "  ./app remove <id>     Delete a todo"
+            println  "  ./app remove <id>     Delete a todo"
         _ =
-            println "  ./app clear           Remove all completed todos"
+            println  "  ./app clear           Remove all completed todos"
     in
-        println ""
+        println  ""
+
 
 -- ============================================================
 -- CLI dispatch
 -- ============================================================
 getArg args =
-    Maybe.withDefault "" (List.head args)
+    Maybe.withDefault  ""  (List.head  args)
+
 
 runCommand cmd arg =
     case cmd of
-        "add" ->
+        
+        ""add"" ->
             if arg == "" then
-                println "Usage: ./app add <title>"
+                println  "Usage: ./app add <title>"
             else
-                addTodo arg
-
-        "list" ->
-            listTodos ()
-
-        "done" ->
+                addTodo  arg
+        
+        ""list"" ->
+            listTodos  ()
+        
+        ""done"" ->
             if arg == "" then
-                println "Usage: ./app done <id>"
+                println  "Usage: ./app done <id>"
             else
-                markDone arg
-
-        "undone" ->
+                markDone  arg
+        
+        ""undone"" ->
             if arg == "" then
-                println "Usage: ./app undone <id>"
+                println  "Usage: ./app undone <id>"
             else
-                markUndone arg
-
-        "remove" ->
+                markUndone  arg
+        
+        ""remove"" ->
             if arg == "" then
-                println "Usage: ./app remove <id>"
+                println  "Usage: ./app remove <id>"
             else
-                removeTodo arg
-
-        "clear" ->
-            clearDone ()
-
-        "help" ->
+                removeTodo  arg
+        
+        ""clear"" ->
+            clearDone  ()
+        
+        ""help"" ->
             showUsage
-
+        
         _ ->
             showUsage
+
 
 -- ============================================================
 -- Main — dispatch command
@@ -165,12 +173,12 @@ runCommand cmd arg =
 main =
     let
         _ =
-            initDb ()
+            initDb  ()
         userArgs =
-            List.drop 1 (Os.args ())
+            List.drop  1  (Os.args  ())
         cmd =
-            getArg userArgs
+            getArg  userArgs
         arg =
-            getArg (List.drop 1 userArgs)
+            getArg  (List.drop  1  userArgs)
     in
-        runCommand cmd arg
+        runCommand  cmd  arg

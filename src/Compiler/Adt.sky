@@ -18,19 +18,16 @@ type alias RegisteredAdt =
 
 
 emptyRegistry : AdtRegistry
-
 emptyRegistry =
     Dict.empty
 
 
 lookupConstructor : String -> AdtRegistry -> Maybe Scheme
-
 lookupConstructor ctorName registry =
     lookupCtorInEntries  ctorName  (Dict.values  registry)
 
 
 lookupCtorInEntries : String -> (List RegisteredAdt) -> Maybe Scheme
-
 lookupCtorInEntries ctorName adts =
     case adts of
         
@@ -48,13 +45,11 @@ lookupCtorInEntries ctorName adts =
 
 
 lookupConstructorAdt : String -> AdtRegistry -> Maybe RegisteredAdt
-
 lookupConstructorAdt ctorName registry =
     lookupCtorAdtInEntries  ctorName  (Dict.values  registry)
 
 
 lookupCtorAdtInEntries : String -> (List RegisteredAdt) -> Maybe RegisteredAdt
-
 lookupCtorAdtInEntries ctorName adts =
     case adts of
         
@@ -72,13 +67,11 @@ lookupCtorAdtInEntries ctorName adts =
 
 
 registerAdts : (Ref.Ref Int) -> (List Declaration) -> ( AdtRegistry , Env.TypeEnv , List String )
-
 registerAdts counter decls =
     registerAdtsLoop  counter  decls  emptyRegistry  Env.empty  []
 
 
 registerAdtsLoop : (Ref.Ref Int) -> (List Declaration) -> AdtRegistry -> Env.TypeEnv -> (List String) -> ( AdtRegistry , Env.TypeEnv , List String )
-
 registerAdtsLoop counter decls registry env diagnostics =
     case decls of
         
@@ -103,7 +96,6 @@ registerAdtsLoop counter decls registry env diagnostics =
 
 
 registerOneAdt : (Ref.Ref Int) -> String -> (List String) -> (List TypeVariant) -> AdtRegistry -> Env.TypeEnv -> ( AdtRegistry , Env.TypeEnv , List String )
-
 registerOneAdt counter typeName typeParams variants registry env =
     let
         arity =
@@ -135,7 +127,6 @@ registerOneAdt counter typeName typeParams variants registry env =
 
 
 buildConstructorScheme : (Ref.Ref Int) -> String -> (List String) -> TypeVariant -> Scheme
-
 buildConstructorScheme counter typeName typeParams variant =
     let
         paramVars =
@@ -158,7 +149,6 @@ buildConstructorScheme counter typeName typeParams variant =
 
 
 buildParamMap : (List String) -> (List Type) -> (Dict.Dict String Type) -> Dict.Dict String Type
-
 buildParamMap names vars acc =
     case names of
         
@@ -177,7 +167,6 @@ buildParamMap names vars acc =
 
 
 buildFunType : (List Type) -> Type -> Type
-
 buildFunType args result =
     case args of
         
@@ -189,7 +178,6 @@ buildFunType args result =
 
 
 getVarId : Type -> Maybe Int
-
 getVarId t =
     case t of
         
@@ -201,20 +189,19 @@ getVarId t =
 
 
 resolveTypeExpr : (Dict.Dict String Type) -> TypeExpr -> Type
-
 resolveTypeExpr paramMap texpr =
     case texpr of
-
+        
         TypeRef parts args _ ->
             resolveTypeRef  paramMap  parts  args
-
+        
         TypeVar name _ ->
             resolveTypeVarExpr  paramMap  name
-
+        
         FunType fromT toT _ ->
             TFun  (resolveTypeExpr  paramMap  fromT)
              (resolveTypeExpr  paramMap  toT)
-
+        
         RecordTypeExpr fields _ ->
             let
                 fieldDict =
@@ -229,19 +216,18 @@ resolveTypeExpr paramMap texpr =
                      fields
             in
                 TRecord  fieldDict
-
+        
         TupleTypeExpr items _ ->
             TTuple  (List.map  (resolveTypeExpr  paramMap)  items)
-
+        
         UnitTypeExpr _ ->
             TConst  "Unit"
-
+        
         _ ->
             TConst  "Any"
 
 
 resolveTypeRef : (Dict.Dict String Type) -> (List String) -> (List TypeExpr) -> Type
-
 resolveTypeRef paramMap parts args =
     let
         name =
@@ -250,10 +236,10 @@ resolveTypeRef paramMap parts args =
             List.map  (resolveTypeExpr  paramMap)  args
     in
         case Dict.get  name  paramMap of
-
+            
             Just tv ->
                 tv
-
+            
             Nothing ->
                 if List.isEmpty  resolvedArgs then
                     TConst  name
@@ -262,12 +248,11 @@ resolveTypeRef paramMap parts args =
 
 
 resolveTypeVarExpr : (Dict.Dict String Type) -> String -> Type
-
 resolveTypeVarExpr paramMap name =
     case Dict.get  name  paramMap of
-
+        
         Just tv ->
             tv
-
+        
         Nothing ->
             TVar  0  (Just  name)

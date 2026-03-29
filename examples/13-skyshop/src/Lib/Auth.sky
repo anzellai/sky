@@ -17,7 +17,8 @@ import Lib.Db as Db
 import Os
 
 ctx =
-    Context.background ()
+    Context.background  ()
+
 
 adminEmails =
     let
@@ -27,10 +28,12 @@ adminEmails =
         if envAdmins == "" then
             [ "admin@example.com" ]
         else
-            String.split "," envAdmins
+            String.split  ","  envAdmins
+
 
 isAdmin user =
-    Db.getBool "is_admin" user
+    Db.getBool  "is_admin"  user
+
 
 -- ══════════════════════════════════════════════════════
 -- FIREBASE AUTH CLIENT (lazy — initialised on first use,
@@ -39,76 +42,85 @@ isAdmin user =
 getAuthClient _ =
     let
         credFile =
-            Result.withDefault  ""  (Os.getenv  "GOOGLE_APPLICATION_CREDENTIALS")
+            Result.withDefault  ""
+             (Os.getenv  "GOOGLE_APPLICATION_CREDENTIALS")
         opts =
             if credFile == "" then
                 []
             else
-                [ Option.withCredentialsFile credFile ]
+                [ Option.withCredentialsFile  credFile ]
         appResult =
-            Firebase.newApp ctx (js "nil") opts
+            Firebase.newApp  ctx  (js  "nil")  opts
     in
         case appResult of
+            
             Ok app_ ->
-                Firebase.appAuth app_ ctx
+                Firebase.appAuth  app_  ctx
             
             Err e ->
-                Err e
+                Err  e
+
 
 -- ══════════════════════════════════════════════════════
 -- VERIFY TOKEN
 -- ══════════════════════════════════════════════════════
 claimString key claims =
-    case Dict.get key claims of
+    case Dict.get  key  claims of
+        
         Just val ->
-            Fmt.sprint [ val ]
+            Fmt.sprint  [ val ]
         
         Nothing ->
             ""
 
+
 verifyToken idToken =
-    case getAuthClient () of
+    case getAuthClient  () of
+        
         Ok client ->
-            case FirebaseAuth.clientVerifyIDToken client ctx idToken of
+            case FirebaseAuth.clientVerifyIDToken  client  ctx  idToken of
+                
                 Ok token ->
                     let
                         uid =
-                            FirebaseAuth.tokenUID token
+                            FirebaseAuth.tokenUID  token
                         claims =
-                            FirebaseAuth.tokenClaims token
+                            FirebaseAuth.tokenClaims  token
                         email =
-                            claimString "email" claims
+                            claimString  "email"  claims
                         name =
-                            claimString "name" claims
+                            claimString  "name"  claims
                         _ =
                             println
-                                (
-                                "[AUTH] Firebase token verified for: " ++
-                                email ++ " (uid: " ++ uid ++ ")"
-                                )
+                             (
+                            "[AUTH] Firebase token verified for: " ++
+                            email ++ " (uid: " ++ uid ++ ")"
+                            )
                     in
-                        findOrCreateUser uid email name
+                        findOrCreateUser  uid  email  name
                 
                 Err e ->
                     let
                         _ =
                             println
-                                (
-                                "[AUTH] Firebase token verification failed: " ++
-                                errorToString e
-                                )
+                             (
+                            "[AUTH] Firebase token verification failed: " ++
+                            errorToString  e
+                            )
                     in
-                        Err "Authentication failed. Please try again."
-        
-        Err e ->
-            let
-                _ =
-                    println
-                        (
-                        "[AUTH] Firebase auth client error: " ++ errorToString e
-                        )
-            in
-                Err "Authentication service unavailable."
+                        Err  "Authentication failed. Please try again."
+                
+                Err e ->
+                    let
+                        _ =
+                            println
+                             (
+                            "[AUTH] Firebase auth client error: " ++
+                            errorToString  e
+                            )
+                    in
+                        Err  "Authentication service unavailable."
+
 
 -- Idempotent upsert using firebase_uid as document ID.
 -- Concurrent calls from onAuthStateChanged can never create duplicates
@@ -117,53 +129,53 @@ verifyToken idToken =
 findOrCreateUser uid email name =
     let
         isAdminUser =
-            List.member email adminEmails
+            List.member  email  adminEmails
         adminStr =
             if isAdminUser then
                 "true"
             else
                 "false"
-
         -- Set with merge: updates email/name/admin but preserves
         -- existing fields (phone, address) from previous writes.
         upsertData =
             Dict.fromList
-                [ ( "id" , uid )
-                , ( "firebase_uid" , uid )
-                , ( "email" , email )
-                , ( "name" , name )
-                , ( "is_admin" , Db.boolVal isAdminUser )
-                ]
+             [ ( "id" , uid )
+            , ( "firebase_uid" , uid )
+            , ( "email" , email )
+            , ( "name" , name )
+            , ( "is_admin" , Db.boolVal  isAdminUser )
+            ]
         _ =
-            Db.setDoc "users" uid upsertData
-
+            Db.setDoc  "users"  uid  upsertData
         -- Read back full document (includes address fields etc.)
         result =
-            Db.getDoc "users" uid
+            Db.getDoc  "users"  uid
     in
         case result of
+            
             Ok maybeUser ->
                 case maybeUser of
+                    
                     Just user ->
-                        if Db.getBool "suspended" user then
-                            Err "Account suspended. Please contact support."
+                        if Db.getBool  "suspended"  user then
+                            Err  "Account suspended. Please contact support."
                         else
                             let
                                 _ =
                                     println
-                                        (
-                                        "[AUTH] Signed in: " ++
-                                        email ++
-                                        " (admin: " ++ adminStr ++ ")"
-                                        )
+                                     (
+                                    "[AUTH] Signed in: " ++
+                                    email ++ " (admin: " ++ adminStr ++ ")"
+                                    )
                             in
-                                Ok user
-
+                                Ok  user
+                    
                     Nothing ->
-                        Err "Failed to load user profile."
+                        Err  "Failed to load user profile."
+                    
+                    Err e ->
+                        Err  e
 
-            Err e ->
-                Err e
 
 -- ══════════════════════════════════════════════════════
 -- SESSION
@@ -171,15 +183,18 @@ findOrCreateUser uid email name =
 signOut =
     let
         _ =
-            println "[AUTH] User signed out"
+            println  "[AUTH] User signed out"
     in
         ()
 
+
 getUserById userId =
-    Db.getDoc "users" userId
+    Db.getDoc  "users"  userId
+
 
 getSessionUser userId =
-    case getUserById userId of
+    case getUserById  userId of
+        
         Ok maybeUser ->
             maybeUser
         

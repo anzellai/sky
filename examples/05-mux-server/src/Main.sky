@@ -7,31 +7,30 @@ import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
 import Io
 
-
 writeResponse w text =
-    Task.perform (Io.writeString w text)
+    Task.perform  (Io.writeString  w  text)
 
 
 indexHandler w _ =
-    writeResponse w "Welcome to Sky Mux Server!"
+    writeResponse  w  "Welcome to Sky Mux Server!"
 
 
 echoHandler w req =
-    writeResponse w "echo received"
+    writeResponse  w  "echo received"
 
 
 pingHandler w _ =
-    writeResponse w "pong"
+    writeResponse  w  "pong"
 
 
 setupRoutes router =
     let
         _ =
-            Task.perform (Mux.routerHandleFunc router "/" indexHandler)
+            Task.perform  (Mux.routerHandleFunc  router  "/"  indexHandler)
         _ =
-            Task.perform (Mux.routerHandleFunc router "/echo" echoHandler)
+            Task.perform  (Mux.routerHandleFunc  router  "/echo"  echoHandler)
         _ =
-            Task.perform (Mux.routerHandleFunc router "/ping" pingHandler)
+            Task.perform  (Mux.routerHandleFunc  router  "/ping"  pingHandler)
     in
         router
 
@@ -39,15 +38,12 @@ setupRoutes router =
 startServer router =
     let
         _ =
-            println "Server starting on port 4000"
+            println  "Server starting on port 4000"
     in
-        Http.listenAndServe ":4000" router
+        Http.listenAndServe  ":4000"  router
 
 
 main =
-    Mux.newRouter ()
-        |> Task.andThen
-            (\router ->
-                startServer (setupRoutes router)
-            )
+    Mux.newRouter  ()
+        |> Task.andThen  (\router -> startServer  (setupRoutes  router))
         |> Task.perform

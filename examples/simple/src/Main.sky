@@ -7,15 +7,16 @@ import Std.Log exposing (println)
 main =
     let
         resp =
-            Http.get "http://localhost:3000"
+            Http.get  "http://localhost:3000"
     in
         case resp of
+            
             Ok r ->
                 let
                     status =
-                        Http.responseStatus r
+                        Http.responseStatus  r
                 in
-                    println "OK" status
+                    println  "OK"  status
             
             Err err ->
-                println "Error" err
+                println  "Error"  err
