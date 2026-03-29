@@ -1,4 +1,4 @@
-module Compiler.Pipeline exposing (compile, compileProject)
+module Compiler.Pipeline exposing (compile, compileProject, buildCheckEnv)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
@@ -100,6 +100,47 @@ compile filePath outDir =
                                     compileSource  filePath  outDir  source
 
 
+buildCheckEnv : String -> Ast.Module -> Env.TypeEnv
+
+buildCheckEnv entryFilePath mod =
+    let
+        srcRoot =
+            dirOfPath  entryFilePath
+        localImports =
+            List.filter
+             (
+            \imp -> not  (Resolver.isStdlib  (String.join  "."  imp.moduleName))
+            )
+             mod.imports
+        localModules =
+            loadLocalModules  srcRoot  localImports  []
+        entryFfiRaw =
+            loadFfiForTypeCheck  srcRoot  localImports
+        depFfiRaw =
+            List.concatMap
+             (
+            \pair ->
+                let
+                    depMod =
+                        snd  pair
+                in
+                    loadFfiForTypeCheck  srcRoot  depMod.imports
+            )
+             localModules
+        allFfiRaw =
+            List.append  entryFfiRaw  depFfiRaw
+        ffiRawModules =
+            deduplicateFfiModules  allFfiRaw  []
+        typeCheckModules =
+            List.append  localModules  ffiRawModules
+        stdlibEnv =
+            Resolver.buildStdlibEnv
+        depTypeEnv =
+            Resolver.buildDepTypeEnv  mod.imports  typeCheckModules
+    in
+        Env.union  depTypeEnv  stdlibEnv
+
+
 compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
 
 compileMultiModule entryPath outDir srcRoot entryMod =
@@ -131,6 +172,25 @@ compileMultiModule entryPath outDir srcRoot entryMod =
             deduplicateFfiModules  allFfiModules  []
         loadedModules =
             List.append  localModules  ffiModules
+        entryFfiRaw =
+            loadFfiForTypeCheck  srcRoot  localImports
+        depFfiRaw =
+            List.concatMap
+             (
+            \pair ->
+                let
+                    mod =
+                        snd  pair
+                in
+                    loadFfiForTypeCheck  srcRoot  mod.imports
+            )
+             localModules
+        allFfiRaw =
+            List.append  entryFfiRaw  depFfiRaw
+        ffiRawModules =
+            deduplicateFfiModules  allFfiRaw  []
+        typeCheckModules =
+            List.append  localModules  ffiRawModules
         _ =
             println
              (
@@ -143,14 +203,19 @@ compileMultiModule entryPath outDir srcRoot entryMod =
             buildAliasMap  entryMod.imports
         stdlibEnv =
             Resolver.buildStdlibEnv
+        depTypeEnv =
+            Resolver.buildDepTypeEnv  entryMod.imports  typeCheckModules
+        combinedEnv =
+            Env.union  depTypeEnv  stdlibEnv
         depDecls =
-            List.concatMap  (compileDependencyModule  stdlibEnv  loadedModules)
+            List.concatMap
+             (compileDependencyModule  combinedEnv  loadedModules)
              loadedModules
         projectRoot =
             dirOfPath  srcRoot
     in
         compileMultiModuleEntry  outDir  projectRoot  entryMod  aliasMap
-         stdlibEnv
+         combinedEnv
          depDecls
          loadedModules
 
@@ -1184,6 +1249,48 @@ skydepSrcRoot srcRoot modName =
             
             Err _ ->
                 srcRoot
+
+
+loadFfiForTypeCheck : String -> (List Ast.ImportDecl) -> List ( String , Ast.Module )
+
+loadFfiForTypeCheck srcRoot imports =
+    List.filterMap  (\imp -> loadOneFfiRaw  srcRoot  imp)
+     (deduplicateFfiImports  imports  Dict.empty)
+
+
+loadOneFfiRaw : String -> Ast.ImportDecl -> Maybe ( String , Ast.Module )
+
+loadOneFfiRaw srcRoot imp =
+    let
+        modName =
+            String.join  "."  imp.moduleName
+    in
+        if Resolver.isStdlib  modName || imp.alias_ == "_" then
+            Nothing
+        else
+            let
+                projectRoot =
+                    dirOfPath  srcRoot
+                skyiPath =
+                    Resolver.resolveBindingPath  projectRoot  modName
+            in
+                case File.readFile  skyiPath of
+                    
+                    Ok skyiSource ->
+                        let
+                            lexResult =
+                                Lexer.lex  skyiSource
+                        in
+                            case Parser.parse  lexResult.tokens of
+                                
+                                Ok skyiMod ->
+                                    Just  ( modName , skyiMod )
+                                
+                                Err _ ->
+                                    Nothing
+                                
+                                Err _ ->
+                                    Nothing
 
 
 loadFfiBindings : String -> (List Ast.ImportDecl) -> List ( String , Ast.Module )

@@ -679,6 +679,46 @@ var CheckModulesLoop = Compiler_Resolver_CheckModulesLoop
 
 var BuildStdlibEnv = Compiler_Resolver_BuildStdlibEnv
 
+var BuildDepTypeEnv = Compiler_Resolver_BuildDepTypeEnv
+
+var BuildDepTypeEnvLoop = Compiler_Resolver_BuildDepTypeEnvLoop
+
+var AddOneModuleTypes = Compiler_Resolver_AddOneModuleTypes
+
+var AddOneModuleTypesInner = Compiler_Resolver_AddOneModuleTypesInner
+
+var FindImportAlias = Compiler_Resolver_FindImportAlias
+
+var ComputeAlias = Compiler_Resolver_ComputeAlias
+
+var LastPart = Compiler_Resolver_LastPart
+
+var FindExposedNames = Compiler_Resolver_FindExposedNames
+
+var GetExposedList = Compiler_Resolver_GetExposedList
+
+var CollectModuleAnnotations = Compiler_Resolver_CollectModuleAnnotations
+
+var CollectModuleAnnotationsLoop = Compiler_Resolver_CollectModuleAnnotationsLoop
+
+var CollectOneAnnotation = Compiler_Resolver_CollectOneAnnotation
+
+var AddAnnotationsToEnv = Compiler_Resolver_AddAnnotationsToEnv
+
+var AddOneAnnotation = Compiler_Resolver_AddOneAnnotation
+
+var AddOneAnnotationInner = Compiler_Resolver_AddOneAnnotationInner
+
+var IsExposed = Compiler_Resolver_IsExposed
+
+var TypeExprToScheme = Compiler_Resolver_TypeExprToScheme
+
+var BuildParamMap = Compiler_Resolver_BuildParamMap
+
+var AssignVarIds = Compiler_Resolver_AssignVarIds
+
+var CollectTypeVarNames = Compiler_Resolver_CollectTypeVarNames
+
 var IsFfiBinding = Compiler_Resolver_IsFfiBinding
 
 var ModuleNameToGoPath = Compiler_Resolver_ModuleNameToGoPath
@@ -1141,6 +1181,14 @@ var formatType = Compiler_Types_FormatType
 
 var FormatType = Compiler_Types_FormatType
 
+var formatVarName = Compiler_Types_FormatVarName
+
+var FormatVarName = Compiler_Types_FormatVarName
+
+var formatFunFrom = Compiler_Types_FormatFunFrom
+
+var FormatFunFrom = Compiler_Types_FormatFunFrom
+
 var empty = Compiler_Env_Empty()
 
 var Empty = Compiler_Env_Empty()
@@ -1249,6 +1297,64 @@ var checkExprExhaustiveness = Compiler_Checker_CheckExprExhaustiveness
 
 var CheckExprExhaustiveness = Compiler_Checker_CheckExprExhaustiveness
 
+var emptyRegistry = Compiler_Adt_EmptyRegistry()
+
+var EmptyRegistry = Compiler_Adt_EmptyRegistry()
+
+var lookupConstructor = Compiler_Adt_LookupConstructor
+
+var LookupConstructor = Compiler_Adt_LookupConstructor
+
+var lookupCtorInEntries = Compiler_Adt_LookupCtorInEntries
+
+var LookupCtorInEntries = Compiler_Adt_LookupCtorInEntries
+
+var lookupConstructorAdt = Compiler_Adt_LookupConstructorAdt
+
+var LookupConstructorAdt = Compiler_Adt_LookupConstructorAdt
+
+var lookupCtorAdtInEntries = Compiler_Adt_LookupCtorAdtInEntries
+
+var LookupCtorAdtInEntries = Compiler_Adt_LookupCtorAdtInEntries
+
+var registerAdts = Compiler_Adt_RegisterAdts
+
+var RegisterAdts = Compiler_Adt_RegisterAdts
+
+var registerAdtsLoop = Compiler_Adt_RegisterAdtsLoop
+
+var RegisterAdtsLoop = Compiler_Adt_RegisterAdtsLoop
+
+var registerOneAdt = Compiler_Adt_RegisterOneAdt
+
+var RegisterOneAdt = Compiler_Adt_RegisterOneAdt
+
+var buildConstructorScheme = Compiler_Adt_BuildConstructorScheme
+
+var BuildConstructorScheme = Compiler_Adt_BuildConstructorScheme
+
+var buildParamMap = Compiler_Adt_BuildParamMap
+
+var buildFunType = Compiler_Adt_BuildFunType
+
+var BuildFunType = Compiler_Adt_BuildFunType
+
+var getVarId = Compiler_Adt_GetVarId
+
+var GetVarId = Compiler_Adt_GetVarId
+
+var resolveTypeExpr = Compiler_Adt_ResolveTypeExpr
+
+var ResolveTypeExpr = Compiler_Adt_ResolveTypeExpr
+
+var resolveTypeRef = Compiler_Adt_ResolveTypeRef
+
+var ResolveTypeRef = Compiler_Adt_ResolveTypeRef
+
+var resolveTypeVarExpr = Compiler_Adt_ResolveTypeVarExpr
+
+var ResolveTypeVarExpr = Compiler_Adt_ResolveTypeVarExpr
+
 func Compiler_Resolver_ResolveProject(entryPath any, srcRoot any) any {
 	return func() any { return func() any { __subject := sky_fileRead(entryPath); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(sky_concat("Cannot read entry file: ", sky_concat(entryPath, sky_concat(" (", sky_concat(e, ")"))))) };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(sky_concat("Parse error in ", sky_concat(entryPath, sky_concat(": ", e)))) };  if sky_asSkyResult(__subject).SkyName == "Ok" { entryMod := sky_asSkyResult(__subject).OkValue; _ = entryMod; return func() any { entryName := sky_call(sky_stringJoin("."), sky_asMap(entryMod)["name"]); _ = entryName; entryLoaded := map[string]any{"name": entryName, "qualifiedName": sky_asMap(entryMod)["name"], "filePath": entryPath, "ast": entryMod, "checkResult": SkyNothing()}; _ = entryLoaded; resolveResult := Compiler_Resolver_ResolveImports(srcRoot, sky_asMap(entryMod)["imports"], []any{entryLoaded}, sky_setEmpty(), []any{}); _ = resolveResult; allModules := sky_fst(resolveResult); _ = allModules; diags := sky_snd(resolveResult); _ = diags; order := sky_call(sky_listMap(func(m any) any { return sky_asMap(m)["name"] }), sky_listReverse(allModules)); _ = order; return SkyOk(map[string]any{"modules": sky_listReverse(allModules), "order": order, "diagnostics": diags}) }() };  return nil }() }() }() };  return nil }() }()
 }
@@ -1291,6 +1397,86 @@ func Compiler_Resolver_CheckModulesLoop(modules any, importedEnv any, diagnostic
 
 func Compiler_Resolver_BuildStdlibEnv() any {
 	return func() any { prelude := Compiler_Env_CreatePreludeEnv(); _ = prelude; stdFunctions := sky_dictFromList([]any{SkyTuple2{V0: "String.toUpper", V1: mono(TFun(TConst("String"), TConst("String")))}, SkyTuple2{V0: "String.toLower", V1: mono(TFun(TConst("String"), TConst("String")))}, SkyTuple2{V0: "String.length", V1: mono(TFun(TConst("String"), TConst("Int")))}, SkyTuple2{V0: "String.fromInt", V1: mono(TFun(TConst("Int"), TConst("String")))}, SkyTuple2{V0: "String.fromFloat", V1: mono(TFun(TConst("Float"), TConst("String")))}, SkyTuple2{V0: "String.join", V1: mono(TFun(TConst("String"), TFun(TApp(TConst("List"), []any{TConst("String")}), TConst("String"))))}, SkyTuple2{V0: "String.split", V1: mono(TFun(TConst("String"), TFun(TConst("String"), TApp(TConst("List"), []any{TConst("String")}))))}, SkyTuple2{V0: "String.contains", V1: mono(TFun(TConst("String"), TFun(TConst("String"), TConst("Bool"))))}, SkyTuple2{V0: "String.startsWith", V1: mono(TFun(TConst("String"), TFun(TConst("String"), TConst("Bool"))))}, SkyTuple2{V0: "String.trim", V1: mono(TFun(TConst("String"), TConst("String")))}, SkyTuple2{V0: "String.isEmpty", V1: mono(TFun(TConst("String"), TConst("Bool")))}, SkyTuple2{V0: "String.slice", V1: mono(TFun(TConst("Int"), TFun(TConst("Int"), TFun(TConst("String"), TConst("String")))))}, SkyTuple2{V0: "String.append", V1: mono(TFun(TConst("String"), TFun(TConst("String"), TConst("String"))))}, SkyTuple2{V0: "List.map", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TVar(1, SkyJust("b"))), TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TApp(TConst("List"), []any{TVar(1, SkyJust("b"))})))}}, SkyTuple2{V0: "List.filter", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TConst("Bool")), TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TApp(TConst("List"), []any{TVar(0, SkyJust("a"))})))}}, SkyTuple2{V0: "List.foldl", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TFun(TVar(1, SkyJust("b")), TVar(1, SkyJust("b")))), TFun(TVar(1, SkyJust("b")), TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TVar(1, SkyJust("b")))))}}, SkyTuple2{V0: "List.foldr", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TFun(TVar(1, SkyJust("b")), TVar(1, SkyJust("b")))), TFun(TVar(1, SkyJust("b")), TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TVar(1, SkyJust("b")))))}}, SkyTuple2{V0: "List.head", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TApp(TConst("Maybe"), []any{TVar(0, SkyJust("a"))}))}}, SkyTuple2{V0: "List.length", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TConst("Int"))}}, SkyTuple2{V0: "List.reverse", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}))}}, SkyTuple2{V0: "List.isEmpty", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TConst("Bool"))}}, SkyTuple2{V0: "List.append", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TApp(TConst("List"), []any{TVar(0, SkyJust("a"))})))}}, SkyTuple2{V0: "List.concatMap", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TApp(TConst("List"), []any{TVar(1, SkyJust("b"))})), TFun(TApp(TConst("List"), []any{TVar(0, SkyJust("a"))}), TApp(TConst("List"), []any{TVar(1, SkyJust("b"))})))}}, SkyTuple2{V0: "Dict.empty", V1: map[string]any{"quantified": []any{0, 1}, "type_": TApp(TConst("Dict"), []any{TVar(0, SkyJust("k")), TVar(1, SkyJust("v"))})}}, SkyTuple2{V0: "Dict.insert", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TVar(0, SkyJust("k")), TFun(TVar(1, SkyJust("v")), TFun(TApp(TConst("Dict"), []any{TVar(0, SkyJust("k")), TVar(1, SkyJust("v"))}), TApp(TConst("Dict"), []any{TVar(0, SkyJust("k")), TVar(1, SkyJust("v"))}))))}}, SkyTuple2{V0: "Dict.get", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TVar(0, SkyJust("k")), TFun(TApp(TConst("Dict"), []any{TVar(0, SkyJust("k")), TVar(1, SkyJust("v"))}), TApp(TConst("Maybe"), []any{TVar(1, SkyJust("v"))})))}}, SkyTuple2{V0: "Log.println", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TConst("String"), TFun(TVar(0, SkyJust("a")), TConst("Unit")))}}, SkyTuple2{V0: "println", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TConst("String"), TFun(TVar(0, SkyJust("a")), TConst("Unit")))}}, SkyTuple2{V0: "Process.exit", V1: mono(TFun(TConst("Int"), TConst("Unit")))}, SkyTuple2{V0: "File.readFile", V1: mono(TFun(TConst("String"), TApp(TConst("Result"), []any{TConst("String"), TConst("String")})))}, SkyTuple2{V0: "File.writeFile", V1: mono(TFun(TConst("String"), TFun(TConst("String"), TApp(TConst("Result"), []any{TConst("String"), TConst("Unit")}))))}, SkyTuple2{V0: "File.mkdirAll", V1: mono(TFun(TConst("String"), TApp(TConst("Result"), []any{TConst("String"), TConst("Unit")})))}, SkyTuple2{V0: "Args.getArgs", V1: mono(TFun(TConst("Unit"), TApp(TConst("List"), []any{TConst("String")})))}, SkyTuple2{V0: "Args.getArg", V1: mono(TFun(TConst("Int"), TApp(TConst("Maybe"), []any{TConst("String")})))}, SkyTuple2{V0: "Ref.new", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TVar(0, SkyJust("a")), TApp(TConst("Ref"), []any{TVar(0, SkyJust("a"))}))}}, SkyTuple2{V0: "Ref.get", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TApp(TConst("Ref"), []any{TVar(0, SkyJust("a"))}), TVar(0, SkyJust("a")))}}, SkyTuple2{V0: "Ref.set", V1: map[string]any{"quantified": []any{0}, "type_": TFun(TVar(0, SkyJust("a")), TFun(TApp(TConst("Ref"), []any{TVar(0, SkyJust("a"))}), TConst("Unit")))}}, SkyTuple2{V0: "Task.succeed", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TVar(0, SkyJust("a")), TApp(TConst("Task"), []any{TVar(1, SkyJust("err")), TVar(0, SkyJust("a"))}))}}, SkyTuple2{V0: "Task.fail", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TVar(0, SkyJust("err")), TApp(TConst("Task"), []any{TVar(0, SkyJust("err")), TVar(1, SkyJust("a"))}))}}, SkyTuple2{V0: "Task.andThen", V1: map[string]any{"quantified": []any{0, 1, 2}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TApp(TConst("Task"), []any{TVar(2, SkyJust("err")), TVar(1, SkyJust("b"))})), TFun(TApp(TConst("Task"), []any{TVar(2, SkyJust("err")), TVar(0, SkyJust("a"))}), TApp(TConst("Task"), []any{TVar(2, SkyJust("err")), TVar(1, SkyJust("b"))})))}}, SkyTuple2{V0: "Task.map", V1: map[string]any{"quantified": []any{0, 1, 2}, "type_": TFun(TFun(TVar(0, SkyJust("a")), TVar(1, SkyJust("b"))), TFun(TApp(TConst("Task"), []any{TVar(2, SkyJust("err")), TVar(0, SkyJust("a"))}), TApp(TConst("Task"), []any{TVar(2, SkyJust("err")), TVar(1, SkyJust("b"))})))}}, SkyTuple2{V0: "Task.perform", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TApp(TConst("Task"), []any{TVar(0, SkyJust("err")), TVar(1, SkyJust("a"))}), TApp(TConst("Result"), []any{TVar(0, SkyJust("err")), TVar(1, SkyJust("a"))}))}}, SkyTuple2{V0: "Task.sequence", V1: map[string]any{"quantified": []any{0, 1}, "type_": TFun(TApp(TConst("List"), []any{TApp(TConst("Task"), []any{TVar(0, SkyJust("err")), TVar(1, SkyJust("a"))})}), TApp(TConst("Task"), []any{TVar(0, SkyJust("err")), TApp(TConst("List"), []any{TVar(1, SkyJust("a"))})}))}}}); _ = stdFunctions; return Compiler_Env_Union(stdFunctions, prelude) }()
+}
+
+func Compiler_Resolver_BuildDepTypeEnv(entryImports any, loadedModules any) any {
+	return Compiler_Resolver_BuildDepTypeEnvLoop(entryImports, loadedModules, Compiler_Env_Empty())
+}
+
+func Compiler_Resolver_BuildDepTypeEnvLoop(entryImports any, modules any, env any) any {
+	return func() any { return func() any { __subject := modules; if len(sky_asList(__subject)) == 0 { return env };  if len(sky_asList(__subject)) > 0 { pair := sky_asList(__subject)[0]; _ = pair; rest := sky_asList(__subject)[1:]; _ = rest; return Compiler_Resolver_BuildDepTypeEnvLoop(entryImports, rest, Compiler_Resolver_AddOneModuleTypes(entryImports, pair, env)) };  return nil }() }()
+}
+
+func Compiler_Resolver_AddOneModuleTypes(entryImports any, pair any, env any) any {
+	return Compiler_Resolver_AddOneModuleTypesInner(entryImports, sky_fst(pair), sky_snd(pair), env)
+}
+
+func Compiler_Resolver_AddOneModuleTypesInner(entryImports any, modName any, mod any, env any) any {
+	return Compiler_Resolver_AddAnnotationsToEnv(Compiler_Resolver_FindImportAlias(entryImports, modName), Compiler_Resolver_FindExposedNames(entryImports, modName), Compiler_Resolver_CollectModuleAnnotations(sky_asMap(mod)["declarations"]), env)
+}
+
+func Compiler_Resolver_FindImportAlias(imports any, modName any) any {
+	return func() any { return func() any { __subject := imports; if len(sky_asList(__subject)) == 0 { return Compiler_Resolver_LastPart(modName) };  if len(sky_asList(__subject)) > 0 { imp := sky_asList(__subject)[0]; _ = imp; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { name := sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]); _ = name; return func() any { if sky_asBool(sky_equal(name, modName)) { return Compiler_Resolver_ComputeAlias(imp) }; return Compiler_Resolver_FindImportAlias(rest, modName) }() }() };  return nil }() }()
+}
+
+func Compiler_Resolver_ComputeAlias(imp any) any {
+	return func() any { if sky_asBool(sky_stringIsEmpty(sky_asMap(imp)["alias_"])) { return func() any { return func() any { __subject := sky_listReverse(sky_asMap(imp)["moduleName"]); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }() }; return sky_asMap(imp)["alias_"] }()
+}
+
+func Compiler_Resolver_LastPart(modName any) any {
+	return func() any { return func() any { __subject := sky_listReverse(sky_call(sky_stringSplit("."), modName)); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return modName };  return nil }() }()
+}
+
+func Compiler_Resolver_FindExposedNames(imports any, modName any) any {
+	return func() any { return func() any { __subject := imports; if len(sky_asList(__subject)) == 0 { return []any{} };  if len(sky_asList(__subject)) > 0 { imp := sky_asList(__subject)[0]; _ = imp; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { name := sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]); _ = name; return func() any { if sky_asBool(sky_equal(name, modName)) { return Compiler_Resolver_GetExposedList(sky_asMap(imp)["exposing_"]) }; return Compiler_Resolver_FindExposedNames(rest, modName) }() }() };  return nil }() }()
+}
+
+func Compiler_Resolver_GetExposedList(clause any) any {
+	return func() any { return func() any { __subject := clause; if sky_asMap(__subject)["SkyName"] == "ExposeAll" { return []any{"*"} };  if sky_asMap(__subject)["SkyName"] == "ExposeList" { names := sky_asMap(__subject)["V0"]; _ = names; return names };  if sky_asMap(__subject)["SkyName"] == "ExposeNone" { return []any{} };  return nil }() }()
+}
+
+func Compiler_Resolver_CollectModuleAnnotations(decls any) any {
+	return Compiler_Resolver_CollectModuleAnnotationsLoop(decls, []any{})
+}
+
+func Compiler_Resolver_CollectModuleAnnotationsLoop(decls any, acc any) any {
+	return func() any { return func() any { __subject := decls; if len(sky_asList(__subject)) == 0 { return sky_listReverse(acc) };  if len(sky_asList(__subject)) > 0 { decl := sky_asList(__subject)[0]; _ = decl; rest := sky_asList(__subject)[1:]; _ = rest; return Compiler_Resolver_CollectModuleAnnotationsLoop(rest, Compiler_Resolver_CollectOneAnnotation(decl, acc)) };  return nil }() }()
+}
+
+func Compiler_Resolver_CollectOneAnnotation(decl any, acc any) any {
+	return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "TypeAnnotDecl" { name := sky_asMap(__subject)["V0"]; _ = name; typeExpr := sky_asMap(__subject)["V1"]; _ = typeExpr; return append([]any{SkyTuple2{V0: name, V1: typeExpr}}, sky_asList(acc)...) };  if true { return acc };  return nil }() }()
+}
+
+func Compiler_Resolver_AddAnnotationsToEnv(qualPrefix any, exposed any, annotations any, env any) any {
+	return func() any { return func() any { __subject := annotations; if len(sky_asList(__subject)) == 0 { return env };  if len(sky_asList(__subject)) > 0 { ann := sky_asList(__subject)[0]; _ = ann; rest := sky_asList(__subject)[1:]; _ = rest; return Compiler_Resolver_AddAnnotationsToEnv(qualPrefix, exposed, rest, Compiler_Resolver_AddOneAnnotation(qualPrefix, exposed, ann, env)) };  return nil }() }()
+}
+
+func Compiler_Resolver_AddOneAnnotation(qualPrefix any, exposed any, ann any, env any) any {
+	return Compiler_Resolver_AddOneAnnotationInner(qualPrefix, exposed, sky_fst(ann), sky_snd(ann), env)
+}
+
+func Compiler_Resolver_AddOneAnnotationInner(qualPrefix any, exposed any, funcName any, texpr any, env any) any {
+	return func() any { scheme := Compiler_Resolver_TypeExprToScheme(texpr); _ = scheme; qualName := sky_concat(qualPrefix, sky_concat(".", funcName)); _ = qualName; envWithQual := Compiler_Env_Extend(qualName, scheme, env); _ = envWithQual; return func() any { if sky_asBool(Compiler_Resolver_IsExposed(funcName, exposed)) { return Compiler_Env_Extend(funcName, scheme, envWithQual) }; return envWithQual }() }()
+}
+
+func Compiler_Resolver_IsExposed(funcName any, exposed any) any {
+	return func() any { return func() any { __subject := exposed; if len(sky_asList(__subject)) == 0 { return false };  if len(sky_asList(__subject)) > 0 { name := sky_asList(__subject)[0]; _ = name; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { if sky_asBool(sky_asBool(sky_equal(name, "*")) || sky_asBool(sky_equal(name, funcName))) { return true }; return Compiler_Resolver_IsExposed(funcName, rest) }() };  return nil }() }()
+}
+
+func Compiler_Resolver_TypeExprToScheme(texpr any) any {
+	return func() any { startId := sky_asInt(0) - sky_asInt(1); _ = startId; varNames := sky_setToList(Compiler_Resolver_CollectTypeVarNames(texpr)); _ = varNames; varPairs := Compiler_Resolver_AssignVarIds(varNames, startId, []any{}); _ = varPairs; paramMap := Compiler_Resolver_BuildParamMap(varPairs, sky_dictEmpty()); _ = paramMap; resolvedType := Compiler_Adt_ResolveTypeExpr(paramMap, texpr); _ = resolvedType; quantified := sky_call(sky_listMap(sky_snd), varPairs); _ = quantified; return map[string]any{"quantified": quantified, "type_": resolvedType} }()
+}
+
+func Compiler_Resolver_BuildParamMap(pairs any, acc any) any {
+	return func() any { return func() any { __subject := pairs; if len(sky_asList(__subject)) == 0 { return acc };  if len(sky_asList(__subject)) > 0 { pair := sky_asList(__subject)[0]; _ = pair; rest := sky_asList(__subject)[1:]; _ = rest; return Compiler_Resolver_BuildParamMap(rest, sky_call2(sky_dictInsert(sky_fst(pair)), TVar(sky_snd(pair), SkyJust(sky_fst(pair))), acc)) };  return nil }() }()
+}
+
+func Compiler_Resolver_AssignVarIds(names any, nextId any, acc any) any {
+	return func() any { return func() any { __subject := names; if len(sky_asList(__subject)) == 0 { return sky_listReverse(acc) };  if len(sky_asList(__subject)) > 0 { name := sky_asList(__subject)[0]; _ = name; rest := sky_asList(__subject)[1:]; _ = rest; return Compiler_Resolver_AssignVarIds(rest, sky_asInt(nextId) - sky_asInt(1), append([]any{SkyTuple2{V0: name, V1: nextId}}, sky_asList(acc)...)) };  return nil }() }()
+}
+
+func Compiler_Resolver_CollectTypeVarNames(texpr any) any {
+	return func() any { return func() any { __subject := texpr; if sky_asMap(__subject)["SkyName"] == "TypeVar" { name := sky_asMap(__subject)["V0"]; _ = name; return sky_setSingleton(name) };  if sky_asMap(__subject)["SkyName"] == "FunType" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(fromT)), Compiler_Resolver_CollectTypeVarNames(toT)) };  if sky_asMap(__subject)["SkyName"] == "TypeRef" { args := sky_asMap(__subject)["V1"]; _ = args; return sky_call2(sky_listFoldl(func(arg any) any { return func(acc any) any { return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(arg)), acc) } }), sky_setEmpty(), args) };  if sky_asMap(__subject)["SkyName"] == "TupleTypeExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return sky_call2(sky_listFoldl(func(item any) any { return func(acc any) any { return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(item)), acc) } }), sky_setEmpty(), items) };  if sky_asMap(__subject)["SkyName"] == "RecordTypeExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return sky_call2(sky_listFoldl(func(f any) any { return func(acc any) any { return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(sky_asMap(f)["type_"])), acc) } }), sky_setEmpty(), fields) };  if sky_asMap(__subject)["SkyName"] == "UnitTypeExpr" { return sky_setEmpty() };  if true { return sky_setEmpty() };  return nil }() }()
 }
 
 func Compiler_Resolver_IsFfiBinding(projectRoot any, modName any) any {
@@ -1555,66 +1741,6 @@ var GoDeclVar = Compiler_GoIr_GoDeclVar
 
 var GoDeclRaw = Compiler_GoIr_GoDeclRaw
 
-var emptyRegistry = Compiler_Adt_EmptyRegistry()
-
-var EmptyRegistry = Compiler_Adt_EmptyRegistry()
-
-var lookupConstructor = Compiler_Adt_LookupConstructor
-
-var LookupConstructor = Compiler_Adt_LookupConstructor
-
-var lookupCtorInEntries = Compiler_Adt_LookupCtorInEntries
-
-var LookupCtorInEntries = Compiler_Adt_LookupCtorInEntries
-
-var lookupConstructorAdt = Compiler_Adt_LookupConstructorAdt
-
-var LookupConstructorAdt = Compiler_Adt_LookupConstructorAdt
-
-var lookupCtorAdtInEntries = Compiler_Adt_LookupCtorAdtInEntries
-
-var LookupCtorAdtInEntries = Compiler_Adt_LookupCtorAdtInEntries
-
-var registerAdts = Compiler_Adt_RegisterAdts
-
-var RegisterAdts = Compiler_Adt_RegisterAdts
-
-var registerAdtsLoop = Compiler_Adt_RegisterAdtsLoop
-
-var RegisterAdtsLoop = Compiler_Adt_RegisterAdtsLoop
-
-var registerOneAdt = Compiler_Adt_RegisterOneAdt
-
-var RegisterOneAdt = Compiler_Adt_RegisterOneAdt
-
-var buildConstructorScheme = Compiler_Adt_BuildConstructorScheme
-
-var BuildConstructorScheme = Compiler_Adt_BuildConstructorScheme
-
-var buildParamMap = Compiler_Adt_BuildParamMap
-
-var BuildParamMap = Compiler_Adt_BuildParamMap
-
-var buildFunType = Compiler_Adt_BuildFunType
-
-var BuildFunType = Compiler_Adt_BuildFunType
-
-var getVarId = Compiler_Adt_GetVarId
-
-var GetVarId = Compiler_Adt_GetVarId
-
-var resolveTypeExpr = Compiler_Adt_ResolveTypeExpr
-
-var ResolveTypeExpr = Compiler_Adt_ResolveTypeExpr
-
-var resolveTypeRef = Compiler_Adt_ResolveTypeRef
-
-var ResolveTypeRef = Compiler_Adt_ResolveTypeRef
-
-var resolveTypeVarExpr = Compiler_Adt_ResolveTypeVarExpr
-
-var ResolveTypeVarExpr = Compiler_Adt_ResolveTypeVarExpr
-
 var initState = Compiler_ParserCore_InitState
 
 var InitState = Compiler_ParserCore_InitState
@@ -1712,6 +1838,44 @@ var checkAllModules = Compiler_Resolver_CheckAllModules
 var checkModulesLoop = Compiler_Resolver_CheckModulesLoop
 
 var buildStdlibEnv = Compiler_Resolver_BuildStdlibEnv()
+
+var buildDepTypeEnv = Compiler_Resolver_BuildDepTypeEnv
+
+var buildDepTypeEnvLoop = Compiler_Resolver_BuildDepTypeEnvLoop
+
+var addOneModuleTypes = Compiler_Resolver_AddOneModuleTypes
+
+var addOneModuleTypesInner = Compiler_Resolver_AddOneModuleTypesInner
+
+var findImportAlias = Compiler_Resolver_FindImportAlias
+
+var computeAlias = Compiler_Resolver_ComputeAlias
+
+var lastPart = Compiler_Resolver_LastPart
+
+var findExposedNames = Compiler_Resolver_FindExposedNames
+
+var getExposedList = Compiler_Resolver_GetExposedList
+
+var collectModuleAnnotations = Compiler_Resolver_CollectModuleAnnotations
+
+var collectModuleAnnotationsLoop = Compiler_Resolver_CollectModuleAnnotationsLoop
+
+var collectOneAnnotation = Compiler_Resolver_CollectOneAnnotation
+
+var addAnnotationsToEnv = Compiler_Resolver_AddAnnotationsToEnv
+
+var addOneAnnotation = Compiler_Resolver_AddOneAnnotation
+
+var addOneAnnotationInner = Compiler_Resolver_AddOneAnnotationInner
+
+var isExposed = Compiler_Resolver_IsExposed
+
+var typeExprToScheme = Compiler_Resolver_TypeExprToScheme
+
+var assignVarIds = Compiler_Resolver_AssignVarIds
+
+var collectTypeVarNames = Compiler_Resolver_CollectTypeVarNames
 
 var isFfiBinding = Compiler_Resolver_IsFfiBinding
 
@@ -2091,8 +2255,6 @@ var CheckAdtExhaustiveness = Compiler_Exhaustive_CheckAdtExhaustiveness
 
 var CollectConstructorPatterns = Compiler_Exhaustive_CollectConstructorPatterns
 
-var LastPart = Compiler_Exhaustive_LastPart
-
 func Compiler_Exhaustive_CheckExhaustiveness(registry any, subjectType any, branches any) any {
 	return func() any { patterns := sky_call(sky_listMap(func(b any) any { return sky_asMap(b)["pattern"] }), branches); _ = patterns; return func() any { if sky_asBool(Compiler_Exhaustive_HasCatchAll(patterns)) { return SkyNothing() }; return Compiler_Exhaustive_CheckTypeExhaustiveness(registry, subjectType, patterns) }() }()
 }
@@ -2360,7 +2522,15 @@ func Compiler_Types_Mono(t any) any {
 }
 
 func Compiler_Types_FormatType(t any) any {
-	return func() any { return func() any { __subject := t; if sky_asMap(__subject)["SkyName"] == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; name := sky_asMap(__subject)["V1"]; _ = name; return func() any { return func() any { __subject := name; if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return n };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_concat("t", sky_stringFromInt(id)) };  if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if sky_asMap(__subject)["SkyName"] == "TFun" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return func() any { fromStr := func() any { return func() any { __subject := fromT; if sky_asMap(__subject)["SkyName"] == "TFun" { return sky_concat("(", sky_concat(Compiler_Types_FormatType(fromT), ")")) };  if true { return Compiler_Types_FormatType(fromT) };  return nil }() }(); _ = fromStr; return sky_concat(fromStr, sky_concat(" -> ", Compiler_Types_FormatType(toT))) }() };  if sky_asMap(__subject)["SkyName"] == "TApp" { ctor := sky_asMap(__subject)["V0"]; _ = ctor; args := sky_asMap(__subject)["V1"]; _ = args; return sky_concat(Compiler_Types_FormatType(ctor), sky_concat(" ", sky_call(sky_stringJoin(" "), sky_call(sky_listMap(Compiler_Types_FormatType), args)))) };  if sky_asMap(__subject)["SkyName"] == "TTuple" { items := sky_asMap(__subject)["V0"]; _ = items; return sky_concat("( ", sky_concat(sky_call(sky_stringJoin(" , "), sky_call(sky_listMap(Compiler_Types_FormatType), items)), " )")) };  if sky_asMap(__subject)["SkyName"] == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { fieldStrs := sky_call(sky_listMap(func(pair any) any { return sky_concat(sky_fst(pair), sky_concat(" : ", Compiler_Types_FormatType(sky_snd(pair)))) }), sky_dictToList(fields)); _ = fieldStrs; return sky_concat("{ ", sky_concat(sky_call(sky_stringJoin(" , "), fieldStrs), " }")) }() };  if true { return "?" };  return nil }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := t; if sky_asMap(__subject)["SkyName"] == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; name := sky_asMap(__subject)["V1"]; _ = name; return Compiler_Types_FormatVarName(id, name) };  if sky_asMap(__subject)["SkyName"] == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if sky_asMap(__subject)["SkyName"] == "TFun" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return sky_concat(Compiler_Types_FormatFunFrom(fromT), sky_concat(" -> ", Compiler_Types_FormatType(toT))) };  if sky_asMap(__subject)["SkyName"] == "TApp" { ctor := sky_asMap(__subject)["V0"]; _ = ctor; args := sky_asMap(__subject)["V1"]; _ = args; return sky_concat(Compiler_Types_FormatType(ctor), sky_concat(" ", sky_call(sky_stringJoin(" "), sky_call(sky_listMap(Compiler_Types_FormatType), args)))) };  if sky_asMap(__subject)["SkyName"] == "TTuple" { items := sky_asMap(__subject)["V0"]; _ = items; return sky_concat("( ", sky_concat(sky_call(sky_stringJoin(" , "), sky_call(sky_listMap(Compiler_Types_FormatType), items)), " )")) };  if sky_asMap(__subject)["SkyName"] == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { fieldStrs := sky_call(sky_listMap(func(pair any) any { return sky_concat(sky_fst(pair), sky_concat(" : ", Compiler_Types_FormatType(sky_snd(pair)))) }), sky_dictToList(fields)); _ = fieldStrs; return sky_concat("{ ", sky_concat(sky_call(sky_stringJoin(" , "), fieldStrs), " }")) }() };  if true { return "?" };  return nil }() }()
+}
+
+func Compiler_Types_FormatVarName(id any, name any) any {
+	return func() any { return func() any { __subject := name; if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return n };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_concat("t", sky_stringFromInt(id)) };  return nil }() }()
+}
+
+func Compiler_Types_FormatFunFrom(fromT any) any {
+	return func() any { return func() any { __subject := fromT; if sky_asMap(__subject)["SkyName"] == "TFun" { return sky_concat("(", sky_concat(Compiler_Types_FormatType(fromT), ")")) };  if true { return Compiler_Types_FormatType(fromT) };  return nil }() }()
 }
 
 func Compiler_GoIr_GoIdent(v0 any) any {
@@ -2897,6 +3067,8 @@ var FindLastSlash = Compiler_Pipeline_FindLastSlash
 
 var Compile = Compiler_Pipeline_Compile
 
+var BuildCheckEnv = Compiler_Pipeline_BuildCheckEnv
+
 var CompileMultiModule = Compiler_Pipeline_CompileMultiModule
 
 var CompileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
@@ -2966,6 +3138,10 @@ var ParseAndLoadSkydep = Compiler_Pipeline_ParseAndLoadSkydep
 var FindSkydepCandidates = Compiler_Pipeline_FindSkydepCandidates
 
 var SkydepSrcRoot = Compiler_Pipeline_SkydepSrcRoot
+
+var LoadFfiForTypeCheck = Compiler_Pipeline_LoadFfiForTypeCheck
+
+var LoadOneFfiRaw = Compiler_Pipeline_LoadOneFfiRaw
 
 var LoadFfiBindings = Compiler_Pipeline_LoadFfiBindings
 
@@ -3339,8 +3515,12 @@ func Compiler_Pipeline_Compile(filePath any, outDir any) any {
 	return func() any { sky_println(sky_concat("Sky Compiler ", skyVersion)); sky_println(""); sky_call(sky_processRun("sh"), []any{"-c", sky_concat("rm -f ", sky_concat(outDir, sky_concat("/sky_ffi_*.go ", sky_concat(outDir, "/sky_*.go 2>/dev/null"))))}); return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Err" { readErr := sky_asSkyResult(__subject).ErrValue; _ = readErr; return SkyErr(sky_concat("Cannot read file: ", sky_concat(filePath, sky_concat(" (", sky_concat(readErr, ")"))))) };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { parseErr := sky_asSkyResult(__subject).ErrValue; _ = parseErr; return SkyErr(sky_concat("Parse error: ", parseErr)) };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { srcRoot := Compiler_Pipeline_DirOfPath(filePath); _ = srcRoot; hasLocalImports := sky_call2(sky_listFoldl(func(imp any) any { return func(acc any) any { return sky_asBool(acc) || sky_asBool(sky_not(Compiler_Resolver_IsStdlib(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"])))) } }), false, sky_asMap(mod)["imports"]); _ = hasLocalImports; return func() any { if sky_asBool(hasLocalImports) { return Compiler_Pipeline_CompileMultiModule(filePath, outDir, srcRoot, mod) }; return Compiler_Pipeline_CompileSource(filePath, outDir, source) }() }() };  return nil }() }() }() };  return nil }() }() }()
 }
 
+func Compiler_Pipeline_BuildCheckEnv(entryFilePath any, mod any) any {
+	return func() any { srcRoot := Compiler_Pipeline_DirOfPath(entryFilePath); _ = srcRoot; localImports := sky_call(sky_listFilter(func(imp any) any { return sky_not(Compiler_Resolver_IsStdlib(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]))) }), sky_asMap(mod)["imports"]); _ = localImports; localModules := Compiler_Pipeline_LoadLocalModules(srcRoot, localImports, []any{}); _ = localModules; entryFfiRaw := Compiler_Pipeline_LoadFfiForTypeCheck(srcRoot, localImports); _ = entryFfiRaw; depFfiRaw := sky_call(sky_listConcatMap(func(pair any) any { return func() any { depMod := sky_snd(pair); _ = depMod; return Compiler_Pipeline_LoadFfiForTypeCheck(srcRoot, sky_asMap(depMod)["imports"]) }() }), localModules); _ = depFfiRaw; allFfiRaw := sky_call(sky_listAppend(entryFfiRaw), depFfiRaw); _ = allFfiRaw; ffiRawModules := Compiler_Pipeline_DeduplicateFfiModules(allFfiRaw, []any{}); _ = ffiRawModules; typeCheckModules := sky_call(sky_listAppend(localModules), ffiRawModules); _ = typeCheckModules; stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; depTypeEnv := Compiler_Resolver_BuildDepTypeEnv(sky_asMap(mod)["imports"], typeCheckModules); _ = depTypeEnv; return Compiler_Env_Union(depTypeEnv, stdlibEnv) }()
+}
+
 func Compiler_Pipeline_CompileMultiModule(entryPath any, outDir any, srcRoot any, entryMod any) any {
-	return func() any { localImports := sky_call(sky_listFilter(func(imp any) any { return sky_not(Compiler_Resolver_IsStdlib(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]))) }), sky_asMap(entryMod)["imports"]); _ = localImports; localModules := Compiler_Pipeline_LoadLocalModules(srcRoot, localImports, []any{}); _ = localModules; entryFfiModules := Compiler_Pipeline_LoadFfiBindings(srcRoot, localImports); _ = entryFfiModules; depFfiModules := sky_call(sky_listConcatMap(func(pair any) any { return func() any { mod := sky_snd(pair); _ = mod; return Compiler_Pipeline_LoadFfiBindings(srcRoot, sky_asMap(mod)["imports"]) }() }), localModules); _ = depFfiModules; allFfiModules := sky_call(sky_listAppend(entryFfiModules), depFfiModules); _ = allFfiModules; ffiModules := Compiler_Pipeline_DeduplicateFfiModules(allFfiModules, []any{}); _ = ffiModules; loadedModules := sky_call(sky_listAppend(localModules), ffiModules); _ = loadedModules; sky_println(sky_concat("   [MULTI] Loaded ", sky_concat(sky_stringFromInt(sky_listLength(localModules)), sky_concat(" local + ", sky_concat(sky_stringFromInt(sky_listLength(ffiModules)), " FFI modules"))))); aliasMap := Compiler_Pipeline_BuildAliasMap(sky_asMap(entryMod)["imports"]); _ = aliasMap; stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; depDecls := sky_call(sky_listConcatMap(func(__pa0 any) any { return Compiler_Pipeline_CompileDependencyModule(stdlibEnv, loadedModules, __pa0) }), loadedModules); _ = depDecls; projectRoot := Compiler_Pipeline_DirOfPath(srcRoot); _ = projectRoot; return Compiler_Pipeline_CompileMultiModuleEntry(outDir, projectRoot, entryMod, aliasMap, stdlibEnv, depDecls, loadedModules) }()
+	return func() any { localImports := sky_call(sky_listFilter(func(imp any) any { return sky_not(Compiler_Resolver_IsStdlib(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]))) }), sky_asMap(entryMod)["imports"]); _ = localImports; localModules := Compiler_Pipeline_LoadLocalModules(srcRoot, localImports, []any{}); _ = localModules; entryFfiModules := Compiler_Pipeline_LoadFfiBindings(srcRoot, localImports); _ = entryFfiModules; depFfiModules := sky_call(sky_listConcatMap(func(pair any) any { return func() any { mod := sky_snd(pair); _ = mod; return Compiler_Pipeline_LoadFfiBindings(srcRoot, sky_asMap(mod)["imports"]) }() }), localModules); _ = depFfiModules; allFfiModules := sky_call(sky_listAppend(entryFfiModules), depFfiModules); _ = allFfiModules; ffiModules := Compiler_Pipeline_DeduplicateFfiModules(allFfiModules, []any{}); _ = ffiModules; loadedModules := sky_call(sky_listAppend(localModules), ffiModules); _ = loadedModules; entryFfiRaw := Compiler_Pipeline_LoadFfiForTypeCheck(srcRoot, localImports); _ = entryFfiRaw; depFfiRaw := sky_call(sky_listConcatMap(func(pair any) any { return func() any { mod := sky_snd(pair); _ = mod; return Compiler_Pipeline_LoadFfiForTypeCheck(srcRoot, sky_asMap(mod)["imports"]) }() }), localModules); _ = depFfiRaw; allFfiRaw := sky_call(sky_listAppend(entryFfiRaw), depFfiRaw); _ = allFfiRaw; ffiRawModules := Compiler_Pipeline_DeduplicateFfiModules(allFfiRaw, []any{}); _ = ffiRawModules; typeCheckModules := sky_call(sky_listAppend(localModules), ffiRawModules); _ = typeCheckModules; sky_println(sky_concat("   [MULTI] Loaded ", sky_concat(sky_stringFromInt(sky_listLength(localModules)), sky_concat(" local + ", sky_concat(sky_stringFromInt(sky_listLength(ffiModules)), " FFI modules"))))); aliasMap := Compiler_Pipeline_BuildAliasMap(sky_asMap(entryMod)["imports"]); _ = aliasMap; stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; depTypeEnv := Compiler_Resolver_BuildDepTypeEnv(sky_asMap(entryMod)["imports"], typeCheckModules); _ = depTypeEnv; combinedEnv := Compiler_Env_Union(depTypeEnv, stdlibEnv); _ = combinedEnv; depDecls := sky_call(sky_listConcatMap(func(__pa0 any) any { return Compiler_Pipeline_CompileDependencyModule(combinedEnv, loadedModules, __pa0) }), loadedModules); _ = depDecls; projectRoot := Compiler_Pipeline_DirOfPath(srcRoot); _ = projectRoot; return Compiler_Pipeline_CompileMultiModuleEntry(outDir, projectRoot, entryMod, aliasMap, combinedEnv, depDecls, loadedModules) }()
 }
 
 func Compiler_Pipeline_CompileMultiModuleEntry(outDir any, projectRoot any, entryMod any, aliasMap any, stdlibEnv any, depDecls any, loadedModules any) any {
@@ -3477,6 +3657,14 @@ func Compiler_Pipeline_FindSkydepCandidates(skydepsDir any, moduleParts any) any
 
 func Compiler_Pipeline_SkydepSrcRoot(srcRoot any, modName any) any {
 	return func() any { projectRoot := Compiler_Pipeline_DirOfPath(srcRoot); _ = projectRoot; skydepsDir := sky_concat(projectRoot, "/.skydeps"); _ = skydepsDir; findResult := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("find ", sky_concat(skydepsDir, sky_concat(" -path '*/src/", sky_concat(modName, ".sky' 2>/dev/null | head -1"))))}); _ = findResult; return func() any { return func() any { __subject := findResult; if sky_asSkyResult(__subject).SkyName == "Ok" { path := sky_asSkyResult(__subject).OkValue; _ = path; return func() any { trimmed := sky_stringTrim(path); _ = trimmed; modFile := sky_concat("/", sky_concat(modName, ".sky")); _ = modFile; srcDir := sky_call2(sky_stringSlice(0), sky_asInt(sky_stringLength(trimmed)) - sky_asInt(sky_stringLength(modFile)), trimmed); _ = srcDir; return func() any { if sky_asBool(sky_stringIsEmpty(trimmed)) { return srcRoot }; return srcDir }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return srcRoot };  return nil }() }() }()
+}
+
+func Compiler_Pipeline_LoadFfiForTypeCheck(srcRoot any, imports any) any {
+	return sky_call(sky_listFilterMap(func(imp any) any { return Compiler_Pipeline_LoadOneFfiRaw(srcRoot, imp) }), Compiler_Pipeline_DeduplicateFfiImports(imports, sky_dictEmpty()))
+}
+
+func Compiler_Pipeline_LoadOneFfiRaw(srcRoot any, imp any) any {
+	return func() any { modName := sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]); _ = modName; return func() any { if sky_asBool(sky_asBool(Compiler_Resolver_IsStdlib(modName)) || sky_asBool(sky_equal(sky_asMap(imp)["alias_"], "_"))) { return SkyNothing() }; return func() any { projectRoot := Compiler_Pipeline_DirOfPath(srcRoot); _ = projectRoot; skyiPath := Compiler_Resolver_ResolveBindingPath(projectRoot, modName); _ = skyiPath; return func() any { return func() any { __subject := sky_fileRead(skyiPath); if sky_asSkyResult(__subject).SkyName == "Ok" { skyiSource := sky_asSkyResult(__subject).OkValue; _ = skyiSource; return func() any { lexResult := Compiler_Lexer_Lex(skyiSource); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Ok" { skyiMod := sky_asSkyResult(__subject).OkValue; _ = skyiMod; return SkyJust(SkyTuple2{V0: modName, V1: skyiMod}) };  if sky_asSkyResult(__subject).SkyName == "Err" { return SkyNothing() };  if sky_asSkyResult(__subject).SkyName == "Err" { return SkyNothing() };  return nil }() }() }() };  return nil }() }() }() }() }()
 }
 
 func Compiler_Pipeline_LoadFfiBindings(srcRoot any, imports any) any {
@@ -4437,8 +4625,6 @@ var checkAdtExhaustiveness = Compiler_Exhaustive_CheckAdtExhaustiveness
 
 var collectConstructorPatterns = Compiler_Exhaustive_CollectConstructorPatterns
 
-var lastPart = Compiler_Exhaustive_LastPart
-
 func Compiler_Checker_MakeTypedDecl(n any, s any, t any) any {
 	return map[string]any{"name": n, "scheme": s, "prettyType": formatType(t)}
 }
@@ -5090,15 +5276,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6276,7 +6462,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 1, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -6432,7 +6618,7 @@ func cmdRun(_ any) any {
 }
 
 func cmdCheck(_ any) any {
-	return func() any { entryFile := func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { f := sky_asSkyMaybe(__subject).JustValue; _ = f; return f };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "src/Main.sky" };  return nil }() }(); _ = entryFile; return func() any { return func() any { __subject := sky_fileRead(entryFile); if sky_asSkyResult(__subject).SkyName == "Err" { readErr := sky_asSkyResult(__subject).ErrValue; _ = readErr; return func() any { sky_println(sky_concat("Cannot read: ", entryFile)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; return func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { if sky_asBool(sky_listIsEmpty(sky_asMap(result)["diagnostics"])) { return sky_println(sky_concat("Type check passed: ", entryFile)) }; return func() any { sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("  ⚠ ", d)) }), sky_asMap(result)["diagnostics"]); sky_println(""); return func() any { sky_println(sky_concat("Type check failed with ", sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(result)["diagnostics"])), sky_concat(" error(s): ", entryFile)))); return sky_processExit(1) }() }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Type error: ", e)); return sky_processExit(1) }() };  return nil }() }() }() };  return nil }() }() }() };  return nil }() }() }()
+	return func() any { entryFile := func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { f := sky_asSkyMaybe(__subject).JustValue; _ = f; return f };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "src/Main.sky" };  return nil }() }(); _ = entryFile; return func() any { return func() any { __subject := sky_fileRead(entryFile); if sky_asSkyResult(__subject).SkyName == "Err" { readErr := sky_asSkyResult(__subject).ErrValue; _ = readErr; return func() any { sky_println(sky_concat("Cannot read: ", entryFile)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { combinedEnv := Compiler_Pipeline_BuildCheckEnv(entryFile, mod); _ = combinedEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(combinedEnv)); _ = checkResult; return func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return func() any { if sky_asBool(sky_listIsEmpty(sky_asMap(result)["diagnostics"])) { return sky_println(sky_concat("Type check passed: ", entryFile)) }; return func() any { sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("  ⚠ ", d)) }), sky_asMap(result)["diagnostics"]); sky_println(""); return func() any { sky_println(sky_concat("Type check failed with ", sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(result)["diagnostics"])), sky_concat(" error(s): ", entryFile)))); return sky_processExit(1) }() }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Type error: ", e)); return sky_processExit(1) }() };  return nil }() }() }() };  return nil }() }() }() };  return nil }() }() }()
 }
 
 func isGoStdlib(name any) any {
@@ -6557,6 +6743,8 @@ var findLastSlash = Compiler_Pipeline_FindLastSlash
 
 var compile = Compiler_Pipeline_Compile
 
+var buildCheckEnv = Compiler_Pipeline_BuildCheckEnv
+
 var compileMultiModule = Compiler_Pipeline_CompileMultiModule
 
 var compileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
@@ -6626,6 +6814,10 @@ var parseAndLoadSkydep = Compiler_Pipeline_ParseAndLoadSkydep
 var findSkydepCandidates = Compiler_Pipeline_FindSkydepCandidates
 
 var skydepSrcRoot = Compiler_Pipeline_SkydepSrcRoot
+
+var loadFfiForTypeCheck = Compiler_Pipeline_LoadFfiForTypeCheck
+
+var loadOneFfiRaw = Compiler_Pipeline_LoadOneFfiRaw
 
 var loadFfiBindings = Compiler_Pipeline_LoadFfiBindings
 

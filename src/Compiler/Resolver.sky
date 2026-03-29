@@ -14,6 +14,7 @@ import Compiler.Parser as Parser
 import Compiler.Types exposing (..)
 import Compiler.Env as Env
 import Compiler.Checker as Checker
+import Compiler.Adt as Adt
 
 type alias ModuleGraph =
     { modules : List LoadedModule
@@ -292,25 +293,25 @@ resolveBindingPath projectRoot modName =
             "/bindings.skyi"
     in
         case File.readFile  primaryPath of
-
+            
             Ok _ ->
                 primaryPath
-
+            
             Err _ ->
                 case File.readFile  altPath of
-
+                    
                     Ok _ ->
                         altPath
-
+                    
                     Err _ ->
                         if projectRoot == "." then
                             altPath
                         else
                             case File.readFile  cwdPrimary of
-
+                                
                                 Ok _ ->
                                     cwdPrimary
-
+                                
                                 Err _ ->
                                     cwdAlt
 
@@ -954,19 +955,21 @@ buildStdlibEnv =
               }
             )
             , ( "Log.println"
-            , { quantified = [ 0 ]
+            , { quantified =
+                  [ 0 ]
               , type_ =
                   TFun  (TConst  "String")
                    (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
               }
             )
             , ( "println"
-              , { quantified = [ 0 ]
-                , type_ =
-                    TFun  (TConst  "String")
-                     (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
-                }
-              )
+            , { quantified =
+                  [ 0 ]
+              , type_ =
+                  TFun  (TConst  "String")
+                   (TFun  (TVar  0  (Just  "a"))  (TConst  "Unit"))
+              }
+            )
             , ( "Process.exit"
             , mono  (TFun  (TConst  "Int")  (TConst  "Unit"))
             )
@@ -1139,6 +1142,285 @@ buildStdlibEnv =
             ]
     in
         Env.union  stdFunctions  prelude
+
+
+buildDepTypeEnv : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> Env.TypeEnv
+
+buildDepTypeEnv entryImports loadedModules =
+    buildDepTypeEnvLoop  entryImports  loadedModules  Env.empty
+
+
+buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List ( String , Ast.Module )) -> Env.TypeEnv -> Env.TypeEnv
+
+buildDepTypeEnvLoop entryImports modules env =
+    case modules of
+        
+        [  ] ->
+            env
+        
+        pair :: rest ->
+            buildDepTypeEnvLoop  entryImports  rest
+             (addOneModuleTypes  entryImports  pair  env)
+
+
+addOneModuleTypes : (List Ast.ImportDecl) -> ( String , Ast.Module ) -> Env.TypeEnv -> Env.TypeEnv
+
+addOneModuleTypes entryImports pair env =
+    addOneModuleTypesInner  entryImports  (fst  pair)  (snd  pair)  env
+
+
+addOneModuleTypesInner : (List Ast.ImportDecl) -> String -> Ast.Module -> Env.TypeEnv -> Env.TypeEnv
+
+addOneModuleTypesInner entryImports modName mod env =
+    addAnnotationsToEnv  (findImportAlias  entryImports  modName)
+     (findExposedNames  entryImports  modName)
+     (collectModuleAnnotations  mod.declarations)
+     env
+
+
+findImportAlias : (List Ast.ImportDecl) -> String -> String
+
+findImportAlias imports modName =
+    case imports of
+        
+        [  ] ->
+            lastPart  modName
+        
+        imp :: rest ->
+            let
+                name =
+                    String.join  "."  imp.moduleName
+            in
+                if name == modName then
+                    computeAlias  imp
+                else
+                    findImportAlias  rest  modName
+
+
+computeAlias : Ast.ImportDecl -> String
+
+computeAlias imp =
+    if String.isEmpty  imp.alias_ then
+        case List.reverse  imp.moduleName of
+            
+            last :: _ ->
+                last
+            
+            [  ] ->
+                ""
+    else
+        imp.alias_
+
+
+lastPart : String -> String
+
+lastPart modName =
+    case List.reverse  (String.split  "."  modName) of
+        
+        last :: _ ->
+            last
+        
+        [  ] ->
+            modName
+
+
+findExposedNames : (List Ast.ImportDecl) -> String -> List String
+
+findExposedNames imports modName =
+    case imports of
+        
+        [  ] ->
+            []
+        
+        imp :: rest ->
+            let
+                name =
+                    String.join  "."  imp.moduleName
+            in
+                if name == modName then
+                    getExposedList  imp.exposing_
+                else
+                    findExposedNames  rest  modName
+
+
+getExposedList : ExposingClause -> List String
+
+getExposedList clause =
+    case clause of
+        
+        ExposeAll ->
+            [ "*" ]
+        
+        ExposeList names ->
+            names
+        
+        ExposeNone ->
+            []
+
+
+collectModuleAnnotations : (List Declaration) -> List ( String , TypeExpr )
+
+collectModuleAnnotations decls =
+    collectModuleAnnotationsLoop  decls  []
+
+
+collectModuleAnnotationsLoop : (List Declaration) -> (List ( String , TypeExpr )) -> List ( String , TypeExpr )
+
+collectModuleAnnotationsLoop decls acc =
+    case decls of
+        
+        [  ] ->
+            List.reverse  acc
+        
+        decl :: rest ->
+            collectModuleAnnotationsLoop  rest
+             (collectOneAnnotation  decl  acc)
+
+
+collectOneAnnotation : Declaration -> (List ( String , TypeExpr )) -> List ( String , TypeExpr )
+
+collectOneAnnotation decl acc =
+    case decl of
+        
+        TypeAnnotDecl name typeExpr _ ->
+            ( name , typeExpr ) :: acc
+        
+        _ ->
+            acc
+
+
+addAnnotationsToEnv : String -> (List String) -> (List ( String , TypeExpr )) -> Env.TypeEnv -> Env.TypeEnv
+
+addAnnotationsToEnv qualPrefix exposed annotations env =
+    case annotations of
+        
+        [  ] ->
+            env
+        
+        ann :: rest ->
+            addAnnotationsToEnv  qualPrefix  exposed  rest
+             (addOneAnnotation  qualPrefix  exposed  ann  env)
+
+
+addOneAnnotation : String -> (List String) -> ( String , TypeExpr ) -> Env.TypeEnv -> Env.TypeEnv
+
+addOneAnnotation qualPrefix exposed ann env =
+    addOneAnnotationInner  qualPrefix  exposed  (fst  ann)  (snd  ann)  env
+
+
+addOneAnnotationInner : String -> (List String) -> String -> TypeExpr -> Env.TypeEnv -> Env.TypeEnv
+
+addOneAnnotationInner qualPrefix exposed funcName texpr env =
+    let
+        scheme =
+            typeExprToScheme  texpr
+        qualName =
+            qualPrefix ++ "." ++ funcName
+        envWithQual =
+            Env.extend  qualName  scheme  env
+    in
+        if isExposed  funcName  exposed then
+            Env.extend  funcName  scheme  envWithQual
+        else
+            envWithQual
+
+
+isExposed : String -> (List String) -> Bool
+
+isExposed funcName exposed =
+    case exposed of
+        
+        [  ] ->
+            False
+        
+        name :: rest ->
+            if name == "*" || name == funcName then
+                True
+            else
+                isExposed  funcName  rest
+
+
+typeExprToScheme : TypeExpr -> Scheme
+
+typeExprToScheme texpr =
+    let
+        startId =
+            0 - 1
+        varNames =
+            Set.toList  (collectTypeVarNames  texpr)
+        varPairs =
+            assignVarIds  varNames  startId  []
+        paramMap =
+            buildParamMap  varPairs  Dict.empty
+        resolvedType =
+            Adt.resolveTypeExpr  paramMap  texpr
+        quantified =
+            List.map  snd  varPairs
+    in
+        { quantified = quantified , type_ = resolvedType }
+
+
+buildParamMap : (List ( String , Int )) -> (Dict.Dict String Type) -> Dict.Dict String Type
+
+buildParamMap pairs acc =
+    case pairs of
+        
+        [  ] ->
+            acc
+        
+        pair :: rest ->
+            buildParamMap  rest
+             (
+            Dict.insert  (fst  pair)  (TVar  (snd  pair)  (Just  (fst  pair)))
+             acc
+            )
+
+
+assignVarIds : (List String) -> Int -> (List ( String , Int )) -> List ( String , Int )
+
+assignVarIds names nextId acc =
+    case names of
+        
+        [  ] ->
+            List.reverse  acc
+        
+        name :: rest ->
+            assignVarIds  rest  (nextId - 1)  (( name , nextId ) :: acc)
+
+
+collectTypeVarNames : TypeExpr -> Set.Set String
+
+collectTypeVarNames texpr =
+    case texpr of
+        
+        TypeVar name _ ->
+            Set.singleton  name
+        
+        FunType fromT toT _ ->
+            Set.union  (collectTypeVarNames  fromT)  (collectTypeVarNames  toT)
+        
+        TypeRef _ args _ ->
+            List.foldl  (\arg acc -> Set.union  (collectTypeVarNames  arg)  acc)
+             Set.empty
+             args
+        
+        TupleTypeExpr items _ ->
+            List.foldl
+             (\item acc -> Set.union  (collectTypeVarNames  item)  acc)
+             Set.empty
+             items
+        
+        RecordTypeExpr fields _ ->
+            List.foldl
+             (\f acc -> Set.union  (collectTypeVarNames  f.type_)  acc)
+             Set.empty
+             fields
+        
+        UnitTypeExpr _ ->
+            Set.empty
+        
+        _ ->
+            Set.empty
 
 
 isFfiBinding : String -> String -> Bool

@@ -46,23 +46,22 @@ applySub : Substitution -> Type -> Type
 
 applySub sub t =
     case t of
-
+        
         TVar id _ ->
             applySubVar  sub  t  id
-
+        
         TConst _ ->
             t
-
+        
         TFun fromT toT ->
             TFun  (applySub  sub  fromT)  (applySub  sub  toT)
-
+        
         TApp ctor args ->
-            TApp  (applySub  sub  ctor)
-             (List.map  (applySub  sub)  args)
-
+            TApp  (applySub  sub  ctor)  (List.map  (applySub  sub)  args)
+        
         TTuple items ->
             TTuple  (List.map  (applySub  sub)  items)
-
+        
         TRecord fields ->
             TRecord  (Dict.map  (\kk v -> applySub  sub  v)  fields)
 
@@ -71,15 +70,15 @@ applySubVar : Substitution -> Type -> Int -> Type
 
 applySubVar sub t id =
     case Dict.get  id  sub of
-
+        
         Just replacement ->
             replacement
-
+        
         Nothing ->
             t
-                
-                _ ->
-                    t
+        
+        _ ->
+            t
 
 
 applySubToScheme : Substitution -> Scheme -> Scheme
@@ -193,51 +192,55 @@ formatType : Type -> String
 
 formatType t =
     case t of
-
+        
         TVar id name ->
-            case name of
-
-                Just n ->
-                    n
-
-                Nothing ->
-                    "t" ++ String.fromInt  id
-
+            formatVarName  id  name
+        
         TConst name ->
             name
-
+        
         TFun fromT toT ->
-            let
-                fromStr =
-                    case fromT of
-
-                        TFun _ _ ->
-                            "(" ++ formatType  fromT ++ ")"
-
-                        _ ->
-                            formatType  fromT
-            in
-                fromStr ++ " -> " ++ formatType  toT
-
+            formatFunFrom  fromT ++ " -> " ++ formatType  toT
+        
         TApp ctor args ->
             formatType  ctor ++
             " " ++ String.join  " "  (List.map  formatType  args)
-
+        
         TTuple items ->
-            "( " ++
-            String.join  " , "  (List.map  formatType  items) ++ " )"
-
+            "( " ++ String.join  " , "  (List.map  formatType  items) ++ " )"
+        
         TRecord fields ->
             let
                 fieldStrs =
                     List.map
-                     (
-                    \pair ->
-                        fst  pair ++ " : " ++ formatType  (snd  pair)
-                    )
+                     (\pair -> fst  pair ++ " : " ++ formatType  (snd  pair))
                      (Dict.toList  fields)
             in
                 "{ " ++ String.join  " , "  fieldStrs ++ " }"
-
+        
         _ ->
             "?"
+
+
+formatVarName : Int -> (Maybe String) -> String
+
+formatVarName id name =
+    case name of
+        
+        Just n ->
+            n
+        
+        Nothing ->
+            "t" ++ String.fromInt  id
+
+
+formatFunFrom : Type -> String
+
+formatFunFrom fromT =
+    case fromT of
+        
+        TFun _ _ ->
+            "(" ++ formatType  fromT ++ ")"
+        
+        _ ->
+            formatType  fromT

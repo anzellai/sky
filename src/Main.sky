@@ -94,10 +94,10 @@ cmdBuild _ =
                         outDir ++ "/go.sum"
                     goModExists =
                         case File.readFile  goModPath of
-
+                            
                             Ok _ ->
                                 True
-
+                            
                             Err _ ->
                                 False
                     _ =
@@ -110,20 +110,22 @@ cmdBuild _ =
                         case Process.run  "sh"
                               [ "-c"
                              , "ls " ++
-                             outDir ++ "/sky_*.go " ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
+                             outDir ++
+                             "/sky_*.go " ++
+                             outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
                              ] of
-
+                            
                             Ok output ->
                                 not  (String.isEmpty  (String.trim  output))
-
+                            
                             Err _ ->
                                 False
                     goSumExists =
                         case File.readFile  goSumPath of
-
+                            
                             Ok _ ->
                                 True
-
+                            
                             Err _ ->
                                 False
                     _ =
@@ -223,13 +225,14 @@ cmdCheck _ =
                         
                         Ok mod ->
                             let
-                                stdlibEnv =
-                                    Resolver.buildStdlibEnv
+                                combinedEnv =
+                                    Pipeline.buildCheckEnv  entryFile  mod
                                 checkResult =
-                                    Checker.checkModule  mod  (Just  stdlibEnv)
+                                    Checker.checkModule  mod
+                                     (Just  combinedEnv)
                             in
                                 case checkResult of
-
+                                    
                                     Ok result ->
                                         if List.isEmpty  result.diagnostics then
                                             println
@@ -240,7 +243,10 @@ cmdCheck _ =
                                             let
                                                 _ =
                                                     List.map
-                                                     (\d -> println  ("  ⚠ " ++ d))
+                                                     (
+                                                    \d ->
+                                                        println  ("  ⚠ " ++ d)
+                                                    )
                                                      result.diagnostics
                                                 _ =
                                                     println  ""
@@ -251,8 +257,12 @@ cmdCheck _ =
                                                          (
                                                         "Type check failed with " ++
                                                         String.fromInt
-                                                         (List.length  result.diagnostics) ++
-                                                        " error(s): " ++ entryFile
+                                                         (
+                                                        List.length
+                                                         result.diagnostics
+                                                        ) ++
+                                                        " error(s): " ++
+                                                        entryFile
                                                         )
                                                 in
                                                     Process.exit  1
@@ -447,10 +457,10 @@ generateGoBindings : String -> String -> ()
 
 generateGoBindings pkg cacheDir =
     case BindingGen.generateBindings  pkg  cacheDir of
-
+        
         Ok content ->
             println  ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
-
+        
         Err e ->
             println  ("Warning: binding generation failed: " ++ e)
 
@@ -493,10 +503,10 @@ cmdInstall _ =
             Process.run  "sh"  [ "-c" , "cd .skycache/gomod && go mod tidy" ]
         _ =
             case tidyResult of
-
+                
                 Ok _ ->
                     ()
-
+                
                 Err e ->
                     println  ("Install warning: " ++ errorToString  e)
         _ =
@@ -539,8 +549,7 @@ installTomlDeps lines inGoDeps =
             in
                 if isGoDepsHeader then
                     installTomlDeps  rest  True
-                else if String.startsWith  "["  trimmed &&
-                not  isGoDepsHeader then
+                else if String.startsWith  "["  trimmed && not  isGoDepsHeader then
                     installTomlDeps  rest  False
                 else if inGoDeps && String.contains  "="  trimmed then
                     let
@@ -617,15 +626,14 @@ installTomlDeps lines inGoDeps =
                     installTomlDeps  rest  inGoDeps
 
 
-
 installFromSkyToml : () -> ()
 
 installFromSkyToml _ =
     case File.readFile  "sky.toml" of
-
+        
         Err _ ->
             ()
-
+        
         Ok content ->
             let
                 lines =
@@ -638,10 +646,10 @@ installTomlDeps : (List String) -> Bool -> ()
 
 installTomlDeps lines inGoDeps =
     case lines of
-
+        
         [  ] ->
             ()
-
+        
         line :: rest ->
             let
                 trimmed =
@@ -652,8 +660,7 @@ installTomlDeps lines inGoDeps =
             in
                 if isGoDepsHeader then
                     installTomlDeps  rest  True
-                else if String.startsWith  "["  trimmed &&
-                not  isGoDepsHeader then
+                else if String.startsWith  "["  trimmed && not  isGoDepsHeader then
                     installTomlDeps  rest  False
                 else if inGoDeps && String.contains  "="  trimmed then
                     let
@@ -665,10 +672,10 @@ installTomlDeps lines inGoDeps =
                             String.trim
                              (
                             case String.split  "="  trimmed of
-
+                                
                                 key :: _ ->
                                     key
-
+                                
                                 [  ] ->
                                     ""
                             )
@@ -684,24 +691,25 @@ installTomlDeps lines inGoDeps =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
                         case File.readFile  bindingPath of
-
+                            
                             Ok _ ->
                                 installTomlDeps  rest  True
-
+                            
                             Err _ ->
                                 let
                                     firstPart =
                                         case String.split  "/"  pkg of
-
+                                            
                                             first :: _ ->
                                                 first
-
+                                            
                                             [  ] ->
                                                 pkg
                                     _ =
                                         println
                                          (
-                                        "   Generating bindings for " ++ pkg ++ "..."
+                                        "   Generating bindings for " ++
+                                        pkg ++ "..."
                                         )
                                 in
                                     if isGoStdlib  firstPart || isGoStdlib  pkg then
@@ -711,7 +719,8 @@ installTomlDeps lines inGoDeps =
                                             _ =
                                                 File.mkdirAll  cacheDir
                                             _ =
-                                                generateGoBindings  pkg  cacheDir
+                                                generateGoBindings  pkg
+                                                 cacheDir
                                         in
                                             installTomlDeps  rest  True
                                     else if String.contains  "."  firstPart then
@@ -858,16 +867,15 @@ preFilterBindings _ =
          "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++
          "out=\"${f%.skyi}.filtered.skyi\"; " ++
          "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++
-         "echo \"   Pre-filtered $f\"; " ++
-         "fi; done"
+         "echo \"   Pre-filtered $f\"; " ++ "fi; done"
          ] of
-
+        
         Ok output ->
             if not  (String.isEmpty  (String.trim  output)) then
                 println  (String.trim  output)
             else
                 ()
-
+        
         Err _ ->
             ()
 
