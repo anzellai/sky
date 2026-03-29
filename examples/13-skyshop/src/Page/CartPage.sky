@@ -17,98 +17,89 @@ import Tailwind exposing (..)
 import Tailwind.Responsive exposing (sm, md, lg)
 
 viewCart model =
-    Layout.page model (
-    case model.user of
-        
-        Nothing ->
-            viewSignInPrompt model
-        
-        Just _ ->
-            viewCartContent model
-    )
+    Layout.page model
+        (
+        case model.user of
+            
+            Nothing ->
+                viewSignInPrompt model
+            
+            Just _ ->
+                viewCartContent model
+        )
 
 
 viewSignInPrompt model =
-    div [ tw [ textCenter , py20 ] ] [ div [ Layout.emptyIconSm ] [ text "Cart"
-                                       ]
-    , h2 [ tw [ text2xl , fontBold , mb2 , textGray900 ] ] [ text (
-                                                             Tr.t model.lang "cart.signinTitle"
-                                                             )
-      ]
-    , p [ tw [ textGray500 , mb6 ] ] [ text (
-                                       Tr.t model.lang "cart.signinPrompt"
-                                       )
-      ]
-    , a [ href "/auth/signin" , attribute "sky-nav" "" , Layout.btnPrimary ] [ text (
-                                                                               Tr.t model.lang "nav.signin"
-                                                                               )
-      ]
-    ]
+    div [ tw [ textCenter , py20 ] ]
+        [ div [ Layout.emptyIconSm ] [ text "Cart" ]
+        , h2 [ tw [ text2xl , fontBold , mb2 , textGray900 ] ]
+              [ text (Tr.t model.lang "cart.signinTitle") ]
+        , p [ tw [ textGray500 , mb6 ] ]
+              [ text (Tr.t model.lang "cart.signinPrompt") ]
+        , a [ href "/auth/signin" , attribute "sky-nav" "" , Layout.btnPrimary ]
+              [ text (Tr.t model.lang "nav.signin") ]
+        ]
 
 
 viewCartContent model =
     let
         lang = model.lang
     in
-        div [] [ h1 [ tw [ text3xl , fontBold , mb2 , textGray900 ] ] [ text (
-                                                                        Tr.t lang "cart.title"
-                                                                        )
-                 ]
-        , if model.checkoutUrl != "" then
-            viewCheckoutRedirect model
-        else if List.isEmpty model.cartItems then
-            viewEmptyCart model
-        else
-            div [] [ p [ tw [ textGray500 , mt1 , mb6 ] ] [ text (
-                                                            String.fromInt (
-                                                            List.length model.cartItems
-                                                            ) ++ " items"
-                                                            )
-                     ]
-            , div [ tw [ flex , flexCol , lg flexRow , gap8 , itemsStart ] ] [ div [ tw [ flex1
-                                                                                     ]
-                                                                               ] [ viewCartItems model
-                                                                               ]
-              , div [ tw [ wFull , lg w96 , lg shrink0 ] ] [ viewCartSummary model
-                ]
-              ]
+        div []
+            [ h1 [ tw [ text3xl , fontBold , mb2 , textGray900 ] ]
+                  [ text (Tr.t lang "cart.title") ]
+            , if model.checkoutUrl != "" then
+                viewCheckoutRedirect model
+            else if List.isEmpty model.cartItems then
+                viewEmptyCart model
+            else
+                div []
+                    [ p [ tw [ textGray500 , mt1 , mb6 ] ]
+                          [ text
+                                (
+                                String.fromInt (List.length model.cartItems) ++ " items"
+                                )
+                          ]
+                    , div
+                          [ tw
+                                [ flex
+                                , flexCol
+                                , lg flexRow
+                                , gap8
+                                , itemsStart
+                                ]
+                          ]
+                          [ div [ tw [ flex1 ] ] [ viewCartItems model ]
+                          , div [ tw [ wFull , lg w96 , lg shrink0 ] ]
+                                [ viewCartSummary model ]
+                          ]
+                    ]
             ]
-        ]
 
 
 viewCheckoutRedirect model =
-    div [ tw [ textCenter , py16 ] ] [ div [ class "spinner" ] []
-    , p [ tw [ textLg , fontMedium , mb2 , textGray900 ] ] [ text (
-                                                             Tr.t model.lang "cart.redirecting"
-                                                             )
-      ]
-    , p [ tw [ textSm , textGray500 , mb6 ] ] [ text (
-                                                Tr.t model.lang "cart.redirectHint"
-                                                )
-      ]
-    , a [ href model.checkoutUrl , Layout.btnPrimary ] [ text (
-                                                         Tr.t model.lang "cart.goToPayment"
-                                                         )
-      ]
-    , div [ attribute "data-sky-redirect" model.checkoutUrl ] []
-    ]
+    div [ tw [ textCenter , py16 ] ]
+        [ div [ class "spinner" ] []
+        , p [ tw [ textLg , fontMedium , mb2 , textGray900 ] ]
+              [ text (Tr.t model.lang "cart.redirecting") ]
+        , p [ tw [ textSm , textGray500 , mb6 ] ]
+              [ text (Tr.t model.lang "cart.redirectHint") ]
+        , a [ href model.checkoutUrl , Layout.btnPrimary ]
+              [ text (Tr.t model.lang "cart.goToPayment") ]
+        , div [ attribute "data-sky-redirect" model.checkoutUrl ] []
+        ]
 
 
 viewEmptyCart model =
-    div [ tw [ textCenter , py20 ] ] [ div [ Layout.emptyIcon ] [ text "~" ]
-    , h2 [ tw [ textXl , fontSemibold , mb2 , textGray900 ] ] [ text (
-                                                                Tr.t model.lang "cart.empty"
-                                                                )
-      ]
-    , p [ tw [ textGray500 , mb6 ] ] [ text (
-                                       Tr.t model.lang "cart.startShopping"
-                                       )
-      ]
-    , a [ href "/products" , attribute "sky-nav" "" , Layout.btnPrimary ] [ text (
-                                                                            Tr.t model.lang "cart.continueShopping"
-                                                                            )
-      ]
-    ]
+    div [ tw [ textCenter , py20 ] ]
+        [ div [ Layout.emptyIcon ] [ text "~" ]
+        , h2 [ tw [ textXl , fontSemibold , mb2 , textGray900 ] ]
+              [ text (Tr.t model.lang "cart.empty") ]
+        , p [ tw [ textGray500 , mb6 ] ]
+              [ text (Tr.t model.lang "cart.startShopping") ]
+        , a [ href "/products" , attribute "sky-nav" "" , Layout.btnPrimary ]
+              [ text (Tr.t model.lang "cart.continueShopping") ]
+        ]
 
 
 viewCartItems model =
@@ -141,57 +132,48 @@ viewCartItem model item =
                 Nothing ->
                     ""
     in
-        div [ Layout.cartItem ] [ if thumb != "" then
-            img [ src thumb , alt title , Layout.cartThumb ]
-        else
-            div [ Layout.cartThumbPlaceholder ] [ text "~" ]
-        , div [ tw [ flex1 ] ] [ h3 [ tw [ fontMedium , textGray900 , textSm ] ] [ text title
-                                 ]
-          , div [ tw [ textXs , textGray500 , mt1 ] ] [ text (
-                                                        pricing.original ++ " each"
-                                                        )
+        div [ Layout.cartItem ]
+            [ if thumb != "" then
+                img [ src thumb , alt title , Layout.cartThumb ]
+            else
+                div [ Layout.cartThumbPlaceholder ] [ text "~" ]
+            , div [ tw [ flex1 ] ]
+                  [ h3 [ tw [ fontMedium , textGray900 , textSm ] ]
+                        [ text title ]
+                  , div [ tw [ textXs , textGray500 , mt1 ] ]
+                        [ text (pricing.original ++ " each") ]
+                  ]
+            , div [ tw [ flex , itemsCenter , gap3 ] ]
+                  [ div [ tw [ flex , itemsCenter , gap1 ] ]
+                        [ button
+                              [ onClick
+                                    (
+                                    UpdateCartItemQty itemId
+                                        (String.fromInt (qty - 1))
+                                    )
+                              , Layout.qtyBtn
+                              ]
+                              [ text "-" ]
+                        , span
+                              [ tw [ w8 , textCenter , fontSemibold , textSm ] ]
+                              [ text (String.fromInt qty) ]
+                        , button
+                              [ onClick
+                                    (
+                                    UpdateCartItemQty itemId
+                                        (String.fromInt (qty + 1))
+                                    )
+                              , Layout.qtyBtn
+                              ]
+                              [ text "+" ]
+                        ]
+                  , span [ Layout.lineTotal , style "min-width:80px" ]
+                        [ text lineTotal_ ]
+                  , button
+                        [ onClick (RemoveCartItem itemId) , Layout.removeBtn ]
+                        [ text (Tr.t model.lang "cart.remove") ]
+                  ]
             ]
-          ]
-        , div [ tw [ flex , itemsCenter , gap3 ] ] [ div [ tw [ flex
-                                                           , itemsCenter
-                                                           , gap1
-                                                           ]
-                                                     ] [ button [ onClick (
-                                                                  UpdateCartItemQty itemId (
-                                                                  String.fromInt (
-                                                                  qty - 1
-                                                                  )
-                                                                  )
-                                                                  )
-                                                         , Layout.qtyBtn
-                                                         ] [ text "-" ]
-                                                     , span [ tw [ w8
-                                                              , textCenter
-                                                              , fontSemibold
-                                                              , textSm
-                                                              ]
-                                                       ] [ text (
-                                                           String.fromInt qty
-                                                           )
-                                                       ]
-                                                     , button [ onClick (
-                                                                UpdateCartItemQty itemId (
-                                                                String.fromInt (
-                                                                qty + 1
-                                                                )
-                                                                )
-                                                                )
-                                                       , Layout.qtyBtn
-                                                       ] [ text "+" ]
-                                                     ]
-          , span [ Layout.lineTotal , style "min-width:80px" ] [ text lineTotal_
-            ]
-          , button [ onClick (RemoveCartItem itemId) , Layout.removeBtn ] [ text (
-                                                                            Tr.t model.lang "cart.remove"
-                                                                            )
-            ]
-          ]
-        ]
 
 
 viewCartSummary model =
@@ -214,85 +196,76 @@ viewCartSummary model =
                 Nothing ->
                     "GBP"
     in
-        div [ tw [ bgWhite , roundedLg , border , borderGray200 , p6 , sticky ]
-        , style "top:80px"
-        ] [ h3 [ tw [ fontSemibold , textGray900 , mb4 ] ] [ text (
-                                                             Tr.t lang "cart.orderSummary"
-                                                             )
+        div
+            [ tw [ bgWhite , roundedLg , border , borderGray200 , p6 , sticky ]
+            , style "top:80px"
             ]
-        , div [ tw [ mb4 ] ] [ label [ Layout.formLabel_ ] [ text (
-                                                             Tr.t lang "cart.remarks"
-                                                             )
-                               ]
-          , textarea [ value model.cartRemarks
-            , onInput UpdateRemarks
-            , rows 3
-            , Layout.formInput
-            , placeholder (Tr.t lang "cart.deliveryInstructions")
-            ] []
-          ]
-        , div [ tw [ borderT , borderGray200 , mt4 , pt4 ] ] [ div [ tw [ flex
-                                                                     , justifyBetween
-                                                                     , itemsCenter
-                                                                     , mb1
-                                                                     ]
-                                                               ] [ span [ tw [ textSm
-                                                                          , textGray500
-                                                                          ]
-                                                                   ] [ text (
-                                                                       Tr.t lang "cart.subtotal"
-                                                                       )
-                                                                   ]
-                                                               , span [ tw [ fontMedium
-                                                                        ]
-                                                                 ] [ text (
-                                                                     Money.formatPrice totalAmount totalCurrency
-                                                                     )
-                                                                 ]
-                                                               ]
-          , div [ tw [ flex , justifyBetween , itemsCenter , mb1 ] ] [ span [ tw [ textSm
-                                                                              , textGray500
-                                                                              ]
-                                                                       ] [ text (
-                                                                           Tr.t lang "cart.shipping"
-                                                                           )
-                                                                       ]
-            , span [ tw [ textSm , textGreen600 , fontMedium ] ] [ text (
-                                                                   Tr.t lang "cart.shippingFree"
-                                                                   )
-              ]
-            ]
-          , div [ tw [ flex
-                  , justifyBetween
-                  , itemsCenter
-                  , mt4
-                  , pt4
-                  , borderT
-                  , borderGray200
+            [ h3 [ tw [ fontSemibold , textGray900 , mb4 ] ]
+                  [ text (Tr.t lang "cart.orderSummary") ]
+            , div [ tw [ mb4 ] ]
+                  [ label [ Layout.formLabel_ ]
+                        [ text (Tr.t lang "cart.remarks") ]
+                  , textarea
+                        [ value model.cartRemarks
+                        , onInput UpdateRemarks
+                        , rows 3
+                        , Layout.formInput
+                        , placeholder (Tr.t lang "cart.deliveryInstructions")
+                        ]
+                        []
                   ]
-            ] [ span [ tw [ textLg , fontBold , textGray900 ] ] [ text (
-                                                                  Tr.t lang "cart.total"
-                                                                  )
-                ]
-            , span [ tw [ text2xl , fontBold , textGray900 ] ] [ text (
-                                                                 Money.formatPrice totalAmount totalCurrency
-                                                                 )
-              ]
+            , div [ tw [ borderT , borderGray200 , mt4 , pt4 ] ]
+                  [ div [ tw [ flex , justifyBetween , itemsCenter , mb1 ] ]
+                        [ span [ tw [ textSm , textGray500 ] ]
+                              [ text (Tr.t lang "cart.subtotal") ]
+                        , span [ tw [ fontMedium ] ]
+                              [ text
+                                    (
+                                    Money.formatPrice totalAmount totalCurrency
+                                    )
+                              ]
+                        ]
+                  , div [ tw [ flex , justifyBetween , itemsCenter , mb1 ] ]
+                        [ span [ tw [ textSm , textGray500 ] ]
+                              [ text (Tr.t lang "cart.shipping") ]
+                        , span [ tw [ textSm , textGreen600 , fontMedium ] ]
+                              [ text (Tr.t lang "cart.shippingFree") ]
+                        ]
+                  , div
+                        [ tw
+                              [ flex
+                              , justifyBetween
+                              , itemsCenter
+                              , mt4
+                              , pt4
+                              , borderT
+                              , borderGray200
+                              ]
+                        ]
+                        [ span [ tw [ textLg , fontBold , textGray900 ] ]
+                              [ text (Tr.t lang "cart.total") ]
+                        , span [ tw [ text2xl , fontBold , textGray900 ] ]
+                              [ text
+                                    (
+                                    Money.formatPrice totalAmount totalCurrency
+                                    )
+                              ]
+                        ]
+                  ]
+            , button [ onClick StartCheckout , Layout.btnCheckout ]
+                  [ text (Tr.t lang "cart.checkout") ]
+            , a
+                  [ href "/products"
+                  , attribute "sky-nav" ""
+                  , tw
+                        [ block
+                        , textCenter
+                        , mt3
+                        , textSm
+                        , textBlue500
+                        , fontMedium
+                        , hover textBlue700
+                        ]
+                  ]
+                  [ text (Tr.t lang "cart.continueShopping") ]
             ]
-          ]
-        , button [ onClick StartCheckout , Layout.btnCheckout ] [ text (
-                                                                  Tr.t lang "cart.checkout"
-                                                                  )
-          ]
-        , a [ href "/products"
-          , attribute "sky-nav" ""
-          , tw [ block
-            , textCenter
-            , mt3
-            , textSm
-            , textBlue500
-            , fontMedium
-            , hover textBlue700
-            ]
-          ] [ text (Tr.t lang "cart.continueShopping") ]
-        ]

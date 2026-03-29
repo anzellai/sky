@@ -1946,8 +1946,11 @@ buildFfiDeclString prefix name params body wrapperName =
         skyArgCount = List.length params
         wrapperArgCount = countWrapperArgs body
     in
-        if skyArgCount == 0 && wrapperArgCount == 0 then
-            "func " ++ goName ++ "() any { return " ++ wrapperName ++ "() }"
+    in
+        if skyArgCount == 0 then
+            "func " ++ goName ++ "() any { return " ++ wrapperName ++ "(nil) }"
+        else if wrapperArgCount == 0 then
+            makeFfiFunc goName wrapperName skyArgCount skyArgCount
         else
             makeFfiFunc goName wrapperName skyArgCount wrapperArgCount
 

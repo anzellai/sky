@@ -93,35 +93,38 @@ createCustomer userId userName userEmail =
 
 buildLineItems items =
     items
-        |> List.map (
-           \item ->
-               let
-                   title = Db.getField "title" item
-                   price = Db.getInt "price_amount" item
-                   discount = Db.getInt "price_discount" item
-                   effectivePrice =
-                       if price - discount > 0 then
-                           price - discount
-                       else
-                           price
-                   qty = Db.getInt "quantity" item
-                   currency = String.toLower (Db.getField "price_currency" item)
-               in
-                   { price_data = { product_data = { name = title }
-                                  , unit_amount = effectivePrice
-                                  , currency = currency
-                                  }
-                   , quantity = qty
-                   }
+        |> List.map
+               (
+               \item ->
+                   let
+                       title = Db.getField "title" item
+                       price = Db.getInt "price_amount" item
+                       discount = Db.getInt "price_discount" item
+                       effectivePrice =
+                           if price - discount > 0 then
+                               price - discount
+                           else
+                               price
+                       qty = Db.getInt "quantity" item
+                       currency =
+                           String.toLower (Db.getField "price_currency" item)
+                   in
+                       { price_data = { product_data = { name = title }
+                                      , unit_amount = effectivePrice
+                                      , currency = currency
+                                      }
+                       , quantity = qty
+                       }
 -- ══════════════════════════════════════════════════════
 -- PAYMENT VERIFICATION
 -- ══════════════════════════════════════════════════════
-           )
+               )
 
 
 createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
-        Err "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
+        Err
+            "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
     else
         case getOrCreateCustomer userId userName userEmail of
             
@@ -153,14 +156,16 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                                             , optional = True
                                             }
                         ]
-                        , metadata = Dict.fromList [ ("cart_id", cartId)
-                                     , ("remarks", remarks)
-                                     ]
+                        , metadata = Dict.fromList
+                                         [ ("cart_id", cartId)
+                                         , ("remarks", remarks)
+                                         ]
                         }
                     _ =
-                        println (
-                        "[STRIPE] Creating checkout session for cart: " ++ cartId
-                        )
+                        println
+                            (
+                            "[STRIPE] Creating checkout session for cart: " ++ cartId
+                            )
                 in
                     case Session.new params of
                         
@@ -174,9 +179,11 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                         Err e ->
                             let
                                 _ =
-                                    println (
-                                    "[STRIPE] API error: " ++ errorToString e
-                                    )
+                                    println
+                                        (
+                                        "[STRIPE] API error: " ++ errorToString
+                                                                      e
+                                        )
                             in
                                 Err ("Stripe API error: " ++ errorToString e)
 
@@ -238,43 +245,53 @@ verifyStripeSession cartId sessionId =
                 if status == Stripe.checkoutSessionStatusComplete && paymentStatus == Stripe.checkoutSessionPaymentStatusPaid then
                     let
                         _ =
-                            println (
-                            "[STRIPE] Payment verified for cart: " ++ cartId
-                            )
+                            println
+                                (
+                                "[STRIPE] Payment verified for cart: " ++ cartId
+                                )
                         customerDetails =
                             Stripe.checkoutSessionCustomerDetails sess
                         custName =
-                            Stripe.checkoutSessionCustomerDetailsName customerDetails
+                            Stripe.checkoutSessionCustomerDetailsName
+                                customerDetails
                         custEmail =
-                            Stripe.checkoutSessionCustomerDetailsEmail customerDetails
+                            Stripe.checkoutSessionCustomerDetailsEmail
+                                customerDetails
                         custPhone =
-                            Stripe.checkoutSessionCustomerDetailsPhone customerDetails
+                            Stripe.checkoutSessionCustomerDetailsPhone
+                                customerDetails
                         collectedInfo =
                             Stripe.checkoutSessionCollectedInformation sess
                         shippingDetails =
-                            Stripe.checkoutSessionCollectedInformationShippingDetails collectedInfo
+                            Stripe.checkoutSessionCollectedInformationShippingDetails
+                                collectedInfo
                         shippingName =
 -- ══════════════════════════════════════════════════════
 -- STOCK MANAGEMENT
 -- ══════════════════════════════════════════════════════
-                            Stripe.checkoutSessionCollectedInformationShippingDetailsName shippingDetails
+                            Stripe.checkoutSessionCollectedInformationShippingDetailsName
+                                shippingDetails
                         shippingAddr =
-                            Stripe.checkoutSessionCollectedInformationShippingDetailsAddress shippingDetails
+                            Stripe.checkoutSessionCollectedInformationShippingDetailsAddress
+                                shippingDetails
                     in
-                        Ok { status = status
-                           , paymentStatus = paymentStatus
-                           , customerName = if custName != "" then
-                               custName
-                           else
-                               shippingName
-                           , customerEmail = custEmail
-                           , customerPhone = custPhone
-                           , shippingLine1 = Stripe.addressLine1 shippingAddr
-                           , shippingLine2 = Stripe.addressLine2 shippingAddr
-                           , shippingCity = Stripe.addressCity shippingAddr
-                           , shippingCountry = Stripe.addressCountry shippingAddr
-                           , shippingPostalCode = Stripe.addressPostalCode shippingAddr
-                           }
+                        Ok
+                            { status = status
+                            , paymentStatus = paymentStatus
+                            , customerName = if custName != "" then
+                                custName
+                            else
+                                shippingName
+                            , customerEmail = custEmail
+                            , customerPhone = custPhone
+                            , shippingLine1 = Stripe.addressLine1 shippingAddr
+                            , shippingLine2 = Stripe.addressLine2 shippingAddr
+                            , shippingCity = Stripe.addressCity shippingAddr
+                            , shippingCountry = Stripe.addressCountry
+                                                    shippingAddr
+                            , shippingPostalCode = Stripe.addressPostalCode
+                                                       shippingAddr
+                            }
                 else
                     Err "Payment not complete."
         
@@ -285,14 +302,12 @@ verifyStripeSession cartId sessionId =
 deductStock orderId =
     let
         orderItems =
-            Result.withDefault [] (
-            Db.queryWhere "order_items" "order_id" "==" orderId
-            )
+            Result.withDefault []
+                (Db.queryWhere "order_items" "order_id" "==" orderId)
         items =
             if List.isEmpty orderItems then
-                Result.withDefault [] (
-                Db.queryWhere "cart_items" "cart_id" "==" orderId
-                )
+                Result.withDefault []
+                    (Db.queryWhere "cart_items" "cart_id" "==" orderId)
             else
                 orderItems
         _ = List.map (deductItemStock) items

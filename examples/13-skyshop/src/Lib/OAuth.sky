@@ -18,14 +18,6 @@ module Lib.OAuth exposing (firebaseAuthScript, handleAuthCallback)
 --   GOOGLE_APPLICATION_CREDENTIALS
 -- ══════════════════════════════════════════════════════
 import Sky.Core.Prelude exposing (..)
-        -- Store UID cookie for instant server-side auth on page load
-        -- Clear cookie on sign-out
-            -- Load Firebase SDK dynamically into <head>
-            -- Listen for auth state changes (sign-in, sign-out, token refresh)
-            -- Send token to Sky.Live server as a FirebaseAuth Msg
-            -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
-            -- Sign-in function called by buttons
-            -- Sign-out function
 import Sky.Core.Result as Result
 import Os
 import Lib.Auth as Auth
@@ -40,3 +32,12 @@ firebaseAuthScript =
 
 
 handleAuthCallback token = Auth.verifyToken token
+
+        -- Store UID cookie for instant server-side auth on page load
+        -- Clear cookie on sign-out
+            -- Load Firebase SDK dynamically into <head>
+            -- Listen for auth state changes (sign-in, sign-out, token refresh)
+            -- Send token to Sky.Live server as a FirebaseAuth Msg
+            -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
+            -- Sign-in function called by buttons
+            -- Sign-out function

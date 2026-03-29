@@ -82,9 +82,10 @@ verifyToken idToken =
                         email = claimString "email" claims
                         name = claimString "name" claims
                         _ =
-                            println (
-                            "[AUTH] Firebase token verified for: " ++ email ++ " (uid: " ++ uid ++ ")"
-                            )
+                            println
+                                (
+                                "[AUTH] Firebase token verified for: " ++ email ++ " (uid: " ++ uid ++ ")"
+                                )
                     in
 -- Idempotent upsert using firebase_uid as document ID.
 -- Concurrent calls from onAuthStateChanged can never create duplicates
@@ -95,18 +96,22 @@ verifyToken idToken =
                 Err e ->
                     let
                         _ =
-                            println (
-                            "[AUTH] Firebase token verification failed: " ++ errorToString e
-                            )
+                            println
+                                (
+                                "[AUTH] Firebase token verification failed: " ++ errorToString
+                                                                                     e
+                                )
                     in
                         Err "Authentication failed. Please try again."
                 
                 Err e ->
                     let
                         _ =
-                            println (
-                            "[AUTH] Firebase auth client error: " ++ errorToString e
-                            )
+                            println
+                                (
+                                "[AUTH] Firebase auth client error: " ++ errorToString
+                                                                             e
+                                )
                     in
                         Err "Authentication service unavailable."
 
@@ -122,12 +127,13 @@ findOrCreateUser uid email name =
         -- Set with merge: updates email/name/admin but preserves
         -- existing fields (phone, address) from previous writes.
         upsertData =
-            Dict.fromList [ ("id", uid)
-            , ("firebase_uid", uid)
-            , ("email", email)
-            , ("name", name)
-            , ("is_admin", Db.boolVal isAdminUser)
-            ]
+            Dict.fromList
+                [ ("id", uid)
+                , ("firebase_uid", uid)
+                , ("email", email)
+                , ("name", name)
+                , ("is_admin", Db.boolVal isAdminUser)
+                ]
         _ = Db.setDoc "users" uid upsertData
         -- Read back full document (includes address fields etc.)
         result = Db.getDoc "users" uid
@@ -143,9 +149,10 @@ findOrCreateUser uid email name =
                         else
                             let
                                 _ =
-                                    println (
-                                    "[AUTH] Signed in: " ++ email ++ " (admin: " ++ adminStr ++ ")"
-                                    )
+                                    println
+                                        (
+                                        "[AUTH] Signed in: " ++ email ++ " (admin: " ++ adminStr ++ ")"
+                                        )
                             in
                                 Ok user
                     

@@ -12,13 +12,766 @@ t lang key =
         tEn key
 
 
-tEn key = case key of "" app.name
+tEn key =
+    case key of
+        
+        "app.name" ->
+            "SkyShop"
+        
+        "nav.home" ->
+            "Home"
+        
+        "nav.products" ->
+            "Products"
+        
+        "nav.cart" ->
+            "Cart"
+        
+        "nav.orders" ->
+            "My Orders"
+        
+        "nav.admin" ->
+            "Admin"
+        
+        "nav.signin" ->
+            "Sign In"
+        
+        "nav.signout" ->
+            "Sign Out"
+        
+        "nav.signup" ->
+            "Sign Up"
+        
+        "auth.welcome" ->
+            "Welcome back"
+        
+        "auth.create" ->
+            "Create an account"
+        
+        "auth.email" ->
+            "Email"
+        
+        "auth.password" ->
+            "Password"
+        
+        "auth.name" ->
+            "Full Name"
+        
+        "auth.phone" ->
+            "Phone Number"
+        
+        "auth.signin.btn" ->
+            "Sign In"
+        
+        "auth.signup.btn" ->
+            "Create Account"
+        
+        "auth.signin.link" ->
+            "Already have an account? Sign in"
+        
+        "auth.signup.link" ->
+            "Don't have an account? Sign up"
+        
+        "product.addToCart" ->
+            "Add to Cart"
+        
+        "product.outOfStock" ->
+            "Out of Stock"
+        
+        "product.inStock" ->
+            "In Stock"
+        
+        "product.unlimited" ->
+            "Available"
+        
+        "product.left" ->
+            "left"
+        
+        "product.category" ->
+            "Category"
+        
+        "product.all" ->
+            "All"
+        
+        "product.search" ->
+            "Search products..."
+        
+        "product.sort.newest" ->
+            "Newest"
+        
+        "product.sort.price" ->
+            "Price"
+        
+        "product.sort.title" ->
+            "Name"
+        
+        "product.noResults" ->
+            "No products found."
+        
+        "product.quantity" ->
+            "Quantity"
+        
+        "cart.title" ->
+            "Shopping Cart"
+        
+        "cart.empty" ->
+            "Your cart is empty."
+        
+        "cart.total" ->
+            "Total"
+        
+        "cart.checkout" ->
+            "Proceed to Checkout"
+        
+        "cart.remove" ->
+            "Remove"
+        
+        "cart.remarks" ->
+            "Delivery remarks (optional)"
+        
+        "cart.continueShopping" ->
+            "Continue Shopping"
+        
+        "order.title" ->
+            "My Orders"
+        
+        "order.empty" ->
+            "No orders yet."
+        
+        "order.detail" ->
+            "Order Details"
+        
+        "order.placed" ->
+            "Order placed"
+        
+        "order.items" ->
+            "Items"
+        
+        "order.shipping" ->
+            "Shipping"
+        
+        "order.status" ->
+            "Status"
+        
+        "order.success" ->
+            "Payment successful! Your order has been placed."
+        
+        "order.failed" ->
+            "Payment verification failed."
+        
+        "order.processing" ->
+            "Verifying payment..."
+        
+        "admin.products" ->
+            "Manage Products"
+        
+        "admin.orders" ->
+            "Manage Orders"
+        
+        "admin.newProduct" ->
+            "New Product"
+        
+        "admin.editProduct" ->
+            "Edit Product"
+        
+        "admin.product.title" ->
+            "Title"
+        
+        "admin.product.summary" ->
+            "Summary"
+        
+        "admin.product.category" ->
+            "Category"
+        
+        "admin.product.price" ->
+            "Price (pence)"
+        
+        "admin.product.discount" ->
+            "Discount (pence)"
+        
+        "admin.product.currency" ->
+            "Currency"
+        
+        "admin.product.stock" ->
+            "Stock (-1 = unlimited)"
+        
+        "admin.product.published" ->
+            "Published"
+        
+        "admin.product.images" ->
+            "Images"
+        
+        "admin.product.save" ->
+            "Save Product"
+        
+        "admin.product.delete" ->
+            "Delete Product"
+        
+        "admin.product.upload" ->
+            "Upload Image"
+        
+        "admin.order.updateState" ->
+            "Update Status"
+        
+        "admin.order.filter" ->
+            "Filter by status"
+        
+        "footer.privacy" ->
+            "Privacy Policy"
+        
+        "footer.terms" ->
+            "Terms & Conditions"
+        
+        "footer.copyright" ->
+            "SkyShop. All rights reserved."
+        
+        "common.loading" ->
+            "Loading..."
+        
+        "common.error" ->
+            "An error occurred."
+        
+        "common.save" ->
+            "Save"
+        
+        "common.cancel" ->
+            "Cancel"
+        
+        "common.delete" ->
+            "Delete"
+        
+        "common.back" ->
+            "Back"
+        
+        "common.yes" ->
+            "Yes"
+        
+        "common.no" ->
+            "No"
+        
+        "hero.badge" ->
+            "Curated Collection"
+        
+        "hero.subtitle" ->
+            "Quality guaranteed. Every item handpicked with care."
+        
+        "hero.cta" ->
+            "Browse Products"
+        
+        "hero.browse" ->
+            "Browse our curated collection"
+        
+        "product.quality" ->
+            "Quality Guaranteed"
+        
+        "footer.tagline" ->
+            "Curated luxury goods with quality guaranteed. Your trusted shopping destination."
+        
+        "auth.terms_notice" ->
+            "By signing in, you agree to our Terms of Service and Privacy Policy."
+        
+        "home.featured" ->
+            "Featured Products"
+        
+        "cart.signinPrompt" ->
+            "Sign in to add items and manage your cart"
+        
+        "cart.signinTitle" ->
+            "Sign in to view your cart"
+        
+        "cart.redirecting" ->
+            "Redirecting to payment..."
+        
+        "cart.redirectHint" ->
+            "If not redirected automatically, click below"
+        
+        "cart.goToPayment" ->
+            "Go to payment"
+        
+        "cart.startShopping" ->
+            "Start shopping to add items here"
+        
+        "cart.orderSummary" ->
+            "Order Summary"
+        
+        "cart.deliveryInstructions" ->
+            "Special delivery instructions..."
+        
+        "cart.subtotal" ->
+            "Subtotal"
+        
+        "cart.shipping" ->
+            "Shipping"
+        
+        "cart.shippingFree" ->
+            "Free"
+        
+        "home.viewAll" ->
+            "View all"
+        
+        "product.sortBy" ->
+            "Sort by"
+        
+        "product.description" ->
+            "Description"
+        
+        "product.securePayment" ->
+            "Secure Payment"
+        
+        "product.fastShipping" ->
+            "Fast Shipping"
+        
+        "footer.quickLinks" ->
+            "Quick Links"
+        
+        "footer.legal" ->
+            "Legal"
+        
+        "admin.product.basicInfo" ->
+            "Basic Information"
+        
+        "admin.product.pricingInventory" ->
+            "Pricing & Inventory"
+        
+        _ ->
+            key
 
 
-key tZh key = case key of "" app.name
+tZh key =
+    case key of
+        
+        "app.name" ->
+            "SkyShop"
+        
+        "nav.home" ->
+            "首頁"
+        
+        "nav.products" ->
+            "商品"
+        
+        "nav.cart" ->
+            "購物車"
+        
+        "nav.orders" ->
+            "我的訂單"
+        
+        "nav.admin" ->
+            "管理"
+        
+        "nav.signin" ->
+            "登錄"
+        
+        "nav.signout" ->
+            "登出"
+        
+        "nav.signup" ->
+            "註冊"
+        
+        "auth.welcome" ->
+            "歡迎回來"
+        
+        "auth.create" ->
+            "創建帳戶"
+        
+        "auth.email" ->
+            "電郵"
+        
+        "auth.password" ->
+            "密碼"
+        
+        "auth.name" ->
+            "全名"
+        
+        "auth.phone" ->
+            "電話"
+        
+        "auth.signin.btn" ->
+            "登錄"
+        
+        "auth.signup.btn" ->
+            "創建帳戶"
+        
+        "auth.signin.link" ->
+            "已有帳戶？ 登錄"
+        
+        "auth.signup.link" ->
+            "沒有帳戶？ 註冊"
+        
+        "product.addToCart" ->
+            "加入購物車"
+        
+        "product.outOfStock" ->
+            "現正缺貨"
+        
+        "product.inStock" ->
+            "有貨"
+        
+        "product.unlimited" ->
+            "現貨"
+        
+        "product.left" ->
+            "剩餘"
+        
+        "product.category" ->
+            "類別"
+        
+        "product.all" ->
+            "全部"
+        
+        "product.search" ->
+            "搜索商品..."
+        
+        "product.sort.newest" ->
+            "最新"
+        
+        "product.sort.price" ->
+            "價格"
+        
+        "product.sort.title" ->
+            "名稱"
+        
+        "product.noResults" ->
+            "未找到商品。"
+        
+        "product.quantity" ->
+            "數量"
+        
+        "cart.title" ->
+            "購物車"
+        
+        "cart.empty" ->
+            "您的購物車是空的"
+        
+        "cart.total" ->
+            "總計"
+        
+        "cart.checkout" ->
+            "結帳"
+        
+        "cart.remove" ->
+            "移除"
+        
+        "cart.remarks" ->
+            "配送備註（可選）"
+        
+        "cart.continueShopping" ->
+            "繼續購物"
+        
+        "order.title" ->
+            "我的訂單"
+        
+        "order.empty" ->
+            "暫無訂單。"
+        
+        "order.detail" ->
+            "訂單詳情"
+        
+        "order.placed" ->
+            "下單時間"
+        
+        "order.items" ->
+            "商品"
+        
+        "order.shipping" ->
+            "配送"
+        
+        "order.status" ->
+            "狀態"
+        
+        "order.success" ->
+            "購物成功！您的訂單已提交。"
+        
+        "order.failed" ->
+            "支付驗證失敗。"
+        
+        "order.processing" ->
+            "正在驗證支付..."
+        
+        "admin.products" ->
+            "商品管理"
+        
+        "admin.orders" ->
+            "訂單管理"
+        
+        "admin.newProduct" ->
+            "新建商品"
+        
+        "admin.editProduct" ->
+            "編輯商品"
+        
+        "admin.product.title" ->
+            "標題"
+        
+        "admin.product.summary" ->
+            "商品概要"
+        
+        "admin.product.category" ->
+            "類別"
+        
+        "admin.product.price" ->
+            "價格（分）"
+        
+        "admin.product.discount" ->
+            "折扣（分）"
+        
+        "admin.product.currency" ->
+            "貨幣"
+        
+        "admin.product.stock" ->
+            "庫存（-1 = 無限）"
+        
+        "admin.product.published" ->
+            "已發佈"
+        
+        "admin.product.images" ->
+            "圖片"
+        
+        "admin.product.save" ->
+            "保存商品"
+        
+        "admin.product.delete" ->
+            "刪除商品"
+        
+        "admin.product.upload" ->
+            "上傳圖片"
+        
+        "admin.order.updateState" ->
+            "更新狀態"
+        
+        "admin.order.filter" ->
+            "按狀態篩選"
+        
+        "footer.privacy" ->
+            "隱私政策"
+        
+        "footer.terms" ->
+            "條款和條件"
+        
+        "footer.copyright" ->
+            "SkyShop。保留所有權利。"
+        
+        "common.loading" ->
+            "載入中..."
+        
+        "common.error" ->
+            "發生錯誤。"
+        
+        "common.save" ->
+            "保存"
+        
+        "common.cancel" ->
+            "取消"
+        
+        "common.delete" ->
+            "刪除"
+        
+        "common.back" ->
+            "返回"
+        
+        "hero.badge" ->
+            "嚴選精品"
+        
+        "hero.subtitle" ->
+            "品質保證，精心挑選每一件商品。"
+        
+        "hero.cta" ->
+            "瀏覽商品"
+        
+        "hero.browse" ->
+            "瀏覽我們嚴選的商品系列"
+        
+        "product.quality" ->
+            "品質保證"
+        
+        "footer.tagline" ->
+            "嚴選精品，品質保證。您值得信賴的購物平台。"
+        
+        "auth.terms_notice" ->
+            "登入即表示您同意我們的服務條款和隱私政策。"
+        
+        "home.featured" ->
+            "精選商品"
+        
+        "cart.signinPrompt" ->
+            "登入後即可管理購物車"
+        
+        "cart.signinTitle" ->
+            "請先登入"
+        
+        "cart.redirecting" ->
+            "正在跳轉到支付..."
+        
+        "cart.redirectHint" ->
+            "如果沒有自動跳轉，請點擊下方連結"
+        
+        "cart.goToPayment" ->
+            "前往支付"
+        
+        "cart.startShopping" ->
+            "去逛逛吧"
+        
+        "cart.orderSummary" ->
+            "訂單摘要"
+        
+        "cart.deliveryInstructions" ->
+            "特殊配送說明..."
+        
+        "cart.subtotal" ->
+            "小計"
+        
+        "cart.shipping" ->
+            "運費"
+        
+        "cart.shippingFree" ->
+            "包郵"
+        
+        "home.viewAll" ->
+            "查看全部"
+        
+        "product.sortBy" ->
+            "排序"
+        
+        "product.description" ->
+            "商品描述"
+        
+        "product.securePayment" ->
+            "安全支付"
+        
+        "product.fastShipping" ->
+            "快速配送"
+        
+        "footer.quickLinks" ->
+            "快速連結"
+        
+        "footer.legal" ->
+            "法律"
+        
+        "admin.product.basicInfo" ->
+            "基本資訊"
+        
+        "admin.product.pricingInventory" ->
+            "價格與庫存"
+        
+        _ ->
+            key
 
 
-state tCurrency currency = case currency of "" GBP
+tCategory lang category =
+    if lang == "zh" then
+        case category of
+            
+            "Accessories" ->
+                "配飾"
+            
+            "Bags" ->
+                "包"
+            
+            "Fashion" ->
+                "時尚"
+            
+            "Jewellery And Watches" ->
+                "珠寶手錶"
+            
+            "Kids" ->
+                "兒童"
+            
+            "Luxury Brands" ->
+                "奢侈品"
+            
+            "Miscellaneous" ->
+                "其他"
+            
+            "Wallet And Small Items" ->
+                "錢包小物"
+            
+            _ ->
+                category
+    else
+        category
 
 
-currency tCurrencySymbol currency = case currency of "" GBP
+tCartState lang state =
+    if lang == "zh" then
+        case state of
+            
+            "ongoing" ->
+                "進行中"
+            
+            "pending" ->
+                "待付款"
+            
+            "ordered" ->
+                "已下訂單"
+            
+            "shipped" ->
+                "已運送"
+            
+            "delivered" ->
+                "已遞送"
+            
+            "cancelled" ->
+                "已取消"
+            
+            "refunded" ->
+                "已退款"
+            
+            _ ->
+                state
+    else
+        case state of
+            
+            "ongoing" ->
+                "Ongoing"
+            
+            "pending" ->
+                "Pending"
+            
+            "ordered" ->
+                "Ordered"
+            
+            "shipped" ->
+                "Shipped"
+            
+            "delivered" ->
+                "Delivered"
+            
+            "cancelled" ->
+                "Cancelled"
+            
+            "refunded" ->
+                "Refunded"
+            
+            _ ->
+                state
+
+
+tCurrency currency =
+    case currency of
+        
+        "GBP" ->
+            "British Pound"
+        
+        "HKD" ->
+            "Hong Kong Dollar"
+        
+        "USD" ->
+            "US Dollar"
+        
+        _ ->
+            currency
+
+
+tCurrencySymbol currency =
+    case currency of
+        
+        "GBP" ->
+            "£"
+        
+        "HKD" ->
+            "HK$"
+        
+        "USD" ->
+            "$"
+        
+        _ ->
+            currency

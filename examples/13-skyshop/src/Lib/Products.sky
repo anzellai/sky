@@ -21,11 +21,11 @@ listAllProducts =
             case result of
                 
                 Ok products ->
-                    println (
-                    "[PRODUCTS] Loaded " ++ String.fromInt (
-                                            List.length products
-                                            ) ++ " products"
-                    )
+                    println
+                        (
+                        "[PRODUCTS] Loaded " ++ String.fromInt
+                                                    (List.length products) ++ " products"
+                        )
                 
                 Err e ->
                     println ("[PRODUCTS] ERROR loading products: " ++ e)
@@ -69,23 +69,35 @@ filterBySearch query products =
         let
             lowerQuery = String.toLower query
         in
-            List.filter (
-            \p ->
-                String.contains lowerQuery (
-                String.toLower (Db.getField "title" p)
-                ) || String.contains lowerQuery (
-                     String.toLower (Db.getField "summary" p)
-                     )
-            ) products
+            List.filter
+                (
+                \p ->
+                    String.contains lowerQuery
+                        (String.toLower (Db.getField "title" p)) || String.contains
+                                                                        lowerQuery
+                                                                        (
+                                                                        String.toLower
+                                                                            (
+                                                                            Db.getField
+                                                                                "summary"
+                                                                                p
+                                                                            )
+                                                                        )
+                )
+                products
 
 
 sortProducts sortBy sortDir products =
     let
         sorted =
             if sortBy == "price" then
-                List.sortBy (
-                \p -> Db.getInt "price_amount" p - Db.getInt "price_discount" p
-                ) products
+                List.sortBy
+                    (
+                    \p ->
+                        Db.getInt "price_amount" p - Db.getInt "price_discount"
+                                                         p
+                    )
+                    products
             else if sortBy == "title" then
                 List.sortBy (\_ -> 0) products
             else
@@ -101,17 +113,18 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
     let
         productId = Result.withDefault "" (Uuid.newString ())
         productData =
-            Dict.fromList [ ("id", productId)
-            , ("title", title)
-            , ("summary", summary)
-            , ("category", category)
-            , ("price_amount", Db.intVal priceAmount)
-            , ("price_currency", priceCurrency)
-            , ("price_discount", Db.intVal priceDiscount)
-            , ("price_tax", Db.intVal 0)
-            , ("stock", Db.intVal stock)
-            , ("published", Db.boolVal published)
-            ]
+            Dict.fromList
+                [ ("id", productId)
+                , ("title", title)
+                , ("summary", summary)
+                , ("category", category)
+                , ("price_amount", Db.intVal priceAmount)
+                , ("price_currency", priceCurrency)
+                , ("price_discount", Db.intVal priceDiscount)
+                , ("price_tax", Db.intVal 0)
+                , ("stock", Db.intVal stock)
+                , ("published", Db.boolVal published)
+                ]
         result = Db.setDoc "products" productId productData
     in
         case result of
@@ -129,16 +142,17 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
 updateProduct productId title summary category priceAmount priceCurrency priceDiscount stock published =
     let
         productData =
-            Dict.fromList [ ("id", productId)
-            , ("title", title)
-            , ("summary", summary)
-            , ("category", category)
-            , ("price_amount", Db.intVal priceAmount)
-            , ("price_currency", priceCurrency)
-            , ("price_discount", Db.intVal priceDiscount)
-            , ("stock", Db.intVal stock)
-            , ("published", Db.boolVal published)
-            ]
+            Dict.fromList
+                [ ("id", productId)
+                , ("title", title)
+                , ("summary", summary)
+                , ("category", category)
+                , ("price_amount", Db.intVal priceAmount)
+                , ("price_currency", priceCurrency)
+                , ("price_discount", Db.intVal priceDiscount)
+                , ("stock", Db.intVal stock)
+                , ("published", Db.boolVal published)
+                ]
         result = Db.setDoc "products" productId productData
     in
         case result of
@@ -157,17 +171,16 @@ deleteProduct productId =
     let
         images = listProductImages productId
         _ =
-            List.map (
-            \img -> Db.deleteDoc "product_images" (Db.getField "id" img)
-            ) images
+            List.map
+                (\img -> Db.deleteDoc "product_images" (Db.getField "id" img))
+                images
         cartItems =
-            Result.withDefault [] (
-            Db.queryWhere "cart_items" "product_id" "==" productId
-            )
+            Result.withDefault []
+                (Db.queryWhere "cart_items" "product_id" "==" productId)
         _ =
-            List.map (
-            \item -> Db.deleteDoc "cart_items" (Db.getField "id" item)
-            ) cartItems
+            List.map
+                (\item -> Db.deleteDoc "cart_items" (Db.getField "id" item))
+                cartItems
         result = Db.deleteDoc "products" productId
         _ = println ("[PRODUCT] Deleted: " ++ productId)
     in
@@ -181,9 +194,8 @@ deleteProduct productId =
 
 
 listProductImages productId =
-    Result.withDefault [] (
-    Db.queryWhere "product_images" "product_id" "==" productId
-    )
+    Result.withDefault []
+        (Db.queryWhere "product_images" "product_id" "==" productId)
 
 
 addProductImage productId imageData =
@@ -192,11 +204,12 @@ addProductImage productId imageData =
         existingImages = listProductImages productId
         nextPosition = String.fromInt (List.length existingImages)
         imageDoc =
-            Dict.fromList [ ("id", imageId)
-            , ("product_id", productId)
-            , ("data", imageData)
-            , ("position", nextPosition)
-            ]
+            Dict.fromList
+                [ ("id", imageId)
+                , ("product_id", productId)
+                , ("data", imageData)
+                , ("position", nextPosition)
+                ]
         result = Db.setDoc "product_images" imageId imageDoc
     in
         case result of

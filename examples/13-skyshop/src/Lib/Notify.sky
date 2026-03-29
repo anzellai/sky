@@ -32,12 +32,13 @@ notifyOrderPlaced cart items userName userEmail =
             subject ++ " - " ++ itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
         notificationId = Result.withDefault "" (Uuid.newString ())
         notificationData =
-            Dict.fromList [ ("id", notificationId)
-            , ("notification_type", "order")
-            , ("subject", subject)
-            , ("body", body)
-            , ("sent", Db.boolVal False)
-            ]
+            Dict.fromList
+                [ ("id", notificationId)
+                , ("notification_type", "order")
+                , ("subject", subject)
+                , ("body", body)
+                , ("sent", Db.boolVal False)
+                ]
         _ =
             Db.setDoc "notifications" notificationId notificationData
                 |> ignoreResult
@@ -65,22 +66,26 @@ sendEmailNotification notificationId subject body =
         if smtpHost == "" || notifyTo == "" then
             let
                 _ =
-                    println "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
+                    println
+                        "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
             in
                 ()
         else
             let
                 _ =
-                    println (
-                    "[NOTIFY] Would send email to " ++ notifyTo ++ ": " ++ subject
-                    )
+                    println
+                        (
+                        "[NOTIFY] Would send email to " ++ notifyTo ++ ": " ++ subject
+                        )
                 _ =
                     case Db.getDoc "notifications" notificationId of
                         
                         Ok (Just notification) ->
-                            Db.setDoc "notifications" notificationId (
-                            Dict.insert "sent" (Db.boolVal True) notification
-                            )
+                            Db.setDoc "notifications" notificationId
+                                (
+                                Dict.insert "sent" (Db.boolVal True)
+                                    notification
+                                )
                         
                         _ ->
                             Ok ()

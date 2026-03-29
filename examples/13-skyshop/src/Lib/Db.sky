@@ -243,8 +243,10 @@ initDb =
         Err e ->
             let
                 _ =
-                    println (
-                    "[DB] ERROR: Failed to initialise Firestore: " ++ errorToString e
-                    )
+                    println
+                        (
+                        "[DB] ERROR: Failed to initialise Firestore: " ++ errorToString
+                                                                              e
+                        )
             in
                 ()

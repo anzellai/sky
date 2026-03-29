@@ -74,7 +74,9 @@ refreshProducts model =
     let
         products =
             if model.search != "" || model.categoryFilter != "all" then
-                Products.searchProducts model.search model.categoryFilter model.sortBy model.sortDir
+                Products.searchProducts model.search model.categoryFilter
+                    model.sortBy
+                    model.sortDir
             else
                 Products.listProducts
     in
@@ -242,15 +244,16 @@ handleSignOut model =
     let
         _ = Auth.signOut
     in
-        (refreshProducts { model
-                         | user = Nothing
-                         , page = HomePage
-                         , cart = Nothing
-                         , cartItems = []
-                         , orders = []
-                         , notification = ""
-                         , signOutPending = True
-                         }, Cmd.none)
+        (refreshProducts
+             { model
+             | user = Nothing
+             , page = HomePage
+             , cart = Nothing
+             , cartItems = []
+             , orders = []
+             , notification = ""
+             , signOutPending = True
+             }, Cmd.none)
 
 
 -- ══════════════════════════════════════════════════════
@@ -272,11 +275,12 @@ handleAddToCart productId model =
                             cartId = Db.getField "id" cart
                             _ = Cart.addItem cartId productId qty
                             updatedModel =
-                                refreshCart { model
-                                            | notification = "Added to cart!"
-                                            , notificationType = "success"
-                                            , quantity = 1
-                                            }
+                                refreshCart
+                                    { model
+                                    | notification = "Added to cart!"
+                                    , notificationType = "success"
+                                    , quantity = 1
+                                    }
                         in
                             (updatedModel, Cmd.none)
                     
@@ -340,23 +344,33 @@ handleStartCheckout model =
                             case Cart.checkoutToOrder cartId of
                                 
                                 Ok orderId ->
-                                    case Stripe.createCheckoutSession orderId items userId userName userEmail model.cartRemarks of
+                                    case Stripe.createCheckoutSession orderId
+                                             items
+                                             userId
+                                             userName
+                                             userEmail
+                                             model.cartRemarks of
                                         
                                         Ok session ->
                                             let
                                                 -- Set checkout info on the ORDER (not the cart)
                                                 _ =
-                                                    Cart.setCheckout orderId session.url session.id model.cartRemarks
+                                                    Cart.setCheckout orderId
+                                                        session.url
+                                                        session.id
+                                                        model.cartRemarks
                                                 _ =
-                                                    Cart.setCartState orderId "pending"
+                                                    Cart.setCartState orderId
+                                                        "pending"
                                                 -- Reset the active cart to fresh "ongoing"
                                                 userId = Db.getField "id" user
                                     -- Save shipping/customer details to order
                                                 _ = Cart.createCart userId
                                             in
-                                                (refreshCart { model
-                                                             | checkoutUrl = session.url
-                                                             }, Cmd.none)
+                                                (refreshCart
+                                                     { model
+                                                     | checkoutUrl = session.url
+                                                     }, Cmd.none)
                                         
                                         Err e ->
                                             ({ model
@@ -413,9 +427,10 @@ handleVerifyPayment orderId model =
                     else
                         let
                             _ =
-                                println (
-                                "[VERIFY] Checking payment for order: " ++ orderId
-                                )
+                                println
+                                    (
+                                    "[VERIFY] Checking payment for order: " ++ orderId
+                                    )
                         in
                             case Stripe.verifyPayment orderId of
                                 
@@ -424,27 +439,38 @@ handleVerifyPayment orderId model =
                                         _ = println "[VERIFY] Payment verified!"
                                         _ = Cart.setCartState orderId "ordered"
                                         _ =
-                                            Cart.setShipping orderId status.customerName status.customerEmail status.customerPhone status.shippingLine1 status.shippingLine2 status.shippingCity status.shippingCountry status.shippingPostalCode
+                                            Cart.setShipping orderId
+                                                status.customerName
+                                                status.customerEmail
+                                                status.customerPhone
+                                                status.shippingLine1
+                                                status.shippingLine2
+                                                status.shippingCity
+                                                status.shippingCountry
+                                                status.shippingPostalCode
                                         _ =
                                             case model.user of
                                                 
                                                 Just user ->
                                                     let
                                                         userId =
-                                                            Db.getField "id" user
+                                                            Db.getField "id"
+                                                                user
                                                         updates =
-                                                            Dict.fromList [ ("id", userId)
-                                                            , ("name", status.customerName)
-                                                            , ("email", status.customerEmail)
-                                                            , ("phone", status.customerPhone)
-                                                            , ("address_line1", status.shippingLine1)
-                                                            , ("address_line2", status.shippingLine2)
-                                                            , ("address_city", status.shippingCity)
-                                                            , ("address_country", status.shippingCountry)
-                                                            , ("address_postcode", status.shippingPostalCode)
-                                                            ]
+                                                            Dict.fromList
+                                                                [ ("id", userId)
+                                                                , ("name", status.customerName)
+                                                                , ("email", status.customerEmail)
+                                                                , ("phone", status.customerPhone)
+                                                                , ("address_line1", status.shippingLine1)
+                                                                , ("address_line2", status.shippingLine2)
+                                                                , ("address_city", status.shippingCity)
+                                                                , ("address_country", status.shippingCountry)
+                                                                , ("address_postcode", status.shippingPostalCode)
+                                                                ]
                                                     in
-                                                        Db.setDoc "users" userId updates
+                                                        Db.setDoc "users" userId
+                                                            updates
                                                 
                                                 Nothing ->
                                                     Ok ()
@@ -453,29 +479,38 @@ handleVerifyPayment orderId model =
                                             case model.user of
                                                 
                                                 Just user ->
-                                                    Notify.notifyOrderPlaced orderDoc items (
-                                                    Db.getField "name" user
-                                                    ) (Db.getField "email" user)
+                                                    Notify.notifyOrderPlaced
+                                                        orderDoc
+                                                        items
+                                                        (
+                                                        Db.getField "name" user
+                                                        )
+                                                        (
+                                                        Db.getField "email" user
+                                                        )
                                                 
                                                 Nothing ->
                                                     ()
                                         updatedOrder = Cart.getOrder orderId
                                         orderItems = Cart.getOrderItems orderId
                                     in
-                                        (refreshCart { base
-                                                     | order = updatedOrder
-                                                     , orderItems = orderItems
-                                                     , page = OrderPage orderId
-                                                     , notification = Tr.t model.lang "order.success"
-                                                     , notificationType = "success"
-                                                     }, Cmd.none)
+                                        (refreshCart
+                                             { base
+                                             | order = updatedOrder
+                                             , orderItems = orderItems
+                                             , page = OrderPage orderId
+                                             , notification = Tr.t model.lang
+                                                                  "order.success"
+                                             , notificationType = "success"
+                                             }, Cmd.none)
                                 
                                 Err e ->
                                     let
                                         _ =
-                                            println (
-                                            "[VERIFY] Payment failed: " ++ e
-                                            )
+                                            println
+                                                (
+                                                "[VERIFY] Payment failed: " ++ e
+                                                )
                                     in
                                         ({ base
                                          | notification = e
@@ -485,7 +520,8 @@ handleVerifyPayment orderId model =
                                 Nothing ->
                                     let
                                         _ =
-                                            println "[VERIFY] Order is Nothing in handleVerifyPayment"
+                                            println
+                                                "[VERIFY] Order is Nothing in handleVerifyPayment"
                                     in
                                         ({ base
                                          | notification = "Order not found."
@@ -516,7 +552,13 @@ handleSubmitProduct model =
 
 handleCreateProduct : Model -> (Model, Cmd Msg)
 handleCreateProduct model =
-    case Products.createProduct model.editTitle model.editSummary model.editCategory model.editPrice model.editCurrency model.editDiscount model.editStock model.editPublished of
+    case Products.createProduct model.editTitle model.editSummary
+             model.editCategory
+             model.editPrice
+             model.editCurrency
+             model.editDiscount
+             model.editStock
+             model.editPublished of
         
         Ok productId ->
             let
@@ -540,13 +582,21 @@ handleCreateProduct model =
 
 handleUpdateProduct : Model -> (Model, Cmd Msg)
 handleUpdateProduct model =
-    case Products.updateProduct model.editProductId model.editTitle model.editSummary model.editCategory model.editPrice model.editCurrency model.editDiscount model.editStock model.editPublished of
+    case Products.updateProduct model.editProductId model.editTitle
+             model.editSummary
+             model.editCategory
+             model.editPrice
+             model.editCurrency
+             model.editDiscount
+             model.editStock
+             model.editPublished of
         
         Ok _ ->
-            (refreshAdminProducts { model
-                                  | notification = "Product updated!"
-                                  , notificationType = "success"
-                                  }, Cmd.none)
+            (refreshAdminProducts
+                 { model
+                 | notification = "Product updated!"
+                 , notificationType = "success"
+                 }, Cmd.none)
         
         Err e ->
             ({ model
@@ -560,13 +610,15 @@ handleDeleteProduct productId model =
     case Products.deleteProduct productId of
         
         Ok _ ->
-            (refreshAdminProducts (
-             clearEditForm { model
-                           | page = AdminProductsPage
-                           , notification = "Product deleted."
-                           , notificationType = "success"
-                           }
-             ), Cmd.none)
+            (refreshAdminProducts
+                 (
+                 clearEditForm
+                     { model
+                     | page = AdminProductsPage
+                     , notification = "Product deleted."
+                     , notificationType = "success"
+                     }
+                 ), Cmd.none)
         
         Err e ->
             ({ model
@@ -642,7 +694,9 @@ handleUpdateOrderState orderId newState model =
                 ({ updatedModel
                  | order = order
                  , orderItems = items
-                 , notification = "Order status updated to " ++ Tr.tCartState model.lang newState
+                 , notification = "Order status updated to " ++ Tr.tCartState
+                                                                    model.lang
+                                                                    newState
                  , notificationType = "success"
                  }, Cmd.none)
         
@@ -669,9 +723,8 @@ update msg model =
                 Ok user ->
                     let
                         _ =
-                            println (
-                            "[AUTH] Sign in: " ++ Db.getField "email" user
-                            )
+                            println
+                                ("[AUTH] Sign in: " ++ Db.getField "email" user)
                         newPage =
                             case model.page of
                                 
@@ -681,15 +734,17 @@ update msg model =
                                 _ ->
                                     model.page
                         updated =
-                            refreshProducts (
-                            refreshCart { model
-                                        | user = Just user
-                                        , page = newPage
-                                        , notification = "Welcome!"
-                                        , notificationType = "success"
-                                        , authError = ""
-                                        }
-                            )
+                            refreshProducts
+                                (
+                                refreshCart
+                                    { model
+                                    | user = Just user
+                                    , page = newPage
+                                    , notification = "Welcome!"
+                                    , notificationType = "success"
+                                    , authError = ""
+                                    }
+                                )
                     in
                         (updated, Cmd.none)
                 
@@ -964,7 +1019,8 @@ requireAdmin model =
 -- APP
 -- ══════════════════════════════════════════════════════
 main =
-    app { init = init
+    app
+        { init = init
         , update = update
         , view = view
         , subscriptions = subscriptions

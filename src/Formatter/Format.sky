@@ -677,7 +677,7 @@ formatLiteral lit =
             text (String.fromFloat f)
         
         LitString s ->
-            text ("\"" ++ quoteString s ++ "\"")
+            text s
         
         LitChar c ->
             text ("'" ++ c ++ "'")

@@ -33,23 +33,24 @@ createCart userId =
     let
         cartId = userId ++ "-cart"
         cartData =
-            Dict.fromList [ ("id", cartId)
-            , ("owner_id", userId)
-            , ("state", "ongoing")
-            , ("checkout_link", "")
-            , ("checkout_reference", "")
-            , ("checkout_remarks", "")
-            , ("shipping_name", "")
-            , ("shipping_email", "")
-            , ("shipping_phone", "")
-            , ("shipping_line1", "")
-            , ("shipping_line2", "")
-            , ("shipping_city", "")
-            , ("shipping_country", "")
-            , ("shipping_postcode", "")
-            , ("total_amount", Db.intVal 0)
-            , ("total_currency", "GBP")
-            ]
+            Dict.fromList
+                [ ("id", cartId)
+                , ("owner_id", userId)
+                , ("state", "ongoing")
+                , ("checkout_link", "")
+                , ("checkout_reference", "")
+                , ("checkout_remarks", "")
+                , ("shipping_name", "")
+                , ("shipping_email", "")
+                , ("shipping_phone", "")
+                , ("shipping_line1", "")
+                , ("shipping_line2", "")
+                , ("shipping_city", "")
+                , ("shipping_country", "")
+                , ("shipping_postcode", "")
+                , ("total_amount", Db.intVal 0)
+                , ("total_currency", "GBP")
+                ]
     in
         case Db.setDoc "carts" cartId cartData of
             
@@ -85,23 +86,31 @@ enrichCartItem item =
         case Db.getDoc "products" productId of
             
             Ok (Just product) ->
-                Dict.insert "title" (Db.getField "title" product) (
-                Dict.insert "summary" (Db.getField "summary" product) (
-                Dict.insert "price_amount" (Db.getField "price_amount" product) (
-                Dict.insert "price_currency" (
-                Db.getField "price_currency" product
-                ) (
-                Dict.insert "price_discount" (
-                Db.getField "price_discount" product
-                ) (
-                Dict.insert "price_tax" (Db.getField "price_tax" product) (
-                Dict.insert "stock" (Db.getField "stock" product) item
-                )
-                )
-                )
-                )
-                )
-                )
+                Dict.insert "title" (Db.getField "title" product)
+                    (
+                    Dict.insert "summary" (Db.getField "summary" product)
+                        (
+                        Dict.insert "price_amount"
+                            (Db.getField "price_amount" product)
+                            (
+                            Dict.insert "price_currency"
+                                (Db.getField "price_currency" product)
+                                (
+                                Dict.insert "price_discount"
+                                    (Db.getField "price_discount" product)
+                                    (
+                                    Dict.insert "price_tax"
+                                        (Db.getField "price_tax" product)
+                                        (
+                                        Dict.insert "stock"
+                                            (Db.getField "stock" product)
+                                            item
+                                        )
+                                    )
+                                )
+                            )
+                        )
+                    )
             
             _ ->
                 item
@@ -125,11 +134,11 @@ getCartWithItems cartId =
 addItem cartId productId quantity =
     let
         existingItems =
-            Result.withDefault [] (
-            Db.queryWhere "cart_items" "cart_id" "==" cartId
-            )
+            Result.withDefault []
+                (Db.queryWhere "cart_items" "cart_id" "==" cartId)
         matchingItems =
-            List.filter (\item -> Db.getField "product_id" item == productId) existingItems
+            List.filter (\item -> Db.getField "product_id" item == productId)
+                existingItems
     in
         case List.head matchingItems of
             
@@ -149,11 +158,12 @@ addItem cartId productId quantity =
                 let
                     itemId = Result.withDefault "" (Uuid.newString ())
                     itemData =
-                        Dict.fromList [ ("id", itemId)
-                        , ("cart_id", cartId)
-                        , ("product_id", productId)
-                        , ("quantity", Db.intVal quantity)
-                        ]
+                        Dict.fromList
+                            [ ("id", itemId)
+                            , ("cart_id", cartId)
+                            , ("product_id", productId)
+                            , ("quantity", Db.intVal quantity)
+                            ]
                     _ = Db.setDoc "cart_items" itemId itemData
                     _ = recalculateTotal cartId
                 in
@@ -203,21 +213,24 @@ recalculateTotal cartId =
     let
         items = getCartItems cartId
         total =
-            List.foldl (
-            \item acc ->
-                let
-                    price = Db.getInt "price_amount" item
-                    discount = Db.getInt "price_discount" item
-                    qty = Db.getInt "quantity" item
-                    effectivePrice = price - discount
-                    itemTotal =
-                        if effectivePrice > 0 then
-                            effectivePrice * qty
-                        else
-                            0
-                in
-                    acc + itemTotal
-            ) 0 items
+            List.foldl
+                (
+                \item acc ->
+                    let
+                        price = Db.getInt "price_amount" item
+                        discount = Db.getInt "price_discount" item
+                        qty = Db.getInt "quantity" item
+                        effectivePrice = price - discount
+                        itemTotal =
+                            if effectivePrice > 0 then
+                                effectivePrice * qty
+                            else
+                                0
+                    in
+                        acc + itemTotal
+                )
+                0
+                items
         currency =
             case List.head items of
                 
@@ -232,9 +245,8 @@ recalculateTotal cartId =
             Ok (Just cart) ->
                 let
                     updatedCart =
-                        Dict.insert "total_amount" (Db.intVal total) (
-                        Dict.insert "total_currency" currency cart
-                        )
+                        Dict.insert "total_amount" (Db.intVal total)
+                            (Dict.insert "total_currency" currency cart)
                     _ = Db.setDoc "carts" cartId updatedCart
                 in
                     total
@@ -270,9 +282,10 @@ setCartState docId newState =
                 updatedDoc = Dict.insert "state" newState doc
                 result = Db.setDoc collection docId updatedDoc
                 _ =
-                    println (
-                    "[ORDER] State changed: " ++ docId ++ " -> " ++ newState
-                    )
+                    println
+                        (
+                        "[ORDER] State changed: " ++ docId ++ " -> " ++ newState
+                        )
             in
                 case result of
                     
@@ -292,11 +305,11 @@ setCheckout docId link reference remarks =
         Ok ( collection , doc ) ->
             let
                 updatedDoc =
-                    Dict.insert "checkout_link" link (
-                    Dict.insert "checkout_reference" reference (
-                    Dict.insert "checkout_remarks" remarks doc
-                    )
-                    )
+                    Dict.insert "checkout_link" link
+                        (
+                        Dict.insert "checkout_reference" reference
+                            (Dict.insert "checkout_remarks" remarks doc)
+                        )
             in
                 Db.setDoc collection docId updatedDoc
         
@@ -310,21 +323,31 @@ setShipping docId name email phone line1 line2 city country postcode =
         Ok ( collection , doc ) ->
             let
                 updatedDoc =
-                    Dict.insert "shipping_name" name (
-                    Dict.insert "shipping_email" email (
-                    Dict.insert "shipping_phone" phone (
-                    Dict.insert "shipping_line1" line1 (
-                    Dict.insert "shipping_line2" line2 (
-                    Dict.insert "shipping_city" city (
-                    Dict.insert "shipping_country" country (
-                    Dict.insert "shipping_postcode" postcode doc
-                    )
-                    )
-                    )
-                    )
-                    )
-                    )
-                    )
+                    Dict.insert "shipping_name" name
+                        (
+                        Dict.insert "shipping_email" email
+                            (
+                            Dict.insert "shipping_phone" phone
+                                (
+                                Dict.insert "shipping_line1" line1
+                                    (
+                                    Dict.insert "shipping_line2" line2
+                                        (
+                                        Dict.insert "shipping_city" city
+                                            (
+                                            Dict.insert "shipping_country"
+                                                country
+                                                (
+                                                Dict.insert "shipping_postcode"
+                                                    postcode
+                                                    doc
+                                                )
+                                            )
+                                        )
+                                    )
+                                )
+                            )
+                        )
             in
                 Db.setDoc collection docId updatedDoc
         
@@ -341,34 +364,39 @@ checkoutToOrder cartId =
             Ok (Just cart) ->
                 let
                     orderData =
-                        Dict.insert "id" orderId (
-                        Dict.insert "cart_id" cartId cart
-                        )
+                        Dict.insert "id" orderId
+                            (Dict.insert "cart_id" cartId cart)
                     _ = Db.setDoc "orders" orderId orderData
                     cartItems =
-                        Result.withDefault [] (
-                        Db.queryWhere "cart_items" "cart_id" "==" cartId
-                        )
+                        Result.withDefault []
+                            (Db.queryWhere "cart_items" "cart_id" "==" cartId)
                     _ =
-                        List.map (
-                        \item ->
-                            let
-                                itemId =
-                                    Result.withDefault "" (Uuid.newString ())
-                                enriched = enrichCartItem item
-                                orderItem =
-                                    Dict.insert "id" itemId (
-                                    Dict.insert "order_id" orderId (
-                                    Dict.insert "cart_id" cartId enriched
-                                    )
-                                    )
-                            in
-                                Db.setDoc "order_items" itemId orderItem
-                        ) cartItems
+                        List.map
+                            (
+                            \item ->
+                                let
+                                    itemId =
+                                        Result.withDefault ""
+                                            (Uuid.newString ())
+                                    enriched = enrichCartItem item
+                                    orderItem =
+                                        Dict.insert "id" itemId
+                                            (
+                                            Dict.insert "order_id" orderId
+                                                (
+                                                Dict.insert "cart_id" cartId
+                                                    enriched
+                                                )
+                                            )
+                                in
+                                    Db.setDoc "order_items" itemId orderItem
+                            )
+                            cartItems
                     _ =
-                        println (
-                        "[CHECKOUT] Created order " ++ orderId ++ " from cart " ++ cartId
-                        )
+                        println
+                            (
+                            "[CHECKOUT] Created order " ++ orderId ++ " from cart " ++ cartId
+                            )
                 in
                     Ok orderId
             
@@ -415,9 +443,8 @@ getOrdersByState state =
     else
         let
             orders =
-                Result.withDefault [] (
-                Db.queryWhere "orders" "state" "==" state
-                )
+                Result.withDefault []
+                    (Db.queryWhere "orders" "state" "==" state)
         in
             List.map (enrichOrderWithUser) orders
 
@@ -436,9 +463,8 @@ enrichOrderWithUser order =
         case Db.getDoc "users" ownerId of
             
             Ok (Just user) ->
-                Dict.insert "user_name" (Db.getField "name" user) (
-                Dict.insert "user_email" (Db.getField "email" user) order
-                )
+                Dict.insert "user_name" (Db.getField "name" user)
+                    (Dict.insert "user_email" (Db.getField "email" user) order)
             
             _ ->
                 order
