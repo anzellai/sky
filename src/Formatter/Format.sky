@@ -8,7 +8,6 @@ import Compiler.Token exposing (SourceSpan, emptySpan)
 import Formatter.Doc exposing (..)
 
 formatModule : Module -> String
-
 formatModule mod =
     let
         header =
@@ -35,7 +34,6 @@ formatModule mod =
 
 
 formatModuleHeader : Module -> Doc
-
 formatModuleHeader mod =
     let
         name =
@@ -48,7 +46,6 @@ formatModuleHeader mod =
 
 
 formatExposing : ExposingClause -> Doc
-
 formatExposing clause =
     case clause of
         
@@ -66,7 +63,6 @@ formatExposing clause =
 
 
 formatImport : ImportDecl -> Doc
-
 formatImport imp =
     let
         name =
@@ -96,13 +92,11 @@ formatImport imp =
 
 
 formatDeclarations : (List Declaration) -> Doc
-
 formatDeclarations decls =
     formatDeclPairs  (List.map  formatDeclaration  decls)  decls
 
 
 formatDeclPairs : (List Doc) -> (List Declaration) -> Doc
-
 formatDeclPairs docs decls =
     case docs of
         
@@ -118,7 +112,7 @@ formatDeclPairs docs decls =
                     isDeclAnnotFunPair  decls
                 sep =
                     if isAnnotFunPair then
-                        concat  [ hardline , hardline ]
+                        hardline
                     else
                         concat  [ hardline , hardline , hardline ]
             in
@@ -127,7 +121,6 @@ formatDeclPairs docs decls =
 
 
 isDeclAnnotFunPair : (List Declaration) -> Bool
-
 isDeclAnnotFunPair decls =
     let
         firstName =
@@ -139,7 +132,6 @@ isDeclAnnotFunPair decls =
 
 
 getDeclAnnotName : (Maybe Declaration) -> String
-
 getDeclAnnotName md =
     case md of
         
@@ -151,7 +143,6 @@ getDeclAnnotName md =
 
 
 getDeclAnnotNameInner : Declaration -> String
-
 getDeclAnnotNameInner d =
     case d of
         
@@ -163,7 +154,6 @@ getDeclAnnotNameInner d =
 
 
 getDeclFunName : (Maybe Declaration) -> String
-
 getDeclFunName md =
     case md of
         
@@ -175,7 +165,6 @@ getDeclFunName md =
 
 
 getDeclFunNameInner : Declaration -> String
-
 getDeclFunNameInner d =
     case d of
         
@@ -187,7 +176,6 @@ getDeclFunNameInner d =
 
 
 formatDeclaration : Declaration -> Doc
-
 formatDeclaration decl =
     case decl of
         
@@ -214,7 +202,6 @@ formatDeclaration decl =
 
 
 formatFunction : String -> (List Pattern) -> Expression -> Doc
-
 formatFunction name params body =
     let
         paramDocs =
@@ -234,7 +221,6 @@ formatFunction name params body =
 
 
 formatTypeDecl : String -> (List String) -> (List TypeVariant) -> Doc
-
 formatTypeDecl name params variants =
     let
         paramStr =
@@ -270,7 +256,6 @@ formatTypeDecl name params variants =
 
 
 formatVariant : TypeVariant -> Doc
-
 formatVariant variant =
     if List.isEmpty  variant.fields then
         text  variant.name
@@ -284,7 +269,6 @@ formatVariant variant =
 
 
 formatTypeAlias : String -> (List String) -> TypeExpr -> Doc
-
 formatTypeAlias name params aliasType =
     let
         paramStr =
@@ -300,7 +284,6 @@ formatTypeAlias name params aliasType =
 
 
 formatExpr : Expression -> Doc
-
 formatExpr expr =
     case expr of
         
@@ -376,7 +359,6 @@ formatExpr expr =
 
 
 formatTuple : (List Expression) -> Doc
-
 formatTuple items =
     case items of
         
@@ -402,7 +384,6 @@ formatTuple items =
 
 
 formatList : (List Expression) -> Doc
-
 formatList items =
     case items of
         
@@ -428,7 +409,6 @@ formatList items =
 
 
 formatRecord : (List NamedExpr) -> Doc
-
 formatRecord fields =
     case fields of
         
@@ -456,7 +436,6 @@ formatRecord fields =
 
 
 formatField : NamedExpr -> Doc
-
 formatField field =
     concat
      [ text  field.name
@@ -466,7 +445,6 @@ formatField field =
 
 
 formatRecordUpdate : Expression -> (List NamedExpr) -> Doc
-
 formatRecordUpdate base fields =
     group
      (
@@ -486,7 +464,6 @@ formatRecordUpdate base fields =
 
 
 formatCall : Expression -> (List Expression) -> Doc
-
 formatCall callee args =
     group
      (
@@ -504,7 +481,6 @@ formatCall callee args =
 
 
 formatLambda : (List Pattern) -> Expression -> Doc
-
 formatLambda params body =
     group
      (
@@ -518,7 +494,6 @@ formatLambda params body =
 
 
 formatBinary : String -> Expression -> Expression -> Doc
-
 formatBinary op leftExpr rightExpr =
     if op == "|>" || op == "<|" then
         concat
@@ -540,7 +515,6 @@ formatBinary op leftExpr rightExpr =
 
 
 formatIf : Expression -> Expression -> Expression -> Doc
-
 formatIf condition thenBranch elseBranch =
     let
         elseDoc =
@@ -563,7 +537,6 @@ formatIf condition thenBranch elseBranch =
 
 
 isExprIf : Expression -> Bool
-
 isExprIf expr =
     case expr of
         
@@ -575,7 +548,6 @@ isExprIf expr =
 
 
 formatLet : (List LetBinding) -> Expression -> Doc
-
 formatLet bindings body =
     concat
      [ text  "let"
@@ -587,7 +559,6 @@ formatLet bindings body =
 
 
 formatLetBinding : LetBinding -> Doc
-
 formatLetBinding binding =
     concat
      [ hardline
@@ -598,7 +569,6 @@ formatLetBinding binding =
 
 
 formatCase : Expression -> (List CaseBranch) -> Doc
-
 formatCase subject branches =
     concat
      [ text  "case "
@@ -609,7 +579,6 @@ formatCase subject branches =
 
 
 formatBranch : CaseBranch -> Doc
-
 formatBranch branch =
     concat
      [ hardline
@@ -621,7 +590,6 @@ formatBranch branch =
 
 
 formatPattern : Pattern -> Doc
-
 formatPattern pat =
     case pat of
         
@@ -681,7 +649,6 @@ formatPattern pat =
 
 
 formatPatternParens : Pattern -> Doc
-
 formatPatternParens pat =
     case pat of
         
@@ -699,7 +666,6 @@ formatPatternParens pat =
 
 
 formatLiteral : LiteralValue -> Doc
-
 formatLiteral lit =
     case lit of
         
@@ -723,7 +689,6 @@ formatLiteral lit =
 
 
 formatTypeExpr : TypeExpr -> Doc
-
 formatTypeExpr texpr =
     case texpr of
         
@@ -770,7 +735,6 @@ formatTypeExpr texpr =
 
 
 formatTypeExprParens : TypeExpr -> Doc
-
 formatTypeExprParens texpr =
     case texpr of
         
@@ -788,7 +752,6 @@ formatTypeExprParens texpr =
 
 
 formatRecordType : (List NamedType) -> Doc
-
 formatRecordType fields =
     case fields of
         
@@ -814,12 +777,10 @@ formatRecordType fields =
 
 
 formatNamedType : NamedType -> Doc
-
 formatNamedType field =
     concat  [ text  field.name , text  " : " , formatTypeExpr  field.type_ ]
 
 
 quoteString : String -> String
-
 quoteString s =
     s

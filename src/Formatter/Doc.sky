@@ -17,55 +17,46 @@ type Doc
 
 
 text : String -> Doc
-
 text s =
     DocText  s
 
 
 line : Doc
-
 line =
     DocLine
 
 
 hardline : Doc
-
 hardline =
     DocHardline
 
 
 softline : Doc
-
 softline =
     DocSoftline
 
 
 concat : (List Doc) -> Doc
-
 concat parts =
     DocConcat  parts
 
 
 indent : Doc -> Doc
-
 indent doc =
     DocIndent  doc
 
 
 group : Doc -> Doc
-
 group doc =
     DocGroup  doc
 
 
 align : Doc -> Doc
-
 align doc =
     DocAlign  doc
 
 
 joinDocs : (List Doc) -> Doc -> Doc
-
 joinDocs docs sep =
     case docs of
         
@@ -77,19 +68,16 @@ joinDocs docs sep =
 
 
 maxWidth : Int
-
 maxWidth =
     80
 
 
 indentWidth : Int
-
 indentWidth =
     4
 
 
 render : Doc -> String
-
 render doc =
     let
         outputRef =
@@ -107,7 +95,6 @@ render doc =
 
 
 writeStr : String -> (Ref.Ref String) -> (Ref.Ref Int) -> ()
-
 writeStr s outputRef colRef =
     let
         _ =
@@ -119,7 +106,6 @@ writeStr s outputRef colRef =
 
 
 newline : (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
-
 newline outputRef colRef indentRef =
     let
         indentLevel =
@@ -135,7 +121,6 @@ newline outputRef colRef indentRef =
 
 
 makeSpaces : Int -> String
-
 makeSpaces n =
     if n <= 0 then
         ""
@@ -144,7 +129,6 @@ makeSpaces n =
 
 
 flatWidth : Doc -> Int
-
 flatWidth doc =
     case doc of
         
@@ -174,7 +158,6 @@ flatWidth doc =
 
 
 fits : Doc -> Int -> Bool
-
 fits doc remaining =
     if remaining < 0 then
         False
@@ -207,7 +190,6 @@ fits doc remaining =
 
 
 fitsConcat : (List Doc) -> Int -> Bool
-
 fitsConcat parts remaining =
     case parts of
         
@@ -226,7 +208,6 @@ fitsConcat parts remaining =
 
 
 walk : Doc -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
-
 walk doc outputRef colRef indentRef =
     case doc of
         
@@ -283,7 +264,6 @@ walk doc outputRef colRef indentRef =
 
 
 walkParts : (List Doc) -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
-
 walkParts parts outputRef colRef indentRef =
     case parts of
         
@@ -299,7 +279,6 @@ walkParts parts outputRef colRef indentRef =
 
 
 flatten : Doc -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
-
 flatten doc outputRef colRef indentRef =
     case doc of
         
@@ -329,7 +308,6 @@ flatten doc outputRef colRef indentRef =
 
 
 flattenParts : (List Doc) -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> ()
-
 flattenParts parts outputRef colRef indentRef =
     case parts of
         
