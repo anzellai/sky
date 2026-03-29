@@ -369,15 +369,14 @@ formatTuple items =
             group
              (
             concat
-             [ text  "( "
+             [ text  "("
             , formatExpr  first
             , concat
                (
               List.map
-               (\item -> concat  [ line , text  ", " , formatExpr  item ])
+               (\item -> concat  [ text  ", " , formatExpr  item ])
                rest
               )
-            , line
             , text  ")"
             ]
             )
@@ -473,7 +472,7 @@ formatCall callee args =
      [ formatExpr  callee
     , concat
        (
-      List.map  (\arg -> concat  [ line , text  " " , formatExpr  arg ])  args
+      List.map  (\arg -> concat  [ text  " " , formatExpr  arg ])  args
       )
     ]
     )
@@ -724,9 +723,9 @@ formatTypeExpr texpr =
             group
              (
             concat
-             [ text  "( "
-            , joinDocs  (List.map  formatTypeExpr  items)  (text  " , ")
-            , text  " )"
+             [ text  "("
+            , joinDocs  (List.map  formatTypeExpr  items)  (text  ", ")
+            , text  ")"
             ]
             )
         

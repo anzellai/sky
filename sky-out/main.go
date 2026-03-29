@@ -5158,7 +5158,7 @@ func Formatter_Format_FormatExpr(expr any) any {
 }
 
 func Formatter_Format_FormatTuple(items any) any {
-	return func() any { return func() any { __subject := items; if len(sky_asList(__subject)) == 0 { return text("()") };  if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; rest := sky_asList(__subject)[1:]; _ = rest; return group(concat([]any{text("( "), Formatter_Format_FormatExpr(first), concat(sky_call(sky_listMap(func(item any) any { return concat([]any{line, text(", "), Formatter_Format_FormatExpr(item)}) }), rest)), line, text(")")})) };  return nil }() }()
+	return func() any { return func() any { __subject := items; if len(sky_asList(__subject)) == 0 { return text("()") };  if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; rest := sky_asList(__subject)[1:]; _ = rest; return group(concat([]any{text("("), Formatter_Format_FormatExpr(first), concat(sky_call(sky_listMap(func(item any) any { return concat([]any{text(", "), Formatter_Format_FormatExpr(item)}) }), rest)), text(")")})) };  return nil }() }()
 }
 
 func Formatter_Format_FormatList(items any) any {
@@ -5178,7 +5178,7 @@ func Formatter_Format_FormatRecordUpdate(base any, fields any) any {
 }
 
 func Formatter_Format_FormatCall(callee any, args any) any {
-	return group(align(concat([]any{Formatter_Format_FormatExpr(callee), concat(sky_call(sky_listMap(func(arg any) any { return concat([]any{line, text(" "), Formatter_Format_FormatExpr(arg)}) }), args))})))
+	return group(align(concat([]any{Formatter_Format_FormatExpr(callee), concat(sky_call(sky_listMap(func(arg any) any { return concat([]any{text(" "), Formatter_Format_FormatExpr(arg)}) }), args))})))
 }
 
 func Formatter_Format_FormatLambda(params any, body any) any {
@@ -5226,7 +5226,7 @@ func Formatter_Format_FormatLiteral(lit any) any {
 }
 
 func Formatter_Format_FormatTypeExpr(texpr any) any {
-	return func() any { return func() any { __subject := texpr; if sky_asMap(__subject)["SkyName"] == "TypeRef" { parts := sky_asMap(__subject)["V0"]; _ = parts; args := sky_asMap(__subject)["V1"]; _ = args; return func() any { name := sky_call(sky_stringJoin("."), parts); _ = name; return func() any { if sky_asBool(sky_listIsEmpty(args)) { return text(name) }; return concat([]any{text(name), text(" "), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatTypeExprParens), args), text(" "))}) }() }() };  if sky_asMap(__subject)["SkyName"] == "TypeVar" { name := sky_asMap(__subject)["V0"]; _ = name; return text(name) };  if sky_asMap(__subject)["SkyName"] == "FunType" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return concat([]any{Formatter_Format_FormatTypeExprParens(fromT), text(" -> "), Formatter_Format_FormatTypeExpr(toT)}) };  if sky_asMap(__subject)["SkyName"] == "RecordTypeExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return Formatter_Format_FormatRecordType(fields) };  if sky_asMap(__subject)["SkyName"] == "TupleTypeExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return group(concat([]any{text("( "), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatTypeExpr), items), text(" , ")), text(" )")})) };  if sky_asMap(__subject)["SkyName"] == "UnitTypeExpr" { return text("()") };  return nil }() }()
+	return func() any { return func() any { __subject := texpr; if sky_asMap(__subject)["SkyName"] == "TypeRef" { parts := sky_asMap(__subject)["V0"]; _ = parts; args := sky_asMap(__subject)["V1"]; _ = args; return func() any { name := sky_call(sky_stringJoin("."), parts); _ = name; return func() any { if sky_asBool(sky_listIsEmpty(args)) { return text(name) }; return concat([]any{text(name), text(" "), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatTypeExprParens), args), text(" "))}) }() }() };  if sky_asMap(__subject)["SkyName"] == "TypeVar" { name := sky_asMap(__subject)["V0"]; _ = name; return text(name) };  if sky_asMap(__subject)["SkyName"] == "FunType" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return concat([]any{Formatter_Format_FormatTypeExprParens(fromT), text(" -> "), Formatter_Format_FormatTypeExpr(toT)}) };  if sky_asMap(__subject)["SkyName"] == "RecordTypeExpr" { fields := sky_asMap(__subject)["V0"]; _ = fields; return Formatter_Format_FormatRecordType(fields) };  if sky_asMap(__subject)["SkyName"] == "TupleTypeExpr" { items := sky_asMap(__subject)["V0"]; _ = items; return group(concat([]any{text("("), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatTypeExpr), items), text(", ")), text(")")})) };  if sky_asMap(__subject)["SkyName"] == "UnitTypeExpr" { return text("()") };  return nil }() }()
 }
 
 func Formatter_Format_FormatTypeExprParens(texpr any) any {
@@ -5280,7 +5280,7 @@ func Formatter_Doc_Line() any {
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
