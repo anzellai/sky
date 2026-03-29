@@ -296,16 +296,20 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
 
 runNativeDce : String -> String -> ()
 runNativeDce outDir goCode =
-    case Process.run "sky-dce" [ outDir ] of
-        
-        Ok output ->
-            if not (String.isEmpty (String.trim output)) then
-                println (String.trim output)
-            else
-                ()
-        
-        Err _ ->
-            ()
+    let
+        _ =
+            case Process.run "sky-dce" [ outDir ] of
+
+                Ok output ->
+                    if not (String.isEmpty (String.trim output)) then
+                        println (String.trim output)
+                    else
+                        ()
+
+                Err _ ->
+                    ()
+    in
+        ()
 
 
 copyLiveRuntime : String -> ()
@@ -700,11 +704,7 @@ dceMainGo outDir goCode =
                 newCode = trimmedHeader ++ bodyCode
                 outPath = outDir ++ "/main.go"
                 _ = File.writeFile outPath newCode
-                _ =
-                    Process.run "sh"
-                        [ "-c"
-                        , "goimports -w " ++ outPath ++ " 2>/dev/null || true"
-                        ]
+                _ = println ""
                 _ =
                     if String.contains "skylive_rt" bodyCode then
                         Process.run "sh"
