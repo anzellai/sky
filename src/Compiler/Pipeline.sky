@@ -1901,7 +1901,70 @@ compileDependencyModule stdlibEnv allModules ffiNames pair =
         if Set.member modName ffiNames then
             compileFfiModuleLight allModules pair
         else
-            compileDependencyModuleFull stdlibEnv allModules pair
+            compileDependencyModuleCached stdlibEnv allModules pair
+
+
+compileDependencyModuleCached : Env.TypeEnv -> (List (String, Ast.Module)) -> (String, Ast.Module) -> List GoDecl
+compileDependencyModuleCached stdlibEnv allModules pair =
+    let
+        modName = fst pair
+        mod = snd pair
+        cachePath = ".skycache/lowered/" ++ String.replace "." "_" modName ++ ".go"
+    in
+        case File.readFile cachePath of
+
+            Ok cachedCode ->
+                let
+                    prefix = String.replace "." "_" modName
+                    cachedDecl = GoDeclRaw cachedCode
+                    aliases = generateConstructorAliases prefix [ cachedDecl ]
+                    depImportAliases = generateImportAliases mod.imports allModules
+                in
+                    List.concat [ aliases , depImportAliases , [ cachedDecl ] ]
+
+            Err _ ->
+                compileDependencyModuleAndCache stdlibEnv allModules pair cachePath
+
+
+compileDependencyModuleAndCache : Env.TypeEnv -> (List (String, Ast.Module)) -> (String, Ast.Module) -> String -> List GoDecl
+compileDependencyModuleAndCache stdlibEnv allModules pair cachePath =
+    let
+        modName = fst pair
+        mod = snd pair
+        prefix = String.replace "." "_" modName
+        registry =
+            case Checker.checkModule mod Nothing of
+
+                Ok result ->
+                    result.registry
+
+                Err _ ->
+                    Adt.emptyRegistry
+        depBaseCtx = Lower.emptyCtx
+        depAliasMap = buildAliasMap mod.imports
+        localFns = collectAllFunctionNames mod.declarations
+        depExposed = Lower.buildExposedStdlib mod.imports
+        ctx =
+            { depBaseCtx
+            | registry = registry
+            , localFunctions = localFns
+            , importedConstructors = Lower.buildConstructorMap registry
+            , modulePrefix = prefix
+            , importAliases = depAliasMap
+            , localFunctionArity = Lower.collectLocalFunctionArities mod.declarations
+            , exposedStdlib = depExposed
+            }
+        goDecls = Lower.lowerDeclarations ctx mod.declarations
+        ctorDecls = Lower.generateConstructorDecls registry mod.declarations
+        filtered = List.filter isExportableDecl (List.append ctorDecls goDecls)
+        prefixed = List.map (prefixDecl prefix) filtered
+        prefixedCode = String.join "\n\n" (List.map (\d -> Emit.emitDecl d) prefixed)
+        _ = Process.run "mkdir" [ "-p", ".skycache/lowered" ]
+        _ = File.writeFile cachePath prefixedCode
+        aliases = generateConstructorAliases prefix prefixed
+        depImportAliases = generateImportAliases mod.imports allModules
+    in
+        deduplicateDecls (List.concat [ aliases , depImportAliases , prefixed ])
 
 
 compileFfiModuleLight : (List (String, Ast.Module)) -> (String, Ast.Module) -> List GoDecl
