@@ -209,7 +209,7 @@ formatFunction name params body =
                 , text " ="
                 ]
     in
-        concat [ header , indent (concat [ hardline , formatExpr body ]) ]
+        group (concat [ header , indent (concat [ line , formatExpr body ]) ])
 
 
 formatTypeDecl : String -> (List String) -> (List TypeVariant) -> Doc
@@ -369,21 +369,24 @@ formatTuple items =
 formatList : (List Expression) -> Doc
 formatList items =
     case items of
-        
-        [  ] ->
+
+        [] ->
             text "[]"
-        
+
         first :: rest ->
-            group (
-            concat [ text "[ "
-            , formatExpr first
-            , concat (
-              List.map (\item -> concat [ line , text ", " , formatExpr item ]) rest
-              )
-            , line
-            , text "]"
-            ]
-            )
+            group
+             (concat
+              [ text "[ "
+             , formatExpr first
+             , concat
+                (List.map
+                 (\item -> concat [ line, text ", ", formatExpr item ])
+                 rest
+                )
+             , line
+             , text "]"
+             ]
+             )
 
 
 formatRecord : (List NamedExpr) -> Doc
