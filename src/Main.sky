@@ -1340,7 +1340,8 @@ fmtStdin _ =
                             Process.exit  1
                     
                     Ok mod ->
-                        Io.writeStdout  (Format.formatModule  mod)
+                        Io.writeStdout
+                         (reinsertComments  source  (Format.formatModule  mod))
                     
                     Err e ->
                         let
