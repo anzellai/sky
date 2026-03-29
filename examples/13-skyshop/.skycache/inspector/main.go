@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"go/importer"
+	// go/importer removed: packages.Load handles module-aware loading
 	"go/types"
 	"os"
 	_ "strings"
@@ -96,14 +96,18 @@ func main() {
 
 	var pkg *types.Package
 	if minimal {
-		// Use compiled (gc) importer — reads export data, not source
-		imp := importer.Default()
-		var err error
-		pkg, err = imp.Import(pkgPath)
+		// Minimal mode: load types only (no syntax/deps) for faster inspection
+		cfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName}
+		pkgs, err := packages.Load(cfg, pkgPath)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "import error: %v\n", err)
+			fmt.Fprintf(os.Stderr, "load error: %v\n", err)
 			os.Exit(1)
 		}
+		if len(pkgs) == 0 || pkgs[0].Types == nil {
+			fmt.Fprintln(os.Stderr, "no types found")
+			os.Exit(1)
+		}
+		pkg = pkgs[0].Types
 	} else {
 		cfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName | packages.NeedImports | packages.NeedDeps | packages.NeedSyntax}
 		pkgs, err := packages.Load(cfg, pkgPath)

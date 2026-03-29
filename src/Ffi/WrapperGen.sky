@@ -494,7 +494,7 @@ generateMethodWrapper safePkg pkgName method =
             if method.isInterface then
                 "_receiver := receiver.(" ++ shortPkgName pkgName ++ "." ++ method.typeName ++ ")"
             else
-                "_receiver := receiver.(*" ++ shortPkgName pkgName ++ "." ++ method.typeName ++ ")"
+                String.join "" [ "var _receiver *" , shortPkgName pkgName , "." , method.typeName , "; if _p, ok := receiver.(*" , shortPkgName pkgName , "." , method.typeName , "); ok { _receiver = _p } else if _v, ok := receiver.(" , shortPkgName pkgName , "." , method.typeName , "); ok { _receiver = &_v }" ]
         allMethodArgCasts =
             List.indexedMap (\i p -> generateArgCast i p) method.params
         argNames =

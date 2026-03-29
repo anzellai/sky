@@ -1204,6 +1204,10 @@ aliasedExpressionTrim : AliasedExpression -> Result String Expression
 aliasedExpressionTrim receiver =
     Sky_cloud_google_com_go_firestore_AliasedExpressionTrim receiver
 
+aliasedExpressionType : AliasedExpression -> Result String Expression
+aliasedExpressionType receiver =
+    Sky_cloud_google_com_go_firestore_AliasedExpressionType receiver
+
 aliasedExpressionUnixMicrosToTimestamp : AliasedExpression -> Result String Expression
 aliasedExpressionUnixMicrosToTimestamp receiver =
     Sky_cloud_google_com_go_firestore_AliasedExpressionUnixMicrosToTimestamp receiver
@@ -1535,6 +1539,10 @@ booleanExpressionToUpper receiver =
 booleanExpressionTrim : BooleanExpression -> Result String Expression
 booleanExpressionTrim receiver =
     Sky_cloud_google_com_go_firestore_BooleanExpressionTrim receiver
+
+booleanExpressionType : BooleanExpression -> Result String Expression
+booleanExpressionType receiver =
+    Sky_cloud_google_com_go_firestore_BooleanExpressionType receiver
 
 booleanExpressionUnixMicrosToTimestamp : BooleanExpression -> Result String Expression
 booleanExpressionUnixMicrosToTimestamp receiver =
@@ -2244,6 +2252,10 @@ expressionTrim : Expression -> Result String Expression
 expressionTrim receiver =
     Sky_cloud_google_com_go_firestore_ExpressionTrim receiver
 
+expressionType : Expression -> Result String Expression
+expressionType receiver =
+    Sky_cloud_google_com_go_firestore_ExpressionType receiver
+
 expressionUnixMicrosToTimestamp : Expression -> Result String Expression
 expressionUnixMicrosToTimestamp receiver =
     Sky_cloud_google_com_go_firestore_ExpressionUnixMicrosToTimestamp receiver
@@ -2563,6 +2575,10 @@ functionExpressionToUpper receiver =
 functionExpressionTrim : FunctionExpression -> Result String Expression
 functionExpressionTrim receiver =
     Sky_cloud_google_com_go_firestore_FunctionExpressionTrim receiver
+
+functionExpressionType : FunctionExpression -> Result String Expression
+functionExpressionType receiver =
+    Sky_cloud_google_com_go_firestore_FunctionExpressionType receiver
 
 functionExpressionUnixMicrosToTimestamp : FunctionExpression -> Result String Expression
 functionExpressionUnixMicrosToTimestamp receiver =
