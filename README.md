@@ -60,6 +60,7 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 - [Editor Integration](#editor-integration)
 - [Examples](#examples)
 - [Architecture](#architecture)
+- [Compiler Optimisation Journey](#compiler-optimisation-journey)
 
 ---
 
@@ -1186,6 +1187,130 @@ examples/                         -- 15 example projects
 - **Auto-generated FFI** -- Go packages introspected at build time; type-safe Task-wrapped wrappers generated automatically
 - **Pointer safety** -- Go `*primitive` → `Maybe T`, opaque struct pointers are transparent handles
 - **~4MB native binary** -- no Node.js, no npm, no TypeScript runtime. Just Go
+
+---
+
+## Compiler Optimisation Journey
+
+The Sky compiler is self-hosted -- written in Sky, compiling to Go, then compiling itself. Building the largest example project (SkyShop: 43 local modules + 14 FFI modules including Stripe SDK, Firebase, Tailwind CSS) exposed a series of performance bottlenecks. Here's how each was identified and fixed.
+
+### The Problem
+
+SkyShop's build was **hanging indefinitely** -- the compiler never completed. The root cause: the `loadFfiForTypeCheck` function loaded the full Stripe SDK binding file (8.4 MB, 147K lines) once per dependency module. With 43 local modules each triggering a separate FFI loading pass, the compiler was parsing the Stripe SDK ~40 times.
+
+### Optimisation Timeline
+
+| # | Optimisation | Before | After | Technique |
+|---|---|---|---|---|
+| 1 | **Combined FFI imports** | Hanging | 2:56 | Collect all dep imports first, deduplicate, load once |
+| 2 | **FFI light path** | 2:56 | 1:28 | Skip full type-check + lowering for `.skyi` modules; generate only constructors + wrapper vars |
+| 3 | **Parallel module lowering** | 1:28 | 1:12 | `List.parallelMap` using goroutines for dependency module compilation |
+| 4 | **Parallel FFI loading** | 1:12 | 1:06 | Parallel `skyi-filter` subprocess spawning for FFI binding files |
+| 5 | **Parallel wrapper copying** | -- | -- | Concurrent file I/O for FFI wrapper `.go` files |
+| 6 | **String.join optimisation** | 218s CPU | 207s CPU | Replace O(n^2) `++` chains with O(n) `String.join ""` in lowerer hot paths |
+| 7 | **Incremental compilation** | 1:06 | 1:02 | Cache lowered Go declarations in `.skycache/lowered/`; skip re-lowering unchanged modules |
+
+**Result: Hanging -> 1:02** (with ~300% CPU utilisation on multi-core machines).
+
+### Key Technical Details
+
+#### Combined FFI Loading (Step 1)
+
+The original pipeline loaded FFI bindings per-module:
+
+```sky
+-- Before: O(modules * FFI) -- loaded Stripe SDK 40+ times
+depFfiModules =
+    List.concatMap (\pair -> loadFfiBindings srcRoot (snd pair).imports) localModules
+
+-- After: O(FFI) -- load each FFI module once
+allImports = List.append localImports (List.concatMap (\pair -> (snd pair).imports) localModules)
+ffiModules = loadFfiBindings srcRoot allImports
+```
+
+#### FFI Light Path (Step 2)
+
+FFI `.skyi` modules only need constructor declarations and wrapper variable bindings -- not full type-checking or AST-to-Go lowering. The light path generates just what's needed:
+
+```sky
+compileFfiModuleLight allModules pair =
+    let
+        ctorDecls = Lower.generateConstructorDecls registry mod.declarations
+        wrapperVars = List.filterMap (makeFfiWrapperVar prefix) mod.declarations
+    in
+        deduplicateDecls (List.concat [ aliases , depImportAliases , prefixed , wrapperVars ])
+```
+
+#### Goroutine-Based Parallelism (Steps 3-5)
+
+Sky now has `Task.parallel` and `List.parallelMap` -- pure functional interfaces backed by Go goroutines:
+
+```elm
+-- Run tasks concurrently, collect results in order
+Task.parallel : List (Task err a) -> Task err (List a)
+
+-- Map a function over a list using goroutines
+List.parallelMap : (a -> b) -> List a -> List b
+```
+
+The compiler uses `List.parallelMap` for the three most expensive sequential operations:
+
+```sky
+-- Parallel module lowering (biggest win)
+depDecls = List.concat (List.parallelMap (compileDependencyModule env modules ffiNames) loadedModules)
+
+-- Parallel FFI binding loading
+results = List.parallelMap (\imp -> loadOneFfiBinding srcRoot imp) deduped
+
+-- Parallel wrapper file copying
+_ = List.parallelMap (\modName -> copyOneFfiWrapper outDir projectRoot modName mainGoCode) uniqueModNames
+```
+
+The parallel helpers are written to a separate Go file (`sky-out/sky_parallel.go`) with proper multi-line formatting, avoiding the `goimports` issue where single-line function bodies cause import stripping.
+
+#### String Concatenation (Step 6)
+
+Sky's `++` operator compiles to Go string concatenation, which is O(n) per operation. Chained concatenation `a ++ b ++ c ++ d` creates O(n^2) intermediate strings. The fix: replace hot-path chains with `String.join "" [parts]`, which uses Go's `strings.Join` (single allocation):
+
+```sky
+-- Before: 4 intermediate strings
+"sky_asInt(" ++ left ++ ") " ++ op ++ " sky_asInt(" ++ right ++ ")"
+
+-- After: 1 allocation
+String.join "" [ "sky_asInt(" , left , ") " , op , " sky_asInt(" , right , ")" ]
+```
+
+Applied to the lowerer's `emitGoExprInline` (called per AST node), `lowerBinary` (per operator), `emitBranchCode` (per case branch), and `patternToCondition` (per pattern match).
+
+#### Incremental Compilation (Step 7)
+
+Dependency modules that haven't changed don't need re-lowering. The compiler caches lowered Go declarations in `.skycache/lowered/`:
+
+```
+.skycache/lowered/
+  Tailwind_Typography.go      -- cached lowered output
+  Tailwind_Spacing.go
+  Lib_Auth.go
+  ...
+```
+
+On subsequent builds, cached modules skip type-checking and lowering entirely. Cross-module aliases are regenerated fresh each build to avoid duplicates. The cache is invalidated by `sky clean` or by deleting `.skycache/lowered/`.
+
+### Current Build Times
+
+| Project | Modules | Time | Notes |
+|---|---|---|---|
+| hello-world | 1 | <1s | Single module, no deps |
+| skyvote | 32 local + 2 FFI | 1.7s | SQLite + Sky.Live |
+| **skyshop** | 43 local + 14 FFI | **1:02** | Stripe, Firebase, Tailwind, Sky.Live |
+| compiler self-build | 28 local | 5.6s | 2800 Go declarations |
+
+### What's Next
+
+- **Smarter cache invalidation** -- detect source changes per-module instead of invalidating everything
+- **Symbol-level tree-shaking** -- collect wrapper references during lowering, skip unused FFI symbols (ported from the TS compiler)
+- **Selective import emission** -- only emit Go imports for packages actually referenced
+- **Multi-level caching** -- cache type-check results, inspector output, and wrapper generation separately
 
 ---
 

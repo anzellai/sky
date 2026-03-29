@@ -245,19 +245,29 @@ main =
 
 ### Current Optimisations (implemented)
 
-1. **Stale file cleanup** (`Pipeline.sky:compile`) — `rm -f sky-out/sky_ffi_*.go sky-out/sky_*.go` at start of every build prevents cross-project pollution when `sky-out/` is reused.
+1. **Stale file cleanup** (`Pipeline.sky:compile`) — `rm -f sky-out/sky_ffi_*.go sky-out/sky_*.go sky-out/live_init.go` at start of every build prevents cross-project pollution when `sky-out/` is reused.
 
 2. **Empty wrapper deletion** (`Pipeline.sky:trimWrapperFile`) — when wrapper DCE eliminates ALL functions from an FFI wrapper file, the file is deleted entirely instead of leaving import-only stubs that cause Go build failures.
 
-3. **Native DCE tool** (`bin/sky-dce` + `Pipeline.sky:runNativeDce`) — compiled Go tool performs both wrapper DCE and main.go DCE in a single pass. Uses native `strings.Contains` (no `any` boxing) for O(n²) reachability analysis. Replaces the Sky-based DCE which took 27s with a 1s native implementation. Wrapper DCE: extracts function names from wrapper files, checks references in main.go, removes unused functions. Main.go DCE: BFS reachability from `main()` + wrapper seeds + var/header seeds. Falls back to Sky-based DCE if `sky-dce` not on PATH.
+3. **Native DCE tool** (`bin/sky-dce` + `Pipeline.sky:runNativeDce`) — compiled Go tool performs both wrapper DCE and main.go DCE in a single pass. Uses native `strings.Contains` (no `any` boxing) for O(n²) reachability analysis. Replaces the Sky-based DCE which took 27s with a 1s native implementation.
 
 4. **Var declaration preservation** — DCE separates `var` declarations from `func` blocks before analysis. All vars are preserved (they may be type constructors or FFI aliases). Only unreachable functions are eliminated.
 
-5. **Import-keeper removal** (`Lower.sky`) — removed all `var _ = pkg.Symbol` declarations that forced unused Go imports. `goimports` now handles import management.
+5. **Large .skyi filtering** (`bin/skyi-filter` + `Pipeline.sky:loadOneFfiBinding`) — for binding files >10KB, runs external Go tool that precomputes used `Alias.funcName` set via regex, then streams the .skyi keeping only header + types + used declarations. Stripe SDK: 147K→9K lines in 90ms.
 
-6. **Large .skyi filtering** (`bin/skyi-filter` + `Pipeline.sky:loadOneFfiBinding`) — for binding files >10KB, runs external Go tool that precomputes used `Alias.funcName` set via regex, then streams the .skyi keeping only header + types + used declarations. Stripe SDK: 147K→9K lines in 90ms.
+6. **Combined FFI imports** (`Pipeline.sky:compileMultiModule`) — collect all dependency imports first, deduplicate, then load FFI modules once. Previously loaded per-module, causing the 8.4MB Stripe SDK to be parsed 40+ times.
 
-7. **Wrapper goimports** (`Pipeline.sky:eliminateDeadCode`) — runs `goimports -w` on all remaining wrapper files after DCE to fix unused imports from partial function elimination. Now handled by `bin/sky-dce` native tool.
+7. **FFI light path** (`Pipeline.sky:compileFfiModuleLight`) — skip full type-check + lowering for `.skyi` modules. Generate only constructor declarations + wrapper variable bindings. Handles 0-arity wrappers via `sky_callZeroOrNil` (type-assertion dispatch) and literal bindings via `extractLiteralFromBody`.
+
+8. **Parallel module lowering** (`Pipeline.sky` + `Lower.sky`) — `List.parallelMap` using Go goroutines for dependency module compilation. Parallel helpers written to separate `sky-out/sky_parallel.go` file (avoids `goimports` stripping `sync` import from single-line helper decls). ~300% CPU utilisation on multi-core.
+
+9. **Parallel FFI loading** — `loadFfiBindings` uses `List.parallelMap` to spawn `skyi-filter` subprocesses concurrently.
+
+10. **Parallel wrapper copying** — `copyFfiWrappers` uses `List.parallelMap` for concurrent file I/O.
+
+11. **String.join optimisation** (`Lower.sky:emitGoExprInline`, `lowerBinary`, `emitBranchCode`, `patternToCondition`, `lowerLet`) — replaced O(n²) `++` concatenation chains with O(n) `String.join "" [parts]` in the lowerer's hottest functions. Reduced CPU time by ~5%.
+
+12. **Incremental compilation** (`Pipeline.sky:compileDependencyModuleCached`) — cache lowered Go declarations in `.skycache/lowered/`. On subsequent builds, cached modules skip type-checking + lowering entirely. Cross-module aliases regenerated fresh each build. Invalidated by `sky clean`.
 
 ### Known Issues (to fix)
 
@@ -285,7 +295,7 @@ main =
 
 10. **FFI binding gaps** — PARTIALLY FIXED. Removed blanket `[` + `]` type rejection that blocked `[]` slice types from reaching the proper slice handler. Slice-of-pointer patterns like `[]*pkg.Type` now pass through to the existing slice handler in both BindingGen and WrapperGen. Some complex Firestore/Stripe methods may still be filtered by other type checks.
 
-11. **Skyshop build time ~1:35** — MOSTLY FIXED. Native DCE tool (`bin/sky-dce`) reduced DCE from 27s to 1s. Warm build: 50s → 15.5s. Cold build: 2:56 → 17s. Remaining time: local module loading (3.8s), dep lowering (5.9s), entry emit (2.9s), Go build (~3s). Full symbol-level tree-shaking during lowering not yet ported from TS compiler.
+11. **Skyshop build time** — FIXED. Was hanging indefinitely due to repeated 8.4MB Stripe SDK parsing. Fixed via combined FFI imports, FFI light path, parallel goroutine lowering, String.join optimisation, and incremental caching. Warm build: **1:02** at 316% CPU. See README.md "Compiler Optimisation Journey" for full details.
 
 14. **Lowerer: string pattern matching double-quoting** — FIXED. `literalCondition` in Lower.sky called `goQuote` on `LitString` values that already include surrounding quotes from the lexer. This double-quoted strings in pattern match conditions, causing ALL string `case` branches to fail silently and fall through to wildcards. Fix: use the `LitString` value directly since it's already a valid Go string literal. Impact: 253 string pattern matches in skyshop (translations) now work correctly.
 
@@ -305,9 +315,9 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 
 1. **Symbol-level tree-shaking during lowering** — the TS lowerer collects `Sky_*` wrapper references into a `collectedWrapperSymbols` set AS it generates Go code. Wrappers are then filtered via `filterInspectResult()` to only generate code for referenced symbols. Impact: Stripe SDK 40K symbols → ~50 wrappers. The self-hosted compiler generates ALL wrappers then DCEs 99.8% of them.
 
-2. **Selective import emission** — the TS lowerer scans emitted GoIR for `GoSelectorExpr`/`GoRawExpr` references and only emits imports for detected packages. The self-hosted compiler emits all 17 stdlib imports unconditionally in `makeGoPackage`.
+2. **Selective import emission** — the TS lowerer scans emitted GoIR for `GoSelectorExpr`/`GoRawExpr` references and only emits imports for detected packages. The self-hosted compiler emits all 18 stdlib imports unconditionally in `makeGoPackage`.
 
-3. **.skyi for types only, not lowered** — TS compiler uses .skyi modules purely for type information during type-checking. They are NOT lowered to Go code. Wrappers come from a separate generation step using InspectResult. The self-hosted compiler parses .skyi into full AST modules and lowers them.
+3. **.skyi for types only, not lowered** — PARTIALLY DONE. `compileFfiModuleLight` skips full lowering for .skyi modules, generating only constructors + wrapper vars. Full symbol-level approach (TS-style) not yet ported.
 
 4. **`-gcflags="all=-l"`** — disables Go inlining for faster compilation. Not yet used in self-hosted build step (`Main.sky` line ~116).
 
@@ -317,27 +327,30 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 
 7. **Single-pass emission** — imports tracked during lowering (not post-hoc scanning). No second pass over generated Go needed.
 
+### Build Times (current)
+
+| Project | Modules | Time | CPU | Notes |
+|---|---|---|---|---|
+| hello-world | 1 | <1s | — | Single module |
+| skyvote | 32+2 FFI | 1.7s | 180% | SQLite + Sky.Live |
+| **skyshop** | 43+14 FFI | **1:02** | 316% | Stripe, Firebase, Tailwind |
+| compiler | 28 | 5.6s | 312% | Self-hosted, 2800 Go decls |
+
 ### Priority Optimisation Roadmap
 
-**P0 — Biggest impact for skyshop (<15s goal):**
-- DONE: Native DCE tool (`bin/sky-dce`) — 27s → 1s DCE, warm build 50s → 16s
-- DONE: Package-level wrapper filtering (skip entire unused FFI packages)
-- DONE: Removed debug prints from `compileDependencyModule` (57 println calls per build)
-- DONE: Fixed string pattern matching + exposedStdlib priority (skyshop rendering)
-- DONE: Removed debug prints from `compileDependencyModule` (57 println calls per build)
-- DONE: FFI import deduplication (Os loaded 5x → 1x)
-- DONE: Removed `go get` loop before `go mod tidy` (cold build 1:41 → 17s)
-- DONE: Working type checker — catches errors at compile time (v0.7.2)
-- DONE: Wrapper IIFE fix — effectful FFI calls now return values not closures
-- TODO: Skip .skyi lowering — use .skyi for types only, emit direct wrapper calls
+**Done:**
+- DONE: Native DCE tool — 27s → 1s
+- DONE: Combined FFI imports — fixed hanging build
+- DONE: FFI light path — skip full lowering for .skyi
+- DONE: Parallel lowering/loading/copying — goroutines, 300%+ CPU
+- DONE: String.join in hot paths — O(n²) → O(n) concat
+- DONE: Incremental compilation — cache lowered modules
+- DONE: `-gcflags="all=-l"` in go build
 
-**P1 — Moderate impact:**
-- Port full symbol-level tree-shaking (collect wrapper refs during lowering, skip unused wrappers)
-- Selective import emission in `makeGoPackage` (scan declarations, only emit used imports)
-- DONE: `-gcflags="all=-l"` already in go build command
-- Preserve go.mod/go.sum across builds
-
-**P2 — Incremental/future:**
-- Multi-level caching for type-check results
-- Inspector cache for Go package introspection
+**TODO:**
+- Smarter cache invalidation — detect source changes per-module
+- Symbol-level tree-shaking — collect wrapper refs during lowering, skip unused
+- Selective import emission — only emit Go imports for referenced packages
+- Preserve go.mod/go.sum across builds — allow Go incremental build
+- Multi-level caching — type-check results, inspector output, wrapper generation
 - Go generics support in FFI pipeline
