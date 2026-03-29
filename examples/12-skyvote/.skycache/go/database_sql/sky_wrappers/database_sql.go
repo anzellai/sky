@@ -1120,3 +1120,35 @@ func Sky_database_sql_LevelSnapshot(_ any) any {
 func Sky_database_sql_LevelWriteCommitted(_ any) any {
 	return sql.LevelWriteCommitted
 }
+// Custom helper: query and scan all rows into list of string maps
+func Sky_database_sql_QueryToMaps(db any, query any, args any) any {
+	return func() any {
+		defer func() { recover() }()
+		_db := db.(*sql.DB)
+		_query := sky_asString(query)
+		_args := sky_asList(args)
+		rows, err := _db.Query(_query, _args...)
+		if err != nil { return SkyErr(err.Error()) }
+		defer rows.Close()
+		cols, err := rows.Columns()
+		if err != nil { return SkyErr(err.Error()) }
+		var result []any
+		for rows.Next() {
+			values := make([]any, len(cols))
+			ptrs := make([]any, len(cols))
+			for i := range values { ptrs[i] = &values[i] }
+			if err := rows.Scan(ptrs...); err != nil { continue }
+			row := map[string]any{}
+			for i, col := range cols {
+				switch v := values[i].(type) {
+				case []byte: row[col] = string(v)
+				case nil: row[col] = ""
+				default: row[col] = _ffi_fmt.Sprintf("%v", v)
+				}
+			}
+			result = append(result, row)
+		}
+		if result == nil { result = []any{} }
+		return SkyOk(result)
+	}()
+}

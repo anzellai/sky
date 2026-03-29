@@ -489,3 +489,6 @@ levelSnapshot =
 levelWriteCommitted : IsolationLevel
 levelWriteCommitted =
     Sky_database_sql_LevelWriteCommitted
+queryToMaps : DB -> String -> List Any -> Result String (List Any)
+queryToMaps receiver arg0 arg1 =
+    Sky_database_sql_QueryToMaps receiver arg0 arg1
