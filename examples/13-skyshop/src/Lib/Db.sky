@@ -99,19 +99,33 @@ getDocWithClient client collection docId =
 
 
 getDocInner colRef docId =
-    let
-        docRef = Firestore.collectionRefDoc colRef docId
-    in
-        case Firestore.documentRefGet docRef ctx of
-            
-            Ok snapshot ->
-                if Firestore.documentSnapshotExists snapshot then
-                    Ok (Just (snapshotToDict snapshot))
-                else
-                    Ok Nothing
-            
-            Err _ ->
-                Ok Nothing
+    case Firestore.collectionRefDoc colRef docId of
+        
+        Err _ ->
+            Ok Nothing
+        
+        Ok docRef ->
+            getDocRef docRef
+
+
+getDocRef docRef =
+    case Firestore.documentRefGet docRef ctx of
+        
+        Ok snapshot ->
+            getDocSnapshot snapshot
+        
+        Err _ ->
+            Ok Nothing
+
+
+getDocSnapshot snapshot =
+    case Firestore.documentSnapshotExists snapshot of
+        
+        Ok True ->
+            Ok (Just (snapshotToDict snapshot))
+        
+        _ ->
+            Ok Nothing
 
 
 mergeOpts = [ Firestore.mergeAll () ]
@@ -138,8 +152,17 @@ setDocWithClient client collection docId data =
 
 
 setDocInner colRef docId data =
+    case Firestore.collectionRefDoc colRef docId of
+        
+        Err e ->
+            Err (errorToString e)
+        
+        Ok docRef ->
+            setDocRef docRef data
+
+
+setDocRef docRef data =
     let
-        docRef = Firestore.collectionRefDoc colRef docId
         goMap = dictToMap data
     in
         case Firestore.documentRefSet docRef ctx goMap mergeOpts of
@@ -172,16 +195,13 @@ queryDocsWithClient client collection =
 
 
 queryDocsInner colRef =
-    let
-        iter = Firestore.collectionRefDocuments colRef ctx
-    in
-        case Firestore.documentIteratorGetAll iter of
-            
-            Ok snapshots ->
-                Ok (List.map snapshotToDict snapshots)
-            
-            Err e ->
-                Err (errorToString e)
+    case Firestore.collectionRefDocuments colRef ctx of
+        
+        Err e ->
+            Err (errorToString e)
+        
+        Ok iter ->
+            getAllSnapshots iter
 
 
 queryWhere collection field op value =
@@ -205,17 +225,16 @@ queryWhereWithClient client collection field op value =
 
 
 queryWhereInner colRef field op value =
-    let
-        q = Firestore.collectionRefWhere colRef field op value
-        iter = Firestore.queryDocuments q ctx
-    in
-        case Firestore.documentIteratorGetAll iter of
-            
-            Ok snapshots ->
-                Ok (List.map snapshotToDict snapshots)
-            
-            Err e ->
-                Err (errorToString e)
+    case Firestore.collectionRefWhere colRef field op value of
+        
+        Err e ->
+            Err (errorToString e)
+        
+        Ok q ->
+-- ══════════════════════════════════════════════════════
+-- SHARED QUERY HELPERS
+-- ══════════════════════════════════════════════════════
+            runQuery q
 
 
 queryWhereOrder collection field op value orderField dir =
@@ -241,23 +260,30 @@ queryWhereOrderWithClient client collection field op value orderField dir =
 
 
 queryWhereOrderInner colRef field op value orderField dir =
+    case Firestore.collectionRefWhere colRef field op value of
+        
+        Err e ->
+            Err (errorToString e)
+        
+        Ok q ->
+            queryWhereOrderQuery q orderField dir
+
+
+queryWhereOrderQuery q orderField dir =
     let
-        q = Firestore.collectionRefWhere colRef field op value
         direction =
             if dir == "desc" then
                 Firestore.desc
             else
                 Firestore.asc
-        ordered = Firestore.queryOrderBy q orderField direction
-        iter = Firestore.queryDocuments ordered ctx
     in
-        case Firestore.documentIteratorGetAll iter of
-            
-            Ok snapshots ->
-                Ok (List.map snapshotToDict snapshots)
+        case Firestore.queryOrderBy q orderField direction of
             
             Err e ->
                 Err (errorToString e)
+            
+            Ok ordered ->
+                runQuery ordered
 
 
 deleteDoc collection docId =
@@ -281,16 +307,43 @@ deleteDocWithClient client collection docId =
 
 
 deleteDocInner colRef docId =
-    let
-        docRef = Firestore.collectionRefDoc colRef docId
-    in
-        case Firestore.documentRefDelete docRef ctx [] of
-            
-            Ok _ ->
-                Ok ()
-            
-            Err e ->
-                Err (errorToString e)
+    case Firestore.collectionRefDoc colRef docId of
+        
+        Err e ->
+            Err (errorToString e)
+        
+        Ok docRef ->
+            deleteDocRef docRef
+
+
+deleteDocRef docRef =
+    case Firestore.documentRefDelete docRef ctx [] of
+        
+        Ok _ ->
+            Ok ()
+        
+        Err e ->
+            Err (errorToString e)
+
+
+runQuery q =
+    case Firestore.queryDocuments q ctx of
+        
+        Err e ->
+            Err (errorToString e)
+        
+        Ok iter ->
+            getAllSnapshots iter
+
+
+getAllSnapshots iter =
+    case Firestore.documentIteratorGetAll iter of
+        
+        Ok snapshots ->
+            Ok (List.map snapshotToDict snapshots)
+        
+        Err e ->
+            Err (errorToString e)
 
 
 -- ══════════════════════════════════════════════════════
