@@ -5,8 +5,6 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
-import Std.Cmd as Cmd
-
 -- ============================================================
 -- Counter — A reusable counter component for Sky.Live
 --
@@ -18,28 +16,32 @@ import Std.Cmd as Cmd
 --   Counter.view     (render with toMsg wrapper)
 -- ============================================================
 -- The component state type (same name as module)
+import Std.Cmd as Cmd
+
+-- Internal messages
 type alias Counter =
     { count : Int , label : String }
 
 
--- Internal messages
+-- Initial state
 type Msg
     = Increment
     | Decrement
+-- Create with a custom label
     | Reset
 
 
--- Initial state
 init : Counter
 init =
     { count = 0 , label = "Counter" }
 
 
--- Create with a custom label
 initWith : String -> Counter
 initWith label =
     { count = 0 , label = label }
 
+-- View with toMsg wrapper
+-- The toMsg function wraps internal Msgs for the parent's event system.
 
 update : Msg -> Counter -> ( Counter , Cmd Msg )
 update msg counter =
@@ -53,11 +55,11 @@ update msg counter =
         
         Reset ->
             ( { counter | count = 0 } , Cmd.none )
+-- Query functions
 
 
--- View with toMsg wrapper
--- The toMsg function wraps internal Msgs for the parent's event system.
 view : (Msg -> parentMsg) -> Counter -> VNode
+-- State machine
 view toMsg counter =
     div  [ class  "counter-component" ]
      [ h3  []  [ text  counter.label ]
@@ -72,9 +74,6 @@ view toMsg counter =
     ]
 
 
--- Query functions
 getCount : Counter -> Int
 getCount counter =
     counter.count
-
--- State machine

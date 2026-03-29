@@ -5,11 +5,11 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput, onSubmit)
 import State exposing (..)
-import Ui.Layout as Layout
-
 -- ══════════════════════════════════════════════════════
 -- SIGN IN
 -- ══════════════════════════════════════════════════════
+import Ui.Layout as Layout
+
 viewSignIn model =
     Layout.page  model
      (
@@ -51,13 +51,13 @@ viewSignIn model =
             [ text  "Sign up" ]
          ]
        ]
+-- ══════════════════════════════════════════════════════
+-- SIGN UP
+-- ══════════════════════════════════════════════════════
     ]
     )
 
 
--- ══════════════════════════════════════════════════════
--- SIGN UP
--- ══════════════════════════════════════════════════════
 viewSignUp model =
     Layout.page  model
      (
@@ -107,15 +107,15 @@ viewSignUp model =
           [ text  "Already have an account? "
          , a  [ href  "/auth/signin" , attribute  "sky-nav"  "" ]
             [ text  "Sign in" ]
+-- ══════════════════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════════════════
          ]
        ]
     ]
     )
 
 
--- ══════════════════════════════════════════════════════
--- HELPERS
--- ══════════════════════════════════════════════════════
 viewAuthError error =
     if error == "" then
         text  ""

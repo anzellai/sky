@@ -8,25 +8,25 @@ import Sky.Core.String as String
 import Std.Html exposing (..)
 import Std.Html.Attributes as Attr
 import Std.Html.Events as Events
-import Std.Css as Css
-
 -- ============================================================
 -- Helpers
 -- ============================================================
+import Std.Css as Css
+
 getField field row =
     Maybe.withDefault  ""  (Dict.get  field  row)
 
 
 errorBanner msg =
+-- ============================================================
+-- Design tokens
+-- ============================================================
     if msg == "" then
         raw  ""
     else
         div  [ Attr.class  "error" ]  [ text  msg ]
 
 
--- ============================================================
--- Design tokens
--- ============================================================
 sp n =
     Css.px  (n * 4)
 
@@ -63,6 +63,9 @@ textLight _ =
     Css.hex  "64748b"
 
 
+-- ============================================================
+-- Stylesheet
+-- ============================================================
 pageBg _ =
     Css.hex  "f8fafc"
 
@@ -111,9 +114,6 @@ cardShadow _ =
     Css.shadow  0  1  3  (Css.rgba  0  0  0  0.1)
 
 
--- ============================================================
--- Stylesheet
--- ============================================================
 appStyles _ =
     Css.stylesheet
      [ Css.rule  "*"
@@ -360,6 +360,9 @@ appStyles _ =
       , Css.marginBottom  (sp  3)
       , Css.fontStyle  "italic"
       ]
+-- ============================================================
+-- Inline style helpers
+-- ============================================================
     , Css.rule  ".md img"
        [ Css.maxWidth  (Css.pct  100) , Css.borderRadius  (radius  ()) ]
     , Css.rule  ".md a"  [ Css.color  (primaryColor  ()) ]
@@ -373,6 +376,9 @@ appStyles _ =
       , Css.width  (Css.pct  100)
       , Css.marginBottom  (sp  4)
       ]
+-- ============================================================
+-- Layout
+-- ============================================================
     , Css.rule  ".md th,.md td"
        [ Css.border  ("1px solid " ++ borderColor  ())
       , Css.padding2  (sp  2)  (sp  3)
@@ -390,6 +396,9 @@ appStyles _ =
       , Css.fontSize  (Css.px  14)
       , Css.color  (textMuted  ())
       ]
+-- ============================================================
+-- Navigation
+-- ============================================================
     , Css.rule  ".auth-footer a"  [ Css.margin2  (Css.zero  ())  (Css.px  4) ]
     , Css.rule  ".header-row"
        [ Css.display  "flex"
@@ -410,9 +419,6 @@ appStyles _ =
     ]
 
 
--- ============================================================
--- Inline style helpers
--- ============================================================
 fullWidth _ =
     Attr.style  (Css.styles  [ Css.width  (Css.pct  100) ])
 
@@ -424,18 +430,21 @@ fullWidthBlock _ =
              [ Css.width  (Css.pct  100)
             , Css.textAlign  "center"
             , Css.marginTop  (sp  5)
+-- ============================================================
+-- Reusable components
+-- ============================================================
             , Css.display  "block"
             ]
     in
         Attr.style  s
 
 
--- ============================================================
--- Layout
--- ============================================================
 layout title navEl content =
     doctype  () ++
     render
+-- ============================================================
+-- Public pages
+-- ============================================================
      (
     htmlNode  [ Attr.lang  "en" ]
      [ headNode  []
@@ -452,9 +461,6 @@ layout title navEl content =
     )
 
 
--- ============================================================
--- Navigation
--- ============================================================
 navGuest _ =
     nav  [ Attr.class  "nav" ]
      [ div  [ Attr.class  "nav-inner" ]
@@ -490,9 +496,6 @@ navAuth email =
     ]
 
 
--- ============================================================
--- Reusable components
--- ============================================================
 featureCard icon title description =
     div  [ Attr.class  "feature" ]
      [ div  [ Attr.class  "feature-icon" ]  [ text  icon ]
@@ -506,9 +509,6 @@ formGroup labelText inputEl =
      [ label  []  [ text  labelText ] , inputEl ]
 
 
--- ============================================================
--- Public pages
--- ============================================================
 landingPage _ =
     let
         heroBtnStyle =
@@ -667,6 +667,9 @@ forgotPasswordPage errorMsg =
      (
     div  [ Attr.class  "card auth-card" ]
      [ h2  []  [ text  "Forgot Password" ]
+-- ============================================================
+-- Notes pages
+-- ============================================================
     , p
        [ Attr.style
           (
@@ -745,9 +748,6 @@ verifyResultPage isSuccess message =
         )
 
 
--- ============================================================
--- Notes pages
--- ============================================================
 noteCard note =
     let
         noteTitle =
@@ -892,6 +892,20 @@ noteViewPage email note =
 
 
 noteFormPage email noteTitle content noteId isEdit =
+        -- Layout
+        -- Navigation
+        -- Buttons
+        -- Forms
+        -- Alerts
+        -- Note cards
+        -- Headings & links
+        -- Hero
+        -- Features grid
+        -- Split view (editor + preview)
+        -- Markdown rendered content
+        -- Auth pages
+        -- Utility classes
+        -- Responsive
     let
         pageTitle =
             if isEdit then
@@ -978,18 +992,3 @@ errorPage message =
        [ text  "Go Home" ]
     ]
     )
-
-        -- Layout
-        -- Navigation
-        -- Buttons
-        -- Forms
-        -- Alerts
-        -- Note cards
-        -- Headings & links
-        -- Hero
-        -- Features grid
-        -- Split view (editor + preview)
-        -- Markdown rendered content
-        -- Auth pages
-        -- Utility classes
-        -- Responsive

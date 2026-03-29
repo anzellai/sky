@@ -1226,29 +1226,12 @@ cmdFmt _ =
 
 reinsertComments : String -> String -> String
 reinsertComments original formatted =
-    let
-        commentPairs =
-            extractCommentPairs  (String.split  "\n"  original)  []
-    in
-        insertCommentPairs  commentPairs  (String.split  "\n"  formatted)
-
-
-extractCommentPairs : (List String) -> (List ( String , String )) -> List ( String , String )
-extractCommentPairs lines acc =
-    case lines of
-        
-        [  ] ->
-            List.reverse  acc
-        
-        line :: rest ->
-            if isCommentLine  (String.trim  line) then
-                let
-                    anchor =
-                        findNextNonComment  rest
-                in
-                    extractCommentPairs  rest  (( line , anchor ) :: acc)
-            else
-                extractCommentPairs  rest  acc
+    String.join  "\n"
+     (
+    mergeWithComments  (String.split  "\n"  original)
+     (String.split  "\n"  formatted)
+     []
+    )
 
 
 isCommentLine : String -> Bool
@@ -1256,62 +1239,37 @@ isCommentLine trimmed =
     String.startsWith  "--"  trimmed || String.startsWith  "{-"  trimmed
 
 
-findNextNonComment : (List String) -> String
-findNextNonComment lines =
-    case lines of
+mergeWithComments : (List String) -> (List String) -> (List String) -> List String
+mergeWithComments origLines fmtLines acc =
+    case origLines of
         
         [  ] ->
-            ""
+            List.append  acc  fmtLines
         
-        line :: rest ->
+        origLine :: origRest ->
             let
                 trimmed =
-                    String.trim  line
+                    String.trim  origLine
             in
-                if String.isEmpty  trimmed then
-                    findNextNonComment  rest
-                else if isCommentLine  trimmed then
-                    findNextNonComment  rest
+                if isCommentLine  trimmed then
+                    mergeWithComments  origRest  fmtLines
+                     (List.append  acc  [ origLine ])
+                else if String.isEmpty  trimmed then
+                    mergeWithComments  origRest  fmtLines  acc
                 else
-                    trimmed
+                    advanceFormatted  origRest  fmtLines  acc
 
 
-insertCommentPairs : (List ( String , String )) -> (List String) -> String
-insertCommentPairs pairs outputLines =
-    let
-        result =
-            List.foldl  (\pair lines -> insertOnePair  pair  lines)  outputLines
-             pairs
-    in
-        String.join  "\n"  result
-
-
-insertOnePair : ( String , String ) -> (List String) -> List String
-insertOnePair pair lines =
-    let
-        comment =
-            fst  pair
-        anchor =
-            snd  pair
-    in
-        if String.isEmpty  anchor then
-            List.append  lines  [ comment ]
-        else
-            insertBeforeAnchor  comment  anchor  lines  []
-
-
-insertBeforeAnchor : String -> String -> (List String) -> (List String) -> List String
-insertBeforeAnchor comment anchor lines acc =
-    case lines of
+advanceFormatted : (List String) -> (List String) -> (List String) -> List String
+advanceFormatted origRest fmtLines acc =
+    case fmtLines of
         
         [  ] ->
-            List.append  (List.reverse  acc)  [ comment ]
+            mergeWithComments  origRest  []  acc
         
-        line :: rest ->
-            if String.trim  line == anchor then
-                List.concat  [ List.reverse  acc , [ comment , line ] , rest ]
-            else
-                insertBeforeAnchor  comment  anchor  rest  (line :: acc)
+        fmtLine :: fmtRest ->
+            mergeWithComments  origRest  fmtRest
+             (List.append  acc  [ fmtLine ])
 
 
 fmtStdin : () -> ()

@@ -8,11 +8,11 @@ import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
 import Ui.Styles exposing (globalStyles)
-import Lib.Db as Db
-
 -- ══════════════════════════════════════════════════════
 -- PAGE LAYOUT
 -- ══════════════════════════════════════════════════════
+import Lib.Db as Db
+
 page model content =
     div  []
      [ styleNode  []  globalStyles
@@ -35,6 +35,9 @@ pageWithAuth model content =
                 [ p  [ class  "auth-prompt" ]
                    [ text  "Please "
                   , a  [ href  "/auth/signin" , attribute  "sky-nav"  "" ]
+-- ══════════════════════════════════════════════════════
+-- HEADER
+-- ══════════════════════════════════════════════════════
                      [ text  "sign in" ]
                   , text  " to access this page."
                   ]
@@ -43,9 +46,6 @@ pageWithAuth model content =
             )
 
 
--- ══════════════════════════════════════════════════════
--- HEADER
--- ══════════════════════════════════════════════════════
 viewHeader model =
     headerNode  [ class  "header" ]
      [ div  [ class  "header-inner" ]
@@ -85,6 +85,9 @@ viewAuthNav model =
         Nothing ->
             span  [ class  "auth-nav-anon" ]
              [ a
+-- ══════════════════════════════════════════════════════
+-- NOTIFICATION
+-- ══════════════════════════════════════════════════════
                 [ href  "/auth/signin"
                , attribute  "sky-nav"  ""
                , class  "nav-link"
@@ -99,9 +102,6 @@ viewAuthNav model =
             ]
 
 
--- ══════════════════════════════════════════════════════
--- NOTIFICATION
--- ══════════════════════════════════════════════════════
 viewNotification model =
     if model.notification == "" then
         text  ""

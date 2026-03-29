@@ -5,11 +5,11 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
-import Lib.Db as Db
-
 -- ══════════════════════════════════════════════════════
 -- BADGES
 -- ══════════════════════════════════════════════════════
+import Lib.Db as Db
+
 badge label badgeClass =
     span  [ class  ("badge " ++ badgeClass) ]  [ text  label ]
 
@@ -30,6 +30,9 @@ statusBadge status =
 
 
 categoryBadge category =
+-- ══════════════════════════════════════════════════════
+-- IDEA CARD
+-- ══════════════════════════════════════════════════════
     if category == "bug" then
         badge  "Bug"  "badge-bug"
     else if category == "improvement" then
@@ -38,9 +41,6 @@ categoryBadge category =
         badge  "Feature"  "badge-feature"
 
 
--- ══════════════════════════════════════════════════════
--- IDEA CARD
--- ══════════════════════════════════════════════════════
 ideaCard idea userId =
     let
         ideaId =
@@ -76,19 +76,22 @@ ideaCard idea userId =
              ]
           , p  [ class  "idea-desc" ]
              [ text  (Db.getField  "description"  idea) ]
+-- ══════════════════════════════════════════════════════
+-- STAT CARD
+-- ══════════════════════════════════════════════════════
           , div  [ class  "idea-meta" ]
              [ categoryBadge  category
             , statusBadge  status
             , span  []  [ text  ("by " ++ authorName) ]
             , span  []  [ text  (commentCount ++ " comments") ]
+-- ══════════════════════════════════════════════════════
+-- EMPTY STATE
+-- ══════════════════════════════════════════════════════
             ]
           ]
         ]
 
 
--- ══════════════════════════════════════════════════════
--- STAT CARD
--- ══════════════════════════════════════════════════════
 statCard label value =
     div  [ class  "stat-card" ]
      [ div  [ class  "stat-value" ]  [ text  value ]
@@ -96,8 +99,5 @@ statCard label value =
     ]
 
 
--- ══════════════════════════════════════════════════════
--- EMPTY STATE
--- ══════════════════════════════════════════════════════
 emptyState message =
     div  [ class  "empty-state" ]  [ p  []  [ text  message ] ]

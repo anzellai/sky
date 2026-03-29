@@ -13,11 +13,11 @@ import Lib.Db as Db
 import Lib.Money as Money
 import Lib.Translation as Tr
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
-
 -- ══════════════════════════════════════════════════════
 -- ORDER LIST
 -- ══════════════════════════════════════════════════════
+import Tailwind.Responsive exposing (sm, md, lg)
+
 viewOrders model =
     Layout.page  model
      (
@@ -48,15 +48,15 @@ viewOrders model =
                 div  [ tw  [ textCenter , py16 , textGray500 ] ]
                  [ text  (Tr.t  model.lang  "order.empty") ]
             else
+-- ══════════════════════════════════════════════════════
+-- ORDER DETAIL
+-- ══════════════════════════════════════════════════════
                 div  [ tw  [ flexCol , gap4 ] ]
                  (List.map  (viewOrderCard  model)  model.orders)
             ]
     )
 
 
--- ══════════════════════════════════════════════════════
--- ORDER DETAIL
--- ══════════════════════════════════════════════════════
 viewOrderCard model order =
     let
         orderId =
@@ -103,28 +103,7 @@ viewOrderCard model order =
 
 
 stateColor state =
-    case state of
-        
-        ""ordered"" ->
-            tw  [ bgBlue100 , textBlue700 ]
-        
-        ""shipped"" ->
-            tw  [ bgYellow100 , textYellow500 ]
-        
-        ""delivered"" ->
-            tw  [ bgGreen100 , textGreen700 ]
-        
-        ""cancelled"" ->
-            tw  [ bgRed100 , textRed700 ]
-        
-        ""refunded"" ->
-            tw  [ bgGray100 , textGray600 ]
-        
-        ""pending"" ->
-            tw  [ bgOrange100 , textOrange500 ]
-        
-        _ ->
-            tw  [ bgGray100 , textGray600 ]
+    case state of  ""  ordered
 
 
 viewOrder model =
@@ -273,13 +252,13 @@ viewOrderItem item =
            , span  [ tw  [ textSm , textGray500 , ml2 ] ]
               [ text  ("x" ++ String.fromInt  qty) ]
            ]
+-- ══════════════════════════════════════════════════════
+-- ORDER SUCCESS
+-- ══════════════════════════════════════════════════════
         , span  [ tw  [ fontSemibold ] ]  [ text  lineTotal_ ]
         ]
 
 
--- ══════════════════════════════════════════════════════
--- ORDER SUCCESS
--- ══════════════════════════════════════════════════════
 viewOrderSuccess model =
     Layout.page  model
      (

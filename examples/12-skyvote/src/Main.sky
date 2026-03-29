@@ -22,6 +22,9 @@ import Page.Board as Board
 import Page.Detail as Detail
 import Page.Submit as Submit
 import Page.AuthPage as PageAuth
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
 import Page.About as About
 import Page.Roadmap as Roadmap
 
@@ -52,6 +55,9 @@ init _req =
           , selectedIdea =
               Nothing
           , ideaComments =
+-- ══════════════════════════════════════════════════════
+-- HELPERS (defined before update so they are in scope)
+-- ══════════════════════════════════════════════════════
               []
           , newComment =
               ""
@@ -77,7 +83,7 @@ init _req =
 
 
 -- ══════════════════════════════════════════════════════
--- HELPERS (defined before update so they are in scope)
+-- BOARD HANDLERS
 -- ══════════════════════════════════════════════════════
 logActivity event targetId userId =
     Db.exec
@@ -128,6 +134,9 @@ handleSetFilter category model =
             Ideas.getIdeas  model.sortBy  category  model.searchQuery
     in
         ( { model | filterCategory = category , ideas = ideas } , Cmd.none )
+-- ══════════════════════════════════════════════════════
+-- DETAIL HANDLERS
+-- ══════════════════════════════════════════════════════
 
 
 handleSetSearch : String -> Model -> ( Model , Cmd Msg )
@@ -168,6 +177,9 @@ handleToggleVote ideaId model =
               }
             , Cmd.none
             )
+-- ══════════════════════════════════════════════════════
+-- SUBMIT HANDLERS
+-- ══════════════════════════════════════════════════════
 
 
 handleViewIdea : String -> Model -> ( Model , Cmd Msg )
@@ -198,6 +210,9 @@ handleViewIdea ideaId model =
 
 doSubmitComment : (Dict String String) -> Model -> ( Model , Cmd Msg )
 doSubmitComment user model =
+-- ══════════════════════════════════════════════════════
+-- AUTH HANDLERS
+-- ══════════════════════════════════════════════════════
     let
         userId =
             Db.getField  "id"  user
@@ -268,6 +283,9 @@ doCreateIdea user model =
         _ =
             Ideas.createIdea  model.submitTitle  model.submitDescription
              model.submitCategory
+-- ══════════════════════════════════════════════════════
+-- UPDATE
+-- ══════════════════════════════════════════════════════
              userId
         _ =
             logActivity  "submit"  ""  userId
@@ -305,6 +323,9 @@ handleSubmitIdea model =
         
         Nothing ->
             ( { model | page = SignInPage } , Cmd.none )
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
 
 
 handleSignInSuccess : (Dict String String) -> Model -> ( Model , Cmd Msg )
@@ -324,6 +345,9 @@ handleSignInSuccess user model =
           , ideas =
               ideas
           , authEmail =
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS
+-- ══════════════════════════════════════════════════════
               ""
           , authPassword =
               ""
@@ -331,6 +355,9 @@ handleSignInSuccess user model =
               ""
           , notification =
               "Welcome back!"
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
           }
         , Cmd.none
         )
@@ -492,9 +519,6 @@ update msg model =
             refreshCurrentView  model
 
 
--- ══════════════════════════════════════════════════════
--- VIEW
--- ══════════════════════════════════════════════════════
 view : Model -> VNode
 view model =
     case model.page of
@@ -524,9 +548,6 @@ view model =
             Board.viewBoard  model
 
 
--- ══════════════════════════════════════════════════════
--- SUBSCRIPTIONS
--- ══════════════════════════════════════════════════════
 subscriptions model =
     case model.page of
         
@@ -540,9 +561,6 @@ subscriptions model =
             Sub.none
 
 
--- ══════════════════════════════════════════════════════
--- APP
--- ══════════════════════════════════════════════════════
 main =
     app
      { init =
@@ -564,22 +582,3 @@ main =
      , notFound =
          NotFoundPage
      }
-
--- ══════════════════════════════════════════════════════
--- INIT
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- BOARD HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- DETAIL HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- SUBMIT HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- AUTH HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- UPDATE
--- ══════════════════════════════════════════════════════

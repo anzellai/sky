@@ -14,11 +14,11 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
-
 -- ══════════════════════════════════════════════════════
 -- ADMIN PRODUCT LIST
 -- ══════════════════════════════════════════════════════
+import Tailwind.Responsive exposing (sm, md, lg)
+
 viewAdminProducts model =
     let
         lang =
@@ -140,6 +140,9 @@ viewAdminProductRow model product =
              else
                  String.fromInt  stock
              )
+-- ══════════════════════════════════════════════════════
+-- ADMIN PRODUCT FORM
+-- ══════════════════════════════════════════════════════
           ]
         , if published then
             span  [ Layout.badgeLive ]  [ text  "Live" ]
@@ -148,9 +151,6 @@ viewAdminProductRow model product =
         ]
 
 
--- ══════════════════════════════════════════════════════
--- ADMIN PRODUCT FORM
--- ══════════════════════════════════════════════════════
 viewAdminNewProduct model =
     Layout.adminPage  model
      (
@@ -182,6 +182,7 @@ viewAdminEditProduct model =
           ]
            [ text  "< Products" ]
        , div  [ tw  [ flex , justifyBetween , itemsCenter , mt2 ] ]
+            -- Image Manager
           [ h1  [ tw  [ text2xl , fontBold , textGray900 ] ]
              [ text  (Tr.t  model.lang  "admin.editProduct") ]
          , button
@@ -192,7 +193,6 @@ viewAdminEditProduct model =
          ]
        ]
     , viewProductForm  model
-            -- Image Manager
     , if model.editProductId != "" then
         viewImageManager  model
     else
@@ -414,6 +414,9 @@ viewImageManager model =
               )
           , div  [ Layout.uploadZone ]
              [ div  [ tw  [ flex1 ] ]
+-- ══════════════════════════════════════════════════════
+-- ADMIN ORDERS
+-- ══════════════════════════════════════════════════════
                 [ input
                    [ type_  "file"
                   , attribute  "accept"  "image/*"
@@ -430,9 +433,6 @@ viewImageManager model =
         ]
 
 
--- ══════════════════════════════════════════════════════
--- ADMIN ORDERS
--- ══════════════════════════════════════════════════════
 viewAdminOrders model =
     let
         lang =
@@ -504,6 +504,9 @@ orderFilterBtn filterValue label activeFilter =
         , py1
         , roundedFull
         , fontSemibold
+-- ══════════════════════════════════════════════════════
+-- ADMIN ORDER DETAIL
+-- ══════════════════════════════════════════════════════
         , bgBlue600
         , textWhite
         , border
@@ -526,9 +529,6 @@ orderFilterBtn filterValue label activeFilter =
      [ text  label ]
 
 
--- ══════════════════════════════════════════════════════
--- ADMIN ORDER DETAIL
--- ══════════════════════════════════════════════════════
 viewAdminOrderRow model order =
     let
         orderId =
@@ -567,33 +567,8 @@ viewAdminOrderRow model order =
         ]
 
 
-stateBadge model st =
-    let
-        badgeStyle =
-            case st of
-                
-                ""ordered"" ->
-                    Layout.badgeOrdered
-                
-                ""shipped"" ->
-                    Layout.badgeShipped
-                
-                ""delivered"" ->
-                    Layout.badgeDelivered
-                
-                ""cancelled"" ->
-                    Layout.badgeCancelled
-                
-                ""refunded"" ->
-                    Layout.badgeRefunded
-                
-                ""pending"" ->
-                    Layout.badgePending
-                
-                _ ->
-                    Layout.badgeDraft
-    in
-        span  [ badgeStyle ]  [ text  (Tr.tCartState  model.lang  st) ]
+badgeStyle =
+    case st of  ""  ordered
 
 
 viewAdminOrder model =

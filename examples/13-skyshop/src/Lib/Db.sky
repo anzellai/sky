@@ -10,11 +10,11 @@ import Std.Log exposing (println)
 import Cloud.Google.Com.Go.Firestore as Firestore
 import Context
 import Fmt
-import Os
-
 -- ══════════════════════════════════════════════════════
 -- FIRESTORE CLIENT
 -- ══════════════════════════════════════════════════════
+import Os
+
 ctx =
     Context.background  ()
 
@@ -26,6 +26,9 @@ getProjectId _ =
     in
         if env == "" then
             "skyshop"
+-- ══════════════════════════════════════════════════════
+-- HELPERS
+-- ══════════════════════════════════════════════════════
         else
             env
 
@@ -34,15 +37,14 @@ getFirestoreClient _ =
     Firestore.newClient  ctx  (getProjectId  ())  []
 
 
--- ══════════════════════════════════════════════════════
--- HELPERS
--- ══════════════════════════════════════════════════════
 anyToString val =
     Fmt.sprint  [ val ]
 
 
 snapshotToDict snapshot =
     let
+-- Typed value wrappers for storing native types in Firestore Dicts.
+-- These pass values through as-is (identity at runtime).
         rawData =
             Firestore.documentSnapshotData  snapshot
         docId =
@@ -52,6 +54,9 @@ snapshotToDict snapshot =
 
 
 mapToStringDict rawMap =
+-- ══════════════════════════════════════════════════════
+-- CORE API
+-- ══════════════════════════════════════════════════════
     Dict.map  (\_ v -> anyToString  v)  rawMap
 
 
@@ -59,8 +64,6 @@ dictToMap dict =
     dict
 
 
--- Typed value wrappers for storing native types in Firestore Dicts.
--- These pass values through as-is (identity at runtime).
 intVal : Int -> a
 intVal n =
     identity  n
@@ -76,9 +79,6 @@ floatVal f =
     identity  f
 
 
--- ══════════════════════════════════════════════════════
--- CORE API
--- ══════════════════════════════════════════════════════
 getDoc collection docId =
     case getFirestoreClient  () of
         
@@ -171,6 +171,9 @@ queryWhere collection field op value =
                     Ok snapshots ->
                         Ok  (List.map  snapshotToDict  snapshots)
                     
+-- ══════════════════════════════════════════════════════
+-- FIELD ACCESSORS (same interface as before)
+-- ══════════════════════════════════════════════════════
                     Err e ->
                         Err  (errorToString  e)
                     
@@ -190,6 +193,9 @@ queryWhereOrder collection field op value orderField dir =
                 direction =
                     if dir == "desc" then
                         Firestore.desc
+-- ══════════════════════════════════════════════════════
+-- INIT (no schema needed for Firestore)
+-- ══════════════════════════════════════════════════════
                     else
                         Firestore.asc
                 ordered =
@@ -231,9 +237,6 @@ deleteDoc collection docId =
                         Err  (errorToString  e)
 
 
--- ══════════════════════════════════════════════════════
--- FIELD ACCESSORS (same interface as before)
--- ══════════════════════════════════════════════════════
 getField field row =
     Maybe.withDefault  ""  (Dict.get  field  row)
 
@@ -259,9 +262,6 @@ getBool field row =
         val == "1" || val == "true"
 
 
--- ══════════════════════════════════════════════════════
--- INIT (no schema needed for Firestore)
--- ══════════════════════════════════════════════════════
 initDb =
     case getFirestoreClient  () of
         

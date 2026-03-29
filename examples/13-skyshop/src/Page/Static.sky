@@ -5,11 +5,11 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import State exposing (..)
 import Ui.Layout as Layout
-import Tailwind exposing (..)
-
 -- ══════════════════════════════════════════════════════
 -- PRIVACY POLICY
 -- ══════════════════════════════════════════════════════
+import Tailwind exposing (..)
+
 viewPrivacyPolicy model =
     Layout.page  model
      (
@@ -31,13 +31,13 @@ viewPrivacyPolicy model =
       , section_  "7. Contact"
          "For privacy-related inquiries, please contact us at privacy@example.com."
       ]
+-- ══════════════════════════════════════════════════════
+-- TERMS AND CONDITIONS
+-- ══════════════════════════════════════════════════════
     ]
     )
 
 
--- ══════════════════════════════════════════════════════
--- TERMS AND CONDITIONS
--- ══════════════════════════════════════════════════════
 viewTerms model =
     Layout.page  model
      (
@@ -62,6 +62,9 @@ viewTerms model =
     ]
     )
 
+-- ══════════════════════════════════════════════════════
+-- 404
+-- ══════════════════════════════════════════════════════
 
 section_ title body =
     div  [ tw  [ mb6 ] ]
@@ -70,9 +73,6 @@ section_ title body =
     ]
 
 
--- ══════════════════════════════════════════════════════
--- 404
--- ══════════════════════════════════════════════════════
 viewNotFound model =
     Layout.page  model
      (

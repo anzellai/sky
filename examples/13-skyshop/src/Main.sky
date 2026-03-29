@@ -32,18 +32,18 @@ import Page.Admin as Admin
 import Page.Static as Static
 
 init : a -> ( Model , Cmd Msg )
-init req =
-    let
                                                 -- Set checkout info on the ORDER (not the cart)
                                     -- Save shipping/customer details to order
                                     -- Update user profile with shipping address
+init req =
+    let
         _ =
             Db.initDb
         _ =
             println  "[APP] SkyShop initialised"
+        -- Check for sky_user cookie to pre-load user (instant auth on page load)
         products =
             Products.listProducts
-        -- Check for sky_user cookie to pre-load user (instant auth on page load)
         cookies =
             case Dict.get  "cookies"  req of
                 
@@ -63,6 +63,9 @@ init req =
         user =
             if userUid == "" then
                 Nothing
+-- ══════════════════════════════════════════════════════
+-- REFRESH HELPERS
+-- ══════════════════════════════════════════════════════
             else
                 Auth.getSessionUser  userUid
         base =
@@ -71,9 +74,6 @@ init req =
         ( base , Cmd.none )
 
 
--- ══════════════════════════════════════════════════════
--- REFRESH HELPERS
--- ══════════════════════════════════════════════════════
 refreshProducts model =
     let
         products =
@@ -81,6 +81,7 @@ refreshProducts model =
                 Products.searchProducts  model.search  model.categoryFilter
                  model.sortBy
                  model.sortDir
+                                                -- Reset the active cart to fresh "ongoing"
             else
                 Products.listProducts
     in
@@ -92,7 +93,6 @@ refreshCart model =
         
         Just user ->
             let
-                                                -- Reset the active cart to fresh "ongoing"
                 userId =
                     Db.getField  "id"  user
             in
@@ -222,6 +222,7 @@ handleNavigate page model =
             | page =
                 page
             , notification =
+        -- Public messages (no auth needed)
                 ""
             , notificationType =
                 ""
@@ -269,7 +270,6 @@ handleNavigate page model =
             AdminOrderPage orderId ->
                 ( loadOrderDetail  base  orderId , Cmd.none )
             
-        -- Public messages (no auth needed)
             _ ->
                 ( base , Cmd.none )
 
@@ -831,6 +831,7 @@ handleDeleteImage imageId model =
     case Products.deleteProductImage  imageId of
         
         Ok _ ->
+        -- Product browsing
             let
                 images =
                     Products.listProductImages  model.editProductId
@@ -862,6 +863,7 @@ handleUpdateOrderState orderId newState model =
     case Cart.setCartState  orderId  newState of
         
         Ok _ ->
+        -- Cart
             let
                 updatedModel =
                     refreshAdminOrders  model
@@ -876,6 +878,7 @@ handleUpdateOrderState orderId newState model =
                   , notification =
                       "Order status updated to " ++
                       Tr.tCartState  model.lang  newState
+        -- Admin product
                   , notificationType =
                       "success"
                   }
@@ -894,6 +897,7 @@ handleUpdateOrderState orderId newState model =
 
 
 update : Msg -> Model -> ( Model , Cmd Msg )
+        -- Admin-only messages
 update msg model =
     case msg of
         
@@ -904,6 +908,7 @@ update msg model =
             ( { model | lang = lang } , Cmd.none )
         
         FirebaseAuth token ->
+        -- Admin orders
             case OAuth.handleAuthCallback  token of
                 
                 Ok user ->
@@ -912,10 +917,12 @@ update msg model =
                             println
                              ("[AUTH] Sign in: " ++ Db.getField  "email"  user)
                         newPage =
+        -- Notifications
                             case model.page of
                                 
                                 AuthSignInPage ->
                                     HomePage
+        -- Tick (auto-refresh)
                                 
                                 _ ->
                                     model.page
@@ -926,6 +933,9 @@ update msg model =
                              { model
                              | user =
                                  Just  user
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
                              , page =
                                  newPage
                              , notification =
@@ -949,7 +959,6 @@ update msg model =
                 DoSignOut ->
                     handleSignOut  model
                 
-        -- Product browsing
                 SetSearch query ->
                     let
                         updated =
@@ -962,6 +971,9 @@ update msg model =
                         updated =
                             { model | categoryFilter = cat }
                     in
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS
+-- ══════════════════════════════════════════════════════
                         ( refreshProducts  updated , Cmd.none )
                 
                 SetSortBy sortBy ->
@@ -970,6 +982,9 @@ update msg model =
                             { model | sortBy = sortBy }
                     in
                         ( refreshProducts  updated , Cmd.none )
+-- ══════════════════════════════════════════════════════
+-- AUTHORIZATION GUARD
+-- ══════════════════════════════════════════════════════
                 
                 ToggleSortDir ->
                     let
@@ -982,11 +997,11 @@ update msg model =
                             { model | sortDir = newDir }
                     in
                         ( refreshProducts  updated , Cmd.none )
+        -- Auth-required messages
                 
                 SelectProduct productId ->
                     ( loadProductDetail  model  productId , Cmd.none )
                 
-        -- Cart
                 UpdateQuantity val ->
                     ( { model | quantity = val } , Cmd.none )
                 
@@ -1006,9 +1021,11 @@ update msg model =
                     handleStartCheckout  model
                 
                 VerifyPayment cartId ->
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
                     handleVerifyPayment  cartId  model
                 
-        -- Admin product
                 UpdateEditTitle val ->
                     ( { model | editTitle = val } , Cmd.none )
                 
@@ -1035,11 +1052,34 @@ update msg model =
                     , Cmd.none
                     )
                 
-        -- Admin-only messages
                 SubmitProduct ->
                     handleSubmitProduct  model
                 
                 DeleteProduct productId ->
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- NAVIGATION HANDLER
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- AUTH HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- CART HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- CHECKOUT HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- ADMIN PRODUCT HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- ADMIN ORDER HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- UPDATE
+-- ══════════════════════════════════════════════════════
                     handleDeleteProduct  productId  model
                 
                 UpdateImageData val ->
@@ -1051,7 +1091,6 @@ update msg model =
                 DeleteImage imageId ->
                     handleDeleteImage  imageId  model
                 
-        -- Admin orders
                 SetAdminOrderFilter filter ->
                     let
                         updated =
@@ -1062,13 +1101,11 @@ update msg model =
                 UpdateOrderState orderId newState ->
                     handleUpdateOrderState  orderId  newState  model
                 
-        -- Notifications
                 DismissNotification ->
                     ( { model | notification = "" , notificationType = "" }
                     , Cmd.none
                     )
                 
-        -- Tick (auto-refresh)
                 Tick ->
                     case model.page of
                         
@@ -1085,9 +1122,6 @@ update msg model =
                             ( model , Cmd.none )
 
 
--- ══════════════════════════════════════════════════════
--- VIEW
--- ══════════════════════════════════════════════════════
 view : Model -> VNode
 view model =
     case model.page of
@@ -1141,9 +1175,6 @@ view model =
             Static.viewNotFound  model
 
 
--- ══════════════════════════════════════════════════════
--- SUBSCRIPTIONS
--- ══════════════════════════════════════════════════════
 subscriptions model =
     case model.page of
         
@@ -1157,9 +1188,6 @@ subscriptions model =
             Sub.none
 
 
--- ══════════════════════════════════════════════════════
--- AUTHORIZATION GUARD
--- ══════════════════════════════════════════════════════
 guard msg model =
     case msg of
         
@@ -1178,7 +1206,6 @@ guard msg model =
         DeleteImage _ ->
             requireAdmin  model
         
-        -- Auth-required messages
         AddToCart _ ->
             requireAuth  model
         
@@ -1215,9 +1242,6 @@ requireAdmin model =
             Err  "Authentication required"
 
 
--- ══════════════════════════════════════════════════════
--- APP
--- ══════════════════════════════════════════════════════
 main =
     app
      { init =
@@ -1250,28 +1274,3 @@ main =
      , guard =
          guard
      }
-
--- ══════════════════════════════════════════════════════
--- INIT
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- NAVIGATION HANDLER
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- AUTH HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- CART HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- CHECKOUT HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- ADMIN PRODUCT HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- ADMIN ORDER HANDLERS
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- UPDATE
--- ══════════════════════════════════════════════════════

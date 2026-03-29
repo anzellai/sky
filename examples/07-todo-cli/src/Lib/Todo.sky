@@ -1,6 +1,6 @@
 module Lib.Todo exposing (..)
-
 -- Lib.Todo — Todo display helpers.
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
 import Lib.Db as Db

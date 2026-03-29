@@ -1,11 +1,11 @@
 module Ui.Styles exposing (globalStyles)
 
 import Sky.Core.Prelude exposing (..)
-import Std.Css exposing (..)
-
 -- ══════════════════════════════════════════════════════
 -- DESIGN TOKENS
 -- ══════════════════════════════════════════════════════
+import Std.Css exposing (..)
+
 primary =
     hex  "6366f1"
 
@@ -42,6 +42,9 @@ dangerLight =
     hex  "fee2e2"
 
 
+-- ══════════════════════════════════════════════════════
+-- GLOBAL STYLESHEET
+-- ══════════════════════════════════════════════════════
 info =
     hex  "3b82f6"
 
@@ -82,9 +85,6 @@ borderMedium =
     hex  "cbd5e1"
 
 
--- ══════════════════════════════════════════════════════
--- GLOBAL STYLESHEET
--- ══════════════════════════════════════════════════════
 globalStyles =
     stylesheet
      [ rule  "*, *::before, *::after"
@@ -541,6 +541,25 @@ globalStyles =
     , rule  ".mb-20"  [ property  "margin-bottom"  "20px" ]
     , rule  ".text-center"  [ textAlign  "center" ]
     , rule  ".text-muted-sm"  [ color  textMuted , fontSize  (px  14) ]
+        -- Layout
+        -- Header
+        -- Buttons
+        -- Cards
+        -- Forms
+        -- Badges
+        -- Vote button
+        -- Idea list
+        -- Toolbar
+        -- Page title
+        -- Detail page
+        -- Comments
+        -- Auth pages
+        -- About & Roadmap
+        -- Roadmap columns
+        -- Stats
+        -- Empty state
+        -- Notification
+        -- Responsive
     , rule  ".text-secondary-sm"
        [ color  textSecondary
       , fontSize  (px  14)
@@ -581,23 +600,3 @@ globalStyles =
       , rule  ".header-inner"  [ flexDirection  "column" , gap  (px  12) ]
       ]
     ]
-
-        -- Layout
-        -- Header
-        -- Buttons
-        -- Cards
-        -- Forms
-        -- Badges
-        -- Vote button
-        -- Idea list
-        -- Toolbar
-        -- Page title
-        -- Detail page
-        -- Comments
-        -- Auth pages
-        -- About & Roadmap
-        -- Roadmap columns
-        -- Stats
-        -- Empty state
-        -- Notification
-        -- Responsive

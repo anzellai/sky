@@ -14,11 +14,11 @@ import Lib.Money as Money
 import Lib.Translation as Tr
 import Lib.Products as Products
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
-
 -- ══════════════════════════════════════════════════════
 -- HOME PAGE
 -- ══════════════════════════════════════════════════════
+import Tailwind.Responsive exposing (sm, md, lg)
+
 viewHome model =
     Layout.page  model
      (
@@ -122,6 +122,9 @@ viewFeaturedProducts model =
             [ h2  [ tw  [ text2xl , fontBold , textGray900 ] ]
                [ text  (Tr.t  model.lang  "home.featured") ]
            , a
+-- ══════════════════════════════════════════════════════
+-- PRODUCTS PAGE
+-- ══════════════════════════════════════════════════════
               [ href  "/products"
              , attribute  "sky-nav"  ""
              , tw  [ textSm , fontSemibold , textBlue600 ]
@@ -132,9 +135,6 @@ viewFeaturedProducts model =
         ]
 
 
--- ══════════════════════════════════════════════════════
--- PRODUCTS PAGE
--- ══════════════════════════════════════════════════════
 viewProducts model =
     Layout.page  model
      (
@@ -240,6 +240,9 @@ sortBtn sortValue label activeSort =
         , textWhite
         , border
         , borderGray900
+-- ══════════════════════════════════════════════════════
+-- PRODUCT GRID
+-- ══════════════════════════════════════════════════════
         ]
     else
         tw
@@ -258,9 +261,6 @@ sortBtn sortValue label activeSort =
      [ text  label ]
 
 
--- ══════════════════════════════════════════════════════
--- PRODUCT GRID
--- ══════════════════════════════════════════════════════
 viewProductGrid model products =
     if List.isEmpty  products then
         div  [ tw  [ textCenter , py16 ] ]

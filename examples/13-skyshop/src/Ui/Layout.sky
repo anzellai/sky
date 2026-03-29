@@ -14,13 +14,16 @@ import Lib.Auth as Auth
 import Lib.Translation as Tr
 import Lib.OAuth as OAuth
 import Tailwind exposing (..)
+-- Aliases to avoid collision with Std.Html heading elements
 import Tailwind.Responsive exposing (sm, md, lg)
 
--- Aliases to avoid collision with Std.Html heading elements
 h2_ =
     ( "class" , "h-2" )
 
 
+-- ══════════════════════════════════════════════════════
+-- STYLE HELPERS
+-- ══════════════════════════════════════════════════════
 h5_ =
     ( "class" , "h-5" )
 
@@ -29,9 +32,6 @@ h6_ =
     ( "class" , "h-6" )
 
 
--- ══════════════════════════════════════════════════════
--- STYLE HELPERS
--- ══════════════════════════════════════════════════════
 btnPrimary =
     tw
      [ textSm
@@ -453,6 +453,9 @@ cartThumbPlaceholder =
      [ w16
     , h16
     , roundedMd
+-- ══════════════════════════════════════════════════════
+-- LAYOUT
+-- ══════════════════════════════════════════════════════
     , shrink0
     , bgGray100
     , flex
@@ -511,6 +514,9 @@ imgPlaceholder =
     ]
 
 
+-- ══════════════════════════════════════════════════════
+-- HEADER
+-- ══════════════════════════════════════════════════════
 objectCover_ =
     tw  [ wFull , hFull , objectCover ]
 
@@ -557,9 +563,6 @@ imgOverlayDelete =
     ]
 
 
--- ══════════════════════════════════════════════════════
--- LAYOUT
--- ══════════════════════════════════════════════════════
 page model content =
     div  [ tw  [ minHScreen , flex , flexCol ] ]
      [ styles
@@ -626,9 +629,6 @@ adminPage model content =
             )
 
 
--- ══════════════════════════════════════════════════════
--- HEADER
--- ══════════════════════════════════════════════════════
 viewHeader model =
     let
         lang =
@@ -747,6 +747,9 @@ langToggle model =
 viewUserNav model =
     let
         lang =
+-- ══════════════════════════════════════════════════════
+-- NOTIFICATION
+-- ══════════════════════════════════════════════════════
             model.lang
     in
         case model.user of
@@ -768,6 +771,9 @@ viewUserNav model =
                      , hover  bgGray100
                      ]
                    ]
+-- ══════════════════════════════════════════════════════
+-- ADMIN SIDEBAR
+-- ══════════════════════════════════════════════════════
                     [ span  []  [ text  (Tr.t  lang  "nav.cart") ]
                    , viewCartBadge  model
                    ]
@@ -815,6 +821,9 @@ viewUserNav model =
                       ]
                     ]
                      [ text  (Tr.t  lang  "nav.signout") ]
+-- ══════════════════════════════════════════════════════
+-- FOOTER
+-- ══════════════════════════════════════════════════════
                   ]
                 ]
             
@@ -877,9 +886,6 @@ viewCartBadge model =
             text  ""
 
 
--- ══════════════════════════════════════════════════════
--- NOTIFICATION
--- ══════════════════════════════════════════════════════
 viewNotification model =
     if model.notification == "" then
         text  ""
@@ -887,6 +893,9 @@ viewNotification model =
         let
             notifStyle =
                 if model.notificationType == "error" then
+-- ══════════════════════════════════════════════════════
+-- GLOBAL STYLES (minimal - only what Tailwind can't do)
+-- ══════════════════════════════════════════════════════
                     notificationError
                 else
                     notificationSuccess
@@ -903,9 +912,6 @@ viewNotification model =
             ]
 
 
--- ══════════════════════════════════════════════════════
--- ADMIN SIDEBAR
--- ══════════════════════════════════════════════════════
 adminSidebar model =
     let
         lang =
@@ -963,9 +969,6 @@ adminSidebarLink url key model =
          [ text  (Tr.t  lang  key) ]
 
 
--- ══════════════════════════════════════════════════════
--- FOOTER
--- ══════════════════════════════════════════════════════
 viewFooter model =
     let
         lang =
@@ -1037,9 +1040,6 @@ viewFooter model =
         ]
 
 
--- ══════════════════════════════════════════════════════
--- GLOBAL STYLES (minimal - only what Tailwind can't do)
--- ══════════════════════════════════════════════════════
 globalStyles =
     styleNode  []
      (

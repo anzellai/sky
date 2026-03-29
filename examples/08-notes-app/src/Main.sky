@@ -12,11 +12,11 @@ import Std.Log exposing (println)
 import Lib.Db as Db
 import Lib.Auth as Auth
 import Lib.Notes as Notes
-import Lib.View as View
-
 -- ============================================================
 -- Database initialisation
 -- ============================================================
+import Lib.View as View
+
 initDb _ =
     let
         _ =
@@ -31,13 +31,13 @@ initDb _ =
             Db.exec
              "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT '')"
              []
+-- ============================================================
+-- Auth helpers
+-- ============================================================
     in
         ()
 
 
--- ============================================================
--- Auth helpers
--- ============================================================
 getSessionToken : Request -> String
 getSessionToken req =
     Server.getCookie  "session"  req
@@ -57,6 +57,9 @@ requireAuth req onUser =
                 Just user ->
                     let
                         email =
+-- ============================================================
+-- Auth handlers
+-- ============================================================
                             Db.getField  "email"  user
                     in
                         onUser  user  email
@@ -67,9 +70,6 @@ requireAuth req onUser =
                             "Path=/; HttpOnly; Max-Age=0"
 
 
--- ============================================================
--- Auth handlers
--- ============================================================
 handleLanding : a -> Request -> Task String Response
 handleLanding _ req =
     let
@@ -177,6 +177,9 @@ handleForgotPassword _ req =
         Task.succeed  (Server.html  (View.forgotPasswordPage  ""))
 
 
+-- ============================================================
+-- Notes handlers
+-- ============================================================
 handleVerify : a -> Request -> Task String Response
 handleVerify _ req =
     let
@@ -207,9 +210,6 @@ handleSignOut _ req =
         )
 
 
--- ============================================================
--- Notes handlers
--- ============================================================
 handleNotesList : a -> Request -> Task String Response
 handleNotesList _ req =
     Task.succeed
@@ -300,6 +300,9 @@ handleEditNote _ req =
                         Server.formValue  "content"  req
                     _ =
                         Notes.updateNote  noteId  userId  title  content
+-- ============================================================
+-- Server entry point
+-- ============================================================
                 in
                     Server.redirect  ("/notes/view?id=" ++ noteId)
             else
@@ -344,9 +347,6 @@ handleDeleteNote _ req =
     )
 
 
--- ============================================================
--- Server entry point
--- ============================================================
 main =
     let
         _ =

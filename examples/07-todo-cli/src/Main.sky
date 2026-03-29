@@ -1,5 +1,4 @@
 module Main exposing (main)
-
 -- 07-todo-cli: A TODO app with SQLite persistence.
 --
 -- Usage:
@@ -9,6 +8,7 @@ module Main exposing (main)
 --   ./app undone 1                Mark todo #1 as not done
 --   ./app remove 1                Delete todo #1
 --   ./app clear                   Remove all completed todos
+
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -18,20 +18,20 @@ import Lib.Db as Db
 import Lib.Todo as Todo
 import Os
 import Log.Slog as Slog
-import Std.Log exposing (println)
-
 -- ============================================================
 -- Database setup
 -- ============================================================
+import Std.Log exposing (println)
+
 initDb _ =
     Db.exec
+-- ============================================================
+-- Commands
+-- ============================================================
      "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
      []
 
 
--- ============================================================
--- Commands
--- ============================================================
 addTodo title =
     let
         _ =
@@ -102,6 +102,9 @@ showUsage =
             Slog.info  "Sky TODO - A simple todo manager"  []
         _ =
             println  ""
+-- ============================================================
+-- CLI dispatch
+-- ============================================================
         _ =
             println  "Usage:"
         _ =
@@ -120,62 +123,23 @@ showUsage =
         println  ""
 
 
--- ============================================================
--- CLI dispatch
--- ============================================================
 getArg args =
     Maybe.withDefault  ""  (List.head  args)
 
 
 runCommand cmd arg =
-    case cmd of
-        
-        ""add"" ->
-            if arg == "" then
-                println  "Usage: ./app add <title>"
-            else
-                addTodo  arg
-        
-        ""list"" ->
-            listTodos  ()
-        
-        ""done"" ->
-            if arg == "" then
-                println  "Usage: ./app done <id>"
-            else
-                markDone  arg
-        
-        ""undone"" ->
-            if arg == "" then
-                println  "Usage: ./app undone <id>"
-            else
-                markUndone  arg
-        
-        ""remove"" ->
-            if arg == "" then
-                println  "Usage: ./app remove <id>"
-            else
-                removeTodo  arg
-        
-        ""clear"" ->
-            clearDone  ()
-        
-        ""help"" ->
-            showUsage
-        
-        _ ->
-            showUsage
+    case cmd of  ""  add
 
 
--- ============================================================
--- Main — dispatch command
--- ============================================================
-main =
+showUsage main =
     let
         _ =
             initDb  ()
         userArgs =
             List.drop  1  (Os.args  ())
+-- ============================================================
+-- Main — dispatch command
+-- ============================================================
         cmd =
             getArg  userArgs
         arg =

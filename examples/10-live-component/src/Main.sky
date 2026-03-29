@@ -8,18 +8,18 @@ import Std.Css exposing (..)
 import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
+-- ══════════════════════════════════════════════════════
+-- MODEL — unified with component state
+-- ══════════════════════════════════════════════════════
 import Counter exposing (Counter)
 
 -- ══════════════════════════════════════════════════════
--- MODEL — unified with component state
+-- MSG — CounterMsg wraps Counter.Msg (auto-wired!)
 -- ══════════════════════════════════════════════════════
 type Page
     = MainPage
 
 
--- ══════════════════════════════════════════════════════
--- MSG — CounterMsg wraps Counter.Msg (auto-wired!)
--- ══════════════════════════════════════════════════════
 type alias Model =
     { page : Page , title : String , myCounter : Counter }
 
@@ -42,6 +42,9 @@ init _req =
     , Cmd.none
     )
 
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
 
 update : Msg -> Model -> ( Model , Cmd Msg )
 update msg model =
@@ -57,9 +60,6 @@ update msg model =
             ( model , Cmd.none )
 
 
--- ══════════════════════════════════════════════════════
--- VIEW
--- ══════════════════════════════════════════════════════
 view : Model -> VNode
 view model =
     div  []
@@ -114,6 +114,9 @@ pageStyles =
     , rule  ".btn"
        [ padding2  (rem  0.5)  (rem  1.5)
       , border  "none"
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
       , property  "background"  "#2563eb"
       , color  (hex  "ffffff")
       , borderRadius  (px  6)
@@ -129,13 +132,16 @@ pageStyles =
        [ fontWeight  "bold"
       , color  (hex  "333")
       , property  "margin-top"  "1rem"
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- UPDATE — no CounterMsg case needed! Auto-wired by compiler.
+-- ══════════════════════════════════════════════════════
       ]
     ]
 
 
--- ══════════════════════════════════════════════════════
--- APP
--- ══════════════════════════════════════════════════════
 main =
     app
      { init =
@@ -151,10 +157,3 @@ main =
      , notFound =
          MainPage
      }
-
--- ══════════════════════════════════════════════════════
--- INIT
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- UPDATE — no CounterMsg case needed! Auto-wired by compiler.
--- ══════════════════════════════════════════════════════

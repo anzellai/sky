@@ -3,8 +3,6 @@ module Lib.OAuth exposing (firebaseAuthScript, handleAuthCallback)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Os
-import Lib.Auth as Auth
-
 -- ══════════════════════════════════════════════════════
 -- FIREBASE AUTH
 --
@@ -22,6 +20,8 @@ import Lib.Auth as Auth
 --   GOOGLE_CLOUD_PROJECT
 --   GOOGLE_APPLICATION_CREDENTIALS
 -- ══════════════════════════════════════════════════════
+import Lib.Auth as Auth
+
 firebaseAuthScript =
     let
         apiKey =
@@ -51,9 +51,9 @@ firebaseAuthScript =
         "firebase.auth().onAuthStateChanged(function(user){" ++
         "_fbUser=user;" ++
         "if(user){" ++
+        -- Store UID cookie for instant server-side auth on page load
         "if(_skyAuthUid===user.uid)return;" ++
         "_skyAuthUid=user.uid;" ++
-        -- Store UID cookie for instant server-side auth on page load
         "document.cookie='sky_user='+user.uid+';path=/;max-age=2592000;SameSite=Lax';" ++
         "user.getIdToken().then(function(token){" ++
         "function _trySend(t,n){" ++
@@ -61,9 +61,9 @@ firebaseAuthScript =
         "else if(n<20){setTimeout(function(){_trySend(t,n+1)},100);}" ++
         "}" ++
         "_trySend(token,0);" ++
+        -- Clear cookie on sign-out
         "});" ++
         "}else{_skyAuthUid=null;" ++
-        -- Clear cookie on sign-out
         "document.cookie='sky_user=;path=/;max-age=0';" ++
         "}" ++
         "});" ++
@@ -82,14 +82,13 @@ firebaseAuthScript =
         "}" ++
         "function skySignOut(){" ++
         "if(_fbReady){firebase.auth().signOut();}" ++ "}" ++ "</script>"
-
-
-handleAuthCallback token =
-    Auth.verifyToken  token
-
             -- Load Firebase SDK dynamically into <head>
             -- Listen for auth state changes (sign-in, sign-out, token refresh)
             -- Send token to Sky.Live server as a FirebaseAuth Msg
             -- Retry until __sky_send is available (Sky.Live JS may load after Firebase SDK)
             -- Sign-in function called by buttons
             -- Sign-out function
+
+
+handleAuthCallback token =
+    Auth.verifyToken  token

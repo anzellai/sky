@@ -8,18 +8,18 @@ import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Os
-import Lib.Db as Db
 -- Stripe Go SDK imports
+import Lib.Db as Db
 import Github.Com.Stripe.StripeGo.V84 as Stripe
 import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
 import Github.Com.Stripe.StripeGo.V84.Customer as Customer
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
 
 foreign import "sky_wrappers" exposing (Sky_ToJSON)
 
 
--- ══════════════════════════════════════════════════════
--- INIT
--- ══════════════════════════════════════════════════════
 initStripe =
     let
         key =
@@ -44,6 +44,9 @@ domainUrl =
         if domain != "" then
             domain
         else
+-- ══════════════════════════════════════════════════════
+-- CUSTOMER MANAGEMENT
+-- ══════════════════════════════════════════════════════
             let
                 effectivePort =
                     if port_ == "" then
@@ -54,9 +57,6 @@ domainUrl =
                 "http://localhost:" ++ effectivePort
 
 
--- ══════════════════════════════════════════════════════
--- CUSTOMER MANAGEMENT
--- ══════════════════════════════════════════════════════
 getOrCreateCustomer userId userName userEmail =
     let
         iter =
@@ -87,6 +87,9 @@ createCustomer userId userName userEmail =
             , metadata =
                 Dict.fromList  [ ( "sky_uid" , userId ) ]
             }
+-- ══════════════════════════════════════════════════════
+-- CHECKOUT SESSION
+-- ══════════════════════════════════════════════════════
     in
         case Customer.new  params of
             
@@ -103,9 +106,6 @@ createCustomer userId userName userEmail =
                 Err  ("Failed to create Stripe customer: " ++ errorToString  e)
 
 
--- ══════════════════════════════════════════════════════
--- CHECKOUT SESSION
--- ══════════════════════════════════════════════════════
 buildLineItems items =
     items
         |> List.map
@@ -201,6 +201,9 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                          (
                         "[STRIPE] Creating checkout session for cart: " ++
                         cartId
+-- ══════════════════════════════════════════════════════
+-- PAYMENT VERIFICATION
+-- ══════════════════════════════════════════════════════
                         )
                 in
                     case Session.new  params of
@@ -225,9 +228,6 @@ createCheckoutSession cartId items userId userName userEmail remarks =
                                 Err  ("Stripe API error: " ++ errorToString  e)
 
 
--- ══════════════════════════════════════════════════════
--- PAYMENT VERIFICATION
--- ══════════════════════════════════════════════════════
 type alias PaymentStatus =
     { status : String
     , paymentStatus : String
@@ -308,6 +308,9 @@ verifyStripeSession cartId sessionId =
                             Stripe.checkoutSessionCollectedInformationShippingDetails
                              collectedInfo
                         shippingName =
+-- ══════════════════════════════════════════════════════
+-- STOCK MANAGEMENT
+-- ══════════════════════════════════════════════════════
                             Stripe.checkoutSessionCollectedInformationShippingDetailsName
                              shippingDetails
                         shippingAddr =
@@ -346,9 +349,6 @@ verifyStripeSession cartId sessionId =
             Err  ("Failed to retrieve checkout session: " ++ errorToString  e)
 
 
--- ══════════════════════════════════════════════════════
--- STOCK MANAGEMENT
--- ══════════════════════════════════════════════════════
 deductStock orderId =
     let
         orderItems =

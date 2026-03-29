@@ -7,12 +7,12 @@ import Sky.Core.List as List
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.String as String
-import Std.Log exposing (println)
-
 -- ============================================================
 -- Encoding Examples (same API as Elm's Json.Encode)
 -- ============================================================
 -- 1. Simple flat object
+import Std.Log exposing (println)
+
 encodeSimple =
     let
         val =
@@ -21,11 +21,11 @@ encodeSimple =
             , ( "age" , Encode.int  30 )
             , ( "active" , Encode.bool  True )
             ]
+-- 2. Complex nested object with lists
     in
         Encode.encode  2  val
 
 
--- 2. Complex nested object with lists
 encodeComplex =
     let
         val =
@@ -38,17 +38,18 @@ encodeComplex =
               ]
             )
             , ( "tags" , Encode.list  Encode.string  [ "admin" , "premium" ] )
+-- ============================================================
+-- Decoding Examples (same API as Elm's Json.Decode)
+-- ============================================================
+-- 3. Simple field decoding with map2
             , ( "scores" , Encode.list  Encode.int  [ 95 , 87 , 92 ] )
             ]
     in
         Encode.encode  2  val
 
 
--- ============================================================
--- Decoding Examples (same API as Elm's Json.Decode)
--- ============================================================
--- 3. Simple field decoding with map2
 simpleDecoder =
+-- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
     Decode.map2  (\n a -> n ++ ", age " ++ String.fromInt  a)
      (Decode.field  "name"  Decode.string)
      (Decode.field  "age"  Decode.int)
@@ -59,7 +60,6 @@ decodeSimpleExample =
      (Decode.decodeString  simpleDecoder  "{\"name\":\"Charlie\",\"age\":28}")
 
 
--- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
 userDecoder =
     Decode.succeed
      (
@@ -68,6 +68,7 @@ userDecoder =
     )
         |> Pipeline.required  "name"  Decode.string
         |> Pipeline.required  "email"  Decode.string
+-- 5. Pipeline with optional fields
         |> Pipeline.required  "age"  Decode.int
         |> Pipeline.required  "verified"  Decode.bool
 
@@ -82,7 +83,6 @@ pipelineExample =
          (Result.map  (\u -> u.name ++ " (" ++ u.email ++ ")")  result)
 
 
--- 5. Pipeline with optional fields
 profileDecoder =
     Decode.succeed
      (
@@ -95,6 +95,7 @@ profileDecoder =
 
 
 optionalExample =
+-- 6. Nested field access
     let
         result =
             Decode.decodeString  profileDecoder
@@ -105,6 +106,7 @@ optionalExample =
         Result.map
          (
         \p ->
+-- 7. Decoding a list of objects
             "@" ++
             p.username ++
             ", bio: " ++ p.bio ++ ", followers: " ++ String.fromInt  p.followers
@@ -113,7 +115,6 @@ optionalExample =
         )
 
 
--- 6. Nested field access
 nestedDecoder =
     Decode.map2  (\n c -> n ++ " from " ++ c)
      (Decode.at  [ "user" , "profile" , "name" ]  Decode.string)
@@ -126,9 +127,9 @@ nestedExample =
     Decode.decodeString  nestedDecoder
      "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}"
     )
+-- 8. Roundtrip: Encode -> JSON String -> Decode
 
 
--- 7. Decoding a list of objects
 todoDecoder =
     Decode.succeed
      (\id title done -> { id = id , title = title , done = done })
@@ -155,8 +156,8 @@ listExample =
         )
 
 
--- 8. Roundtrip: Encode -> JSON String -> Decode
 roundtrip =
+-- 9. oneOf - handling multiple possible formats
     let
         original =
             Encode.object
@@ -170,6 +171,9 @@ roundtrip =
         jsonStr =
             Encode.encode  0  original
         decoder =
+-- ============================================================
+-- Main
+-- ============================================================
             Decode.map2
              (
             \c ns ->
@@ -187,7 +191,6 @@ roundtrip =
         Result.withDefault  "roundtrip error"  result
 
 
--- 9. oneOf - handling multiple possible formats
 flexibleDecoder =
     Decode.field  "value"
      (Decode.oneOf  [ Decode.map  String.fromInt  Decode.int , Decode.string ])
@@ -205,9 +208,6 @@ flexibleExample =
         r1 ++ " and " ++ r2
 
 
--- ============================================================
--- Main
--- ============================================================
 main =
     let
         _ =

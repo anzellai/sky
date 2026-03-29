@@ -6,19 +6,7 @@ import Sky.Core.Maybe as Maybe
 import Lib.Db as Db
 
 currencySymbol currency =
-    case currency of
-        
-        ""GBP"" ->
-            "£"
-        
-        ""HKD"" ->
-            "HK$"
-        
-        ""USD"" ->
-            "$"
-        
-        _ ->
-            currency ++ " "
+    case currency of  ""  GBP
 
 
 formatAmount amountInPence =
