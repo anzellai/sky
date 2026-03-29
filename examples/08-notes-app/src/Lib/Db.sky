@@ -1,28 +1,39 @@
-module Lib.Db exposing (open, close, exec, queryRows, getField)
+module Lib.Db exposing (exec, queryRows, getField)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
+import Sky.Core.Ref as Ref
 import Database.Sql as Sql
 import Modernc.Org.Sqlite as _
 
-
-open path =
-    Sql.open "sqlite" path
-
-
-close db =
-    Task.perform (Sql.dBClose db)
+dbRef =
+    Ref.new  (Sql.open  "sqlite"  "skynotes.db")
 
 
-exec db query args =
-    Task.run (Sql.dBExec db query args)
+getConn _ =
+    Ref.get  dbRef
 
 
-queryRows db query args =
-    Task.run (Sql.dBQuery db query args)
+exec query args =
+    case getConn  () of
+        
+        Ok conn ->
+            Sql.dBExec  conn  query  args
+        
+        Err e ->
+            Err  e
+
+
+queryRows query args =
+    case getConn  () of
+        
+        Ok conn ->
+            Sql.queryToMaps  conn  query  args
+        
+        Err e ->
+            Err  e
 
 
 getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+    Maybe.withDefault  ""  (Dict.get  field  row)

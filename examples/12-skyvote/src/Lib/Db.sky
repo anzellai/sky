@@ -7,7 +7,6 @@ import Sky.Core.Ref as Ref
 import Database.Sql as Sql
 import Modernc.Org.Sqlite as _
 
--- Cached database connection (opened once, reused)
 dbRef =
     Ref.new  (Sql.open  "sqlite"  "skyvote.db")
 
@@ -18,22 +17,23 @@ getConn _ =
 
 exec query args =
     case getConn  () of
-
+        
         Ok conn ->
             Sql.dBExec  conn  query  args
-
+        
         Err e ->
             Err  e
 
 
 queryRows query args =
     case getConn  () of
-
+        
         Ok conn ->
             Sql.queryToMaps  conn  query  args
-
+        
         Err e ->
             Err  e
 
+
 getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+    Maybe.withDefault  ""  (Dict.get  field  row)

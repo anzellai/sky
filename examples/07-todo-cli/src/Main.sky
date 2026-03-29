@@ -23,27 +23,27 @@ import Std.Log exposing (println)
 -- ============================================================
 -- Database setup
 -- ============================================================
-initDb db =
-    Db.exec db
+initDb _ =
+    Db.exec
         "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
         []
 
 -- ============================================================
 -- Commands
 -- ============================================================
-addTodo db title =
+addTodo title =
     let
         _ =
-            Db.exec db "INSERT INTO todos (title) VALUES (?)" [ title ]
+            Db.exec "INSERT INTO todos (title) VALUES (?)" [ title ]
     in
         Slog.info "Action" [ "Added:" , title ]
 
-listTodos db =
+listTodos _ =
     let
         rows =
             Result.withDefault []
                 (
-                Db.queryRows db "SELECT id, title, done FROM todos ORDER BY id"
+                Db.queryRows "SELECT id, title, done FROM todos ORDER BY id"
                     []
                 )
     in
@@ -58,37 +58,37 @@ listTodos db =
             in
                 println ""
 
-markDone db idStr =
+markDone idStr =
     let
         id =
             Db.parseInt idStr
         _ =
-            Db.exec db "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
+            Db.exec "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
     in
         println "Marked as done:" idStr
 
-markUndone db idStr =
+markUndone idStr =
     let
         id =
             Db.parseInt idStr
         _ =
-            Db.exec db "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
+            Db.exec "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
     in
         println "Marked as not done:" idStr
 
-removeTodo db idStr =
+removeTodo idStr =
     let
         id =
             Db.parseInt idStr
         _ =
-            Db.exec db "DELETE FROM todos WHERE id = ?" [ id ]
+            Db.exec "DELETE FROM todos WHERE id = ?" [ id ]
     in
         println "Removed todo:" idStr
 
-clearDone db =
+clearDone _ =
     let
         _ =
-            Db.exec db "DELETE FROM todos WHERE done = 1" []
+            Db.exec "DELETE FROM todos WHERE done = 1" []
     in
         println "Cleared completed todos"
 
@@ -121,68 +121,56 @@ showUsage =
 getArg args =
     Maybe.withDefault "" (List.head args)
 
-runCommand db cmd arg =
+runCommand cmd arg =
     case cmd of
         "add" ->
             if arg == "" then
                 println "Usage: ./app add <title>"
             else
-                addTodo db arg
-        
+                addTodo arg
+
         "list" ->
-            listTodos db
-        
+            listTodos ()
+
         "done" ->
             if arg == "" then
                 println "Usage: ./app done <id>"
             else
-                markDone db arg
-        
+                markDone arg
+
         "undone" ->
             if arg == "" then
                 println "Usage: ./app undone <id>"
             else
-                markUndone db arg
-        
+                markUndone arg
+
         "remove" ->
             if arg == "" then
                 println "Usage: ./app remove <id>"
             else
-                removeTodo db arg
-        
+                removeTodo arg
+
         "clear" ->
-            clearDone db
-        
+            clearDone ()
+
         "help" ->
             showUsage
-        
+
         _ ->
             showUsage
 
 -- ============================================================
--- Main — open db, dispatch command, close db
+-- Main — dispatch command
 -- ============================================================
-runApp db =
+main =
     let
         _ =
-            initDb db
+            initDb ()
         userArgs =
             List.drop 1 (Os.args ())
         cmd =
             getArg userArgs
         arg =
             getArg (List.drop 1 userArgs)
-        _ =
-            runCommand db cmd arg
-        _ =
-            Db.close db
     in
-        println ""
-
-main =
-    case Db.open "todos.db" of
-        Ok db ->
-            runApp db
-        
-        Err _ ->
-            println "Failed to open database"
+        runCommand cmd arg

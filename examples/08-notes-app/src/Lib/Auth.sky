@@ -29,7 +29,7 @@ generateToken _ =
     Result.withDefault  ""  (Uuid.newString  ())
 
 
-createUser db email password =
+createUser email password =
     let
         passHash =
             hashPassword  password
@@ -52,20 +52,20 @@ createUser db email password =
         _ =
             println  ""
         result =
-            Db.exec  db
+            Db.exec
              "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
              [ email , passHash , token ]
     in
         case result of
-            
+
             Ok _ ->
                 Ok  token
-            
+
             Err e ->
                 Err  e
 
 
-checkUserCredentials db email password user =
+checkUserCredentials email password user =
     let
         storedHash =
             Db.getField  "password_hash"  user
@@ -82,10 +82,10 @@ checkUserCredentials db email password user =
             Err  "Invalid email or password."
 
 
-authenticateUser db email password =
+authenticateUser email password =
     let
         rows =
-            Db.queryRows  db
+            Db.queryRows
              "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
              [ email ]
         userRows =
@@ -94,35 +94,35 @@ authenticateUser db email password =
             List.head  userRows
     in
         case maybeUser of
-            
+
             Just user ->
-                checkUserCredentials  db  email  password  user
-            
+                checkUserCredentials  email  password  user
+
             Nothing ->
                 Err  "Invalid email or password."
 
 
-createSession db userId =
+createSession userId =
     let
         token =
             generateToken  ()
         result =
-            Db.exec  db  "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
+            Db.exec  "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
              [ userId , token ]
     in
         case result of
-            
+
             Ok _ ->
                 Ok  token
-            
+
             Err _ ->
                 Err  "Failed to create session."
 
 
-getSessionUser db sessionToken =
+getSessionUser sessionToken =
     let
         rows =
-            Db.queryRows  db
+            Db.queryRows
              "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
              [ sessionToken ]
         userRows =
@@ -131,20 +131,20 @@ getSessionUser db sessionToken =
         List.head  userRows
 
 
-verifyEmail db token =
+verifyEmail token =
     let
         result =
-            Db.exec  db
+            Db.exec
              "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
              [ token ]
     in
         case result of
-            
+
             Ok rowsAffected ->
                 if rowsAffected == 0 then
                     Err  "Invalid or already used verification link."
                 else
                     Ok  "Your email has been verified! You can now sign in."
-            
+
             Err _ ->
                 Err  "A database error occurred during verification."

@@ -1,28 +1,45 @@
-module Lib.Db exposing (..)
+module Lib.Db exposing (exec, queryRows, getField, parseInt)
 
--- Lib.Db — Database operations using auto-generated bindings only.
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
 import Sky.Core.String as String
+import Sky.Core.Ref as Ref
 import Database.Sql as Sql
 import Modernc.Org.Sqlite as _
 
-open path =
-    Sql.open "sqlite" path
+dbRef =
+    Ref.new  (Sql.open  "sqlite"  "todos.db")
 
-close db =
-    Sql.dBClose db
 
-exec db query args =
-    Sql.dBExec db query args
+getConn _ =
+    Ref.get  dbRef
 
-queryRows db query args =
-    Sql.dBQuery db query args
+
+exec query args =
+    case getConn  () of
+        
+        Ok conn ->
+            Sql.dBExec  conn  query  args
+        
+        Err e ->
+            Err  e
+
+
+queryRows query args =
+    case getConn  () of
+        
+        Ok conn ->
+            Sql.queryToMaps  conn  query  args
+        
+        Err e ->
+            Err  e
+
 
 getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+    Maybe.withDefault  ""  (Dict.get  field  row)
+
 
 parseInt s =
-    Result.withDefault 0 (String.toInt s)
+    Result.withDefault  0  (String.toInt  s)

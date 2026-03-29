@@ -18,18 +18,18 @@ import Lib.View as View
 -- ============================================================
 -- Database initialisation
 -- ============================================================
-initDb db =
+initDb _ =
     let
         _ =
-            Db.exec db
+            Db.exec
                 "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, verified INTEGER DEFAULT 0, verification_token TEXT, created_at TEXT DEFAULT (datetime('now')))"
                 []
         _ =
-            Db.exec db
+            Db.exec
                 "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))"
                 []
         _ =
-            Db.exec db
+            Db.exec
                 "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT '')"
                 []
     in
@@ -45,7 +45,7 @@ getSessionToken req =
         |> Maybe.withDefault ""
 
 
-requireAuth db req onUser =
+requireAuth req onUser =
     let
         token =
             getSessionToken req
@@ -53,7 +53,7 @@ requireAuth db req onUser =
         if token == "" then
             Server.redirect "/auth/sign-in"
         else
-            case Auth.getSessionUser db token of
+            case Auth.getSessionUser token of
                 Just user ->
                     let
                         email =
@@ -70,7 +70,7 @@ requireAuth db req onUser =
 -- Auth handlers
 -- ============================================================
 handleLanding : a -> Request -> Task String Response
-handleLanding db req =
+handleLanding _ req =
     let
         token =
             getSessionToken req
@@ -82,7 +82,7 @@ handleLanding db req =
 
 
 handleSignIn : a -> Request -> Task String Response
-handleSignIn db req =
+handleSignIn _ req =
     if Server.method req == "POST" then
         let
             email =
@@ -90,13 +90,13 @@ handleSignIn db req =
             password =
                 Server.formValue "password" req
         in
-            case Auth.authenticateUser db email password of
+            case Auth.authenticateUser email password of
                 Ok user ->
                     let
                         userId =
                             Db.getField "id" user
                     in
-                        case Auth.createSession db userId of
+                        case Auth.createSession userId of
                             Ok sessionToken ->
                                 Task.succeed
                                     (Server.redirect "/notes"
@@ -114,7 +114,7 @@ handleSignIn db req =
 
 
 handleSignUp : a -> Request -> Task String Response
-handleSignUp db req =
+handleSignUp _ req =
     if Server.method req == "POST" then
         let
             email =
@@ -133,7 +133,7 @@ handleSignUp db req =
                         (View.signUpPage "Password must be at least 8 characters.")
                     )
             else
-                case Auth.createUser db email password of
+                case Auth.createUser email password of
                     Ok _ ->
                         Task.succeed
                             (Server.html (View.signUpSuccessPage ()))
@@ -150,7 +150,7 @@ handleSignUp db req =
 
 
 handleForgotPassword : a -> Request -> Task String Response
-handleForgotPassword db req =
+handleForgotPassword _ req =
     if Server.method req == "POST" then
         let
             email =
@@ -166,12 +166,12 @@ handleForgotPassword db req =
 
 
 handleVerify : a -> Request -> Task String Response
-handleVerify db req =
+handleVerify _ req =
     let
         token =
             Server.queryParam "token" req
     in
-        case Auth.verifyEmail db token of
+        case Auth.verifyEmail token of
             Ok msg ->
                 Task.succeed (Server.html (View.verifyResultPage True msg))
 
@@ -180,12 +180,12 @@ handleVerify db req =
 
 
 handleSignOut : a -> Request -> Task String Response
-handleSignOut db req =
+handleSignOut _ req =
     let
         token =
             getSessionToken req
         _ =
-            Db.exec db "DELETE FROM sessions WHERE token = ?" [ token ]
+            Db.exec "DELETE FROM sessions WHERE token = ?" [ token ]
     in
         Task.succeed
             (Server.redirect "/"
@@ -197,15 +197,15 @@ handleSignOut db req =
 -- Notes handlers
 -- ============================================================
 handleNotesList : a -> Request -> Task String Response
-handleNotesList db req =
+handleNotesList _ req =
     Task.succeed
-        (requireAuth db req
+        (requireAuth req
             (\user email ->
                 let
                     userId =
                         Db.getField "id" user
                     notes =
-                        Result.withDefault [] (Notes.getNotes db userId)
+                        Result.withDefault [] (Notes.getNotes userId)
                 in
                     Server.html (View.notesListPage email notes)
             )
@@ -213,9 +213,9 @@ handleNotesList db req =
 
 
 handleNewNote : a -> Request -> Task String Response
-handleNewNote db req =
+handleNewNote _ req =
     Task.succeed
-        (requireAuth db req
+        (requireAuth req
             (\user email ->
                 let
                     userId =
@@ -228,7 +228,7 @@ handleNewNote db req =
                             content =
                                 Server.formValue "content" req
                             _ =
-                                Notes.createNote db userId title content
+                                Notes.createNote userId title content
                         in
                             Server.redirect "/notes"
                     else
@@ -238,9 +238,9 @@ handleNewNote db req =
 
 
 handleViewNote : a -> Request -> Task String Response
-handleViewNote db req =
+handleViewNote _ req =
     Task.succeed
-        (requireAuth db req
+        (requireAuth req
             (\user email ->
                 let
                     userId =
@@ -248,7 +248,7 @@ handleViewNote db req =
                     noteId =
                         Server.queryParam "id" req
                 in
-                    case Notes.getNote db noteId userId of
+                    case Notes.getNote noteId userId of
                         Just note ->
                             Server.html (View.noteViewPage email note)
 
@@ -259,9 +259,9 @@ handleViewNote db req =
 
 
 handleEditNote : a -> Request -> Task String Response
-handleEditNote db req =
+handleEditNote _ req =
     Task.succeed
-        (requireAuth db req
+        (requireAuth req
             (\user email ->
                 let
                     userId =
@@ -276,11 +276,11 @@ handleEditNote db req =
                             content =
                                 Server.formValue "content" req
                             _ =
-                                Notes.updateNote db noteId userId title content
+                                Notes.updateNote noteId userId title content
                         in
                             Server.redirect ("/notes/view?id=" ++ noteId)
                     else
-                        case Notes.getNote db noteId userId of
+                        case Notes.getNote noteId userId of
                             Just note ->
                                 let
                                     title =
@@ -300,9 +300,9 @@ handleEditNote db req =
 
 
 handleDeleteNote : a -> Request -> Task String Response
-handleDeleteNote db req =
+handleDeleteNote _ req =
     Task.succeed
-        (requireAuth db req
+        (requireAuth req
             (\user email ->
                 let
                     userId =
@@ -310,7 +310,7 @@ handleDeleteNote db req =
                     noteId =
                         Server.formValue "id" req
                     _ =
-                        Notes.deleteNote db noteId userId
+                        Notes.deleteNote noteId userId
                 in
                     Server.redirect "/notes"
             )
@@ -321,38 +321,33 @@ handleDeleteNote db req =
 -- Server entry point
 -- ============================================================
 main =
-    Db.open "skynotes.db"
-        |> Task.andThen
-            (\db ->
-                let
-                    _ =
-                        initDb db
-                    _ =
-                        println ""
-                    _ =
-                        println "==========================================="
-                    _ =
-                        println " SkyNotes server running"
-                    _ =
-                        println " http://localhost:4000"
-                    _ =
-                        println "==========================================="
-                    _ =
-                        println ""
-                in
-                    Server.listen 4000
-                        [ Server.any "/" (handleLanding db)
-                        , Server.any "/auth/sign-in" (handleSignIn db)
-                        , Server.any "/auth/sign-up" (handleSignUp db)
-                        , Server.any "/auth/forgot-password"
-                            (handleForgotPassword db)
-                        , Server.any "/auth/verify" (handleVerify db)
-                        , Server.any "/auth/sign-out" (handleSignOut db)
-                        , Server.any "/notes" (handleNotesList db)
-                        , Server.any "/notes/new" (handleNewNote db)
-                        , Server.any "/notes/view" (handleViewNote db)
-                        , Server.any "/notes/edit" (handleEditNote db)
-                        , Server.any "/notes/delete" (handleDeleteNote db)
-                        ]
-            )
-        |> Task.perform
+    let
+        _ =
+            initDb ()
+        _ =
+            println ""
+        _ =
+            println "==========================================="
+        _ =
+            println " SkyNotes server running"
+        _ =
+            println " http://localhost:4000"
+        _ =
+            println "==========================================="
+        _ =
+            println ""
+    in
+        Server.listen 4000
+            [ Server.any "/" handleLanding
+            , Server.any "/auth/sign-in" handleSignIn
+            , Server.any "/auth/sign-up" handleSignUp
+            , Server.any "/auth/forgot-password" handleForgotPassword
+            , Server.any "/auth/verify" handleVerify
+            , Server.any "/auth/sign-out" handleSignOut
+            , Server.any "/notes" handleNotesList
+            , Server.any "/notes/new" handleNewNote
+            , Server.any "/notes/view" handleViewNote
+            , Server.any "/notes/edit" handleEditNote
+            , Server.any "/notes/delete" handleDeleteNote
+            ]
+            |> Task.perform

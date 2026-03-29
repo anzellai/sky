@@ -6,32 +6,32 @@ import Sky.Core.List as List
 import Lib.Db as Db
 
 
-createNote db userId title content =
-    Db.exec db "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
+createNote userId title content =
+    Db.exec "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
         [ userId , title , content ]
 
 
-updateNote db noteId userId title content =
-    Db.exec db
+updateNote noteId userId title content =
+    Db.exec
         "UPDATE notes SET title = ?, content = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
         [ title , content , noteId , userId ]
 
 
-deleteNote db noteId userId =
-    Db.exec db "DELETE FROM notes WHERE id = ? AND user_id = ?"
+deleteNote noteId userId =
+    Db.exec "DELETE FROM notes WHERE id = ? AND user_id = ?"
         [ noteId , userId ]
 
 
-getNotes db userId =
-    Db.queryRows db
+getNotes userId =
+    Db.queryRows
         "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
         [ userId ]
 
 
-getNote db noteId userId =
+getNote noteId userId =
     let
         rows =
-            Db.queryRows db
+            Db.queryRows
                 "SELECT id, title, content, created_at, updated_at FROM notes WHERE id = ? AND user_id = ? LIMIT 1"
                 [ noteId , userId ]
     in
