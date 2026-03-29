@@ -5280,7 +5280,7 @@ func Formatter_Doc_Line() any {
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
@@ -6776,7 +6776,35 @@ func cmdRemove(_ any) any {
 }
 
 func cmdFmt(_ any) any {
-	return func() any { filePath := func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { f := sky_asSkyMaybe(__subject).JustValue; _ = f; return f };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "src/Main.sky" };  return nil }() }(); _ = filePath; useStdin := sky_asBool(sky_equal(filePath, "--stdin")) || sky_asBool(sky_equal(filePath, "-")); _ = useStdin; return func() any { if sky_asBool(useStdin) { return fmtStdin(struct{}{}) }; return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Cannot read: ", filePath)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { formatted := Formatter_Format_FormatModule(mod); _ = formatted; sky_call(sky_fileWrite(filePath), formatted); return sky_println(sky_concat("Formatted: ", filePath)) }() };  return nil }() }() }() };  return nil }() }() }() }()
+	return func() any { filePath := func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { f := sky_asSkyMaybe(__subject).JustValue; _ = f; return f };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "src/Main.sky" };  return nil }() }(); _ = filePath; useStdin := sky_asBool(sky_equal(filePath, "--stdin")) || sky_asBool(sky_equal(filePath, "-")); _ = useStdin; return func() any { if sky_asBool(useStdin) { return fmtStdin(struct{}{}) }; return func() any { return func() any { __subject := sky_fileRead(filePath); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Cannot read: ", filePath)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { source := sky_asSkyResult(__subject).OkValue; _ = source; return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { formatted := Formatter_Format_FormatModule(mod); _ = formatted; withComments := reinsertComments(source, formatted); _ = withComments; sky_call(sky_fileWrite(filePath), withComments); return sky_println(sky_concat("Formatted: ", filePath)) }() };  return nil }() }() }() };  return nil }() }() }() }()
+}
+
+func reinsertComments(original any, formatted any) any {
+	return func() any { commentPairs := extractCommentPairs(sky_call(sky_stringSplit("\n"), original), []any{}); _ = commentPairs; return insertCommentPairs(commentPairs, sky_call(sky_stringSplit("\n"), formatted)) }()
+}
+
+func extractCommentPairs(lines any, acc any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return sky_listReverse(acc) };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { if sky_asBool(isCommentLine(sky_stringTrim(line))) { return func() any { anchor := findNextNonComment(rest); _ = anchor; return extractCommentPairs(rest, append([]any{SkyTuple2{V0: line, V1: anchor}}, sky_asList(acc)...)) }() }; return extractCommentPairs(rest, acc) }() };  return nil }() }()
+}
+
+func isCommentLine(trimmed any) any {
+	return sky_asBool(sky_call(sky_stringStartsWith("--"), trimmed)) || sky_asBool(sky_call(sky_stringStartsWith("{-"), trimmed))
+}
+
+func findNextNonComment(lines any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return "" };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { trimmed := sky_stringTrim(line); _ = trimmed; return func() any { if sky_asBool(sky_stringIsEmpty(trimmed)) { return findNextNonComment(rest) }; if sky_asBool(isCommentLine(trimmed)) { return findNextNonComment(rest) }; return trimmed }() }() };  return nil }() }()
+}
+
+func insertCommentPairs(pairs any, outputLines any) any {
+	return func() any { result := sky_call2(sky_listFoldl(func(pair any) any { return func(lines any) any { return insertOnePair(pair, lines) } }), outputLines, pairs); _ = result; return sky_call(sky_stringJoin("\n"), result) }()
+}
+
+func insertOnePair(pair any, lines any) any {
+	return func() any { comment := sky_fst(pair); _ = comment; anchor := sky_snd(pair); _ = anchor; return func() any { if sky_asBool(sky_stringIsEmpty(anchor)) { return sky_call(sky_listAppend(lines), []any{comment}) }; return insertBeforeAnchor(comment, anchor, lines, []any{}) }() }()
+}
+
+func insertBeforeAnchor(comment any, anchor any, lines any, acc any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return sky_call(sky_listAppend(sky_listReverse(acc)), []any{comment}) };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { if sky_asBool(sky_equal(sky_stringTrim(line), anchor)) { return sky_listConcat([]any{sky_listReverse(acc), []any{comment, line}, rest}) }; return insertBeforeAnchor(comment, anchor, rest, append([]any{line}, sky_asList(acc)...)) }() };  return nil }() }()
 }
 
 func fmtStdin(_ any) any {
