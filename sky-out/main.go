@@ -5280,7 +5280,7 @@ func Formatter_Doc_Line() any {
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
@@ -6516,7 +6516,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 0, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -6780,19 +6780,27 @@ func cmdFmt(_ any) any {
 }
 
 func reinsertComments(original any, formatted any) any {
-	return sky_call(sky_stringJoin("\n"), mergeWithComments(sky_call(sky_stringSplit("\n"), original), sky_call(sky_stringSplit("\n"), formatted), []any{}))
+	return func() any { commentGroups := collectCommentGroups(sky_call(sky_stringSplit("\n"), original), []any{}, []any{}); _ = commentGroups; fmtLines := sky_call(sky_stringSplit("\n"), formatted); _ = fmtLines; return sky_call(sky_stringJoin("\n"), insertCommentGroups(commentGroups, fmtLines, []any{})) }()
 }
 
 func isCommentLine(trimmed any) any {
 	return sky_asBool(sky_call(sky_stringStartsWith("--"), trimmed)) || sky_asBool(sky_call(sky_stringStartsWith("{-"), trimmed))
 }
 
-func mergeWithComments(origLines any, fmtLines any, acc any) any {
-	return func() any { return func() any { __subject := origLines; if len(sky_asList(__subject)) == 0 { return sky_call(sky_listAppend(acc), fmtLines) };  if len(sky_asList(__subject)) > 0 { origLine := sky_asList(__subject)[0]; _ = origLine; origRest := sky_asList(__subject)[1:]; _ = origRest; return func() any { trimmed := sky_stringTrim(origLine); _ = trimmed; return func() any { if sky_asBool(isCommentLine(trimmed)) { return mergeWithComments(origRest, fmtLines, sky_call(sky_listAppend(acc), []any{origLine})) }; if sky_asBool(sky_stringIsEmpty(trimmed)) { return mergeWithComments(origRest, fmtLines, acc) }; return advanceFormatted(origRest, fmtLines, acc) }() }() };  return nil }() }()
+func collectCommentGroups(lines any, currentComments any, acc any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return func() any { if sky_asBool(sky_listIsEmpty(currentComments)) { return sky_listReverse(acc) }; return sky_listReverse(append([]any{SkyTuple2{V0: sky_listReverse(currentComments), V1: ""}}, sky_asList(acc)...)) }() };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { trimmed := sky_stringTrim(line); _ = trimmed; return func() any { if sky_asBool(isCommentLine(trimmed)) { return collectCommentGroups(rest, append([]any{line}, sky_asList(currentComments)...), acc) }; if sky_asBool(sky_stringIsEmpty(trimmed)) { return collectCommentGroups(rest, currentComments, acc) }; if sky_asBool(sky_not(sky_listIsEmpty(currentComments))) { return func() any { anchorWord := extractAnchorWord(trimmed); _ = anchorWord; return collectCommentGroups(rest, []any{}, append([]any{SkyTuple2{V0: sky_listReverse(currentComments), V1: anchorWord}}, sky_asList(acc)...)) }() }; return collectCommentGroups(rest, []any{}, acc) }() }() };  return nil }() }()
 }
 
-func advanceFormatted(origRest any, fmtLines any, acc any) any {
-	return func() any { return func() any { __subject := fmtLines; if len(sky_asList(__subject)) == 0 { return mergeWithComments(origRest, []any{}, acc) };  if len(sky_asList(__subject)) > 0 { fmtLine := sky_asList(__subject)[0]; _ = fmtLine; fmtRest := sky_asList(__subject)[1:]; _ = fmtRest; return mergeWithComments(origRest, fmtRest, sky_call(sky_listAppend(acc), []any{fmtLine})) };  return nil }() }()
+func extractAnchorWord(line any) any {
+	return func() any { return func() any { __subject := sky_call(sky_stringSplit(" "), line); if len(sky_asList(__subject)) > 0 { word := sky_asList(__subject)[0]; _ = word; return word };  if len(sky_asList(__subject)) == 0 { return line };  return nil }() }()
+}
+
+func insertCommentGroups(groups any, fmtLines any, acc any) any {
+	return func() any { return func() any { __subject := groups; if len(sky_asList(__subject)) == 0 { return sky_call(sky_listAppend(acc), fmtLines) };  if len(sky_asList(__subject)) > 0 { group := sky_asList(__subject)[0]; _ = group; restGroups := sky_asList(__subject)[1:]; _ = restGroups; return func() any { comments := sky_fst(group); _ = comments; anchor := sky_snd(group); _ = anchor; return func() any { if sky_asBool(sky_stringIsEmpty(anchor)) { return insertCommentGroups(restGroups, fmtLines, sky_call(sky_listAppend(acc), comments)) }; return insertBeforeAnchorOnce(comments, anchor, restGroups, fmtLines, acc) }() }() };  return nil }() }()
+}
+
+func insertBeforeAnchorOnce(comments any, anchor any, restGroups any, fmtLines any, acc any) any {
+	return func() any { return func() any { __subject := fmtLines; if len(sky_asList(__subject)) == 0 { return insertCommentGroups(restGroups, []any{}, sky_call(sky_listAppend(acc), comments)) };  if len(sky_asList(__subject)) > 0 { fmtLine := sky_asList(__subject)[0]; _ = fmtLine; fmtRest := sky_asList(__subject)[1:]; _ = fmtRest; return func() any { if sky_asBool(sky_call(sky_stringStartsWith(anchor), sky_stringTrim(fmtLine))) { return insertCommentGroups(restGroups, fmtRest, sky_listConcat([]any{acc, comments, []any{fmtLine}})) }; return insertBeforeAnchorOnce(comments, anchor, restGroups, fmtRest, sky_call(sky_listAppend(acc), []any{fmtLine})) }() };  return nil }() }()
 }
 
 func fmtStdin(_ any) any {

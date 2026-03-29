@@ -1226,12 +1226,14 @@ cmdFmt _ =
 
 reinsertComments : String -> String -> String
 reinsertComments original formatted =
-    String.join  "\n"
-     (
-    mergeWithComments  (String.split  "\n"  original)
-     (String.split  "\n"  formatted)
-     []
-    )
+    let
+        commentGroups =
+            collectCommentGroups  (String.split  "\n"  original)  []  []
+        fmtLines =
+            String.split  "\n"  formatted
+    in
+        String.join  "\n"
+         (insertCommentGroups  commentGroups  fmtLines  [])
 
 
 isCommentLine : String -> Bool
@@ -1239,37 +1241,84 @@ isCommentLine trimmed =
     String.startsWith  "--"  trimmed || String.startsWith  "{-"  trimmed
 
 
-mergeWithComments : (List String) -> (List String) -> (List String) -> List String
-mergeWithComments origLines fmtLines acc =
-    case origLines of
-        
-        [  ] ->
-            List.append  acc  fmtLines
-        
-        origLine :: origRest ->
+collectCommentGroups : (List String) -> (List String) -> (List ( List String, String )) -> List ( List String, String )
+collectCommentGroups lines currentComments acc =
+    case lines of
+
+        [] ->
+            if List.isEmpty  currentComments then
+                List.reverse  acc
+            else
+                List.reverse  (( List.reverse  currentComments, "" ) :: acc)
+
+        line :: rest ->
             let
                 trimmed =
-                    String.trim  origLine
+                    String.trim  line
             in
                 if isCommentLine  trimmed then
-                    mergeWithComments  origRest  fmtLines
-                     (List.append  acc  [ origLine ])
+                    collectCommentGroups  rest  (line :: currentComments)  acc
                 else if String.isEmpty  trimmed then
-                    mergeWithComments  origRest  fmtLines  acc
+                    collectCommentGroups  rest  currentComments  acc
+                else if not  (List.isEmpty  currentComments) then
+                    let
+                        anchorWord =
+                            extractAnchorWord  trimmed
+                    in
+                        collectCommentGroups  rest  []
+                         (( List.reverse  currentComments, anchorWord ) :: acc)
                 else
-                    advanceFormatted  origRest  fmtLines  acc
+                    collectCommentGroups  rest  []  acc
 
 
-advanceFormatted : (List String) -> (List String) -> (List String) -> List String
-advanceFormatted origRest fmtLines acc =
+extractAnchorWord : String -> String
+extractAnchorWord line =
+    case String.split  " "  line of
+
+        word :: _ ->
+            word
+
+        [] ->
+            line
+
+
+insertCommentGroups : (List ( List String, String )) -> (List String) -> (List String) -> List String
+insertCommentGroups groups fmtLines acc =
+    case groups of
+
+        [] ->
+            List.append  acc  fmtLines
+
+        group :: restGroups ->
+            let
+                comments =
+                    fst  group
+                anchor =
+                    snd  group
+            in
+                if String.isEmpty  anchor then
+                    insertCommentGroups  restGroups  fmtLines
+                     (List.append  acc  comments)
+                else
+                    insertBeforeAnchorOnce  comments  anchor
+                     restGroups  fmtLines  acc
+
+
+insertBeforeAnchorOnce : (List String) -> String -> (List ( List String, String )) -> (List String) -> (List String) -> List String
+insertBeforeAnchorOnce comments anchor restGroups fmtLines acc =
     case fmtLines of
-        
-        [  ] ->
-            mergeWithComments  origRest  []  acc
-        
+
+        [] ->
+            insertCommentGroups  restGroups  []
+             (List.append  acc  comments)
+
         fmtLine :: fmtRest ->
-            mergeWithComments  origRest  fmtRest
-             (List.append  acc  [ fmtLine ])
+            if String.startsWith  anchor  (String.trim  fmtLine) then
+                insertCommentGroups  restGroups  fmtRest
+                 (List.concat  [ acc, comments, [ fmtLine ] ])
+            else
+                insertBeforeAnchorOnce  comments  anchor
+                 restGroups  fmtRest  (List.append  acc  [ fmtLine ])
 
 
 fmtStdin : () -> ()

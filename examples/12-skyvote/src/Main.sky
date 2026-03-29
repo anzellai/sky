@@ -22,563 +22,531 @@ import Page.Board as Board
 import Page.Detail as Detail
 import Page.Submit as Submit
 import Page.AuthPage as PageAuth
--- ══════════════════════════════════════════════════════
--- INIT
--- ══════════════════════════════════════════════════════
 import Page.About as About
 import Page.Roadmap as Roadmap
 
-init : a -> ( Model , Cmd Msg )
+init : a -> (Model, Cmd Msg)
 init _req =
     let
         _ =
             Schema.initDb
         _ =
-            println  "[APP] SkyVote initialised"
+            println "[APP] SkyVote initialised"
         ideas =
-            Ideas.getIdeas  "newest"  "all"  ""
+            Ideas.getIdeas "newest" "all" ""
     in
-        ( { page =
-              BoardPage
-          , currentUser =
-              Nothing
-          , ideas =
-              ideas
-          , sortBy =
-              "newest"
-          , filterCategory =
-              "all"
-          , searchQuery =
-              ""
-          , selectedIdeaId =
-              ""
-          , selectedIdea =
-              Nothing
-          , ideaComments =
+        ({ page =
+             BoardPage
+         , currentUser =
+             Nothing
+         , ideas =
+             ideas
+         , sortBy =
+             "newest"
+         , filterCategory =
+             "all"
+         , searchQuery =
+             ""
+         , selectedIdeaId =
+             ""
+         , selectedIdea =
+             Nothing
+         , ideaComments =
+             []
+         , newComment =
+             ""
+         , submitTitle =
+             ""
+         , submitDescription =
+             ""
+         , submitCategory =
+             "feature"
+         , authEmail =
+             ""
+         , authUsername =
+             ""
+         , authPassword =
+             ""
+         , authError =
+             ""
+         , notification =
+             ""
+         }, Cmd.none)
+
+
 -- ══════════════════════════════════════════════════════
 -- HELPERS (defined before update so they are in scope)
 -- ══════════════════════════════════════════════════════
-              []
-          , newComment =
-              ""
-          , submitTitle =
-              ""
-          , submitDescription =
-              ""
-          , submitCategory =
-              "feature"
-          , authEmail =
-              ""
-          , authUsername =
-              ""
-          , authPassword =
-              ""
-          , authError =
-              ""
-          , notification =
-              ""
-          }
-        , Cmd.none
-        )
-
-
--- ══════════════════════════════════════════════════════
--- BOARD HANDLERS
--- ══════════════════════════════════════════════════════
 logActivity event targetId userId =
-    Db.exec
-     "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
-     [ event ++ "-" ++ targetId , event , targetId , userId ]
+    Db.exec "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)" [ event ++
+    "-" ++ targetId
+    , event
+    , targetId
+    , userId
+    ]
 
 
-refreshCurrentView : Model -> ( Model , Cmd Msg )
+refreshCurrentView : Model -> (Model, Cmd Msg)
 refreshCurrentView model =
     case model.page of
         
         BoardPage ->
             let
                 ideas =
-                    Ideas.getIdeas  model.sortBy  model.filterCategory
-                     model.searchQuery
+                    Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
             in
-                ( { model | ideas = ideas } , Cmd.none )
+                ({ model | ideas = ideas }, Cmd.none)
         
         DetailPage ->
             let
                 idea =
-                    Ideas.getIdea  model.selectedIdeaId
+                    Ideas.getIdea model.selectedIdeaId
                 comments =
-                    Comments.getComments  model.selectedIdeaId
+                    Comments.getComments model.selectedIdeaId
             in
-                ( { model | selectedIdea = idea , ideaComments = comments }
-                , Cmd.none
-                )
+                ({ model | selectedIdea = idea , ideaComments = comments }, Cmd.none)
         
         _ ->
-            ( model , Cmd.none )
+            (model, Cmd.none)
 
 
-handleSetSort : String -> Model -> ( Model , Cmd Msg )
+handleSetSort : String -> Model -> (Model, Cmd Msg)
 handleSetSort sortBy model =
     let
         ideas =
-            Ideas.getIdeas  sortBy  model.filterCategory  model.searchQuery
+            Ideas.getIdeas sortBy model.filterCategory model.searchQuery
     in
-        ( { model | sortBy = sortBy , ideas = ideas } , Cmd.none )
+        ({ model | sortBy = sortBy , ideas = ideas }, Cmd.none)
 
 
-handleSetFilter : String -> Model -> ( Model , Cmd Msg )
+handleSetFilter : String -> Model -> (Model, Cmd Msg)
 handleSetFilter category model =
     let
         ideas =
-            Ideas.getIdeas  model.sortBy  category  model.searchQuery
+            Ideas.getIdeas model.sortBy category model.searchQuery
     in
-        ( { model | filterCategory = category , ideas = ideas } , Cmd.none )
--- ══════════════════════════════════════════════════════
--- DETAIL HANDLERS
--- ══════════════════════════════════════════════════════
+        ({ model | filterCategory = category , ideas = ideas }, Cmd.none)
 
 
-handleSetSearch : String -> Model -> ( Model , Cmd Msg )
+handleSetSearch : String -> Model -> (Model, Cmd Msg)
 handleSetSearch query model =
     let
         ideas =
-            Ideas.getIdeas  model.sortBy  model.filterCategory  query
+            Ideas.getIdeas model.sortBy model.filterCategory query
     in
-        ( { model | searchQuery = query , ideas = ideas } , Cmd.none )
+        ({ model | searchQuery = query , ideas = ideas }, Cmd.none)
 
 
-handleToggleVoteAuth : String -> (Dict String String) -> Model -> ( Model , Cmd Msg )
+handleToggleVoteAuth : String -> (Dict String String) -> Model -> (Model, Cmd Msg)
 handleToggleVoteAuth ideaId user model =
     let
         userId =
-            Db.getField  "id"  user
+            Db.getField "id" user
         _ =
-            Ideas.toggleVote  ideaId  userId
+            Ideas.toggleVote ideaId userId
         _ =
-            logActivity  "vote"  ideaId  userId
+            logActivity "vote" ideaId userId
     in
-        refreshCurrentView  model
+        refreshCurrentView model
 
 
-handleToggleVote : String -> Model -> ( Model , Cmd Msg )
+handleToggleVote : String -> Model -> (Model, Cmd Msg)
 handleToggleVote ideaId model =
     case model.currentUser of
         
         Just user ->
-            handleToggleVoteAuth  ideaId  user  model
+            handleToggleVoteAuth ideaId user model
         
         Nothing ->
-            ( { model
-              | page =
-                  SignInPage
-              , authError =
-                  "Please sign in to vote."
-              }
-            , Cmd.none
-            )
--- ══════════════════════════════════════════════════════
--- SUBMIT HANDLERS
--- ══════════════════════════════════════════════════════
+            ({ model
+             | page =
+                 SignInPage
+             , authError =
+                 "Please sign in to vote."
+             }, Cmd.none)
 
 
-handleViewIdea : String -> Model -> ( Model , Cmd Msg )
+handleViewIdea : String -> Model -> (Model, Cmd Msg)
 handleViewIdea ideaId model =
     let
         idea =
-            Ideas.getIdea  ideaId
+            Ideas.getIdea ideaId
         comments =
-            Comments.getComments  ideaId
+            Comments.getComments ideaId
     in
-        ( { model
-          | page =
-              DetailPage
-          , selectedIdeaId =
-              ideaId
-          , selectedIdea =
-              idea
-          , ideaComments =
-              comments
-          , newComment =
-              ""
-          , notification =
-              ""
-          }
-        , Cmd.none
-        )
+        ({ model
+         | page =
+             DetailPage
+         , selectedIdeaId =
+             ideaId
+         , selectedIdea =
+             idea
+         , ideaComments =
+             comments
+         , newComment =
+             ""
+         , notification =
+             ""
+         }, Cmd.none)
 
 
-doSubmitComment : (Dict String String) -> Model -> ( Model , Cmd Msg )
+doSubmitComment : (Dict String String) -> Model -> (Model, Cmd Msg)
 doSubmitComment user model =
--- ══════════════════════════════════════════════════════
--- AUTH HANDLERS
--- ══════════════════════════════════════════════════════
     let
         userId =
-            Db.getField  "id"  user
+            Db.getField "id" user
         _ =
-            Comments.createComment  model.selectedIdeaId  userId
-             model.newComment
+            Comments.createComment model.selectedIdeaId userId model.newComment
         _ =
-            logActivity  "comment"  model.selectedIdeaId  userId
+            logActivity "comment" model.selectedIdeaId userId
         comments =
-            Comments.getComments  model.selectedIdeaId
+            Comments.getComments model.selectedIdeaId
         idea =
-            Ideas.getIdea  model.selectedIdeaId
+            Ideas.getIdea model.selectedIdeaId
     in
-        ( { model
-          | ideaComments =
-              comments
-          , selectedIdea =
-              idea
-          , newComment =
-              ""
-          }
-        , Cmd.none
-        )
+        ({ model
+         | ideaComments =
+             comments
+         , selectedIdea =
+             idea
+         , newComment =
+             ""
+         }, Cmd.none)
 
 
-handleSubmitComment : Model -> ( Model , Cmd Msg )
+handleSubmitComment : Model -> (Model, Cmd Msg)
 handleSubmitComment model =
     case model.currentUser of
         
         Just user ->
             if model.newComment == "" then
-                ( model , Cmd.none )
+                (model, Cmd.none)
             else
-                doSubmitComment  user  model
+                doSubmitComment user model
         
         Nothing ->
-            ( { model | page = SignInPage } , Cmd.none )
+            ({ model | page = SignInPage }, Cmd.none)
 
 
-handleBackToBoard : Model -> ( Model , Cmd Msg )
+handleBackToBoard : Model -> (Model, Cmd Msg)
 handleBackToBoard model =
     let
         ideas =
-            Ideas.getIdeas  model.sortBy  model.filterCategory
-             model.searchQuery
+            Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
-        ( { model
-          | page =
-              BoardPage
-          , ideas =
-              ideas
-          , selectedIdea =
-              Nothing
-          , selectedIdeaId =
-              ""
-          , notification =
-              ""
-          }
-        , Cmd.none
-        )
+        ({ model
+         | page =
+             BoardPage
+         , ideas =
+             ideas
+         , selectedIdea =
+             Nothing
+         , selectedIdeaId =
+             ""
+         , notification =
+             ""
+         }, Cmd.none)
 
 
-doCreateIdea : (Dict String String) -> Model -> ( Model , Cmd Msg )
+doCreateIdea : (Dict String String) -> Model -> (Model, Cmd Msg)
 doCreateIdea user model =
     let
         userId =
-            Db.getField  "id"  user
+            Db.getField "id" user
         _ =
-            Ideas.createIdea  model.submitTitle  model.submitDescription
-             model.submitCategory
--- ══════════════════════════════════════════════════════
--- UPDATE
--- ══════════════════════════════════════════════════════
-             userId
+            Ideas.createIdea model.submitTitle model.submitDescription model.submitCategory userId
         _ =
-            logActivity  "submit"  ""  userId
+            logActivity "submit" "" userId
         ideas =
-            Ideas.getIdeas  model.sortBy  model.filterCategory
-             model.searchQuery
+            Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
-        ( { model
-          | page =
-              BoardPage
-          , ideas =
-              ideas
-          , submitTitle =
-              ""
-          , submitDescription =
-              ""
-          , submitCategory =
-              "feature"
-          , notification =
-              "Your idea has been submitted!"
-          }
-        , Cmd.none
-        )
+        ({ model
+         | page =
+             BoardPage
+         , ideas =
+             ideas
+         , submitTitle =
+             ""
+         , submitDescription =
+             ""
+         , submitCategory =
+             "feature"
+         , notification =
+             "Your idea has been submitted!"
+         }, Cmd.none)
 
 
-handleSubmitIdea : Model -> ( Model , Cmd Msg )
+handleSubmitIdea : Model -> (Model, Cmd Msg)
 handleSubmitIdea model =
     case model.currentUser of
         
         Just user ->
             if model.submitTitle == "" then
-                ( model , Cmd.none )
+                (model, Cmd.none)
             else
-                doCreateIdea  user  model
+                doCreateIdea user model
         
         Nothing ->
-            ( { model | page = SignInPage } , Cmd.none )
--- ══════════════════════════════════════════════════════
--- VIEW
--- ══════════════════════════════════════════════════════
+            ({ model | page = SignInPage }, Cmd.none)
 
 
-handleSignInSuccess : (Dict String String) -> Model -> ( Model , Cmd Msg )
+handleSignInSuccess : (Dict String String) -> Model -> (Model, Cmd Msg)
 handleSignInSuccess user model =
     let
         ideas =
-            Ideas.getIdeas  model.sortBy  model.filterCategory
-             model.searchQuery
+            Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
         _ =
-            logActivity  "signin"  ""  (Db.getField  "id"  user)
+            logActivity "signin" "" (Db.getField "id" user)
     in
-        ( { model
-          | currentUser =
-              Just  user
-          , page =
-              BoardPage
-          , ideas =
-              ideas
-          , authEmail =
--- ══════════════════════════════════════════════════════
--- SUBSCRIPTIONS
--- ══════════════════════════════════════════════════════
-              ""
-          , authPassword =
-              ""
-          , authError =
-              ""
-          , notification =
-              "Welcome back!"
--- ══════════════════════════════════════════════════════
--- APP
--- ══════════════════════════════════════════════════════
-          }
-        , Cmd.none
-        )
+        ({ model
+         | currentUser =
+             Just user
+         , page =
+             BoardPage
+         , ideas =
+             ideas
+         , authEmail =
+             ""
+         , authPassword =
+             ""
+         , authError =
+             ""
+         , notification =
+             "Welcome back!"
+         }, Cmd.none)
 
 
-handleSignIn : Model -> ( Model , Cmd Msg )
+handleSignIn : Model -> (Model, Cmd Msg)
 handleSignIn model =
-    case Auth.authenticateUser  model.authEmail  model.authPassword of
+    case Auth.authenticateUser model.authEmail model.authPassword of
         
         Ok user ->
-            handleSignInSuccess  user  model
+            handleSignInSuccess user model
         
         Err error ->
-            ( { model | authError = error } , Cmd.none )
+            ({ model | authError = error }, Cmd.none)
 
 
-handleSignUpSuccess : String -> Model -> ( Model , Cmd Msg )
+handleSignUpSuccess : String -> Model -> (Model, Cmd Msg)
 handleSignUpSuccess userId model =
-    case Auth.getUserById  userId of
+    case Auth.getUserById userId of
         
         Just user ->
             let
                 _ =
-                    logActivity  "signup"  ""  userId
+                    logActivity "signup" "" userId
             in
-                ( { model
-                  | currentUser =
-                      Just  user
-                  , page =
-                      BoardPage
-                  , authEmail =
-                      ""
-                  , authUsername =
-                      ""
-                  , authPassword =
-                      ""
-                  , authError =
-                      ""
-                  , notification =
-                      "Account created! Welcome to SkyVote."
-                  }
-                , Cmd.none
-                )
+                ({ model
+                 | currentUser =
+                     Just user
+                 , page =
+                     BoardPage
+                 , authEmail =
+                     ""
+                 , authUsername =
+                     ""
+                 , authPassword =
+                     ""
+                 , authError =
+                     ""
+                 , notification =
+                     "Account created! Welcome to SkyVote."
+                 }, Cmd.none)
         
         Nothing ->
-            ( { model | authError = "Account created. Please sign in." }
-            , Cmd.none
-            )
+            ({ model | authError = "Account created. Please sign in." }, Cmd.none)
 
 
-handleSignUpValidated : Model -> ( Model , Cmd Msg )
+handleSignUpValidated : Model -> (Model, Cmd Msg)
 handleSignUpValidated model =
-    case Auth.createUser  model.authUsername  model.authEmail
-          model.authPassword of
+    case Auth.createUser model.authUsername model.authEmail model.authPassword of
         
         Ok userId ->
-            handleSignUpSuccess  userId  model
+            handleSignUpSuccess userId model
         
         Err error ->
-            ( { model | authError = error } , Cmd.none )
+            ({ model | authError = error }, Cmd.none)
 
 
-handleSignUp : Model -> ( Model , Cmd Msg )
+handleSignUp : Model -> (Model, Cmd Msg)
 handleSignUp model =
-    if String.length  model.authPassword < 8 then
-        ( { model | authError = "Password must be at least 8 characters." }
-        , Cmd.none
-        )
+    if String.length model.authPassword < 8 then
+        ({ model | authError = "Password must be at least 8 characters." }, Cmd.none)
     else if model.authUsername == "" then
-        ( { model | authError = "Username is required." } , Cmd.none )
+        ({ model | authError = "Username is required." }, Cmd.none)
     else
-        handleSignUpValidated  model
+        handleSignUpValidated model
 
 
-handleSignOut : Model -> ( Model , Cmd Msg )
+handleSignOut : Model -> (Model, Cmd Msg)
 handleSignOut model =
     let
         _ =
-            println  "[AUTH] User signed out"
+            println "[AUTH] User signed out"
     in
-        ( { model
-          | currentUser =
-              Nothing
-          , page =
-              BoardPage
-          , notification =
-              ""
-          , authError =
-              ""
-          }
-        , Cmd.none
-        )
+        ({ model
+         | currentUser =
+             Nothing
+         , page =
+             BoardPage
+         , notification =
+             ""
+         , authError =
+             ""
+         }, Cmd.none)
 
 
-update : Msg -> Model -> ( Model , Cmd Msg )
+update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         
         Navigate page ->
-            ( { model | page = page , notification = "" , authError = "" }
-            , Cmd.none
-            )
+            ({ model | page = page , notification = "" , authError = "" }, Cmd.none)
         
         SetSort sortBy ->
-            handleSetSort  sortBy  model
+            handleSetSort sortBy model
         
         SetFilter category ->
-            handleSetFilter  category  model
+            handleSetFilter category model
         
         SetSearch query ->
-            handleSetSearch  query  model
+            handleSetSearch query model
         
         ToggleVote ideaId ->
-            handleToggleVote  ideaId  model
+            handleToggleVote ideaId model
         
         ViewIdea ideaId ->
-            handleViewIdea  ideaId  model
+            handleViewIdea ideaId model
         
         UpdateComment content ->
-            ( { model | newComment = content } , Cmd.none )
+            ({ model | newComment = content }, Cmd.none)
         
         SubmitComment ->
-            handleSubmitComment  model
+            handleSubmitComment model
         
         BackToBoard ->
-            handleBackToBoard  model
+            handleBackToBoard model
         
         UpdateTitle t ->
-            ( { model | submitTitle = t } , Cmd.none )
+            ({ model | submitTitle = t }, Cmd.none)
         
         UpdateDescription d ->
-            ( { model | submitDescription = d } , Cmd.none )
+            ({ model | submitDescription = d }, Cmd.none)
         
         UpdateCategory c ->
-            ( { model | submitCategory = c } , Cmd.none )
+            ({ model | submitCategory = c }, Cmd.none)
         
         SubmitIdea ->
-            handleSubmitIdea  model
+            handleSubmitIdea model
         
         UpdateEmail e ->
-            ( { model | authEmail = e } , Cmd.none )
+            ({ model | authEmail = e }, Cmd.none)
         
         UpdateUsername u ->
-            ( { model | authUsername = u } , Cmd.none )
+            ({ model | authUsername = u }, Cmd.none)
         
         UpdatePassword p ->
-            ( { model | authPassword = p } , Cmd.none )
+            ({ model | authPassword = p }, Cmd.none)
         
         DoSignIn ->
-            handleSignIn  model
+            handleSignIn model
         
         DoSignUp ->
-            handleSignUp  model
+            handleSignUp model
         
         DoSignOut ->
-            handleSignOut  model
+            handleSignOut model
         
         Tick ->
-            refreshCurrentView  model
+            refreshCurrentView model
 
 
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
 view : Model -> VNode
 view model =
     case model.page of
         
         BoardPage ->
-            Board.viewBoard  model
+            Board.viewBoard model
         
         DetailPage ->
-            Detail.viewDetail  model
+            Detail.viewDetail model
         
         SubmitPage ->
-            Submit.viewSubmit  model
+            Submit.viewSubmit model
         
         SignInPage ->
-            PageAuth.viewSignIn  model
+            PageAuth.viewSignIn model
         
         SignUpPage ->
-            PageAuth.viewSignUp  model
+            PageAuth.viewSignUp model
         
         AboutPage ->
-            About.viewAbout  model
+            About.viewAbout model
         
         RoadmapPage ->
-            Roadmap.viewRoadmap  model
+            Roadmap.viewRoadmap model
         
         NotFoundPage ->
-            Board.viewBoard  model
+            Board.viewBoard model
 
 
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS
+-- ══════════════════════════════════════════════════════
 subscriptions model =
     case model.page of
         
         BoardPage ->
-            Time.every  10000  Tick
+            Time.every 10000 Tick
         
         DetailPage ->
-            Time.every  10000  Tick
+            Time.every 10000 Tick
         
         _ ->
             Sub.none
 
 
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
 main =
-    app
-     { init =
-         init
-     , update =
-         update
-     , view =
-         view
-     , subscriptions =
-         subscriptions
-     , routes =
-         [ route  "/"  BoardPage
-         , route  "/submit"  SubmitPage
-         , route  "/auth/signin"  SignInPage
-         , route  "/auth/signup"  SignUpPage
-         , route  "/about"  AboutPage
-         , route  "/roadmap"  RoadmapPage
-         ]
-     , notFound =
-         NotFoundPage
-     }
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- BOARD HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- DETAIL HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- SUBMIT HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- AUTH HANDLERS
+-- ══════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════
+-- UPDATE
+-- ══════════════════════════════════════════════════════
+    app { init =
+            init
+        , update =
+            update
+        , view =
+            view
+        , subscriptions =
+            subscriptions
+        , routes =
+            [ route "/" BoardPage
+            , route "/submit" SubmitPage
+            , route "/auth/signin" SignInPage
+            , route "/auth/signup" SignUpPage
+            , route "/about" AboutPage
+            , route "/roadmap" RoadmapPage
+            ]
+        , notFound =
+            NotFoundPage
+        }
