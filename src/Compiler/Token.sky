@@ -47,6 +47,7 @@ type alias Diagnostic =
 
 
 emptySpan : SourceSpan
+
 emptySpan =
     { start =
         { offset = 0 , line = 0 , column = 0 }
@@ -56,6 +57,7 @@ emptySpan =
 
 
 isKeyword : String -> Bool
+
 isKeyword word =
     word == "module" ||
     word == "exposing" ||

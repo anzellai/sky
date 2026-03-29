@@ -5,39 +5,39 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Lib.Db as Db
 
+
 createNote userId title content =
-    Db.exec  "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
-     [ userId , title , content ]
+    Db.exec "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
+        [ userId , title , content ]
 
 
 updateNote noteId userId title content =
     Db.exec
-     "UPDATE notes SET title = ?, content = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
-     [ title , content , noteId , userId ]
+        "UPDATE notes SET title = ?, content = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
+        [ title , content , noteId , userId ]
 
 
 deleteNote noteId userId =
-    Db.exec  "DELETE FROM notes WHERE id = ? AND user_id = ?"
-     [ noteId , userId ]
+    Db.exec "DELETE FROM notes WHERE id = ? AND user_id = ?"
+        [ noteId , userId ]
 
 
 getNotes userId =
     Db.queryRows
-     "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
-     [ userId ]
+        "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
+        [ userId ]
 
 
 getNote noteId userId =
     let
         rows =
             Db.queryRows
-             "SELECT id, title, content, created_at, updated_at FROM notes WHERE id = ? AND user_id = ? LIMIT 1"
-             [ noteId , userId ]
+                "SELECT id, title, content, created_at, updated_at FROM notes WHERE id = ? AND user_id = ? LIMIT 1"
+                [ noteId , userId ]
     in
         case rows of
-            
             Ok noteRows ->
-                List.head  noteRows
-            
+                List.head noteRows
+
             Err _ ->
                 Nothing

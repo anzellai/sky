@@ -11,11 +11,13 @@ type alias ParserState =
 
 
 initState : (List Token) -> ParserState
+
 initState tokens =
     { tokens = tokens , pos = 0 , errors = [] }
 
 
 peek : ParserState -> Token
+
 peek state =
     case List.drop  state.pos  state.tokens
         |> List.head of
@@ -28,6 +30,7 @@ peek state =
 
 
 peekAt : Int -> ParserState -> Token
+
 peekAt offset state =
     case List.drop  (state.pos + offset)  state.tokens
         |> List.head of
@@ -40,6 +43,7 @@ peekAt offset state =
 
 
 previous : ParserState -> Token
+
 previous state =
     if state.pos > 0 then
         case List.drop  (state.pos - 1)  state.tokens
@@ -55,6 +59,7 @@ previous state =
 
 
 advance : ParserState -> ( Token , ParserState )
+
 advance state =
     let
         token =
@@ -67,16 +72,19 @@ advance state =
 
 
 matchKind : TokenKind -> ParserState -> Bool
+
 matchKind kind state =
     tokenKindEq  (peekKind  state)  kind
 
 
 matchLexeme : String -> ParserState -> Bool
+
 matchLexeme lex state =
     peekLexeme  state == lex
 
 
 matchKindLex : TokenKind -> String -> ParserState -> Bool
+
 matchKindLex kind lex state =
     let
         t =
@@ -86,6 +94,7 @@ matchKindLex kind lex state =
 
 
 consume : TokenKind -> ParserState -> Result String ( Token , ParserState )
+
 consume kind state =
     let
         t =
@@ -114,6 +123,7 @@ consume kind state =
 
 
 consumeLex : TokenKind -> String -> ParserState -> Result String ( Token , ParserState )
+
 consumeLex kind lex state =
     let
         t =
@@ -140,11 +150,13 @@ consumeLex kind lex state =
 
 
 tokenKindEq : TokenKind -> TokenKind -> Bool
+
 tokenKindEq a b =
     tokenKindStr  a == tokenKindStr  b
 
 
 tokenKindStr : TokenKind -> String
+
 tokenKindStr k =
     case k of
         
@@ -225,6 +237,7 @@ tokenKindStr k =
 
 
 parseQualifiedParts : (List String) -> ParserState -> ( List String , ParserState )
+
 parseQualifiedParts parts state =
     if matchKind  TkDot  state then
         let
@@ -245,6 +258,7 @@ parseQualifiedParts parts state =
 
 
 peekLexeme : ParserState -> String
+
 peekLexeme state =
     let
         t =
@@ -254,6 +268,7 @@ peekLexeme state =
 
 
 peekColumn : ParserState -> Int
+
 peekColumn state =
     let
         t =
@@ -267,6 +282,7 @@ peekColumn state =
 
 
 peekKind : ParserState -> TokenKind
+
 peekKind state =
     let
         t =
@@ -276,6 +292,7 @@ peekKind state =
 
 
 peekAt1Kind : ParserState -> TokenKind
+
 peekAt1Kind state =
     let
         t =
@@ -297,6 +314,7 @@ unescapeString s =
 
 
 filterLayout : (List Token) -> List Token
+
 filterLayout tokens =
     List.filter
      (

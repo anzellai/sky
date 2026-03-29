@@ -20,11 +20,13 @@ type alias PatternResult =
 
 
 emptyResult : PatternResult
+
 emptyResult =
     { substitution = emptySub , bindings = [] }
 
 
 checkPattern : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> Type -> Result String PatternResult
+
 checkPattern counter registry env pat expectedType =
     case pat of
         
@@ -271,6 +273,7 @@ checkPattern counter registry env pat expectedType =
 
 
 checkConstructorPattern : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> Scheme -> (List Pattern) -> Type -> Result String PatternResult
+
 checkConstructorPattern counter registry env ctorName scheme argPats expectedType =
     let
         instType =
@@ -305,6 +308,7 @@ checkConstructorPattern counter registry env ctorName scheme argPats expectedTyp
 
 
 splitFunType : Type -> ( List Type , Type )
+
 splitFunType t =
     case t of
         
@@ -324,6 +328,7 @@ splitFunType t =
 
 
 checkPatternList : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Substitution -> (List ( String , Type )) -> Result String PatternResult
+
 checkPatternList counter registry env pats types sub bindings =
     case pats of
         
@@ -357,6 +362,7 @@ checkPatternList counter registry env pats types sub bindings =
 
 
 checkPatternListSame : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> Type -> Substitution -> (List ( String , Type )) -> Result String PatternResult
+
 checkPatternListSame counter registry env pats elemType sub bindings =
     case pats of
         
@@ -377,6 +383,7 @@ checkPatternListSame counter registry env pats elemType sub bindings =
 
 
 literalType : LiteralValue -> Type
+
 literalType lit =
     case lit of
         

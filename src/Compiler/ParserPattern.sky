@@ -9,6 +9,7 @@ import Compiler.Ast exposing (..)
 import Compiler.ParserCore exposing (..)
 
 parsePatternExpr : ParserState -> Result String ( Pattern , ParserState )
+
 parsePatternExpr state =
     case parsePrimaryPattern  state of
         
@@ -61,6 +62,7 @@ parsePatternExpr state =
 
 
 parsePrimaryPattern : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPattern state =
     if matchKind  TkUpperIdentifier  state then
         parsePrimaryPatternUpper  state
@@ -79,6 +81,7 @@ parsePrimaryPattern state =
 
 
 parsePrimaryPatternUpper : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternUpper state =
     let
         advResult =
@@ -104,6 +107,7 @@ parsePrimaryPatternUpper state =
 
 
 parsePrimaryPatternIdent : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternIdent state =
     let
         advResult =
@@ -120,6 +124,7 @@ parsePrimaryPatternIdent state =
 
 
 parsePrimaryPatternInt : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternInt state =
     let
         advResult =
@@ -139,6 +144,7 @@ parsePrimaryPatternInt state =
 
 
 parsePrimaryPatternString : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternString state =
     let
         advResult =
@@ -152,6 +158,7 @@ parsePrimaryPatternString state =
 
 
 parsePrimaryPatternParen : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternParen state =
     let
         advResult =
@@ -178,6 +185,7 @@ parsePrimaryPatternParen state =
 
 
 parsePrimaryPatternParenCont : Pattern -> ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternParenCont first s2 =
     if matchKind  TkComma  s2 then
         parseTuplePatternRest  [ first ]  s2
@@ -192,6 +200,7 @@ parsePrimaryPatternParenCont first s2 =
 
 
 parsePrimaryPatternBracket : ParserState -> Result String ( Pattern , ParserState )
+
 parsePrimaryPatternBracket state =
     let
         advResult =
@@ -226,6 +235,7 @@ parsePrimaryPatternBracket state =
 
 
 parsePatternArgs : ParserState -> ( List Pattern , ParserState )
+
 parsePatternArgs state =
     if matchKind  TkIdentifier  state ||
     matchKind  TkUpperIdentifier  state || matchKind  TkLParen  state then
@@ -256,6 +266,7 @@ parsePatternArgs state =
 
 
 parseTuplePatternRest : (List Pattern) -> ParserState -> Result String ( Pattern , ParserState )
+
 parseTuplePatternRest items state =
     if matchKind  TkComma  state then
         let
@@ -282,6 +293,7 @@ parseTuplePatternRest items state =
 
 
 parsePatternList : ParserState -> ( List Pattern , ParserState )
+
 parsePatternList state =
     case parsePatternExpr  state of
         

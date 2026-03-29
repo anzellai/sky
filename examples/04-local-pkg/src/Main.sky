@@ -11,8 +11,8 @@ main =
         b =
             20
         sum =
-            Utils.add  a  b
+            Utils.add a b
         message =
-            Utils.formatMessage  "Current"  sum
+            Utils.formatMessage "Current" sum
     in
-        println  "Calculation result:"  message
+        println "Calculation result:" message

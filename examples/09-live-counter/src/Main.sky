@@ -9,22 +9,20 @@ import Std.Live exposing (app, route)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
+import Std.Time as Time
+
 -- ══════════════════════════════════════════════════════
 -- MODEL
 -- ══════════════════════════════════════════════════════
-import Std.Time as Time
-
 type Page
--- ══════════════════════════════════════════════════════
--- MSG
--- ══════════════════════════════════════════════════════
     = CounterPage
     | AboutPage
 
-
+-- ══════════════════════════════════════════════════════
+-- MSG
+-- ══════════════════════════════════════════════════════
 type alias Model =
     { page : Page , count : Int }
-
 
 type Msg
     = Navigate Page
@@ -33,28 +31,25 @@ type Msg
     | Reset
     | Tick
 
-
-init : a -> ( Model , Cmd Msg )
+-- ══════════════════════════════════════════════════════
+-- INIT
+-- ══════════════════════════════════════════════════════
+init : a -> ( Model, Cmd Msg )
 init _req =
     ( { page = CounterPage , count = 0 } , Cmd.none )
 
-
-update : Msg -> Model -> ( Model , Cmd Msg )
+-- ══════════════════════════════════════════════════════
+-- UPDATE
+-- ══════════════════════════════════════════════════════
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
--- ══════════════════════════════════════════════════════
--- SUBSCRIPTIONS — auto-increment every second on CounterPage
--- ══════════════════════════════════════════════════════
-        
         Navigate page ->
             ( { model | page = page } , Cmd.none )
         
         Increment ->
             ( { model | count = model.count + 1 } , Cmd.none )
         
--- ══════════════════════════════════════════════════════
--- VIEW
--- ══════════════════════════════════════════════════════
         Decrement ->
             ( { model | count = model.count - 1 } , Cmd.none )
         
@@ -64,171 +59,157 @@ update msg model =
         Tick ->
             ( { model | count = model.count + 1 } , Cmd.none )
 
-
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS — auto-increment every second on CounterPage
+-- ══════════════════════════════════════════════════════
 subscriptions : Model -> Sub Msg
 subscriptions model =
     case model.page of
-        
         CounterPage ->
-            Time.every  1000  Tick
+            Time.every 1000 Tick
         
         _ ->
             Sub.none
 
-
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
 view : Model -> VNode
 view model =
-    div  []
-     [ styleNode  []  pageStyles
-    , div  [ class  "app" ]
-       [ nav  [ class  "navbar" ]
-          [ button  [ onClick  (Navigate  CounterPage) , class  "nav-btn" ]
-             [ text  "Counter" ]
-         , button  [ onClick  (Navigate  AboutPage) , class  "nav-btn" ]
-            [ text  "About" ]
-         ]
-      , div  [ class  "content" ]  [ viewPage  model ]
-      ]
-    ]
-
+    div []
+        [ styleNode [] pageStyles
+        , div [ class "app" ]
+            [ nav [ class "navbar" ]
+                [ button [ onClick (Navigate CounterPage) , class "nav-btn" ]
+                    [ text "Counter" ]
+                , button [ onClick (Navigate AboutPage) , class "nav-btn" ]
+                    [ text "About" ]
+                ]
+            , div [ class "content" ] [ viewPage model ]
+            ]
+        ]
 
 viewPage : Model -> VNode
 viewPage model =
     case model.page of
-        
         CounterPage ->
-            viewCounter  model
+            viewCounter model
         
         AboutPage ->
             viewAbout
 
-
 viewCounter : Model -> VNode
 viewCounter model =
-    div  [ class  "counter" ]
-     [ h1  []  [ text  "Sky.Live Counter" ]
-    , div  [ class  "count" ]
-       [ span  [ class  "count-value" ]  [ text  (String.fromInt  model.count) ]
-      ]
-    , div  [ class  "buttons" ]
-       [ button  [ onClick  Decrement , class  "btn" ]  [ text  "-" ]
-      , button  [ onClick  Reset , class  "btn btn-secondary" ]
-         [ text  "Reset" ]
-      , button  [ onClick  Increment , class  "btn" ]  [ text  "+" ]
-      ]
-    , p  [ class  "hint" ]
-       [ text
-          "Counter auto-increments every second via server-push (SSE subscription)."
-      ]
-    ]
-
+    div [ class "counter" ]
+        [ h1 [] [ text "Sky.Live Counter" ]
+        , div [ class "count" ]
+            [ span [ class "count-value" ] [ text (String.fromInt model.count) ]
+            ]
+        , div [ class "buttons" ]
+            [ button [ onClick Decrement , class "btn" ] [ text "-" ]
+            , button [ onClick Reset , class "btn btn-secondary" ]
+                [ text "Reset" ]
+            , button [ onClick Increment , class "btn" ] [ text "+" ]
+            ]
+        , p [ class "hint" ]
+            [ text
+                "Counter auto-increments every second via server-push (SSE subscription)."
+            ]
+        ]
 
 viewAbout : String
 viewAbout =
-    div  [ class  "about" ]
-     [ h1  []  [ text  "About Sky.Live" ]
-    , p  []
-       [ text
-          "This is a Sky.Live application — an HTTP-first, server-driven UI."
-      ]
-    , p  []
-       [ text
-          "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches."
-      ]
-    , p  []
-       [ text
-          "The counter auto-increments via SSE subscriptions — navigate to About to stop it!"
-      ]
-    ]
-
+    div [ class "about" ]
+        [ h1 [] [ text "About Sky.Live" ]
+        , p []
+            [ text
+                "This is a Sky.Live application — an HTTP-first, server-driven UI."
+            ]
+        , p []
+            [ text
+                "The server holds all state. Clicks send POST requests. The server diffs the view and returns minimal patches."
+            ]
+        , p []
+            [ text
+                "The counter auto-increments via SSE subscriptions — navigate to About to stop it!"
+            ]
+        ]
 
 pageStyles =
     stylesheet
-     [ rule  "*, *::before, *::after"
-        [ property  "box-sizing"  "border-box" , margin  "0" , padding  "0" ]
-    , rule  "body"
-       [ fontFamily  "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
-      , property  "background"  "#f5f5f5"
-      , color  (hex  "333")
-      ]
-    , rule  ".app"
-       [ maxWidth  (px  600) , margin2  "0"  "auto" , padding  (rem  2.0) ]
-    , rule  ".navbar"
-       [ display  "flex"
-      , gap  (rem  0.5)
-      , property  "margin-bottom"  "2rem"
-      , property  "padding-bottom"  "1rem"
-      , borderBottom  "1px solid #ddd"
-      ]
-    , rule  ".nav-btn"
-       [ property  "appearance"  "none"
-      , padding2  (rem  0.5)  (rem  1.0)
-      , border  "1px solid #ddd"
-      , property  "background"  "white"
-      , borderRadius  (px  6)
-      , cursor  "pointer"
-      , fontSize  (rem  0.9)
-      ]
-    , rule  ".nav-btn:hover"  [ property  "background"  "#f0f0f0" ]
-    , rule  ".counter"  [ textAlign  "center" ]
-    , rule  ".counter h1"
-       [ property  "margin-bottom"  "2rem" , fontSize  (rem  1.5) ]
-    , rule  ".count"  [ margin2  (rem  2.0)  "0" ]
-    , rule  ".count-value"
+        [ rule "*, *::before, *::after"
+            [ property "box-sizing" "border-box" , margin "0" , padding "0" ]
+        , rule "body"
+            [ fontFamily
+                "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+            , property "background" "#f5f5f5"
+            , color (hex "333")
+            ]
+        , rule ".app"
+            [ maxWidth (px 600) , margin2 "0" "auto" , padding (rem 2.0) ]
+        , rule ".navbar"
+            [ display "flex"
+            , gap (rem 0.5)
+            , property "margin-bottom" "2rem"
+            , property "padding-bottom" "1rem"
+            , borderBottom "1px solid #ddd"
+            ]
+        , rule ".nav-btn"
+            [ property "appearance" "none"
+            , padding2 (rem 0.5) (rem 1.0)
+            , border "1px solid #ddd"
+            , property "background" "white"
+            , borderRadius (px 6)
+            , cursor "pointer"
+            , fontSize (rem 0.9)
+            ]
+        , rule ".nav-btn:hover" [ property "background" "#f0f0f0" ]
+        , rule ".counter" [ textAlign "center" ]
+        , rule ".counter h1"
+            [ property "margin-bottom" "2rem" , fontSize (rem 1.5) ]
+        , rule ".count" [ margin2 (rem 2.0) "0" ]
+        , rule ".count-value"
+            [ fontSize (rem 4.0) , fontWeight "bold" , color (hex "2563eb") ]
+        , rule ".buttons"
+            [ display "flex"
+            , gap (rem 1.0)
+            , justifyContent "center"
+            , margin2 (rem 2.0) "0"
+            ]
+        , rule ".btn"
+            [ property "appearance" "none"
+            , padding2 (rem 0.75) (rem 2.0)
+            , border "none"
+            , property "background" "#2563eb"
+            , color (hex "ffffff")
+            , borderRadius (px 8)
+            , fontSize (rem 1.2)
+            , cursor "pointer"
+            , property "min-width" "60px"
+            ]
+        , rule ".btn:hover" [ property "background" "#1d4ed8" ]
+        , rule ".btn:active" [ transform "scale(0.95)" ]
+        , rule ".btn-secondary" [ property "background" "#6b7280" ]
+        , rule ".btn-secondary:hover" [ property "background" "#4b5563" ]
+        , rule ".hint"
+            [ color (hex "888")
+            , fontSize (rem 0.85)
+            , property "margin-top" "2rem"
+            ]
+        , rule ".about" [ lineHeight "1.8" ]
+        , rule ".about h1" [ property "margin-bottom" "1rem" ]
+        , rule ".about p" [ property "margin-bottom" "1rem" ]
+        ]
+
 -- ══════════════════════════════════════════════════════
 -- APP
 -- ══════════════════════════════════════════════════════
-       [ fontSize  (rem  4.0) , fontWeight  "bold" , color  (hex  "2563eb") ]
-    , rule  ".buttons"
-       [ display  "flex"
-      , gap  (rem  1.0)
-      , justifyContent  "center"
-      , margin2  (rem  2.0)  "0"
-      ]
-    , rule  ".btn"
-       [ property  "appearance"  "none"
-      , padding2  (rem  0.75)  (rem  2.0)
-      , border  "none"
-      , property  "background"  "#2563eb"
-      , color  (hex  "ffffff")
-      , borderRadius  (px  8)
-      , fontSize  (rem  1.2)
--- ══════════════════════════════════════════════════════
--- INIT
--- ══════════════════════════════════════════════════════
--- ══════════════════════════════════════════════════════
--- UPDATE
--- ══════════════════════════════════════════════════════
-      , cursor  "pointer"
-      , property  "min-width"  "60px"
-      ]
-    , rule  ".btn:hover"  [ property  "background"  "#1d4ed8" ]
-    , rule  ".btn:active"  [ transform  "scale(0.95)" ]
-    , rule  ".btn-secondary"  [ property  "background"  "#6b7280" ]
-    , rule  ".btn-secondary:hover"  [ property  "background"  "#4b5563" ]
-    , rule  ".hint"
-       [ color  (hex  "888")
-      , fontSize  (rem  0.85)
-      , property  "margin-top"  "2rem"
-      ]
-    , rule  ".about"  [ lineHeight  "1.8" ]
-    , rule  ".about h1"  [ property  "margin-bottom"  "1rem" ]
-    , rule  ".about p"  [ property  "margin-bottom"  "1rem" ]
-    ]
-
-
 main =
     app
-     { init =
-         init
-     , update =
-         update
-     , view =
-         view
-     , subscriptions =
-         subscriptions
-     , routes =
-         [ route  "/"  CounterPage , route  "/about"  AboutPage ]
-     , notFound =
-         CounterPage
-     }
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" CounterPage , route "/about" AboutPage ]
+        , notFound = CounterPage
+        }

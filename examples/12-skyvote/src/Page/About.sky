@@ -7,98 +7,103 @@ import State exposing (..)
 import Ui.Layout as Layout
 
 viewAbout model =
-    Layout.page  model
-     (
-    div  [ class  "content-page" ]
-     [ h1  []  [ text  "About SkyVote" ]
-    , p  []
-       [ text
-          "SkyVote is a feature voting board where users can submit ideas, vote on the ones they care about, and discuss with the community. The best ideas rise to the top."
-      ]
-    , p  []
-       [ text  "This application is a production-grade example built with "
-      , strong  []  [ text  "Sky" ]
-      , text  " — an Elm-inspired programming language that compiles to Go."
-      ]
-    , h2  []  [ text  "Built with Sky" ]
-    , p  []
-       [ text
-          "Sky combines the safety and elegance of Elm's type system with Go's performance and ecosystem. This app demonstrates:"
-      ]
-    , ul  []
-       [ li  []
-          [ strong  []  [ text  "Sky.Live" ]
-         , text
-            " — Server-driven real-time UI. No client-side JavaScript framework needed. The server holds all state and sends minimal HTML patches over SSE."
-         ]
-      , li  []
-         [ strong  []  [ text  "Type-safe HTML & CSS" ]
-        , text
-           " — All markup and styles are generated with Sky's type-safe builders. No templates, no CSS files."
-        ]
-      , li  []
-         [ strong  []  [ text  "SQLite database" ]
-        , text
-           " — Persistent data storage via Go's database/sql with the modernc SQLite driver. Zero external dependencies."
-        ]
-      , li  []
-         [ strong  []  [ text  "The Elm Architecture (TEA)" ]
-        , text
-           " — Predictable state management with Model, Msg, init, update, and view."
-        ]
-      , li  []
-         [ strong  []  [ text  "Go interop" ]
-        , text
-           " — Seamless access to Go's standard library and third-party packages through auto-generated bindings."
-        ]
-      ]
-    , h2  []  [ text  "Architecture" ]
-    , p  []  [ text  "SkyVote is structured as a multi-module Sky project:" ]
-    , ul  []
-       [ li  []
-          [ codeNode  []  [ text  "Main.sky" ]
-         , text  " — App entry point, routing, state management"
-         ]
-      , li  []
-         [ codeNode  []  [ text  "Page/*" ]
-        , text  " — View modules for each page"
-        ]
-      , li  []
-         [ codeNode  []  [ text  "Lib/*" ]
-        , text  " — Database, auth, and business logic"
-        ]
-      , li  []
-         [ codeNode  []  [ text  "Ui/*" ]
-        , text  " — Shared layout, styles, and components"
-        ]
-      ]
-    , p  []
-       [ text
-          "The entire application compiles to a single Go binary with an embedded SQLite database. Deploy it anywhere — it is just one file."
-      ]
-    , h2  []  [ text  "How Voting Works" ]
-    , ul  []
-       [ li  []  [ text  "Sign up for an account to submit ideas and vote" ]
-      , li  []
-         [ text
-            "Each user gets one vote per idea — click to vote, click again to unvote"
-        ]
-      , li  []
-         [ text
-            "Ideas are sorted by vote count so the most popular ones rise to the top"
-        ]
-      , li  []  [ text  "Add comments to discuss ideas with the community" ]
-      , li  []
-         [ text  "The "
-        , a  [ href  "/roadmap" , attribute  "sky-nav"  "" ]
-           [ text  "Roadmap" ]
-        , text  " page shows ideas grouped by their status"
-        ]
-      ]
-    , h2  []  [ text  "Learn More" ]
-    , p  []
-       [ text
-          "Sky is open source and under active development. Visit the project repository to learn more about the language, read the documentation, or contribute."
-      ]
-    ]
-    )
+    Layout.page model
+        (
+        div [ class "content-page" ]
+            [ h1 [] [ text "About SkyVote" ]
+            , p []
+                [ text
+                    "SkyVote is a feature voting board where users can submit ideas, vote on the ones they care about, and discuss with the community. The best ideas rise to the top."
+                ]
+            , p []
+                [ text
+                    "This application is a production-grade example built with "
+                , strong [] [ text "Sky" ]
+                , text
+                    " — an Elm-inspired programming language that compiles to Go."
+                ]
+            , h2 [] [ text "Built with Sky" ]
+            , p []
+                [ text
+                    "Sky combines the safety and elegance of Elm's type system with Go's performance and ecosystem. This app demonstrates:"
+                ]
+            , ul []
+                [ li []
+                    [ strong [] [ text "Sky.Live" ]
+                    , text
+                        " — Server-driven real-time UI. No client-side JavaScript framework needed. The server holds all state and sends minimal HTML patches over SSE."
+                    ]
+                , li []
+                    [ strong [] [ text "Type-safe HTML & CSS" ]
+                    , text
+                        " — All markup and styles are generated with Sky's type-safe builders. No templates, no CSS files."
+                    ]
+                , li []
+                    [ strong [] [ text "SQLite database" ]
+                    , text
+                        " — Persistent data storage via Go's database/sql with the modernc SQLite driver. Zero external dependencies."
+                    ]
+                , li []
+                    [ strong [] [ text "The Elm Architecture (TEA)" ]
+                    , text
+                        " — Predictable state management with Model, Msg, init, update, and view."
+                    ]
+                , li []
+                    [ strong [] [ text "Go interop" ]
+                    , text
+                        " — Seamless access to Go's standard library and third-party packages through auto-generated bindings."
+                    ]
+                ]
+            , h2 [] [ text "Architecture" ]
+            , p []
+                [ text "SkyVote is structured as a multi-module Sky project:" ]
+            , ul []
+                [ li []
+                    [ codeNode [] [ text "Main.sky" ]
+                    , text " — App entry point, routing, state management"
+                    ]
+                , li []
+                    [ codeNode [] [ text "Page/*" ]
+                    , text " — View modules for each page"
+                    ]
+                , li []
+                    [ codeNode [] [ text "Lib/*" ]
+                    , text " — Database, auth, and business logic"
+                    ]
+                , li []
+                    [ codeNode [] [ text "Ui/*" ]
+                    , text " — Shared layout, styles, and components"
+                    ]
+                ]
+            , p []
+                [ text
+                    "The entire application compiles to a single Go binary with an embedded SQLite database. Deploy it anywhere — it is just one file."
+                ]
+            , h2 [] [ text "How Voting Works" ]
+            , ul []
+                [ li []
+                    [ text "Sign up for an account to submit ideas and vote" ]
+                , li []
+                    [ text
+                        "Each user gets one vote per idea — click to vote, click again to unvote"
+                    ]
+                , li []
+                    [ text
+                        "Ideas are sorted by vote count so the most popular ones rise to the top"
+                    ]
+                , li []
+                    [ text "Add comments to discuss ideas with the community" ]
+                , li []
+                    [ text "The "
+                    , a [ href "/roadmap" , attribute "sky-nav" "" ]
+                        [ text "Roadmap" ]
+                    , text " page shows ideas grouped by their status"
+                    ]
+                ]
+            , h2 [] [ text "Learn More" ]
+            , p []
+                [ text
+                    "Sky is open source and under active development. Visit the project repository to learn more about the language, read the documentation, or contribute."
+                ]
+            ]
+        )

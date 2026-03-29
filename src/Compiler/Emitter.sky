@@ -21,6 +21,7 @@ type alias ProjectConfig =
 
 
 emitProject : ProjectConfig -> Result String String
+
 emitProject config =
     case Pipeline.compile  config.entryFile  config.outDir of
         
@@ -38,6 +39,7 @@ emitProject config =
 
 
 emitSingleModule : ProjectConfig -> Module -> String -> Result String String
+
 emitSingleModule config mod source =
     let
         stdlibEnv =
@@ -73,6 +75,7 @@ emitSingleModule config mod source =
 
 
 lowerModuleForProject : Adt.AdtRegistry -> Module -> String -> GoPackage
+
 lowerModuleForProject registry mod moduleName =
     let
         baseCtx =
@@ -105,6 +108,7 @@ lowerModuleForProject registry mod moduleName =
 
 
 copyRuntime : String -> String -> Result String ()
+
 copyRuntime outDir moduleName =
     let
         runtimeDir =
@@ -120,6 +124,7 @@ copyRuntime outDir moduleName =
 
 
 generateRuntimeGo : String
+
 generateRuntimeGo =
     String.join  "\n"
      [ "package runtime"

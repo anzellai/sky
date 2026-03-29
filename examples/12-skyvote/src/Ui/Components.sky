@@ -5,99 +5,102 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
+import Lib.Db as Db
+
 -- ══════════════════════════════════════════════════════
 -- BADGES
 -- ══════════════════════════════════════════════════════
-import Lib.Db as Db
-
 badge label badgeClass =
-    span  [ class  ("badge " ++ badgeClass) ]  [ text  label ]
-
+    span [ class ("badge " ++ badgeClass) ] [ text label ]
 
 statusBadge status =
     if status == "open" then
-        badge  "Open"  "badge-open"
-    else if status == "planned" then
-        badge  "Planned"  "badge-planned"
-    else if status == "in-progress" then
-        badge  "In Progress"  "badge-in-progress"
-    else if status == "done" then
-        badge  "Done"  "badge-done"
-    else if status == "declined" then
-        badge  "Declined"  "badge-declined"
+        badge "Open" "badge-open"
     else
-        badge  status  "badge-open"
-
+        if status == "planned" then
+            badge "Planned" "badge-planned"
+        else
+            if status == "in-progress" then
+                badge "In Progress" "badge-in-progress"
+            else
+                if status == "done" then
+                    badge "Done" "badge-done"
+                else
+                    if status == "declined" then
+                        badge "Declined" "badge-declined"
+                    else
+                        badge status "badge-open"
 
 categoryBadge category =
+    if category == "bug" then
+        badge "Bug" "badge-bug"
+    else
+        if category == "improvement" then
+            badge "Improvement" "badge-improvement"
+        else
+            badge "Feature" "badge-feature"
+
 -- ══════════════════════════════════════════════════════
 -- IDEA CARD
 -- ══════════════════════════════════════════════════════
-    if category == "bug" then
-        badge  "Bug"  "badge-bug"
-    else if category == "improvement" then
-        badge  "Improvement"  "badge-improvement"
-    else
-        badge  "Feature"  "badge-feature"
-
-
 ideaCard idea userId =
     let
         ideaId =
-            Db.getField  "id"  idea
+            Db.getField "id" idea
         voteCount =
-            Db.getField  "vote_count"  idea
+            Db.getField "vote_count" idea
         commentCount =
-            Db.getField  "comment_count"  idea
+            Db.getField "comment_count" idea
         category =
-            Db.getField  "category"  idea
+            Db.getField "category" idea
         status =
-            Db.getField  "status"  idea
+            Db.getField "status" idea
         authorName =
-            Db.getField  "author_name"  idea
+            Db.getField "author_name" idea
         isVoted =
             if userId == "" then
                 ""
             else
                 ""
     in
-        div  [ class  "idea-card" ]
-         [ div  []
-            [ button  [ onClick  (ToggleVote  ideaId) , class  "vote-btn" ]
-               [ span  [ class  "vote-count" ]  [ text  voteCount ]
-              , span  [ class  "vote-label" ]  [ text  "votes" ]
-              ]
-           ]
-        , div  [ class  "idea-content" ]
-           [ div  []
-              [ button
-                 [ onClick  (ViewIdea  ideaId) , class  "idea-title-btn" ]
-                 [ text  (Db.getField  "title"  idea) ]
-             ]
-          , p  [ class  "idea-desc" ]
-             [ text  (Db.getField  "description"  idea) ]
+        div [ class "idea-card" ]
+            [ div []
+                [ button
+                    [ onClick (ToggleVote ideaId) , class "vote-btn" ]
+                    [ span [ class "vote-count" ] [ text voteCount ]
+                    , span [ class "vote-label" ] [ text "votes" ]
+                    ]
+                ]
+            , div [ class "idea-content" ]
+                [ div []
+                    [ button
+                        [ onClick (ViewIdea ideaId)
+                        , class "idea-title-btn"
+                        ]
+                        [ text (Db.getField "title" idea) ]
+                    ]
+                , p [ class "idea-desc" ]
+                    [ text (Db.getField "description" idea) ]
+                , div [ class "idea-meta" ]
+                    [ categoryBadge category
+                    , statusBadge status
+                    , span [] [ text ("by " ++ authorName) ]
+                    , span [] [ text (commentCount ++ " comments") ]
+                    ]
+                ]
+            ]
+
 -- ══════════════════════════════════════════════════════
 -- STAT CARD
 -- ══════════════════════════════════════════════════════
-          , div  [ class  "idea-meta" ]
-             [ categoryBadge  category
-            , statusBadge  status
-            , span  []  [ text  ("by " ++ authorName) ]
-            , span  []  [ text  (commentCount ++ " comments") ]
+statCard label value =
+    div [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text value ]
+        , div [ class "stat-label" ] [ text label ]
+        ]
+
 -- ══════════════════════════════════════════════════════
 -- EMPTY STATE
 -- ══════════════════════════════════════════════════════
-            ]
-          ]
-        ]
-
-
-statCard label value =
-    div  [ class  "stat-card" ]
-     [ div  [ class  "stat-value" ]  [ text  value ]
-    , div  [ class  "stat-label" ]  [ text  label ]
-    ]
-
-
 emptyState message =
-    div  [ class  "empty-state" ]  [ p  []  [ text  message ] ]
+    div [ class "empty-state" ] [ p [] [ text message ] ]

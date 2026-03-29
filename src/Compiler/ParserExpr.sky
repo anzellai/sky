@@ -10,6 +10,7 @@ import Compiler.ParserCore exposing (..)
 import Compiler.ParserPattern as ParserPattern
 
 parseExpr : Int -> ParserState -> Result String ( Expression , ParserState )
+
 parseExpr minPrec state =
     case parseApplication  state of
         
@@ -21,6 +22,7 @@ parseExpr minPrec state =
 
 
 parseExprLoop : Int -> Expression -> ParserState -> Result String ( Expression , ParserState )
+
 parseExprLoop minPrec left state =
     if matchKind  TkEquals  state then
         Ok  ( left , state )
@@ -79,6 +81,7 @@ parseExprLoop minPrec left state =
 
 
 getOperatorInfo : String -> Maybe ( Int , String )
+
 getOperatorInfo op =
     if op == "||" then
         Just  ( 2 , "right" )
@@ -107,6 +110,7 @@ getOperatorInfo op =
 
 
 parseApplication : ParserState -> Result String ( Expression , ParserState )
+
 parseApplication state =
     let
         fnCol =
@@ -122,6 +126,7 @@ parseApplication state =
 
 
 parseApplicationArgs : Int -> Expression -> ParserState -> Result String ( Expression , ParserState )
+
 parseApplicationArgs fnCol fn state =
     if isStartOfPrimary  state then
         if peekColumn  state <= 1 then
@@ -155,6 +160,7 @@ parseApplicationArgs fnCol fn state =
 
 
 isStartOfPrimary : ParserState -> Bool
+
 isStartOfPrimary state =
     matchKind  TkIdentifier  state ||
     matchKind  TkUpperIdentifier  state ||
@@ -172,6 +178,7 @@ isStartOfPrimary state =
 
 
 parsePrimary : ParserState -> Result String ( Expression , ParserState )
+
 parsePrimary state =
     if matchKindLex  TkKeyword  "case"  state then
         parseCaseExpr  state
@@ -261,6 +268,7 @@ parsePrimary state =
 
 
 parseCaseExpr : ParserState -> Result String ( Expression , ParserState )
+
 parseCaseExpr state =
     let
         ( _ , s1 ) =
@@ -286,6 +294,7 @@ parseCaseExpr state =
 
 
 parseCaseBranches : ParserState -> ( List CaseBranch , ParserState )
+
 parseCaseBranches state =
     if matchKind  TkEOF  state then
         ( [] , state )
@@ -332,6 +341,7 @@ parseCaseBranches state =
 
 
 parseIfExpr : ParserState -> Result String ( Expression , ParserState )
+
 parseIfExpr state =
     let
         ( _ , s1 ) =
@@ -376,6 +386,7 @@ parseIfExpr state =
 
 
 parseLetExpr : ParserState -> Result String ( Expression , ParserState )
+
 parseLetExpr state =
     let
         ( _ , s1 ) =
@@ -399,6 +410,7 @@ parseLetExpr state =
 
 
 parseLetBindings : ParserState -> ( List LetBinding , ParserState )
+
 parseLetBindings state =
     if matchKindLex  TkKeyword  "in"  state || matchKind  TkEOF  state then
         ( [] , state )
@@ -431,6 +443,7 @@ parseLetBindings state =
 
 
 parseLambdaExpr : ParserState -> Result String ( Expression , ParserState )
+
 parseLambdaExpr state =
     let
         ( _ , s1 ) =
@@ -454,6 +467,7 @@ parseLambdaExpr state =
 
 
 parseLambdaParams : ParserState -> ( List Pattern , ParserState )
+
 parseLambdaParams state =
     if matchKind  TkArrow  state then
         ( [] , state )
@@ -472,6 +486,7 @@ parseLambdaParams state =
 
 
 parseRecordOrUpdate : ParserState -> Result String ( Expression , ParserState )
+
 parseRecordOrUpdate state =
     let
         ( _ , s1 ) =
@@ -516,6 +531,7 @@ parseRecordOrUpdate state =
 
 
 parseRecordFields : ParserState -> ( List NamedExpr , ParserState )
+
 parseRecordFields state =
     if matchKind  TkRBrace  state then
         ( [] , state )
@@ -558,6 +574,7 @@ parseRecordFields state =
 
 
 parseParenOrTuple : ParserState -> Result String ( Expression , ParserState )
+
 parseParenOrTuple state =
     let
         ( _ , s1 ) =
@@ -589,6 +606,7 @@ parseParenOrTuple state =
 
 
 parseTupleRest : (List Expression) -> ParserState -> Result String ( Expression , ParserState )
+
 parseTupleRest items state =
     if matchKind  TkComma  state then
         let
@@ -613,6 +631,7 @@ parseTupleRest items state =
 
 
 parseListExpr : ParserState -> Result String ( Expression , ParserState )
+
 parseListExpr state =
     let
         ( _ , s1 ) =
@@ -639,6 +658,7 @@ parseListExpr state =
 
 
 parseListItems : ParserState -> ( List Expression , ParserState )
+
 parseListItems state =
     case parseExpr  0  state of
         
@@ -659,6 +679,7 @@ parseListItems state =
 
 
 parseQualifiedOrConstructor : ParserState -> Result String ( Expression , ParserState )
+
 parseQualifiedOrConstructor state =
     let
         ( id , s1 ) =
@@ -673,6 +694,7 @@ parseQualifiedOrConstructor state =
 
 
 parseFieldAccess : Token -> ParserState -> Result String ( Expression , ParserState )
+
 parseFieldAccess base state =
     let
         ( _ , s1 ) =

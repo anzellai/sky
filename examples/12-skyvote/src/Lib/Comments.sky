@@ -10,22 +10,20 @@ import Lib.Db as Db
 createComment ideaId authorId content =
     let
         id =
-            String.slice  0  12
-             (Crypto.sha256  (ideaId ++ ":" ++ authorId ++ ":" ++ content))
+            String.slice 0 12 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content))
         result =
             Db.exec
-             "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"
-             [ id , ideaId , authorId , content ]
+                "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"
+                [ id , ideaId , authorId , content ]
         _ =
-            println  ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
+            println ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
     in
         result
 
-
 getComments ideaId =
-    Result.withDefault  []
-     (
-    Db.queryRows
-     "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
-     [ ideaId ]
-    )
+    Result.withDefault []
+        (
+        Db.queryRows
+            "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
+            [ ideaId ]
+        )

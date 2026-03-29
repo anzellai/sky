@@ -6,6 +6,7 @@ import Sky.Core.List as List
 import Compiler.GoIr exposing (..)
 
 emitPackage : GoPackage -> String
+
 emitPackage pkg =
     let
         header =
@@ -22,6 +23,7 @@ emitPackage pkg =
 
 
 emitImports : (List GoImport) -> String
+
 emitImports imports =
     let
         lines =
@@ -39,6 +41,7 @@ emitImports imports =
 
 
 emitDecl : GoDecl -> String
+
 emitDecl decl =
     case decl of
         
@@ -53,6 +56,7 @@ emitDecl decl =
 
 
 emitFuncDecl : GoFuncDecl -> String
+
 emitFuncDecl fd =
     let
         params =
@@ -70,11 +74,13 @@ emitFuncDecl fd =
 
 
 emitParam : GoParam -> String
+
 emitParam p =
     p.name ++ " " ++ p.type_
 
 
 emitStmt : GoStmt -> String
+
 emitStmt stmt =
     case stmt of
         
@@ -113,6 +119,7 @@ emitStmt stmt =
 
 
 emitExpr : GoExpr -> String
+
 emitExpr expr =
     case expr of
         
@@ -180,5 +187,6 @@ emitExpr expr =
 
 
 goQuote : String -> String
+
 goQuote s =
     "\"" ++ s ++ "\""

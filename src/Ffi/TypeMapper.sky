@@ -6,6 +6,7 @@ import Sky.Core.List as List
 import Sky.Core.Char as Char
 
 mapGoTypeToSky : String -> String
+
 mapGoTypeToSky goType =
     if goType == "string" then
         "String"
@@ -79,6 +80,7 @@ mapGoTypeToSky goType =
 
 
 isGoPrimitive : String -> Bool
+
 isGoPrimitive t =
     t == "string" ||
     t == "int" ||
@@ -95,6 +97,7 @@ isGoPrimitive t =
 
 
 goTypeToAssertion : String -> String
+
 goTypeToAssertion goType =
     if goType == "string" then
         "sky_asString"
@@ -150,6 +153,7 @@ goTypeToAssertion goType =
 
 
 goTypeToCast : String -> String -> String
+
 goTypeToCast goType argName =
     let
         assertion =
@@ -164,6 +168,7 @@ goTypeToCast goType argName =
 
 
 shortTypeName : String -> String
+
 shortTypeName goType =
     if String.startsWith  "*"  goType then
         "*" ++ shortTypeName  (String.slice  1  (String.length  goType)  goType)
@@ -193,6 +198,7 @@ shortTypeName goType =
 
 
 findLastDot : String -> Int -> Int
+
 findLastDot s idx =
     if idx < 0 then
         0
@@ -203,6 +209,7 @@ findLastDot s idx =
 
 
 lowerCamelCase : String -> String
+
 lowerCamelCase s =
     if String.isEmpty  s then
         ""

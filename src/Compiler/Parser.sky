@@ -11,6 +11,7 @@ import Compiler.ParserExpr as ParserExpr
 import Compiler.ParserPattern as ParserPattern
 
 dispatchDeclaration : String -> String -> ParserState -> Result String ( Declaration , ParserState )
+
 dispatchDeclaration first second state =
     if first == "foreign" && second == "import" then
         parseForeignImport  state
@@ -28,6 +29,7 @@ dispatchDeclaration first second state =
 
 
 parseVariantFields : ParserState -> ( List TypeExpr , ParserState )
+
 parseVariantFields state =
     if matchKind  TkUpperIdentifier  state ||
     matchKind  TkIdentifier  state ||
@@ -51,6 +53,7 @@ parseVariantFields state =
 
 
 parseTypeArgs : ParserState -> ( List TypeExpr , ParserState )
+
 parseTypeArgs state =
     if matchKind  TkUpperIdentifier  state ||
     matchKind  TkIdentifier  state ||
@@ -75,6 +78,7 @@ parseTypeArgs state =
 
 
 parse : (List Token) -> Result String Module
+
 parse tokens =
     let
         state =
@@ -90,6 +94,7 @@ parse tokens =
 
 
 parseModule : ParserState -> Result String ( Module , ParserState )
+
 parseModule state =
     case consumeLex  TkKeyword  "module"  state of
         
@@ -128,6 +133,7 @@ parseModule state =
 
 
 parseModuleName : ParserState -> Result String ( List String , ParserState )
+
 parseModuleName state =
     case consume  TkUpperIdentifier  state of
         
@@ -139,6 +145,7 @@ parseModuleName state =
 
 
 parseModuleNameParts : (List String) -> ParserState -> Result String ( List String , ParserState )
+
 parseModuleNameParts parts state =
     if matchKind  TkDot  state then
         let
@@ -157,6 +164,7 @@ parseModuleNameParts parts state =
 
 
 parseOptionalExposing : ParserState -> ( ExposingClause , ParserState )
+
 parseOptionalExposing state =
     if matchKindLex  TkKeyword  "exposing"  state then
         let
@@ -175,6 +183,7 @@ parseOptionalExposing state =
 
 
 parseExposingClause : ParserState -> Result String ( ExposingClause , ParserState )
+
 parseExposingClause state =
     case consume  TkLParen  state of
         
@@ -211,6 +220,7 @@ parseExposingClause state =
 
 
 parseExposedItems : (List String) -> ParserState -> ( List String , ParserState )
+
 parseExposedItems items state =
     if matchKind  TkRParen  state then
         ( items , state )
@@ -234,6 +244,7 @@ parseExposedItems items state =
 
 
 parseImports : ParserState -> ( List ImportDecl , ParserState )
+
 parseImports state =
     if matchKindLex  TkKeyword  "import"  state then
         case parseImport  state of
@@ -252,6 +263,7 @@ parseImports state =
 
 
 parseImport : ParserState -> Result String ( ImportDecl , ParserState )
+
 parseImport state =
     case consumeLex  TkKeyword  "import"  state of
         
@@ -295,6 +307,7 @@ parseImport state =
 
 
 getLexemeAt1 : ParserState -> String
+
 getLexemeAt1 state =
     let
         t =
@@ -304,11 +317,13 @@ getLexemeAt1 state =
 
 
 parseDeclaration : ParserState -> Result String ( Declaration , ParserState )
+
 parseDeclaration state =
     dispatchDeclaration  (peekLexeme  state)  (getLexemeAt1  state)  state
 
 
 parseDeclarations : ParserState -> ( List Declaration , ParserState )
+
 parseDeclarations state =
     if matchKind  TkEOF  state then
         ( [] , state )
@@ -317,6 +332,7 @@ parseDeclarations state =
 
 
 parseDeclsHelper : (Result String ( Declaration , ParserState )) -> ParserState -> ( List Declaration , ParserState )
+
 parseDeclsHelper result origState =
     case result of
         
@@ -328,16 +344,19 @@ parseDeclsHelper result origState =
 
 
 addDeclAndContinue : Declaration -> ParserState -> ( List Declaration , ParserState )
+
 addDeclAndContinue decl s1 =
     prependToResult  decl  (parseDeclarations  s1)
 
 
 prependToResult : Declaration -> ( List Declaration , ParserState ) -> ( List Declaration , ParserState )
+
 prependToResult decl result =
     ( decl :: fst  result , snd  result )
 
 
 parseForeignImport : ParserState -> Result String ( Declaration , ParserState )
+
 parseForeignImport state =
     let
         ( _ , s1 ) =
@@ -382,6 +401,7 @@ parseForeignImport state =
 
 
 parseTypeAlias : ParserState -> Result String ( Declaration , ParserState )
+
 parseTypeAlias state =
     let
         ( _ , s1 ) =
@@ -420,6 +440,7 @@ parseTypeAlias state =
 
 
 parseTypeDecl : ParserState -> Result String ( Declaration , ParserState )
+
 parseTypeDecl state =
     let
         ( _ , s1 ) =
@@ -453,6 +474,7 @@ parseTypeDecl state =
 
 
 parseTypeParams : ParserState -> ( List String , ParserState )
+
 parseTypeParams state =
     if matchKind  TkIdentifier  state then
         let
@@ -467,6 +489,7 @@ parseTypeParams state =
 
 
 parseTypeVariants : ParserState -> ( List TypeVariant , ParserState )
+
 parseTypeVariants state =
     case consume  TkUpperIdentifier  state of
         
@@ -478,11 +501,13 @@ parseTypeVariants state =
 
 
 buildVariant : Token -> ParserState -> ( List TypeVariant , ParserState )
+
 buildVariant name s1 =
     finishVariant  name.lexeme  (parseVariantFields  s1)
 
 
 finishVariant : String -> ( List TypeExpr , ParserState ) -> ( List TypeVariant , ParserState )
+
 finishVariant variantName fieldResult =
     if matchKind  TkPipe  (snd  fieldResult) then
         prependVariant
@@ -502,11 +527,13 @@ finishVariant variantName fieldResult =
 
 
 prependVariant : TypeVariant -> ( List TypeVariant , ParserState ) -> ( List TypeVariant , ParserState )
+
 prependVariant v rest =
     ( v :: fst  rest , snd  rest )
 
 
 parseTypeExpr : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseTypeExpr state =
     case parseTypeApp  state of
         
@@ -531,6 +558,7 @@ parseTypeExpr state =
 
 
 parseTypeApp : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseTypeApp state =
     case parseTypePrimary  state of
         
@@ -542,11 +570,13 @@ parseTypeApp state =
 
 
 applyTypeArgs : TypeExpr -> ParserState -> Result String ( TypeExpr , ParserState )
+
 applyTypeArgs target s1 =
     resolveTypeApp  target  (parseTypeArgs  s1)
 
 
 resolveTypeApp : TypeExpr -> ( List TypeExpr , ParserState ) -> Result String ( TypeExpr , ParserState )
+
 resolveTypeApp target argsResult =
     if List.isEmpty  (fst  argsResult) then
         Ok  ( target , snd  argsResult )
@@ -561,6 +591,7 @@ resolveTypeApp target argsResult =
 
 
 parseTypePrimary : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseTypePrimary state =
     if matchKind  TkUpperIdentifier  state then
         let
@@ -611,6 +642,7 @@ parseTypePrimary state =
 
 
 parseTupleTypeRest : (List TypeExpr) -> ParserState -> Result String ( TypeExpr , ParserState )
+
 parseTupleTypeRest items state =
     if matchKind  TkComma  state then
         let
@@ -635,6 +667,7 @@ parseTupleTypeRest items state =
 
 
 parseRecordType : ParserState -> Result String ( TypeExpr , ParserState )
+
 parseRecordType state =
     let
         ( _ , s1 ) =
@@ -652,6 +685,7 @@ parseRecordType state =
 
 
 parseRecordTypeFields : (List NamedType) -> ParserState -> ( List NamedType , ParserState )
+
 parseRecordTypeFields fields state =
     if matchKind  TkRBrace  state then
         ( fields , state )
@@ -692,6 +726,7 @@ parseRecordTypeFields fields state =
 
 
 parseTypeAnnot : ParserState -> Result String ( Declaration , ParserState )
+
 parseTypeAnnot state =
     let
         ( name , s1 ) =
@@ -713,6 +748,7 @@ parseTypeAnnot state =
 
 
 parseFunDecl : ParserState -> Result String ( Declaration , ParserState )
+
 parseFunDecl state =
     let
         ( name , s1 ) =
@@ -737,6 +773,7 @@ parseFunDecl state =
 
 
 parseFunParams : ParserState -> ( List Pattern , ParserState )
+
 parseFunParams state =
     if matchKind  TkEquals  state then
         ( [] , state )

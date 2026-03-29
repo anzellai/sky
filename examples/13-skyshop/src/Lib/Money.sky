@@ -6,36 +6,44 @@ import Sky.Core.Maybe as Maybe
 import Lib.Db as Db
 
 currencySymbol currency =
-    case currency of  ""  GBP
-
+    case currency of
+        "GBP" ->
+            "£"
+        
+        "HKD" ->
+            "HK$"
+        
+        "USD" ->
+            "$"
+        
+        _ ->
+            currency ++ " "
 
 formatAmount amountInPence =
     let
         pounds =
             amountInPence // 100
         pence =
-            modBy  100  amountInPence
+            modBy 100 amountInPence
         penceStr =
             if pence < 10 then
-                "0" ++ String.fromInt  pence
+                "0" ++ String.fromInt pence
             else
-                String.fromInt  pence
+                String.fromInt pence
     in
-        String.fromInt  pounds ++ "." ++ penceStr
-
+        String.fromInt pounds ++ "." ++ penceStr
 
 formatPrice amount currency =
-    currencySymbol  currency ++ formatAmount  amount
-
+    currencySymbol currency ++ formatAmount amount
 
 formatPriceFromRow row =
     let
         amount =
-            Db.getInt  "price_amount"  row
+            Db.getInt "price_amount" row
         discount =
-            Db.getInt  "price_discount"  row
+            Db.getInt "price_discount" row
         currency =
-            Db.getField  "price_currency"  row
+            Db.getField "price_currency" row
         effectivePrice =
             if discount > 0 then
                 amount - discount
@@ -43,18 +51,13 @@ formatPriceFromRow row =
                 amount
     in
         if discount > 0 then
-            { original =
-                currencySymbol  currency ++ formatAmount  amount
+            { original = currencySymbol currency ++ formatAmount amount
             , discounted =
-                currencySymbol  currency ++ formatAmount  effectivePrice
-            , hasDiscount =
-                True
+                currencySymbol currency ++ formatAmount effectivePrice
+            , hasDiscount = True
             }
         else
-            { original =
-                currencySymbol  currency ++ formatAmount  amount
-            , discounted =
-                ""
-            , hasDiscount =
-                False
+            { original = currencySymbol currency ++ formatAmount amount
+            , discounted = ""
+            , hasDiscount = False
             }

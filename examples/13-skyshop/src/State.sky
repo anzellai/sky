@@ -2,11 +2,11 @@ module State exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
+import Sky.Core.Dict as Dict
+
 -- ══════════════════════════════════════════════════════
 -- PAGES
 -- ══════════════════════════════════════════════════════
-import Sky.Core.Dict as Dict
-
 type Page
     = HomePage
     | ProductsPage
@@ -22,13 +22,12 @@ type Page
     | AdminOrdersPage
     | AdminOrderPage String
     | PrivacyPolicyPage
--- ══════════════════════════════════════════════════════
--- MESSAGES
--- ══════════════════════════════════════════════════════
     | TermsPage
     | NotFoundPage
 
-
+-- ══════════════════════════════════════════════════════
+-- MESSAGES
+-- ══════════════════════════════════════════════════════
 type Msg
     = Navigate Page
     | SetLang String
@@ -60,15 +59,14 @@ type Msg
     | DeleteImage String
     | SetAdminOrderFilter String
     | UpdateOrderState String String
--- ══════════════════════════════════════════════════════
--- MODEL
--- ══════════════════════════════════════════════════════
     | DismissNotification
     | FirebaseAuth String
     | Tick
     | NoOp
 
-
+-- ══════════════════════════════════════════════════════
+-- MODEL
+-- ══════════════════════════════════════════════════════
 type alias Model =
     { page : Page
     , lang : String
@@ -99,9 +97,6 @@ type alias Model =
     , editPublished : Bool
     , editImageData : String
     , adminOrders : List (Dict String String)
--- ══════════════════════════════════════════════════════
--- INITIAL MODEL
--- ══════════════════════════════════════════════════════
     , adminOrderFilter : String
     , quantity : Int
     , notification : String
@@ -109,83 +104,50 @@ type alias Model =
     , signOutPending : Bool
     }
 
-
+-- ══════════════════════════════════════════════════════
+-- INITIAL MODEL
+-- ══════════════════════════════════════════════════════
 emptyModel : Model
 emptyModel =
-    { page =
-        HomePage
-    , lang =
-        "en"
-    , user =
-        Nothing
-    , authError =
-        ""
-    , products =
-        []
-    , product =
-        Nothing
-    , productImages =
-        []
-    , search =
-        ""
-    , categoryFilter =
-        "all"
-    , sortBy =
-        "newest"
-    , sortDir =
-        "desc"
-    , cart =
-        Nothing
-    , cartItems =
-        []
-    , cartRemarks =
-        ""
-    , checkoutUrl =
-        ""
-    , orders =
-        []
-    , order =
-        Nothing
-    , orderItems =
-        []
-    , editProductId =
-        ""
-    , editTitle =
-        ""
-    , editSummary =
-        ""
-    , editCategory =
-        "Miscellaneous"
-    , editPrice =
-        0
-    , editDiscount =
-        0
-    , editCurrency =
-        "GBP"
-    , editStock =
-        -1
-    , editPublished =
-        False
-    , editImageData =
-        ""
-    , adminOrders =
-        []
-    , adminOrderFilter =
-        "all"
-    , quantity =
+    { page = HomePage
+    , lang = "en"
+    , user = Nothing
+    , authError = ""
+    , products = []
+    , product = Nothing
+    , productImages = []
+    , search = ""
+    , categoryFilter = "all"
+    , sortBy = "newest"
+    , sortDir = "desc"
+    , cart = Nothing
+    , cartItems = []
+    , cartRemarks = ""
+    , checkoutUrl = ""
+    , orders = []
+    , order = Nothing
+    , orderItems = []
+    , editProductId = ""
+    , editTitle = ""
+    , editSummary = ""
+    , editCategory = "Miscellaneous"
+    , editPrice = 0
+    , editDiscount = 0
+    , editCurrency = "GBP"
+    , editStock = -1
+    , editPublished = False
+    , editImageData = ""
+    , adminOrders = []
+    , adminOrderFilter = "all"
+    , quantity = 1
+    , notification = ""
+    , notificationType = ""
+    , signOutPending = False
+    }
+
 -- ══════════════════════════════════════════════════════
 -- CONSTANTS
 -- ══════════════════════════════════════════════════════
-        1
-    , notification =
-        ""
-    , notificationType =
-        ""
-    , signOutPending =
-        False
-    }
-
-
 allCategories =
     [ "Accessories"
     , "Bags"
@@ -197,7 +159,6 @@ allCategories =
     , "Wallet And Small Items"
     ]
 
-
 allCartStates =
     [ "ongoing"
     , "pending"
@@ -207,7 +168,6 @@ allCartStates =
     , "cancelled"
     , "refunded"
     ]
-
 
 allCurrencies =
     [ "GBP" , "HKD" , "USD" ]

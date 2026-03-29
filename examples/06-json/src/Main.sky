@@ -7,264 +7,248 @@ import Sky.Core.List as List
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Result as Result
 import Sky.Core.String as String
+import Std.Log exposing (println)
+
 -- ============================================================
 -- Encoding Examples (same API as Elm's Json.Encode)
 -- ============================================================
 -- 1. Simple flat object
-import Std.Log exposing (println)
-
 encodeSimple =
     let
         val =
             Encode.object
-             [ ( "name" , Encode.string  "Alice" )
-            , ( "age" , Encode.int  30 )
-            , ( "active" , Encode.bool  True )
-            ]
--- 2. Complex nested object with lists
+                [ ( "name" , Encode.string "Alice" )
+                , ( "age" , Encode.int 30 )
+                , ( "active" , Encode.bool True )
+                ]
     in
-        Encode.encode  2  val
+        Encode.encode 2 val
 
-
+-- 2. Complex nested object with lists
 encodeComplex =
     let
         val =
             Encode.object
-             [ ( "user"
-            , Encode.object
-               [ ( "name" , Encode.string  "Bob" )
-              , ( "email" , Encode.string  "bob@example.com" )
-              , ( "age" , Encode.int  25 )
-              ]
-            )
-            , ( "tags" , Encode.list  Encode.string  [ "admin" , "premium" ] )
+                [ ( "user"
+                , Encode.object
+                    [ ( "name" , Encode.string "Bob" )
+                    , ( "email" , Encode.string "bob@example.com" )
+                    , ( "age" , Encode.int 25 )
+                    ]
+                )
+                , ( "tags" , Encode.list Encode.string [ "admin" , "premium" ] )
+                , ( "scores" , Encode.list Encode.int [ 95 , 87 , 92 ] )
+                ]
+    in
+        Encode.encode 2 val
+
 -- ============================================================
 -- Decoding Examples (same API as Elm's Json.Decode)
 -- ============================================================
 -- 3. Simple field decoding with map2
-            , ( "scores" , Encode.list  Encode.int  [ 95 , 87 , 92 ] )
-            ]
-    in
-        Encode.encode  2  val
-
-
 simpleDecoder =
--- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
-    Decode.map2  (\n a -> n ++ ", age " ++ String.fromInt  a)
-     (Decode.field  "name"  Decode.string)
-     (Decode.field  "age"  Decode.int)
-
+    Decode.map2 (\n a -> n ++ ", age " ++ String.fromInt a)
+        (Decode.field "name" Decode.string)
+        (Decode.field "age" Decode.int)
 
 decodeSimpleExample =
-    Result.withDefault  "decode error"
-     (Decode.decodeString  simpleDecoder  "{\"name\":\"Charlie\",\"age\":28}")
+    Result.withDefault "decode error"
+        (Decode.decodeString simpleDecoder "{\"name\":\"Charlie\",\"age\":28}")
 
-
+-- 4. Pipeline Decoding (same API as Elm's Json.Decode.Pipeline!)
 userDecoder =
     Decode.succeed
-     (
-    \name email age verified ->
-        { name = name , email = email , age = age , verified = verified }
-    )
-        |> Pipeline.required  "name"  Decode.string
-        |> Pipeline.required  "email"  Decode.string
--- 5. Pipeline with optional fields
-        |> Pipeline.required  "age"  Decode.int
-        |> Pipeline.required  "verified"  Decode.bool
-
+        (
+        \name email age verified ->
+            { name = name , email = email , age = age , verified = verified }
+        )
+        |> Pipeline.required "name" Decode.string
+        |> Pipeline.required "email" Decode.string
+        |> Pipeline.required "age" Decode.int
+        |> Pipeline.required "verified" Decode.bool
 
 pipelineExample =
     let
         result =
-            Decode.decodeString  userDecoder
-             "{\"name\":\"Diana\",\"email\":\"diana@example.com\",\"age\":32,\"verified\":true}"
+            Decode.decodeString userDecoder
+                "{\"name\":\"Diana\",\"email\":\"diana@example.com\",\"age\":32,\"verified\":true}"
     in
-        Result.withDefault  "pipeline error"
-         (Result.map  (\u -> u.name ++ " (" ++ u.email ++ ")")  result)
+        Result.withDefault "pipeline error"
+            (Result.map (\u -> u.name ++ " (" ++ u.email ++ ")") result)
 
-
+-- 5. Pipeline with optional fields
 profileDecoder =
     Decode.succeed
-     (
-    \username bio followers ->
-        { username = username , bio = bio , followers = followers }
-    )
-        |> Pipeline.required  "username"  Decode.string
-        |> Pipeline.optional  "bio"  Decode.string  "No bio provided"
-        |> Pipeline.optional  "followers"  Decode.int  0
-
+        (
+        \username bio followers ->
+            { username = username , bio = bio , followers = followers }
+        )
+        |> Pipeline.required "username" Decode.string
+        |> Pipeline.optional "bio" Decode.string "No bio provided"
+        |> Pipeline.optional "followers" Decode.int 0
 
 optionalExample =
--- 6. Nested field access
     let
         result =
-            Decode.decodeString  profileDecoder
-             "{\"username\":\"skydev\",\"followers\":42}"
+            Decode.decodeString profileDecoder
+                "{\"username\":\"skydev\",\"followers\":42}"
     in
-        Result.withDefault  "profile error"
-         (
-        Result.map
-         (
-        \p ->
--- 7. Decoding a list of objects
-            "@" ++
-            p.username ++
-            ", bio: " ++ p.bio ++ ", followers: " ++ String.fromInt  p.followers
-        )
-         result
-        )
+        Result.withDefault "profile error"
+            (
+            Result.map
+                (
+                \p ->
+                    "@" ++
+                    p.username ++
+                    ", bio: " ++
+                    p.bio ++ ", followers: " ++ String.fromInt p.followers
+                )
+                result
+            )
 
-
+-- 6. Nested field access
 nestedDecoder =
-    Decode.map2  (\n c -> n ++ " from " ++ c)
-     (Decode.at  [ "user" , "profile" , "name" ]  Decode.string)
-     (Decode.at  [ "user" , "profile" , "city" ]  Decode.string)
-
+    Decode.map2 (\n c -> n ++ " from " ++ c)
+        (Decode.at [ "user" , "profile" , "name" ] Decode.string)
+        (Decode.at [ "user" , "profile" , "city" ] Decode.string)
 
 nestedExample =
-    Result.withDefault  "nested error"
-     (
-    Decode.decodeString  nestedDecoder
-     "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}"
-    )
--- 8. Roundtrip: Encode -> JSON String -> Decode
+    Result.withDefault "nested error"
+        (
+        Decode.decodeString nestedDecoder
+            "{\"user\":{\"profile\":{\"name\":\"Eve\",\"city\":\"London\"}}}"
+        )
 
-
+-- 7. Decoding a list of objects
 todoDecoder =
-    Decode.succeed
-     (\id title done -> { id = id , title = title , done = done })
-        |> Pipeline.required  "id"  Decode.int
-        |> Pipeline.required  "title"  Decode.string
-        |> Pipeline.required  "done"  Decode.bool
-
+    Decode.succeed (\id title done -> { id = id , title = title , done = done })
+        |> Pipeline.required "id" Decode.int
+        |> Pipeline.required "title" Decode.string
+        |> Pipeline.required "done" Decode.bool
 
 todoListDecoder =
-    Decode.list  todoDecoder
-
+    Decode.list todoDecoder
 
 listExample =
     let
         result =
-            Decode.decodeString  todoListDecoder
-             "[{\"id\":1,\"title\":\"Buy milk\",\"done\":false},{\"id\":2,\"title\":\"Write Sky\",\"done\":true}]"
+            Decode.decodeString todoListDecoder
+                "[{\"id\":1,\"title\":\"Buy milk\",\"done\":false},{\"id\":2,\"title\":\"Write Sky\",\"done\":true}]"
     in
-        Result.withDefault  "list error"
-         (
-        Result.map
-         (\todos -> String.join  ", "  (List.map  (\t -> t.title)  todos))
-         result
-        )
+        Result.withDefault "list error"
+            (
+            Result.map
+                (\todos -> String.join ", " (List.map (\t -> t.title) todos))
+                result
+            )
 
-
+-- 8. Roundtrip: Encode -> JSON String -> Decode
 roundtrip =
--- 9. oneOf - handling multiple possible formats
     let
         original =
             Encode.object
-             [ ( "items"
-            , Encode.list
-               (\n -> Encode.object  [ ( "name" , Encode.string  n ) ])
-               [ "Alice" , "Bob" , "Charlie" ]
-            )
-            , ( "count" , Encode.int  3 )
-            ]
+                [ ( "items"
+                , Encode.list
+                    (\n -> Encode.object [ ( "name" , Encode.string n ) ])
+                    [ "Alice" , "Bob" , "Charlie" ]
+                )
+                , ( "count" , Encode.int 3 )
+                ]
         jsonStr =
-            Encode.encode  0  original
+            Encode.encode 0 original
         decoder =
--- ============================================================
--- Main
--- ============================================================
             Decode.map2
-             (
-            \c ns ->
-                "Count: " ++
-                String.fromInt  c ++ ", Names: " ++ String.join  ", "  ns
-            )
-             (Decode.field  "count"  Decode.int)
-             (
-            Decode.field  "items"
-             (Decode.list  (Decode.field  "name"  Decode.string))
-            )
+                (
+                \c ns ->
+                    "Count: " ++
+                    String.fromInt c ++ ", Names: " ++ String.join ", " ns
+                )
+                (Decode.field "count" Decode.int)
+                (
+                Decode.field "items"
+                    (Decode.list (Decode.field "name" Decode.string))
+                )
         result =
-            Decode.decodeString  decoder  jsonStr
+            Decode.decodeString decoder jsonStr
     in
-        Result.withDefault  "roundtrip error"  result
+        Result.withDefault "roundtrip error" result
 
-
+-- 9. oneOf - handling multiple possible formats
 flexibleDecoder =
-    Decode.field  "value"
-     (Decode.oneOf  [ Decode.map  String.fromInt  Decode.int , Decode.string ])
-
+    Decode.field "value"
+        (Decode.oneOf [ Decode.map String.fromInt Decode.int , Decode.string ])
 
 flexibleExample =
     let
         r1 =
-            Result.withDefault  "?"
-             (Decode.decodeString  flexibleDecoder  "{\"value\":42}")
+            Result.withDefault "?"
+                (Decode.decodeString flexibleDecoder "{\"value\":42}")
         r2 =
-            Result.withDefault  "?"
-             (Decode.decodeString  flexibleDecoder  "{\"value\":\"hello\"}")
+            Result.withDefault "?"
+                (Decode.decodeString flexibleDecoder "{\"value\":\"hello\"}")
     in
         r1 ++ " and " ++ r2
 
-
+-- ============================================================
+-- Main
+-- ============================================================
 main =
     let
         _ =
-            println  "=== Sky JSON Examples (Elm-compatible API) ==="
+            println "=== Sky JSON Examples (Elm-compatible API) ==="
         _ =
-            println  ""
+            println ""
         _ =
-            println  "1. Simple encoding:"
+            println "1. Simple encoding:"
         _ =
-            println  encodeSimple
+            println encodeSimple
         _ =
-            println  ""
+            println ""
         _ =
-            println  "2. Complex encoding:"
+            println "2. Complex encoding:"
         _ =
-            println  encodeComplex
+            println encodeComplex
         _ =
-            println  ""
+            println ""
         _ =
-            println  "3. Simple decoding (map2):"
+            println "3. Simple decoding (map2):"
         _ =
-            println  decodeSimpleExample
+            println decodeSimpleExample
         _ =
-            println  ""
+            println ""
         _ =
-            println  "4. Pipeline decoding:"
+            println "4. Pipeline decoding:"
         _ =
-            println  pipelineExample
+            println pipelineExample
         _ =
-            println  ""
+            println ""
         _ =
-            println  "5. Optional fields:"
+            println "5. Optional fields:"
         _ =
-            println  optionalExample
+            println optionalExample
         _ =
-            println  ""
+            println ""
         _ =
-            println  "6. Nested at:"
+            println "6. Nested at:"
         _ =
-            println  nestedExample
+            println nestedExample
         _ =
-            println  ""
+            println ""
         _ =
-            println  "7. List of objects:"
+            println "7. List of objects:"
         _ =
-            println  listExample
+            println listExample
         _ =
-            println  ""
+            println ""
         _ =
-            println  "8. Roundtrip:"
+            println "8. Roundtrip:"
         _ =
-            println  roundtrip
+            println roundtrip
         _ =
-            println  ""
+            println ""
         _ =
-            println  "9. oneOf (flexible):"
+            println "9. oneOf (flexible):"
         _ =
-            println  flexibleExample
+            println flexibleExample
     in
-        println  "Done!"
+        println "Done!"

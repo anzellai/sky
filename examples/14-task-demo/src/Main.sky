@@ -4,33 +4,35 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Log exposing (println)
 
+
 main =
     let
         pipeline =
-            Task.succeed  "Sky"
+            Task.succeed "Sky"
                 |> Task.andThen
-                    (\name -> Task.succeed  ("Hello, " ++ name ++ "!"))
+                    (\name ->
+                        Task.succeed ("Hello, " ++ name ++ "!")
+                    )
                 |> Task.andThen
-                    (
-                   \greeting ->
-                       Task.succeed
-                        (greeting ++ " Task is the effect boundary.")
-                   )
+                    (\greeting ->
+                        Task.succeed (greeting ++ " Task is the effect boundary.")
+                    )
+
         result =
-            Task.perform  pipeline
+            Task.perform pipeline
+
         _ =
-            println  result
+            println result
+
         failResult =
             Task.run
-             (
-            Task.fail  "intentional"
-                |> Task.andThen  (\_ -> Task.succeed  "unreachable")
-            )
+                (Task.fail "intentional"
+                    |> Task.andThen (\_ -> Task.succeed "unreachable")
+                )
     in
         case failResult of
-            
             Ok _ ->
-                println  "ERROR: should have failed"
-            
+                println "ERROR: should have failed"
+
             Err e ->
-                println  ("Error caught: " ++ e)
+                println ("Error caught: " ++ e)
