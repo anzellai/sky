@@ -2088,6 +2088,7 @@ generateHelperDecls =
     , GoDeclRaw "func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"
     , GoDeclRaw
           "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; fn := v.(func(any) any); return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w).(func(any) any)(r) } }"
+    , GoDeclRaw "func sky_callZeroOrNil(f any) any { if fn, ok := f.(func() any); ok { return fn() }; if fn, ok := f.(func(any) any); ok { return fn(nil) }; return f }"
     , GoDeclRaw "func sky_asUint(v any) uint { return uint(sky_asInt(v)) }"
     , GoDeclRaw "func sky_asUint8(v any) uint8 { return uint8(sky_asInt(v)) }"
     , GoDeclRaw

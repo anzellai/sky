@@ -1931,9 +1931,13 @@ buildFfiVarDecl : String -> String -> (List Ast.Pattern) -> Ast.Expression -> Ma
 buildFfiVarDecl prefix name params body =
     let
         wrapperName = extractWrapperNameFromBody body
+        literalVal = extractLiteralFromBody body
+        goName = prefix ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
         declStr = buildFfiDeclString prefix name params body wrapperName
     in
-        if String.isEmpty wrapperName then
+        if not (String.isEmpty literalVal) then
+            Just (GoDeclRaw ("func " ++ goName ++ "() any { return " ++ literalVal ++ " }"))
+        else if String.isEmpty wrapperName then
             Nothing
         else
             Just (GoDeclRaw declStr)
@@ -1946,9 +1950,8 @@ buildFfiDeclString prefix name params body wrapperName =
         skyArgCount = List.length params
         wrapperArgCount = countWrapperArgs body
     in
-    in
         if skyArgCount == 0 then
-            "func " ++ goName ++ "() any { return " ++ wrapperName ++ "(nil) }"
+            "func " ++ goName ++ "() any { return sky_callZeroOrNil(" ++ wrapperName ++ ") }"
         else if wrapperArgCount == 0 then
             makeFfiFunc goName wrapperName skyArgCount skyArgCount
         else
@@ -2008,6 +2011,29 @@ extractWrapperNameFromBody expr =
         Ast.ParenExpr inner _ ->
             extractWrapperNameFromBody inner
         
+        _ ->
+            ""
+
+
+extractLiteralFromBody : Ast.Expression -> String
+extractLiteralFromBody expr =
+    case expr of
+
+        Ast.StringLitExpr s _ ->
+            "\"" ++ s ++ "\""
+
+        Ast.IntLitExpr _ raw _ ->
+            raw
+
+        Ast.FloatLitExpr _ raw _ ->
+            raw
+
+        Ast.BoolLitExpr b _ ->
+            if b then
+                "true"
+            else
+                "false"
+
         _ ->
             ""
 
