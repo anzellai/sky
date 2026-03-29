@@ -5110,7 +5110,7 @@ func Formatter_Format_FormatDeclarations(decls any) any {
 }
 
 func Formatter_Format_FormatDeclPairs(docs any, decls any) any {
-	return func() any { return func() any { __subject := docs; if len(sky_asList(__subject)) == 0 { return text("") };  if len(sky_asList(__subject)) == 1 { d := sky_asList(__subject)[0]; _ = d; return d };  if len(sky_asList(__subject)) > 0 { d1 := sky_asList(__subject)[0]; _ = d1; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { isAnnotFunPair := Formatter_Format_IsDeclAnnotFunPair(decls); _ = isAnnotFunPair; sep := func() any { if sky_asBool(isAnnotFunPair) { return concat([]any{hardline, hardline}) }; return concat([]any{hardline, hardline, hardline}) }(); _ = sep; return concat([]any{d1, sep, Formatter_Format_FormatDeclPairs(rest, sky_call(sky_listDrop(1), decls))}) }() };  return nil }() }()
+	return func() any { return func() any { __subject := docs; if len(sky_asList(__subject)) == 0 { return text("") };  if len(sky_asList(__subject)) == 1 { d := sky_asList(__subject)[0]; _ = d; return d };  if len(sky_asList(__subject)) > 0 { d1 := sky_asList(__subject)[0]; _ = d1; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { isAnnotFunPair := Formatter_Format_IsDeclAnnotFunPair(decls); _ = isAnnotFunPair; sep := func() any { if sky_asBool(isAnnotFunPair) { return hardline }; return concat([]any{hardline, hardline, hardline}) }(); _ = sep; return concat([]any{d1, sep, Formatter_Format_FormatDeclPairs(rest, sky_call(sky_listDrop(1), decls))}) }() };  return nil }() }()
 }
 
 func Formatter_Format_IsDeclAnnotFunPair(decls any) any {
@@ -5276,11 +5276,11 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
@@ -5462,6 +5462,24 @@ var StdlibTypeMap = Lsp_Server_StdlibTypeMap
 var LookupInTypedDecls = Lsp_Server_LookupInTypedDecls
 
 var InferFromAst = Lsp_Server_InferFromAst
+
+var InferLocalBinding = Lsp_Server_InferLocalBinding
+
+var FindAssignmentLine = Lsp_Server_FindAssignmentLine
+
+var FindAssignmentLineLoop = Lsp_Server_FindAssignmentLineLoop
+
+var ExtractRhsExpr = Lsp_Server_ExtractRhsExpr
+
+var InferRhsType = Lsp_Server_InferRhsType
+
+var InferQualifiedCallType = Lsp_Server_InferQualifiedCallType
+
+var ExtractReturnType = Lsp_Server_ExtractReturnType
+
+var ExtractReturnTypeFromAnnot = Lsp_Server_ExtractReturnTypeFromAnnot
+
+var FindCharInString = Lsp_Server_FindCharInString
 
 var GetLineAt = Lsp_Server_GetLineAt
 
@@ -5816,7 +5834,7 @@ func Lsp_Server_GetHoverForPosition(state any, uri any, line any, character any)
 }
 
 func Lsp_Server_LookupTypeInfo(state any, uri any, word any, source any) any {
-	return func() any { isQualified := sky_call(sky_stringContains("."), word); _ = isQualified; qualParts := sky_call(sky_stringSplit("."), word); _ = qualParts; modAlias := func() any { return func() any { __subject := qualParts; if len(sky_asList(__subject)) > 0 { m := sky_asList(__subject)[0]; _ = m; return m };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = modAlias; funcName := func() any { return func() any { __subject := sky_listReverse(qualParts); if len(sky_asList(__subject)) > 0 { f := sky_asList(__subject)[0]; _ = f; return f };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = funcName; fromDep := func() any { if sky_asBool(isQualified) { return func() any { return func() any { __subject := Lsp_Server_LookupDepExport(state, modAlias, funcName); if sky_asSkyMaybe(__subject).SkyName == "Just" { exp := sky_asSkyMaybe(__subject).JustValue; _ = exp; return sky_concat(word, sky_concat(" : ", sky_asMap(exp)["signature"])) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return "" }(); _ = fromDep; fromStdlibMap := func() any { if sky_asBool(sky_stringIsEmpty(fromDep)) { return Lsp_Server_LookupStdlibType(word) }; return fromDep }(); _ = fromStdlibMap; fromAnnotation := func() any { if sky_asBool(sky_stringIsEmpty(fromStdlibMap)) { return Lsp_Server_FindAnnotationInSource(func() any { if sky_asBool(isQualified) { return funcName }; return word }(), source) }; return fromStdlibMap }(); _ = fromAnnotation; fromTypeCheck := func() any { if sky_asBool(sky_stringIsEmpty(fromAnnotation)) { return func() any { return func() any { __subject := sky_call(sky_dictGet(uri), sky_asMap(state)["typeCache"]); if sky_asSkyMaybe(__subject).SkyName == "Just" { checkResult := sky_asSkyMaybe(__subject).JustValue; _ = checkResult; return Lsp_Server_LookupInTypedDecls(word, sky_asMap(checkResult)["declarations"]) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return fromAnnotation }(); _ = fromTypeCheck; fromAst := func() any { if sky_asBool(sky_stringIsEmpty(fromTypeCheck)) { return func() any { return func() any { __subject := sky_call(sky_dictGet(uri), sky_asMap(state)["astCache"]); if sky_asSkyMaybe(__subject).SkyName == "Just" { mod := sky_asSkyMaybe(__subject).JustValue; _ = mod; return Lsp_Server_InferFromAst(word, sky_asMap(mod)["declarations"]) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return fromTypeCheck }(); _ = fromAst; return fromAst }()
+	return func() any { isQualified := sky_call(sky_stringContains("."), word); _ = isQualified; qualParts := sky_call(sky_stringSplit("."), word); _ = qualParts; modAlias := func() any { return func() any { __subject := qualParts; if len(sky_asList(__subject)) > 0 { m := sky_asList(__subject)[0]; _ = m; return m };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = modAlias; funcName := func() any { return func() any { __subject := sky_listReverse(qualParts); if len(sky_asList(__subject)) > 0 { f := sky_asList(__subject)[0]; _ = f; return f };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = funcName; fromDep := func() any { if sky_asBool(isQualified) { return func() any { return func() any { __subject := Lsp_Server_LookupDepExport(state, modAlias, funcName); if sky_asSkyMaybe(__subject).SkyName == "Just" { exp := sky_asSkyMaybe(__subject).JustValue; _ = exp; return sky_concat(word, sky_concat(" : ", sky_asMap(exp)["signature"])) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return "" }(); _ = fromDep; fromStdlibMap := func() any { if sky_asBool(sky_stringIsEmpty(fromDep)) { return Lsp_Server_LookupStdlibType(word) }; return fromDep }(); _ = fromStdlibMap; fromAnnotation := func() any { if sky_asBool(sky_stringIsEmpty(fromStdlibMap)) { return Lsp_Server_FindAnnotationInSource(func() any { if sky_asBool(isQualified) { return funcName }; return word }(), source) }; return fromStdlibMap }(); _ = fromAnnotation; fromTypeCheck := func() any { if sky_asBool(sky_stringIsEmpty(fromAnnotation)) { return func() any { return func() any { __subject := sky_call(sky_dictGet(uri), sky_asMap(state)["typeCache"]); if sky_asSkyMaybe(__subject).SkyName == "Just" { checkResult := sky_asSkyMaybe(__subject).JustValue; _ = checkResult; return Lsp_Server_LookupInTypedDecls(word, sky_asMap(checkResult)["declarations"]) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return fromAnnotation }(); _ = fromTypeCheck; fromAst := func() any { if sky_asBool(sky_stringIsEmpty(fromTypeCheck)) { return func() any { return func() any { __subject := sky_call(sky_dictGet(uri), sky_asMap(state)["astCache"]); if sky_asSkyMaybe(__subject).SkyName == "Just" { mod := sky_asSkyMaybe(__subject).JustValue; _ = mod; return Lsp_Server_InferFromAst(word, sky_asMap(mod)["declarations"]) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }() }; return fromTypeCheck }(); _ = fromAst; fromLocal := func() any { if sky_asBool(sky_stringIsEmpty(fromAst)) { return Lsp_Server_InferLocalBinding(state, uri, word, source, line) }; return fromAst }(); _ = fromLocal; return fromLocal }()
 }
 
 func Lsp_Server_LookupStdlibType(name any) any {
@@ -5833,6 +5851,42 @@ func Lsp_Server_LookupInTypedDecls(name any, decls any) any {
 
 func Lsp_Server_InferFromAst(name any, decls any) any {
 	return func() any { return func() any { __subject := decls; if len(sky_asList(__subject)) == 0 { return "" };  if len(sky_asList(__subject)) > 0 { decl := sky_asList(__subject)[0]; _ = decl; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { return func() any { __subject := decl; if sky_asMap(__subject)["SkyName"] == "FunDecl" { fname := sky_asMap(__subject)["V0"]; _ = fname; params := sky_asMap(__subject)["V1"]; _ = params; return func() any { if sky_asBool(sky_equal(fname, name)) { return func() any { paramCount := sky_listLength(params); _ = paramCount; paramTypes := sky_call(sky_listMap(func(_ any) any { return "a" }), sky_call(sky_listTake(paramCount), []any{1, 2, 3, 4, 5, 6, 7, 8})); _ = paramTypes; vars := []any{"a", "b", "c", "d", "e", "f", "g", "h"}; _ = vars; typedParams := sky_call(sky_listTake(paramCount), vars); _ = typedParams; return func() any { if sky_asBool(sky_equal(paramCount, 0)) { return sky_concat(name, " : a") }; return sky_concat(name, sky_concat(" : ", sky_call(sky_stringJoin(" -> "), sky_call(sky_listAppend(typedParams), []any{"result"})))) }() }() }; return Lsp_Server_InferFromAst(name, rest) }() };  if true { return Lsp_Server_InferFromAst(name, rest) };  return nil }() }() };  return nil }() }()
+}
+
+func Lsp_Server_InferLocalBinding(state any, uri any, word any, source any, line any) any {
+	return func() any { assignmentLine := Lsp_Server_FindAssignmentLine(word, source, line); _ = assignmentLine; rhsExpr := Lsp_Server_ExtractRhsExpr(assignmentLine); _ = rhsExpr; return func() any { if sky_asBool(sky_stringIsEmpty(rhsExpr)) { return "" }; return Lsp_Server_InferRhsType(state, uri, rhsExpr, source) }() }()
+}
+
+func Lsp_Server_FindAssignmentLine(word any, source any, cursorLine any) any {
+	return func() any { lines := sky_call(sky_stringSplit("\n"), source); _ = lines; pattern := sky_concat(word, " ="); _ = pattern; return Lsp_Server_FindAssignmentLineLoop(lines, pattern, 0, cursorLine) }()
+}
+
+func Lsp_Server_FindAssignmentLineLoop(lines any, pattern any, idx any, cursorLine any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return "" };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { if sky_asBool(sky_asBool(sky_asInt(idx) <= sky_asInt(cursorLine)) && sky_asBool(sky_call(sky_stringContains(pattern), sky_stringTrim(line)))) { return func() any { nextLine := func() any { return func() any { __subject := rest; if len(sky_asList(__subject)) > 0 { next := sky_asList(__subject)[0]; _ = next; return sky_stringTrim(next) };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = nextLine; return func() any { if sky_asBool(sky_stringIsEmpty(nextLine)) { return "" }; return nextLine }() }() }; return Lsp_Server_FindAssignmentLineLoop(rest, pattern, sky_asInt(idx) + sky_asInt(1), cursorLine) }() };  return nil }() }()
+}
+
+func Lsp_Server_ExtractRhsExpr(line any) any {
+	return sky_stringTrim(line)
+}
+
+func Lsp_Server_InferRhsType(state any, uri any, expr any, source any) any {
+	return func() any { parts := sky_call(sky_stringSplit(" "), expr); _ = parts; callee := func() any { return func() any { __subject := sky_listHead(parts); if sky_asSkyMaybe(__subject).SkyName == "Just" { c := sky_asSkyMaybe(__subject).JustValue; _ = c; return c };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }(); _ = callee; return func() any { if sky_asBool(sky_call(sky_stringContains("."), callee)) { return Lsp_Server_InferQualifiedCallType(state, uri, callee, source) }; return "" }() }()
+}
+
+func Lsp_Server_InferQualifiedCallType(state any, uri any, qualName any, source any) any {
+	return func() any { callParts := sky_call(sky_stringSplit("."), qualName); _ = callParts; modAlias := func() any { return func() any { __subject := sky_listHead(callParts); if sky_asSkyMaybe(__subject).SkyName == "Just" { m := sky_asSkyMaybe(__subject).JustValue; _ = m; return m };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  return nil }() }(); _ = modAlias; funcName := func() any { return func() any { __subject := sky_listReverse(callParts); if len(sky_asList(__subject)) > 0 { f := sky_asList(__subject)[0]; _ = f; return f };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = funcName; depResult := Lsp_Server_LookupDepExport(state, modAlias, funcName); _ = depResult; return func() any { return func() any { __subject := depResult; if sky_asSkyMaybe(__subject).SkyName == "Just" { exp := sky_asSkyMaybe(__subject).JustValue; _ = exp; return Lsp_Server_ExtractReturnType(sky_asMap(exp)["signature"]) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return func() any { annotResult := Lsp_Server_FindAnnotationInSource(funcName, source); _ = annotResult; return func() any { if sky_asBool(sky_not(sky_stringIsEmpty(annotResult))) { return Lsp_Server_ExtractReturnTypeFromAnnot(annotResult) }; return "" }() }() };  return nil }() }() }()
+}
+
+func Lsp_Server_ExtractReturnType(sig any) any {
+	return func() any { parts := sky_call(sky_stringSplit(" -> "), sig); _ = parts; lastPart := func() any { return func() any { __subject := sky_listReverse(parts); if len(sky_asList(__subject)) > 0 { l := sky_asList(__subject)[0]; _ = l; return l };  if len(sky_asList(__subject)) == 0 { return sig };  return nil }() }(); _ = lastPart; return lastPart }()
+}
+
+func Lsp_Server_ExtractReturnTypeFromAnnot(annot any) any {
+	return func() any { colonIdx := Lsp_Server_FindCharInString(string(':'), annot, 0); _ = colonIdx; typePart := func() any { if sky_asBool(sky_asInt(colonIdx) > sky_asInt(0)) { return sky_stringTrim(sky_call2(sky_stringSlice(sky_asInt(colonIdx) + sky_asInt(1)), sky_stringLength(annot), annot)) }; return annot }(); _ = typePart; return Lsp_Server_ExtractReturnType(typePart) }()
+}
+
+func Lsp_Server_FindCharInString(ch any, str any, idx any) any {
+	return func() any { if sky_asBool(sky_asInt(idx) >= sky_asInt(sky_stringLength(str))) { return -1 }; if sky_asBool(sky_equal(sky_call2(sky_stringSlice(idx), sky_asInt(idx) + sky_asInt(1), str), sky_stringFromChar(ch))) { return idx }; return Lsp_Server_FindCharInString(ch, str, sky_asInt(idx) + sky_asInt(1)) }()
 }
 
 func Lsp_Server_GetLineAt(lineNum any, source any) any {
@@ -6462,7 +6516,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 1, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() }() };  return nil }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  return nil }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  return nil }() }()
 }
 
 func Ffi_WrapperGen_IsEffectfulName(name any) any {
@@ -7160,6 +7214,24 @@ var stdlibTypeMap = Lsp_Server_StdlibTypeMap()
 var lookupInTypedDecls = Lsp_Server_LookupInTypedDecls
 
 var inferFromAst = Lsp_Server_InferFromAst
+
+var inferLocalBinding = Lsp_Server_InferLocalBinding
+
+var findAssignmentLine = Lsp_Server_FindAssignmentLine
+
+var findAssignmentLineLoop = Lsp_Server_FindAssignmentLineLoop
+
+var extractRhsExpr = Lsp_Server_ExtractRhsExpr
+
+var inferRhsType = Lsp_Server_InferRhsType
+
+var inferQualifiedCallType = Lsp_Server_InferQualifiedCallType
+
+var extractReturnType = Lsp_Server_ExtractReturnType
+
+var extractReturnTypeFromAnnot = Lsp_Server_ExtractReturnTypeFromAnnot
+
+var findCharInString = Lsp_Server_FindCharInString
 
 var getLineAt = Lsp_Server_GetLineAt
 

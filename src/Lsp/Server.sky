@@ -945,8 +945,13 @@ lookupTypeInfo state uri word source =
                         ""
             else
                 fromTypeCheck
+        fromLocal =
+            if String.isEmpty  fromAst then
+                inferLocalBinding  state  uri  word  source  line
+            else
+                fromAst
     in
-        fromAst
+        fromLocal
 
 
 lookupStdlibType : String -> String
@@ -1145,6 +1150,173 @@ inferFromAst name decls =
                 
                 _ ->
                     inferFromAst  name  rest
+
+
+inferLocalBinding : ServerState -> String -> String -> String -> Int -> String
+
+inferLocalBinding state uri word source line =
+    let
+        assignmentLine =
+            findAssignmentLine  word  source  line
+        rhsExpr =
+            extractRhsExpr  assignmentLine
+    in
+        if String.isEmpty  rhsExpr then
+            ""
+        else
+            inferRhsType  state  uri  rhsExpr  source
+
+
+findAssignmentLine : String -> String -> Int -> String
+
+findAssignmentLine word source cursorLine =
+    let
+        lines =
+            String.split  "\n"  source
+        pattern =
+            word ++ " ="
+    in
+        findAssignmentLineLoop  lines  pattern  0  cursorLine
+
+
+findAssignmentLineLoop : (List String) -> String -> Int -> Int -> String
+
+findAssignmentLineLoop lines pattern idx cursorLine =
+    case lines of
+
+        [] ->
+            ""
+
+        line :: rest ->
+            if idx <= cursorLine && String.contains  pattern  (String.trim  line) then
+                let
+                    nextLine =
+                        case rest of
+
+                            next :: _ ->
+                                String.trim  next
+
+                            [] ->
+                                ""
+                in
+                    if String.isEmpty  nextLine then
+                        ""
+                    else
+                        nextLine
+            else
+                findAssignmentLineLoop  rest  pattern  (idx + 1)  cursorLine
+
+
+extractRhsExpr : String -> String
+
+extractRhsExpr line =
+    String.trim  line
+
+
+inferRhsType : ServerState -> String -> String -> String -> String
+
+inferRhsType state uri expr source =
+    let
+        parts =
+            String.split  " "  expr
+        callee =
+            case List.head  parts of
+
+                Just c ->
+                    c
+
+                Nothing ->
+                    ""
+    in
+        if String.contains  "."  callee then
+            inferQualifiedCallType  state  uri  callee  source
+        else
+            ""
+
+
+inferQualifiedCallType : ServerState -> String -> String -> String -> String
+
+inferQualifiedCallType state uri qualName source =
+    let
+        callParts =
+            String.split  "."  qualName
+        modAlias =
+            case List.head  callParts of
+
+                Just m ->
+                    m
+
+                Nothing ->
+                    ""
+        funcName =
+            case List.reverse  callParts of
+
+                f :: _ ->
+                    f
+
+                [] ->
+                    ""
+        depResult =
+            lookupDepExport  state  modAlias  funcName
+    in
+        case depResult of
+
+            Just exp ->
+                extractReturnType  exp.signature
+
+            Nothing ->
+                let
+                    annotResult =
+                        findAnnotationInSource  funcName  source
+                in
+                    if not  (String.isEmpty  annotResult) then
+                        extractReturnTypeFromAnnot  annotResult
+                    else
+                        ""
+
+
+extractReturnType : String -> String
+
+extractReturnType sig =
+    let
+        parts =
+            String.split  " -> "  sig
+        lastPart =
+            case List.reverse  parts of
+
+                l :: _ ->
+                    l
+
+                [] ->
+                    sig
+    in
+        lastPart
+
+
+extractReturnTypeFromAnnot : String -> String
+
+extractReturnTypeFromAnnot annot =
+    let
+        colonIdx =
+            findCharInString  ':'  annot  0
+        typePart =
+            if colonIdx > 0 then
+                String.trim  (String.slice  (colonIdx + 1)  (String.length  annot)  annot)
+            else
+                annot
+    in
+        extractReturnType  typePart
+
+
+findCharInString : Char -> String -> Int -> Int
+
+findCharInString ch str idx =
+    if idx >= String.length  str then
+        -1
+    else if String.slice  idx  (idx + 1)  str == String.fromChar  ch then
+        idx
+    else
+        findCharInString  ch  str  (idx + 1)
 
 
 getLineAt : Int -> String -> String
