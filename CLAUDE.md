@@ -89,7 +89,7 @@ sky --version                     # sky v0.6.0
 | Module | Key Functions |
 |--------|--------------|
 | `Sky.Core.String` | split, join, replace, trim, contains, startsWith, toInt, fromInt, slice, length |
-| `Sky.Core.List` | map, filter, foldl, foldr, head, take, drop, sort, zip, concat, filterMap |
+| `Sky.Core.List` | map, filter, foldl, foldr, head, take, drop, sort, zip, concat, filterMap, parallelMap |
 | `Sky.Core.Dict` | empty, insert, get, remove, keys, values, map, foldl, union, member |
 | `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList |
 | `Sky.Core.Maybe` | withDefault, map, andThen |
@@ -106,7 +106,7 @@ sky --version                     # sky v0.6.0
 ### Task-Wrapped Effects
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
-| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence | Task err a |
+| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy | Task err a |
 | `Sky.Core.File` | readFile, writeFile, mkdirAll, readDir, exists | Task String a |
 | `Sky.Core.Process` | run, exit, getCwd, loadEnv | Task String a |
 | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task String a |
@@ -117,6 +117,30 @@ sky --version                     # sky v0.6.0
 
 ### Prelude (implicitly imported everywhere)
 `Result (Ok/Err)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
+
+### Concurrency
+
+Sky provides goroutine-backed concurrency through Task and List:
+
+```elm
+-- Run tasks concurrently, collect results in order (first error short-circuits)
+Task.parallel : List (Task err a) -> Task err (List a)
+
+-- Defer computation until task is executed
+Task.lazy : (() -> a) -> Task err a
+
+-- Map function over list using goroutines (pure, no Task wrapping)
+List.parallelMap : (a -> b) -> List a -> List b
+```
+
+Usage:
+```elm
+-- Parallel HTTP requests
+results = Task.perform (Task.parallel [ Http.get url1, Http.get url2, Http.get url3 ])
+
+-- Parallel computation (no Task needed)
+squares = List.parallelMap (\n -> n * n) [ 1, 2, 3, 4, 5 ]
+```
 
 ## Go FFI / Interop Model
 

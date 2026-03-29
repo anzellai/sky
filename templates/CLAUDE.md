@@ -18,7 +18,7 @@ sky upgrade               # Self-upgrade Sky compiler to latest release
 sky remove <package>      # Remove a dependency
 sky lsp                   # Start Language Server
 sky clean                 # Remove build artifacts
-sky --version             # Show version (v0.6.0)
+sky --version             # Show version
 ```
 
 ## Language Syntax
@@ -116,7 +116,29 @@ result = Task.perform pipeline
 - `Task.map : (a -> b) -> Task err a -> Task err b`
 - `Task.andThen : (a -> Task err b) -> Task err a -> Task err b`
 - `Task.perform : Task err a -> Result err a`
-- `Task.sequence : List (Task err a) -> Task err (List a)`
+- `Task.sequence : List (Task err a) -> Task err (List a)` -- run sequentially
+- `Task.parallel : List (Task err a) -> Task err (List a)` -- run concurrently (goroutines)
+- `Task.lazy : (() -> a) -> Task err a` -- defer computation until executed
+
+**Concurrency:**
+
+`Task.parallel` runs tasks concurrently using Go goroutines. Results are collected in order; the first error short-circuits.
+
+```elm
+-- Parallel HTTP requests (total time = slowest request, not sum)
+results = Task.perform (Task.parallel [ Http.get url1, Http.get url2, Http.get url3 ])
+
+-- Sequential for comparison (total time = sum of all requests)
+results = Task.perform (Task.sequence [ Http.get url1, Http.get url2, Http.get url3 ])
+```
+
+`List.parallelMap` maps a function over a list using goroutines (pure, no Task wrapping):
+
+```elm
+-- Process items concurrently
+squares = List.parallelMap (\n -> n * n) [ 1, 2, 3, 4, 5 ]
+-- [1, 4, 9, 16, 25]
+```
 
 ## Go Interop (FFI)
 
@@ -239,6 +261,7 @@ sortBy : (a -> comparable) -> List a -> List a
 zip : List a -> List b -> List (a, b)
 unzip : List (a, b) -> (List a, List b)
 map2 : (a -> b -> c) -> List a -> List b -> List c
+parallelMap : (a -> b) -> List a -> List b  -- goroutine-backed concurrent map
 ```
 
 ### Sky.Core.String

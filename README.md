@@ -546,7 +546,7 @@ Key modules: `Std.Cmd`, `Std.Sub`, `Std.Task`, `Std.Program`.
 | `Sky.Core.Prelude`  | `Result`, `Maybe`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`, `js` (auto-imported)                                                                                                                     |
 | `Sky.Core.Maybe`    | `withDefault`, `map`, `andThen`                                                                                                                                                                                                        |
 | `Sky.Core.Result`   | `withDefault`, `map`, `andThen`, `mapError`, `toMaybe`                                                                                                                                                                                 |
-| `Sky.Core.List`     | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty`, `singleton`, `all`, `any`, `sum`, `product`, `maximum`, `minimum`, `partition`, `find`, `filterMap`, `sortBy`, `zip`, `unzip`, `map2` |
+| `Sky.Core.List`     | `map`, `filter`, `foldl`, `foldr`, `head`, `tail`, `length`, `append`, `reverse`, `sort`, `range`, `member`, `concat`, `concatMap`, `indexedMap`, `take`, `drop`, `intersperse`, `isEmpty`, `singleton`, `all`, `any`, `sum`, `product`, `maximum`, `minimum`, `partition`, `find`, `filterMap`, `sortBy`, `zip`, `unzip`, `map2`, `parallelMap` |
 | `Sky.Core.String`   | `split`, `join`, `contains`, `replace`, `trim`, `length`, `toLower`, `toUpper`, `startsWith`, `endsWith`, `slice`, `fromInt`, `toInt`, `fromFloat`, `toFloat`, `lines`, `words`, `repeat`, `padLeft`, `padRight`, `reverse`, `indexes`, `concat`, `fromChar` |
 | `Sky.Core.Dict`     | `empty`, `singleton`, `insert`, `get`, `remove`, `keys`, `values`, `map`, `foldl`, `fromList`, `toList`, `isEmpty`, `size`, `member`, `update`, `filter`, `union`, `intersect`, `diff`, `partition`, `foldr`                            |
 | `Sky.Core.Debug`    | `log`, `toString`                                                                                                                                                                                                                      |
@@ -596,9 +596,62 @@ result = Decode.decodeString userDecoder jsonString
 | `Std.Cmd`     | `none`, `batch`, `perform`                  |
 | `Std.Sub`     | `none`, `batch` -- subscription types       |
 | `Std.Time`    | `every` -- timer subscriptions for Sky.Live |
-| `Std.Task`    | `succeed`, `fail`, `map`, `andThen`         |
+| `Std.Task`    | `succeed`, `fail`, `map`, `andThen`, `sequence`, `parallel`, `lazy`, `perform` |
 | `Std.Program` | `Program` type alias, `makeProgram`         |
 | `Std.Uuid`    | `v4` (UUID generation)                      |
+
+### Task and Concurrency
+
+Sky wraps all effectful operations in `Task`. Tasks are lazy -- they only execute when `perform` is called.
+
+```elm
+import Sky.Core.Task as Task
+
+-- Sequential: run tasks one after another
+Task.sequence : List (Task err a) -> Task err (List a)
+
+-- Parallel: run tasks concurrently using goroutines
+Task.parallel : List (Task err a) -> Task err (List a)
+
+-- Lazy: defer computation until task is executed
+Task.lazy : (() -> a) -> Task err a
+
+-- Parallel map: map a function over a list using goroutines
+List.parallelMap : (a -> b) -> List a -> List b
+```
+
+**Example -- parallel HTTP requests:**
+
+```elm
+import Sky.Core.Task as Task
+import Sky.Core.Http as Http
+
+fetchAll urls =
+    let
+        tasks = List.map (\url -> Http.get url) urls
+        results = Task.perform (Task.parallel tasks)
+    in
+        results
+```
+
+**Example -- sequential vs parallel:**
+
+```elm
+-- Sequential: total time = sum of individual times
+seqResults = Task.perform (Task.sequence [ taskA, taskB, taskC ])
+
+-- Parallel: total time = max of individual times
+parResults = Task.perform (Task.parallel [ taskA, taskB, taskC ])
+```
+
+`Task.parallel` preserves result order -- the i-th result corresponds to the i-th task. If any task fails, the first error is returned. Under the hood, each task runs in its own goroutine with panic recovery.
+
+`List.parallelMap` is the pure equivalent for non-Task computations:
+
+```elm
+-- Process items concurrently
+results = List.parallelMap expensiveComputation items
+```
 
 ### Std.Html (Server-Side Rendering)
 
