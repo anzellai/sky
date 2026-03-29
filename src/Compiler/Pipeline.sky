@@ -1098,8 +1098,11 @@ loadOneFfiRaw srcRoot imp =
 
 loadFfiBindings : String -> (List Ast.ImportDecl) -> List (String, Ast.Module)
 loadFfiBindings srcRoot imports =
-    List.filterMap (\imp -> loadOneFfiBinding srcRoot imp)
-        (deduplicateFfiImports imports Dict.empty)
+    let
+        deduped = deduplicateFfiImports imports Dict.empty
+        results = List.parallelMap (\imp -> loadOneFfiBinding srcRoot imp) deduped
+    in
+        List.filterMap identity results
 
 
 deduplicateFfiImports : (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List Ast.ImportDecl
@@ -1337,12 +1340,8 @@ copyFfiWrappers outDir projectRoot imports mainGoCode =
                 imports
         uniqueModNames = Set.toList (Set.fromList allModNames)
         _ =
-            List.foldl
-                (
-                \modName _ ->
-                    copyOneFfiWrapper outDir projectRoot modName mainGoCode
-                )
-                ()
+            List.parallelMap
+                (\modName -> copyOneFfiWrapper outDir projectRoot modName mainGoCode)
                 uniqueModNames
         _ = copyProjectWrappers outDir projectRoot mainGoCode
     in
