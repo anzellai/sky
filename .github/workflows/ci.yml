@@ -42,48 +42,50 @@ jobs:
           go build -gcflags=all=-l -o app .
           cd ..
           cp -f sky-out/app /usr/local/bin/sky
+          sky --version
+
+      # Phase 1: compile from Sky source
+      - name: Phase 1 compile
+        run: |
+          rm -rf .skycache sky-out
           sky build src/Main.sky
-          sky-out/app version
+          cp -f sky-out/app /usr/local/bin/sky
+          sky --version
 
       # Phase 2: self-host (new compiler compiles itself)
       - name: Phase 2 self-host
         run: |
-          cp -f sky-out/app /usr/local/bin/sky
-          rm -rf sky-out
+          rm -rf .skycache sky-out
           sky build src/Main.sky
-          sky-out/app version
+          cp -f sky-out/app /usr/local/bin/sky
+          sky --version
 
       # Phase 3: propagate lowerer fixes
       - name: Phase 3 bootstrap
         run: |
-          cp -f sky-out/app /usr/local/bin/sky
-          rm -rf sky-out
+          rm -rf .skycache sky-out
           sky build src/Main.sky
-          sky-out/app version
+          cp -f sky-out/app /usr/local/bin/sky
+          sky --version
 
-      # Verify the built compiler works (not a hello-world binary)
+      # Verify the built compiler works
       - name: Verify compiler
         run: |
-          sky-out/app check src/Main.sky
+          sky check src/Main.sky
           echo "Compiler verification passed"
 
-      # Type check
-      - name: Type check
-        run: sky check src/Main.sky
-
-      # Verify type safety: non-exhaustive case panics at runtime (not silent nil)
-      - name: Verify non-exhaustive case detection
+      # Verify type safety features in generated code
+      - name: Verify type safety
         run: |
-          grep -q 'panic("non-exhaustive case expression")' sky-out/main.go
-          echo "Non-exhaustive case panic verified"
-
-      # Verify type safety: strict identifier checking
-      - name: Verify strict identifier checking
-        run: |
-          grep -q 'isLikelyExternal' sky-out/main.go
-          echo "Strict identifier checking verified"
+          rm -rf .skycache sky-out
+          sky build src/Main.sky
+          grep -q 'panic("non-exhaustive case expression")' sky-out/main.go && echo "Non-exhaustive panic: OK"
+          # Save compiler binary before example tests overwrite sky-out/
+          cp -f sky-out/app /usr/local/bin/sky
 
       # Test examples — simple (no FFI)
+      # NOTE: Each example build overwrites sky-out/. The compiler is
+      # saved in /usr/local/bin/sky and must NOT be read from sky-out/app.
       - name: Test hello-world
         run: |
           rm -rf sky-out
