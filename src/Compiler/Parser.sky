@@ -291,12 +291,28 @@ parseDeclarations state =
 parseDeclsHelper : (Result String (Declaration, ParserState)) -> ParserState -> (List Declaration, ParserState)
 parseDeclsHelper result origState =
     case result of
-        
         Ok pair ->
             addDeclAndContinue (fst pair) (snd pair)
-        
+
         Err _ ->
-            parseDeclarations (snd (advance origState))
+            parseDeclarations (skipToNextDecl origState)
+
+
+skipToNextDecl : ParserState -> ParserState
+skipToNextDecl state =
+    let
+        ( _ , s1 ) = advance state
+    in
+        if matchKind TkEOF s1 then
+            s1
+        else if peekColumn s1 == 1 && matchKind TkIdentifier s1 then
+            s1
+        else if peekColumn s1 == 1 && peekLexeme s1 == "type" then
+            s1
+        else if peekColumn s1 == 1 && peekLexeme s1 == "foreign" then
+            s1
+        else
+            skipToNextDecl s1
 
 
 addDeclAndContinue : Declaration -> ParserState -> (List Declaration, ParserState)

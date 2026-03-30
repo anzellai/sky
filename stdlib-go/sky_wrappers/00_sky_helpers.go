@@ -439,12 +439,58 @@ func Sky_list_Drop(n any, list any) any {
 	return result
 }
 
+func sky_compareValues(a, b any) int {
+	switch av := a.(type) {
+	case int:
+		switch bv := b.(type) {
+		case int:
+			if av < bv { return -1 }
+			if av > bv { return 1 }
+			return 0
+		case float64:
+			if float64(av) < bv { return -1 }
+			if float64(av) > bv { return 1 }
+			return 0
+		}
+		bv := 0
+		if av < bv { return -1 }
+		if av > bv { return 1 }
+		return 0
+	case float64:
+		switch bv := b.(type) {
+		case float64:
+			if av < bv { return -1 }
+			if av > bv { return 1 }
+			return 0
+		case int:
+			bvf := float64(bv)
+			if av < bvf { return -1 }
+			if av > bvf { return 1 }
+			return 0
+		}
+		var bv float64
+		if av < bv { return -1 }
+		if av > bv { return 1 }
+		return 0
+	case string:
+		bv := fmt.Sprintf("%v", b)
+		if av < bv { return -1 }
+		if av > bv { return 1 }
+		return 0
+	default:
+		as, bs := fmt.Sprintf("%v", a), fmt.Sprintf("%v", b)
+		if as < bs { return -1 }
+		if as > bs { return 1 }
+		return 0
+	}
+}
+
 func Sky_list_Sort(list any) any {
 	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	copy(result, lst)
 	sort.Slice(result, func(i, j int) bool {
-		return fmt.Sprintf("%v", result[i]) < fmt.Sprintf("%v", result[j])
+		return sky_compareValues(result[i], result[j]) < 0
 	})
 	return result
 }
@@ -527,7 +573,7 @@ func Sky_list_Maximum(list any) any {
 	if len(lst) == 0 { return SkyNothing() }
 	best := lst[0]
 	for _, item := range lst[1:] {
-		if fmt.Sprintf("%v", item) > fmt.Sprintf("%v", best) { best = item }
+		if sky_compareValues(item, best) > 0 { best = item }
 	}
 	return SkyJust(best)
 }
@@ -537,7 +583,7 @@ func Sky_list_Minimum(list any) any {
 	if len(lst) == 0 { return SkyNothing() }
 	best := lst[0]
 	for _, item := range lst[1:] {
-		if fmt.Sprintf("%v", item) < fmt.Sprintf("%v", best) { best = item }
+		if sky_compareValues(item, best) < 0 { best = item }
 	}
 	return SkyJust(best)
 }

@@ -1448,71 +1448,68 @@ findCompletionStart text idx =
 
 completionsFromAst : (List Declaration) -> String -> List String
 completionsFromAst decls prefix =
-    List.filterMap
-        (
-        \decl ->
-            case decl of
-                
-                FunDecl name _ _ _ ->
-                    if String.isEmpty prefix || String.startsWith prefix name then
-                        let
-                            sig =
-                                case Dict.get name stdlibTypeMap of
-                                    
-                                    Just t ->
-                                        t
-                                    
-                                    Nothing ->
-                                        "function"
-                        in
-                            Just (makeCompletionItem name sig 3)
+    List.filterMap (\decl -> completionFromDecl decl prefix) decls
+
+
+completionFromDecl : Declaration -> String -> Maybe String
+completionFromDecl decl prefix =
+    case decl of
+
+        FunDecl name _ _ _ ->
+            funDeclCompletion name prefix
+
+        TypeDecl name _ variants _ ->
+            typeDeclCompletion name prefix variants
+
+        TypeAliasDecl name _ _ _ ->
+            if String.isEmpty prefix || String.startsWith prefix name then
+                Just (makeCompletionItem name "type alias" 22)
+            else
+                Nothing
+
+        _ ->
+            Nothing
+
+
+funDeclCompletion : String -> String -> Maybe String
+funDeclCompletion name prefix =
+    if String.isEmpty prefix || String.startsWith prefix name then
+        let
+            sig =
+                Maybe.withDefault "function" (Dict.get name stdlibTypeMap)
+        in
+            Just (makeCompletionItem name sig 3)
+    else
+        Nothing
+
+
+typeDeclCompletion : String -> String -> (List TypeVariant) -> Maybe String
+typeDeclCompletion name prefix variants =
+    let
+        typeItem =
+            if String.isEmpty prefix || String.startsWith prefix name then
+                [ makeCompletionItem name "type" 22 ]
+            else
+                []
+        ctorItems =
+            List.filterMap
+                (
+                \v ->
+                    if String.isEmpty prefix || String.startsWith prefix
+                                                    v.name then
+                        Just (makeCompletionItem v.name name 4)
                     else
                         Nothing
-                
-                TypeDecl name _ variants _ ->
-                    let
-                        typeItem =
-                            if String.isEmpty prefix || String.startsWith prefix
-                                                            name then
-                                [ makeCompletionItem name "type" 22 ]
-                            else
-                                []
-                        ctorItems =
-                            List.filterMap
-                                (
-                                \v ->
-                                    if String.isEmpty prefix || String.startsWith
-                                                                    prefix
-                                                                    v.name then
-                                        Just (makeCompletionItem v.name name 4)
-                                    else
-                                        Nothing
-                                )
-                                variants
-                    in
-                        case List.append typeItem ctorItems of
-                            
-                            first :: _ ->
-                                Just first
-                            
-                            [  ] ->
-                                Nothing
-                            
-                            TypeAliasDecl name _ _ _ ->
-                                if String.isEmpty prefix || String.startsWith
-                                                                prefix
-                                                                name then
-                                    Just
-                                        (
-                                        makeCompletionItem name "type alias" 22
-                                        )
-                                else
-                                    Nothing
-                            
-                            _ ->
-                                Nothing
-        )
-        decls
+                )
+                variants
+    in
+        case List.append typeItem ctorItems of
+
+            first :: _ ->
+                Just first
+
+            [  ] ->
+                Nothing
 
 
 completionsFromStdlib : String -> List String

@@ -1140,59 +1140,74 @@ lowerCall ctx callee args =
                     goCallee = lowerExpr ctx flatCallee
                     goArgs = List.map (lowerArgExpr ctx) flatArgs
                 in
-                    case goCallee of
-                        
-                        GoCallExpr innerFn innerArgs ->
-                            if List.isEmpty innerArgs then
-                                GoCallExpr innerFn goArgs
-                            else if List.length goArgs == 1 then
-                                GoCallExpr (GoIdent "sky_call")
-                                    (List.append [ goCallee ] goArgs)
-                            else if List.length goArgs == 2 then
-                                GoCallExpr (GoIdent "sky_call2")
-                                    (List.append [ goCallee ] goArgs)
-                            else if List.length goArgs == 3 then
-                                GoCallExpr (GoIdent "sky_call3")
-                                    (List.append [ goCallee ] goArgs)
-                            else
-                                GoCallExpr (GoIdent "sky_call")
-                                    (List.append [ goCallee ] goArgs)
-                        
-                        GoRawExpr code ->
-                            if String.endsWith "()" code then
-                                case goArgs of
-                                    
-                                    singleArg :: [  ] ->
-                                        GoCallExpr (GoIdent "sky_call")
-                                            [ goCallee , singleArg ]
-                                    
-                                    _ ->
-                                        GoCallExpr goCallee goArgs
-                            else
-                                GoCallExpr goCallee goArgs
-                        
-                        _ ->
-                            if isDynamicCallee ctx flatCallee then
-                                if List.length goArgs == 1 then
-                                    GoCallExpr (GoIdent "sky_call")
-                                        [ goCallee , listGet 0 goArgs ]
-                                else if List.length goArgs == 2 then
-                                    GoCallExpr (GoIdent "sky_call2")
-                                        [ goCallee
-                                        , listGet 0 goArgs
-                                        , listGet 1 goArgs
-                                        ]
-                                else if List.length goArgs == 3 then
-                                    GoCallExpr (GoIdent "sky_call3")
-                                        [ goCallee
-                                        , listGet 0 goArgs
-                                        , listGet 1 goArgs
-                                        , listGet 2 goArgs
-                                        ]
-                                else
-                                    GoCallExpr goCallee goArgs
-                            else
-                                GoCallExpr goCallee goArgs
+                    lowerCallDirect ctx flatCallee goCallee goArgs
+
+
+lowerCallDirect : LowerCtx -> Expression -> GoExpr -> (List GoExpr) -> GoExpr
+lowerCallDirect ctx flatCallee goCallee goArgs =
+    case goCallee of
+
+        GoCallExpr innerFn innerArgs ->
+            if List.isEmpty innerArgs then
+                GoCallExpr innerFn goArgs
+            else if List.length goArgs == 1 then
+                GoCallExpr (GoIdent "sky_call")
+                    (List.append [ goCallee ] goArgs)
+            else if List.length goArgs == 2 then
+                GoCallExpr (GoIdent "sky_call2")
+                    (List.append [ goCallee ] goArgs)
+            else if List.length goArgs == 3 then
+                GoCallExpr (GoIdent "sky_call3")
+                    (List.append [ goCallee ] goArgs)
+            else
+                GoCallExpr (GoIdent "sky_call")
+                    (List.append [ goCallee ] goArgs)
+
+        GoRawExpr code ->
+            lowerCallRawExpr goCallee goArgs code
+
+        _ ->
+            if isDynamicCallee ctx flatCallee then
+                if List.length goArgs == 1 then
+                    GoCallExpr (GoIdent "sky_call")
+                        [ goCallee , listGet 0 goArgs ]
+                else if List.length goArgs == 2 then
+                    GoCallExpr (GoIdent "sky_call2")
+                        [ goCallee
+                        , listGet 0 goArgs
+                        , listGet 1 goArgs
+                        ]
+                else if List.length goArgs == 3 then
+                    GoCallExpr (GoIdent "sky_call3")
+                        [ goCallee
+                        , listGet 0 goArgs
+                        , listGet 1 goArgs
+                        , listGet 2 goArgs
+                        ]
+                else
+                    GoCallExpr goCallee goArgs
+            else
+                GoCallExpr goCallee goArgs
+
+
+lowerCallRawExpr : GoExpr -> (List GoExpr) -> String -> GoExpr
+lowerCallRawExpr goCallee goArgs code =
+    if String.endsWith "()" code then
+        lowerCallRawExprZeroArity goCallee goArgs
+    else
+        GoCallExpr goCallee goArgs
+
+
+lowerCallRawExprZeroArity : GoExpr -> (List GoExpr) -> GoExpr
+lowerCallRawExprZeroArity goCallee goArgs =
+    case goArgs of
+
+        singleArg :: [  ] ->
+            GoCallExpr (GoIdent "sky_call")
+                [ goCallee , singleArg ]
+
+        _ ->
+            GoCallExpr goCallee goArgs
 
 
 isDynamicCallee : LowerCtx -> Expression -> Bool
@@ -1274,32 +1289,31 @@ type alias PartialApp =
 checkPartialApplication : LowerCtx -> Expression -> Int -> Maybe PartialApp
 checkPartialApplication ctx callee argCount =
     case callee of
-        
         IdentifierExpr name _ ->
-            case Dict.get name ctx.localFunctionArity of
-                
-                Just arity ->
-                    if argCount < arity then
-                        let
-                            goName =
-                                if String.isEmpty ctx.modulePrefix then
-                                    sanitizeGoIdent name
-                                else
-                                    ctx.modulePrefix ++ "_" ++ capitalizeFirst
-                                                                   (
-                                                                   sanitizeGoIdent
-                                                                       name
-                                                                   )
-                        in
-                            Just { goFuncName = goName , totalArity = arity }
-                    else
-                        Nothing
-                
-                Nothing ->
-                    Nothing
-                
-                _ ->
-                    Nothing
+            checkPartialIdent ctx name argCount
+
+        _ ->
+            Nothing
+
+
+checkPartialIdent ctx name argCount =
+    case Dict.get name ctx.localFunctionArity of
+        Just arity ->
+            if argCount < arity then
+                let
+                    goName =
+                        if String.isEmpty ctx.modulePrefix then
+                            sanitizeGoIdent name
+                        else
+                            ctx.modulePrefix ++ "_" ++ capitalizeFirst
+                                                           (sanitizeGoIdent name)
+                in
+                    Just { goFuncName = goName , totalArity = arity }
+            else
+                Nothing
+
+        Nothing ->
+            Nothing
 
 
 generatePartialClosure : PartialApp -> (List GoExpr) -> Int -> GoExpr
@@ -1341,43 +1355,59 @@ listRange start end =
 flattenCall : LowerCtx -> Expression -> (List Expression) -> (Expression, List Expression)
 flattenCall ctx callee args =
     case callee of
-        
+
         CallExpr innerCallee innerArgs _ ->
             let
-                isLocalImport =
-                    case innerCallee of
-                        
-                        QualifiedExpr parts _ ->
-                            case List.head parts of
-                                
-                                Just modName ->
-                                    Dict.member modName ctx.importAliases
-                                
-                                Nothing ->
-                                    False
-                                
-                                _ ->
-                                    False
-                isExposedStdlib =
-                    case innerCallee of
-                        
-                        IdentifierExpr idName _ ->
-                            Dict.member idName ctx.exposedStdlib
-                        
-                        _ ->
-                            False
+                isLocal = isCalleeLocalImport ctx innerCallee
+                isExposed = isCalleeExposedStdlib ctx innerCallee
             in
-                if isLocalImport then
+                if isLocal then
                     flattenCall ctx innerCallee (List.append innerArgs args)
-                else if isExposedStdlib then
+                else if isExposed then
                     (callee, args)
                 else if isStdlibCallee innerCallee then
                     (callee, args)
                 else
                     flattenCall ctx innerCallee (List.append innerArgs args)
-        
+
         _ ->
             (callee, args)
+
+
+isCalleeLocalImport : LowerCtx -> Expression -> Bool
+isCalleeLocalImport ctx expr =
+    case expr of
+
+        QualifiedExpr parts _ ->
+            isQualifiedLocalImport ctx parts
+
+        _ ->
+            False
+
+
+isQualifiedLocalImport : LowerCtx -> (List String) -> Bool
+isQualifiedLocalImport ctx parts =
+    case List.head parts of
+
+        Just modName ->
+            Dict.member modName ctx.importAliases
+
+        Nothing ->
+            False
+
+        _ ->
+            False
+
+
+isCalleeExposedStdlib : LowerCtx -> Expression -> Bool
+isCalleeExposedStdlib ctx expr =
+    case expr of
+
+        IdentifierExpr idName _ ->
+            Dict.member idName ctx.exposedStdlib
+
+        _ ->
+            False
 
 
 lowerLambda : LowerCtx -> (List Pattern) -> Expression -> GoExpr
@@ -1516,7 +1546,7 @@ lowerLetBinding ctx binding =
 lambdaTupleBindings : Pattern -> String
 lambdaTupleBindings pat =
     case pat of
-        
+
         PTuple items _ ->
             let
                 size = List.length items
@@ -1527,24 +1557,26 @@ lambdaTupleBindings pat =
                         "sky_asTuple2"
                 bindings =
                     List.indexedMap
-                        (
-                        \idx p ->
-                            case p of
-                                
-                                PVariable name _ ->
-                                    let
-                                        goName = sanitizeGoIdent name
-                                    in
-                                        goName ++ " := " ++ assertFn ++ "(_p).V" ++ String.fromInt
-                                                                                        idx ++ "; _ = " ++ goName ++ "; "
-                                
-                                _ ->
-                                    ""
-                        )
+                        (\idx p -> emitTupleBinding assertFn idx p)
                         items
             in
                 String.join "" bindings
-        
+
+        _ ->
+            ""
+
+
+emitTupleBinding : String -> Int -> Pattern -> String
+emitTupleBinding assertFn idx p =
+    case p of
+
+        PVariable name _ ->
+            let
+                goName = sanitizeGoIdent name
+            in
+                goName ++ " := " ++ assertFn ++ "(_p).V" ++ String.fromInt
+                                                                idx ++ "; _ = " ++ goName ++ "; "
+
         _ ->
             ""
 
@@ -1604,7 +1636,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
     let
         subjectCode = emitGoExprInline subjectExpr
     in
-        String.join "" [ "func() any { __subject := " , subjectCode , "; " , String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) , " return nil }()" ]
+        String.join "" [ "func() any { __subject := " , subjectCode , "; " , String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) , " panic(\"non-exhaustive case expression\") }()" ]
 
 
 emitBranchCode : LowerCtx -> (Int, CaseBranch) -> String
@@ -1900,7 +1932,7 @@ lowerBinary ctx op left right =
         else if op == "++" then
             GoRawExpr (String.join "" [ "sky_concat(" , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
         else if op == "+" || op == "-" || op == "*" || op == "%" then
-            GoRawExpr (String.join "" [ "sky_asInt(" , emitGoExprInline goLeft , ") " , op , " sky_asInt(" , emitGoExprInline goRight , ")" ])
+            GoRawExpr (String.join "" [ "sky_numBinop(\"" , op , "\", " , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
         else if op == "/" then
             GoRawExpr (String.join "" [ "sky_asFloat(" , emitGoExprInline goLeft , ") / sky_asFloat(" , emitGoExprInline goRight , ")" ])
         else if op == "//" then
@@ -1912,7 +1944,7 @@ lowerBinary ctx op left right =
         else if op == "!=" then
             GoUnaryExpr "!" (GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ])
         else if op == "<" || op == "<=" || op == ">" || op == ">=" then
-            GoRawExpr (String.join "" [ "sky_asInt(" , emitGoExprInline goLeft , ") " , op , " sky_asInt(" , emitGoExprInline goRight , ")" ])
+            GoRawExpr (String.join "" [ "sky_numCompare(\"" , op , "\", " , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
         else if op == "&&" then
             GoRawExpr (String.join "" [ "sky_asBool(" , emitGoExprInline goLeft , ") && sky_asBool(" , emitGoExprInline goRight , ")" ])
         else if op == "||" then
@@ -2033,7 +2065,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"
     , GoDeclRaw
-          "func sky_asList(v any) []any { if l, ok := v.([]any); ok { return l }; return nil }"
+          "func sky_asList(v any) []any { if l, ok := v.([]any); ok { return l }; return []any{} }"
     , GoDeclRaw
           "func sky_asBytes(v any) []byte { if b, ok := v.([]byte); ok { return b }; if s, ok := v.(string); ok { return []byte(s) }; return nil }"
     , GoDeclRaw
@@ -2055,8 +2087,10 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"
     , GoDeclRaw "func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"
+    , GoDeclRaw "func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; return ai + bi }"
+    , GoDeclRaw "func sky_numCompare(op string, a, b any) bool { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"<\": return af < bf; case \"<=\": return af <= bf; case \">\": return af > bf; case \">=\": return af >= bf }; return false }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"<\": return ai < bi; case \"<=\": return ai <= bi; case \">\": return ai > bi; case \">=\": return ai >= bi }; return false }"
     , GoDeclRaw
-          "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; fn := v.(func(any) any); return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w).(func(any) any)(r) } }"
+          "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; if fn, ok := v.(func(any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { sky_call(fn(w), r) } }; panic(fmt.Sprintf(\"sky_asHttpHandler: cannot convert %T\", v)) }"
     , GoDeclRaw "func sky_callZeroOrNil(f any) any { if fn, ok := f.(func() any); ok { return fn() }; if fn, ok := f.(func(any) any); ok { return fn(nil) }; return f }"
     , GoDeclRaw "func sky_asUint(v any) uint { return uint(sky_asInt(v)) }"
     , GoDeclRaw "func sky_asUint8(v any) uint8 { return uint8(sky_asInt(v)) }"
@@ -2067,7 +2101,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asUint64(v any) uint64 { return uint64(sky_asInt(v)) }"
     , GoDeclRaw
-          "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return nil }"
+          "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return map[string]any{} }"
     , GoDeclRaw
           "func sky_equal(a, b any) bool { return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
     , GoDeclRaw
@@ -2081,7 +2115,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_stringToLower(v any) any { return strings.ToLower(sky_asString(v)) }"
     , GoDeclRaw
-          "func sky_stringLength(v any) any { return len(sky_asString(v)) }"
+          "func sky_stringLength(v any) any { return len([]rune(sky_asString(v))) }"
     , GoDeclRaw
           "func sky_stringTrim(v any) any { return strings.TrimSpace(sky_asString(v)) }"
     , GoDeclRaw
@@ -2175,9 +2209,9 @@ generateHelperDecls =
           "func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"
     , GoDeclRaw "func sky_refNew(v any) any { return &SkyRef{Value: v} }"
     , GoDeclRaw "type SkyRef struct { Value any }"
-    , GoDeclRaw "func sky_refGet(r any) any { return r.(*SkyRef).Value }"
+    , GoDeclRaw "func sky_refGet(r any) any { if ref, ok := r.(*SkyRef); ok { return ref.Value }; panic(\"sky_refGet: not a Ref\") }"
     , GoDeclRaw
-          "func sky_refSet(v any) any { return func(r any) any { r.(*SkyRef).Value = v; return struct{}{} } }"
+          "func sky_refSet(v any) any { return func(r any) any { if ref, ok := r.(*SkyRef); ok { ref.Value = v; return struct{}{} }; panic(\"sky_refSet: not a Ref\") } }"
     , GoDeclRaw "func sky_dictEmpty() any { return map[string]any{} }"
     , GoDeclRaw
           "func sky_dictInsert(k any) any { return func(v any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)+1); for key, val := range m { result[key] = val }; result[sky_asString(k)] = v; return result } } }"
@@ -2258,13 +2292,13 @@ generateHelperDecls =
     , GoDeclRaw "func sky_identity(v any) any { return v }"
     , GoDeclRaw
           "func sky_always(a any) any { return func(b any) any { return a } }"
-    , GoDeclRaw "func sky_js(v any) any { return v }"
+    , GoDeclRaw "func sky_js(v any) any { if s, ok := v.(string); ok && s == \"nil\" { return nil }; return v }"
     , GoDeclRaw
           "func sky_call(f any, arg any) any { if fn, ok := f.(func(any) any); ok { return fn(arg) }; if s, ok := f.(string); ok { if args, ok := arg.([]any); ok { parts := make([]string, len(args)); for i, a := range args { parts[i] = sky_asString(a) }; return s + \"(\" + strings.Join(parts, \", \") + \")\" }; return s + \" \" + sky_asString(arg) }; panic(fmt.Sprintf(\"sky_call: cannot call %T\", f)) }"
     , GoDeclRaw
-          "func sky_call2(f any, a any, b any) any { return f.(func(any) any)(a).(func(any) any)(b) }"
+          "func sky_call2(f any, a any, b any) any { return sky_call(sky_call(f, a), b) }"
     , GoDeclRaw
-          "func sky_call3(f any, a any, b any, c any) any { return f.(func(any) any)(a).(func(any) any)(b).(func(any) any)(c) }"
+          "func sky_call3(f any, a any, b any, c any) any { return sky_call(sky_call(sky_call(f, a), b), c) }"
     , GoDeclRaw
           "func sky_taskSucceed(value any) any { return func() any { return SkyOk(value) } }"
     , GoDeclRaw
@@ -2282,7 +2316,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_taskLazy(f any) any { return func() any { return SkyOk(sky_call(f, struct{}{})) } }"
     , GoDeclRaw
-          "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { defer func() { if r := recover(); r != nil { fmt.Fprintf(os.Stderr, \"Task panic: %v\\n\", r); panic(r) } }(); return t() }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
+          "func sky_runTask(task any) any { if t, ok := task.(func() any); ok { var result any; func() { defer func() { if r := recover(); r != nil { result = SkyErr(fmt.Sprintf(\"panic: %v\", r)) } }(); result = t() }(); return result }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"
     , GoDeclRaw
           "func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"
     , GoDeclRaw
@@ -2674,24 +2708,26 @@ isGoKeyword name =
 isStdlibCallee : Expression -> Bool
 isStdlibCallee expr =
     case expr of
-        
         QualifiedExpr parts _ ->
-            case List.head parts of
-                
-                Just first ->
-                    first == "String" || first == "List" || first == "Dict" || first == "Set" || first == "File" || first == "Process" || first == "Ref" || first == "Io" || first == "Args" || first == "Log" || first == "Task" || first == "Server" || first == "Result" || first == "Maybe" || first == "Math" || first == "Crypto" || first == "Encoding" || first == "Time" || first == "Http" || first == "Encode" || first == "Decode" || first == "Pipeline" || first == "Cmd" || first == "Sub" || first == "Html" || first == "Attr" || first == "Events" || first == "Css" || first == "Live"
-                
-                Nothing ->
-                    False
-                
-                IdentifierExpr name _ ->
-                    String.startsWith "sky_" name
-                
-                CallExpr innerCallee _ _ ->
-                    isStdlibCallee innerCallee
-                
-                _ ->
-                    False
+            isStdlibQualified parts
+
+        IdentifierExpr name _ ->
+            String.startsWith "sky_" name
+
+        CallExpr innerCallee _ _ ->
+            isStdlibCallee innerCallee
+
+        _ ->
+            False
+
+
+isStdlibQualified parts =
+    case List.head parts of
+        Just first ->
+            first == "String" || first == "List" || first == "Dict" || first == "Set" || first == "File" || first == "Process" || first == "Ref" || first == "Io" || first == "Args" || first == "Log" || first == "Task" || first == "Server" || first == "Result" || first == "Maybe" || first == "Math" || first == "Crypto" || first == "Encoding" || first == "Time" || first == "Http" || first == "Encode" || first == "Decode" || first == "Pipeline" || first == "Cmd" || first == "Sub" || first == "Html" || first == "Attr" || first == "Events" || first == "Css" || first == "Live"
+
+        Nothing ->
+            False
 
 
 makeTupleKey : (List Pattern) -> String

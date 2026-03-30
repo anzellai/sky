@@ -161,6 +161,11 @@ generateFieldBinding safePkg typeName fieldJson =
     in
         if String.isEmpty fieldName || not (isSafeFieldType fieldType) then
             Nothing
+        else if String.startsWith "*" fieldType then
+            Just
+                (
+                skyFieldName ++ " : Any -> Maybe " ++ skyType ++ "\n" ++ skyFieldName ++ " receiver =\n" ++ "    " ++ wrapperName ++ " receiver"
+                )
         else
             Just
                 (
@@ -483,7 +488,15 @@ isSafeTypeForPkg pkgName goType =
                                                                                   (
                                                                                   "*" ++ pkgName ++ "."
                                                                                   )
-                                                                                  goType || (
+                                                                                  goType || String.startsWith
+                                                                                                (
+                                                                                                pkgName ++ "/"
+                                                                                                )
+                                                                                                goType || String.startsWith
+                                                                                                              (
+                                                                                                              "*" ++ pkgName ++ "/"
+                                                                                                              )
+                                                                                                              goType || (
             not (String.isEmpty parentPkg) && String.startsWith
                                                   (parentPkg ++ ".")
                                                   goType

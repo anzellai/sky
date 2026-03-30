@@ -333,6 +333,20 @@ main =
 
 19. **WrapperGen: IIFE missing invocation** — FIXED. `wrapFallibleReturn` and `wrapEffectfulReturn` generated `func() any { ... }` without trailing `()`. Effectful FFI calls (Os.getenv, Http.get, etc.) returned unevaluated closures instead of Result values. Fix: add `()` to invoke IIFEs. Existing projects must regenerate wrappers (`sky add <pkg>` or `sky install`).
 
+20. **Parser nesting bug** — FIXED. `parseCaseBranches` used `peekColumn <= 1` to terminate branch parsing. Inner case expressions absorbed outer branches as dead code. Fix: `branchCol` parameter tracks the owning case's indentation level; terminates at `peekColumn < branchCol`. Eight compiler source files refactored to extract nested case expressions: Main.sky, Infer.sky, PatternCheck.sky, Unify.sky, Lower.sky, Pipeline.sky, Parser.sky, Lsp/Server.sky.
+
+21. **Type safety audit** — FIXED. Comprehensive audit found 33 gaps violating "if it compiles, it works". All resolved:
+    - Case fallthrough: `return nil` changed to `panic("non-exhaustive case expression")`
+    - FFI panic recovery: wrappers use named returns with `SkyErr("FFI panic: ...")` instead of silently returning nil
+    - Arithmetic: `+`, `-`, `*` are float-aware via `sky_numBinop`; comparisons via `sky_numCompare`
+    - Strings: `String.length` counts runes not bytes
+    - Sorting: `List.sort`/`max`/`min` use numeric comparison for numbers
+    - Type system: unknown lowercase identifiers produce errors; Int/Float are distinct types; `JsValue` removed from universal unifiers
+    - FFI: pointer fields return `Maybe`; receiver nil guards; safe opaque type casts; variadic element type checking
+    - Runtime: `sky_runTask` converts panics to `SkyErr`; `sky_asList`/`sky_asMap` return empty collections not nil
+    - Session store: `RebuildADT` handles custom ADTs recursively
+    - Exhaustive.sky module checks pattern coverage against ADT registry
+
 ### Techniques from TS Compiler (to port)
 
 The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build, ~500ms incremental) through techniques not yet ported:

@@ -64,10 +64,6 @@ classifyFunc results funcName =
                     Effectful
 
 
-isEffectfulName : String -> Bool
-isEffectfulName name = True
-
-
 generateWrapperFile : String -> String -> (List FuncEntry) -> (List MethodEntry) -> (List String) -> String
 generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
     let
@@ -186,10 +182,24 @@ canWrapFuncForPkg pkgName func =
                             let
                                 p = snd pair
                             in
-                                if func.variadic && idx == paramCount - 1 then
-                                    True
-                                else
-                                    isSupportedTypeForPkg pkgName (snd p)
+                                let
+                                    t = snd p
+                                in
+                                    if func.variadic && idx == paramCount - 1 then
+                                        let
+                                            elemType =
+                                                if String.startsWith "[]" t then
+                                                    String.slice 2
+                                                        (String.length t)
+                                                        t
+                                                else
+                                                    t
+                                        in
+                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || isSupportedTypeForPkg
+                                                                                                                                                                     pkgName
+                                                                                                                                                                     elemType
+                                    else
+                                        isSupportedTypeForPkg pkgName t
                     )
                     (zipIndex func.params 0)
         in
@@ -225,10 +235,24 @@ canWrapMethodForPkg pkgName method =
                             let
                                 p = snd pair
                             in
-                                if method.variadic && idx == mParamCount - 1 then
-                                    True
-                                else
-                                    isSupportedTypeForPkg pkgName (snd p)
+                                let
+                                    t = snd p
+                                in
+                                    if method.variadic && idx == mParamCount - 1 then
+                                        let
+                                            elemType =
+                                                if String.startsWith "[]" t then
+                                                    String.slice 2
+                                                        (String.length t)
+                                                        t
+                                                else
+                                                    t
+                                        in
+                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || isSupportedTypeForPkg
+                                                                                                                                                                     pkgName
+                                                                                                                                                                     elemType
+                                    else
+                                        isSupportedTypeForPkg pkgName t
                     )
                     (zipIndex method.params 0)
         in
@@ -298,7 +322,15 @@ isSupportedTypeForPkg pkgName goType =
                                                                                         (
                                                                                         "*" ++ pkgName ++ "."
                                                                                         )
-                                                                                        goType || (
+                                                                                        goType || String.startsWith
+                                                                                                      (
+                                                                                                      pkgName ++ "/"
+                                                                                                      )
+                                                                                                      goType || String.startsWith
+                                                                                                                    (
+                                                                                                                    "*" ++ pkgName ++ "/"
+                                                                                                                    )
+                                                                                                                    goType || (
             not (String.isEmpty parentPkg) && String.startsWith
                                                   (parentPkg ++ ".")
                                                   goType
@@ -494,7 +526,23 @@ generateMethodWrapper safePkg pkgName method =
             if method.isInterface then
                 "_receiver := receiver.(" ++ shortPkgName pkgName ++ "." ++ method.typeName ++ ")"
             else
-                String.join "" [ "var _receiver *" , shortPkgName pkgName , "." , method.typeName , "; if _p, ok := receiver.(*" , shortPkgName pkgName , "." , method.typeName , "); ok { _receiver = _p } else if _v, ok := receiver.(" , shortPkgName pkgName , "." , method.typeName , "); ok { _receiver = &_v }" ]
+                String.join ""
+                    [ "var _receiver *"
+                    , shortPkgName pkgName
+                    , "."
+                    , method.typeName
+                    , "; if _p, ok := receiver.(*"
+                    , shortPkgName pkgName
+                    , "."
+                    , method.typeName
+                    , "); ok { _receiver = _p } else if _v, ok := receiver.("
+                    , shortPkgName pkgName
+                    , "."
+                    , method.typeName
+                    , "); ok { _receiver = &_v }; if _receiver == nil { return SkyErr(\"nil receiver: expected "
+                    , method.typeName
+                    , "\") }"
+                    ]
         allMethodArgCasts =
             List.indexedMap (\i p -> generateArgCast i p) method.params
         argNames =
@@ -598,9 +646,9 @@ wrapFallibleReturn results goCall =
         hasValueReturn = List.length results > 1
     in
         if hasValueReturn then
-            "return func() any {\n\t\t" ++ "defer func() { recover() }()\n\t\t" ++ "result, err := " ++ goCall ++ "\n\t\t" ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++ "return SkyOk(result)\n\t}()"
+            "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ "result, err := " ++ goCall ++ "\n\t\t" ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++ "return SkyOk(result)\n\t}()"
         else
-            "return func() any {\n\t\t" ++ "defer func() { recover() }()\n\t\t" ++ "err := " ++ goCall ++ "\n\t\t" ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
+            "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ "err := " ++ goCall ++ "\n\t\t" ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
 
 
 wrapEffectfulReturn : (List String) -> String -> String
@@ -608,7 +656,7 @@ wrapEffectfulReturn results goCall =
     case results of
         
         [  ] ->
-            "return func() any {\n\t\t" ++ "defer func() { recover() }()\n\t\t" ++ goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
+            "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
         
         single :: [  ] ->
             let
@@ -620,20 +668,31 @@ wrapEffectfulReturn results goCall =
                     else
                         "result"
             in
-                "return func() any {\n\t\t" ++ "defer func() { recover() }()\n\t\t" ++ "result := " ++ goCall ++ "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}()"
+                "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ "result := " ++ goCall ++ "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}()"
         
         _ ->
             let
-                n = List.length results
                 vars =
                     String.join ", "
                         (
                         List.indexedMap (\i _ -> "_r" ++ String.fromInt i)
                             results
                         )
+                tupleType = "SkyTuple" ++ String.fromInt (List.length results)
             in
-                "return func() any {\n\t\t" ++ "defer func() { recover() }()\n\t\t" ++ vars ++ " := " ++ goCall ++ "\n\t\t" ++ "return SkyOk(SkyTuple" ++ String.fromInt
-                                                                                                                                                              n ++ "{" ++ vars ++ "})\n\t}()"
+                String.join ""
+                    [ "return func() (__ret any) {\n\t\t"
+                    , "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t"
+                    , vars
+                    , " := "
+                    , goCall
+                    , "\n\t\t"
+                    , "return SkyOk("
+                    , tupleType
+                    , "{"
+                    , vars
+                    , "})\n\t}()"
+                    ]
 
 
 shortPkgName : String -> String
@@ -729,6 +788,11 @@ generateFieldAccessor safePkg typeName fieldJson =
     in
         if String.isEmpty fieldName || not (isSafeFieldType fieldType) then
             Nothing
+        else if String.startsWith "*" fieldType then
+            Just
+                (
+                "func Sky_" ++ safePkg ++ "_FIELD_" ++ typeName ++ "_" ++ fieldName ++ "(receiver any) any {\n" ++ "\tv := _ffi_reflect.ValueOf(receiver)\n" ++ "\tfor v.Kind() == _ffi_reflect.Ptr { v = v.Elem() }\n" ++ "\tif v.Kind() == _ffi_reflect.Struct {\n" ++ "\t\tf := v.FieldByName(\"" ++ fieldName ++ "\")\n" ++ "\t\tif f.IsValid() {\n" ++ "\t\t\tif f.IsNil() { return SkyNothing() }\n" ++ "\t\t\treturn SkyJust(f.Interface())\n" ++ "\t\t}\n" ++ "\t}\n" ++ "\treturn SkyNothing()\n" ++ "}"
+                )
         else
             Just
                 (
@@ -737,7 +801,22 @@ generateFieldAccessor safePkg typeName fieldJson =
 
 
 isSafeFieldType : String -> Bool
-isSafeFieldType _ = True
+isSafeFieldType fieldType =
+    not (String.startsWith "func(" fieldType) && not
+                                                     (
+                                                     String.startsWith "chan "
+                                                         fieldType
+                                                     ) && not
+                                                              (
+                                                              String.contains
+                                                                  "unsafe.Pointer"
+                                                                  fieldType
+                                                              ) && not
+                                                                       (
+                                                                       String.contains
+                                                                           "sync."
+                                                                           fieldType
+                                                                       )
 
 
 varTypeCast : String -> String

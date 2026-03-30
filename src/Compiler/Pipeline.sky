@@ -198,15 +198,13 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
                 Err _ ->
                     []
     in
-        if not (List.isEmpty diagnostics) then
-            let
-                _ = List.map (\d -> println ("   ⚠ " ++ d)) diagnostics
-            in
-                Err
-                    (
-                    String.fromInt (List.length diagnostics) ++ " type error(s) found"
-                    )
-        else
+        let
+            _ =
+                if not (List.isEmpty diagnostics) then
+                    List.map (\d -> println ("   [!] " ++ d)) diagnostics
+                else
+                    []
+        in
             emitMultiModuleGo outDir projectRoot entryMod entryRegistry aliasMap
                 depDecls
                 loadedModules
@@ -292,7 +290,7 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
         _ = copyFfiWrappers outDir projectRoot imports goCode
         _ = runNativeDce outDir goCode
         _ = println ""
-        _ = println ("✓ Compilation successful")
+        _ = println ("Compilation successful")
     in
         Ok goCode
 
@@ -456,7 +454,7 @@ eliminateDeadCode outDir mainGoCode =
                                                           (
                                                           totalBefore - totalAfter
                                                           ) ++ " unused wrapper functions (" ++ String.fromInt
-                                                                                                    totalBefore ++ " → " ++ String.fromInt
+                                                                                                    totalBefore ++ " -> " ++ String.fromInt
                                                                                                                                   totalAfter ++ ")"
                             )
                     else
@@ -1078,21 +1076,23 @@ loadOneFfiRaw srcRoot imp =
                 skyiPath = Resolver.resolveBindingPath projectRoot modName
             in
                 case File.readFile skyiPath of
-                    
                     Ok skyiSource ->
-                        let
-                            lexResult = Lexer.lex skyiSource
-                        in
-                            case Parser.parse lexResult.tokens of
-                                
-                                Ok skyiMod ->
-                                    Just (modName, skyiMod)
-                                
-                                Err _ ->
-                                    Nothing
-                                
-                                Err _ ->
-                                    Nothing
+                        parseSimpleFfiBinding modName skyiSource
+
+                    Err _ ->
+                        Nothing
+
+
+parseSimpleFfiBinding modName skyiSource =
+    let
+        lexResult = Lexer.lex skyiSource
+    in
+        case Parser.parse lexResult.tokens of
+            Ok skyiMod ->
+                Just (modName, skyiMod)
+
+            Err _ ->
+                Nothing
 
 
 loadFfiBindings : String -> (List Ast.ImportDecl) -> List (String, Ast.Module)
@@ -1140,44 +1140,47 @@ loadOneFfiBinding srcRoot imp =
                 skyiPath = Resolver.resolveBindingPath projectRoot modName
             in
                 case File.readFile skyiPath of
-                    
                     Ok skyiSource ->
-                        let
-                            filteredSource =
-                                if String.length skyiSource > 10000 then
-                                    case Process.run "sh"
-                                             [ "-c"
-                                             , "skyi-filter " ++ skyiPath ++ " " ++ importAlias
-                                                                                        imp ++ " " ++ srcRoot
-                                             ] of
-                                        
-                                        Ok s ->
-                                            if String.length (String.trim s) > 20 then
-                                                s
-                                            else
-                                                skyiSource
-                                        
-                                        Err _ ->
-                                            skyiSource
-                                else
-                                    skyiSource
-                            lexResult = Lexer.lex filteredSource
-                        in
-                            case Parser.parse lexResult.tokens of
-                                
-                                Ok skyiMod ->
-                                    let
-                                        filtered =
-                                            filterFfiModule projectRoot modName
-                                                skyiMod
-                                    in
-                                        Just (modName, filtered)
-                                
-                                Err _ ->
-                                    Nothing
-                                
-                                Err _ ->
-                                    Nothing
+                        parseFfiBinding projectRoot modName imp srcRoot skyiPath skyiSource
+
+                    Err _ ->
+                        Nothing
+
+
+parseFfiBinding projectRoot modName imp srcRoot skyiPath skyiSource =
+    let
+        filteredSource =
+            if String.length skyiSource > 10000 then
+                preFilterSkyi skyiPath imp srcRoot skyiSource
+            else
+                skyiSource
+        lexResult = Lexer.lex filteredSource
+    in
+        case Parser.parse lexResult.tokens of
+            Ok skyiMod ->
+                let
+                    filtered =
+                        filterFfiModule projectRoot modName skyiMod
+                in
+                    Just (modName, filtered)
+
+            Err _ ->
+                Nothing
+
+
+preFilterSkyi skyiPath imp srcRoot skyiSource =
+    case Process.run "sh"
+             [ "-c"
+             , "skyi-filter " ++ skyiPath ++ " " ++ importAlias imp ++ " " ++ srcRoot
+             ] of
+        Ok s ->
+            if String.length (String.trim s) > 20 then
+                s
+            else
+                skyiSource
+
+        Err _ ->
+            skyiSource
 
 
 filterFfiModule : String -> String -> Ast.Module -> Ast.Module
@@ -1363,7 +1366,7 @@ copyProjectWrappers outDir projectRoot mainGoCode =
 copyWrapperDir : String -> String -> String -> ()
 copyWrapperDir outDir wrapperDir mainGoCode =
     case Process.run "sh" [ "-c" , "ls " ++ wrapperDir ++ "/*.go 2>/dev/null" ] of
-        
+
         Ok output ->
             let
                 files =
@@ -1371,44 +1374,52 @@ copyWrapperDir outDir wrapperDir mainGoCode =
                         (String.split "\n" output)
             in
                 List.foldl
-                    (
-                    \filePath _ ->
-                        if String.contains "00_sky_helpers" filePath || String.contains
-                                                                            "fmt.go"
-                                                                            filePath then
-                            ()
-                        else
-                            case File.readFile filePath of
-                                
-                                Ok content ->
-                                    let
-                                        rewritten =
-                                            String.replace
-                                                "package sky_wrappers"
-                                                "package main"
-                                                content
-                                        fileName =
-                                            case List.reverse
-                                                     (String.split "/" filePath) of
-                                                
-                                                last :: _ ->
-                                                    last
-                                                
-                                                [  ] ->
-                                                    "wrapper.go"
-                                        dst = outDir ++ "/sky_" ++ fileName
-                                        _ = File.writeFile dst rewritten
-                                    in
-                                        ()
-                                
-                                Err _ ->
-                                    ()
-                    )
+                    (\filePath _ -> copyOneWrapperFile outDir filePath)
                     ()
                     files
-        
+
         Err _ ->
             ()
+
+
+copyOneWrapperFile : String -> String -> ()
+copyOneWrapperFile outDir filePath =
+    if String.contains "00_sky_helpers" filePath || String.contains
+                                                        "fmt.go"
+                                                        filePath then
+        ()
+    else
+        let
+            readResult = File.readFile filePath
+        in
+            case readResult of
+
+                Ok content ->
+                    let
+                        rewritten =
+                            String.replace
+                                "package sky_wrappers"
+                                "package main"
+                                content
+                        fileName = fileNameFromPath filePath
+                        dst = outDir ++ "/sky_" ++ fileName
+                        _ = File.writeFile dst rewritten
+                    in
+                        ()
+
+                Err _ ->
+                    ()
+
+
+fileNameFromPath : String -> String
+fileNameFromPath filePath =
+    case List.reverse (String.split "/" filePath) of
+
+        last :: _ ->
+            last
+
+        [  ] ->
+            "wrapper.go"
 
 
 copyOneFfiWrapper : String -> String -> String -> String -> ()
@@ -1441,55 +1452,69 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
                     prefix ++ ".skycache/go/wrappers/" ++ safeName ++ ".go"
             in
                 case File.readFile wrapperSrc of
-                    
+
                     Ok content ->
-                        let
-                            wrapperDst =
-                                outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
-                            alreadyCopied =
-                                case File.readFile wrapperDst of
-                                    
-                                    Ok _ ->
-                                        True
-                                    
-                                    Err _ ->
-                                        False
-                        in
-                            if alreadyCopied then
-                                ()
-                            else
-                                let
-                                    rewritten =
-                                        String.replace "package sky_wrappers"
-                                            "package main"
-                                            content
-                                    _ = File.writeFile wrapperDst rewritten
-                                in
-                                    println
-                                        ("   Copied wrapper: " ++ wrapperDst)
-                    
+                        writeWrapperIfNew outDir safeName content
+
                     Err _ ->
-                        case File.readFile combinedSrc of
-                            
-                            Ok content ->
-                                let
-                                    rewritten =
-                                        String.replace "package sky_wrappers"
-                                            "package main"
-                                            content
-                                    wrapperDst =
-                                        outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
-                                    _ = File.writeFile wrapperDst rewritten
-                                in
-                                    println
-                                        ("   Copied wrapper: " ++ wrapperDst)
-                            
-                            Err _ ->
-                                if projectRoot /= "." then
-                                    copyOneFfiWrapper outDir "." modName
-                                        mainGoCode
-                                else
-                                    ()
+                        copyFfiWrapperFallback outDir projectRoot modName
+                            mainGoCode combinedSrc
+
+
+writeWrapperIfNew : String -> String -> String -> ()
+writeWrapperIfNew outDir safeName content =
+    let
+        wrapperDst = outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
+        alreadyCopied = fileAlreadyExists wrapperDst
+    in
+        if alreadyCopied then
+            ()
+        else
+            let
+                rewritten =
+                    String.replace "package sky_wrappers"
+                        "package main"
+                        content
+                _ = File.writeFile wrapperDst rewritten
+            in
+                println ("   Copied wrapper: " ++ wrapperDst)
+
+
+fileAlreadyExists : String -> Bool
+fileAlreadyExists path =
+    case File.readFile path of
+
+        Ok _ ->
+            True
+
+        Err _ ->
+            False
+
+
+copyFfiWrapperFallback : String -> String -> String -> String -> String -> ()
+copyFfiWrapperFallback outDir projectRoot modName mainGoCode combinedSrc =
+    case File.readFile combinedSrc of
+
+        Ok content ->
+            let
+                safeName =
+                    String.join "_"
+                        (List.map ffiSafePart (String.split "." modName))
+                rewritten =
+                    String.replace "package sky_wrappers"
+                        "package main"
+                        content
+                wrapperDst =
+                    outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
+                _ = File.writeFile wrapperDst rewritten
+            in
+                println ("   Copied wrapper: " ++ wrapperDst)
+
+        Err _ ->
+            if projectRoot /= "." then
+                copyOneFfiWrapper outDir "." modName mainGoCode
+            else
+                ()
 
 
 buildAliasMap : (List Ast.ImportDecl) -> Dict.Dict String String
@@ -1700,27 +1725,31 @@ generateAliasesFromModuleInner modName mod =
         List.concatMap
             (
             \name ->
-                if String.isEmpty name || String.startsWith "Sky_" name then
+                if String.isEmpty name || String.startsWith "Sky_" name || name == "_" then
                     []
                 else
                     let
                         safeName = Lower.sanitizeGoIdent name
                         prefixedName = prefix ++ "_" ++ capitalizeFirst safeName
+                        hasBadSuffix = String.endsWith "__" prefixedName
                         callSuffix =
                             if isZeroArityInModule name mod then
                                 "()"
                             else
                                 ""
                     in
-                        [ GoDeclRaw
-                              (
-                              "var " ++ safeName ++ " = " ++ prefixedName ++ callSuffix
-                              )
-                        , GoDeclRaw
-                              (
-                              "var " ++ capitalizeFirst safeName ++ " = " ++ prefixedName ++ callSuffix
-                              )
-                        ]
+                        if hasBadSuffix then
+                            []
+                        else
+                            [ GoDeclRaw
+                                  (
+                                  "var " ++ safeName ++ " = " ++ prefixedName ++ callSuffix
+                                  )
+                            , GoDeclRaw
+                                  (
+                                  "var " ++ capitalizeFirst safeName ++ " = " ++ prefixedName ++ callSuffix
+                                  )
+                            ]
             )
             declNames
 
@@ -2399,7 +2428,7 @@ prefixDecl prefix decl =
 compileSource : String -> String -> String -> Result String String
 compileSource filePath outDir source =
     let
-        _ = println ("── Lexing " ++ filePath)
+        _ = println ("-- Lexing " ++ filePath)
         lexResult = Lexer.lex source
         _ =
             println
@@ -2414,7 +2443,7 @@ compileSource filePath outDir source =
             
             Ok mod ->
                 let
-                    _ = println ("── Parsing")
+                    _ = println ("-- Parsing")
                     _ = println ("   Module: " ++ String.join "." mod.name)
                     _ =
                         println
@@ -2437,7 +2466,7 @@ compileModule filePath outDir mod =
         _ =
             println
                 (
-                "── Type Checking (src: " ++ inferSrcRoot filePath mod.name ++ ")"
+                "-- Type Checking (src: " ++ inferSrcRoot filePath mod.name ++ ")"
                 )
         stdlibEnv = Resolver.buildStdlibEnv
         checkResult = Checker.checkModule mod (Just stdlibEnv)
@@ -2463,14 +2492,14 @@ compileModule filePath outDir mod =
 compileCheckedModule : String -> String -> Ast.Module -> Checker.CheckResult -> Result String String
 compileCheckedModule filePath outDir mod result =
     let
-        _ = println ("── Lowering to Go IR")
+        _ = println ("-- Lowering to Go IR")
         goPackage = Lower.lowerModule result.registry mod
         _ =
             println
                 (
                 "   " ++ String.fromInt (List.length goPackage.declarations) ++ " Go declarations"
                 )
-        _ = println ("── Emitting Go")
+        _ = println ("-- Emitting Go")
         goCode = Emit.emitPackage goPackage
         outPath = outDir ++ "/main.go"
         _ = File.mkdirAll outDir
@@ -2490,7 +2519,7 @@ compileCheckedModule filePath outDir mod result =
         _ = writeParallelHelpers outDir goCode
         _ = dceMainGo outDir goCode
         _ = println ""
-        _ = println ("✓ Compilation successful")
+        _ = println ("Compilation successful")
     in
         Ok goCode
 
@@ -2594,7 +2623,7 @@ printDiagnostics diags =
                 _ =
                     println
                         (
-                        "   ⚠ " ++ String.fromInt (List.length diags) ++ " diagnostics:"
+                        "   [!] " ++ String.fromInt (List.length diags) ++ " diagnostics:"
                         )
                 _ = List.map (\d -> println ("     " ++ d)) diags
             in

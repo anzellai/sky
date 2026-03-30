@@ -17,7 +17,10 @@ main =
                                (greeting ++ " Task is the effect boundary.")
                        )
         result = Task.perform pipeline
-        _ = println result
+        _ =
+            case result of
+                Ok val -> println val
+                Err e -> println ("Task error: " ++ e)
         failResult =
             Task.run
                 (

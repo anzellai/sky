@@ -271,16 +271,17 @@ parseCaseExpr state =
                     
                     Ok ( _ , s3 ) ->
                         let
-                            ( branches , s4 ) = parseCaseBranches s3
+                            branchCol = peekColumn s3
+                            ( branches , s4 ) = parseCaseBranches branchCol s3
                         in
                             Ok (CaseExpr subject branches emptySpan, s4)
 
 
-parseCaseBranches : ParserState -> (List CaseBranch, ParserState)
-parseCaseBranches state =
+parseCaseBranches : Int -> ParserState -> (List CaseBranch, ParserState)
+parseCaseBranches branchCol state =
     if matchKind TkEOF state then
         ([], state)
-    else if peekColumn state <= 1 then
+    else if peekColumn state < branchCol then
         ([], state)
     else
         let
@@ -312,7 +313,7 @@ parseCaseBranches state =
                                 
                                 Ok ( body , s3 ) ->
                                     let
-                                        ( rest , s4 ) = parseCaseBranches s3
+                                        ( rest , s4 ) = parseCaseBranches branchCol s3
                                     in
                                         ({ pattern = pat , body = body } :: rest, s4)
 

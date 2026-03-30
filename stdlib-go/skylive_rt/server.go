@@ -305,6 +305,13 @@ func StartServer(config LiveConfig, app LiveApp) {
 
 	// Event handler — processes Msg from the JS client
 	mux.HandleFunc("POST /_sky/event", func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[SKY] Panic in event handler: %v", rec)
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(EventResponse{})
+			}
+		}()
 		handleEvent(w, r, store, &app, sessLock)
 	})
 

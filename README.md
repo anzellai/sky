@@ -1365,6 +1365,48 @@ On subsequent builds, cached modules skip type-checking and lowering entirely. C
 - **Selective import emission** -- only emit Go imports for packages actually referenced
 - **Multi-level caching** -- cache type-check results, inspector output, and wrapper generation separately
 
+## Type Safety Audit
+
+A comprehensive audit identified 33 gaps where "if it compiles, it works" could be violated. All 33 have been addressed. The compiler now self-hosts cleanly with strict type safety enforcement.
+
+### Parser Nesting Bug (Fixed)
+
+The parser's `parseCaseBranches` function used a fixed column check (`peekColumn <= 1`) to terminate case branch parsing. When a `case` expression was nested inside another `case` branch, the inner case's branches would absorb the outer case's subsequent branches as dead code.
+
+**Fix:** `parseCaseBranches` now accepts a `branchCol` parameter and terminates at `peekColumn < branchCol`. Eight compiler source files were refactored to extract nested case expressions into helper functions: Main.sky, Infer.sky, PatternCheck.sky, Unify.sky, Lower.sky, Pipeline.sky, Parser.sky, and Lsp/Server.sky.
+
+### Non-Exhaustive Case Detection (New)
+
+Case expressions that don't cover all constructors previously returned `nil` silently, causing downstream panics or wrong behaviour. Now:
+
+- **Runtime:** Case fallthrough emits `panic("non-exhaustive case expression")` instead of `return nil`, producing a clear error message
+- **Compile time:** The new `Exhaustive.sky` module checks pattern coverage against the ADT registry and reports missing patterns as warnings
+- **Type checking:** Unknown lowercase identifiers produce "Unknown identifier" errors instead of silently becoming polymorphic type variables
+
+### FFI Boundary Safety
+
+| Fix | Description |
+|-----|------------|
+| Panic recovery | FFI wrappers use named returns with `SkyErr("FFI panic: ...")` instead of silently returning `nil` |
+| Pointer nil safety | Pointer type assertions check for nil before casting: `if arg == nil { return nil }` |
+| Receiver nil guard | Method wrappers return `SkyErr("nil receiver")` when the receiver type doesn't match |
+| Opaque type safety | Non-pointer opaque type casts use comma-ok form with zero-value fallback |
+| Field accessors | Pointer struct fields return `Maybe` (via `SkyJust`/`SkyNothing`) instead of raw `nil` |
+| Variadic safety | Variadic function parameters check element type instead of bypassing type checks |
+
+### Runtime Correctness
+
+| Fix | Description |
+|-----|------------|
+| Float-aware arithmetic | `+`, `-`, `*` dispatch on operand types: float if either operand is float, int otherwise |
+| Float-aware comparison | `<`, `<=`, `>`, `>=` use the same float dispatch |
+| Rune-aware strings | `String.length` counts Unicode code points, not bytes |
+| Numeric sorting | `List.sort`, `List.maximum`, `List.minimum` use numeric comparison for numbers |
+| Int/Float distinction | `Int` and `Float` are distinct types (no silent coercion), matching Elm semantics |
+| Safe call chaining | `sky_call2`/`sky_call3` use safe `sky_call` chaining instead of bare type assertions |
+| Task panic recovery | `sky_runTask` converts panics to `SkyErr` instead of re-panicking |
+| Session store | `RebuildADT` handles custom ADTs recursively for session round-trip integrity |
+
 ---
 
 ## Contributing

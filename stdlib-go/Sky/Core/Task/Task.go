@@ -1,6 +1,9 @@
 package sky_sky_core_task
 
-import "fmt"
+import (
+	"fmt"
+	"os"
+)
 
 // Task is a deferred computation: func() any that returns a SkyResult.
 // SkyResult has Tag=0 (Ok) or Tag=1 (Err), with OkValue/ErrValue fields.
@@ -114,7 +117,7 @@ func Perform(task any) any {
 func PerformUnsafe(task any) {
 	result := runTask(task)
 	if result.Tag == 1 {
-		fmt.Fprintf(nil, "Task failed: %v\n", result.ErrValue)
+		fmt.Fprintf(os.Stderr, "Task failed: %v\n", result.ErrValue)
 	}
 }
 
@@ -122,11 +125,11 @@ func PerformUnsafe(task any) {
 // The function is called lazily when the task is performed.
 // Panics are caught and converted to Err.
 func FromIO(fn any) any {
-	return func() any {
+	return func() (result any) {
 		defer func() {
 			if r := recover(); r != nil {
-				// Panic caught — return as error
-				// This is handled by the caller
+				// Recover from panics and convert to a typed error
+				result = SkyErr(fmt.Sprintf("FFI panic: %v", r))
 			}
 		}()
 

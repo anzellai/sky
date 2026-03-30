@@ -292,6 +292,20 @@ func RebuildADT(m map[string]any) any {
 		val := m["ErrValue"]
 		return skyErr(val)
 	default:
-		return nil
+		// Custom ADT (e.g., user-defined types like Page, Msg)
+		// Recursively fix nested values within the map
+		for k, v := range m {
+			switch inner := v.(type) {
+			case map[string]any:
+				if rebuilt := RebuildADT(inner); rebuilt != nil {
+					m[k] = rebuilt
+				} else {
+					fixJSONNumbers(inner)
+				}
+			case []any:
+				fixJSONSlice(inner)
+			}
+		}
+		return m
 	}
 }

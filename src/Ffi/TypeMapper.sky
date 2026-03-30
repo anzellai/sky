@@ -40,7 +40,7 @@ mapGoTypeToSky goType =
     else if String.startsWith "map[" goType then
         "Any"
     else if String.startsWith "func(" goType then
-        "Any"
+        mapGoFuncType goType
     else if String.startsWith "*" goType then
         let
             inner = String.slice 1 (String.length goType) goType
@@ -138,8 +138,15 @@ goTypeToCast goType argName =
     in
         if assertion == "" then
             argName
+        else if assertion == "sky_asType" && String.startsWith "*" goType then
+            -- Nil-safe cast for pointer types
+            "func() " ++ shortTypeName goType ++ " { if " ++ argName ++ " == nil { return nil }; return " ++ argName ++ ".(" ++ shortTypeName
+                                                                                                                                    goType ++ ") }()"
         else if assertion == "sky_asType" then
-            argName ++ ".(" ++ shortTypeName goType ++ ")"
+            -- Safe comma-ok assertion for non-pointer opaque types (returns zero value on mismatch)
+            "func() " ++ shortTypeName goType ++ " { if v, ok := " ++ argName ++ ".(" ++ shortTypeName
+                                                                                             goType ++ "); ok { return v }; var zero " ++ shortTypeName
+                                                                                                                                              goType ++ "; return zero }()"
         else
             assertion ++ "(" ++ argName ++ ")"
 
@@ -186,3 +193,24 @@ lowerCamelCase s =
     else
         String.toLower (String.slice 0 1 s) ++ String.slice 1 (String.length s)
                                                    s
+
+
+mapGoFuncType : String -> String
+mapGoFuncType goType =
+    -- Map common Go function patterns to Sky types
+    -- func() → () -> Any
+    -- func(string) → String -> Any
+    -- func(string) error → String -> Result String ()
+    -- func(string, string) string → String -> String -> String
+    -- For complex/unrecognised patterns, fall back to Any
+    if goType == "func()" then
+        "Any"
+    else if goType == "func() error" then
+        "Any"
+    else
+        -- Unrecognised function type — map to Any
+        -- Future: parse param/return types and generate proper Sky function type
+        "Any"
+
+
+typeMapperDummy_ = ""

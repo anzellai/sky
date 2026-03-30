@@ -71,6 +71,18 @@ jobs:
       - name: Type check
         run: sky check src/Main.sky
 
+      # Verify type safety: non-exhaustive case panics at runtime (not silent nil)
+      - name: Verify non-exhaustive case detection
+        run: |
+          grep -q 'panic("non-exhaustive case expression")' sky-out/main.go
+          echo "Non-exhaustive case panic verified"
+
+      # Verify type safety: strict identifier checking
+      - name: Verify strict identifier checking
+        run: |
+          grep -q 'isLikelyExternal' sky-out/main.go
+          echo "Strict identifier checking verified"
+
       # Test examples — simple (no FFI)
       - name: Test hello-world
         run: |

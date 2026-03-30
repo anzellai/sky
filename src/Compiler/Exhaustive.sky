@@ -54,30 +54,27 @@ isCatchAll pat =
 checkTypeExhaustiveness : AdtRegistry -> Type -> (List Pattern) -> Maybe String
 checkTypeExhaustiveness registry subjectType patterns =
     case subjectType of
-        
         TConst typeName ->
-            if typeName == "Bool" then
-                checkBoolExhaustiveness patterns
-            else
-                case Dict.get typeName registry of
-                    
-                    Just adt ->
-                        checkAdtExhaustiveness adt patterns
-                    
-                    Nothing ->
-                        Nothing
-                    
-                    TApp (TConst typeName) _ ->
-                        case Dict.get typeName registry of
-                            
-                            Just adt ->
-                                checkAdtExhaustiveness adt patterns
-                            
-                            Nothing ->
-                                Nothing
-                            
-                            _ ->
-                                Nothing
+            checkConstTypeExhaustiveness registry typeName patterns
+
+        TApp (TConst typeName) _ ->
+            checkConstTypeExhaustiveness registry typeName patterns
+
+        _ ->
+            Nothing
+
+
+checkConstTypeExhaustiveness : AdtRegistry -> String -> (List Pattern) -> Maybe String
+checkConstTypeExhaustiveness registry typeName patterns =
+    if typeName == "Bool" then
+        checkBoolExhaustiveness patterns
+    else
+        case Dict.get typeName registry of
+            Just adt ->
+                checkAdtExhaustiveness adt patterns
+
+            Nothing ->
+                Nothing
 
 
 checkBoolExhaustiveness : (List Pattern) -> Maybe String
