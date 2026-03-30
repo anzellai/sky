@@ -105,9 +105,6 @@ handleSignIn _ req =
                             
                             Err msg ->
                                 Task.succeed (Server.html (View.signInPage msg))
-                            
-                            Err msg ->
-                                Task.succeed (Server.html (View.signInPage msg))
     else
         Task.succeed (Server.html (View.signInPage ""))
 

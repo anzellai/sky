@@ -8,7 +8,7 @@ import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 
 -- ============================================================
--- Counter — A reusable counter component for Sky.Live
+-- Counter -- A reusable counter component for Sky.Live
 --
 -- Follows the component protocol:
 --   Counter.Counter  (type = module name)

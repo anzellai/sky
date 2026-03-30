@@ -22,5 +22,5 @@ func Counter_View(toMsg any, counter any) any {
 }
 
 func Counter_GetCount(counter any) any {
-	return sky_asMap(counter)["coun"]
+	return sky_asMap(counter)["count"]
 }

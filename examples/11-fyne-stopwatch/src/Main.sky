@@ -18,7 +18,7 @@ setupWindow myApp =
 
 
 showWindow window =
-    case Widget.newLabel "00:00.0 — Built with Sky + Fyne" of
+    case Widget.newLabel "00:00.0 -- Built with Sky + Fyne" of
         
         Ok display ->
             let

@@ -21,7 +21,7 @@ main =
 
 Sky compiles to Go. You get a single binary that runs your fullstack app -- API server, database access, and server-rendered interactive UI -- all from one codebase, one language, one deployment artifact.
 
-The compiler, CLI, formatter, and LSP are all **self-hosted** — written in Sky itself, compiled to a ~4MB native Go binary. Zero Node.js/TypeScript/npm dependencies. The compiler bootstraps through 3+ generations of self-compilation.
+The compiler, CLI, formatter, and LSP are all **self-hosted** -- written in Sky itself, compiled to a ~4MB native Go binary. Zero Node.js/TypeScript/npm dependencies. The compiler bootstraps through 3+ generations of self-compilation.
 
 ### Why Sky exists
 
@@ -99,7 +99,7 @@ my-app/
     Main.sky        -- entry point
 ```
 
-The generated `CLAUDE.md` gives Claude Code full context about Sky syntax, stdlib, FFI, and Sky.Live — so it can write Sky code confidently from day one.
+The generated `CLAUDE.md` gives Claude Code full context about Sky syntax, stdlib, FFI, and Sky.Live -- so it can write Sky code confidently from day one.
 
 ### Docker
 
@@ -428,7 +428,7 @@ See [Pattern Matching](#pattern-matching).
 
 Sky can import any Go package. The compiler auto-generates type-safe, **Task-wrapped** bindings with panic recovery. Users never write FFI code.
 
-**Principle**: all Go interop returns `Task String T` — effects are explicit, panics are caught, nil is handled.
+**Principle**: all Go interop returns `Task String T` -- effects are explicit, panics are caught, nil is handled.
 
 #### Importing Go Packages
 
@@ -444,7 +444,7 @@ main =
         |> Task.perform
 ```
 
-#### Return Type Mapping (Go → Sky)
+#### Return Type Mapping (Go -> Sky)
 
 | Go Return | Sky Return | Notes |
 |-----------|-----------|-------|
@@ -454,8 +454,8 @@ main =
 | `void` (side effect) | `Task String ()` | Wrapped in lazy thunk |
 | `*string`, `*int` | `Maybe String`, `Maybe Int` | Nil-safe |
 | `*sql.DB` | `Db` (opaque handle) | Pointer is transparent |
-| `[]string` | `List String` | Slice → List |
-| `map[string]int` | `Dict String Int` | Map → Dict |
+| `[]string` | `List String` | Slice -> List |
+| `map[string]int` | `Dict String Int` | Map -> Dict |
 
 #### Panic Safety
 
@@ -470,8 +470,8 @@ case Task.perform (riskyGoCall args) of
 
 #### Pointer Safety
 
-- **Primitive pointers** (`*string`, `*int`) → `Maybe T`
-- **Opaque struct pointers** (`*sql.DB`) → `Db` (type name, pointer hidden)
+- **Primitive pointers** (`*string`, `*int`) -> `Maybe T`
+- **Opaque struct pointers** (`*sql.DB`) -> `Db` (type name, pointer hidden)
 
 ```elm
 case getName user of
@@ -496,7 +496,7 @@ Go callbacks are automatically bridged:
 
 ```elm
 Mux.routerHandleFunc router "/api" myHandler
--- Generated Go: bridges func(any) any → func(http.ResponseWriter, *http.Request)
+-- Generated Go: bridges func(any) any -> func(http.ResponseWriter, *http.Request)
 ```
 
 ### TEA Architecture
@@ -873,7 +873,7 @@ Sky.Live config values from `sky.toml` are embedded at compile time, but can be 
 | `SKY_LIVE_SESSION_PATH` | `live.session.path` | _(empty)_ | Store file path (sqlite) |
 | `SKY_LIVE_SESSION_URL` | `live.session.url` | _(empty)_ | Store connection URL (redis, postgresql) |
 | `SKY_LIVE_STATIC_DIR` | `live.static.dir` | _(empty)_ | Path to static assets |
-| `SKY_LIVE_TTL` | — | `30m` | Session TTL (Go duration format) |
+| `SKY_LIVE_TTL` | -- | `30m` | Session TTL (Go duration format) |
 
 ```bash
 # Override via env var
@@ -1244,7 +1244,7 @@ examples/                         -- 15 example projects
 - **Hindley-Milner type inference** -- full inference with unification, explicit annotations optional
 - **Go as backend** -- compiles to readable Go code, leverages Go's toolchain and ecosystem
 - **Auto-generated FFI** -- Go packages introspected at build time; type-safe Task-wrapped wrappers generated automatically
-- **Pointer safety** -- Go `*primitive` → `Maybe T`, opaque struct pointers are transparent handles
+- **Pointer safety** -- Go `*primitive` -> `Maybe T`, opaque struct pointers are transparent handles
 - **~4MB native binary** -- no Node.js, no npm, no TypeScript runtime. Just Go
 
 ---

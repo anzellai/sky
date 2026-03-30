@@ -733,7 +733,7 @@ forgotPasswordSentPage _ =
                         )
                   ]
                   [ text
-                        "This is a demo app — in production, an email would be sent instead."
+                        "This is a demo app -- in production, an email would be sent instead."
                   ]
             , a
                   [ Attr.href "/auth/sign-in"
