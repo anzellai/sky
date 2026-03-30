@@ -1,3 +1,4 @@
+// hash:6-6
 func Ui_Components_Badge(label any, badgeClass any) any {
 	return sky_call(sky_call(sky_htmlEl("span"), []any{sky_call(sky_attrSimple("class"), sky_concat("badge ", badgeClass))}), []any{sky_htmlText(label)})
 }
@@ -8,6 +9,14 @@ func Ui_Components_StatusBadge(status any) any {
 
 func Ui_Components_CategoryBadge(category any) any {
 	return func() any { if sky_asBool(sky_equal(category, "bug")) { return Ui_Components_Badge("Bug", "badge-bug") }; if sky_asBool(sky_equal(category, "improvement")) { return Ui_Components_Badge("Improvement", "badge-improvement") }; return Ui_Components_Badge("Feature", "badge-feature") }()
+}
+
+func Ui_Components_StatCard(label any, value any) any {
+	return sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "stat-card")}), []any{sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "stat-value")}), []any{sky_htmlText(value)}), sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "stat-label")}), []any{sky_htmlText(label)})})
+}
+
+func Ui_Components_EmptyState(message any) any {
+	return sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "empty-state")}), []any{sky_call(sky_call(sky_htmlEl("p"), []any{}), []any{sky_htmlText(message)})})
 }
 
 func Ui_Components_IdeaCard(idea any, userId any) any {

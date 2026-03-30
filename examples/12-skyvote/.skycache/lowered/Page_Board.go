@@ -1,3 +1,4 @@
+// hash:7-11
 func Page_Board_GetUserId(model any) any {
 	return func() any { return func() any { __subject := sky_asMap(model)["currentUser"]; if sky_asSkyMaybe(__subject).SkyName == "Just" { user := sky_asSkyMaybe(__subject).JustValue; _ = user; return Lib_Db_GetField("id", user) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  panic("non-exhaustive case expression") }() }()
 }
@@ -23,5 +24,5 @@ func Page_Board_FilterBtn(filterValue any, label any, activeFilter any) any {
 }
 
 func Page_Board_SortBtn(sortValue any, label any, activeSort any) any {
-	return sky_call(sky_call(sky_htmlEl("button"), []any{sky_call(sky_evtHandler("click"), SetSort(sortValue)), sky_call(sky_attrSimple("class"), func() any { if sky_asBool(sky_equal(activeSort, sortValue)) { return "filter-btn active" }; return "filter-btn" }())}), []any{sky_htmlText(label)})
+	return sky_call3(sky_call(sky_htmlEl("button"), []any{sky_call(sky_evtHandler("click"), SetSort(sortValue)), sky_call(sky_attrSimple("class"), func() any { if sky_asBool(sky_equal(activeSort, sortValue)) { return "filter-btn active" }; return "filter-btn" }())}), []any{sky_htmlText(label)}, 0, 0)
 }

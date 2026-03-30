@@ -1,3 +1,4 @@
+// hash:8-8
 func Lib_Ideas_CreateIdea(title any, description any, category any, authorId any) any {
 	return func() any { id := sky_call(sky_call(sky_stringSlice(0), 12), sky_cryptoSha256(sky_concat(title, sky_concat(":", authorId)))); _ = id; result := Lib_Db_Exec_("INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)", []any{id, title, description, category, authorId}); _ = result; sky_println(sky_concat("[IDEA] Created: ", sky_concat(title, sky_concat(" by ", authorId)))); return func() any { return func() any { __subject := result; if sky_asSkyResult(__subject).SkyName == "Ok" { return SkyOk(id) };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  panic("non-exhaustive case expression") }() }() }()
 }
@@ -27,5 +28,5 @@ func Lib_Ideas_GetVoteCount(ideaId any) any {
 }
 
 func Lib_Ideas_UpdateStatus(ideaId any, newStatus any) any {
-	return func() any { Lib_Db_Exec_("UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?", []any{newStatus, ideaId}); sky_println(sky_concat("[IDEA] Status changed: ", sky_concat(ideaId, sky_concat(" -> ", newStatus)))); return struct{}{} }()
+	return func() any { Lib_Db_Exec_("UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?", []any{newStatus, ideaId}); sky_println(sky_concat("[IDEA] Status changed: ", sky_concat(ideaId, sky_concat(" -> ", newStatus)))); return struct{}{} }()(0, 0)
 }

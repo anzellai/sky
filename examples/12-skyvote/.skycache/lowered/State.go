@@ -1,3 +1,4 @@
+// hash:3-1
 var State_BoardPage = map[string]any{"Tag": 0, "SkyName": "BoardPage"}
 
 var State_DetailPage = map[string]any{"Tag": 1, "SkyName": "DetailPage"}

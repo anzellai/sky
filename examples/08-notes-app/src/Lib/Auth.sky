@@ -130,5 +130,4 @@ verifyEmail token =
                 Err "A database error occurred during verification."
 
 
-authModuleDummy_ = ""
 

@@ -1,3 +1,4 @@
+// hash:5-6
 func Lib_Db_DbRef() any {
 	return sky_refNew(Database_Sql_Open("sqlite", "skyvote.db"))
 }

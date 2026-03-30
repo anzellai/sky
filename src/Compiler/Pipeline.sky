@@ -164,13 +164,13 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         depTypeEnv = Resolver.buildDepTypeEnv entryMod.imports typeCheckModules
         combinedEnv = Env.union depTypeEnv stdlibEnv
         ffiNames = Set.fromList (List.map fst ffiModules)
+        projectRoot = dirOfPath srcRoot
         depDecls =
             List.concat
                 (List.parallelMap
-                    (compileDependencyModule combinedEnv loadedModules ffiNames)
+                    (compileDependencyModule combinedEnv loadedModules ffiNames projectRoot)
                     loadedModules
                 )
-        projectRoot = dirOfPath srcRoot
     in
         compileMultiModuleEntry outDir projectRoot entryMod aliasMap combinedEnv
             depDecls
@@ -1922,40 +1922,64 @@ importAlias imp =
 
 
 compileDependencyModule : Env.TypeEnv -> (List (String, Ast.Module)) -> (Set.Set String) -> (String, Ast.Module) -> List GoDecl
-compileDependencyModule stdlibEnv allModules ffiNames pair =
+compileDependencyModule stdlibEnv allModules ffiNames projectRoot pair =
     let
         modName = fst pair
     in
         if Set.member modName ffiNames then
             compileFfiModuleLight allModules pair
         else
-            compileDependencyModuleCached stdlibEnv allModules pair
+            compileDependencyModuleCached stdlibEnv allModules projectRoot pair
 
 
-compileDependencyModuleCached : Env.TypeEnv -> (List (String, Ast.Module)) -> (String, Ast.Module) -> List GoDecl
-compileDependencyModuleCached stdlibEnv allModules pair =
+compileDependencyModuleCached stdlibEnv allModules projectRoot pair =
     let
         modName = fst pair
         mod = snd pair
-        cachePath = ".skycache/lowered/" ++ String.replace "." "_" modName ++ ".go"
+        cacheDir =
+            if String.isEmpty projectRoot then
+                ".skycache/lowered"
+            else
+                projectRoot ++ "/.skycache/lowered"
+        _ = File.mkdirAll cacheDir
+        cachePath = cacheDir ++ "/" ++ String.replace "." "_" modName ++ ".go"
+        sourceHash = String.fromInt (List.length mod.declarations) ++ "-" ++ String.fromInt (List.length mod.imports)
     in
         case File.readFile cachePath of
-
             Ok cachedCode ->
-                let
-                    prefix = String.replace "." "_" modName
-                    cachedDecl = GoDeclRaw cachedCode
-                    aliases = generateConstructorAliases prefix [ cachedDecl ]
-                    depImportAliases = generateImportAliases mod.imports allModules
-                in
-                    List.concat [ aliases , depImportAliases , [ cachedDecl ] ]
+                if isCacheValid cachedCode sourceHash then
+                    let
+                        prefix = String.replace "." "_" modName
+                        body = stripCacheHeader cachedCode
+                        cachedDecl = GoDeclRaw body
+                        aliases = generateConstructorAliases prefix [ cachedDecl ]
+                        depImportAliases = generateImportAliases mod.imports allModules
+                    in
+                        List.concat [ aliases , depImportAliases , [ cachedDecl ] ]
+                else
+                    compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
 
             Err _ ->
-                compileDependencyModuleAndCache stdlibEnv allModules pair cachePath
+                compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
 
 
-compileDependencyModuleAndCache : Env.TypeEnv -> (List (String, Ast.Module)) -> (String, Ast.Module) -> String -> List GoDecl
-compileDependencyModuleAndCache stdlibEnv allModules pair cachePath =
+isCacheValid cachedCode sourceHash =
+    String.startsWith ("// hash:" ++ sourceHash ++ "\n") cachedCode
+
+
+stripCacheHeader code =
+    case String.split "\n" code of
+        header :: rest ->
+            if String.startsWith "// hash:" header then
+                String.join "\n" rest
+            else
+                code
+
+        _ ->
+            code
+
+
+compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash =
     let
         modName = fst pair
         mod = snd pair
@@ -1987,8 +2011,10 @@ compileDependencyModuleAndCache stdlibEnv allModules pair cachePath =
         filtered = List.filter isExportableDecl (List.append ctorDecls goDecls)
         prefixed = List.map (prefixDecl prefix) filtered
         prefixedCode = String.join "\n\n" (List.map (\d -> Emit.emitDecl d) prefixed)
-        _ = Process.run "mkdir" [ "-p", ".skycache/lowered" ]
-        _ = File.writeFile cachePath prefixedCode
+        cacheContent = "// hash:" ++ sourceHash ++ "\n" ++ prefixedCode
+        cacheWriteDir = dirOfPath cachePath
+        _ = File.mkdirAll cacheWriteDir
+        _ = File.writeFile cachePath cacheContent
         aliases = generateConstructorAliases prefix prefixed
         depImportAliases = generateImportAliases mod.imports allModules
     in

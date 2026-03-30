@@ -95,9 +95,7 @@ getUserById userId =
         List.head userRows
 
 
-endOfModule_ =
     0
 
 
-endOfModule2_ =
     0

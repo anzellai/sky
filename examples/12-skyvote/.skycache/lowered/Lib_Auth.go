@@ -1,3 +1,4 @@
+// hash:5-10
 func Lib_Auth_HashPassword(password any) any {
 	return func() any { salted := sky_concat("skyvote-salt-v1:", password); _ = salted; hash := sky_call(sky_resultWithDefault(""), Crypto_Sha256_Sum256(sky_stringToBytes(salted))); _ = hash; return sky_call(sky_resultWithDefault(""), Encoding_Hex_EncodeToString(hash)) }()
 }
@@ -15,5 +16,5 @@ func Lib_Auth_AuthenticateUser(email any, password any) any {
 }
 
 func Lib_Auth_GetUserById(userId any) any {
-	return func() any { rows := Lib_Db_QueryRows("SELECT id, username, email FROM users WHERE id = ? LIMIT 1", []any{userId}); _ = rows; userRows := sky_call(sky_resultWithDefault([]any{}), rows); _ = userRows; return sky_listHead(userRows) }()
+	return func() any { rows := Lib_Db_QueryRows("SELECT id, username, email FROM users WHERE id = ? LIMIT 1", []any{userId}); _ = rows; userRows := sky_call(sky_resultWithDefault([]any{}), rows); _ = userRows; return sky_listHead(userRows) }()(0, 0)
 }

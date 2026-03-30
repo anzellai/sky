@@ -14,7 +14,7 @@ import Lib.Ideas as Ideas
 
 handleSignInSuccess user model =
     let
-        ideas = Result.withDefault [] (Ideas.getAllIdeas ())
+        ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
         _ = println ("[AUTH] Sign-in: " ++ Db.getField "email" user)
     in
         ({ model
@@ -43,7 +43,7 @@ handleSignUpSuccess userId model =
 
         Just user ->
             let
-                ideas = Result.withDefault [] (Ideas.getAllIdeas ())
+                ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
                 _ = println ("[AUTH] Sign-up success: " ++ userId)
             in
                 ({ model

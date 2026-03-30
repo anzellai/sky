@@ -36,9 +36,7 @@ queryRows query args =
 getField field row = Maybe.withDefault "" (Dict.get field row)
 
 
-endOfModule_ =
     0
 
 
-endOfModule2_ =
     0

@@ -160,9 +160,7 @@ updateStatus ideaId newStatus =
         ()
 
 
-endOfModule_ =
     0
 
 
-endOfModule2_ =
     0

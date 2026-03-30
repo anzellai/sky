@@ -7,9 +7,9 @@ import Std.Live.Events exposing (onClick, onInput, onSubmit)
 import State exposing (..)
 import Ui.Layout as Layout
 
--- ══════════════════════════════════════════════════════
+-- ======================================================
 -- HELPERS
--- ══════════════════════════════════════════════════════
+-- ======================================================
 viewAuthError authErr =
     if authErr == "" then
         text ""
@@ -17,9 +17,9 @@ viewAuthError authErr =
         div [ class "notification notification-error" ] [ text authErr ]
 
 
--- ══════════════════════════════════════════════════════
+-- ======================================================
 -- SIGN UP CONTENT
--- ══════════════════════════════════════════════════════
+-- ======================================================
 signUpContent model =
     div [ class "auth-container" ]
         [ div [ class "auth-card" ]
@@ -76,9 +76,9 @@ viewSignUp model =
     Layout.page model (signUpContent model)
 
 
--- ══════════════════════════════════════════════════════
+-- ======================================================
 -- SIGN IN CONTENT
--- ══════════════════════════════════════════════════════
+-- ======================================================
 signInContent model =
     div [ class "auth-container" ]
         [ div [ class "auth-card" ]
