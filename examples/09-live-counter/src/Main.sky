@@ -37,14 +37,12 @@ type Msg
 -- ══════════════════════════════════════════════════════
 -- INIT
 -- ══════════════════════════════════════════════════════
-init : a -> (Model, Cmd Msg)
 init _req = ({ page = CounterPage , count = 0 }, Cmd.none)
 
 
 -- ══════════════════════════════════════════════════════
 -- UPDATE
 -- ══════════════════════════════════════════════════════
-update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
         
@@ -67,7 +65,6 @@ update msg model =
 -- ══════════════════════════════════════════════════════
 -- SUBSCRIPTIONS — auto-increment every second on CounterPage
 -- ══════════════════════════════════════════════════════
-subscriptions : Model -> Sub Msg
 subscriptions model =
     case model.page of
         
@@ -81,7 +78,6 @@ subscriptions model =
 -- ══════════════════════════════════════════════════════
 -- VIEW
 -- ══════════════════════════════════════════════════════
-view : Model -> VNode
 view model =
     div []
         [ styleNode [] pageStyles
@@ -98,7 +94,6 @@ view model =
         ]
 
 
-viewPage : Model -> VNode
 viewPage model =
     case model.page of
         
@@ -109,7 +104,6 @@ viewPage model =
             viewAbout
 
 
-viewCounter : Model -> VNode
 viewCounter model =
     div [ class "counter" ]
         [ h1 [] [ text "Sky.Live Counter" ]

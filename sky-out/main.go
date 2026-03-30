@@ -5161,7 +5161,7 @@ func Compiler_Infer_InferExpr(counter any, registry any, env any, expr any) any 
 }
 
 func Compiler_Infer_InferIdentifier(counter any, env any, name any) any {
-	return func() any { return func() any { __subject := Compiler_Env_Lookup(name, env); if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return func() any { if sky_asBool(Compiler_Infer_IsLikelyExternal(name)) { return SkyOk(map[string]any{"substitution": emptySub, "type_": freshVar(counter, SkyNothing())}) }; return SkyErr(sky_concat("Unknown identifier: ", name)) }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := Compiler_Env_Lookup(name, env); if sky_asSkyMaybe(__subject).SkyName == "Just" { scheme := sky_asSkyMaybe(__subject).JustValue; _ = scheme; return SkyOk(map[string]any{"substitution": emptySub, "type_": instantiate(counter, scheme)}) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return SkyOk(map[string]any{"substitution": emptySub, "type_": freshVar(counter, SkyNothing())}) };  panic("non-exhaustive case expression") }() }()
 }
 
 func Compiler_Infer_IsLikelyExternal(name any) any {
@@ -5981,15 +5981,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {

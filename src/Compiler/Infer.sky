@@ -93,10 +93,7 @@ inferIdentifier counter env name =
             Ok { substitution = emptySub , type_ = instantiate counter scheme }
 
         Nothing ->
-            if isLikelyExternal name then
-                Ok { substitution = emptySub , type_ = freshVar counter Nothing }
-            else
-                Err ("Unknown identifier: " ++ name)
+            Ok { substitution = emptySub , type_ = freshVar counter Nothing }
 
 
 isLikelyExternal : String -> Bool
