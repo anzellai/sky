@@ -77,55 +77,49 @@ jobs:
       # Verify type safety features in generated code
       - name: Verify type safety
         run: |
-          rm -rf .skycache sky-out
-          sky build src/Main.sky
           grep -q 'panic("non-exhaustive case expression")' sky-out/main.go && echo "Non-exhaustive panic: OK"
-          # Save compiler binary before example tests overwrite sky-out/
-          cp -f sky-out/app /usr/local/bin/sky
 
-      # Test examples — simple (no FFI)
-      # NOTE: Each example build overwrites sky-out/. The compiler is
-      # saved in /usr/local/bin/sky and must NOT be read from sky-out/app.
+      # Test examples — each builds in its own directory so sky-out/
+      # at repo root (the compiler) is never overwritten.
       - name: Test hello-world
         run: |
-          rm -rf sky-out
-          sky build examples/01-hello-world/src/Main.sky
+          cd examples/01-hello-world
+          sky build src/Main.sky
           sky-out/app | grep "Hello from Sky!"
 
       - name: Test json
         run: |
-          rm -rf sky-out
-          sky build examples/06-json/src/Main.sky
+          cd examples/06-json
+          sky build src/Main.sky
           sky-out/app | grep "Done!"
 
       - name: Test local-pkg
         run: |
-          rm -rf sky-out
-          sky build examples/04-local-pkg/src/Main.sky
+          cd examples/04-local-pkg
+          sky build src/Main.sky
           sky-out/app | grep "Calculation result"
 
       - name: Test task-demo
         run: |
-          rm -rf sky-out
-          sky build examples/14-task-demo/src/Main.sky
+          cd examples/14-task-demo
+          sky build src/Main.sky
           sky-out/app | grep "Hello, Sky!"
 
-      # Test examples — with Go FFI (requires .skycache bindings)
-      # These test sky add + build together
+      # Test examples — with Go FFI
       - name: Test go-stdlib (FFI)
         run: |
-          rm -rf sky-out .skycache
+          cd examples/02-go-stdlib
           sky add crypto/sha256
           sky add encoding/hex
           sky add net/http
           sky add time
-          sky build examples/02-go-stdlib/src/Main.sky
+          sky build src/Main.sky
           sky-out/app | grep "SHA256"
 
       - name: Test live-component
         run: |
-          rm -rf sky-out
-          sky build examples/10-live-component/src/Main.sky
+          cd examples/10-live-component
+          sky build src/Main.sky
 
       # Test Go FFI toolchain
       - name: Test sky add (Go stdlib)

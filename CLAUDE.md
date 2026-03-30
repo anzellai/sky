@@ -62,16 +62,29 @@ stdlib-go/                        -- Go runtime implementations for stdlib modul
 examples/                         -- 15 example projects
 ```
 
+## Building Examples
+
+**NEVER run `sky build` for examples from the repo root.** Always `cd` into the example directory first:
+
+```bash
+# CORRECT — builds into examples/01-hello-world/sky-out/
+cd examples/01-hello-world && sky build src/Main.sky
+
+# WRONG — overwrites the compiler in sky-out/
+sky build examples/01-hello-world/src/Main.sky
+```
+
+The repo root `sky-out/` directory contains the **compiler binary**. Running `sky build` from the root for an example will overwrite it with the example's binary (e.g. an HTTP server), breaking the compiler.
+
 ## Git Push / Release Checklist
 
 Before pushing to main or creating a release tag:
 
-1. **Rebuild the compiler**: `rm -rf .skycache && sky build src/Main.sky` — ensure `sky-out/app` is the compiler binary, NOT an example build
-2. **Verify**: `sky-out/app --version` must print `sky dev` or a version string, NOT start a server
+1. **Rebuild the compiler**: `rm -rf .skycache && sky build src/Main.sky`
+2. **Verify**: `sky-out/app --version` must print `sky dev` or a version, NOT start a server
 3. **Bootstrap**: Run `sky build src/Main.sky` twice to verify self-hosting
-4. **Test examples**: Build at least `examples/01-hello-world` and `examples/06-json`
+4. **Test examples**: `cd examples/01-hello-world && sky build src/Main.sky` (from the example dir)
 5. **CI check**: Ensure `.github/workflows/ci.yml` matches the current build steps
-6. **Never commit example builds to sky-out/**: The `sky-out/` directory must always contain the compiler, not the last example built
 
 ## Shell Commands
 
