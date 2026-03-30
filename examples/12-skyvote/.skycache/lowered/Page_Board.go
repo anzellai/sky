@@ -24,5 +24,5 @@ func Page_Board_FilterBtn(filterValue any, label any, activeFilter any) any {
 }
 
 func Page_Board_SortBtn(sortValue any, label any, activeSort any) any {
-	return sky_call3(sky_call(sky_htmlEl("button"), []any{sky_call(sky_evtHandler("click"), SetSort(sortValue)), sky_call(sky_attrSimple("class"), func() any { if sky_asBool(sky_equal(activeSort, sortValue)) { return "filter-btn active" }; return "filter-btn" }())}), []any{sky_htmlText(label)}, 0, 0)
+	return sky_call(sky_call(sky_htmlEl("button"), []any{sky_call(sky_evtHandler("click"), SetSort(sortValue)), sky_call(sky_attrSimple("class"), func() any { if sky_asBool(sky_equal(activeSort, sortValue)) { return "filter-btn active" }; return "filter-btn" }())}), []any{sky_htmlText(label)})
 }

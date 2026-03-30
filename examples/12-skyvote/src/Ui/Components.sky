@@ -6,6 +6,7 @@ import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
 import Lib.Db as Db
+import Lib.Ideas as Ideas
 
 -- ======================================================
 -- BADGES
@@ -66,9 +67,9 @@ ideaCard idea userId =
         authorName = Db.getField "author_name" idea
         isVoted =
             if userId == "" then
-                ""
+                False
             else
-                ""
+                Ideas.hasVoted ideaId userId
     in
         div [ class "idea-card" ]
             [ div []
@@ -95,3 +96,4 @@ ideaCard idea userId =
                         ]
                   ]
             ]
+

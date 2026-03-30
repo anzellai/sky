@@ -16,5 +16,5 @@ func Lib_Auth_AuthenticateUser(email any, password any) any {
 }
 
 func Lib_Auth_GetUserById(userId any) any {
-	return func() any { rows := Lib_Db_QueryRows("SELECT id, username, email FROM users WHERE id = ? LIMIT 1", []any{userId}); _ = rows; userRows := sky_call(sky_resultWithDefault([]any{}), rows); _ = userRows; return sky_listHead(userRows) }()(0, 0)
+	return func() any { rows := Lib_Db_QueryRows("SELECT id, username, email FROM users WHERE id = ? LIMIT 1", []any{userId}); _ = rows; userRows := sky_call(sky_resultWithDefault([]any{}), rows); _ = userRows; return sky_listHead(userRows) }()
 }

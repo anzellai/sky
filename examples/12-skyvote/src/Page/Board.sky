@@ -125,7 +125,5 @@ sortBtn sortValue label activeSort =
         [ text label ]
 
 
-    0
 
 
-    0

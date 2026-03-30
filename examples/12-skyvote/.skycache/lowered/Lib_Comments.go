@@ -4,5 +4,5 @@ func Lib_Comments_CreateComment(ideaId any, authorId any, content any) any {
 }
 
 func Lib_Comments_GetComments(ideaId any) any {
-	return sky_call(sky_call(sky_call(sky_resultWithDefault([]any{}), Lib_Db_QueryRows("SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC", []any{ideaId})), 0), 0)
+	return sky_call(sky_resultWithDefault([]any{}), Lib_Db_QueryRows("SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC", []any{ideaId}))
 }

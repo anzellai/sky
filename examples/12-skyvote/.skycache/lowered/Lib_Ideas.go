@@ -28,5 +28,5 @@ func Lib_Ideas_GetVoteCount(ideaId any) any {
 }
 
 func Lib_Ideas_UpdateStatus(ideaId any, newStatus any) any {
-	return func() any { Lib_Db_Exec_("UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?", []any{newStatus, ideaId}); sky_println(sky_concat("[IDEA] Status changed: ", sky_concat(ideaId, sky_concat(" -> ", newStatus)))); return struct{}{} }()(0, 0)
+	return func() any { Lib_Db_Exec_("UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?", []any{newStatus, ideaId}); sky_println(sky_concat("[IDEA] Status changed: ", sky_concat(ideaId, sky_concat(" -> ", newStatus)))); return struct{}{} }()
 }

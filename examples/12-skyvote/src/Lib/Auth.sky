@@ -95,7 +95,5 @@ getUserById userId =
         List.head userRows
 
 
-    0
 
 
-    0

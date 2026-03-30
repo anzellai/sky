@@ -34,8 +34,8 @@ getIdeas sortBy filterCategory searchQuery =
         whereClause =
             if filterCategory == "all" then
                 if searchQuery == "" then
-                    ""
-                else
+                ""
+            else
                     " WHERE (i.title LIKE '%" ++ searchQuery ++ "%' OR i.description LIKE '%" ++ searchQuery ++ "%')"
             else if searchQuery == "" then
                 " WHERE i.category = '" ++ filterCategory ++ "'"
@@ -160,7 +160,5 @@ updateStatus ideaId newStatus =
         ()
 
 
-    0
 
 
-    0

@@ -4299,7 +4299,7 @@ func Compiler_Pipeline_CompileDependencyModule(stdlibEnv any, allModules any, ff
 }
 
 func Compiler_Pipeline_CompileDependencyModuleCached(stdlibEnv any, allModules any, projectRoot any, pair any) any {
-	return func() any { modName := sky_fst(pair); _ = modName; mod := sky_snd(pair); _ = mod; cacheDir := func() any { if sky_asBool(sky_stringIsEmpty(projectRoot)) { return ".skycache/lowered" }; return sky_concat(projectRoot, "/.skycache/lowered") }(); _ = cacheDir; sky_fileMkdirAll(cacheDir); cachePath := sky_concat(cacheDir, sky_concat("/", sky_concat(sky_call(sky_call(sky_stringReplace("."), "_"), modName), ".go"))); _ = cachePath; sourceHash := sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(mod)["declarations"])), sky_concat("-", sky_stringFromInt(sky_listLength(sky_asMap(mod)["imports"])))); _ = sourceHash; return func() any { return func() any { __subject := sky_fileRead(cachePath); if sky_asSkyResult(__subject).SkyName == "Ok" { cachedCode := sky_asSkyResult(__subject).OkValue; _ = cachedCode; return func() any { if sky_asBool(Compiler_Pipeline_IsCacheValid(cachedCode, sourceHash)) { return func() any { prefix := sky_call(sky_call(sky_stringReplace("."), "_"), modName); _ = prefix; body := Compiler_Pipeline_StripCacheHeader(cachedCode); _ = body; cachedDecl := GoDeclRaw(body); _ = cachedDecl; aliases := Compiler_Pipeline_GenerateConstructorAliases(prefix, []any{cachedDecl}); _ = aliases; depImportAliases := Compiler_Pipeline_GenerateImportAliases(sky_asMap(mod)["imports"], allModules); _ = depImportAliases; return sky_listConcat([]any{aliases, depImportAliases, []any{cachedDecl}}) }() }; return Compiler_Pipeline_CompileDependencyModuleAndCache(stdlibEnv, allModules, pair, cachePath, sourceHash) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Pipeline_CompileDependencyModuleAndCache(stdlibEnv, allModules, pair, cachePath, sourceHash) };  panic("non-exhaustive case expression") }() }() }()
+	return func() any { modName := sky_fst(pair); _ = modName; mod := sky_snd(pair); _ = mod; cacheDir := func() any { if sky_asBool(sky_stringIsEmpty(projectRoot)) { return ".skycache/lowered" }; return sky_concat(projectRoot, "/.skycache/lowered") }(); _ = cacheDir; sky_fileMkdirAll(cacheDir); cachePath := sky_concat(cacheDir, sky_concat("/", sky_concat(sky_call(sky_call(sky_stringReplace("."), "_"), modName), ".go"))); _ = cachePath; sourceHash := sky_concat(sky_stringFromInt(sky_listLength(sky_asMap(mod)["declarations"])), sky_concat("-", sky_stringFromInt(sky_listLength(sky_asMap(mod)["imports"])))); _ = sourceHash; return Compiler_Pipeline_CompileDependencyModuleAndCache(stdlibEnv, allModules, pair, cachePath, sourceHash) }()
 }
 
 func Compiler_Pipeline_IsCacheValid(cachedCode any, sourceHash any) any {
@@ -6121,15 +6121,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 1, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -7377,7 +7377,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 0, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Ffi_WrapperGen_GenerateWrapperFile(safePkg any, pkgName any, funcs any, methods any, fieldAccessors any) any {

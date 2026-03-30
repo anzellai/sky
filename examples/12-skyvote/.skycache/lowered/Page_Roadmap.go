@@ -8,5 +8,5 @@ func Page_Roadmap_RoadmapColumn(title any, subtitle any, items any) any {
 }
 
 func Page_Roadmap_RoadmapItem(idea any) any {
-	return func() any { ideaId := Lib_Db_GetField("id", idea); _ = ideaId; voteCount := Lib_Db_GetField("vote_count", idea); _ = voteCount; return sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "roadmap-item")}), []any{sky_call(sky_call(sky_htmlEl("button"), []any{sky_call(sky_evtHandler("click"), ViewIdea(ideaId)), sky_call(sky_attrSimple("class"), "roadmap-item-title")}), []any{sky_htmlText(Lib_Db_GetField("title", idea))}), sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "roadmap-item-votes")}), []any{sky_htmlText(sky_concat(voteCount, " votes"))})}) }()(0, 0)
+	return func() any { ideaId := Lib_Db_GetField("id", idea); _ = ideaId; voteCount := Lib_Db_GetField("vote_count", idea); _ = voteCount; return sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "roadmap-item")}), []any{sky_call(sky_call(sky_htmlEl("button"), []any{sky_call(sky_evtHandler("click"), ViewIdea(ideaId)), sky_call(sky_attrSimple("class"), "roadmap-item-title")}), []any{sky_htmlText(Lib_Db_GetField("title", idea))}), sky_call(sky_call(sky_htmlEl("div"), []any{sky_call(sky_attrSimple("class"), "roadmap-item-votes")}), []any{sky_htmlText(sky_concat(voteCount, " votes"))})}) }()
 }

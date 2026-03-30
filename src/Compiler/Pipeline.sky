@@ -1945,22 +1945,7 @@ compileDependencyModuleCached stdlibEnv allModules projectRoot pair =
         cachePath = cacheDir ++ "/" ++ String.replace "." "_" modName ++ ".go"
         sourceHash = String.fromInt (List.length mod.declarations) ++ "-" ++ String.fromInt (List.length mod.imports)
     in
-        case File.readFile cachePath of
-            Ok cachedCode ->
-                if isCacheValid cachedCode sourceHash then
-                    let
-                        prefix = String.replace "." "_" modName
-                        body = stripCacheHeader cachedCode
-                        cachedDecl = GoDeclRaw body
-                        aliases = generateConstructorAliases prefix [ cachedDecl ]
-                        depImportAliases = generateImportAliases mod.imports allModules
-                    in
-                        List.concat [ aliases , depImportAliases , [ cachedDecl ] ]
-                else
-                    compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
-
-            Err _ ->
-                compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
+        compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
 
 
 isCacheValid cachedCode sourceHash =

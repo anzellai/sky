@@ -19,7 +19,7 @@ viewAbout model =
                         "This application is a production-grade example built with "
                   , strong [] [ text "Sky" ]
                   , text
-                        " — an Elm-inspired programming language that compiles to Go."
+                        " -- an Elm-inspired programming language that compiles to Go."
                   ]
             , h2 [] [ text "Built with Sky" ]
             , p []
@@ -30,27 +30,27 @@ viewAbout model =
                   [ li []
                         [ strong [] [ text "Sky.Live" ]
                         , text
-                              " — Server-driven real-time UI. No client-side JavaScript framework needed. The server holds all state and sends minimal HTML patches over SSE."
+                              " -- Server-driven real-time UI. No client-side JavaScript framework needed. The server holds all state and sends minimal HTML patches over SSE."
                         ]
                   , li []
                         [ strong [] [ text "Type-safe HTML & CSS" ]
                         , text
-                              " — All markup and styles are generated with Sky's type-safe builders. No templates, no CSS files."
+                              " -- All markup and styles are generated with Sky's type-safe builders. No templates, no CSS files."
                         ]
                   , li []
                         [ strong [] [ text "SQLite database" ]
                         , text
-                              " — Persistent data storage via Go's database/sql with the modernc SQLite driver. Zero external dependencies."
+                              " -- Persistent data storage via Go's database/sql with the modernc SQLite driver. Zero external dependencies."
                         ]
                   , li []
                         [ strong [] [ text "The Elm Architecture (TEA)" ]
                         , text
-                              " — Predictable state management with Model, Msg, init, update, and view."
+                              " -- Predictable state management with Model, Msg, init, update, and view."
                         ]
                   , li []
                         [ strong [] [ text "Go interop" ]
                         , text
-                              " — Seamless access to Go's standard library and third-party packages through auto-generated bindings."
+                              " -- Seamless access to Go's standard library and third-party packages through auto-generated bindings."
                         ]
                   ]
             , h2 [] [ text "Architecture" ]
@@ -60,24 +60,24 @@ viewAbout model =
             , ul []
                   [ li []
                         [ codeNode [] [ text "Main.sky" ]
-                        , text " — App entry point, routing, state management"
+                        , text " -- App entry point, routing, state management"
                         ]
                   , li []
                         [ codeNode [] [ text "Page/*" ]
-                        , text " — View modules for each page"
+                        , text " -- View modules for each page"
                         ]
                   , li []
                         [ codeNode [] [ text "Lib/*" ]
-                        , text " — Database, auth, and business logic"
+                        , text " -- Database, auth, and business logic"
                         ]
                   , li []
                         [ codeNode [] [ text "Ui/*" ]
-                        , text " — Shared layout, styles, and components"
+                        , text " -- Shared layout, styles, and components"
                         ]
                   ]
             , p []
                   [ text
-                        "The entire application compiles to a single Go binary with an embedded SQLite database. Deploy it anywhere — it is just one file."
+                        "The entire application compiles to a single Go binary with an embedded SQLite database. Deploy it anywhere -- it is just one file."
                   ]
             , h2 [] [ text "How Voting Works" ]
             , ul []
@@ -86,7 +86,7 @@ viewAbout model =
                         ]
                   , li []
                         [ text
-                              "Each user gets one vote per idea — click to vote, click again to unvote"
+                              "Each user gets one vote per idea -- click to vote, click again to unvote"
                         ]
                   , li []
                         [ text
@@ -112,7 +112,5 @@ viewAbout model =
         )
 
 
-    0
 
 
-    0

@@ -58,7 +58,7 @@ init _req =
 
 
 -- ======================================================
--- APP (must be early — parser drops last functions)
+-- APP (must be early -- parser drops last functions)
 -- ======================================================
 main =
     app
@@ -380,4 +380,3 @@ handleSubmitIdea model =
             ({ model | page = SignInPage }, Cmd.none)
 
 
-    0
