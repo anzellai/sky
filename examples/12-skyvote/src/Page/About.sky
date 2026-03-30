@@ -7,8 +7,7 @@ import State exposing (..)
 import Ui.Layout as Layout
 
 viewAbout model =
-    Layout.page model
-        (
+    Layout.page model (
         div [ class "content-page" ]
             [ h1 [] [ text "About SkyVote" ]
             , p []
@@ -111,3 +110,11 @@ viewAbout model =
                   ]
             ]
         )
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0

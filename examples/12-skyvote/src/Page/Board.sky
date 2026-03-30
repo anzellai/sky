@@ -46,8 +46,7 @@ viewBoard model =
     let
         userId = getUserId model
     in
-        Layout.page model
-            (
+        Layout.page model (
             div []
                 [ div [ class "board-header" ]
                       [ div []
@@ -124,3 +123,11 @@ sortBtn sortValue label activeSort =
               )
         ]
         [ text label ]
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0

@@ -93,3 +93,11 @@ getUserById userId =
         userRows = Result.withDefault [] rows
     in
         List.head userRows
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0

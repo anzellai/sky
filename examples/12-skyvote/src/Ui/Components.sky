@@ -38,6 +38,22 @@ categoryBadge category =
 
 
 -- ══════════════════════════════════════════════════════
+-- STAT CARD
+-- ══════════════════════════════════════════════════════
+statCard label value =
+    div [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text value ]
+        , div [ class "stat-label" ] [ text label ]
+        ]
+
+
+-- ══════════════════════════════════════════════════════
+-- EMPTY STATE
+-- ══════════════════════════════════════════════════════
+emptyState message = div [ class "empty-state" ] [ p [] [ text message ] ]
+
+
+-- ══════════════════════════════════════════════════════
 -- IDEA CARD
 -- ══════════════════════════════════════════════════════
 ideaCard idea userId =
@@ -79,19 +95,3 @@ ideaCard idea userId =
                         ]
                   ]
             ]
-
-
--- ══════════════════════════════════════════════════════
--- STAT CARD
--- ══════════════════════════════════════════════════════
-statCard label value =
-    div [ class "stat-card" ]
-        [ div [ class "stat-value" ] [ text value ]
-        , div [ class "stat-label" ] [ text label ]
-        ]
-
-
--- ══════════════════════════════════════════════════════
--- EMPTY STATE
--- ══════════════════════════════════════════════════════
-emptyState message = div [ class "empty-state" ] [ p [] [ text message ] ]

@@ -251,6 +251,11 @@ func readWrapperContent(outDir string) string {
 			sb.Write(data)
 		}
 	}
+	// Also read live_init.go if present — its references must survive DCE
+	liveInit := filepath.Join(outDir, "live_init.go")
+	if data, err := os.ReadFile(liveInit); err == nil {
+		sb.Write(data)
+	}
 	return sb.String()
 }
 

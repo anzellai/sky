@@ -11,6 +11,16 @@ import Ui.Styles exposing (globalStyles)
 import Lib.Db as Db
 
 -- ══════════════════════════════════════════════════════
+-- NOTIFICATION
+-- ══════════════════════════════════════════════════════
+viewNotification model =
+    if model.notification == "" then
+        text ""
+    else
+        div [ class "notification" ] [ text model.notification ]
+
+
+-- ══════════════════════════════════════════════════════
 -- PAGE LAYOUT
 -- ══════════════════════════════════════════════════════
 page model content =
@@ -23,10 +33,10 @@ page model content =
 
 pageWithAuth model content =
     case model.currentUser of
-        
+
         Just _ ->
             page model content
-        
+
         Nothing ->
             page model
                 (
@@ -77,7 +87,7 @@ viewHeader model =
 
 viewAuthNav model =
     case model.currentUser of
-        
+
         Just user ->
             span [ class "auth-nav" ]
                 [ a
@@ -91,7 +101,7 @@ viewAuthNav model =
                 , button [ onClick DoSignOut , class "btn btn-ghost btn-sm" ]
                       [ text "Sign out" ]
                 ]
-        
+
         Nothing ->
             span [ class "auth-nav-anon" ]
                 [ a
@@ -107,13 +117,3 @@ viewAuthNav model =
                       ]
                       [ text "Sign up" ]
                 ]
-
-
--- ══════════════════════════════════════════════════════
--- NOTIFICATION
--- ══════════════════════════════════════════════════════
-viewNotification model =
-    if model.notification == "" then
-        text ""
-    else
-        div [ class "notification" ] [ text model.notification ]

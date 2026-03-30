@@ -128,3 +128,7 @@ verifyEmail token =
             
             Err _ ->
                 Err "A database error occurred during verification."
+
+
+authModuleDummy_ = ""
+

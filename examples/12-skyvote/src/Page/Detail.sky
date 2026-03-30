@@ -153,3 +153,11 @@ viewCommentFormAuth model =
         , button [ type_ "submit" , class "btn btn-primary btn-sm" ]
               [ text "Post Comment" ]
         ]
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0

@@ -16,11 +16,9 @@ main =
                            Task.succeed
                                (greeting ++ " Task is the effect boundary.")
                        )
-        result = Task.perform pipeline
-        _ =
-            case result of
-                Ok val -> println val
-                Err e -> println ("Task error: " ++ e)
+        successResult =
+            Task.run pipeline
+        _ = printResult "Success" successResult
         failResult =
             Task.run
                 (
@@ -28,10 +26,13 @@ main =
                     |> Task.andThen (\_ -> Task.succeed "unreachable")
                 )
     in
-        case failResult of
-            
-            Ok _ ->
-                println "ERROR: should have failed"
-            
-            Err e ->
-                println ("Error caught: " ++ e)
+        printResult "Fail" failResult
+
+
+printResult label result =
+    case result of
+        Ok val ->
+            println (label ++ ": " ++ val)
+
+        Err e ->
+            println (label ++ " error: " ++ e)

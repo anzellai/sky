@@ -47,15 +47,29 @@ init _req =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        
+
         Navigate page ->
             ({ model | page = page }, Cmd.none)
-        
+
         UpdateTitle t ->
             ({ model | title = t }, Cmd.none)
-        
+
         _ ->
             (model, Cmd.none)
+
+
+-- ══════════════════════════════════════════════════════
+-- APP
+-- ══════════════════════════════════════════════════════
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = \_ -> ()
+        , routes = [ route "/" MainPage ]
+        , notFound = MainPage
+        }
 
 
 -- ══════════════════════════════════════════════════════
@@ -135,17 +149,3 @@ pageStyles =
               , property "margin-top" "1rem"
               ]
         ]
-
-
--- ══════════════════════════════════════════════════════
--- APP
--- ══════════════════════════════════════════════════════
-main =
-    app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = \_ -> ()
-        , routes = [ route "/" MainPage ]
-        , notFound = MainPage
-        }

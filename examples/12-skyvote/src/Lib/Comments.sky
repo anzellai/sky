@@ -28,3 +28,11 @@ getComments ideaId =
             "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
             [ ideaId ]
         )
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0

@@ -24,6 +24,7 @@ import Page.Submit as Submit
 import Page.AuthPage as PageAuth
 import Page.About as About
 import Page.Roadmap as Roadmap
+import Lib.AuthHandlers as AuthHandlers
 
 -- ══════════════════════════════════════════════════════
 -- INIT
@@ -57,7 +58,144 @@ init _req =
 
 
 -- ══════════════════════════════════════════════════════
--- HELPERS (defined before update so they are in scope)
+-- APP (must be early — parser drops last functions)
+-- ══════════════════════════════════════════════════════
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes =
+            [ route "/" BoardPage
+            , route "/submit" SubmitPage
+            , route "/auth/signin" SignInPage
+            , route "/auth/signup" SignUpPage
+            , route "/about" AboutPage
+            , route "/roadmap" RoadmapPage
+            ]
+        , notFound = NotFoundPage
+        }
+
+
+-- ══════════════════════════════════════════════════════
+-- VIEW
+-- ══════════════════════════════════════════════════════
+view : Model -> VNode
+view model =
+    case model.page of
+
+        BoardPage ->
+            Board.viewBoard model
+
+        DetailPage ->
+            Detail.viewDetail model
+
+        SubmitPage ->
+            Submit.viewSubmit model
+
+        SignInPage ->
+            PageAuth.viewSignIn model
+
+        SignUpPage ->
+            PageAuth.viewSignUp model
+
+        AboutPage ->
+            About.viewAbout model
+
+        RoadmapPage ->
+            Roadmap.viewRoadmap model
+
+        NotFoundPage ->
+            Board.viewBoard model
+
+
+-- ══════════════════════════════════════════════════════
+-- SUBSCRIPTIONS
+-- ══════════════════════════════════════════════════════
+subscriptions model =
+    case model.page of
+
+        BoardPage ->
+            Time.every 10000 Tick
+
+        DetailPage ->
+            Time.every 10000 Tick
+
+        _ ->
+            Sub.none
+
+
+-- ══════════════════════════════════════════════════════
+-- UPDATE
+-- ══════════════════════════════════════════════════════
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ({ model | page = page , notification = "" , authError = "" }, Cmd.none)
+
+        SetSort sortBy ->
+            handleSetSort sortBy model
+
+        SetFilter category ->
+            handleSetFilter category model
+
+        SetSearch query ->
+            handleSetSearch query model
+
+        ToggleVote ideaId ->
+            handleToggleVote ideaId model
+
+        ViewIdea ideaId ->
+            handleViewIdea ideaId model
+
+        UpdateComment content ->
+            ({ model | newComment = content }, Cmd.none)
+
+        SubmitComment ->
+            handleSubmitComment model
+
+        BackToBoard ->
+            handleBackToBoard model
+
+        UpdateTitle t ->
+            ({ model | submitTitle = t }, Cmd.none)
+
+        UpdateDescription d ->
+            ({ model | submitDescription = d }, Cmd.none)
+
+        UpdateCategory c ->
+            ({ model | submitCategory = c }, Cmd.none)
+
+        SubmitIdea ->
+            handleSubmitIdea model
+
+        UpdateEmail e ->
+            ({ model | authEmail = e }, Cmd.none)
+
+        UpdateUsername u ->
+            ({ model | authUsername = u }, Cmd.none)
+
+        UpdatePassword p ->
+            ({ model | authPassword = p }, Cmd.none)
+
+        DoSignIn ->
+            AuthHandlers.handleSignIn model
+
+        DoSignUp ->
+            AuthHandlers.handleSignUp model
+
+        DoSignOut ->
+            AuthHandlers.handleSignOut model
+
+        Tick ->
+            refreshCurrentView model
+
+
+-- ══════════════════════════════════════════════════════
+-- HELPERS
 -- ══════════════════════════════════════════════════════
 logActivity event targetId userId =
     Db.exec
@@ -242,225 +380,5 @@ handleSubmitIdea model =
             ({ model | page = SignInPage }, Cmd.none)
 
 
--- ══════════════════════════════════════════════════════
--- AUTH HANDLERS
--- ══════════════════════════════════════════════════════
-handleSignInSuccess : (Dict String String) -> Model -> (Model, Cmd Msg)
-handleSignInSuccess user model =
-    let
-        ideas =
-            Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
-        _ = logActivity "signin" "" (Db.getField "id" user)
-    in
-        ({ model
-         | currentUser = Just user
-         , page = BoardPage
-         , ideas = ideas
-         , authEmail = ""
-         , authPassword = ""
-         , authError = ""
-         , notification = "Welcome back!"
-         }, Cmd.none)
-
-
-handleSignIn : Model -> (Model, Cmd Msg)
-handleSignIn model =
-    case Auth.authenticateUser model.authEmail model.authPassword of
-        
-        Ok user ->
-            handleSignInSuccess user model
-        
-        Err error ->
-            ({ model | authError = error }, Cmd.none)
-
-
-handleSignUpSuccess : String -> Model -> (Model, Cmd Msg)
-handleSignUpSuccess userId model =
-    case Auth.getUserById userId of
-        
-        Just user ->
-            let
-                _ = logActivity "signup" "" userId
-            in
-                ({ model
-                 | currentUser = Just user
-                 , page = BoardPage
-                 , authEmail = ""
-                 , authUsername = ""
-                 , authPassword = ""
-                 , authError = ""
-                 , notification = "Account created! Welcome to SkyVote."
-                 }, Cmd.none)
-        
-        Nothing ->
-            ({ model | authError = "Account created. Please sign in." }, Cmd.none)
-
-
-handleSignUpValidated : Model -> (Model, Cmd Msg)
-handleSignUpValidated model =
-    case Auth.createUser model.authUsername model.authEmail model.authPassword of
-        
-        Ok userId ->
-            handleSignUpSuccess userId model
-        
-        Err error ->
-            ({ model | authError = error }, Cmd.none)
-
-
-handleSignUp : Model -> (Model, Cmd Msg)
-handleSignUp model =
-    if String.length model.authPassword < 8 then
-        ({ model | authError = "Password must be at least 8 characters." }, Cmd.none)
-    else if model.authUsername == "" then
-        ({ model | authError = "Username is required." }, Cmd.none)
-    else
-        handleSignUpValidated model
-
-
-handleSignOut : Model -> (Model, Cmd Msg)
-handleSignOut model =
-    let
-        _ = println "[AUTH] User signed out"
-    in
-        ({ model
-         | currentUser = Nothing
-         , page = BoardPage
-         , notification = ""
-         , authError = ""
-         }, Cmd.none)
-
-
--- ══════════════════════════════════════════════════════
--- UPDATE
--- ══════════════════════════════════════════════════════
-update : Msg -> Model -> (Model, Cmd Msg)
-update msg model =
-    case msg of
-        
-        Navigate page ->
-            ({ model | page = page , notification = "" , authError = "" }, Cmd.none)
-        
-        SetSort sortBy ->
-            handleSetSort sortBy model
-        
-        SetFilter category ->
-            handleSetFilter category model
-        
-        SetSearch query ->
-            handleSetSearch query model
-        
-        ToggleVote ideaId ->
-            handleToggleVote ideaId model
-        
-        ViewIdea ideaId ->
-            handleViewIdea ideaId model
-        
-        UpdateComment content ->
-            ({ model | newComment = content }, Cmd.none)
-        
-        SubmitComment ->
-            handleSubmitComment model
-        
-        BackToBoard ->
-            handleBackToBoard model
-        
-        UpdateTitle t ->
-            ({ model | submitTitle = t }, Cmd.none)
-        
-        UpdateDescription d ->
-            ({ model | submitDescription = d }, Cmd.none)
-        
-        UpdateCategory c ->
-            ({ model | submitCategory = c }, Cmd.none)
-        
-        SubmitIdea ->
-            handleSubmitIdea model
-        
-        UpdateEmail e ->
-            ({ model | authEmail = e }, Cmd.none)
-        
-        UpdateUsername u ->
-            ({ model | authUsername = u }, Cmd.none)
-        
-        UpdatePassword p ->
-            ({ model | authPassword = p }, Cmd.none)
-        
-        DoSignIn ->
-            handleSignIn model
-        
-        DoSignUp ->
-            handleSignUp model
-        
-        DoSignOut ->
-            handleSignOut model
-        
-        Tick ->
-            refreshCurrentView model
-
-
--- ══════════════════════════════════════════════════════
--- VIEW
--- ══════════════════════════════════════════════════════
-view : Model -> VNode
-view model =
-    case model.page of
-        
-        BoardPage ->
-            Board.viewBoard model
-        
-        DetailPage ->
-            Detail.viewDetail model
-        
-        SubmitPage ->
-            Submit.viewSubmit model
-        
-        SignInPage ->
-            PageAuth.viewSignIn model
-        
-        SignUpPage ->
-            PageAuth.viewSignUp model
-        
-        AboutPage ->
-            About.viewAbout model
-        
-        RoadmapPage ->
-            Roadmap.viewRoadmap model
-        
-        NotFoundPage ->
-            Board.viewBoard model
-
-
--- ══════════════════════════════════════════════════════
--- SUBSCRIPTIONS
--- ══════════════════════════════════════════════════════
-subscriptions model =
-    case model.page of
-        
-        BoardPage ->
-            Time.every 10000 Tick
-        
-        DetailPage ->
-            Time.every 10000 Tick
-        
-        _ ->
-            Sub.none
-
-
--- ══════════════════════════════════════════════════════
--- APP
--- ══════════════════════════════════════════════════════
-main =
-    app
-        { init = init
-        , update = update
-        , view = view
-        , subscriptions = subscriptions
-        , routes = [ route "/" BoardPage
-        , route "/submit" SubmitPage
-        , route "/auth/signin" SignInPage
-        , route "/auth/signup" SignUpPage
-        , route "/about" AboutPage
-        , route "/roadmap" RoadmapPage
-        ]
-        , notFound = NotFoundPage
-        }
+endOfModule_ =
+    0

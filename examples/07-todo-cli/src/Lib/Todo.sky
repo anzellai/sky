@@ -14,8 +14,8 @@ showStatus done =
 
 formatTodo row =
     let
-        id = Db.getField "id" row
-        title = Db.getField "title" row
-        done = Db.getField "done" row
+        todoId = Db.getField "id" row
+        todoName = Db.getField "title" row
+        todoDone = Db.getField "done" row
     in
-        "  " ++ id ++ ". " ++ showStatus done ++ " " ++ title
+        identity ("  " ++ todoId ++ ". " ++ showStatus todoDone ++ " " ++ todoName)

@@ -593,3 +593,11 @@ globalStyles =
               , rule ".header-inner" [ flexDirection "column" , gap (px 12) ]
               ]
         ]
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0

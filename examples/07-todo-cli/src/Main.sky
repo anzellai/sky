@@ -32,11 +32,11 @@ initDb _ =
 -- ============================================================
 -- Commands
 -- ============================================================
-addTodo title =
+addTodo todoTitle =
     let
-        _ = Db.exec "INSERT INTO todos (title) VALUES (?)" [ title ]
+        _ = Db.exec "INSERT INTO todos (title) VALUES (?)" [ todoTitle ]
     in
-        Slog.info "Action" [ "Added:" , title ]
+        Slog.info "Action" [ "Added:" , todoTitle ]
 
 
 listTodos _ =
@@ -106,45 +106,45 @@ showUsage =
 -- ============================================================
 -- CLI dispatch
 -- ============================================================
-getArg args = Maybe.withDefault "" (List.head args)
+getArg argList = Maybe.withDefault "" (List.head argList)
 
 
-runCommand cmd arg =
+runCommand cmd cmdArg =
     case cmd of
-        
+
         "add" ->
-            if arg == "" then
+            if cmdArg == "" then
                 println "Usage: ./app add <title>"
             else
-                addTodo arg
-        
+                addTodo cmdArg
+
         "list" ->
             listTodos ()
-        
+
         "done" ->
-            if arg == "" then
+            if cmdArg == "" then
                 println "Usage: ./app done <id>"
             else
-                markDone arg
-        
+                markDone cmdArg
+
         "undone" ->
-            if arg == "" then
+            if cmdArg == "" then
                 println "Usage: ./app undone <id>"
             else
-                markUndone arg
-        
+                markUndone cmdArg
+
         "remove" ->
-            if arg == "" then
+            if cmdArg == "" then
                 println "Usage: ./app remove <id>"
             else
-                removeTodo arg
-        
+                removeTodo cmdArg
+
         "clear" ->
             clearDone ()
-        
+
         "help" ->
             showUsage
-        
+
         _ ->
             showUsage
 
@@ -157,6 +157,6 @@ main =
         _ = initDb ()
         userArgs = List.drop 1 (Os.args ())
         cmd = getArg userArgs
-        arg = getArg (List.drop 1 userArgs)
+        cmdArg = getArg (List.drop 1 userArgs)
     in
-        runCommand cmd arg
+        identity (runCommand cmd cmdArg)

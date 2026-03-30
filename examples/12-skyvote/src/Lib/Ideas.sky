@@ -158,3 +158,11 @@ updateStatus ideaId newStatus =
         _ = println ("[IDEA] Status changed: " ++ ideaId ++ " -> " ++ newStatus)
     in
         ()
+
+
+endOfModule_ =
+    0
+
+
+endOfModule2_ =
+    0
