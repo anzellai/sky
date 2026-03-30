@@ -10,6 +10,7 @@ import Compiler.Ast as Ast exposing (..)
 import Compiler.Adt as Adt exposing (AdtRegistry)
 import Compiler.Env as Env
 import Compiler.Infer as Infer
+import Compiler.Unify as Unify
 import Compiler.Exhaustive as Exhaustive
 
 type alias CheckResult =
@@ -17,6 +18,7 @@ type alias CheckResult =
     , registry : AdtRegistry
     , declarations : List TypedDecl
     , diagnostics : List String
+    , typeAliases : Dict.Dict String Type
     }
 
 
@@ -34,13 +36,18 @@ checkModule mod imports =
         counter = Ref.new 100
         baseEnv =
             case imports of
-                
+
                 Just importedEnv ->
                     Env.union importedEnv Env.createPreludeEnv
-                
+
                 Nothing ->
                     Env.createPreludeEnv
-        aliasEnv = registerTypeAliases mod.declarations baseEnv
+        moduleName = String.join "." mod.name
+        ( aliasEnv , typeAliases ) =
+            registerTypeAliases counter mod.declarations baseEnv
+        qualifiedAliases =
+            addQualifiedAliases moduleName mod.imports typeAliases
+        _ = Unify.setTypeAliases qualifiedAliases
         ( registry , adtEnv , adtDiags ) =
             Adt.registerAdts counter mod.declarations
         env0 = Env.union adtEnv aliasEnv
@@ -49,6 +56,7 @@ checkModule mod imports =
         ( typedDecls , finalEnv , inferDiags ) =
             inferAllDeclarations counter registry env1 mod.declarations
                 annotations
+                qualifiedAliases
         exhaustDiags = checkAllExhaustiveness registry mod.declarations
         allDiags = List.concat [ adtDiags , inferDiags , exhaustDiags ]
     in
@@ -57,24 +65,77 @@ checkModule mod imports =
             , registry = registry
             , declarations = typedDecls
             , diagnostics = allDiags
+            , typeAliases = qualifiedAliases
             }
 
 
-registerTypeAliases : (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
-registerTypeAliases decls env =
+registerTypeAliases : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> (Env.TypeEnv, Dict.Dict String Type)
+registerTypeAliases counter decls env =
+    registerTypeAliasesLoop counter decls env Dict.empty
+
+
+registerTypeAliasesLoop : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
+registerTypeAliasesLoop counter decls env aliases =
     case decls of
-        
+
         [  ] ->
-            env
-        
+            ( env , aliases )
+
         decl :: rest ->
-            case decl of
-                
-                TypeAliasDecl aliasName aliasParams aliasType _ ->
-                    registerTypeAliases rest env
-                
-                _ ->
-                    registerTypeAliases rest env
+            registerOneTypeAlias counter decl rest env aliases
+
+
+registerOneTypeAlias : (Ref.Ref Int) -> Declaration -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
+registerOneTypeAlias counter decl rest env aliases =
+    case decl of
+
+        TypeAliasDecl aliasName aliasParams aliasBody _ ->
+            let
+                paramVars =
+                    List.map (\p -> freshVar counter (Just p)) aliasParams
+                paramMap = Adt.buildParamMap aliasParams paramVars Dict.empty
+                resolvedType = Adt.resolveTypeExpr paramMap aliasBody
+                newAliases = Dict.insert aliasName resolvedType aliases
+            in
+                registerTypeAliasesLoop counter rest env newAliases
+
+        _ ->
+            registerTypeAliasesLoop counter rest env aliases
+
+
+addQualifiedAliases : String -> (List ImportDecl) -> (Dict.Dict String Type) -> Dict.Dict String Type
+addQualifiedAliases moduleName imports aliases =
+    let
+        withModuleName =
+            addModuleQualifiedAll moduleName aliases
+    in
+        List.foldl (addImportQualifiedAliases aliases) withModuleName imports
+
+
+addModuleQualifiedAll : String -> (Dict.Dict String Type) -> Dict.Dict String Type
+addModuleQualifiedAll moduleName aliases =
+    if String.isEmpty moduleName then
+        aliases
+    else
+        Dict.foldl (addOneModuleQualified moduleName) aliases aliases
+
+
+addOneModuleQualified : String -> String -> Type -> (Dict.Dict String Type) -> Dict.Dict String Type
+addOneModuleQualified moduleName aliasName aliasType acc =
+    Dict.insert (moduleName ++ "." ++ aliasName) aliasType acc
+
+
+addImportQualifiedAliases : (Dict.Dict String Type) -> ImportDecl -> (Dict.Dict String Type) -> Dict.Dict String Type
+addImportQualifiedAliases baseAliases imp acc =
+    let
+        prefix = imp.alias_
+    in
+        Dict.foldl (addOnePrefixedAlias prefix) acc baseAliases
+
+
+addOnePrefixedAlias : String -> String -> Type -> (Dict.Dict String Type) -> Dict.Dict String Type
+addOnePrefixedAlias prefix aliasName aliasType acc =
+    Dict.insert (prefix ++ "." ++ aliasName) aliasType acc
 
 
 collectAnnotations : (List Declaration) -> Dict.Dict String TypeExpr
@@ -123,54 +184,59 @@ preRegisterOneFunction counter decl rest env =
             preRegisterFunctions counter rest env
 
 
-inferAllDeclarations : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (List TypedDecl, Env.TypeEnv, List String)
-inferAllDeclarations counter registry env decls annotations =
-    inferDeclsLoop counter registry env decls annotations [] []
+inferAllDeclarations : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (Dict.Dict String Type) -> (List TypedDecl, Env.TypeEnv, List String)
+inferAllDeclarations counter registry env decls annotations typeAliases =
+    inferDeclsLoop counter registry env decls annotations typeAliases [] []
 
 
-inferDeclsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (List TypedDecl) -> (List String) -> (List TypedDecl, Env.TypeEnv, List String)
-inferDeclsLoop counter registry env decls annotations typedDecls diagnostics =
+inferDeclsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (Dict.Dict String Type) -> (List TypedDecl) -> (List String) -> (List TypedDecl, Env.TypeEnv, List String)
+inferDeclsLoop counter registry env decls annotations typeAliases typedDecls diagnostics =
     case decls of
-        
+
         [  ] ->
             (List.reverse typedDecls, env, diagnostics)
-        
+
         decl :: rest ->
-            inferOneDecl counter registry env decl rest annotations typedDecls
-                diagnostics
-
-
-inferOneDecl counter registry env decl rest annotations typedDecls diagnostics =
-    case decl of
-        
-        FunDecl name _ _ _ ->
-            inferOneFunDecl counter registry env name decl rest annotations
+            inferOneDecl counter registry env decl rest annotations typeAliases
                 typedDecls
                 diagnostics
-        
+
+
+inferOneDecl counter registry env decl rest annotations typeAliases typedDecls diagnostics =
+    case decl of
+
+        FunDecl name _ _ _ ->
+            inferOneFunDecl counter registry env name decl rest annotations
+                typeAliases
+                typedDecls
+                diagnostics
+
         _ ->
-            inferDeclsLoop counter registry env rest annotations typedDecls
+            inferDeclsLoop counter registry env rest annotations typeAliases
+                typedDecls
                 diagnostics
 
 
-inferOneFunDecl counter registry env fnName decl rest annotations typedDecls diagnostics =
+inferOneFunDecl counter registry env fnName decl rest annotations typeAliases typedDecls diagnostics =
     let
         annotation = Dict.get fnName annotations
     in
-        case Infer.inferDeclaration counter registry env decl annotation of
-            
+        case Infer.inferDeclaration counter registry env decl annotation typeAliases of
+
             Ok inferResult ->
                 addTypedDeclAndContinue counter registry env rest annotations
+                    typeAliases
                     typedDecls
                     diagnostics
                     inferResult
-            
+
             Err e ->
-                inferDeclsLoop counter registry env rest annotations typedDecls
+                inferDeclsLoop counter registry env rest annotations typeAliases
+                    typedDecls
                     (e :: diagnostics)
 
 
-addTypedDeclAndContinue counter registry env rest annotations typedDecls diagnostics inferResult =
+addTypedDeclAndContinue counter registry env rest annotations typeAliases typedDecls diagnostics inferResult =
     let
         nm = inferResult.name
         sc = inferResult.scheme
@@ -180,7 +246,8 @@ addTypedDeclAndContinue counter registry env rest annotations typedDecls diagnos
         newEnv = Env.extend nm sc env
         newDiags = List.append diagnostics inferResult.diagnostics
     in
-        inferDeclsLoop counter registry newEnv rest annotations newDecls
+        inferDeclsLoop counter registry newEnv rest annotations typeAliases
+            newDecls
             newDiags
 
 

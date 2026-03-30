@@ -1031,19 +1031,20 @@ type alias DeclResult =
     { name : String , scheme : Scheme , diagnostics : List String }
 
 
-inferDeclaration : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Declaration -> (Maybe TypeExpr) -> Result String DeclResult
-inferDeclaration counter registry env decl annotation =
+inferDeclaration : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Declaration -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> Result String DeclResult
+inferDeclaration counter registry env decl annotation typeAliases =
     case decl of
 
         FunDecl name params body _ ->
             inferFunction counter registry env name params body annotation
+                typeAliases
 
         _ ->
             Err "inferDeclaration: not a function declaration"
 
 
-inferFunction : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> (List Pattern) -> Expression -> (Maybe TypeExpr) -> Result String DeclResult
-inferFunction counter registry env name params body annotation =
+inferFunction : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> (List Pattern) -> Expression -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> Result String DeclResult
+inferFunction counter registry env name params body annotation typeAliases =
     let
         paramVars = List.map (\p -> freshVar counter Nothing) params
         bindResult = bindParams counter registry env params paramVars
@@ -1064,10 +1065,11 @@ inferFunction counter registry env name params body annotation =
                         selfVar
                         body
                         annotation
+                        typeAliases
 
 
-inferFunctionBody : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> Env.TypeEnv -> Substitution -> (List Type) -> Type -> Expression -> (Maybe TypeExpr) -> Result String DeclResult
-inferFunctionBody counter registry env name envWithSelf paramSub paramVars selfVar body annotation =
+inferFunctionBody : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> Env.TypeEnv -> Substitution -> (List Type) -> Type -> Expression -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> Result String DeclResult
+inferFunctionBody counter registry env name envWithSelf paramSub paramVars selfVar body annotation typeAliases =
     case inferExpr counter registry envWithSelf body of
 
         Err e ->
@@ -1087,10 +1089,11 @@ inferFunctionBody counter registry env name envWithSelf paramSub paramVars selfV
                 inferFunctionSelfUnify counter env name bodySub funType selfType
                     body
                     annotation
+                    typeAliases
 
 
-inferFunctionSelfUnify : (Ref.Ref Int) -> Env.TypeEnv -> String -> Substitution -> Type -> Type -> Expression -> (Maybe TypeExpr) -> Result String DeclResult
-inferFunctionSelfUnify counter env name bodySub funType selfType body annotation =
+inferFunctionSelfUnify : (Ref.Ref Int) -> Env.TypeEnv -> String -> Substitution -> Type -> Type -> Expression -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> Result String DeclResult
+inferFunctionSelfUnify counter env name bodySub funType selfType body annotation typeAliases =
     case unify selfType funType of
 
         Err e ->
@@ -1102,6 +1105,7 @@ inferFunctionSelfUnify counter env name bodySub funType selfType body annotation
                 finalType = applySub finalSub funType
                 diagnostics =
                     checkAnnotation counter env finalType annotation
+                        typeAliases
                 scheme = Env.generalizeInEnv env finalType
             in
                 Ok
@@ -1177,16 +1181,20 @@ debugType t =
             "other"
 
 
-checkAnnotation : (Ref.Ref Int) -> Env.TypeEnv -> Type -> (Maybe TypeExpr) -> List String
-checkAnnotation counter env inferredType annotation =
+checkAnnotation : (Ref.Ref Int) -> Env.TypeEnv -> Type -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> List String
+checkAnnotation counter env inferredType annotation typeAliases =
     case annotation of
 
         Nothing ->
             []
 
         Just annotExpr ->
-            checkAnnotationInner inferredType
-                (Adt.resolveTypeExpr Dict.empty annotExpr)
+            let
+                annotType = Adt.resolveTypeExpr typeAliases annotExpr
+                expandedAnnot = expandTypeAliases typeAliases annotType
+                expandedInferred = expandTypeAliases typeAliases inferredType
+            in
+                checkAnnotationInner expandedInferred expandedAnnot
 
 
 checkAnnotationInner : Type -> Type -> List String
@@ -1198,6 +1206,43 @@ checkAnnotationInner inferredType annotType =
 
         Err e ->
             [ "Type annotation mismatch: " ++ e ]
+
+
+expandTypeAliases : (Dict.Dict String Type) -> Type -> Type
+expandTypeAliases aliases ty =
+    case ty of
+
+        TConst name ->
+            expandTConstAlias aliases name ty
+
+        TFun fromT toT ->
+            TFun (expandTypeAliases aliases fromT)
+                (expandTypeAliases aliases toT)
+
+        TApp ctor args ->
+            TApp (expandTypeAliases aliases ctor)
+                (List.map (expandTypeAliases aliases) args)
+
+        TTuple items ->
+            TTuple (List.map (expandTypeAliases aliases) items)
+
+        TRecord fields ->
+            TRecord
+                (Dict.map (\kk v -> expandTypeAliases aliases v) fields)
+
+        _ ->
+            ty
+
+
+expandTConstAlias : (Dict.Dict String Type) -> String -> Type -> Type
+expandTConstAlias aliases name fallback =
+    case Dict.get name aliases of
+
+        Just expanded ->
+            expanded
+
+        Nothing ->
+            fallback
 
 
 applySubToEnv : Substitution -> Env.TypeEnv -> Env.TypeEnv

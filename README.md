@@ -1169,6 +1169,12 @@ name = "sky"
 source = { git = "https://github.com/anzellai/tree-sitter-sky", rev = "main" }
 ```
 
+### Zed
+
+Community-contributed Zed extension with syntax highlighting and LSP integration:
+
+[sky-zed](https://github.com/TheGB0077/sky-zed) by [@TheGB0077](https://github.com/TheGB0077)
+
 ---
 
 ## Examples

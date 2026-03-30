@@ -151,7 +151,6 @@ buildGoProject outDir =
 
 handleBuildResult outDir buildResult =
     case buildResult of
-
         Ok _ ->
             let
                 _ = println ("Build complete: " ++ outDir ++ "/app")
@@ -159,12 +158,50 @@ handleBuildResult outDir buildResult =
                 ()
 
         Err e ->
-            let
-                _ =
-                    println
-                        ("go build failed: " ++ errorToString e)
-            in
-                Process.exit 1
+            if String.contains "no required module" (errorToString e) then
+                retryBuildWithTidy outDir e
+            else
+                let
+                    _ = println ("go build failed: " ++ errorToString e)
+                in
+                    Process.exit 1
+
+
+retryBuildWithTidy outDir originalErr =
+    let
+        _ = println "Missing Go dependencies, running go mod tidy..."
+        tidyResult =
+            Process.run "sh"
+                [ "-c" , "cd " ++ outDir ++ " && go mod tidy 2>&1" ]
+        _ =
+            case tidyResult of
+                Ok _ ->
+                    ()
+
+                Err te ->
+                    let
+                        _ = println ("go mod tidy failed: " ++ errorToString te)
+                    in
+                        ()
+        _ = println "Retrying go build..."
+        retryResult =
+            Process.run "sh"
+                [ "-c"
+                , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app"
+                ]
+    in
+        case retryResult of
+            Ok _ ->
+                let
+                    _ = println ("Build complete: " ++ outDir ++ "/app")
+                in
+                    ()
+
+            Err retryErr ->
+                let
+                    _ = println ("go build failed: " ++ errorToString retryErr)
+                in
+                    Process.exit 1
 
 
 cmdRun _ =

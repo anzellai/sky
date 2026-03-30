@@ -250,7 +250,7 @@ parsePrimary state =
         in
             Ok (BoolLitExpr False tok.span, s1)
     else
-        Err
+        Err ("Unexpected token: " ++ peekLexeme state)
 
 
 parseCaseExpr : ParserState -> Result String (Expression, ParserState)

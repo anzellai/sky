@@ -5,10 +5,59 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Set as Set
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Ref as Ref
 import Compiler.Types exposing (..)
+
+
+typeAliasRegistry : Ref.Ref (Dict.Dict String Type)
+typeAliasRegistry = Ref.new Dict.empty
+
+
+setTypeAliases : (Dict.Dict String Type) -> ()
+setTypeAliases aliases = Ref.set aliases typeAliasRegistry
+
+
+expandAlias : Type -> Type
+expandAlias ty =
+    let
+        aliases = Ref.get typeAliasRegistry
+    in
+        expandAliasWithMap aliases ty
+
+
+expandAliasWithMap : (Dict.Dict String Type) -> Type -> Type
+expandAliasWithMap aliases ty =
+    case ty of
+
+        TConst name ->
+            expandAliasConst aliases name ty
+
+        _ ->
+            ty
+
+
+expandAliasConst : (Dict.Dict String Type) -> String -> Type -> Type
+expandAliasConst aliases name fallback =
+    case Dict.get name aliases of
+
+        Just expanded ->
+            expanded
+
+        Nothing ->
+            fallback
+
 
 unify : Type -> Type -> Result String Substitution
 unify t1 t2 =
+    let
+        et1 = expandAlias t1
+        et2 = expandAlias t2
+    in
+        unifyInner et1 et2
+
+
+unifyInner : Type -> Type -> Result String Substitution
+unifyInner t1 t2 =
     case t1 of
         TVar id1 _ ->
             bindVar id1 t2
@@ -39,6 +88,8 @@ unifyConst nameA t1 t2 =
             if nameA == nameB then
                 Ok emptySub
             else if isUniversalUnifier nameA || isUniversalUnifier nameB then
+                Ok emptySub
+            else if isQualifiedMatch nameA nameB then
                 Ok emptySub
             else
                 Err ("Type mismatch: " ++ nameA ++ " vs " ++ nameB)
@@ -223,6 +274,16 @@ bindVar id t =
                     )
             else
                 Ok (Dict.insert id t Dict.empty)
+
+
+isQualifiedMatch : String -> String -> Bool
+isQualifiedMatch nameA nameB =
+    if String.contains "." nameA && not (String.contains "." nameB) then
+        String.endsWith ("." ++ nameB) nameA
+    else if String.contains "." nameB && not (String.contains "." nameA) then
+        String.endsWith ("." ++ nameA) nameB
+    else
+        False
 
 
 isUniversalUnifier : String -> Bool

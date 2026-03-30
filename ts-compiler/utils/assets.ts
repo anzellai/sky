@@ -3964,9 +3964,14 @@ sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
 sky check src/Main.sky    # Type-check without compiling
 sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
+sky add <package>         # Add Go or Sky dependency + auto-generate bindings
+sky install               # Install all deps + auto-generate missing bindings
+sky update                # Update sky.toml dependencies to latest
+sky upgrade               # Self-upgrade Sky compiler to latest release
+sky remove <package>      # Remove a dependency
 sky lsp                   # Start Language Server
 sky clean                 # Remove build artifacts
-sky --version             # Show version (v0.6.0)
+sky --version             # Show version
 \`\`\`
 
 ## Language Syntax
@@ -4064,7 +4069,29 @@ result = Task.perform pipeline
 - \`Task.map : (a -> b) -> Task err a -> Task err b\`
 - \`Task.andThen : (a -> Task err b) -> Task err a -> Task err b\`
 - \`Task.perform : Task err a -> Result err a\`
-- \`Task.sequence : List (Task err a) -> Task err (List a)\`
+- \`Task.sequence : List (Task err a) -> Task err (List a)\` -- run sequentially
+- \`Task.parallel : List (Task err a) -> Task err (List a)\` -- run concurrently (goroutines)
+- \`Task.lazy : (() -> a) -> Task err a\` -- defer computation until executed
+
+**Concurrency:**
+
+\`Task.parallel\` runs tasks concurrently using Go goroutines. Results are collected in order; the first error short-circuits.
+
+\`\`\`elm
+-- Parallel HTTP requests (total time = slowest request, not sum)
+results = Task.perform (Task.parallel [ Http.get url1, Http.get url2, Http.get url3 ])
+
+-- Sequential for comparison (total time = sum of all requests)
+results = Task.perform (Task.sequence [ Http.get url1, Http.get url2, Http.get url3 ])
+\`\`\`
+
+\`List.parallelMap\` maps a function over a list using goroutines (pure, no Task wrapping):
+
+\`\`\`elm
+-- Process items concurrently
+squares = List.parallelMap (\\n -> n * n) [ 1, 2, 3, 4, 5 ]
+-- [1, 4, 9, 16, 25]
+\`\`\`
 
 ## Go Interop (FFI)
 
@@ -4187,6 +4214,7 @@ sortBy : (a -> comparable) -> List a -> List a
 zip : List a -> List b -> List (a, b)
 unzip : List (a, b) -> (List a, List b)
 map2 : (a -> b -> c) -> List a -> List b -> List c
+parallelMap : (a -> b) -> List a -> List b  -- goroutine-backed concurrent map
 \`\`\`
 
 ### Sky.Core.String
@@ -4362,7 +4390,7 @@ getArgs : () -> List String     -- command-line arguments
 ### Sky.Core.Json.Encode
 
 \`\`\`elm
-encode : Int -> Value -> String       -- serialize with indentation
+encode : Int -> Value -> String       -- serialise with indentation
 string : String -> Value
 int : Int -> Value
 float : Float -> Value
@@ -4869,7 +4897,9 @@ sky add database/sql               # Go stdlib
 sky install                        # install all from sky.toml
 \`\`\`
 
-This auto-generates \`.skycache/go/<package>/bindings.skyi\` and \`bindings.idx\` with type-safe wrappers. **Never write FFI code manually** — the compiler generates everything. Large packages (e.g., Stripe SDK with 40K+ symbols) use lazy binding resolution via the index for fast compilation.
+This auto-generates \`.skycache/go/<package>/bindings.skyi\` with type-safe Sky bindings and \`sky_wrappers/<package>.go\` with Go wrapper functions (including panic recovery). **Never write FFI code manually** — the compiler generates everything. The inspector extracts ALL struct fields, methods, functions, and constants. Dead code elimination strips unused wrappers from the final build.
+
+\`sky install\` auto-scans your source files for FFI imports and generates any missing bindings.
 
 ### Import Path Mapping
 
