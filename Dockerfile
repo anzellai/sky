@@ -15,7 +15,7 @@ FROM golang:1.26-bookworm AS builder
 WORKDIR /sky
 COPY sky-out/ ./sky-out/
 
-RUN cd sky-out && go build -ldflags="-s -w" -o /usr/local/bin/sky main.go
+RUN cd sky-out && go build -ldflags="-s -w" -o /usr/local/bin/sky .
 
 # ── Stage 2: Runtime image ──────────────────────────────────
 FROM golang:1.26-bookworm
