@@ -62,6 +62,17 @@ stdlib-go/                        -- Go runtime implementations for stdlib modul
 examples/                         -- 15 example projects
 ```
 
+## Git Push / Release Checklist
+
+Before pushing to main or creating a release tag:
+
+1. **Rebuild the compiler**: `rm -rf .skycache && sky build src/Main.sky` — ensure `sky-out/app` is the compiler binary, NOT an example build
+2. **Verify**: `sky-out/app --version` must print `sky dev` or a version string, NOT start a server
+3. **Bootstrap**: Run `sky build src/Main.sky` twice to verify self-hosting
+4. **Test examples**: Build at least `examples/01-hello-world` and `examples/06-json`
+5. **CI check**: Ensure `.github/workflows/ci.yml` matches the current build steps
+6. **Never commit example builds to sky-out/**: The `sky-out/` directory must always contain the compiler, not the last example built
+
 ## Shell Commands
 
 Always use `-f` flag with `rm` and `cp` commands (e.g. `rm -f`, `rm -rf`, `cp -f`) to avoid interactive confirmation prompts that block execution.
