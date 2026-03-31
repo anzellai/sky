@@ -133,12 +133,36 @@ func main() {
 		collectReferencedTypes(&inspect, usedSymbols, ancestors, referencedTypes)
 	}
 
-	// --- Types (opaque) ---
+	// Collect field accessor names so we don't create conflicting type aliases
+	fieldAccessorNames := map[string]bool{}
 	for _, t := range inspect.Types {
-		if t.Kind == "" || t.HasTypeParams(inspect) {
+		if t.Kind != "struct" {
+			continue
+		}
+		for _, field := range t.Fields {
+			// Field accessor: lowerfirst(TypeName) + Capitalise(FieldName)
+			// But the conflict is: type alias "CheckoutSessionCustomerDetails"
+			// vs field accessor "checkoutSessionCustomerDetails" — the type alias
+			// creates a constructor that shadows the function
+			accessorPascal := t.Name + capitalise(field.Name)
+			fieldAccessorNames[accessorPascal] = true
+		}
+	}
+
+	// --- Types (opaque) — only structs/interfaces, skip if name conflicts with field accessor ---
+	for _, t := range inspect.Types {
+		if t.HasTypeParams(inspect) {
+			continue
+		}
+		if t.Kind != "struct" && t.Kind != "interface" {
 			continue
 		}
 		if isLarge && !isSymbolUsed(t.Name, usedSymbols) && !referencedTypes[t.Name] {
+			continue
+		}
+		// Don't create type alias if the name matches a field accessor
+		// (the accessor function would be shadowed by the constructor)
+		if fieldAccessorNames[t.Name] {
 			continue
 		}
 		skyi.WriteString(fmt.Sprintf("type %s = %s\n\n", t.Name, t.Name))
@@ -887,9 +911,17 @@ func pkgToModuleName(pkg string) string {
 	for _, part := range parts {
 		subParts := strings.Split(part, ".")
 		for _, sp := range subParts {
-			sp = strings.ReplaceAll(sp, "-", "")
-			if len(sp) > 0 {
-				result = append(result, capitalise(sp))
+			// Join hyphenated segments as PascalCase within a single part
+			// e.g. "stripe-go" → "StripeGo" (one segment)
+			hyphenParts := strings.Split(sp, "-")
+			var combined string
+			for _, hp := range hyphenParts {
+				if len(hp) > 0 {
+					combined += capitalise(hp)
+				}
+			}
+			if len(combined) > 0 {
+				result = append(result, combined)
 			}
 		}
 	}

@@ -110,33 +110,22 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
                 candidateParent
             else
                 ""
-        hasParentTypeRef =
-            if String.isEmpty parentPkg then
-                False
-            else
-                let
-                    parentShort = shortPkgName parentPkg
-                    allTypes =
-                        List.concatMap
-                            (
-                            \f -> List.append (List.map snd f.params) f.results
-                            )
-                            funcs
-                    allMethodTypes =
-                        List.concatMap
-                            (
-                            \m -> List.append (List.map snd m.params) m.results
-                            )
-                            methods
-                in
-                    List.any (\t -> String.contains (parentShort ++ ".") t)
-                        (List.append allTypes allMethodTypes)
+        allTypeRefs =
+            let
+                funcTypes =
+                    List.concatMap
+                        (\f -> List.append (List.map snd f.params) f.results)
+                        funcs
+                methodTypes =
+                    List.concatMap
+                        (\m -> List.append (List.map snd m.params) m.results)
+                        methods
+            in
+                List.append funcTypes methodTypes
+        ancestorPkgs = buildAncestorPkgsW pkgName
         parentImport =
-            if String.isEmpty parentPkg || parentPkg == pkgName || not
-                                                                       hasParentTypeRef then
-                ""
-            else
-                "\t" ++ shortPkgName parentPkg ++ " \"" ++ parentPkg ++ "\"\n"
+            String.join ""
+                (List.filterMap (buildAncestorImportLine pkgName allTypeRefs) ancestorPkgs)
     in
         String.join "\n"
             [ "package sky_wrappers"
@@ -333,6 +322,20 @@ checkAncestorPkgsW ancestors goType =
                 True
             else
                 checkAncestorPkgsW rest goType
+
+
+buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
+    if ancestorPkg == currentPkg then
+        Nothing
+    else
+        let
+            ancestorShort = shortPkgName ancestorPkg
+            hasRef = List.any (\t -> String.contains (ancestorShort ++ ".") t) allTypeRefs
+        in
+            if hasRef then
+                Just ("\t" ++ ancestorShort ++ " \"" ++ ancestorPkg ++ "\"\n")
+            else
+                Nothing
 
 
 isSupportedType : String -> Bool
