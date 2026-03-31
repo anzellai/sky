@@ -13,17 +13,17 @@ import Lsp.JsonRpc as Json
 generateBindings : String -> String -> Result String String
 generateBindings pkgName outDir =
     case Inspector.inspectPackage pkgName of
-        
+
         Err e ->
             Err e
-        
+
         Ok inspectJson ->
             if String.length inspectJson > 50000 then
                 case generateBindingsNative pkgName outDir of
-                    
+
                     Ok content ->
                         Ok content
-                    
+
                     Err _ ->
                         generateBindingsFromJson pkgName outDir inspectJson
             else
@@ -53,7 +53,7 @@ generateBindingsNative pkgName outDir =
     let
         inspectPath = outDir ++ "/inspect.json"
         _ = File.mkdirAll outDir
-        result = Process.run "sky-ffi-gen" [ pkgName , inspectPath , outDir ]
+        result = Process.run "sky-ffi-gen" [ pkgName , inspectPath , outDir , "src" ]
     in
         case result of
             
