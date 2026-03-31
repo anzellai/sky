@@ -59,8 +59,20 @@ src/                              -- Sky compiler (self-hosted, 34 modules)
 
 ts-compiler/                      -- Legacy TypeScript bootstrap (reference only, not used)
 stdlib-go/                        -- Go runtime implementations for stdlib modules
+templates/CLAUDE.md               -- Template copied into new projects by `sky init`
 examples/                         -- 15 example projects
 ```
+
+## Template Sync (Non-Negotiable)
+
+When stdlib functions, language syntax, Sky.Live APIs, or CLI commands change, **`templates/CLAUDE.md` MUST be updated** to reflect the changes. This template is the primary context file that AI assistants (Claude Code) use to write Sky code in user projects. If the template is out of date, AI assistants will generate incorrect code. Always verify the template covers:
+
+- All CLI commands and their current behaviour
+- All standard library modules with correct type signatures
+- Sky.Live component protocol, events, subscriptions
+- Sky.Http.Server routing and middleware
+- Go FFI naming conventions and type mapping
+- Code formatting rules
 
 ## Building Examples
 
@@ -84,7 +96,14 @@ Before pushing to main or creating a release tag:
 2. **Verify**: `sky-out/app --version` must print `sky dev` or a version, NOT start a server
 3. **Bootstrap**: Run `sky build src/Main.sky` twice to verify self-hosting
 4. **Test examples**: `cd examples/01-hello-world && sky build src/Main.sky` (from the example dir)
-5. **CI check**: Ensure `.github/workflows/ci.yml` matches the current build steps
+5. **Test sky check**: `cd examples/12-skyvote && sky check` — must pass with 0 errors (validates cross-module ADT + type alias resolution)
+6. **Test CLI commands**: Verify these in a temp directory:
+   - `sky init mytest` — creates sky.toml, src/Main.sky, .gitignore
+   - `sky build && sky run` — prints "Hello from Sky!"
+   - `sky add fmt` — adds `fmt = "latest"` to `[go.dependencies]` in sky.toml
+   - `sky remove fmt` — removes from sky.toml, reports "Removed fmt"
+   - `sky upgrade` — fetches latest release, compares semver, downloads correct platform binary
+7. **CI check**: Ensure `.github/workflows/ci.yml` matches the current build steps
 
 ## Shell Commands
 
@@ -93,18 +112,20 @@ Always use `-f` flag with `rm` and `cp` commands (e.g. `rm -f`, `rm -rf`, `cp -f
 ## Build & Test
 
 ```bash
+sky init [name]                   # Create new Sky project (sky.toml, src/Main.sky, .gitignore)
 sky build src/Main.sky            # Compile Sky → Go binary (sky-out/app)
 sky build examples/01-hello-world/src/Main.sky   # Compile any project
 sky run src/Main.sky              # Build and run
-sky check src/Main.sky            # Type-check without compiling
+sky check src/Main.sky            # Type-check without compiling (with full ADT + alias resolution)
 sky fmt src/Main.sky              # Format (Elm-style: 4-space, leading commas)
-sky add github.com/some/package   # Add Go or Sky dependency + generate bindings
+sky add github.com/some/package   # Add Go or Sky dependency + generate bindings + update sky.toml
+sky remove <package>              # Remove dependency from sky.toml + clean cache
 sky install                       # Install all deps + auto-generate missing bindings
 sky update                        # Update sky.toml dependencies to latest
-sky upgrade                       # Self-upgrade to latest release
+sky upgrade                       # Self-upgrade to latest release (semver comparison, platform detection)
 sky lsp                           # Start Language Server (JSON-RPC over stdio)
 sky clean                         # Remove sky-out/ dist/
-sky --version                     # sky v0.6.0
+sky --version                     # sky v0.7.7
 ```
 
 ## Standard Library
@@ -321,7 +342,7 @@ main =
 
 1. **Formatter↔compiler compat** — FIXED. All 32 modules format, compile, and self-host. Formatting is idempotent (running `sky fmt` twice produces identical output). Seven fixes in Format.sky: (a) `getLexemeAt1` field access, (b) annotation-function pairing via `formatDeclPairs`, (c) flat `else if` chains via `isExprIf`, (d) record field layout on indented new line, (e) `formatCall` with `align` + `indent` + `line` — long function calls break arguments onto indented new lines while keeping short calls on one line; `align` ensures argument column >= callee column so the parser's `parseApplicationArgs` column check passes, (f) `quoteString` identity (AST stores raw escaped strings, no re-escaping needed), (g) stale `live_init.go` cleanup in Pipeline.sky prevents build failures when switching between Live and non-Live projects.
 
-2. **Lowerer limitation with new functions** — PARTIALLY FIXED. (a) Nested `case` inside `case` inside `let` — uses IIFEs (anonymous function literals), no blank function names observed. Works correctly for all 30 compiler modules. (b) ADT constructor sub-pattern matching — FIXED. `patternToCondition` now recursively checks sub-patterns of constructors via `subPatternConditions`. e.g. `Cons head Nil` generates `SkyName == "Cons" && V1.SkyName == "Nil"` instead of just `SkyName == "Cons"`.
+2. **Lowerer limitation with new functions** — PARTIALLY FIXED. (a) Nested `case` inside `case` inside `let` — uses IIFEs (anonymous function literals), no blank function names observed. Works correctly for all 30 compiler modules. (b) ADT constructor sub-pattern matching — FIXED. `patternToCondition` now recursively checks sub-patterns of constructors via `subPatternConditions`. e.g. `Cons head Nil` generates `SkyName == "Cons" && V1.SkyName == "Nil"` instead of just `SkyName == "Cons"`. (c) **New functions in dependency modules are not emitted** — adding a new function to a dependency module (e.g. Pipeline.sky) and calling it from Main.sky generates the call site but NOT the function definition in Go output. Workaround: modify existing functions instead of adding new ones, or add helper functions that are only called within the same module (internal calls work).
 
 12. **Parser: `getLexemeAt1` field access** — FIXED. `(peekAt 1 state).lexeme` returned the full token object instead of `.lexeme` string because the lowerer dropped field access on parenthesised expressions. Fixed by using a let-binding. This caused `type alias` declarations to be silently skipped during parsing.
 

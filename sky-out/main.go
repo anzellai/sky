@@ -3570,6 +3570,10 @@ var FileAlreadyExists = Compiler_Pipeline_FileAlreadyExists
 
 var CopyFfiWrapperFallback = Compiler_Pipeline_CopyFfiWrapperFallback
 
+var BuildAdtEnvFromModules = Compiler_Pipeline_BuildAdtEnvFromModules
+
+var AddModuleAdtEnv = Compiler_Pipeline_AddModuleAdtEnv
+
 var BuildImportedRegistry = Compiler_Pipeline_BuildImportedRegistry
 
 var BuildImportedAliases = Compiler_Pipeline_BuildImportedAliases
@@ -3955,7 +3959,7 @@ func Compiler_Pipeline_Compile(filePath any, outDir any) any {
 }
 
 func Compiler_Pipeline_BuildCheckEnv(entryFilePath any, mod any) any {
-	return func() any { srcRoot := Compiler_Pipeline_DirOfPath(entryFilePath); _ = srcRoot; localImports := sky_call(sky_listFilter(func(imp any) any { return sky_not(Compiler_Resolver_IsStdlib(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]))) }), sky_asMap(mod)["imports"]); _ = localImports; localModules := Compiler_Pipeline_LoadLocalModules(srcRoot, localImports, []any{}); _ = localModules; allDepImports := sky_call(sky_listConcatMap(func(pair any) any { return func() any { m := sky_snd(pair); _ = m; return sky_asMap(m)["imports"] }() }), localModules); _ = allDepImports; allImports := sky_call(sky_listAppend(localImports), allDepImports); _ = allImports; ffiModules := Compiler_Pipeline_LoadFfiBindings(srcRoot, allImports); _ = ffiModules; ffiDeduped := Compiler_Pipeline_DeduplicateFfiModules(ffiModules, []any{}); _ = ffiDeduped; typeCheckModules := sky_call(sky_listAppend(localModules), ffiDeduped); _ = typeCheckModules; stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; depTypeEnv := Compiler_Resolver_BuildDepTypeEnv(sky_asMap(mod)["imports"], typeCheckModules); _ = depTypeEnv; return Compiler_Env_Union(depTypeEnv, stdlibEnv) }()
+	return func() any { srcRoot := Compiler_Pipeline_DirOfPath(entryFilePath); _ = srcRoot; localImports := sky_call(sky_listFilter(func(imp any) any { return sky_not(Compiler_Resolver_IsStdlib(sky_call(sky_stringJoin("."), sky_asMap(imp)["moduleName"]))) }), sky_asMap(mod)["imports"]); _ = localImports; localModules := Compiler_Pipeline_LoadLocalModules(srcRoot, localImports, []any{}); _ = localModules; allDepImports := sky_call(sky_listConcatMap(func(pair any) any { return func() any { m := sky_snd(pair); _ = m; return sky_asMap(m)["imports"] }() }), localModules); _ = allDepImports; allImports := sky_call(sky_listAppend(localImports), allDepImports); _ = allImports; ffiModules := Compiler_Pipeline_LoadFfiBindings(srcRoot, allImports); _ = ffiModules; ffiDeduped := Compiler_Pipeline_DeduplicateFfiModules(ffiModules, []any{}); _ = ffiDeduped; typeCheckModules := sky_call(sky_listAppend(localModules), ffiDeduped); _ = typeCheckModules; stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; depTypeEnv := Compiler_Resolver_BuildDepTypeEnv(sky_asMap(mod)["imports"], typeCheckModules); _ = depTypeEnv; adtEnv := Compiler_Pipeline_BuildAdtEnvFromModules(localModules); _ = adtEnv; combinedEnv := Compiler_Env_Union(adtEnv, Compiler_Env_Union(depTypeEnv, stdlibEnv)); _ = combinedEnv; importedRegistry := Compiler_Pipeline_BuildImportedRegistry(localModules); _ = importedRegistry; importedAliases := Compiler_Pipeline_BuildImportedAliases(localModules); _ = importedAliases; return SkyTuple3{V0: combinedEnv, V1: importedRegistry, V2: importedAliases} }()
 }
 
 func Compiler_Pipeline_CompileMultiModule(entryPath any, outDir any, srcRoot any, entryMod any) any {
@@ -4188,6 +4192,14 @@ func Compiler_Pipeline_FileAlreadyExists(path any) any {
 
 func Compiler_Pipeline_CopyFfiWrapperFallback(outDir any, projectRoot any, modName any, mainGoCode any, combinedSrc any) any {
 	return func() any { return func() any { __subject := sky_fileRead(combinedSrc); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { safeName := sky_call(sky_stringJoin("_"), sky_call(sky_listMap(Compiler_Pipeline_FfiSafePart), sky_call(sky_stringSplit("."), modName))); _ = safeName; rewritten := sky_call(sky_call(sky_stringReplace("package sky_wrappers"), "package main"), content); _ = rewritten; wrapperDst := sky_concat(outDir, sky_concat("/sky_ffi_", sky_concat(safeName, ".go"))); _ = wrapperDst; sky_call(sky_fileWrite(wrapperDst), rewritten); return sky_println(sky_concat("   Copied wrapper: ", wrapperDst)) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { if sky_asBool(!sky_equal(projectRoot, ".")) { return Compiler_Pipeline_CopyOneFfiWrapper(outDir, ".", modName, mainGoCode) }; return struct{}{} }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Pipeline_BuildAdtEnvFromModules(modules any) any {
+	return func() any { counter := sky_refNew(8000); _ = counter; return sky_call(sky_call(sky_listFoldl(func(__pa0 any) any { return func(__pa1 any) any { return Compiler_Pipeline_AddModuleAdtEnv(counter, __pa0, __pa1) } }), Compiler_Env_Empty()), modules) }()
+}
+
+func Compiler_Pipeline_AddModuleAdtEnv(counter any, pair any, acc any) any {
+	return func() any { mod := sky_snd(pair); _ = mod; __tup_w_adtEnv_w := Compiler_Adt_RegisterAdts(counter, sky_asMap(mod)["declarations"]); adtEnv := sky_asTuple3(__tup_w_adtEnv_w).V1; _ = adtEnv; return Compiler_Env_Union(acc, adtEnv) }()
 }
 
 func Compiler_Pipeline_BuildImportedRegistry(modules any) any {
@@ -6169,15 +6181,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 2, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 6, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -7441,7 +7453,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Ffi_WrapperGen_GenerateWrapperFile(safePkg any, pkgName any, funcs any, methods any, fieldAccessors any) any {
@@ -7581,7 +7593,7 @@ func main() {
 }
 
 func runCommand(command any) any {
-	return func() any { if sky_asBool(sky_equal(command, "build")) { return cmdBuild(struct{}{}) }; if sky_asBool(sky_equal(command, "run")) { return cmdRun(struct{}{}) }; if sky_asBool(sky_equal(command, "check")) { return cmdCheck(struct{}{}) }; if sky_asBool(sky_equal(command, "fmt")) { return cmdFmt(struct{}{}) }; if sky_asBool(sky_equal(command, "clean")) { return cmdClean(struct{}{}) }; if sky_asBool(sky_equal(command, "lsp")) { return Lsp_Server_StartServer(struct{}{}) }; if sky_asBool(sky_equal(command, "add")) { return cmdAdd(struct{}{}) }; if sky_asBool(sky_equal(command, "install")) { return cmdInstall(struct{}{}) }; if sky_asBool(sky_equal(command, "remove")) { return cmdRemove(struct{}{}) }; if sky_asBool(sky_equal(command, "update")) { return cmdUpdate(struct{}{}) }; if sky_asBool(sky_equal(command, "upgrade")) { return cmdUpgrade(struct{}{}) }; if sky_asBool(sky_asBool(sky_equal(command, "version")) || sky_asBool(sky_asBool(sky_equal(command, "--version")) || sky_asBool(sky_equal(command, "-v")))) { return func() any { sky_println(sky_concat("sky ", skyVersion)); return struct{}{} }() }; return cmdHelp(struct{}{}) }()
+	return func() any { if sky_asBool(sky_equal(command, "build")) { return cmdBuild(struct{}{}) }; if sky_asBool(sky_equal(command, "run")) { return cmdRun(struct{}{}) }; if sky_asBool(sky_equal(command, "check")) { return cmdCheck(struct{}{}) }; if sky_asBool(sky_equal(command, "fmt")) { return cmdFmt(struct{}{}) }; if sky_asBool(sky_equal(command, "clean")) { return cmdClean(struct{}{}) }; if sky_asBool(sky_equal(command, "lsp")) { return Lsp_Server_StartServer(struct{}{}) }; if sky_asBool(sky_equal(command, "init")) { return cmdInit(struct{}{}) }; if sky_asBool(sky_equal(command, "add")) { return cmdAdd(struct{}{}) }; if sky_asBool(sky_equal(command, "install")) { return cmdInstall(struct{}{}) }; if sky_asBool(sky_equal(command, "remove")) { return cmdRemove(struct{}{}) }; if sky_asBool(sky_equal(command, "update")) { return cmdUpdate(struct{}{}) }; if sky_asBool(sky_equal(command, "upgrade")) { return cmdUpgrade(struct{}{}) }; if sky_asBool(sky_asBool(sky_equal(command, "version")) || sky_asBool(sky_asBool(sky_equal(command, "--version")) || sky_asBool(sky_equal(command, "-v")))) { return func() any { sky_println(sky_concat("sky ", skyVersion)); return struct{}{} }() }; return cmdHelp(struct{}{}) }()
 }
 
 func cmdBuild(_ any) any {
@@ -7593,7 +7605,7 @@ func buildGoProject(outDir any) any {
 }
 
 func handleBuildResult(outDir any, buildResult any) any {
-	return func() any { return func() any { __subject := buildResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return func() any { sky_println(sky_concat("Build complete: ", sky_concat(outDir, "/app"))); return struct{}{} }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { if sky_asBool(sky_call(sky_stringContains("no required module"), sky_errorToString(e))) { return retryBuildWithTidy(outDir, e) }; return func() any { sky_println(sky_concat("go build failed: ", sky_errorToString(e))); return sky_processExit(1) }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := buildResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return func() any { sky_println(sky_concat("Build complete: ", sky_concat(outDir, "/app"))); checkForUpdates(struct{}{}); return struct{}{} }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { if sky_asBool(sky_call(sky_stringContains("no required module"), sky_errorToString(e))) { return retryBuildWithTidy(outDir, e) }; return func() any { sky_println(sky_concat("go build failed: ", sky_errorToString(e))); return sky_processExit(1) }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func retryBuildWithTidy(outDir any, originalErr any) any {
@@ -7609,7 +7621,7 @@ func cmdCheck(_ any) any {
 }
 
 func checkSource(entryFile any, source any) any {
-	return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { combinedEnv := Compiler_Pipeline_BuildCheckEnv(entryFile, mod); _ = combinedEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(combinedEnv)); _ = checkResult; return handleCheckResult(entryFile, checkResult) }() };  panic("non-exhaustive case expression") }() }() }()
+	return func() any { lexResult := Compiler_Lexer_Lex(source); _ = lexResult; return func() any { return func() any { __subject := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Parse error: ", e)); return sky_processExit(1) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { __tup_combinedEnv_registry_aliases := Compiler_Pipeline_BuildCheckEnv(entryFile, mod); combinedEnv := sky_asTuple3(__tup_combinedEnv_registry_aliases).V0; _ = combinedEnv; registry := sky_asTuple3(__tup_combinedEnv_registry_aliases).V1; _ = registry; aliases := sky_asTuple3(__tup_combinedEnv_registry_aliases).V2; _ = aliases; checkResult := Compiler_Checker_CheckModuleWithRegistryAndAliases(mod, SkyJust(combinedEnv), SkyJust(registry), SkyJust(aliases)); _ = checkResult; return handleCheckResult(entryFile, checkResult) }() };  panic("non-exhaustive case expression") }() }() }()
 }
 
 func handleCheckResult(entryFile any, checkResult any) any {
@@ -7620,8 +7632,44 @@ func isGoStdlib(name any) any {
 	return sky_asBool(sky_equal(name, "archive")) || sky_asBool(sky_asBool(sky_equal(name, "bufio")) || sky_asBool(sky_asBool(sky_equal(name, "bytes")) || sky_asBool(sky_asBool(sky_equal(name, "compress")) || sky_asBool(sky_asBool(sky_equal(name, "container")) || sky_asBool(sky_asBool(sky_equal(name, "context")) || sky_asBool(sky_asBool(sky_equal(name, "crypto")) || sky_asBool(sky_asBool(sky_equal(name, "database")) || sky_asBool(sky_asBool(sky_equal(name, "debug")) || sky_asBool(sky_asBool(sky_equal(name, "embed")) || sky_asBool(sky_asBool(sky_equal(name, "encoding")) || sky_asBool(sky_asBool(sky_equal(name, "errors")) || sky_asBool(sky_asBool(sky_equal(name, "flag")) || sky_asBool(sky_asBool(sky_equal(name, "fmt")) || sky_asBool(sky_asBool(sky_equal(name, "go")) || sky_asBool(sky_asBool(sky_equal(name, "hash")) || sky_asBool(sky_asBool(sky_equal(name, "html")) || sky_asBool(sky_asBool(sky_equal(name, "image")) || sky_asBool(sky_asBool(sky_equal(name, "io")) || sky_asBool(sky_asBool(sky_equal(name, "log")) || sky_asBool(sky_asBool(sky_equal(name, "math")) || sky_asBool(sky_asBool(sky_equal(name, "mime")) || sky_asBool(sky_asBool(sky_equal(name, "net")) || sky_asBool(sky_asBool(sky_equal(name, "os")) || sky_asBool(sky_asBool(sky_equal(name, "path")) || sky_asBool(sky_asBool(sky_equal(name, "reflect")) || sky_asBool(sky_asBool(sky_equal(name, "regexp")) || sky_asBool(sky_asBool(sky_equal(name, "runtime")) || sky_asBool(sky_asBool(sky_equal(name, "sort")) || sky_asBool(sky_asBool(sky_equal(name, "strconv")) || sky_asBool(sky_asBool(sky_equal(name, "strings")) || sky_asBool(sky_asBool(sky_equal(name, "sync")) || sky_asBool(sky_asBool(sky_equal(name, "syscall")) || sky_asBool(sky_asBool(sky_equal(name, "testing")) || sky_asBool(sky_asBool(sky_equal(name, "text")) || sky_asBool(sky_asBool(sky_equal(name, "time")) || sky_asBool(sky_asBool(sky_equal(name, "unicode")) || sky_asBool(sky_equal(name, "unsafe"))))))))))))))))))))))))))))))))))))))
 }
 
+func cmdInit(_ any) any {
+	return func() any { projectName := resolveProjectName(struct{}{}); _ = projectName; tomlExists := func() any { return func() any { __subject := sky_fileRead("sky.toml"); if sky_asSkyResult(__subject).SkyName == "Ok" { return true };  if sky_asSkyResult(__subject).SkyName == "Err" { return false };  panic("non-exhaustive case expression") }() }(); _ = tomlExists; return func() any { if sky_asBool(tomlExists) { return sky_println("sky.toml already exists. Project already initialised.") }; return initProject(projectName) }() }()
+}
+
+func resolveProjectName(_ any) any {
+	return func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Just" { name := sky_asSkyMaybe(__subject).JustValue; _ = name; return name };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return inferProjectName(struct{}{}) };  panic("non-exhaustive case expression") }() }()
+}
+
+func inferProjectName(_ any) any {
+	return func() any { return func() any { __subject := sky_call(sky_processRun("pwd"), []any{}); if sky_asSkyResult(__subject).SkyName == "Ok" { cwd := sky_asSkyResult(__subject).OkValue; _ = cwd; return extractDirName(sky_stringTrim(cwd)) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "sky-project" };  panic("non-exhaustive case expression") }() }()
+}
+
+func extractDirName(cwd any) any {
+	return func() any { return func() any { __subject := sky_listReverse(sky_call(sky_stringSplit("/"), cwd)); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "sky-project" };  panic("non-exhaustive case expression") }() }()
+}
+
+func initProject(projectName any) any {
+	return func() any { tomlContent := sky_call(sky_stringJoin("\n"), []any{sky_concat("name = \"", sky_concat(projectName, "\"")), "version = \"0.1.0\"", "entry = \"src/Main.sky\"", "", "[source]", "root = \"src\"", ""}); _ = tomlContent; mainContent := sky_call(sky_stringJoin("\n"), []any{"module Main exposing (main)", "", "import Sky.Core.Prelude exposing (..)", "import Std.Log exposing (println)", "", "main = println \"Hello from Sky!\"", ""}); _ = mainContent; gitignoreContent := sky_call(sky_stringJoin("\n"), []any{"# Build artifacts", "sky-out/", "dist/", "", "# Sky cache and dependencies", ".skycache/", ".skydeps/", "", "# Environment", ".env", ".env.*", "", "# OS", ".DS_Store", ""}); _ = gitignoreContent; sky_call(sky_fileWrite("sky.toml"), tomlContent); sky_fileMkdirAll("src"); mainPath := "src/Main.sky"; _ = mainPath; mainExists := func() any { return func() any { __subject := sky_fileRead(mainPath); if sky_asSkyResult(__subject).SkyName == "Ok" { return true };  if sky_asSkyResult(__subject).SkyName == "Err" { return false };  panic("non-exhaustive case expression") }() }(); _ = mainExists; func() any { if sky_asBool(mainExists) { return struct{}{} }; return func() any { sky_call(sky_fileWrite(mainPath), mainContent); return struct{}{} }() }(); gitignorePath := ".gitignore"; _ = gitignorePath; gitignoreExists := func() any { return func() any { __subject := sky_fileRead(gitignorePath); if sky_asSkyResult(__subject).SkyName == "Ok" { return true };  if sky_asSkyResult(__subject).SkyName == "Err" { return false };  panic("non-exhaustive case expression") }() }(); _ = gitignoreExists; func() any { if sky_asBool(gitignoreExists) { return struct{}{} }; return func() any { sky_call(sky_fileWrite(gitignorePath), gitignoreContent); return struct{}{} }() }(); claudeMdCreated := copyClaudeMdTemplate(struct{}{}); _ = claudeMdCreated; sky_println(sky_concat("Initialised Sky project: ", projectName)); sky_println(""); sky_println("Created:"); sky_println("  sky.toml        Project configuration"); func() any { if sky_asBool(mainExists) { return struct{}{} }; return func() any { sky_println("  src/Main.sky    Entry point"); return struct{}{} }() }(); func() any { if sky_asBool(gitignoreExists) { return struct{}{} }; return func() any { sky_println("  .gitignore      Git ignore rules"); return struct{}{} }() }(); func() any { if sky_asBool(claudeMdCreated) { return func() any { sky_println("  CLAUDE.md       AI assistant context"); return struct{}{} }() }; return struct{}{} }(); sky_println(""); sky_println("Get started:"); sky_println("  sky build       Compile to binary"); sky_println("  sky run         Build and run"); return struct{}{} }()
+}
+
+func copyClaudeMdTemplate(_ any) any {
+	return func() any { return func() any { __subject := sky_fileRead("CLAUDE.md"); if sky_asSkyResult(__subject).SkyName == "Ok" { return false };  if sky_asSkyResult(__subject).SkyName == "Err" { return tryCopyTemplate(struct{}{}) };  panic("non-exhaustive case expression") }() }()
+}
+
+func tryCopyTemplate(_ any) any {
+	return func() any { skyBin := findSkyBin(struct{}{}); _ = skyBin; binDir := dirOfPath(skyBin); _ = binDir; templatePath := sky_concat(binDir, "/../templates/CLAUDE.md"); _ = templatePath; return func() any { return func() any { __subject := sky_fileRead(templatePath); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { sky_call(sky_fileWrite("CLAUDE.md"), content); return true }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return tryAlternateTemplatePath(binDir) };  panic("non-exhaustive case expression") }() }() }()
+}
+
+func tryAlternateTemplatePath(binDir any) any {
+	return func() any { altPath := sky_concat(binDir, "/templates/CLAUDE.md"); _ = altPath; return func() any { return func() any { __subject := sky_fileRead(altPath); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { sky_call(sky_fileWrite("CLAUDE.md"), content); return true }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return false };  panic("non-exhaustive case expression") }() }() }()
+}
+
 func cmdAdd(_ any) any {
-	return func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_println("Usage: sky add <package>") };  if sky_asSkyMaybe(__subject).SkyName == "Just" { pkg := sky_asSkyMaybe(__subject).JustValue; _ = pkg; return func() any { sky_println(sky_concat("Adding ", sky_concat(pkg, "..."))); firstPart := func() any { return func() any { __subject := sky_call(sky_stringSplit("/"), pkg); if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; return first };  if len(sky_asList(__subject)) == 0 { return pkg };  panic("non-exhaustive case expression") }() }(); _ = firstPart; return func() any { if sky_asBool(sky_asBool(isGoStdlib(firstPart)) || sky_asBool(isGoStdlib(pkg))) { return func() any { cacheDir := sky_concat(".skycache/go/", sky_call(sky_call(sky_stringReplace("-"), "_"), sky_call(sky_call(sky_stringReplace("/"), "_"), sky_call(sky_call(sky_stringReplace("."), "_"), pkg)))); _ = cacheDir; sky_fileMkdirAll(cacheDir); ensureGoModDir(struct{}{}); return generateGoBindings(pkg, cacheDir) }() }; if sky_asBool(sky_call(sky_stringContains("."), firstPart)) { return detectAndInstall(pkg) }; return sky_println(sky_concat("Unknown package: ", sky_concat(pkg, ". Use github.com/owner/repo format."))) }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_println("Usage: sky add <package>") };  if sky_asSkyMaybe(__subject).SkyName == "Just" { pkg := sky_asSkyMaybe(__subject).JustValue; _ = pkg; return func() any { sky_println(sky_concat("Adding ", sky_concat(pkg, "..."))); firstPart := func() any { return func() any { __subject := sky_call(sky_stringSplit("/"), pkg); if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; return first };  if len(sky_asList(__subject)) == 0 { return pkg };  panic("non-exhaustive case expression") }() }(); _ = firstPart; return func() any { if sky_asBool(sky_asBool(isGoStdlib(firstPart)) || sky_asBool(isGoStdlib(pkg))) { return addGoStdlib(pkg) }; if sky_asBool(sky_call(sky_stringContains("."), firstPart)) { return detectAndInstall(pkg) }; return sky_println(sky_concat("Unknown package: ", sky_concat(pkg, ". Use github.com/owner/repo format."))) }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func addGoStdlib(pkg any) any {
+	return func() any { cacheDir := sky_concat(".skycache/go/", safePkgName(pkg)); _ = cacheDir; sky_fileMkdirAll(cacheDir); ensureGoModDir(struct{}{}); generateGoBindings(pkg, cacheDir); addGoDepToToml(pkg, "latest"); sky_println("Done."); checkForUpdates(struct{}{}); return struct{}{} }()
 }
 
 func detectAndInstall(pkg any) any {
@@ -7633,11 +7681,15 @@ func detectClonedPackageType(pkg any, tmpDir any) any {
 }
 
 func installAsSkyPackage(pkg any, tmpDir any) any {
-	return func() any { targetDir := sky_concat(".skydeps/", pkg); _ = targetDir; sky_fileMkdirAll(".skydeps"); sky_call(sky_processRun("rm"), []any{"-rf", targetDir}); sky_call(sky_processRun("mv"), []any{tmpDir, targetDir}); return sky_println(sky_concat("Added Sky package: ", pkg)) }()
+	return func() any { targetDir := sky_concat(".skydeps/", pkg); _ = targetDir; sky_fileMkdirAll(".skydeps"); sky_call(sky_processRun("rm"), []any{"-rf", targetDir}); sky_call(sky_processRun("mv"), []any{tmpDir, targetDir}); addSkyDepToToml(pkg, "1.0.0"); sky_println(sky_concat("Added Sky package: ", pkg)); sky_println("Done."); checkForUpdates(struct{}{}); return struct{}{} }()
 }
 
 func installAsGoPackage(pkg any, tmpDir any) any {
-	return func() any { func() any { if sky_asBool(sky_stringIsEmpty(tmpDir)) { return struct{}{} }; return func() any { sky_call(sky_processRun("rm"), []any{"-rf", tmpDir}); return struct{}{} }() }(); ensureGoModDir(struct{}{}); getResult := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("cd .skycache/gomod && go get ", sky_concat(pkg, "@latest"))}); _ = getResult; return func() any { return func() any { __subject := getResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return func() any { sky_println(sky_concat("Added Go package: ", pkg)); cacheDir := sky_concat(".skycache/go/", sky_call(sky_call(sky_stringReplace("-"), "_"), sky_call(sky_call(sky_stringReplace("/"), "_"), sky_call(sky_call(sky_stringReplace("."), "_"), pkg)))); _ = cacheDir; sky_fileMkdirAll(cacheDir); return generateGoBindings(pkg, cacheDir) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Failed to add ", sky_concat(pkg, sky_concat(": ", sky_errorToString(e))))); return sky_processExit(1) }() };  panic("non-exhaustive case expression") }() }() }()
+	return func() any { func() any { if sky_asBool(sky_stringIsEmpty(tmpDir)) { return struct{}{} }; return func() any { sky_call(sky_processRun("rm"), []any{"-rf", tmpDir}); return struct{}{} }() }(); ensureGoModDir(struct{}{}); getResult := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("cd .skycache/gomod && go get ", sky_concat(pkg, "@latest"))}); _ = getResult; return handleGoPackageResult(pkg, getResult) }()
+}
+
+func handleGoPackageResult(pkg any, getResult any) any {
+	return func() any { return func() any { __subject := getResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return func() any { sky_println(sky_concat("Added Go package: ", pkg)); cacheDir := sky_concat(".skycache/go/", safePkgName(pkg)); _ = cacheDir; sky_fileMkdirAll(cacheDir); generateGoBindings(pkg, cacheDir); addGoDepToToml(pkg, "latest"); sky_println("Done."); checkForUpdates(struct{}{}); return struct{}{} }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return func() any { sky_println(sky_concat("Failed to add ", sky_concat(pkg, sky_concat(": ", sky_errorToString(e))))); sky_processExit(1); return struct{}{} }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func generateGoBindings(pkg any, cacheDir any) any {
@@ -7677,47 +7729,167 @@ func preFilterBindings(_ any) any {
 }
 
 func cmdUpdate(_ any) any {
-	return func() any { return func() any { __subject := sky_fileRead("sky.toml"); if sky_asSkyResult(__subject).SkyName == "Err" { return sky_println("No sky.toml found. Nothing to update.") };  if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { sky_println("Updating dependencies..."); lines := sky_call(sky_stringSplit("\n"), content); _ = lines; updateDependencies(lines); return sky_println("Update complete.") }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := sky_fileRead("sky.toml"); if sky_asSkyResult(__subject).SkyName == "Err" { return sky_println("No sky.toml found. Nothing to update.") };  if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { sky_println("Updating dependencies..."); lines := sky_call(sky_stringSplit("\n"), content); _ = lines; ensureGoModDir(struct{}{}); updateDepsLoop(lines, "", false); return sky_println("Update complete.") }() };  panic("non-exhaustive case expression") }() }()
 }
 
-func updateDependencies(lines any) any {
-	return updateDepsLoop(lines, false)
+func updateDepsLoop(lines any, section any, inDeps any) any {
+	return func() any { if sky_asBool(sky_listIsEmpty(lines)) { return struct{}{} }; return func() any { line := func() any { return func() any { __subject := sky_listHead(lines); if sky_asSkyMaybe(__subject).SkyName == "Just" { l := sky_asSkyMaybe(__subject).JustValue; _ = l; return l };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  panic("non-exhaustive case expression") }() }(); _ = line; rest := sky_call(sky_listDrop(1), lines); _ = rest; trimmed := sky_stringTrim(line); _ = trimmed; return func() any { if sky_asBool(isTomlSectionHeader(trimmed)) { return updateDepsLoop(rest, trimmed, isSkyOrGoDepSection(trimmed)) }; if sky_asBool(sky_asBool(inDeps) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) { return func() any { updateOneDep(trimmed, section); return updateDepsLoop(rest, section, true) }() }; return updateDepsLoop(rest, section, inDeps) }() }() }()
 }
 
-func updateDepsLoop(lines any, inDeps any) any {
-	return func() any { if sky_asBool(sky_listIsEmpty(lines)) { return sky_println("") }; return func() any { line := func() any { return func() any { __subject := sky_listHead(lines); if sky_asSkyMaybe(__subject).SkyName == "Just" { l := sky_asSkyMaybe(__subject).JustValue; _ = l; return l };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return "" };  panic("non-exhaustive case expression") }() }(); _ = line; rest := sky_call(sky_listDrop(1), lines); _ = rest; trimmed := sky_stringTrim(line); _ = trimmed; return func() any { if sky_asBool(sky_equal(trimmed, "[dependencies]")) { return updateDepsLoop(rest, true) }; if sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("["), trimmed)) && sky_asBool(!sky_equal(trimmed, "[dependencies]"))) { return updateDepsLoop(rest, false) }; if sky_asBool(sky_asBool(inDeps) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) { return func() any { updateOneDep(trimmed); return updateDepsLoop(rest, true) }() }; return updateDepsLoop(rest, inDeps) }() }() }()
+func isSkyOrGoDepSection(header any) any {
+	return sky_asBool(sky_equal(header, "[dependencies]")) || sky_asBool(sky_asBool(sky_equal(header, "[go.dependencies]")) || sky_asBool(sky_equal(header, "[\"go.dependencies\"]")))
 }
 
-func updateOneDep(depLine any) any {
-	return func() any { parts := sky_call(sky_stringSplit("="), depLine); _ = parts; pkgName := func() any { return func() any { __subject := parts; if len(sky_asList(__subject)) > 0 { name := sky_asList(__subject)[0]; _ = name; return sky_stringTrim(name) };  if true { return "" };  panic("non-exhaustive case expression") }() }(); _ = pkgName; return func() any { if sky_asBool(sky_stringIsEmpty(pkgName)) { return sky_println("") }; return func() any { sky_println(sky_concat("   Updating ", sky_concat(pkgName, "..."))); ensureGoModDir(struct{}{}); sky_call(sky_processRun("sh"), []any{"-c", sky_concat("cd .skycache/gomod && go get ", sky_concat(pkgName, "@latest 2>/dev/null"))}); return sky_println("") }() }() }()
+func updateOneDep(depLine any, section any) any {
+	return func() any { pkgName := extractTomlKey(depLine); _ = pkgName; return func() any { if sky_asBool(sky_stringIsEmpty(pkgName)) { return struct{}{} }; if sky_asBool(sky_asBool(sky_equal(section, "[go.dependencies]")) || sky_asBool(sky_equal(section, "[\"go.dependencies\"]"))) { return updateGoDep(pkgName) }; return updateSkyDep(pkgName) }() }()
+}
+
+func updateGoDep(pkgName any) any {
+	return func() any { sky_println(sky_concat("   Updating ", sky_concat(pkgName, "..."))); sky_call(sky_processRun("sh"), []any{"-c", sky_concat("cd .skycache/gomod && go get ", sky_concat(pkgName, "@latest 2>/dev/null"))}); return struct{}{} }()
+}
+
+func updateSkyDep(pkgName any) any {
+	return func() any { sky_println(sky_concat("   Updating ", sky_concat(pkgName, "..."))); depDir := sky_concat(".skydeps/", pkgName); _ = depDir; sky_call(sky_processRun("rm"), []any{"-rf", depDir}); sky_call(sky_processRun("git"), []any{"clone", "--depth", "1", sky_concat("https://", pkgName), depDir}); return struct{}{} }()
 }
 
 func cmdUpgrade(_ any) any {
-	return func() any { sky_println("Checking for latest Sky release..."); latestTag := fetchLatestVersion(true); _ = latestTag; return func() any { if sky_asBool(sky_stringIsEmpty(latestTag)) { return sky_println("Could not determine latest version.") }; if sky_asBool(sky_equal(latestTag, skyVersion)) { return sky_println(sky_concat("Already at latest version: ", latestTag)) }; return performUpgrade(latestTag) }() }()
+	return func() any { sky_println("Checking for updates..."); latest := fetchLatestVersionFresh(struct{}{}); _ = latest; return func() any { if sky_asBool(sky_stringIsEmpty(latest)) { return sky_println("Could not determine latest version.") }; return doUpgrade(latest) }() }()
 }
 
-func performUpgrade(tag any) any {
-	return func() any { sky_println(sky_concat("Upgrading to ", sky_concat(tag, "..."))); skyBin := func() any { return func() any { __subject := sky_call(sky_processRun("which"), []any{"sky"}); if sky_asSkyResult(__subject).SkyName == "Ok" { path := sky_asSkyResult(__subject).OkValue; _ = path; return sky_stringTrim(path) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }(); _ = skyBin; return func() any { if sky_asBool(sky_stringIsEmpty(skyBin)) { return sky_println("Could not find sky binary path. Please upgrade manually.") }; return func() any { artifact := detectPlatformArtifact(struct{}{}); _ = artifact; url := sky_concat("https://github.com/anzellai/sky/releases/download/", sky_concat(tag, sky_concat("/", artifact))); _ = url; sky_println(sky_concat("   Downloading ", url)); downloadResult := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("curl -fsSL '", sky_concat(url, sky_concat("' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade ", skyBin)))}); _ = downloadResult; return func() any { return func() any { __subject := downloadResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return sky_println(sky_concat("Upgraded to ", sky_concat(tag, " successfully!"))) };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return sky_println(sky_concat("Upgrade failed: ", sky_concat(sky_errorToString(e), "\nDownload manually from: https://github.com/anzellai/sky/releases"))) };  panic("non-exhaustive case expression") }() }() }() }() }()
+func doUpgrade(latest any) any {
+	return func() any { current := skyVersion; _ = current; isDev := sky_asBool(sky_equal(current, "dev")) || sky_asBool(sky_call(sky_stringContains("-dev"), current)); _ = isDev; return func() any { if sky_asBool(sky_asBool(sky_not(isDev)) && sky_asBool(sky_numCompare("<=", compareVersions(latest, current), 0))) { return sky_println(sky_concat("Already up to date (v", sky_concat(current, ")."))) }; return performUpgrade(latest, current) }() }()
 }
 
-func detectPlatformArtifact(_ any) any {
-	return func() any { osResult := sky_call(sky_processRun("uname"), []any{"-s"}); _ = osResult; archResult := sky_call(sky_processRun("uname"), []any{"-m"}); _ = archResult; os := func() any { return func() any { __subject := osResult; if sky_asSkyResult(__subject).SkyName == "Ok" { o := sky_asSkyResult(__subject).OkValue; _ = o; return sky_stringToLower(sky_stringTrim(o)) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "linux" };  panic("non-exhaustive case expression") }() }(); _ = os; arch := func() any { return func() any { __subject := archResult; if sky_asSkyResult(__subject).SkyName == "Ok" { a := sky_asSkyResult(__subject).OkValue; _ = a; return sky_stringTrim(a) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "x86_64" };  panic("non-exhaustive case expression") }() }(); _ = arch; skyOs := func() any { if sky_asBool(sky_equal(os, "darwin")) { return "darwin" }; if sky_asBool(sky_equal(os, "linux")) { return "linux" }; return "linux" }(); _ = skyOs; skyArch := func() any { if sky_asBool(sky_asBool(sky_equal(arch, "arm64")) || sky_asBool(sky_equal(arch, "aarch64"))) { return "arm64" }; return "x64" }(); _ = skyArch; return sky_concat("sky-", sky_concat(skyOs, sky_concat("-", skyArch))) }()
+func performUpgrade(latest any, current any) any {
+	return func() any { sky_println(sky_concat("Upgrading: v", sky_concat(current, sky_concat(" -> v", latest)))); platform := detectPlatform(struct{}{}); _ = platform; arch := detectArch(struct{}{}); _ = arch; skyBin := findSkyBin(struct{}{}); _ = skyBin; return func() any { if sky_asBool(sky_stringIsEmpty(skyBin)) { return sky_println("Could not find sky binary path. Please upgrade manually.") }; return downloadAndInstall(latest, platform, arch, skyBin) }() }()
 }
 
-func fetchLatestVersion(forceRefresh any) any {
-	return func() any { cacheDir := func() any { return func() any { __subject := sky_call(sky_processRun("sh"), []any{"-c", "echo $HOME"}); if sky_asSkyResult(__subject).SkyName == "Ok" { home := sky_asSkyResult(__subject).OkValue; _ = home; return sky_concat(sky_stringTrim(home), "/.sky") };  if sky_asSkyResult(__subject).SkyName == "Err" { return "/tmp/.sky" };  panic("non-exhaustive case expression") }() }(); _ = cacheDir; cachePath := sky_concat(cacheDir, "/last-update-check.json"); _ = cachePath; return func() any { if sky_asBool(sky_not(forceRefresh)) { return func() any { return func() any { __subject := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("if [ -f ", sky_concat(cachePath, sky_concat(" ] && [ $(( $(date +%s) - $(stat -f %m ", sky_concat(cachePath, sky_concat(" 2>/dev/null || stat -c %Y ", sky_concat(cachePath, sky_concat(" 2>/dev/null || echo 0) )) -lt 86400 ]; then cat ", sky_concat(cachePath, "; fi"))))))))}); if sky_asSkyResult(__subject).SkyName == "Ok" { cached := sky_asSkyResult(__subject).OkValue; _ = cached; return func() any { trimmed := sky_stringTrim(cached); _ = trimmed; return func() any { if sky_asBool(sky_not(sky_stringIsEmpty(trimmed))) { return trimmed }; return fetchAndCacheVersion(cacheDir, cachePath) }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return fetchAndCacheVersion(cacheDir, cachePath) };  panic("non-exhaustive case expression") }() }() }; return fetchAndCacheVersion(cacheDir, cachePath) }() }()
+func downloadAndInstall(latest any, platform any, arch any, skyBin any) any {
+	return func() any { skyAsset := sky_concat("sky-", sky_concat(platform, sky_concat("-", arch))); _ = skyAsset; baseUrl := sky_concat("https://github.com/anzellai/sky/releases/download/v", latest); _ = baseUrl; url := sky_concat(baseUrl, sky_concat("/", skyAsset)); _ = url; sky_println(sky_concat("   Downloading ", url)); skyResult := downloadBinary(url, skyBin); _ = skyResult; return func() any { return func() any { __subject := skyResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return func() any { writeUpdateCache(latest); return sky_println(sky_concat("Sky upgraded to v", sky_concat(latest, " successfully!"))) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return retrySudoDownload(latest, url, skyBin, e) };  panic("non-exhaustive case expression") }() }() }()
 }
 
-func fetchAndCacheVersion(cacheDir any, cachePath any) any {
-	return func() any { result := sky_call(sky_processRun("sh"), []any{"-c", "curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"\\(v[^\"]*\\)\".*/\\1/'"}); _ = result; return func() any { return func() any { __subject := result; if sky_asSkyResult(__subject).SkyName == "Ok" { output := sky_asSkyResult(__subject).OkValue; _ = output; return func() any { tag := sky_stringTrim(output); _ = tag; func() any { if sky_asBool(sky_not(sky_stringIsEmpty(tag))) { return func() any { sky_fileMkdirAll(cacheDir); sky_call(sky_fileWrite(cachePath), tag); return struct{}{} }() }; return struct{}{} }(); return tag }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }() }()
+func retrySudoDownload(latest any, url any, skyBin any, err any) any {
+	return func() any { errMsg := sky_errorToString(err); _ = errMsg; return func() any { if sky_asBool(sky_call(sky_stringContains("ermission"), errMsg)) { return func() any { sky_println("Requires elevated permissions. Retrying with sudo..."); sudoResult := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("curl -fsSL '", sky_concat(url, sky_concat("' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && sudo mv /tmp/sky-upgrade '", sky_concat(skyBin, "'"))))}); _ = sudoResult; return func() any { return func() any { __subject := sudoResult; if sky_asSkyResult(__subject).SkyName == "Ok" { return func() any { writeUpdateCache(latest); return sky_println(sky_concat("Sky upgraded to v", sky_concat(latest, " successfully!"))) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { e2 := sky_asSkyResult(__subject).ErrValue; _ = e2; return sky_println(sky_concat("Upgrade failed: ", sky_concat(sky_errorToString(e2), "\nDownload manually from: https://github.com/anzellai/sky/releases"))) };  panic("non-exhaustive case expression") }() }() }() }; return sky_println(sky_concat("Upgrade failed: ", sky_concat(errMsg, "\nDownload manually from: https://github.com/anzellai/sky/releases"))) }() }()
+}
+
+func downloadBinary(url any, destPath any) any {
+	return func() any { tmpPath := sky_concat(destPath, ".tmp"); _ = tmpPath; result := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("curl -fsSL '", sky_concat(url, sky_concat("' -o '", sky_concat(tmpPath, sky_concat("' && chmod +x '", sky_concat(tmpPath, sky_concat("' && mv '", sky_concat(tmpPath, sky_concat("' '", sky_concat(destPath, "'"))))))))))}); _ = result; return result }()
+}
+
+func findSkyBin(_ any) any {
+	return func() any { return func() any { __subject := sky_call(sky_processRun("which"), []any{"sky"}); if sky_asSkyResult(__subject).SkyName == "Ok" { p := sky_asSkyResult(__subject).OkValue; _ = p; return sky_stringTrim(p) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }()
+}
+
+func dirOfPath(p any) any {
+	return func() any { parts := sky_call(sky_stringSplit("/"), p); _ = parts; dirParts := sky_call(sky_listTake(sky_numBinop("-", sky_listLength(parts), 1)), parts); _ = dirParts; return sky_call(sky_stringJoin("/"), dirParts) }()
+}
+
+func detectPlatform(_ any) any {
+	return func() any { return func() any { __subject := sky_call(sky_processRun("uname"), []any{"-s"}); if sky_asSkyResult(__subject).SkyName == "Ok" { o := sky_asSkyResult(__subject).OkValue; _ = o; return func() any { raw := sky_stringToLower(sky_stringTrim(o)); _ = raw; return func() any { if sky_asBool(sky_equal(raw, "darwin")) { return "darwin" }; return "linux" }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return "linux" };  panic("non-exhaustive case expression") }() }()
+}
+
+func detectArch(_ any) any {
+	return func() any { return func() any { __subject := sky_call(sky_processRun("uname"), []any{"-m"}); if sky_asSkyResult(__subject).SkyName == "Ok" { a := sky_asSkyResult(__subject).OkValue; _ = a; return func() any { raw := sky_stringTrim(a); _ = raw; return func() any { if sky_asBool(sky_asBool(sky_equal(raw, "arm64")) || sky_asBool(sky_equal(raw, "aarch64"))) { return "arm64" }; return "x64" }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return "x64" };  panic("non-exhaustive case expression") }() }()
+}
+
+func compareVersions(a any, b any) any {
+	return func() any { partsA := parseVersion(a); _ = partsA; partsB := parseVersion(b); _ = partsB; return compareVersionParts(partsA, partsB) }()
+}
+
+func parseVersion(v any) any {
+	return func() any { cleaned := sky_call(sky_call(sky_stringReplace("v"), ""), v); _ = cleaned; base := func() any { return func() any { __subject := sky_call(sky_stringSplit("-"), cleaned); if len(sky_asList(__subject)) > 0 { first := sky_asList(__subject)[0]; _ = first; return first };  if len(sky_asList(__subject)) == 0 { return cleaned };  panic("non-exhaustive case expression") }() }(); _ = base; return sky_call(sky_listMap(parseIntOrZero), sky_call(sky_stringSplit("."), base)) }()
+}
+
+func parseIntOrZero(s any) any {
+	return func() any { return func() any { __subject := sky_stringToInt(s); if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return n };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return 0 };  panic("non-exhaustive case expression") }() }()
+}
+
+func compareVersionParts(a any, b any) any {
+	return func() any { return func() any { __subject := a; if len(sky_asList(__subject)) == 0 { return compareVersionParts2([]any{}, b) };  if len(sky_asList(__subject)) > 0 { x := sky_asList(__subject)[0]; _ = x; restA := sky_asList(__subject)[1:]; _ = restA; return func() any { return func() any { __subject := b; if len(sky_asList(__subject)) == 0 { return func() any { if sky_asBool(sky_numCompare(">", x, 0)) { return 1 }; return compareVersionParts(restA, []any{}) }() };  if len(sky_asList(__subject)) > 0 { y := sky_asList(__subject)[0]; _ = y; restB := sky_asList(__subject)[1:]; _ = restB; return func() any { if sky_asBool(sky_numCompare(">", x, y)) { return 1 }; if sky_asBool(sky_numCompare("<", x, y)) { return -1 }; return compareVersionParts(restA, restB) }() };  panic("non-exhaustive case expression") }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func compareVersionParts2(a any, b any) any {
+	return func() any { return func() any { __subject := b; if len(sky_asList(__subject)) == 0 { return 0 };  if len(sky_asList(__subject)) > 0 { y := sky_asList(__subject)[0]; _ = y; restB := sky_asList(__subject)[1:]; _ = restB; return func() any { if sky_asBool(sky_numCompare(">", y, 0)) { return -1 }; return compareVersionParts2(a, restB) }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func getCacheDir(_ any) any {
+	return func() any { return func() any { __subject := sky_call(sky_processRun("sh"), []any{"-c", "echo $HOME"}); if sky_asSkyResult(__subject).SkyName == "Ok" { home := sky_asSkyResult(__subject).OkValue; _ = home; return sky_concat(sky_stringTrim(home), "/.sky") };  if sky_asSkyResult(__subject).SkyName == "Err" { return "/tmp/.sky" };  panic("non-exhaustive case expression") }() }()
+}
+
+func getCachePath(_ any) any {
+	return sky_concat(getCacheDir(struct{}{}), "/last-update-check.json")
+}
+
+func fetchLatestVersionFresh(_ any) any {
+	return func() any { result := sky_call(sky_processRun("sh"), []any{"-c", "curl -fsSL --connect-timeout 3 https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"v\\([^\"]*\\)\".*/\\1/'"}); _ = result; return func() any { return func() any { __subject := result; if sky_asSkyResult(__subject).SkyName == "Ok" { output := sky_asSkyResult(__subject).OkValue; _ = output; return func() any { version := sky_stringTrim(output); _ = version; func() any { if sky_asBool(sky_not(sky_stringIsEmpty(version))) { return writeUpdateCache(version) }; return struct{}{} }(); return version }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }() }()
+}
+
+func fetchLatestVersionCached(_ any) any {
+	return func() any { cachePath := getCachePath(struct{}{}); _ = cachePath; cacheContent := func() any { return func() any { __subject := sky_fileRead(cachePath); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return sky_stringTrim(content) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }(); _ = cacheContent; return func() any { if sky_asBool(sky_stringIsEmpty(cacheContent)) { return fetchLatestVersionSlow(struct{}{}) }; return checkCacheFreshness(cachePath, cacheContent) }() }()
+}
+
+func checkCacheFreshness(cachePath any, cacheContent any) any {
+	return func() any { isFresh := func() any { return func() any { __subject := sky_call(sky_processRun("sh"), []any{"-c", sky_concat("[ $(( $(date +%s) - $(stat -f %m '", sky_concat(cachePath, sky_concat("' 2>/dev/null || stat -c %Y '", sky_concat(cachePath, "' 2>/dev/null || echo 0) )) -lt 86400 ] && echo fresh"))))}); if sky_asSkyResult(__subject).SkyName == "Ok" { out := sky_asSkyResult(__subject).OkValue; _ = out; return sky_call(sky_stringContains("fresh"), out) };  if sky_asSkyResult(__subject).SkyName == "Err" { return false };  panic("non-exhaustive case expression") }() }(); _ = isFresh; return func() any { if sky_asBool(isFresh) { return cacheContent }; return fetchLatestVersionSlow(struct{}{}) }() }()
+}
+
+func fetchLatestVersionSlow(_ any) any {
+	return func() any { result := sky_call(sky_processRun("sh"), []any{"-c", "curl -fsSL --connect-timeout 3 https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"v\\([^\"]*\\)\".*/\\1/'"}); _ = result; return func() any { return func() any { __subject := result; if sky_asSkyResult(__subject).SkyName == "Ok" { output := sky_asSkyResult(__subject).OkValue; _ = output; return func() any { version := sky_stringTrim(output); _ = version; func() any { if sky_asBool(sky_not(sky_stringIsEmpty(version))) { return writeUpdateCache(version) }; return struct{}{} }(); return version }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }() }()
+}
+
+func writeUpdateCache(version any) any {
+	return func() any { cacheDir := getCacheDir(struct{}{}); _ = cacheDir; cachePath := getCachePath(struct{}{}); _ = cachePath; sky_fileMkdirAll(cacheDir); sky_call(sky_fileWrite(cachePath), version); return struct{}{} }()
 }
 
 func checkForUpdates(_ any) any {
-	return func() any { latestTag := fetchLatestVersion(false); _ = latestTag; return func() any { if sky_asBool(sky_asBool(sky_not(sky_stringIsEmpty(latestTag))) && sky_asBool(!sky_equal(latestTag, skyVersion))) { return func() any { sky_println(""); sky_println(sky_concat("   A newer version of Sky is available: ", sky_concat(latestTag, sky_concat(" (current: ", sky_concat(skyVersion, ")"))))); sky_println("   Run 'sky upgrade' to update."); return struct{}{} }() }; return struct{}{} }() }()
+	return func() any { current := skyVersion; _ = current; isDev := sky_asBool(sky_equal(current, "dev")) || sky_asBool(sky_call(sky_stringContains("-dev"), current)); _ = isDev; return func() any { if sky_asBool(isDev) { return struct{}{} }; return checkForUpdatesReal(current) }() }()
+}
+
+func checkForUpdatesReal(current any) any {
+	return func() any { latest := fetchLatestVersionCached(struct{}{}); _ = latest; return func() any { if sky_asBool(sky_asBool(sky_not(sky_stringIsEmpty(latest))) && sky_asBool(sky_numCompare(">", compareVersions(latest, current), 0))) { return func() any { sky_println(""); sky_println(sky_concat("   A newer version of Sky is available: v", sky_concat(latest, sky_concat(" (current: v", sky_concat(current, ")"))))); sky_println("   Run 'sky upgrade' to update."); return struct{}{} }() }; return struct{}{} }() }()
 }
 
 func cmdRemove(_ any) any {
-	return func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_println("Usage: sky remove <package>") };  if sky_asSkyMaybe(__subject).SkyName == "Just" { pkg := sky_asSkyMaybe(__subject).JustValue; _ = pkg; return func() any { sky_println(sky_concat("Removing ", sky_concat(pkg, "..."))); skyDepDir := sky_concat(".skydeps/", pkg); _ = skyDepDir; goDepDir := sky_concat(".skycache/go/", sky_stringToLower(pkg)); _ = goDepDir; sky_call(sky_processRun("rm"), []any{"-rf", skyDepDir}); sky_call(sky_processRun("rm"), []any{"-rf", goDepDir}); return sky_println(sky_concat("Removed: ", pkg)) }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := sky_processGetArg(2); if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_println("Usage: sky remove <package>") };  if sky_asSkyMaybe(__subject).SkyName == "Just" { pkg := sky_asSkyMaybe(__subject).JustValue; _ = pkg; return removePackage(pkg) };  panic("non-exhaustive case expression") }() }()
+}
+
+func removePackage(pkg any) any {
+	return func() any { sky_println(sky_concat("Removing ", sky_concat(pkg, "..."))); removedFromToml := removeDepFromToml(pkg); _ = removedFromToml; skyDepDir := sky_concat(".skydeps/", pkg); _ = skyDepDir; goDepDir := sky_concat(".skycache/go/", safePkgName(pkg)); _ = goDepDir; sky_call(sky_processRun("rm"), []any{"-rf", skyDepDir}); sky_call(sky_processRun("rm"), []any{"-rf", goDepDir}); return func() any { if sky_asBool(removedFromToml) { return sky_println(sky_concat("Removed ", pkg)) }; return sky_println(sky_concat("Package ", sky_concat(pkg, " not found in dependencies."))) }() }()
+}
+
+func extractTomlKey(line any) any {
+	return func() any { parts := sky_call(sky_stringSplit("="), line); _ = parts; return func() any { return func() any { __subject := parts; if len(sky_asList(__subject)) > 0 { key := sky_asList(__subject)[0]; _ = key; return sky_stringTrim(sky_call(sky_call(sky_stringReplace("\""), ""), sky_stringTrim(key))) };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }() }()
+}
+
+func isTomlSectionHeader(trimmed any) any {
+	return sky_call(sky_stringStartsWith("["), trimmed)
+}
+
+func addGoDepToToml(pkg any, version any) any {
+	return func() any { return func() any { __subject := sky_fileRead("sky.toml"); if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { lines := sky_call(sky_stringSplit("\n"), content); _ = lines; depLine := sky_concat(pkg, sky_concat(" = \"", sky_concat(version, "\""))); _ = depLine; hasGoDeps := sky_asBool(listContains("[go.dependencies]", lines)) || sky_asBool(listContains("[\"go.dependencies\"]", lines)); _ = hasGoDeps; alreadyHas := tomlHasDep(pkg, lines); _ = alreadyHas; return func() any { if sky_asBool(alreadyHas) { return struct{}{} }; if sky_asBool(hasGoDeps) { return func() any { newContent := insertAfterSection("[go.dependencies]", depLine, lines); _ = newContent; return func() any { sky_call(sky_fileWrite("sky.toml"), sky_call(sky_stringJoin("\n"), newContent)); return struct{}{} }() }() }; return func() any { newLines := sky_listConcat([]any{lines, []any{"", "[go.dependencies]", depLine}}); _ = newLines; sky_call(sky_fileWrite("sky.toml"), sky_call(sky_stringJoin("\n"), newLines)); return struct{}{} }() }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func addSkyDepToToml(pkg any, version any) any {
+	return func() any { return func() any { __subject := sky_fileRead("sky.toml"); if sky_asSkyResult(__subject).SkyName == "Err" { return struct{}{} };  if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { lines := sky_call(sky_stringSplit("\n"), content); _ = lines; depLine := sky_concat(pkg, sky_concat(" = \"", sky_concat(version, "\""))); _ = depLine; hasDeps := listContains("[dependencies]", lines); _ = hasDeps; alreadyHas := tomlHasDep(pkg, lines); _ = alreadyHas; return func() any { if sky_asBool(alreadyHas) { return struct{}{} }; if sky_asBool(hasDeps) { return func() any { newContent := insertAfterSection("[dependencies]", depLine, lines); _ = newContent; return func() any { sky_call(sky_fileWrite("sky.toml"), sky_call(sky_stringJoin("\n"), newContent)); return struct{}{} }() }() }; return func() any { newLines := sky_listConcat([]any{lines, []any{"", "[dependencies]", depLine}}); _ = newLines; sky_call(sky_fileWrite("sky.toml"), sky_call(sky_stringJoin("\n"), newLines)); return struct{}{} }() }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func tomlHasDep(pkg any, lines any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return false };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { trimmed := sky_stringTrim(line); _ = trimmed; key := extractTomlKey(trimmed); _ = key; return func() any { if sky_asBool(sky_equal(key, pkg)) { return true }; return tomlHasDep(pkg, rest) }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func insertAfterSection(sectionName any, newLine any, lines any) any {
+	return insertAfterSectionLoop(sectionName, newLine, lines, []any{}, false)
+}
+
+func insertAfterSectionLoop(sectionName any, newLine any, lines any, acc any, foundSection any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return func() any { if sky_asBool(foundSection) { return sky_call(sky_listAppend(acc), []any{newLine}) }; return sky_call(sky_listAppend(acc), []any{"", sectionName, newLine}) }() };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { trimmed := sky_stringTrim(line); _ = trimmed; return func() any { if sky_asBool(sky_asBool(sky_equal(trimmed, sectionName)) || sky_asBool(sky_asBool(sky_equal(trimmed, "[\"go.dependencies\"]")) && sky_asBool(sky_equal(sectionName, "[go.dependencies]")))) { return insertAfterSectionLoop(sectionName, newLine, rest, sky_call(sky_listAppend(acc), []any{line}), true) }; if sky_asBool(sky_asBool(foundSection) && sky_asBool(isTomlSectionHeader(trimmed))) { return sky_listConcat([]any{acc, []any{newLine, ""}, []any{line}, rest}) }; return insertAfterSectionLoop(sectionName, newLine, rest, sky_call(sky_listAppend(acc), []any{line}), foundSection) }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func removeDepFromToml(pkg any) any {
+	return func() any { return func() any { __subject := sky_fileRead("sky.toml"); if sky_asSkyResult(__subject).SkyName == "Err" { return false };  if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { lines := sky_call(sky_stringSplit("\n"), content); _ = lines; filtered := removeDepLines(pkg, lines); _ = filtered; newContent := sky_call(sky_stringJoin("\n"), filtered); _ = newContent; return func() any { if sky_asBool(sky_equal(newContent, content)) { return false }; return func() any { sky_call(sky_fileWrite("sky.toml"), newContent); return true }() }() }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func removeDepLines(pkg any, lines any) any {
+	return func() any { return func() any { __subject := lines; if len(sky_asList(__subject)) == 0 { return []any{} };  if len(sky_asList(__subject)) > 0 { line := sky_asList(__subject)[0]; _ = line; rest := sky_asList(__subject)[1:]; _ = rest; return func() any { trimmed := sky_stringTrim(line); _ = trimmed; key := extractTomlKey(trimmed); _ = key; return func() any { if sky_asBool(sky_asBool(sky_equal(key, pkg)) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) { return removeDepLines(pkg, rest) }; return append([]any{line}, sky_asList(removeDepLines(pkg, rest))...) }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func cmdFmt(_ any) any {
@@ -7761,7 +7933,7 @@ func fmtStdinSource(source any) any {
 }
 
 func cmdHelp(_ any) any {
-	return func() any { sky_println(sky_concat("Sky Programming Language ", skyVersion)); sky_println(""); sky_println("Usage: sky <command> [args]"); sky_println(""); sky_println("Commands:"); sky_println("  build [file]    Compile to Go binary"); sky_println("  run [file]      Build and run"); sky_println("  check [file]    Type-check only"); sky_println("  fmt [file]      Format Sky source code"); sky_println("  add <package>   Add Go or Sky dependency"); sky_println("  install         Install all dependencies + generate bindings"); sky_println("  remove <pkg>    Remove a dependency"); sky_println("  update          Update sky.toml dependencies to latest"); sky_println("  upgrade         Upgrade Sky compiler to latest release"); sky_println("  clean           Remove build artifacts"); sky_println("  version         Show version"); return struct{}{} }()
+	return func() any { sky_println(sky_concat("Sky Programming Language ", skyVersion)); sky_println(""); sky_println("Usage: sky <command> [args]"); sky_println(""); sky_println("Commands:"); sky_println("  init [name]     Create a new Sky project"); sky_println("  build [file]    Compile to Go binary"); sky_println("  run [file]      Build and run"); sky_println("  check [file]    Type-check only"); sky_println("  fmt [file]      Format Sky source code"); sky_println("  add <package>   Add Go or Sky dependency"); sky_println("  install         Install all dependencies + generate bindings"); sky_println("  remove <pkg>    Remove a dependency"); sky_println("  update          Update sky.toml dependencies to latest"); sky_println("  upgrade         Upgrade Sky compiler to latest release"); sky_println("  clean           Remove build artifacts"); sky_println("  version         Show version"); return struct{}{} }()
 }
 
 func cmdClean(_ any) any {
@@ -7892,6 +8064,10 @@ var fileAlreadyExists = Compiler_Pipeline_FileAlreadyExists
 
 var copyFfiWrapperFallback = Compiler_Pipeline_CopyFfiWrapperFallback
 
+var buildAdtEnvFromModules = Compiler_Pipeline_BuildAdtEnvFromModules
+
+var addModuleAdtEnv = Compiler_Pipeline_AddModuleAdtEnv
+
 var buildImportedRegistry = Compiler_Pipeline_BuildImportedRegistry
 
 var buildImportedAliases = Compiler_Pipeline_BuildImportedAliases
@@ -8003,8 +8179,6 @@ var generateOriginalAliases = Compiler_Pipeline_GenerateOriginalAliases
 var makeOriginalAlias = Compiler_Pipeline_MakeOriginalAlias
 
 var isExportableDecl = Compiler_Pipeline_IsExportableDecl
-
-var dirOfPath = Compiler_Pipeline_DirOfPath
 
 var needsStdlibWrapper = Compiler_Pipeline_NeedsStdlibWrapper
 

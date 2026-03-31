@@ -94,12 +94,10 @@ This creates:
 ```
 my-app/
   sky.toml          -- project manifest
-  CLAUDE.md         -- AI-assisted development context (Claude Code)
+  .gitignore        -- Sky-specific ignore rules
   src/
     Main.sky        -- entry point
 ```
-
-The generated `CLAUDE.md` gives Claude Code full context about Sky syntax, stdlib, FFI, and Sky.Live -- so it can write Sky code confidently from day one.
 
 ### Docker
 
@@ -977,6 +975,8 @@ sky add crypto/sha256
 sky remove github.com/google/uuid
 ```
 
+Both `sky add` and `sky remove` automatically update `sky.toml` — dependencies are added to `[dependencies]` (Sky packages) or `[go.dependencies]` (Go packages) and removed from the relevant section.
+
 **Auto-detection**: When you run `sky add github.com/...`, Sky checks the remote repository:
 
 - If it has a `sky.toml` -> installs as a Sky package (cloned to `.skydeps/`)
@@ -1068,15 +1068,16 @@ A library can also have Go dependencies. When someone installs your Sky package,
 ## CLI Reference
 
 ```bash
+sky init [name]              # Create a new Sky project (sky.toml, src/Main.sky, .gitignore)
 sky build [file.sky]         # Compile to Go and build binary (sky-out/app)
 sky run [file.sky]           # Build and run
-sky check [file.sky]         # Type-check without compiling (reports all diagnostics)
+sky check [file.sky]         # Type-check without compiling (with cross-module ADT + alias resolution)
 sky fmt <file-or-dir>        # Format code (Elm-style: 4-space, leading commas)
-sky add <package>            # Add a Go or Sky dependency + auto-generate bindings
+sky add <package>            # Add dependency + generate bindings + update sky.toml
 sky install                  # Install all deps + auto-generate missing bindings from source
-sky remove <package>         # Remove a dependency
+sky remove <package>         # Remove dependency from sky.toml + clean cache
 sky update                   # Update sky.toml dependencies to latest versions
-sky upgrade                  # Self-upgrade to latest GitHub release
+sky upgrade                  # Self-upgrade to latest GitHub release (semver, platform detection)
 sky clean                    # Remove sky-out/ dist/
 sky lsp                      # Start LSP server for editor integration
 sky --version                # Show version
@@ -1097,7 +1098,7 @@ If `file.sky` is omitted, defaults to `src/Main.sky`.
 
 ### Type Checker
 
-`sky check` runs the full type-checking pipeline without compiling to Go:
+`sky check` runs the full type-checking pipeline without compiling to Go. It resolves imported ADT constructors, type aliases, and annotations from dependency modules — matching the same environment used during `sky build`:
 
 ```bash
 sky check src/Main.sky        # Check a single file and its dependencies

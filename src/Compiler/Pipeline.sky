@@ -93,7 +93,6 @@ compile filePath outDir =
                                     compileSource filePath outDir source
 
 
-buildCheckEnv : String -> Ast.Module -> Env.TypeEnv
 buildCheckEnv entryFilePath mod =
     let
         srcRoot = dirOfPath entryFilePath
@@ -120,8 +119,12 @@ buildCheckEnv entryFilePath mod =
         typeCheckModules = List.append localModules ffiDeduped
         stdlibEnv = Resolver.buildStdlibEnv
         depTypeEnv = Resolver.buildDepTypeEnv mod.imports typeCheckModules
+        adtEnv = buildAdtEnvFromModules localModules
+        combinedEnv = Env.union adtEnv (Env.union depTypeEnv stdlibEnv)
+        importedRegistry = buildImportedRegistry localModules
+        importedAliases = buildImportedAliases localModules
     in
-        Env.union depTypeEnv stdlibEnv
+        ( combinedEnv , importedRegistry , importedAliases )
 
 
 compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
@@ -1517,6 +1520,21 @@ copyFfiWrapperFallback outDir projectRoot modName mainGoCode combinedSrc =
                 copyOneFfiWrapper outDir "." modName mainGoCode
             else
                 ()
+
+
+buildAdtEnvFromModules modules =
+    let
+        counter = Ref.new 8000
+    in
+        List.foldl (addModuleAdtEnv counter) Env.empty modules
+
+
+addModuleAdtEnv counter pair acc =
+    let
+        mod = snd pair
+        ( _ , adtEnv , _ ) = Adt.registerAdts counter mod.declarations
+    in
+        Env.union acc adtEnv
 
 
 buildImportedRegistry : (List (String, Ast.Module)) -> Adt.AdtRegistry

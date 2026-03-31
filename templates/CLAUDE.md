@@ -7,15 +7,16 @@ This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure function
 ## Quick Reference
 
 ```bash
+sky init [name]           # Create a new Sky project (sky.toml, src/Main.sky, .gitignore, CLAUDE.md)
 sky build src/Main.sky    # Compile to Go binary (output: sky-out/app)
 sky run src/Main.sky      # Build and run
-sky check src/Main.sky    # Type-check without compiling
+sky check src/Main.sky    # Type-check without compiling (cross-module ADT + alias resolution)
 sky fmt src/Main.sky      # Format code (Elm-style: 4-space indent, leading commas)
-sky add <package>         # Add Go or Sky dependency + auto-generate bindings
+sky add <package>         # Add dependency + generate bindings + update sky.toml
+sky remove <package>      # Remove dependency from sky.toml + clean cache
 sky install               # Install all deps + auto-generate missing bindings
 sky update                # Update sky.toml dependencies to latest
 sky upgrade               # Self-upgrade Sky compiler to latest release
-sky remove <package>      # Remove a dependency
 sky lsp                   # Start Language Server
 sky clean                 # Remove build artifacts
 sky --version             # Show version

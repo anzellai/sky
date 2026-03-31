@@ -45,6 +45,8 @@ runCommand command =
         cmdClean ()
     else if command == "lsp" then
         LspServer.startServer ()
+    else if command == "init" then
+        cmdInit ()
     else if command == "add" then
         cmdAdd ()
     else if command == "install" then
@@ -154,6 +156,7 @@ handleBuildResult outDir buildResult =
         Ok _ ->
             let
                 _ = println ("Build complete: " ++ outDir ++ "/app")
+                _ = checkForUpdates ()
             in
                 ()
 
@@ -261,10 +264,10 @@ checkSource entryFile source =
 
             Ok mod ->
                 let
-                    combinedEnv =
+                    ( combinedEnv , registry , aliases ) =
                         Pipeline.buildCheckEnv entryFile mod
                     checkResult =
-                        Checker.checkModule mod (Just combinedEnv)
+                        Checker.checkModuleWithRegistryAndAliases mod (Just combinedEnv) (Just registry) (Just aliases)
                 in
                     handleCheckResult entryFile checkResult
 
@@ -318,6 +321,211 @@ isGoStdlib name =
     name == "archive" || name == "bufio" || name == "bytes" || name == "compress" || name == "container" || name == "context" || name == "crypto" || name == "database" || name == "debug" || name == "embed" || name == "encoding" || name == "errors" || name == "flag" || name == "fmt" || name == "go" || name == "hash" || name == "html" || name == "image" || name == "io" || name == "log" || name == "math" || name == "mime" || name == "net" || name == "os" || name == "path" || name == "reflect" || name == "regexp" || name == "runtime" || name == "sort" || name == "strconv" || name == "strings" || name == "sync" || name == "syscall" || name == "testing" || name == "text" || name == "time" || name == "unicode" || name == "unsafe"
 
 
+cmdInit _ =
+    let
+        projectName = resolveProjectName ()
+        tomlExists =
+            case File.readFile "sky.toml" of
+
+                Ok _ ->
+                    True
+
+                Err _ ->
+                    False
+    in
+        if tomlExists then
+            println "sky.toml already exists. Project already initialised."
+        else
+            initProject projectName
+
+
+resolveProjectName _ =
+    case Args.getArg 2 of
+
+        Just name ->
+            name
+
+        Nothing ->
+            inferProjectName ()
+
+
+inferProjectName _ =
+    case Process.run "pwd" [] of
+
+        Ok cwd ->
+            extractDirName (String.trim cwd)
+
+        Err _ ->
+            "sky-project"
+
+
+extractDirName cwd =
+    case List.reverse (String.split "/" cwd) of
+
+        last :: _ ->
+            last
+
+        [] ->
+            "sky-project"
+
+
+initProject projectName =
+    let
+        tomlContent =
+            String.join "\n"
+                [ "name = \"" ++ projectName ++ "\""
+                , "version = \"0.1.0\""
+                , "entry = \"src/Main.sky\""
+                , ""
+                , "[source]"
+                , "root = \"src\""
+                , ""
+                ]
+        mainContent =
+            String.join "\n"
+                [ "module Main exposing (main)"
+                , ""
+                , "import Sky.Core.Prelude exposing (..)"
+                , "import Std.Log exposing (println)"
+                , ""
+                , "main = println \"Hello from Sky!\""
+                , ""
+                ]
+        gitignoreContent =
+            String.join "\n"
+                [ "# Build artifacts"
+                , "sky-out/"
+                , "dist/"
+                , ""
+                , "# Sky cache and dependencies"
+                , ".skycache/"
+                , ".skydeps/"
+                , ""
+                , "# Environment"
+                , ".env"
+                , ".env.*"
+                , ""
+                , "# OS"
+                , ".DS_Store"
+                , ""
+                ]
+        _ = File.writeFile "sky.toml" tomlContent
+        _ = File.mkdirAll "src"
+        mainPath = "src/Main.sky"
+        mainExists =
+            case File.readFile mainPath of
+
+                Ok _ ->
+                    True
+
+                Err _ ->
+                    False
+        _ =
+            if mainExists then
+                ()
+            else
+                let
+                    _ = File.writeFile mainPath mainContent
+                in
+                    ()
+        gitignorePath = ".gitignore"
+        gitignoreExists =
+            case File.readFile gitignorePath of
+
+                Ok _ ->
+                    True
+
+                Err _ ->
+                    False
+        _ =
+            if gitignoreExists then
+                ()
+            else
+                let
+                    _ = File.writeFile gitignorePath gitignoreContent
+                in
+                    ()
+        claudeMdCreated = copyClaudeMdTemplate ()
+        _ = println ("Initialised Sky project: " ++ projectName)
+        _ = println ""
+        _ = println "Created:"
+        _ = println "  sky.toml        Project configuration"
+        _ =
+            if mainExists then
+                ()
+            else
+                let
+                    _ = println "  src/Main.sky    Entry point"
+                in
+                    ()
+        _ =
+            if gitignoreExists then
+                ()
+            else
+                let
+                    _ = println "  .gitignore      Git ignore rules"
+                in
+                    ()
+        _ =
+            if claudeMdCreated then
+                let
+                    _ = println "  CLAUDE.md       AI assistant context"
+                in
+                    ()
+            else
+                ()
+        _ = println ""
+        _ = println "Get started:"
+        _ = println "  sky build       Compile to binary"
+        _ = println "  sky run         Build and run"
+    in
+        ()
+
+
+copyClaudeMdTemplate _ =
+    case File.readFile "CLAUDE.md" of
+
+        Ok _ ->
+            False
+
+        Err _ ->
+            tryCopyTemplate ()
+
+
+tryCopyTemplate _ =
+    let
+        skyBin = findSkyBin ()
+        binDir = dirOfPath skyBin
+        templatePath = binDir ++ "/../templates/CLAUDE.md"
+    in
+        case File.readFile templatePath of
+
+            Ok content ->
+                let
+                    _ = File.writeFile "CLAUDE.md" content
+                in
+                    True
+
+            Err _ ->
+                tryAlternateTemplatePath binDir
+
+
+tryAlternateTemplatePath binDir =
+    let
+        altPath = binDir ++ "/templates/CLAUDE.md"
+    in
+        case File.readFile altPath of
+
+            Ok content ->
+                let
+                    _ = File.writeFile "CLAUDE.md" content
+                in
+                    True
+
+            Err _ ->
+                False
+
+
 cmdAdd _ =
     case Args.getArg 2 of
 
@@ -337,20 +545,7 @@ cmdAdd _ =
                             pkg
             in
                 if isGoStdlib firstPart || isGoStdlib pkg then
-                    let
-                        cacheDir =
-                            ".skycache/go/" ++ String.replace "-" "_"
-                                                   (
-                                                   String.replace "/" "_"
-                                                       (
-                                                       String.replace "." "_"
-                                                           pkg
-                                                       )
-                                                   )
-                        _ = File.mkdirAll cacheDir
-                        _ = ensureGoModDir ()
-                    in
-                        generateGoBindings pkg cacheDir
+                    addGoStdlib pkg
                 else if String.contains "." firstPart then
                     detectAndInstall pkg
                 else
@@ -358,6 +553,19 @@ cmdAdd _ =
                         (
                         "Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format."
                         )
+
+
+addGoStdlib pkg =
+    let
+        cacheDir = ".skycache/go/" ++ safePkgName pkg
+        _ = File.mkdirAll cacheDir
+        _ = ensureGoModDir ()
+        _ = generateGoBindings pkg cacheDir
+        _ = addGoDepToToml pkg "latest"
+        _ = println "Done."
+        _ = checkForUpdates ()
+    in
+        ()
 
 
 detectAndInstall pkg =
@@ -400,8 +608,12 @@ installAsSkyPackage pkg tmpDir =
         _ = File.mkdirAll ".skydeps"
         _ = Process.run "rm" [ "-rf" , targetDir ]
         _ = Process.run "mv" [ tmpDir , targetDir ]
+        _ = addSkyDepToToml pkg "1.0.0"
+        _ = println ("Added Sky package: " ++ pkg)
+        _ = println "Done."
+        _ = checkForUpdates ()
     in
-        println ("Added Sky package: " ++ pkg)
+        ()
 
 
 installAsGoPackage pkg tmpDir =
@@ -419,28 +631,32 @@ installAsGoPackage pkg tmpDir =
             Process.run "sh"
                 [ "-c" , "cd .skycache/gomod && go get " ++ pkg ++ "@latest" ]
     in
-        case getResult of
+        handleGoPackageResult pkg getResult
 
-            Ok _ ->
-                let
-                    _ = println ("Added Go package: " ++ pkg)
-                    cacheDir =
-                        ".skycache/go/" ++ String.replace "-" "_"
-                                               (
-                                               String.replace "/" "_"
-                                                   (String.replace "." "_" pkg)
-                                               )
-                    _ = File.mkdirAll cacheDir
-                in
-                    generateGoBindings pkg cacheDir
 
-            Err e ->
-                let
-                    _ =
-                        println
-                            ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
-                in
-                    Process.exit 1
+handleGoPackageResult pkg getResult =
+    case getResult of
+
+        Ok _ ->
+            let
+                _ = println ("Added Go package: " ++ pkg)
+                cacheDir = ".skycache/go/" ++ safePkgName pkg
+                _ = File.mkdirAll cacheDir
+                _ = generateGoBindings pkg cacheDir
+                _ = addGoDepToToml pkg "latest"
+                _ = println "Done."
+                _ = checkForUpdates ()
+            in
+                ()
+
+        Err e ->
+            let
+                _ =
+                    println
+                        ("Failed to add " ++ pkg ++ ": " ++ errorToString e)
+                _ = Process.exit 1
+            in
+                ()
 
 
 generateGoBindings pkg cacheDir =
@@ -860,17 +1076,15 @@ cmdUpdate _ =
             let
                 _ = println "Updating dependencies..."
                 lines = String.split "\n" content
-                _ = updateDependencies lines
+                _ = ensureGoModDir ()
+                _ = updateDepsLoop lines "" False
             in
                 println "Update complete."
 
 
-updateDependencies lines = updateDepsLoop lines False
-
-
-updateDepsLoop lines inDeps =
+updateDepsLoop lines section inDeps =
     if List.isEmpty lines then
-        println ""
+        ()
     else
         let
             line =
@@ -884,210 +1098,410 @@ updateDepsLoop lines inDeps =
             rest = List.drop 1 lines
             trimmed = String.trim line
         in
-            if trimmed == "[dependencies]" then
-                updateDepsLoop rest True
-            else if String.startsWith "[" trimmed && trimmed /= "[dependencies]" then
-                updateDepsLoop rest False
+            if isTomlSectionHeader trimmed then
+                updateDepsLoop rest trimmed (isSkyOrGoDepSection trimmed)
             else if inDeps && String.contains "=" trimmed then
                 let
-                    _ = updateOneDep trimmed
+                    _ = updateOneDep trimmed section
                 in
-                    updateDepsLoop rest True
+                    updateDepsLoop rest section True
             else
-                updateDepsLoop rest inDeps
+                updateDepsLoop rest section inDeps
 
 
-updateOneDep depLine =
+isSkyOrGoDepSection header =
+    header == "[dependencies]" || header == "[go.dependencies]" || header == "[\"go.dependencies\"]"
+
+
+updateOneDep depLine section =
     let
-        parts = String.split "=" depLine
-        pkgName =
-            case parts of
-
-                name :: _ ->
-                    String.trim name
-
-                _ ->
-                    ""
+        pkgName = extractTomlKey depLine
     in
         if String.isEmpty pkgName then
-            println ""
+            ()
+        else if section == "[go.dependencies]" || section == "[\"go.dependencies\"]" then
+            updateGoDep pkgName
         else
-            let
-                _ = println ("   Updating " ++ pkgName ++ "...")
-                _ = ensureGoModDir ()
-                _ =
-                    Process.run "sh"
-                        [ "-c"
-                        , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null"
-                        ]
-            in
-                println ""
+            updateSkyDep pkgName
+
+
+updateGoDep pkgName =
+    let
+        _ = println ("   Updating " ++ pkgName ++ "...")
+        _ =
+            Process.run "sh"
+                [ "-c"
+                , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null"
+                ]
+    in
+        ()
+
+
+updateSkyDep pkgName =
+    let
+        _ = println ("   Updating " ++ pkgName ++ "...")
+        depDir = ".skydeps/" ++ pkgName
+        _ = Process.run "rm" [ "-rf" , depDir ]
+        _ =
+            Process.run "git"
+                [ "clone" , "--depth" , "1" , "https://" ++ pkgName , depDir ]
+    in
+        ()
 
 
 cmdUpgrade _ =
     let
-        _ = println "Checking for latest Sky release..."
-        latestTag = fetchLatestVersion True
+        _ = println "Checking for updates..."
+        latest = fetchLatestVersionFresh ()
     in
-        if String.isEmpty latestTag then
+        if String.isEmpty latest then
             println "Could not determine latest version."
-        else if latestTag == Args.skyVersion then
-            println ("Already at latest version: " ++ latestTag)
         else
-            performUpgrade latestTag
+            doUpgrade latest
 
 
-performUpgrade tag =
+doUpgrade latest =
     let
-        _ = println ("Upgrading to " ++ tag ++ "...")
-        skyBin =
-            case Process.run "which" [ "sky" ] of
+        current = Args.skyVersion
+        isDev = current == "dev" || String.contains "-dev" current
+    in
+        if not isDev && compareVersions latest current <= 0 then
+            println ("Already up to date (v" ++ current ++ ").")
+        else
+            performUpgrade latest current
 
-                Ok path ->
-                    String.trim path
 
-                Err _ ->
-                    ""
+performUpgrade latest current =
+    let
+        _ = println ("Upgrading: v" ++ current ++ " -> v" ++ latest)
+        platform = detectPlatform ()
+        arch = detectArch ()
+        skyBin = findSkyBin ()
     in
         if String.isEmpty skyBin then
             println "Could not find sky binary path. Please upgrade manually."
         else
+            downloadAndInstall latest platform arch skyBin
+
+
+downloadAndInstall latest platform arch skyBin =
+    let
+        skyAsset = "sky-" ++ platform ++ "-" ++ arch
+        baseUrl = "https://github.com/anzellai/sky/releases/download/v" ++ latest
+        url = baseUrl ++ "/" ++ skyAsset
+        _ = println ("   Downloading " ++ url)
+        skyResult = downloadBinary url skyBin
+    in
+        case skyResult of
+
+            Ok _ ->
+                let
+                    _ = writeUpdateCache latest
+                in
+                    println ("Sky upgraded to v" ++ latest ++ " successfully!")
+
+            Err e ->
+                retrySudoDownload latest url skyBin e
+
+
+retrySudoDownload latest url skyBin err =
+    let
+        errMsg = errorToString err
+    in
+        if String.contains "ermission" errMsg then
             let
-                artifact = detectPlatformArtifact ()
-                url =
-                    "https://github.com/anzellai/sky/releases/download/" ++ tag ++ "/" ++ artifact
-                _ = println ("   Downloading " ++ url)
-                downloadResult =
+                _ = println "Requires elevated permissions. Retrying with sudo..."
+                sudoResult =
                     Process.run "sh"
                         [ "-c"
-                        , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && mv /tmp/sky-upgrade " ++ skyBin
+                        , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && sudo mv /tmp/sky-upgrade '" ++ skyBin ++ "'"
                         ]
             in
-                case downloadResult of
+                case sudoResult of
 
                     Ok _ ->
-                        println ("Upgraded to " ++ tag ++ " successfully!")
+                        let
+                            _ = writeUpdateCache latest
+                        in
+                            println ("Sky upgraded to v" ++ latest ++ " successfully!")
 
-                    Err e ->
+                    Err e2 ->
                         println
-                            (
-                            "Upgrade failed: " ++ errorToString e ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
-                            )
-
-
-detectPlatformArtifact : () -> String
-detectPlatformArtifact _ =
-    let
-        osResult = Process.run "uname" [ "-s" ]
-        archResult = Process.run "uname" [ "-m" ]
-        os =
-            case osResult of
-
-                Ok o ->
-                    String.toLower (String.trim o)
-
-                Err _ ->
-                    "linux"
-        arch =
-            case archResult of
-
-                Ok a ->
-                    String.trim a
-
-                Err _ ->
-                    "x86_64"
-        skyOs =
-            if os == "darwin" then
-                "darwin"
-            else if os == "linux" then
-                "linux"
-            else
-                "linux"
-        skyArch =
-            if arch == "arm64" || arch == "aarch64" then
-                "arm64"
-            else
-                "x64"
-    in
-        "sky-" ++ skyOs ++ "-" ++ skyArch
-
-
-fetchLatestVersion : Bool -> String
-fetchLatestVersion forceRefresh =
-    let
-        cacheDir =
-            case Process.run "sh" [ "-c" , "echo $HOME" ] of
-
-                Ok home ->
-                    String.trim home ++ "/.sky"
-
-                Err _ ->
-                    "/tmp/.sky"
-        cachePath = cacheDir ++ "/last-update-check.json"
-    in
-        if not forceRefresh then
-            case Process.run "sh"
-                     [ "-c"
-                     , "if [ -f " ++ cachePath ++ " ] && [ $(( $(date +%s) - $(stat -f %m " ++ cachePath ++ " 2>/dev/null || stat -c %Y " ++ cachePath ++ " 2>/dev/null || echo 0) )) -lt 86400 ]; then cat " ++ cachePath ++ "; fi"
-                     ] of
-
-                Ok cached ->
-                    let
-                        trimmed = String.trim cached
-                    in
-                        if not (String.isEmpty trimmed) then
-                            trimmed
-                        else
-                            fetchAndCacheVersion cacheDir cachePath
-
-                Err _ ->
-                    fetchAndCacheVersion cacheDir cachePath
+                            ("Upgrade failed: " ++ errorToString e2 ++ "\nDownload manually from: https://github.com/anzellai/sky/releases")
         else
-            fetchAndCacheVersion cacheDir cachePath
+            println
+                ("Upgrade failed: " ++ errMsg ++ "\nDownload manually from: https://github.com/anzellai/sky/releases")
 
 
-fetchAndCacheVersion : String -> String -> String
-fetchAndCacheVersion cacheDir cachePath =
+downloadBinary url destPath =
+    let
+        tmpPath = destPath ++ ".tmp"
+        result =
+            Process.run "sh"
+                [ "-c"
+                , "curl -fsSL '" ++ url ++ "' -o '" ++ tmpPath ++ "' && chmod +x '" ++ tmpPath ++ "' && mv '" ++ tmpPath ++ "' '" ++ destPath ++ "'"
+                ]
+    in
+        result
+
+
+findSkyBin _ =
+    case Process.run "which" [ "sky" ] of
+
+        Ok p ->
+            String.trim p
+
+        Err _ ->
+            ""
+
+
+dirOfPath p =
+    let
+        parts = String.split "/" p
+        dirParts = List.take (List.length parts - 1) parts
+    in
+        String.join "/" dirParts
+
+
+detectPlatform _ =
+    case Process.run "uname" [ "-s" ] of
+
+        Ok o ->
+            let
+                raw = String.toLower (String.trim o)
+            in
+                if raw == "darwin" then
+                    "darwin"
+                else
+                    "linux"
+
+        Err _ ->
+            "linux"
+
+
+detectArch _ =
+    case Process.run "uname" [ "-m" ] of
+
+        Ok a ->
+            let
+                raw = String.trim a
+            in
+                if raw == "arm64" || raw == "aarch64" then
+                    "arm64"
+                else
+                    "x64"
+
+        Err _ ->
+            "x64"
+
+
+compareVersions : String -> String -> Int
+compareVersions a b =
+    let
+        partsA = parseVersion a
+        partsB = parseVersion b
+    in
+        compareVersionParts partsA partsB
+
+
+parseVersion : String -> List Int
+parseVersion v =
+    let
+        cleaned = String.replace "v" "" v
+        base =
+            case String.split "-" cleaned of
+
+                first :: _ ->
+                    first
+
+                [] ->
+                    cleaned
+    in
+        List.map parseIntOrZero (String.split "." base)
+
+
+parseIntOrZero : String -> Int
+parseIntOrZero s =
+    case String.toInt s of
+
+        Just n ->
+            n
+
+        Nothing ->
+            0
+
+
+compareVersionParts : List Int -> List Int -> Int
+compareVersionParts a b =
+    case a of
+
+        [] ->
+            compareVersionParts2 [] b
+
+        x :: restA ->
+            case b of
+
+                [] ->
+                    if x > 0 then
+                        1
+                    else
+                        compareVersionParts restA []
+
+                y :: restB ->
+                    if x > y then
+                        1
+                    else if x < y then
+                        -1
+                    else
+                        compareVersionParts restA restB
+
+
+compareVersionParts2 a b =
+    case b of
+
+        [] ->
+            0
+
+        y :: restB ->
+            if y > 0 then
+                -1
+            else
+                compareVersionParts2 a restB
+
+
+getCacheDir _ =
+    case Process.run "sh" [ "-c" , "echo $HOME" ] of
+
+        Ok home ->
+            String.trim home ++ "/.sky"
+
+        Err _ ->
+            "/tmp/.sky"
+
+
+getCachePath _ =
+    getCacheDir () ++ "/last-update-check.json"
+
+
+fetchLatestVersionFresh _ =
     let
         result =
             Process.run "sh"
                 [ "-c"
-                , "curl -fsSL https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"\\(v[^\"]*\\)\".*/\\1/'"
+                , "curl -fsSL --connect-timeout 3 https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"v\\([^\"]*\\)\".*/\\1/'"
                 ]
     in
         case result of
 
             Ok output ->
                 let
-                    tag = String.trim output
+                    version = String.trim output
                     _ =
-                        if not (String.isEmpty tag) then
-                            let
-                                _ = File.mkdirAll cacheDir
-                                _ = File.writeFile cachePath tag
-                            in
-                                ()
+                        if not (String.isEmpty version) then
+                            writeUpdateCache version
                         else
                             ()
                 in
-                    tag
+                    version
 
             Err _ ->
                 ""
 
 
+fetchLatestVersionCached _ =
+    let
+        cachePath = getCachePath ()
+        cacheContent =
+            case File.readFile cachePath of
+
+                Ok content ->
+                    String.trim content
+
+                Err _ ->
+                    ""
+    in
+        if String.isEmpty cacheContent then
+            fetchLatestVersionSlow ()
+        else
+            checkCacheFreshness cachePath cacheContent
+
+
+checkCacheFreshness cachePath cacheContent =
+    let
+        isFresh =
+            case Process.run "sh"
+                     [ "-c"
+                     , "[ $(( $(date +%s) - $(stat -f %m '" ++ cachePath ++ "' 2>/dev/null || stat -c %Y '" ++ cachePath ++ "' 2>/dev/null || echo 0) )) -lt 86400 ] && echo fresh"
+                     ] of
+
+                Ok out ->
+                    String.contains "fresh" out
+
+                Err _ ->
+                    False
+    in
+        if isFresh then
+            cacheContent
+        else
+            fetchLatestVersionSlow ()
+
+
+fetchLatestVersionSlow _ =
+    let
+        result =
+            Process.run "sh"
+                [ "-c"
+                , "curl -fsSL --connect-timeout 3 https://api.github.com/repos/anzellai/sky/releases/latest 2>/dev/null | grep '\"tag_name\"' | sed 's/.*\"v\\([^\"]*\\)\".*/\\1/'"
+                ]
+    in
+        case result of
+
+            Ok output ->
+                let
+                    version = String.trim output
+                    _ =
+                        if not (String.isEmpty version) then
+                            writeUpdateCache version
+                        else
+                            ()
+                in
+                    version
+
+            Err _ ->
+                ""
+
+
+writeUpdateCache version =
+    let
+        cacheDir = getCacheDir ()
+        cachePath = getCachePath ()
+        _ = File.mkdirAll cacheDir
+        _ = File.writeFile cachePath version
+    in
+        ()
+
+
 checkForUpdates _ =
     let
-        latestTag = fetchLatestVersion False
+        current = Args.skyVersion
+        isDev = current == "dev" || String.contains "-dev" current
     in
-        if not (String.isEmpty latestTag) && latestTag /= Args.skyVersion then
+        if isDev then
+            ()
+        else
+            checkForUpdatesReal current
+
+
+checkForUpdatesReal current =
+    let
+        latest = fetchLatestVersionCached ()
+    in
+        if not (String.isEmpty latest) && compareVersions latest current > 0 then
             let
                 _ = println ""
                 _ =
                     println
-                        (
-                        "   A newer version of Sky is available: " ++ latestTag ++ " (current: " ++ Args.skyVersion ++ ")"
-                        )
+                        ("   A newer version of Sky is available: v" ++ latest ++ " (current: v" ++ current ++ ")")
                 _ = println "   Run 'sky upgrade' to update."
             in
                 ()
@@ -1102,14 +1516,207 @@ cmdRemove _ =
             println "Usage: sky remove <package>"
 
         Just pkg ->
+            removePackage pkg
+
+
+removePackage pkg =
+    let
+        _ = println ("Removing " ++ pkg ++ "...")
+        removedFromToml = removeDepFromToml pkg
+        skyDepDir = ".skydeps/" ++ pkg
+        goDepDir = ".skycache/go/" ++ safePkgName pkg
+        _ = Process.run "rm" [ "-rf" , skyDepDir ]
+        _ = Process.run "rm" [ "-rf" , goDepDir ]
+    in
+        if removedFromToml then
+            println ("Removed " ++ pkg)
+        else
+            println ("Package " ++ pkg ++ " not found in dependencies.")
+
+
+safePkgName pkg =
+    String.replace "-" "_"
+        (String.replace "/" "_" (String.replace "." "_" pkg))
+
+
+extractTomlKey line =
+    let
+        parts = String.split "=" line
+    in
+        case parts of
+
+            key :: _ ->
+                String.trim (String.replace "\"" "" (String.trim key))
+
+            [] ->
+                ""
+
+
+isTomlSectionHeader trimmed =
+    String.startsWith "[" trimmed
+
+
+addGoDepToToml pkg version =
+    case File.readFile "sky.toml" of
+
+        Err _ ->
+            ()
+
+        Ok content ->
             let
-                _ = println ("Removing " ++ pkg ++ "...")
-                skyDepDir = ".skydeps/" ++ pkg
-                goDepDir = ".skycache/go/" ++ String.toLower pkg
-                _ = Process.run "rm" [ "-rf" , skyDepDir ]
-                _ = Process.run "rm" [ "-rf" , goDepDir ]
+                lines = String.split "\n" content
+                depLine = pkg ++ " = \"" ++ version ++ "\""
+                hasGoDeps = listContains "[go.dependencies]" lines || listContains "[\"go.dependencies\"]" lines
+                alreadyHas = tomlHasDep pkg lines
             in
-                println ("Removed: " ++ pkg)
+                if alreadyHas then
+                    ()
+                else if hasGoDeps then
+                    let
+                        newContent = insertAfterSection "[go.dependencies]" depLine lines
+                    in
+                        let
+                            _ = File.writeFile "sky.toml" (String.join "\n" newContent)
+                        in
+                            ()
+                else
+                    let
+                        newLines =
+                            List.concat
+                                [ lines
+                                , [ "" , "[go.dependencies]" , depLine ]
+                                ]
+                        _ = File.writeFile "sky.toml" (String.join "\n" newLines)
+                    in
+                        ()
+
+
+addSkyDepToToml pkg version =
+    case File.readFile "sky.toml" of
+
+        Err _ ->
+            ()
+
+        Ok content ->
+            let
+                lines = String.split "\n" content
+                depLine = pkg ++ " = \"" ++ version ++ "\""
+                hasDeps = listContains "[dependencies]" lines
+                alreadyHas = tomlHasDep pkg lines
+            in
+                if alreadyHas then
+                    ()
+                else if hasDeps then
+                    let
+                        newContent = insertAfterSection "[dependencies]" depLine lines
+                    in
+                        let
+                            _ = File.writeFile "sky.toml" (String.join "\n" newContent)
+                        in
+                            ()
+                else
+                    let
+                        newLines =
+                            List.concat
+                                [ lines
+                                , [ "" , "[dependencies]" , depLine ]
+                                ]
+                        _ = File.writeFile "sky.toml" (String.join "\n" newLines)
+                    in
+                        ()
+
+
+listContains needle lines =
+    case lines of
+
+        [] ->
+            False
+
+        line :: rest ->
+            if String.trim line == needle then
+                True
+            else
+                listContains needle rest
+
+
+tomlHasDep pkg lines =
+    case lines of
+
+        [] ->
+            False
+
+        line :: rest ->
+            let
+                trimmed = String.trim line
+                key = extractTomlKey trimmed
+            in
+                if key == pkg then
+                    True
+                else
+                    tomlHasDep pkg rest
+
+
+insertAfterSection sectionName newLine lines =
+    insertAfterSectionLoop sectionName newLine lines [] False
+
+
+insertAfterSectionLoop sectionName newLine lines acc foundSection =
+    case lines of
+
+        [] ->
+            if foundSection then
+                List.append acc [ newLine ]
+            else
+                List.append acc [ "" , sectionName , newLine ]
+
+        line :: rest ->
+            let
+                trimmed = String.trim line
+            in
+                if trimmed == sectionName || trimmed == "[\"go.dependencies\"]" && sectionName == "[go.dependencies]" then
+                    insertAfterSectionLoop sectionName newLine rest (List.append acc [ line ]) True
+                else if foundSection && isTomlSectionHeader trimmed then
+                    List.concat [ acc , [ newLine , "" ] , [ line ] , rest ]
+                else
+                    insertAfterSectionLoop sectionName newLine rest (List.append acc [ line ]) foundSection
+
+
+removeDepFromToml pkg =
+    case File.readFile "sky.toml" of
+
+        Err _ ->
+            False
+
+        Ok content ->
+            let
+                lines = String.split "\n" content
+                filtered = removeDepLines pkg lines
+                newContent = String.join "\n" filtered
+            in
+                if newContent == content then
+                    False
+                else
+                    let
+                        _ = File.writeFile "sky.toml" newContent
+                    in
+                        True
+
+
+removeDepLines pkg lines =
+    case lines of
+
+        [] ->
+            []
+
+        line :: rest ->
+            let
+                trimmed = String.trim line
+                key = extractTomlKey trimmed
+            in
+                if key == pkg && String.contains "=" trimmed then
+                    removeDepLines pkg rest
+                else
+                    line :: removeDepLines pkg rest
 
 
 cmdFmt _ =
@@ -1288,6 +1895,7 @@ cmdHelp _ =
         _ = println "Usage: sky <command> [args]"
         _ = println ""
         _ = println "Commands:"
+        _ = println "  init [name]     Create a new Sky project"
         _ = println "  build [file]    Compile to Go binary"
         _ = println "  run [file]      Build and run"
         _ = println "  check [file]    Type-check only"
