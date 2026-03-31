@@ -7,13 +7,14 @@ import Std.Log exposing (println)
 import Time
 import Crypto.Sha256 as Sha256
 import Encoding.Hex as Hex
-import Net.Http as Http
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
 
 main =
     let
         nowStr =
             Time.now ()
-                |> Result.andThen (\t -> Time.timeString t)
+                |> Result.map (\t -> "time: ok")
                 |> Result.withDefault "unknown"
         _ = println ("Current time: " ++ nowStr)
         data = "Hello, Sky!"
@@ -29,16 +30,12 @@ main =
                 Err e ->
                     println ("Hash error: " ++ e)
         _ = println "Sending HTTP request..."
-        httpResult = Http.get "https://httpbin.org/get"
+        httpResult = Task.run (Http.get "https://httpbin.org/get")
         _ =
             case httpResult of
 
                 Ok resp ->
-                    println
-                        (
-                        "HTTP status: " ++ String.fromInt
-                                               (Http.responseStatusCode resp)
-                        )
+                    println ("HTTP response received, body length: " ++ String.fromInt (String.length resp.body))
 
                 Err e ->
                     println ("HTTP error: " ++ e)
