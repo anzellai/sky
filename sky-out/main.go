@@ -4259,7 +4259,7 @@ func Compiler_Pipeline_MakePrefixAlias(prefix any, decl any) any {
 }
 
 func Compiler_Pipeline_IsCommonName(name any) any {
-	return sky_asBool(sky_equal(name, "main")) || sky_asBool(sky_equal(name, "_"))
+	return sky_asBool(sky_equal(name, "main")) || sky_asBool(sky_asBool(sky_equal(name, "_")) || sky_asBool(sky_asBool(sky_equal(name, "update")) || sky_asBool(sky_asBool(sky_equal(name, "init")) || sky_asBool(sky_asBool(sky_equal(name, "view")) || sky_asBool(sky_asBool(sky_equal(name, "subscriptions")) || sky_asBool(sky_asBool(sky_equal(name, "guard")) || sky_asBool(sky_asBool(sky_equal(name, "new")) || sky_asBool(sky_asBool(sky_equal(name, "get")) || sky_asBool(sky_asBool(sky_equal(name, "list")) || sky_asBool(sky_asBool(sky_equal(name, "delete")) || sky_asBool(sky_asBool(sky_equal(name, "set")) || sky_asBool(sky_equal(name, "expire")))))))))))))
 }
 
 func Compiler_Pipeline_IsSharedValue(name any) any {
@@ -4311,7 +4311,7 @@ func Compiler_Pipeline_ExprHasWrapperCall(expr any) any {
 }
 
 func Compiler_Pipeline_GenerateAliasesFromModuleInner(modName any, mod any) any {
-	return func() any { prefix := sky_call(sky_call(sky_stringReplace("."), "_"), modName); _ = prefix; declNames := Compiler_Pipeline_ExtractExportedNames(mod); _ = declNames; return sky_call(sky_listConcatMap(func(name any) any { return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(name)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Sky_"), name)) || sky_asBool(sky_equal(name, "_")))) { return []any{} }; return func() any { safeName := Compiler_Lower_SanitizeGoIdent(name); _ = safeName; prefixedName := sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(safeName))); _ = prefixedName; hasBadSuffix := sky_call(sky_stringEndsWith("__"), prefixedName); _ = hasBadSuffix; callSuffix := func() any { if sky_asBool(Compiler_Pipeline_IsZeroArityInModule(name, mod)) { return "()" }; return "" }(); _ = callSuffix; return func() any { if sky_asBool(hasBadSuffix) { return []any{} }; return []any{GoDeclRaw(sky_concat("var ", sky_concat(safeName, sky_concat(" = ", sky_concat(prefixedName, callSuffix))))), GoDeclRaw(sky_concat("var ", sky_concat(Compiler_Pipeline_CapitalizeFirst(safeName), sky_concat(" = ", sky_concat(prefixedName, callSuffix)))))} }() }() }() }), declNames) }()
+	return func() any { prefix := sky_call(sky_call(sky_stringReplace("."), "_"), modName); _ = prefix; declNames := Compiler_Pipeline_ExtractExportedNames(mod); _ = declNames; return sky_call(sky_listConcatMap(func(name any) any { return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(name)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Sky_"), name)) || sky_asBool(sky_asBool(sky_equal(name, "_")) || sky_asBool(Compiler_Pipeline_IsCommonName(name))))) { return []any{} }; return func() any { safeName := Compiler_Lower_SanitizeGoIdent(name); _ = safeName; prefixedName := sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(safeName))); _ = prefixedName; hasBadSuffix := sky_call(sky_stringEndsWith("__"), prefixedName); _ = hasBadSuffix; callSuffix := func() any { if sky_asBool(Compiler_Pipeline_IsZeroArityInModule(name, mod)) { return "()" }; return "" }(); _ = callSuffix; return func() any { if sky_asBool(hasBadSuffix) { return []any{} }; return []any{GoDeclRaw(sky_concat("var ", sky_concat(safeName, sky_concat(" = ", sky_concat(prefixedName, callSuffix))))), GoDeclRaw(sky_concat("var ", sky_concat(Compiler_Pipeline_CapitalizeFirst(safeName), sky_concat(" = ", sky_concat(prefixedName, callSuffix)))))} }() }() }() }), declNames) }()
 }
 
 func Compiler_Pipeline_IsExposingAll(clause any) any {
@@ -4399,7 +4399,7 @@ func Compiler_Pipeline_ExtractVarNameFromLine(prefix any, line any) any {
 }
 
 func Compiler_Pipeline_MakeAliasDecls(prefix any, fullName any) any {
-	return func() any { unprefixed := sky_call(sky_call(sky_stringSlice(sky_numBinop("+", sky_stringLength(prefix), 1)), sky_stringLength(fullName)), fullName); _ = unprefixed; lower := Compiler_Pipeline_DecapitaliseFirst(unprefixed); _ = lower; return func() any { if sky_asBool(sky_stringIsEmpty(unprefixed)) { return []any{} }; return []any{GoDeclRaw(sky_concat("var ", sky_concat(lower, sky_concat(" = ", fullName)))), GoDeclRaw(sky_concat("var ", sky_concat(unprefixed, sky_concat(" = ", fullName))))} }() }()
+	return func() any { unprefixed := sky_call(sky_call(sky_stringSlice(sky_numBinop("+", sky_stringLength(prefix), 1)), sky_stringLength(fullName)), fullName); _ = unprefixed; lower := Compiler_Pipeline_DecapitaliseFirst(unprefixed); _ = lower; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(unprefixed)) || sky_asBool(Compiler_Pipeline_IsCommonName(lower))) { return []any{} }; return []any{GoDeclRaw(sky_concat("var ", sky_concat(lower, sky_concat(" = ", fullName)))), GoDeclRaw(sky_concat("var ", sky_concat(unprefixed, sky_concat(" = ", fullName))))} }() }()
 }
 
 func Compiler_Pipeline_DecapitaliseFirst(s any) any {
@@ -4419,7 +4419,7 @@ func Compiler_Pipeline_CompileDependencyModuleAndCache(stdlibEnv any, allModules
 }
 
 func Compiler_Pipeline_CompileFfiModuleLight(allModules any, pair any) any {
-	return func() any { modName := sky_fst(pair); _ = modName; mod := sky_snd(pair); _ = mod; prefix := sky_call(sky_call(sky_stringReplace("."), "_"), modName); _ = prefix; registry := Compiler_Adt_EmptyRegistry(); _ = registry; ctorDecls := Compiler_Lower_GenerateConstructorDecls(registry, sky_asMap(mod)["declarations"]); _ = ctorDecls; prefixed := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Pipeline_PrefixDecl(prefix, __pa0) }), ctorDecls); _ = prefixed; aliases := Compiler_Pipeline_GenerateConstructorAliases(prefix, prefixed); _ = aliases; wrapperVars := sky_call(sky_listFilterMap(func(__pa0 any) any { return Compiler_Pipeline_MakeFfiWrapperVar(prefix, __pa0) }), sky_asMap(mod)["declarations"]); _ = wrapperVars; depImportAliases := Compiler_Pipeline_GenerateImportAliases(sky_asMap(mod)["imports"], allModules); _ = depImportAliases; return Compiler_Pipeline_DeduplicateDecls(sky_listConcat([]any{aliases, depImportAliases, prefixed, wrapperVars})) }()
+	return func() any { modName := sky_fst(pair); _ = modName; mod := sky_snd(pair); _ = mod; prefix := sky_call(sky_call(sky_stringReplace("."), "_"), modName); _ = prefix; registry := Compiler_Adt_EmptyRegistry(); _ = registry; ctorDecls := Compiler_Lower_GenerateConstructorDecls(registry, sky_asMap(mod)["declarations"]); _ = ctorDecls; prefixed := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Pipeline_PrefixDecl(prefix, __pa0) }), ctorDecls); _ = prefixed; wrapperVars := sky_call(sky_listFilterMap(func(__pa0 any) any { return Compiler_Pipeline_MakeFfiWrapperVar(prefix, __pa0) }), sky_asMap(mod)["declarations"]); _ = wrapperVars; depImportAliases := Compiler_Pipeline_GenerateImportAliases(sky_asMap(mod)["imports"], allModules); _ = depImportAliases; return Compiler_Pipeline_DeduplicateDecls(sky_listConcat([]any{depImportAliases, prefixed, wrapperVars})) }()
 }
 
 func Compiler_Pipeline_MakeFfiWrapperVar(prefix any, decl any) any {
@@ -4463,7 +4463,7 @@ func Compiler_Pipeline_GenerateConstructorAliases(prefix any, decls any) any {
 }
 
 func Compiler_Pipeline_MakeConstructorAlias(prefix any, decl any) any {
-	return func() any { fullName := Compiler_Pipeline_GetDeclName(decl); _ = fullName; prefixLen := sky_numBinop("+", sky_stringLength(prefix), 1); _ = prefixLen; unprefixed := func() any { if sky_asBool(sky_call(sky_stringStartsWith(sky_concat(prefix, "_")), fullName)) { return sky_call(sky_call(sky_stringSlice(prefixLen), sky_stringLength(fullName)), fullName) }; return "" }(); _ = unprefixed; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(unprefixed)) || sky_asBool(sky_equal(unprefixed, "Main"))) { return SkyNothing() }; return func() any { firstChar := sky_call(sky_call(sky_stringSlice(0), 1), unprefixed); _ = firstChar; aliasName := func() any { if sky_asBool(Compiler_Pipeline_IsSharedValue(sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)))) { return sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)) }; return unprefixed }(); _ = aliasName; return func() any { if sky_asBool(sky_asBool(sky_equal(firstChar, sky_stringToUpper(firstChar))) || sky_asBool(Compiler_Pipeline_IsSharedValue(aliasName))) { return SkyJust(GoDeclRaw(sky_concat("var ", sky_concat(aliasName, sky_concat(" = ", fullName))))) }; return SkyNothing() }() }() }() }()
+	return func() any { fullName := Compiler_Pipeline_GetDeclName(decl); _ = fullName; prefixLen := sky_numBinop("+", sky_stringLength(prefix), 1); _ = prefixLen; unprefixed := func() any { if sky_asBool(sky_call(sky_stringStartsWith(sky_concat(prefix, "_")), fullName)) { return sky_call(sky_call(sky_stringSlice(prefixLen), sky_stringLength(fullName)), fullName) }; return "" }(); _ = unprefixed; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(unprefixed)) || sky_asBool(sky_asBool(sky_equal(unprefixed, "Main")) || sky_asBool(Compiler_Pipeline_IsCommonName(sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)))))) { return SkyNothing() }; return func() any { firstChar := sky_call(sky_call(sky_stringSlice(0), 1), unprefixed); _ = firstChar; aliasName := func() any { if sky_asBool(Compiler_Pipeline_IsSharedValue(sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)))) { return sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)) }; return unprefixed }(); _ = aliasName; return func() any { if sky_asBool(sky_asBool(sky_equal(firstChar, sky_stringToUpper(firstChar))) || sky_asBool(Compiler_Pipeline_IsSharedValue(aliasName))) { return SkyJust(GoDeclRaw(sky_concat("var ", sky_concat(aliasName, sky_concat(" = ", fullName))))) }; return SkyNothing() }() }() }() }()
 }
 
 func Compiler_Pipeline_GenerateOriginalAliases(prefix any, decls any) any {
@@ -6233,7 +6233,7 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 2, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
@@ -6241,7 +6241,7 @@ func Formatter_Doc_Hardline() any {
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -7561,7 +7561,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Ffi_WrapperGen_GenerateWrapperFile(safePkg any, pkgName any, funcs any, methods any, fieldAccessors any) any {

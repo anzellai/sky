@@ -241,7 +241,13 @@ func sky_liveAppLive(config any) any {
 			// produced a SkyResult), preserve the original model to avoid
 			// corrupting the session state.
 			if sr, ok := result.(SkyResult); ok {
-				log.Printf("[Sky.Live] Update error: %v", sr.ErrValue)
+				msgName := ""
+				if m, ok := msg.(map[string]any); ok {
+					if n, ok := m["SkyName"].(string); ok {
+						msgName = n
+					}
+				}
+				log.Printf("[Sky.Live] Update error (msg=%s): %v", msgName, sr.ErrValue)
 				return model, nil
 			}
 			return model, nil

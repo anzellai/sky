@@ -1605,7 +1605,8 @@ makePrefixAlias prefix decl =
 
 
 isCommonName : String -> Bool
-isCommonName name = name == "main" || name == "_"
+isCommonName name =
+    name == "main" || name == "_" || name == "update" || name == "init" || name == "view" || name == "subscriptions" || name == "guard" || name == "new" || name == "get" || name == "list" || name == "delete" || name == "set" || name == "expire"
 
 
 isSharedValue : String -> Bool
@@ -1778,7 +1779,7 @@ generateAliasesFromModuleInner modName mod =
         List.concatMap
             (
             \name ->
-                if String.isEmpty name || String.startsWith "Sky_" name || name == "_" then
+                if String.isEmpty name || String.startsWith "Sky_" name || name == "_" || isCommonName name then
                     []
                 else
                     let
@@ -2074,7 +2075,7 @@ makeAliasDecls prefix fullName =
         unprefixed = String.slice (String.length prefix + 1) (String.length fullName) fullName
         lower = decapitaliseFirst unprefixed
     in
-        if String.isEmpty unprefixed then
+        if String.isEmpty unprefixed || isCommonName lower then
             []
         else
             [ GoDeclRaw ("var " ++ lower ++ " = " ++ fullName)
@@ -2160,13 +2161,12 @@ compileFfiModuleLight allModules pair =
         registry = Adt.emptyRegistry
         ctorDecls = Lower.generateConstructorDecls registry mod.declarations
         prefixed = List.map (prefixDecl prefix) ctorDecls
-        aliases = generateConstructorAliases prefix prefixed
         wrapperVars = List.filterMap (makeFfiWrapperVar prefix) mod.declarations
         depImportAliases = generateImportAliases mod.imports allModules
     in
         deduplicateDecls
             (
-            List.concat [ aliases , depImportAliases , prefixed , wrapperVars ]
+            List.concat [ depImportAliases , prefixed , wrapperVars ]
             )
 
 
@@ -2349,7 +2349,7 @@ makeConstructorAlias prefix decl =
             else
                 ""
     in
-        if String.isEmpty unprefixed || unprefixed == "Main" then
+        if String.isEmpty unprefixed || unprefixed == "Main" || isCommonName (String.toLower (String.slice 0 1 unprefixed) ++ String.slice 1 (String.length unprefixed) unprefixed) then
             Nothing
         else
             let
