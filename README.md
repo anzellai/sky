@@ -446,14 +446,14 @@ main =
 
 | Go Return | Sky Return | Notes |
 |-----------|-----------|-------|
-| `T` (pure) | `T` | No wrapping for pure functions |
-| `(T, error)` | `Task String T` | Error becomes `Err` in Task |
-| `error` | `Task String ()` | Effectful, may fail |
-| `void` (side effect) | `Task String ()` | Wrapped in lazy thunk |
+| `T` | `Result String T` | All FFI calls wrapped in Result with panic recovery |
+| `(T, error)` | `Result String T` | Error becomes `Err` |
+| `error` | `Result String ()` | Effectful, may fail |
+| `void` | `Result String ()` | Returns `Ok ()` |
 | `*string`, `*int` | `Maybe String`, `Maybe Int` | Nil-safe |
 | `*sql.DB` | `Db` (opaque handle) | Pointer is transparent |
 | `[]string` | `List String` | Slice -> List |
-| `map[string]int` | `Dict String Int` | Map -> Dict |
+| Go struct | Opaque type | Constructor + getters + setters |
 
 #### Panic Safety
 
@@ -487,6 +487,35 @@ Go's `Package.Method` becomes `packageMethod` in Sky (lowerCamelCase):
 | `db.Query(q)` | `Sql.dbQuery db q` |
 | `rows.Close()` | `Sql.rowsClose rows` |
 | `http.StatusOK` | `Http.statusOK ()` |
+
+#### Opaque Struct Pattern (Builder)
+
+Go structs are opaque types in Sky. The compiler generates constructors, field getters, and pipeline-friendly setters for each struct:
+
+```elm
+import Github.Com.Stripe.StripeGo.V84 as Stripe
+import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
+
+-- Build a Stripe checkout session with the builder pattern
+params =
+    Stripe.newCheckoutSessionParams ()
+        |> Stripe.checkoutSessionParamsSetMode "payment"
+        |> Stripe.checkoutSessionParamsSetSuccessURL successUrl
+        |> Stripe.checkoutSessionParamsSetCustomer customerId
+        |> Stripe.checkoutSessionParamsSetLineItems lineItems
+
+result = Session.new params
+```
+
+| Generated binding | Go equivalent |
+|---|---|
+| `Stripe.newCheckoutSessionParams ()` | `&stripe.CheckoutSessionParams{}` |
+| `Stripe.checkoutSessionParamsSetMode "payment"` | `params.Mode = stripe.String("payment")` |
+| `Stripe.checkoutSessionID sess` | `sess.ID` (field getter) |
+
+Pointer fields (`*string`, `*int64`, `*bool`) are handled transparently -- pass the plain value, the wrapper creates the pointer. Nested structs are built bottom-up and passed to parent setters.
+
+For large Go packages (Stripe SDK: 8,896 types), the `sky-ffi-gen` native tool generates only bindings for symbols actually referenced in source code, reducing compile time by 100x.
 
 #### Callback Bridging
 
@@ -1276,6 +1305,8 @@ SkyShop's build was **hanging indefinitely** -- the compiler never completed. Th
 | 12 | **ASCII `String.slice`/`length`** | -- | -- | Byte indexing fast path for ASCII strings; `[]rune` conversion only for multi-byte UTF-8 |
 | 13 | **SkyName tag extraction** | 2:01 | 0:59 | Extract `__sky_tag` once per case expression instead of `sky_asMap(x)["SkyName"]` per branch |
 | 14 | **`sky_asString` type-switch** | -- | -- | `strconv.Itoa` for ints, direct return for bools; eliminates `fmt.Sprintf` garbage |
+| 15 | **Opaque struct builders** | -- | -- | Go structs get constructors + setters; eliminates Sky record → Go struct type assertion panics |
+| 16 | **FFI namespace collision fix** | -- | -- | Bare aliases (`var update = FFI_Update`) no longer shadow local functions like `update` |
 
 **Result: Hanging -> 0:59 warm / 1:30 cold** (with ~200% CPU utilisation on multi-core machines).
 

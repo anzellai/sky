@@ -194,10 +194,11 @@ squares = List.parallelMap (\n -> n * n) [ 1, 2, 3, 4, 5 ]
 The compiler owns the entire boundary:
 1. `sky add github.com/some/package` — auto-detect Go vs Sky package
 2. Inspector subprocess runs `go/packages` + `go/types` to extract ALL exported types, fields, methods
-3. Compiler classifies each function: pure / fallible / effectful
+3. Compiler classifies each function: all FFI calls are effectful (Task-wrapped with panic recovery)
 4. Generates `.skyi` binding file + Go wrapper with panic recovery
-5. Dead code elimination strips unused wrappers from final build
-6. `sky install` auto-scans source for FFI imports and generates missing bindings
+5. For large packages (>50KB inspect JSON), `sky-ffi-gen` native tool generates usage-driven bindings — only symbols referenced in source get bindings
+6. Dead code elimination strips unused wrappers from final build
+7. `sky install` auto-scans source for FFI imports and generates missing bindings
 
 ### Type Mapping
 | Go | Sky |
@@ -212,6 +213,46 @@ The compiler owns the entire boundary:
 | `*string`, `*int` | `Maybe String`, `Maybe Int` |
 | `*sql.DB` | `Db` (opaque) |
 | `[]T` | `List T` |
+| Go struct | Opaque type (constructor + field getters + setters) |
+| Go interface | Opaque type (method bindings) |
+
+### Opaque Struct Pattern (Builder)
+
+All Go structs are opaque in Sky — never constructed as Sky records. Use generated constructors and pipeline-friendly setters:
+
+```elm
+-- Constructor: newTypeName () -> TypeName
+-- Getter: typeNameFieldName : TypeName -> FieldType
+-- Setter: typeNameSetFieldName : FieldType -> TypeName -> TypeName
+
+-- Example: Stripe CheckoutSessionParams
+import Github.Com.Stripe.StripeGo.V84 as Stripe
+import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
+
+params =
+    Stripe.newCheckoutSessionParams ()
+        |> Stripe.checkoutSessionParamsSetMode "payment"
+        |> Stripe.checkoutSessionParamsSetSuccessURL successUrl
+        |> Stripe.checkoutSessionParamsSetCustomer customerId
+        |> Stripe.checkoutSessionParamsSetLineItems lineItems
+
+result = Session.new params
+```
+
+Setters take **value first, struct second** for `|>` pipeline compatibility. Pointer fields (`*string`, `*int64`, `*bool`) are automatically wrapped — pass the plain value, the wrapper handles pointer creation.
+
+For nested structs, build inner structs first:
+```elm
+productData =
+    Stripe.newCheckoutSessionLineItemPriceDataProductDataParams ()
+        |> Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName title
+
+priceData =
+    Stripe.newCheckoutSessionLineItemPriceDataParams ()
+        |> Stripe.checkoutSessionLineItemPriceDataParamsSetProductData productData
+        |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount 1000
+        |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency "gbp"
+```
 
 ## Sky.Live
 
@@ -435,6 +476,10 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 - DONE: SkyName tag extraction — one map lookup per case, not per branch
 - DONE: `sky_asString` type-switch — `strconv.Itoa` instead of `fmt.Sprintf` for ints
 - DONE: ASCII fast path for `String.slice`/`length` — skip `[]rune` for ASCII strings
+- DONE: Opaque struct builders — constructors + pipeline setters for Go struct params
+- DONE: FFI namespace collision fix — bare aliases no longer shadow local functions
+- DONE: Rune-based `String.slice` — fixes UTF-8 truncation for multi-byte characters
+- DONE: Sky.Live Update wrapper — preserves model on FFI panics instead of corrupting session
 
 **TODO:**
 - Smarter cache invalidation — hash source content per-module, not just declaration counts

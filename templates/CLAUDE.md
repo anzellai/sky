@@ -175,6 +175,27 @@ import Drivers.Sqlite as _ exposing (..)   -- side-effect import (Go driver)
 | `[]string` | `List String` |
 | `map[string]int` | `Map String Int` |
 
+### Opaque Structs (Builder Pattern)
+
+All Go structs are opaque types in Sky. Use constructors + pipeline setters:
+
+```elm
+-- Constructor: Pkg.newTypeName ()
+-- Getter:     Pkg.typeNameFieldName receiver
+-- Setter:     Pkg.typeNameSetFieldName value receiver  (pipeline-friendly)
+
+-- Example: build a Stripe checkout session
+params =
+    Stripe.newCheckoutSessionParams ()
+        |> Stripe.checkoutSessionParamsSetMode "payment"
+        |> Stripe.checkoutSessionParamsSetSuccessURL url
+        |> Stripe.checkoutSessionParamsSetCustomer customerId
+
+result = Session.new params
+```
+
+Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass the plain value.
+
 ### Error Handling
 
 ```elm
@@ -994,12 +1015,27 @@ Http.statusOK                -- http.StatusOK
 key = Stripe.key ()          -- stripe.Key (getter, returns current value)
 Stripe.setKey "sk_test_..."  -- stripe.Key = "sk_test_..." (setter)
 
+-- Go struct construction: use opaque constructors + setters
+params =
+    Stripe.newCheckoutSessionParams ()                 -- &stripe.CheckoutSessionParams{}
+        |> Stripe.checkoutSessionParamsSetMode "payment"  -- params.Mode = stripe.String("payment")
+        |> Stripe.checkoutSessionParamsSetCustomer id     -- params.Customer = stripe.String(id)
+
+-- Nested structs: build inner first, then set on outer
+priceData = Stripe.newCheckoutSessionLineItemPriceDataParams ()
+    |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency "gbp"
+    |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount 1000
+lineItem = Stripe.newCheckoutSessionLineItemParams ()
+    |> Stripe.checkoutSessionLineItemParamsSetPriceData priceData
+
 -- Variadic args: pass as List
 Exec.command "sh" ["-c", "echo hello"]   -- exec.Command("sh", "-c", "echo hello")
 
 -- []byte args: use String.toBytes
 Sha256.sum256 (String.toBytes data)
 ```
+
+**Important**: Never pass Sky records `{ field = value }` as Go struct parameters. Always use the `newTypeName ()` constructor + `typeNameSetField value` setters. Sky records are `map[string]any` at runtime; Go functions expect typed struct pointers.
 
 ### Side-Effect Imports (Database Drivers)
 
