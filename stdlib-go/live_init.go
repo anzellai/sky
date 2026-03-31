@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -236,7 +237,14 @@ func sky_liveAppLive(config any) any {
 			if t, ok := result.(SkyTuple2); ok {
 				return t.V0, nil
 			}
-			return result, nil
+			// If update didn't return a (Model, Cmd) tuple (e.g. FFI panic
+			// produced a SkyResult), preserve the original model to avoid
+			// corrupting the session state.
+			if sr, ok := result.(SkyResult); ok {
+				log.Printf("[Sky.Live] Update error: %v", sr.ErrValue)
+				return model, nil
+			}
+			return model, nil
 		},
 		View: func(model any) *skylive_rt.VNode {
 			var result any
