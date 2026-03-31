@@ -1,7 +1,7 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
+import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Time
@@ -10,47 +10,37 @@ import Encoding.Hex as Hex
 import Net.Http as Http
 
 main =
-    Time.now ()
-        |> Task.andThen
-               (
-               \now ->
-                   let
-                       _ = println "Current time:" now
-                       data = "Hello, Sky!"
-                   in
-                       Sha256.sum256 (String.toBytes data)
-                           |> Task.andThen
-                                  (
-                                  \hash ->
-                                      Hex.encodeToString hash
-                                          |> Task.andThen
-                                                 (
-                                                 \hashStr ->
-                                                     let
-                                                         _ =
-                                                             println
-                                                                 "SHA256 of 'Hello, Sky!':"
-                                                                 hashStr
-                                                         _ =
-                                                             println
-                                                                 "Sending HTTP request..."
-                                                     in
-                                                         Http.get
-                                                             "https://httpbin.org/get"
-                                                             |> Task.andThen
-                                                                    (
-                                                                    \resp ->
-                                                                        Task.succeed
-                                                                            (
-                                                                            println
-                                                                                "HTTP status:"
-                                                                                (
-                                                                                Http.responseStatusCode
-                                                                                    resp
-                                                                                )
-                                                                            )
-                                                                    )
-                                                 )
-                                  )
-               )
-        |> Task.perform
+    let
+        nowStr =
+            Time.now ()
+                |> Result.andThen (\t -> Time.timeString t)
+                |> Result.withDefault "unknown"
+        _ = println ("Current time: " ++ nowStr)
+        data = "Hello, Sky!"
+        hashResult =
+            Sha256.sum256 (String.toBytes data)
+                |> Result.andThen (\hash -> Hex.encodeToString hash)
+        _ =
+            case hashResult of
+
+                Ok hashStr ->
+                    println ("SHA256 of 'Hello, Sky!': " ++ hashStr)
+
+                Err e ->
+                    println ("Hash error: " ++ e)
+        _ = println "Sending HTTP request..."
+        httpResult = Http.get "https://httpbin.org/get"
+        _ =
+            case httpResult of
+
+                Ok resp ->
+                    println
+                        (
+                        "HTTP status: " ++ String.fromInt
+                                               (Http.responseStatusCode resp)
+                        )
+
+                Err e ->
+                    println ("HTTP error: " ++ e)
+    in
+        ()

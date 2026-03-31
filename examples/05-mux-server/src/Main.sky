@@ -1,13 +1,17 @@
 module Main exposing (main)
 
 import Sky.Core.Prelude exposing (..)
-import Sky.Core.Task as Task
+import Sky.Core.Result as Result
 import Std.Log exposing (println)
 import Net.Http as Http
 import Github.Com.Gorilla.Mux as Mux
 import Io
 
-writeResponse w text = Task.perform (Io.writeString w text)
+writeResponse w text =
+    let
+        _ = Io.writeString w text
+    in
+        ()
 
 
 indexHandler w _ = writeResponse w "Welcome to Sky Mux Server!"
@@ -21,9 +25,9 @@ pingHandler w _ = writeResponse w "pong"
 
 setupRoutes router =
     let
-        _ = Task.perform (Mux.routerHandleFunc router "/" indexHandler)
-        _ = Task.perform (Mux.routerHandleFunc router "/echo" echoHandler)
-        _ = Task.perform (Mux.routerHandleFunc router "/ping" pingHandler)
+        _ = Mux.routerHandleFunc router "/" indexHandler
+        _ = Mux.routerHandleFunc router "/echo" echoHandler
+        _ = Mux.routerHandleFunc router "/ping" pingHandler
     in
         router
 
@@ -36,6 +40,16 @@ startServer router =
 
 
 main =
-    Mux.newRouter ()
-        |> Task.andThen (\router -> startServer (setupRoutes router))
-        |> Task.perform
+    case Mux.newRouter () of
+
+        Ok router ->
+            let
+                _ = startServer (setupRoutes router)
+            in
+                ()
+
+        Err e ->
+            let
+                _ = println ("Failed to create router: " ++ e)
+            in
+                ()

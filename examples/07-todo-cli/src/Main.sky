@@ -35,8 +35,10 @@ initDb _ =
 addTodo todoTitle =
     let
         _ = Db.exec "INSERT INTO todos (title) VALUES (?)" [ todoTitle ]
+        logArgs = [ "Added:" , todoTitle ]
+        _ = Slog.info "Action" logArgs
     in
-        Slog.info "Action" [ "Added:" , todoTitle ]
+        println ("Added: " ++ todoTitle)
 
 
 listTodos _ =
@@ -62,7 +64,7 @@ markDone idStr =
         id = Db.parseInt idStr
         _ = Db.exec "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
     in
-        println "Marked as done:" idStr
+        println ("Marked as done: " ++ idStr)
 
 
 markUndone idStr =
@@ -70,7 +72,7 @@ markUndone idStr =
         id = Db.parseInt idStr
         _ = Db.exec "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
     in
-        println "Marked as not done:" idStr
+        println ("Marked as not done: " ++ idStr)
 
 
 removeTodo idStr =
@@ -78,7 +80,7 @@ removeTodo idStr =
         id = Db.parseInt idStr
         _ = Db.exec "DELETE FROM todos WHERE id = ?" [ id ]
     in
-        println "Removed todo:" idStr
+        println ("Removed todo: " ++ idStr)
 
 
 clearDone _ =
@@ -88,7 +90,7 @@ clearDone _ =
         println "Cleared completed todos"
 
 
-showUsage =
+showUsage _ =
     let
         _ = Slog.info "Sky TODO - A simple todo manager" []
         _ = println ""
@@ -143,10 +145,10 @@ runCommand cmd cmdArg =
             clearDone ()
 
         "help" ->
-            showUsage
+            showUsage ()
 
         _ ->
-            showUsage
+            showUsage ()
 
 
 -- ============================================================

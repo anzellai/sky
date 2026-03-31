@@ -1524,7 +1524,7 @@ windowResize : Window -> Size -> Result String ()
 windowResize receiver arg0 =
     Sky_fyne_io_fyne_v2_WindowResize receiver arg0
 
-windowSetContent : Window -> CanvasObject -> Result String ()
+windowSetContent : Window -> Any -> Result String ()
 windowSetContent receiver arg0 =
     Sky_fyne_io_fyne_v2_WindowSetContent receiver arg0
 

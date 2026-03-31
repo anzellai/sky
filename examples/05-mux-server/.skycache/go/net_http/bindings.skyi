@@ -38,7 +38,7 @@ head : String -> Result String Response
 head arg0 =
     Sky_net_http_Head arg0
 
-listenAndServe : String -> Handler -> Result String ()
+listenAndServe : String -> Any -> Result String ()
 listenAndServe arg0 arg1 =
     Sky_net_http_ListenAndServe arg0 arg1
 

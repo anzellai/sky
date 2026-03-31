@@ -1371,47 +1371,60 @@ On subsequent builds, cached modules skip type-checking and lowering entirely. C
 - **Selective import emission** -- only emit Go imports for packages actually referenced
 - **Multi-level caching** -- cache type-check results, inspector output, and wrapper generation separately
 
-## Type Safety Audit
+## Type Safety Journey
 
-A comprehensive audit identified 33 gaps where "if it compiles, it works" could be violated. All 33 have been addressed. The compiler now self-hosts cleanly with strict type safety enforcement.
+Sky's core principle is **"if it compiles, it works"**. A comprehensive audit identified 33 type safety gaps and all have been addressed. The compiler now self-hosts cleanly with strict type checking -- all 14 examples compile with zero warnings.
 
-### Parser Nesting Bug (Fixed)
+### Parser: Indentation-Based Case Scoping
 
-The parser's `parseCaseBranches` function used a fixed column check (`peekColumn <= 1`) to terminate case branch parsing. When a `case` expression was nested inside another `case` branch, the inner case's branches would absorb the outer case's subsequent branches as dead code.
+The parser's `parseCaseBranches` function used a fixed column check (`peekColumn <= 1`) to terminate case branch parsing. Nested `case` expressions would absorb outer branches as dead code.
 
-**Fix:** `parseCaseBranches` now accepts a `branchCol` parameter and terminates at `peekColumn < branchCol`. Eight compiler source files were refactored to extract nested case expressions into helper functions: Main.sky, Infer.sky, PatternCheck.sky, Unify.sky, Lower.sky, Pipeline.sky, Parser.sky, and Lsp/Server.sky.
+**Fix:** `parseCaseBranches` now tracks `branchCol` (the column of the first branch) and terminates at `peekColumn < branchCol`. Eight compiler source files were refactored to extract nested case expressions into helper functions.
 
-### Non-Exhaustive Case Detection (New)
+### Type Checker: Cross-Module Type Resolution
 
-Case expressions that don't cover all constructors previously returned `nil` silently, causing downstream panics or wrong behaviour. Now:
+Three improvements ensure the type checker works correctly across module boundaries:
 
-- **Runtime:** Case fallthrough emits `panic("non-exhaustive case expression")` instead of `return nil`, producing a clear error message
-- **Compile time:** The new `Exhaustive.sky` module checks pattern coverage against the ADT registry and reports missing patterns as warnings
-- **Type checking:** Unknown lowercase identifiers produce "Unknown identifier" errors instead of silently becoming polymorphic type variables
+1. **Imported ADT constructors** -- The ADT registry now merges constructors from ALL imported modules, not just the entry module. Pattern matching on imported constructors (e.g., `BoardPage` from `State.sky`) type-checks correctly.
+
+2. **Imported type aliases** -- Type aliases (`type alias Model = { ... }`) from imported modules are available during annotation checking. `{ model | field = x }` correctly resolves to `Model` when `Model` is defined in another module.
+
+3. **Record update types** -- Record update expressions (`{ record | field = value }`) now infer the BASE record's type, not a partial record with only the updated fields.
+
+### Non-Exhaustive Case Detection
+
+Case expressions that don't cover all constructors previously returned `nil` silently. Now:
+
+- **Runtime:** Case fallthrough emits `panic("non-exhaustive case expression")` -- no silent nil
+- **Compile time:** `Exhaustive.sky` checks pattern coverage against the ADT registry
 
 ### FFI Boundary Safety
 
-| Fix | Description |
-|-----|------------|
-| Panic recovery | FFI wrappers use named returns with `SkyErr("FFI panic: ...")` instead of silently returning `nil` |
-| Pointer nil safety | Pointer type assertions check for nil before casting: `if arg == nil { return nil }` |
-| Receiver nil guard | Method wrappers return `SkyErr("nil receiver")` when the receiver type doesn't match |
-| Opaque type safety | Non-pointer opaque type casts use comma-ok form with zero-value fallback |
-| Field accessors | Pointer struct fields return `Maybe` (via `SkyJust`/`SkyNothing`) instead of raw `nil` |
-| Variadic safety | Variadic function parameters check element type instead of bypassing type checks |
+| Area | Fix |
+|------|-----|
+| Panic recovery | FFI wrappers use named returns with `SkyErr("FFI panic: ...")` instead of nil |
+| Pointer nil safety | Pointer type assertions check for nil before casting |
+| Receiver nil guard | Method wrappers return `SkyErr("nil receiver")` on type mismatch |
+| Opaque type casts | Comma-ok form with zero-value fallback instead of bare assertions |
+| Field accessors | Pointer struct fields return `Maybe` via `SkyJust`/`SkyNothing` |
+| Variadic params | Element type checking instead of bypassing safety |
 
 ### Runtime Correctness
 
-| Fix | Description |
-|-----|------------|
-| Float-aware arithmetic | `+`, `-`, `*` dispatch on operand types: float if either operand is float, int otherwise |
-| Float-aware comparison | `<`, `<=`, `>`, `>=` use the same float dispatch |
-| Rune-aware strings | `String.length` counts Unicode code points, not bytes |
-| Numeric sorting | `List.sort`, `List.maximum`, `List.minimum` use numeric comparison for numbers |
-| Int/Float distinction | `Int` and `Float` are distinct types (no silent coercion), matching Elm semantics |
-| Safe call chaining | `sky_call2`/`sky_call3` use safe `sky_call` chaining instead of bare type assertions |
-| Task panic recovery | `sky_runTask` converts panics to `SkyErr` instead of re-panicking |
-| Session store | `RebuildADT` handles custom ADTs recursively for session round-trip integrity |
+| Area | Fix |
+|------|-----|
+| Arithmetic | `+`, `-`, `*` dispatch on types: float if either operand is float, int otherwise |
+| Comparison | `<`, `<=`, `>`, `>=` use the same float dispatch |
+| Strings | `String.length` counts Unicode code points (runes), not bytes |
+| Sorting | `List.sort`, `List.maximum`, `List.minimum` use numeric comparison for numbers |
+| Numeric types | `Int` and `Float` are distinct types (no silent coercion), matching Elm |
+| Call safety | `sky_call2`/`sky_call3` use safe `sky_call` chaining |
+| Task recovery | `sky_runTask` converts panics to `SkyErr` instead of re-panicking |
+| Sessions | `RebuildADT` handles custom ADTs recursively for round-trip integrity |
+
+### Incremental Compilation
+
+Dependency modules are cached in `<project>/.skycache/lowered/` with source fingerprints. Caches are project-scoped (not shared between projects) and invalidated when the source changes. The compiler automatically runs `go mod tidy` when Go dependencies are missing.
 
 ---
 

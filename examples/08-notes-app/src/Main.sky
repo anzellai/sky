@@ -154,7 +154,7 @@ handleForgotPassword _ req =
         let
             email = Server.formValue "email" req
             resetToken = Auth.generateToken ()
-            _ = println "[Email Service] Password reset for:" email resetToken
+            _ = println ("[Email Service] Password reset for: " ++ email ++ " " ++ resetToken)
         in
             Task.succeed (Server.html (View.forgotPasswordSentPage ()))
     else
