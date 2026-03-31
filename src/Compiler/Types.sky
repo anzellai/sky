@@ -197,6 +197,191 @@ formatType t =
             "?"
 
 
+typeToGo : Type -> String
+typeToGo t =
+    case t of
+
+        TVar id name ->
+            goVarName id name
+
+        TConst name ->
+            goConstType name
+
+        TFun fromT toT ->
+            "func(" ++ typeToGo fromT ++ ") " ++ typeToGo toT
+
+        TApp ctor args ->
+            goAppType ctor args
+
+        TTuple items ->
+            goTupleType items
+
+        TRecord fields ->
+            goRecordType fields
+
+        _ ->
+            "any"
+
+
+goVarName : Int -> (Maybe String) -> String
+goVarName id name =
+    case name of
+
+        Just n ->
+            String.toUpper (String.slice 0 1 n) ++ String.slice 1 (String.length n) n
+
+        Nothing ->
+            "T" ++ String.fromInt id
+
+
+goConstType : String -> String
+goConstType name =
+    if name == "Int" then
+        "int"
+    else if name == "Float" then
+        "float64"
+    else if name == "String" then
+        "string"
+    else if name == "Bool" then
+        "bool"
+    else if name == "Char" then
+        "rune"
+    else if name == "Bytes" then
+        "[]byte"
+    else if name == "()" then
+        "struct{}"
+    else
+        name
+
+
+goAppType : Type -> List Type -> String
+goAppType ctor args =
+    let
+        ctorName = extractConstName ctor
+    in
+        if ctorName == "List" then
+            goListType args
+        else if ctorName == "Maybe" then
+            goMaybeType args
+        else if ctorName == "Result" then
+            goResultType args
+        else if ctorName == "Dict" then
+            goDictType args
+        else if ctorName == "Set" then
+            goSetType args
+        else if ctorName == "Task" then
+            goTaskType args
+        else if not (String.isEmpty ctorName) then
+            if List.isEmpty args then
+                ctorName
+            else
+                ctorName ++ "[" ++ String.join ", " (List.map typeToGo args) ++ "]"
+        else
+            "any"
+
+
+extractConstName : Type -> String
+extractConstName t =
+    case t of
+
+        TConst name ->
+            name
+
+        _ ->
+            ""
+
+
+goListType args =
+    case args of
+
+        elemT :: [] ->
+            "[]" ++ typeToGo elemT
+
+        _ ->
+            "[]any"
+
+
+goMaybeType args =
+    case args of
+
+        innerT :: [] ->
+            "SkyMaybe[" ++ typeToGo innerT ++ "]"
+
+        _ ->
+            "SkyMaybe[any]"
+
+
+goResultType args =
+    case args of
+
+        errT :: okT :: [] ->
+            "SkyResult[" ++ typeToGo errT ++ ", " ++ typeToGo okT ++ "]"
+
+        _ ->
+            "SkyResult[any, any]"
+
+
+goDictType args =
+    case args of
+
+        keyT :: valT :: [] ->
+            "map[" ++ typeToGo keyT ++ "]" ++ typeToGo valT
+
+        _ ->
+            "map[any]any"
+
+
+goSetType args =
+    case args of
+
+        elemT :: [] ->
+            "map[" ++ typeToGo elemT ++ "]bool"
+
+        _ ->
+            "map[any]bool"
+
+
+goTaskType args =
+    case args of
+
+        errT :: okT :: [] ->
+            "func() SkyResult[" ++ typeToGo errT ++ ", " ++ typeToGo okT ++ "]"
+
+        _ ->
+            "func() SkyResult[any, any]"
+
+
+goTupleType : List Type -> String
+goTupleType items =
+    case items of
+
+        a :: b :: [] ->
+            "SkyTuple2[" ++ typeToGo a ++ ", " ++ typeToGo b ++ "]"
+
+        a :: b :: c :: [] ->
+            "SkyTuple3[" ++ typeToGo a ++ ", " ++ typeToGo b ++ ", " ++ typeToGo c ++ "]"
+
+        _ ->
+            "any"
+
+
+goRecordType : Dict.Dict String Type -> String
+goRecordType fields =
+    let
+        fieldStrs =
+            List.map
+                (\pair ->
+                    let
+                        name = fst pair
+                        capName = String.toUpper (String.slice 0 1 name) ++ String.slice 1 (String.length name) name
+                    in
+                        capName ++ " " ++ typeToGo (snd pair)
+                )
+                (Dict.toList fields)
+    in
+        "struct { " ++ String.join "; " fieldStrs ++ " }"
+
+
 formatVarName : Int -> (Maybe String) -> String
 formatVarName id name =
     case name of

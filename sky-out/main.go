@@ -1214,6 +1214,58 @@ var formatType = Compiler_Types_FormatType
 
 var FormatType = Compiler_Types_FormatType
 
+var typeToGo = Compiler_Types_TypeToGo
+
+var TypeToGo = Compiler_Types_TypeToGo
+
+var goVarName = Compiler_Types_GoVarName
+
+var GoVarName = Compiler_Types_GoVarName
+
+var goConstType = Compiler_Types_GoConstType
+
+var GoConstType = Compiler_Types_GoConstType
+
+var goAppType = Compiler_Types_GoAppType
+
+var GoAppType = Compiler_Types_GoAppType
+
+var extractConstName = Compiler_Types_ExtractConstName
+
+var ExtractConstName = Compiler_Types_ExtractConstName
+
+var goListType = Compiler_Types_GoListType
+
+var GoListType = Compiler_Types_GoListType
+
+var goMaybeType = Compiler_Types_GoMaybeType
+
+var GoMaybeType = Compiler_Types_GoMaybeType
+
+var goResultType = Compiler_Types_GoResultType
+
+var GoResultType = Compiler_Types_GoResultType
+
+var goDictType = Compiler_Types_GoDictType
+
+var GoDictType = Compiler_Types_GoDictType
+
+var goSetType = Compiler_Types_GoSetType
+
+var GoSetType = Compiler_Types_GoSetType
+
+var goTaskType = Compiler_Types_GoTaskType
+
+var GoTaskType = Compiler_Types_GoTaskType
+
+var goTupleType = Compiler_Types_GoTupleType
+
+var GoTupleType = Compiler_Types_GoTupleType
+
+var goRecordType = Compiler_Types_GoRecordType
+
+var GoRecordType = Compiler_Types_GoRecordType
+
 var formatVarName = Compiler_Types_FormatVarName
 
 var FormatVarName = Compiler_Types_FormatVarName
@@ -2744,6 +2796,58 @@ func Compiler_Types_Mono(t any) any {
 
 func Compiler_Types_FormatType(t any) any {
 	return func() any { return func() any { __subject := t; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; name := sky_asMap(__subject)["V1"]; _ = name; return Compiler_Types_FormatVarName(id, name) };  if __sky_tag == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if __sky_tag == "TFun" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return sky_concat(Compiler_Types_FormatFunFrom(fromT), sky_concat(" -> ", Compiler_Types_FormatType(toT))) };  if __sky_tag == "TApp" { ctor := sky_asMap(__subject)["V0"]; _ = ctor; args := sky_asMap(__subject)["V1"]; _ = args; return sky_concat(Compiler_Types_FormatType(ctor), sky_concat(" ", sky_call(sky_stringJoin(" "), sky_call(sky_listMap(Compiler_Types_FormatType), args)))) };  if __sky_tag == "TTuple" { items := sky_asMap(__subject)["V0"]; _ = items; return sky_concat("( ", sky_concat(sky_call(sky_stringJoin(" , "), sky_call(sky_listMap(Compiler_Types_FormatType), items)), " )")) };  if __sky_tag == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return func() any { fieldStrs := sky_call(sky_listMap(func(pair any) any { return sky_concat(sky_fst(pair), sky_concat(" : ", Compiler_Types_FormatType(sky_snd(pair)))) }), sky_dictToList(fields)); _ = fieldStrs; return sky_concat("{ ", sky_concat(sky_call(sky_stringJoin(" , "), fieldStrs), " }")) }() };  if true { return "?" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_TypeToGo(t any) any {
+	return func() any { return func() any { __subject := t; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "TVar" { id := sky_asMap(__subject)["V0"]; _ = id; name := sky_asMap(__subject)["V1"]; _ = name; return Compiler_Types_GoVarName(id, name) };  if __sky_tag == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return Compiler_Types_GoConstType(name) };  if __sky_tag == "TFun" { fromT := sky_asMap(__subject)["V0"]; _ = fromT; toT := sky_asMap(__subject)["V1"]; _ = toT; return sky_concat("func(", sky_concat(Compiler_Types_TypeToGo(fromT), sky_concat(") ", Compiler_Types_TypeToGo(toT)))) };  if __sky_tag == "TApp" { ctor := sky_asMap(__subject)["V0"]; _ = ctor; args := sky_asMap(__subject)["V1"]; _ = args; return Compiler_Types_GoAppType(ctor, args) };  if __sky_tag == "TTuple" { items := sky_asMap(__subject)["V0"]; _ = items; return Compiler_Types_GoTupleType(items) };  if __sky_tag == "TRecord" { fields := sky_asMap(__subject)["V0"]; _ = fields; return Compiler_Types_GoRecordType(fields) };  if true { return "any" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoVarName(id any, name any) any {
+	return func() any { return func() any { __subject := name; if sky_asSkyMaybe(__subject).SkyName == "Just" { n := sky_asSkyMaybe(__subject).JustValue; _ = n; return sky_concat(sky_stringToUpper(sky_call(sky_call(sky_stringSlice(0), 1), n)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(n)), n)) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return sky_concat("T", sky_stringFromInt(id)) };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoConstType(name any) any {
+	return func() any { if sky_asBool(sky_equal(name, "Int")) { return "int" }; if sky_asBool(sky_equal(name, "Float")) { return "float64" }; if sky_asBool(sky_equal(name, "String")) { return "string" }; if sky_asBool(sky_equal(name, "Bool")) { return "bool" }; if sky_asBool(sky_equal(name, "Char")) { return "rune" }; if sky_asBool(sky_equal(name, "Bytes")) { return "[]byte" }; if sky_asBool(sky_equal(name, "()")) { return "struct{}" }; return name }()
+}
+
+func Compiler_Types_GoAppType(ctor any, args any) any {
+	return func() any { ctorName := Compiler_Types_ExtractConstName(ctor); _ = ctorName; return func() any { if sky_asBool(sky_equal(ctorName, "List")) { return Compiler_Types_GoListType(args) }; if sky_asBool(sky_equal(ctorName, "Maybe")) { return Compiler_Types_GoMaybeType(args) }; if sky_asBool(sky_equal(ctorName, "Result")) { return Compiler_Types_GoResultType(args) }; if sky_asBool(sky_equal(ctorName, "Dict")) { return Compiler_Types_GoDictType(args) }; if sky_asBool(sky_equal(ctorName, "Set")) { return Compiler_Types_GoSetType(args) }; if sky_asBool(sky_equal(ctorName, "Task")) { return Compiler_Types_GoTaskType(args) }; if sky_asBool(sky_not(sky_stringIsEmpty(ctorName))) { return func() any { if sky_asBool(sky_listIsEmpty(args)) { return ctorName }; return sky_concat(ctorName, sky_concat("[", sky_concat(sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Types_TypeToGo), args)), "]"))) }() }; return "any" }() }()
+}
+
+func Compiler_Types_ExtractConstName(t any) any {
+	return func() any { return func() any { __subject := t; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "TConst" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if true { return "" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoListType(args any) any {
+	return func() any { return func() any { __subject := args; if len(sky_asList(__subject)) == 1 { elemT := sky_asList(__subject)[0]; _ = elemT; return sky_concat("[]", Compiler_Types_TypeToGo(elemT)) };  if true { return "[]any" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoMaybeType(args any) any {
+	return func() any { return func() any { __subject := args; if len(sky_asList(__subject)) == 1 { innerT := sky_asList(__subject)[0]; _ = innerT; return sky_concat("SkyMaybe[", sky_concat(Compiler_Types_TypeToGo(innerT), "]")) };  if true { return "SkyMaybe[any]" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoResultType(args any) any {
+	return func() any { return func() any { __subject := args; if len(sky_asList(__subject)) == 2 { errT := sky_asList(__subject)[0]; _ = errT; okT := sky_asList(sky_asList(__subject)[1:])[0]; _ = okT; return sky_concat("SkyResult[", sky_concat(Compiler_Types_TypeToGo(errT), sky_concat(", ", sky_concat(Compiler_Types_TypeToGo(okT), "]")))) };  if true { return "SkyResult[any, any]" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoDictType(args any) any {
+	return func() any { return func() any { __subject := args; if len(sky_asList(__subject)) == 2 { keyT := sky_asList(__subject)[0]; _ = keyT; valT := sky_asList(sky_asList(__subject)[1:])[0]; _ = valT; return sky_concat("map[", sky_concat(Compiler_Types_TypeToGo(keyT), sky_concat("]", Compiler_Types_TypeToGo(valT)))) };  if true { return "map[any]any" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoSetType(args any) any {
+	return func() any { return func() any { __subject := args; if len(sky_asList(__subject)) == 1 { elemT := sky_asList(__subject)[0]; _ = elemT; return sky_concat("map[", sky_concat(Compiler_Types_TypeToGo(elemT), "]bool")) };  if true { return "map[any]bool" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoTaskType(args any) any {
+	return func() any { return func() any { __subject := args; if len(sky_asList(__subject)) == 2 { errT := sky_asList(__subject)[0]; _ = errT; okT := sky_asList(sky_asList(__subject)[1:])[0]; _ = okT; return sky_concat("func() SkyResult[", sky_concat(Compiler_Types_TypeToGo(errT), sky_concat(", ", sky_concat(Compiler_Types_TypeToGo(okT), "]")))) };  if true { return "func() SkyResult[any, any]" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoTupleType(items any) any {
+	return func() any { return func() any { __subject := items; if len(sky_asList(__subject)) == 2 { a := sky_asList(__subject)[0]; _ = a; b := sky_asList(sky_asList(__subject)[1:])[0]; _ = b; return sky_concat("SkyTuple2[", sky_concat(Compiler_Types_TypeToGo(a), sky_concat(", ", sky_concat(Compiler_Types_TypeToGo(b), "]")))) };  if len(sky_asList(__subject)) == 3 { a := sky_asList(__subject)[0]; _ = a; b := sky_asList(sky_asList(__subject)[1:])[0]; _ = b; c := sky_asList(sky_asList(sky_asList(__subject)[1:])[1:])[0]; _ = c; return sky_concat("SkyTuple3[", sky_concat(Compiler_Types_TypeToGo(a), sky_concat(", ", sky_concat(Compiler_Types_TypeToGo(b), sky_concat(", ", sky_concat(Compiler_Types_TypeToGo(c), "]")))))) };  if true { return "any" };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Types_GoRecordType(fields any) any {
+	return func() any { fieldStrs := sky_call(sky_listMap(func(pair any) any { return func() any { name := sky_fst(pair); _ = name; capName := sky_concat(sky_stringToUpper(sky_call(sky_call(sky_stringSlice(0), 1), name)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(name)), name)); _ = capName; return sky_concat(capName, sky_concat(" ", Compiler_Types_TypeToGo(sky_snd(pair)))) }() }), sky_dictToList(fields)); _ = fieldStrs; return sky_concat("struct { ", sky_concat(sky_call(sky_stringJoin("; "), fieldStrs), " }")) }()
 }
 
 func Compiler_Types_FormatVarName(id any, name any) any {
@@ -6233,15 +6337,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 2, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 5, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6608,6 +6712,302 @@ var extractBraced = Lsp_JsonRpc_ExtractBraced
 
 var ExtractBraced = Lsp_JsonRpc_ExtractBraced
 
+var findCharIdx = Compiler_Pipeline_FindCharIdx
+
+var findLastSlash = Compiler_Pipeline_FindLastSlash
+
+var compile = Compiler_Pipeline_Compile
+
+var buildCheckEnv = Compiler_Pipeline_BuildCheckEnv
+
+var compileMultiModule = Compiler_Pipeline_CompileMultiModule
+
+var compileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
+
+var emitMultiModuleGo = Compiler_Pipeline_EmitMultiModuleGo
+
+var writeMultiModuleOutput = Compiler_Pipeline_WriteMultiModuleOutput
+
+var writeParallelHelpers = Compiler_Pipeline_WriteParallelHelpers
+
+var runNativeDce = Compiler_Pipeline_RunNativeDce
+
+var copyLiveRuntime = Compiler_Pipeline_CopyLiveRuntime
+
+var findStdlibDir = Compiler_Pipeline_FindStdlibDir
+
+var optimiseJsonFunctions = Compiler_Pipeline_OptimiseJsonFunctions
+
+var writeNativeJsonFile = Compiler_Pipeline_WriteNativeJsonFile
+
+var nativeJsonHelperCode = Compiler_Pipeline_NativeJsonHelperCode()
+
+var fixUnusedVars = Compiler_Pipeline_FixUnusedVars
+
+var eliminateDeadCode = Compiler_Pipeline_EliminateDeadCode
+
+var countFuncsInFile = Compiler_Pipeline_CountFuncsInFile
+
+var trimWrapperFile = Compiler_Pipeline_TrimWrapperFile
+
+var trimWrapperImports = Compiler_Pipeline_TrimWrapperImports
+
+var trimWrapperContent = Compiler_Pipeline_TrimWrapperContent
+
+var isWrapperUsed = Compiler_Pipeline_IsWrapperUsed
+
+var isHelperFunc = Compiler_Pipeline_IsHelperFunc
+
+var extractWrapperFuncName = Compiler_Pipeline_ExtractWrapperFuncName
+
+var splitWrapperSections = Compiler_Pipeline_SplitWrapperSections
+
+var splitWrapperLoop = Compiler_Pipeline_SplitWrapperLoop
+
+var dceMainGo = Compiler_Pipeline_DceMainGo
+
+var trimUnusedImports = Compiler_Pipeline_TrimUnusedImports
+
+var buildReachableSet = Compiler_Pipeline_BuildReachableSet
+
+var collectBlankImports = Compiler_Pipeline_CollectBlankImports
+
+var makeGoPackageWithImports = Compiler_Pipeline_MakeGoPackageWithImports
+
+var shortFuncName = Compiler_Pipeline_ShortFuncName
+
+var makeGoPackage = Compiler_Pipeline_MakeGoPackage
+
+var loadLocalModules = Compiler_Pipeline_LoadLocalModules
+
+var loadFromSkydepsOrSkip = Compiler_Pipeline_LoadFromSkydepsOrSkip
+
+var loadFromCandidatesOrSkip = Compiler_Pipeline_LoadFromCandidatesOrSkip
+
+var tryOneSkydepCandidate = Compiler_Pipeline_TryOneSkydepCandidate
+
+var parseAndLoadSkydep = Compiler_Pipeline_ParseAndLoadSkydep
+
+var findSkydepCandidates = Compiler_Pipeline_FindSkydepCandidates
+
+var skydepSrcRoot = Compiler_Pipeline_SkydepSrcRoot
+
+var loadFfiForTypeCheck = Compiler_Pipeline_LoadFfiForTypeCheck
+
+var loadOneFfiRaw = Compiler_Pipeline_LoadOneFfiRaw
+
+var parseSimpleFfiBinding = Compiler_Pipeline_ParseSimpleFfiBinding
+
+var loadFfiBindings = Compiler_Pipeline_LoadFfiBindings
+
+var deduplicateFfiImports = Compiler_Pipeline_DeduplicateFfiImports
+
+var deduplicateOneImport = Compiler_Pipeline_DeduplicateOneImport
+
+var loadOneFfiBinding = Compiler_Pipeline_LoadOneFfiBinding
+
+var parseFfiBinding = Compiler_Pipeline_ParseFfiBinding
+
+var preFilterSkyi = Compiler_Pipeline_PreFilterSkyi
+
+var filterFfiModule = Compiler_Pipeline_FilterFfiModule
+
+var declHasWrapper = Compiler_Pipeline_DeclHasWrapper
+
+var extractWrapperName = Compiler_Pipeline_ExtractWrapperName
+
+var tryLoadBinding = Compiler_Pipeline_TryLoadBinding
+
+var copyFfiWrappers = Compiler_Pipeline_CopyFfiWrappers
+
+var copyProjectWrappers = Compiler_Pipeline_CopyProjectWrappers
+
+var copyWrapperDir = Compiler_Pipeline_CopyWrapperDir
+
+var copyOneWrapperFile = Compiler_Pipeline_CopyOneWrapperFile
+
+var fileNameFromPath = Compiler_Pipeline_FileNameFromPath
+
+var copyOneFfiWrapper = Compiler_Pipeline_CopyOneFfiWrapper
+
+var writeWrapperIfNew = Compiler_Pipeline_WriteWrapperIfNew
+
+var fileAlreadyExists = Compiler_Pipeline_FileAlreadyExists
+
+var copyFfiWrapperFallback = Compiler_Pipeline_CopyFfiWrapperFallback
+
+var buildAdtEnvFromModules = Compiler_Pipeline_BuildAdtEnvFromModules
+
+var addModuleAdtEnv = Compiler_Pipeline_AddModuleAdtEnv
+
+var buildImportedRegistry = Compiler_Pipeline_BuildImportedRegistry
+
+var buildImportedAliases = Compiler_Pipeline_BuildImportedAliases
+
+var addModuleAliases = Compiler_Pipeline_AddModuleAliases
+
+var addModuleRegistry = Compiler_Pipeline_AddModuleRegistry
+
+var buildAliasMap = Compiler_Pipeline_BuildAliasMap
+
+var generatePrefixAliases = Compiler_Pipeline_GeneratePrefixAliases
+
+var makePrefixAlias = Compiler_Pipeline_MakePrefixAlias
+
+var isCommonName = Compiler_Pipeline_IsCommonName
+
+var isSharedValue = Compiler_Pipeline_IsSharedValue
+
+var deduplicateDecls = Compiler_Pipeline_DeduplicateDecls
+
+var deduplicateDeclsLoop = Compiler_Pipeline_DeduplicateDeclsLoop
+
+var getDeclName = Compiler_Pipeline_GetDeclName
+
+var extractVarName = Compiler_Pipeline_ExtractVarName
+
+var extractFuncName = Compiler_Pipeline_ExtractFuncName
+
+var extractTypeName = Compiler_Pipeline_ExtractTypeName
+
+var generateImportAliases = Compiler_Pipeline_GenerateImportAliases
+
+var generateAliasesForImport = Compiler_Pipeline_GenerateAliasesForImport
+
+var generateAliasesFromModule = Compiler_Pipeline_GenerateAliasesFromModule
+
+var isFfiModule = Compiler_Pipeline_IsFfiModule
+
+var exprHasWrapperCall = Compiler_Pipeline_ExprHasWrapperCall
+
+var generateAliasesFromModuleInner = Compiler_Pipeline_GenerateAliasesFromModuleInner
+
+var isExposingAll = Compiler_Pipeline_IsExposingAll
+
+var isExposingNone = Compiler_Pipeline_IsExposingNone
+
+var getExposeNames = Compiler_Pipeline_GetExposeNames
+
+var isZeroArityInModule = Compiler_Pipeline_IsZeroArityInModule
+
+var findModule = Compiler_Pipeline_FindModule
+
+var extractExportedNames = Compiler_Pipeline_ExtractExportedNames
+
+var extractDeclNames = Compiler_Pipeline_ExtractDeclNames
+
+var collectAllFunctionNames = Compiler_Pipeline_CollectAllFunctionNames
+
+var extractDeclNameForFn = Compiler_Pipeline_ExtractDeclNameForFn
+
+var deduplicateStringList = Compiler_Pipeline_DeduplicateStringList
+
+var deduplicateStringsLoop = Compiler_Pipeline_DeduplicateStringsLoop
+
+var isModuleLoaded = Compiler_Pipeline_IsModuleLoaded
+
+var deduplicateFfiModules = Compiler_Pipeline_DeduplicateFfiModules
+
+var addImportAlias = Compiler_Pipeline_AddImportAlias
+
+var importAlias = Compiler_Pipeline_ImportAlias
+
+var compileDependencyModule = Compiler_Pipeline_CompileDependencyModule
+
+var compileDependencyModuleCached = Compiler_Pipeline_CompileDependencyModuleCached
+
+var loadCachedModule = Compiler_Pipeline_LoadCachedModule
+
+var generateConstructorAliasesFromCode = Compiler_Pipeline_GenerateConstructorAliasesFromCode
+
+var extractFuncNameFromLine = Compiler_Pipeline_ExtractFuncNameFromLine
+
+var extractVarNameFromLine = Compiler_Pipeline_ExtractVarNameFromLine
+
+var makeAliasDecls = Compiler_Pipeline_MakeAliasDecls
+
+var decapitaliseFirst = Compiler_Pipeline_DecapitaliseFirst
+
+var isCacheValid = Compiler_Pipeline_IsCacheValid
+
+var stripCacheHeader = Compiler_Pipeline_StripCacheHeader
+
+var compileDependencyModuleAndCache = Compiler_Pipeline_CompileDependencyModuleAndCache
+
+var compileFfiModuleLight = Compiler_Pipeline_CompileFfiModuleLight
+
+var makeFfiWrapperVar = Compiler_Pipeline_MakeFfiWrapperVar
+
+var buildFfiVarDecl = Compiler_Pipeline_BuildFfiVarDecl
+
+var buildFfiDeclString = Compiler_Pipeline_BuildFfiDeclString
+
+var countWrapperArgs = Compiler_Pipeline_CountWrapperArgs
+
+var countWrapperArgsAcc = Compiler_Pipeline_CountWrapperArgsAcc
+
+var makeFfiFunc = Compiler_Pipeline_MakeFfiFunc
+
+var extractWrapperNameFromBody = Compiler_Pipeline_ExtractWrapperNameFromBody
+
+var extractLiteralFromBody = Compiler_Pipeline_ExtractLiteralFromBody
+
+var compileDependencyModuleFull = Compiler_Pipeline_CompileDependencyModuleFull
+
+var generateConstructorAliases = Compiler_Pipeline_GenerateConstructorAliases
+
+var makeConstructorAlias = Compiler_Pipeline_MakeConstructorAlias
+
+var generateOriginalAliases = Compiler_Pipeline_GenerateOriginalAliases
+
+var makeOriginalAlias = Compiler_Pipeline_MakeOriginalAlias
+
+var isExportableDecl = Compiler_Pipeline_IsExportableDecl
+
+var dirOfPath = Compiler_Pipeline_DirOfPath
+
+var needsStdlibWrapper = Compiler_Pipeline_NeedsStdlibWrapper
+
+var buildStdlibGoImports = Compiler_Pipeline_BuildStdlibGoImports
+
+var importToGoImport = Compiler_Pipeline_ImportToGoImport
+
+var skyModuleToGoImport = Compiler_Pipeline_SkyModuleToGoImport
+
+var skyModuleToGoImportLoop = Compiler_Pipeline_SkyModuleToGoImportLoop
+
+var isTld = Compiler_Pipeline_IsTld
+
+var copyStdlibGo = Compiler_Pipeline_CopyStdlibGo
+
+var ffiPascalPart = Compiler_Pipeline_FfiPascalPart
+
+var ffiSafePart = Compiler_Pipeline_FfiSafePart
+
+var ffiSafePartLoop = Compiler_Pipeline_FfiSafePartLoop
+
+var prefixDecl = Compiler_Pipeline_PrefixDecl
+
+var compileSource = Compiler_Pipeline_CompileSource
+
+var compileModule = Compiler_Pipeline_CompileModule
+
+var compileCheckedModule = Compiler_Pipeline_CompileCheckedModule
+
+var compileProject = Compiler_Pipeline_CompileProject
+
+var inferSrcRoot = Compiler_Pipeline_InferSrcRoot
+
+var inferSrcRootFromEntry = Compiler_Pipeline_InferSrcRootFromEntry
+
+var findSubstring = Compiler_Pipeline_FindSubstring
+
+var findSubstringAt = Compiler_Pipeline_FindSubstringAt
+
+var printDiagnostics = Compiler_Pipeline_PrintDiagnostics
+
+var printTypedDecls = Compiler_Pipeline_PrintTypedDecls
+
 func Lsp_Server_EmptyState() any {
 	return map[string]any{"documents": sky_dictEmpty(), "astCache": sky_dictEmpty(), "typeCache": sky_dictEmpty(), "depCache": sky_dictEmpty()}
 }
@@ -6645,7 +7045,7 @@ func Lsp_Server_HandleDidChange(state any, body any) any {
 }
 
 func Lsp_Server_AnalyzeAndPublishDiagnostics(state any, uri any, text any) any {
-	return func() any { lexResult := Compiler_Lexer_Lex(text); _ = lexResult; parseResult := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); _ = parseResult; return func() any { return func() any { __subject := parseResult; if sky_asSkyResult(__subject).SkyName == "Err" { parseErr := sky_asSkyResult(__subject).ErrValue; _ = parseErr; return func() any { diag := jsonObject([]any{SkyTuple2{V0: "range", V1: Lsp_Server_MakeRange(0, 0, 0, 1)}, SkyTuple2{V0: "severity", V1: jsonInt(1)}, SkyTuple2{V0: "message", V1: jsonString(parseErr)}}); _ = diag; return Lsp_Server_SendNotifyAndReturn(makeNotification("textDocument/publishDiagnostics", jsonObject([]any{SkyTuple2{V0: "uri", V1: jsonString(uri)}, SkyTuple2{V0: "diagnostics", V1: jsonArray([]any{diag})}})), state) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { stdlibEnv := Compiler_Resolver_BuildStdlibEnv(); _ = stdlibEnv; checkResult := Compiler_Checker_CheckModule(mod, SkyJust(stdlibEnv)); _ = checkResult; diagnostics := func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_call(sky_listMap(func(msg any) any { return Lsp_Server_MakeDiagnostic(1, msg) }), sky_asMap(result)["diagnostics"]) };  if sky_asSkyResult(__subject).SkyName == "Err" { err := sky_asSkyResult(__subject).ErrValue; _ = err; return []any{Lsp_Server_MakeDiagnostic(1, err)} };  panic("non-exhaustive case expression") }() }(); _ = diagnostics; stateWithDeps := Lsp_Server_ResolveAndCacheImports(state, uri, sky_asMap(mod)["imports"]); _ = stateWithDeps; return Lsp_Server_PublishAndUpdateState(stateWithDeps, uri, mod, checkResult, diagnostics) }() };  panic("non-exhaustive case expression") }() }() }()
+	return func() any { lexResult := Compiler_Lexer_Lex(text); _ = lexResult; parseResult := Compiler_Parser_Parse(sky_asMap(lexResult)["tokens"]); _ = parseResult; return func() any { return func() any { __subject := parseResult; if sky_asSkyResult(__subject).SkyName == "Err" { parseErr := sky_asSkyResult(__subject).ErrValue; _ = parseErr; return func() any { diag := jsonObject([]any{SkyTuple2{V0: "range", V1: Lsp_Server_MakeRange(0, 0, 0, 1)}, SkyTuple2{V0: "severity", V1: jsonInt(1)}, SkyTuple2{V0: "message", V1: jsonString(parseErr)}}); _ = diag; return Lsp_Server_SendNotifyAndReturn(makeNotification("textDocument/publishDiagnostics", jsonObject([]any{SkyTuple2{V0: "uri", V1: jsonString(uri)}, SkyTuple2{V0: "diagnostics", V1: jsonArray([]any{diag})}})), state) }() };  if sky_asSkyResult(__subject).SkyName == "Ok" { mod := sky_asSkyResult(__subject).OkValue; _ = mod; return func() any { filePath := Lsp_Server_UriToFilePath(uri); _ = filePath; __tup_combinedEnv_registry_aliases := Compiler_Pipeline_BuildCheckEnv(filePath, mod); combinedEnv := sky_asTuple3(__tup_combinedEnv_registry_aliases).V0; _ = combinedEnv; registry := sky_asTuple3(__tup_combinedEnv_registry_aliases).V1; _ = registry; aliases := sky_asTuple3(__tup_combinedEnv_registry_aliases).V2; _ = aliases; checkResult := Compiler_Checker_CheckModuleWithRegistryAndAliases(mod, SkyJust(combinedEnv), SkyJust(registry), SkyJust(aliases)); _ = checkResult; diagnostics := func() any { return func() any { __subject := checkResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_call(sky_listMap(func(msg any) any { return Lsp_Server_MakeDiagnostic(1, msg) }), sky_asMap(result)["diagnostics"]) };  if sky_asSkyResult(__subject).SkyName == "Err" { err := sky_asSkyResult(__subject).ErrValue; _ = err; return []any{Lsp_Server_MakeDiagnostic(1, err)} };  panic("non-exhaustive case expression") }() }(); _ = diagnostics; stateWithDeps := Lsp_Server_ResolveAndCacheImports(state, uri, sky_asMap(mod)["imports"]); _ = stateWithDeps; return Lsp_Server_PublishAndUpdateState(stateWithDeps, uri, mod, checkResult, diagnostics) }() };  panic("non-exhaustive case expression") }() }() }()
 }
 
 func Lsp_Server_PublishAndUpdateState(state any, uri any, mod any, checkResult any, diagnostics any) any {
@@ -7487,7 +7887,7 @@ func Ffi_BindingGen_CheckAncestorPkgs(ancestors any, goType any) any {
 }
 
 func Ffi_BindingGen_IsSafeType(goType any) any {
-	return sky_asBool(sky_equal(goType, "string")) || sky_asBool(sky_asBool(sky_equal(goType, "bool")) || sky_asBool(sky_asBool(sky_equal(goType, "int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]byte")) || sky_asBool(sky_asBool(sky_equal(goType, "int8")) || sky_asBool(sky_asBool(sky_equal(goType, "int16")) || sky_asBool(sky_asBool(sky_equal(goType, "int32")) || sky_asBool(sky_asBool(sky_equal(goType, "int64")) || sky_asBool(sky_asBool(sky_equal(goType, "uint")) || sky_asBool(sky_asBool(sky_equal(goType, "uint8")) || sky_asBool(sky_asBool(sky_equal(goType, "uint16")) || sky_asBool(sky_asBool(sky_equal(goType, "uint32")) || sky_asBool(sky_asBool(sky_equal(goType, "uint64")) || sky_asBool(sky_asBool(sky_equal(goType, "float32")) || sky_asBool(sky_asBool(sky_equal(goType, "float64")) || sky_asBool(sky_asBool(sky_equal(goType, "interface{}")) || sky_asBool(sky_asBool(sky_equal(goType, "any")) || sky_asBool(sky_asBool(sky_equal(goType, "error")) || sky_asBool(sky_asBool(sky_equal(goType, "context.Context")) || sky_asBool(sky_asBool(sky_equal(goType, "[]string")) || sky_asBool(sky_asBool(sky_equal(goType, "[]int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]float64")) || sky_asBool(sky_asBool(sky_equal(goType, "[]bool")) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("["), goType)) || sky_asBool(sky_asBool(sky_asBool(sky_call(sky_stringContains("."), goType)) && sky_asBool(sky_not(Ffi_BindingGen_NeedsExtraImportBinding(goType)))) || sky_asBool(sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("*"), goType)) && sky_asBool(Ffi_BindingGen_IsSafeType(sky_call(sky_call(sky_stringSlice(1), sky_stringLength(goType)), goType)))) || sky_asBool(sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("[]"), goType)) && sky_asBool(Ffi_BindingGen_IsSafeType(sky_call(sky_call(sky_stringSlice(2), sky_stringLength(goType)), goType)))) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("func("), goType)) || sky_asBool(sky_call(sky_stringStartsWith("map["), goType)))))))))))))))))))))))))))))
+	return sky_asBool(sky_equal(goType, "string")) || sky_asBool(sky_asBool(sky_equal(goType, "bool")) || sky_asBool(sky_asBool(sky_equal(goType, "int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]byte")) || sky_asBool(sky_asBool(sky_equal(goType, "int8")) || sky_asBool(sky_asBool(sky_equal(goType, "int16")) || sky_asBool(sky_asBool(sky_equal(goType, "int32")) || sky_asBool(sky_asBool(sky_equal(goType, "int64")) || sky_asBool(sky_asBool(sky_equal(goType, "uint")) || sky_asBool(sky_asBool(sky_equal(goType, "uint8")) || sky_asBool(sky_asBool(sky_equal(goType, "uint16")) || sky_asBool(sky_asBool(sky_equal(goType, "uint32")) || sky_asBool(sky_asBool(sky_equal(goType, "uint64")) || sky_asBool(sky_asBool(sky_equal(goType, "float32")) || sky_asBool(sky_asBool(sky_equal(goType, "float64")) || sky_asBool(sky_asBool(sky_equal(goType, "interface{}")) || sky_asBool(sky_asBool(sky_equal(goType, "any")) || sky_asBool(sky_asBool(sky_equal(goType, "error")) || sky_asBool(sky_asBool(sky_equal(goType, "context.Context")) || sky_asBool(sky_asBool(sky_equal(goType, "io.Reader")) || sky_asBool(sky_asBool(sky_equal(goType, "io.Writer")) || sky_asBool(sky_asBool(sky_equal(goType, "io.ReadCloser")) || sky_asBool(sky_asBool(sky_equal(goType, "io.WriteCloser")) || sky_asBool(sky_asBool(sky_equal(goType, "[]string")) || sky_asBool(sky_asBool(sky_equal(goType, "[]int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]float64")) || sky_asBool(sky_asBool(sky_equal(goType, "[]bool")) || sky_asBool(sky_stringStartsWith)))))))))))))))))))))))))))
 }
 
 func Ffi_BindingGen_NeedsExtraImportBinding(goType any) any {
@@ -7561,7 +7961,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Ffi_WrapperGen_GenerateWrapperFile(safePkg any, pkgName any, funcs any, methods any, fieldAccessors any) any {
@@ -7609,7 +8009,7 @@ func Ffi_WrapperGen_BuildAncestorImportLine(currentPkg any, allTypeRefs any, anc
 }
 
 func Ffi_WrapperGen_IsSupportedType(goType any) any {
-	return sky_asBool(sky_equal(goType, "string")) || sky_asBool(sky_asBool(sky_equal(goType, "bool")) || sky_asBool(sky_asBool(sky_equal(goType, "int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]byte")) || sky_asBool(sky_asBool(sky_equal(goType, "int8")) || sky_asBool(sky_asBool(sky_equal(goType, "int16")) || sky_asBool(sky_asBool(sky_equal(goType, "int32")) || sky_asBool(sky_asBool(sky_equal(goType, "int64")) || sky_asBool(sky_asBool(sky_equal(goType, "uint")) || sky_asBool(sky_asBool(sky_equal(goType, "uint8")) || sky_asBool(sky_asBool(sky_equal(goType, "uint16")) || sky_asBool(sky_asBool(sky_equal(goType, "uint32")) || sky_asBool(sky_asBool(sky_equal(goType, "uint64")) || sky_asBool(sky_asBool(sky_equal(goType, "float32")) || sky_asBool(sky_asBool(sky_equal(goType, "float64")) || sky_asBool(sky_asBool(sky_equal(goType, "interface{}")) || sky_asBool(sky_asBool(sky_equal(goType, "any")) || sky_asBool(sky_asBool(sky_equal(goType, "error")) || sky_asBool(sky_asBool(sky_equal(goType, "context.Context")) || sky_asBool(sky_asBool(sky_equal(goType, "[]string")) || sky_asBool(sky_asBool(sky_equal(goType, "[]int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]float64")) || sky_asBool(sky_asBool(sky_equal(goType, "[]bool")) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("["), goType)) || sky_asBool(sky_asBool(sky_asBool(sky_call(sky_stringContains("."), goType)) && sky_asBool(sky_not(Ffi_WrapperGen_NeedsExtraImport(goType)))) || sky_asBool(sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("*"), goType)) && sky_asBool(Ffi_WrapperGen_IsSupportedType(sky_call(sky_call(sky_stringSlice(1), sky_stringLength(goType)), goType)))) || sky_asBool(sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("[]"), goType)) && sky_asBool(Ffi_WrapperGen_IsSupportedType(sky_call(sky_call(sky_stringSlice(2), sky_stringLength(goType)), goType)))) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("func("), goType)) || sky_asBool(sky_call(sky_stringStartsWith("map["), goType)))))))))))))))))))))))))))))
+	return sky_asBool(sky_equal(goType, "string")) || sky_asBool(sky_asBool(sky_equal(goType, "bool")) || sky_asBool(sky_asBool(sky_equal(goType, "int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]byte")) || sky_asBool(sky_asBool(sky_equal(goType, "int8")) || sky_asBool(sky_asBool(sky_equal(goType, "int16")) || sky_asBool(sky_asBool(sky_equal(goType, "int32")) || sky_asBool(sky_asBool(sky_equal(goType, "int64")) || sky_asBool(sky_asBool(sky_equal(goType, "uint")) || sky_asBool(sky_asBool(sky_equal(goType, "uint8")) || sky_asBool(sky_asBool(sky_equal(goType, "uint16")) || sky_asBool(sky_asBool(sky_equal(goType, "uint32")) || sky_asBool(sky_asBool(sky_equal(goType, "uint64")) || sky_asBool(sky_asBool(sky_equal(goType, "float32")) || sky_asBool(sky_asBool(sky_equal(goType, "float64")) || sky_asBool(sky_asBool(sky_equal(goType, "interface{}")) || sky_asBool(sky_asBool(sky_equal(goType, "any")) || sky_asBool(sky_asBool(sky_equal(goType, "error")) || sky_asBool(sky_asBool(sky_equal(goType, "context.Context")) || sky_asBool(sky_asBool(sky_equal(goType, "io.Reader")) || sky_asBool(sky_asBool(sky_equal(goType, "io.Writer")) || sky_asBool(sky_asBool(sky_equal(goType, "io.ReadCloser")) || sky_asBool(sky_asBool(sky_equal(goType, "io.WriteCloser")) || sky_asBool(sky_asBool(sky_equal(goType, "[]string")) || sky_asBool(sky_asBool(sky_equal(goType, "[]int")) || sky_asBool(sky_asBool(sky_equal(goType, "[]float64")) || sky_asBool(sky_asBool(sky_equal(goType, "[]bool")) || sky_asBool(sky_stringStartsWith)))))))))))))))))))))))))))
 }
 
 func Ffi_WrapperGen_NeedsExtraImport(goType any) any {
@@ -7912,10 +8312,6 @@ func findSkyBin(_ any) any {
 	return func() any { return func() any { __subject := sky_call(sky_processRun("which"), []any{"sky"}); if sky_asSkyResult(__subject).SkyName == "Ok" { p := sky_asSkyResult(__subject).OkValue; _ = p; return sky_stringTrim(p) };  if sky_asSkyResult(__subject).SkyName == "Err" { return "" };  panic("non-exhaustive case expression") }() }()
 }
 
-func dirOfPath(p any) any {
-	return func() any { parts := sky_call(sky_stringSplit("/"), p); _ = parts; dirParts := sky_call(sky_listTake(sky_numBinop("-", sky_listLength(parts), 1)), parts); _ = dirParts; return sky_call(sky_stringJoin("/"), dirParts) }()
-}
-
 func detectPlatform(_ any) any {
 	return func() any { return func() any { __subject := sky_call(sky_processRun("uname"), []any{"-s"}); if sky_asSkyResult(__subject).SkyName == "Ok" { o := sky_asSkyResult(__subject).OkValue; _ = o; return func() any { raw := sky_stringToLower(sky_stringTrim(o)); _ = raw; return func() any { if sky_asBool(sky_equal(raw, "darwin")) { return "darwin" }; return "linux" }() }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return "linux" };  panic("non-exhaustive case expression") }() }()
 }
@@ -8071,300 +8467,6 @@ func cmdHelp(_ any) any {
 func cmdClean(_ any) any {
 	return func() any { sky_call(sky_processRun("rm"), []any{"-rf", "dist"}); sky_call(sky_processRun("rm"), []any{"-rf", "sky-out"}); return sky_println("Cleaned.") }()
 }
-
-var findCharIdx = Compiler_Pipeline_FindCharIdx
-
-var findLastSlash = Compiler_Pipeline_FindLastSlash
-
-var compile = Compiler_Pipeline_Compile
-
-var buildCheckEnv = Compiler_Pipeline_BuildCheckEnv
-
-var compileMultiModule = Compiler_Pipeline_CompileMultiModule
-
-var compileMultiModuleEntry = Compiler_Pipeline_CompileMultiModuleEntry
-
-var emitMultiModuleGo = Compiler_Pipeline_EmitMultiModuleGo
-
-var writeMultiModuleOutput = Compiler_Pipeline_WriteMultiModuleOutput
-
-var writeParallelHelpers = Compiler_Pipeline_WriteParallelHelpers
-
-var runNativeDce = Compiler_Pipeline_RunNativeDce
-
-var copyLiveRuntime = Compiler_Pipeline_CopyLiveRuntime
-
-var findStdlibDir = Compiler_Pipeline_FindStdlibDir
-
-var optimiseJsonFunctions = Compiler_Pipeline_OptimiseJsonFunctions
-
-var writeNativeJsonFile = Compiler_Pipeline_WriteNativeJsonFile
-
-var nativeJsonHelperCode = Compiler_Pipeline_NativeJsonHelperCode()
-
-var fixUnusedVars = Compiler_Pipeline_FixUnusedVars
-
-var eliminateDeadCode = Compiler_Pipeline_EliminateDeadCode
-
-var countFuncsInFile = Compiler_Pipeline_CountFuncsInFile
-
-var trimWrapperFile = Compiler_Pipeline_TrimWrapperFile
-
-var trimWrapperImports = Compiler_Pipeline_TrimWrapperImports
-
-var trimWrapperContent = Compiler_Pipeline_TrimWrapperContent
-
-var isWrapperUsed = Compiler_Pipeline_IsWrapperUsed
-
-var isHelperFunc = Compiler_Pipeline_IsHelperFunc
-
-var extractWrapperFuncName = Compiler_Pipeline_ExtractWrapperFuncName
-
-var splitWrapperSections = Compiler_Pipeline_SplitWrapperSections
-
-var splitWrapperLoop = Compiler_Pipeline_SplitWrapperLoop
-
-var dceMainGo = Compiler_Pipeline_DceMainGo
-
-var trimUnusedImports = Compiler_Pipeline_TrimUnusedImports
-
-var buildReachableSet = Compiler_Pipeline_BuildReachableSet
-
-var collectBlankImports = Compiler_Pipeline_CollectBlankImports
-
-var makeGoPackageWithImports = Compiler_Pipeline_MakeGoPackageWithImports
-
-var shortFuncName = Compiler_Pipeline_ShortFuncName
-
-var makeGoPackage = Compiler_Pipeline_MakeGoPackage
-
-var loadLocalModules = Compiler_Pipeline_LoadLocalModules
-
-var loadFromSkydepsOrSkip = Compiler_Pipeline_LoadFromSkydepsOrSkip
-
-var loadFromCandidatesOrSkip = Compiler_Pipeline_LoadFromCandidatesOrSkip
-
-var tryOneSkydepCandidate = Compiler_Pipeline_TryOneSkydepCandidate
-
-var parseAndLoadSkydep = Compiler_Pipeline_ParseAndLoadSkydep
-
-var findSkydepCandidates = Compiler_Pipeline_FindSkydepCandidates
-
-var skydepSrcRoot = Compiler_Pipeline_SkydepSrcRoot
-
-var loadFfiForTypeCheck = Compiler_Pipeline_LoadFfiForTypeCheck
-
-var loadOneFfiRaw = Compiler_Pipeline_LoadOneFfiRaw
-
-var parseSimpleFfiBinding = Compiler_Pipeline_ParseSimpleFfiBinding
-
-var loadFfiBindings = Compiler_Pipeline_LoadFfiBindings
-
-var deduplicateFfiImports = Compiler_Pipeline_DeduplicateFfiImports
-
-var deduplicateOneImport = Compiler_Pipeline_DeduplicateOneImport
-
-var loadOneFfiBinding = Compiler_Pipeline_LoadOneFfiBinding
-
-var parseFfiBinding = Compiler_Pipeline_ParseFfiBinding
-
-var preFilterSkyi = Compiler_Pipeline_PreFilterSkyi
-
-var filterFfiModule = Compiler_Pipeline_FilterFfiModule
-
-var declHasWrapper = Compiler_Pipeline_DeclHasWrapper
-
-var extractWrapperName = Compiler_Pipeline_ExtractWrapperName
-
-var tryLoadBinding = Compiler_Pipeline_TryLoadBinding
-
-var copyFfiWrappers = Compiler_Pipeline_CopyFfiWrappers
-
-var copyProjectWrappers = Compiler_Pipeline_CopyProjectWrappers
-
-var copyWrapperDir = Compiler_Pipeline_CopyWrapperDir
-
-var copyOneWrapperFile = Compiler_Pipeline_CopyOneWrapperFile
-
-var fileNameFromPath = Compiler_Pipeline_FileNameFromPath
-
-var copyOneFfiWrapper = Compiler_Pipeline_CopyOneFfiWrapper
-
-var writeWrapperIfNew = Compiler_Pipeline_WriteWrapperIfNew
-
-var fileAlreadyExists = Compiler_Pipeline_FileAlreadyExists
-
-var copyFfiWrapperFallback = Compiler_Pipeline_CopyFfiWrapperFallback
-
-var buildAdtEnvFromModules = Compiler_Pipeline_BuildAdtEnvFromModules
-
-var addModuleAdtEnv = Compiler_Pipeline_AddModuleAdtEnv
-
-var buildImportedRegistry = Compiler_Pipeline_BuildImportedRegistry
-
-var buildImportedAliases = Compiler_Pipeline_BuildImportedAliases
-
-var addModuleAliases = Compiler_Pipeline_AddModuleAliases
-
-var addModuleRegistry = Compiler_Pipeline_AddModuleRegistry
-
-var buildAliasMap = Compiler_Pipeline_BuildAliasMap
-
-var generatePrefixAliases = Compiler_Pipeline_GeneratePrefixAliases
-
-var makePrefixAlias = Compiler_Pipeline_MakePrefixAlias
-
-var isCommonName = Compiler_Pipeline_IsCommonName
-
-var isSharedValue = Compiler_Pipeline_IsSharedValue
-
-var deduplicateDecls = Compiler_Pipeline_DeduplicateDecls
-
-var deduplicateDeclsLoop = Compiler_Pipeline_DeduplicateDeclsLoop
-
-var getDeclName = Compiler_Pipeline_GetDeclName
-
-var extractVarName = Compiler_Pipeline_ExtractVarName
-
-var extractFuncName = Compiler_Pipeline_ExtractFuncName
-
-var extractTypeName = Compiler_Pipeline_ExtractTypeName
-
-var generateImportAliases = Compiler_Pipeline_GenerateImportAliases
-
-var generateAliasesForImport = Compiler_Pipeline_GenerateAliasesForImport
-
-var generateAliasesFromModule = Compiler_Pipeline_GenerateAliasesFromModule
-
-var isFfiModule = Compiler_Pipeline_IsFfiModule
-
-var exprHasWrapperCall = Compiler_Pipeline_ExprHasWrapperCall
-
-var generateAliasesFromModuleInner = Compiler_Pipeline_GenerateAliasesFromModuleInner
-
-var isExposingAll = Compiler_Pipeline_IsExposingAll
-
-var isExposingNone = Compiler_Pipeline_IsExposingNone
-
-var getExposeNames = Compiler_Pipeline_GetExposeNames
-
-var isZeroArityInModule = Compiler_Pipeline_IsZeroArityInModule
-
-var findModule = Compiler_Pipeline_FindModule
-
-var extractExportedNames = Compiler_Pipeline_ExtractExportedNames
-
-var extractDeclNames = Compiler_Pipeline_ExtractDeclNames
-
-var collectAllFunctionNames = Compiler_Pipeline_CollectAllFunctionNames
-
-var extractDeclNameForFn = Compiler_Pipeline_ExtractDeclNameForFn
-
-var deduplicateStringList = Compiler_Pipeline_DeduplicateStringList
-
-var deduplicateStringsLoop = Compiler_Pipeline_DeduplicateStringsLoop
-
-var isModuleLoaded = Compiler_Pipeline_IsModuleLoaded
-
-var deduplicateFfiModules = Compiler_Pipeline_DeduplicateFfiModules
-
-var addImportAlias = Compiler_Pipeline_AddImportAlias
-
-var importAlias = Compiler_Pipeline_ImportAlias
-
-var compileDependencyModule = Compiler_Pipeline_CompileDependencyModule
-
-var compileDependencyModuleCached = Compiler_Pipeline_CompileDependencyModuleCached
-
-var loadCachedModule = Compiler_Pipeline_LoadCachedModule
-
-var generateConstructorAliasesFromCode = Compiler_Pipeline_GenerateConstructorAliasesFromCode
-
-var extractFuncNameFromLine = Compiler_Pipeline_ExtractFuncNameFromLine
-
-var extractVarNameFromLine = Compiler_Pipeline_ExtractVarNameFromLine
-
-var makeAliasDecls = Compiler_Pipeline_MakeAliasDecls
-
-var decapitaliseFirst = Compiler_Pipeline_DecapitaliseFirst
-
-var isCacheValid = Compiler_Pipeline_IsCacheValid
-
-var stripCacheHeader = Compiler_Pipeline_StripCacheHeader
-
-var compileDependencyModuleAndCache = Compiler_Pipeline_CompileDependencyModuleAndCache
-
-var compileFfiModuleLight = Compiler_Pipeline_CompileFfiModuleLight
-
-var makeFfiWrapperVar = Compiler_Pipeline_MakeFfiWrapperVar
-
-var buildFfiVarDecl = Compiler_Pipeline_BuildFfiVarDecl
-
-var buildFfiDeclString = Compiler_Pipeline_BuildFfiDeclString
-
-var countWrapperArgs = Compiler_Pipeline_CountWrapperArgs
-
-var countWrapperArgsAcc = Compiler_Pipeline_CountWrapperArgsAcc
-
-var makeFfiFunc = Compiler_Pipeline_MakeFfiFunc
-
-var extractWrapperNameFromBody = Compiler_Pipeline_ExtractWrapperNameFromBody
-
-var extractLiteralFromBody = Compiler_Pipeline_ExtractLiteralFromBody
-
-var compileDependencyModuleFull = Compiler_Pipeline_CompileDependencyModuleFull
-
-var generateConstructorAliases = Compiler_Pipeline_GenerateConstructorAliases
-
-var makeConstructorAlias = Compiler_Pipeline_MakeConstructorAlias
-
-var generateOriginalAliases = Compiler_Pipeline_GenerateOriginalAliases
-
-var makeOriginalAlias = Compiler_Pipeline_MakeOriginalAlias
-
-var isExportableDecl = Compiler_Pipeline_IsExportableDecl
-
-var needsStdlibWrapper = Compiler_Pipeline_NeedsStdlibWrapper
-
-var buildStdlibGoImports = Compiler_Pipeline_BuildStdlibGoImports
-
-var importToGoImport = Compiler_Pipeline_ImportToGoImport
-
-var skyModuleToGoImport = Compiler_Pipeline_SkyModuleToGoImport
-
-var skyModuleToGoImportLoop = Compiler_Pipeline_SkyModuleToGoImportLoop
-
-var isTld = Compiler_Pipeline_IsTld
-
-var copyStdlibGo = Compiler_Pipeline_CopyStdlibGo
-
-var ffiPascalPart = Compiler_Pipeline_FfiPascalPart
-
-var ffiSafePart = Compiler_Pipeline_FfiSafePart
-
-var ffiSafePartLoop = Compiler_Pipeline_FfiSafePartLoop
-
-var prefixDecl = Compiler_Pipeline_PrefixDecl
-
-var compileSource = Compiler_Pipeline_CompileSource
-
-var compileModule = Compiler_Pipeline_CompileModule
-
-var compileCheckedModule = Compiler_Pipeline_CompileCheckedModule
-
-var compileProject = Compiler_Pipeline_CompileProject
-
-var inferSrcRoot = Compiler_Pipeline_InferSrcRoot
-
-var inferSrcRootFromEntry = Compiler_Pipeline_InferSrcRootFromEntry
-
-var findSubstring = Compiler_Pipeline_FindSubstring
-
-var findSubstringAt = Compiler_Pipeline_FindSubstringAt
-
-var printDiagnostics = Compiler_Pipeline_PrintDiagnostics
-
-var printTypedDecls = Compiler_Pipeline_PrintTypedDecls
 
 var formatModule = Formatter_Format_FormatModule
 
