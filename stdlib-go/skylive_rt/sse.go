@@ -176,59 +176,116 @@ func (m *SSEManager) runTimerSub(sub SubDef) {
 		m.mu.RUnlock()
 
 		for _, sid := range sids {
-			m.processSubMsg(sid, sub.MsgName, sub.MsgArgs)
+			if m.isSubActiveForSession(sid, sub) {
+				m.processSubMsg(sid, sub.MsgName, sub.MsgArgs)
+			}
 		}
 	}
 }
 
+// isSubActiveForSession re-evaluates subscriptions for the session's current
+// model and checks whether the given subscription is still active.
+func (m *SSEManager) isSubActiveForSession(sid string, sub SubDef) bool {
+	if m.app.Subscriptions == nil {
+		return true // no subscriptions function means always active
+	}
+	sess, ok := m.store.Get(sid)
+	if !ok {
+		return false
+	}
+	subValue := m.app.Subscriptions(sess.Model)
+	activeSubs := WalkSubValue(subValue, m.app.MsgTagToName)
+	for _, active := range activeSubs {
+		if active.MsgName == sub.MsgName && active.Kind == sub.Kind {
+			return true
+		}
+	}
+	return false
+}
+
 // WalkSubValue converts a Sub ADT value into a flat list of SubDefs.
-// Sub is compiled as a Go struct with Tag field:
+// Sub values are compiled as map[string]any with SkyName field:
 //
-//	Tag 0 = SubNone
-//	Tag 1 = SubTimer (SubTimerValue=interval, SubTimerValue1=msg)
-//	Tag 2 = SubBatch (SubBatchValue=list of Sub values)
+//	SkyName "SubNone"   → no subscription
+//	SkyName "SubTimer"  → V0=interval(int), V1=msg(map with SkyName)
+//	SkyName "SubBatch"  → V0=list of Sub values
+//
+// Also supports struct-based encoding with Tag field for backwards compat.
 func WalkSubValue(sub any, msgTagToName func(int) string) []SubDef {
 	if sub == nil {
 		return nil
 	}
+
+	// Try map-based encoding first (SkyName field)
+	skyName := extractSkyName(sub)
+	if skyName != "" {
+		return walkSubByName(sub, skyName, msgTagToName)
+	}
+
+	// Fallback to tag-based encoding
 	tag := extractSubTag(sub)
 	switch tag {
 	case 0: // SubNone
 		return nil
 	case 1: // SubTimer
-		interval := extractIntField(sub, "SubTimerValue")
-		msgVal := extractField(sub, "SubTimerValue1")
-		msgName := ""
-		if msgVal != nil {
+		return walkSubTimer(sub, "SubTimerValue", "SubTimerValue1", msgTagToName)
+	case 2: // SubBatch
+		return walkSubBatch(sub, "SubBatchValue", msgTagToName)
+	}
+	return nil
+}
+
+func walkSubByName(sub any, skyName string, msgTagToName func(int) string) []SubDef {
+	switch skyName {
+	case "SubNone":
+		return nil
+	case "SubTimer":
+		return walkSubTimer(sub, "V0", "V1", msgTagToName)
+	case "SubBatch":
+		return walkSubBatch(sub, "V0", msgTagToName)
+	}
+	return nil
+}
+
+func walkSubTimer(sub any, intervalField string, msgField string, msgTagToName func(int) string) []SubDef {
+	interval := extractIntField(sub, intervalField)
+	msgVal := extractField(sub, msgField)
+	msgName := ""
+	if msgVal != nil {
+		// Prefer SkyName from the msg value (the actual constructor name)
+		msgName = extractSkyName(msgVal)
+		if msgName == "" {
+			// Fallback to tag-based lookup
 			msgTag := extractSubTag(msgVal)
 			if msgTag >= 0 && msgTagToName != nil {
 				msgName = msgTagToName(msgTag)
 			}
 		}
-		if interval > 0 && msgName != "" {
-			return []SubDef{{
-				Kind:     "timer",
-				Interval: time.Duration(interval) * time.Millisecond,
-				MsgName:  msgName,
-			}}
-		}
-		return nil
-	case 2: // SubBatch
-		listVal := extractField(sub, "SubBatchValue")
-		if listVal == nil {
-			return nil
-		}
-		lst, ok := listVal.([]any)
-		if !ok {
-			return nil
-		}
-		var result []SubDef
-		for _, item := range lst {
-			result = append(result, WalkSubValue(item, msgTagToName)...)
-		}
-		return result
+	}
+	if interval > 0 && msgName != "" {
+		return []SubDef{{
+			Kind:     "timer",
+			Interval: time.Duration(interval) * time.Millisecond,
+			MsgName:  msgName,
+		}}
 	}
 	return nil
+}
+
+func walkSubBatch(sub any, listField string, msgTagToName func(int) string) []SubDef {
+	listVal := extractField(sub, listField)
+	if listVal == nil {
+		return nil
+	}
+	lst, ok := listVal.([]any)
+	if !ok {
+		return nil
+	}
+	var result []SubDef
+	for _, item := range lst {
+		result = append(result, WalkSubValue(item, msgTagToName)...)
+	}
+	return result
 }
 
 func extractSubTag(v any) int {
@@ -255,6 +312,22 @@ func extractSubTag(v any) int {
 		}
 	}
 	return -1
+}
+
+func extractSkyName(v any) string {
+	if m, ok := v.(map[string]any); ok {
+		if n, ok := m["SkyName"].(string); ok {
+			return n
+		}
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() == reflect.Struct {
+		f := rv.FieldByName("SkyName")
+		if f.IsValid() && f.Kind() == reflect.String {
+			return f.String()
+		}
+	}
+	return ""
 }
 
 func extractField(v any, fieldName string) any {
