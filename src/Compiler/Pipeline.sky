@@ -2206,6 +2206,8 @@ buildFfiDeclString prefix name params body wrapperName =
     in
         if skyArgCount == 0 then
             "func " ++ goName ++ "() any { return sky_callZeroOrNil(" ++ wrapperName ++ ") }"
+        else if skyArgCount == 2 && String.contains "_SET_" wrapperName then
+            "func " ++ goName ++ "(a0 any) any { return func(a1 any) any { return " ++ wrapperName ++ "(a0, a1) } }"
         else if wrapperArgCount == 0 then
             makeFfiFunc goName wrapperName skyArgCount skyArgCount
         else

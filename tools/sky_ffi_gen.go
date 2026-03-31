@@ -77,26 +77,26 @@ func main() {
 	if len(os.Args) < 4 {
 		fmt.Fprintf(os.Stderr, "Usage: sky-ffi-gen <pkg> <inspect.json> <outdir> [srcroot]\n")
 		os.Exit(1)
-	}
+		}
 	pkgName := os.Args[1]
 	inspectPath := os.Args[2]
 	outDir := os.Args[3]
 	srcRoot := "src"
 	if len(os.Args) >= 5 {
 		srcRoot = os.Args[4]
-	}
+		}
 
 	data, err := os.ReadFile(inspectPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot read %s: %v\n", inspectPath, err)
 		os.Exit(1)
-	}
+		}
 
 	var inspect InspectData
 	if err := json.Unmarshal(data, &inspect); err != nil {
 		fmt.Fprintf(os.Stderr, "Cannot parse %s: %v\n", inspectPath, err)
 		os.Exit(1)
-	}
+		}
 
 	// For large packages, scan source to determine used symbols
 	usedSymbols := map[string]bool{}
@@ -112,7 +112,7 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "[ffi-gen] Used symbols: %v\n", syms[:min(len(syms), 20)])
 		}
-	}
+		}
 
 	safePkg := safePkgName(pkgName)
 	moduleName := pkgToModuleName(pkgName)
@@ -131,7 +131,7 @@ func main() {
 	referencedTypes := map[string]bool{}
 	if isLarge {
 		collectReferencedTypes(&inspect, usedSymbols, ancestors, referencedTypes)
-	}
+		}
 
 	// Collect field accessor names so we don't create conflicting type aliases
 	fieldAccessorNames := map[string]bool{}
@@ -147,7 +147,7 @@ func main() {
 			accessorPascal := t.Name + capitalise(field.Name)
 			fieldAccessorNames[accessorPascal] = true
 		}
-	}
+		}
 
 	// --- Types (opaque) — only structs/interfaces, skip if name conflicts with field accessor ---
 	for _, t := range inspect.Types {
@@ -166,7 +166,7 @@ func main() {
 			continue
 		}
 		skyi.WriteString(fmt.Sprintf("type %s = %s\n\n", t.Name, t.Name))
-	}
+		}
 
 	// --- Functions ---
 	for _, f := range inspect.Funcs {
@@ -189,7 +189,7 @@ func main() {
 		for _, imp := range imports {
 			extraImports[imp] = true
 		}
-	}
+		}
 
 	// --- Methods ---
 	for _, t := range inspect.Types {
@@ -217,7 +217,7 @@ func main() {
 				extraImports[imp] = true
 			}
 		}
-	}
+		}
 
 	// --- Fields (getters) + Constructors + Setters ---
 	for _, t := range inspect.Types {
@@ -251,7 +251,7 @@ func main() {
 			skyi.WriteString(skyiSetter)
 			wrapper.WriteString(wrapSetter)
 		}
-	}
+		}
 
 	// --- Variables ---
 	for _, v := range inspect.Vars {
@@ -264,7 +264,7 @@ func main() {
 		skyiVar, wrapVar := generateVarAccessor(v, pkgName, safePkg)
 		skyi.WriteString(skyiVar)
 		wrapper.WriteString(wrapVar)
-	}
+		}
 
 	// --- Constants ---
 	for _, c := range inspect.Consts {
@@ -277,7 +277,7 @@ func main() {
 		skyiConst, wrapConst := generateConstAccessor(c, pkgName, safePkg)
 		skyi.WriteString(skyiConst)
 		wrapper.WriteString(wrapConst)
-	}
+		}
 
 	// Detect ancestor package references in wrapper code
 	wrapperCode := wrapper.String()
@@ -286,7 +286,7 @@ func main() {
 		if strings.Contains(wrapperCode, alias+".") {
 			extraImports[a] = true
 		}
-	}
+		}
 
 	// Finalise wrapper imports
 	var importBlock strings.Builder
@@ -297,7 +297,7 @@ func main() {
 	for imp := range extraImports {
 		alias := lastPathSegment(imp)
 		importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
-	}
+		}
 	importBlock.WriteString(")\n\nvar _ = _ffi_fmt.Sprintf\nvar _ = _ffi_reflect.TypeOf\n\n")
 
 	// Write output files
@@ -330,7 +330,7 @@ func collectReferencedTypes(data *InspectData, used map[string]bool, ancestors [
 		for _, r := range f.Results {
 			addReferencedType(r.Type, pkg, refs)
 		}
-	}
+		}
 	// Scan used types for field types
 	for _, t := range data.Types {
 		if !isSymbolUsed(t.Name, used) && !refs[t.Name] {
@@ -352,7 +352,7 @@ func collectReferencedTypes(data *InspectData, used map[string]bool, ancestors [
 				addReferencedType(field.Type, pkg, refs)
 			}
 		}
-	}
+		}
 }
 
 func addReferencedType(goType string, pkg string, refs map[string]bool) {
@@ -362,7 +362,7 @@ func addReferencedType(goType string, pkg string, refs map[string]bool) {
 	if strings.HasPrefix(bare, pkg+".") {
 		typeName := bare[len(pkg)+1:]
 		refs[typeName] = true
-	}
+		}
 }
 
 // --- Type safety checks ---
@@ -370,7 +370,7 @@ func addReferencedType(goType string, pkg string, refs map[string]bool) {
 func isFuncSafe(f FuncDef, pkg string, ancestors []string) bool {
 	if len(f.Results) > 2 {
 		return false
-	}
+		}
 	for i, p := range f.Params {
 		if f.Variadic && i == len(f.Params)-1 {
 			// Variadic: accept any qualified type
@@ -379,19 +379,19 @@ func isFuncSafe(f FuncDef, pkg string, ancestors []string) bool {
 		if !isTypeSafe(p.Type, pkg, ancestors) {
 			return false
 		}
-	}
+		}
 	for _, r := range f.Results {
 		if !isTypeSafe(r.Type, pkg, ancestors) {
 			return false
 		}
-	}
+		}
 	return true
 }
 
 func isMethodSafe(m FuncDef, pkg string, ancestors []string) bool {
 	if len(m.Results) > 2 {
 		return false
-	}
+		}
 	for i, p := range m.Params {
 		if m.Variadic && i == len(m.Params)-1 {
 			continue
@@ -399,12 +399,12 @@ func isMethodSafe(m FuncDef, pkg string, ancestors []string) bool {
 		if !isTypeSafe(p.Type, pkg, ancestors) {
 			return false
 		}
-	}
+		}
 	for _, r := range m.Results {
 		if !isTypeSafe(r.Type, pkg, ancestors) {
 			return false
 		}
-	}
+		}
 	return true
 }
 
@@ -417,19 +417,19 @@ func isTypeSafe(goType string, pkg string, ancestors []string) bool {
 		"[]byte", "[]string", "[]int", "[]float64", "[]bool", "[]any",
 		"context.Context":
 		return true
-	}
+		}
 	// Byte arrays
 	if strings.HasPrefix(goType, "[") && strings.HasSuffix(goType, "]byte") {
 		return true
-	}
+		}
 	// Function types — only HTTP handler
 	if strings.HasPrefix(goType, "func(") {
 		return strings.Contains(goType, "ResponseWriter")
-	}
+		}
 	// Maps — only string-keyed
 	if strings.HasPrefix(goType, "map[") {
 		return goType == "map[string]interface{}" || goType == "map[string]any" || goType == "map[string]string"
-	}
+		}
 	// Slices — check element
 	if strings.HasPrefix(goType, "[]") {
 		elem := goType[2:]
@@ -437,7 +437,7 @@ func isTypeSafe(goType string, pkg string, ancestors []string) bool {
 			elem = elem[1:]
 		}
 		return isFromPkgOrAncestor(elem, pkg, ancestors) || strings.Contains(elem, ".")
-	}
+		}
 	// Pointer to type
 	bare := strings.TrimPrefix(goType, "*")
 	// Same package or ancestor package
@@ -447,12 +447,12 @@ func isTypeSafe(goType string, pkg string, ancestors []string) bool {
 func isFromPkgOrAncestor(goType string, pkg string, ancestors []string) bool {
 	if strings.HasPrefix(goType, pkg+".") || strings.HasPrefix(goType, pkg+"/") {
 		return true
-	}
+		}
 	for _, a := range ancestors {
 		if strings.HasPrefix(goType, a+".") {
 			return true
 		}
-	}
+		}
 	return false
 }
 
@@ -460,11 +460,11 @@ func buildAncestorPkgs(pkg string) []string {
 	parts := strings.Split(pkg, "/")
 	if len(parts) <= 3 || !strings.Contains(parts[0], ".") {
 		return nil
-	}
+		}
 	var ancestors []string
 	for i := len(parts) - 1; i >= 3; i-- {
 		ancestors = append(ancestors, strings.Join(parts[:i], "/"))
-	}
+		}
 	return ancestors
 }
 
@@ -489,26 +489,26 @@ func generateFuncBinding(f FuncDef, pkg, safePkg string, ancestors []string) (st
 		skyParams = append(skyParams, fmt.Sprintf("%s", mapGoTypeToSky(p.Type, pkg, ancestors)))
 		skyParamNames = append(skyParamNames, pName)
 		_ = p
-	}
+		}
 
 	retType := buildReturnType(f.Results, pkg, ancestors)
 	sigParts := append(skyParams, retType)
 	sig := strings.Join(sigParts, " -> ")
 	if len(sigParts) == 1 {
 		sig = retType
-	}
+		}
 
 	var skyi strings.Builder
 	skyi.WriteString(fmt.Sprintf("%s : %s\n", skyName, sig))
 	skyi.WriteString(fmt.Sprintf("%s", skyName))
 	for _, n := range skyParamNames {
 		skyi.WriteString(fmt.Sprintf(" %s", n))
-	}
+		}
 	skyi.WriteString(" =\n")
 	skyi.WriteString(fmt.Sprintf("    %s", wrapperName))
 	for _, n := range skyParamNames {
 		skyi.WriteString(fmt.Sprintf(" %s", n))
-	}
+		}
 	skyi.WriteString("\n\n")
 
 	// Go wrapper
@@ -529,7 +529,7 @@ func generateMethodBinding(m FuncDef, t TypeDef, pkg, safePkg string, ancestors 
 		pName := fmt.Sprintf("arg%d", i)
 		skyParams = append(skyParams, mapGoTypeToSky(m.Params[i].Type, pkg, ancestors))
 		skyParamNames = append(skyParamNames, pName)
-	}
+		}
 
 	retType := buildReturnType(m.Results, pkg, ancestors)
 	sigParts := append(skyParams, retType)
@@ -540,12 +540,12 @@ func generateMethodBinding(m FuncDef, t TypeDef, pkg, safePkg string, ancestors 
 	skyi.WriteString(fmt.Sprintf("%s", skyName))
 	for _, n := range skyParamNames {
 		skyi.WriteString(fmt.Sprintf(" %s", n))
-	}
+		}
 	skyi.WriteString(" =\n")
 	skyi.WriteString(fmt.Sprintf("    %s", wrapperName))
 	for _, n := range skyParamNames {
 		skyi.WriteString(fmt.Sprintf(" %s", n))
-	}
+		}
 	skyi.WriteString("\n\n")
 
 	wrap, imports := generateGoWrapper(m, pkg, safePkg, wrapperName, true, t.Name, ancestors)
@@ -560,7 +560,7 @@ func generateFieldAccessor(field FieldDef, t TypeDef, pkg, safePkg string) (stri
 	isPtr := strings.HasPrefix(field.Type, "*")
 	if isPtr {
 		skyType = "Maybe " + skyType
-	}
+		}
 
 	var skyi strings.Builder
 	skyi.WriteString(fmt.Sprintf("%s : Any -> %s\n", skyName, skyType))
@@ -586,7 +586,7 @@ func generateFieldAccessor(field FieldDef, t TypeDef, pkg, safePkg string) (stri
 		wrap.WriteString(fmt.Sprintf("\t\tf := v.FieldByName(\"%s\")\n", field.Name))
 		wrap.WriteString("\t\tif f.IsValid() { return f.Interface() }\n")
 		wrap.WriteString("\t}\n\treturn nil\n}\n\n")
-	}
+		}
 	return skyi.String(), wrap.String()
 }
 
@@ -616,7 +616,7 @@ func generateFieldSetter(field FieldDef, t TypeDef, pkg, safePkg string) (string
 	if strings.HasPrefix(field.Type, "*") {
 		inner := field.Type[1:]
 		skyValType = mapGoTypeToSky(inner, pkg, nil)
-	}
+		}
 
 	// Setter signature: value -> TypeName -> TypeName (for pipeline chaining)
 	var skyi strings.Builder
@@ -672,7 +672,7 @@ func generateFieldSetter(field FieldDef, t TypeDef, pkg, safePkg string) (string
 	} else {
 		// Other types — try direct set via reflection
 		wrap.WriteString("\tif val != nil { f.Set(_ffi_reflect.ValueOf(val).Convert(f.Type())) }\n")
-	}
+		}
 
 	wrap.WriteString("\treturn receiver\n")
 	wrap.WriteString("}\n\n")
@@ -699,7 +699,7 @@ func generateVarAccessor(v VarDef, pkg, safePkg string) (string, string) {
 		skyi.WriteString(fmt.Sprintf("%s : () -> Any\n", skyName))
 		skyi.WriteString(fmt.Sprintf("%s _ =\n    %s ()\n\n", skyName, getterName))
 		wrap.WriteString(fmt.Sprintf("func %s(_ any) any { return _ffi_pkg.%s }\n\n", getterName, v.Name))
-	}
+		}
 	return skyi.String(), wrap.String()
 }
 
@@ -713,12 +713,12 @@ func generateConstAccessor(c ConstDef, pkg, safePkg string) (string, string) {
 
 	if !isCustom && !isPrimitive {
 		return "", ""
-	}
+		}
 
 	skyType := "String"
 	if c.Type == "int" || c.Type == "int64" {
 		skyType = "Int"
-	}
+		}
 
 	var skyi strings.Builder
 	skyi.WriteString(fmt.Sprintf("%s : %s\n", skyName, skyType))
@@ -731,7 +731,7 @@ func generateConstAccessor(c ConstDef, pkg, safePkg string) (string, string) {
 		wrap.WriteString(fmt.Sprintf("func %s(_ any) any { return _ffi_pkg.%s }\n\n", wrapperName, c.Name))
 	} else {
 		wrap.WriteString(fmt.Sprintf("func %s(_ any) any { return _ffi_pkg.%s }\n\n", wrapperName, c.Name))
-	}
+		}
 	return skyi.String(), wrap.String()
 }
 
@@ -745,10 +745,10 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 	paramNames := []string{}
 	if isMethod {
 		paramNames = append(paramNames, "receiver")
-	}
+		}
 	for i := range f.Params {
 		paramNames = append(paramNames, fmt.Sprintf("arg%d", i))
-	}
+		}
 
 	buf.WriteString(fmt.Sprintf("func %s(%s) any {\n", wrapperName,
 		strings.Join(mapSlice(paramNames, func(n string) string { return n + " any" }), ", ")))
@@ -769,7 +769,7 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		} else {
 			castArgs = append(castArgs, "receiver.(*_ffi_pkg."+typeName+")")
 		}
-	}
+		}
 
 	for i, p := range f.Params {
 		argName := fmt.Sprintf("arg%d", i)
@@ -799,7 +799,7 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 				castArgs = append(castArgs, argName)
 			}
 		}
-	}
+		}
 
 	// Build call
 	callExpr := ""
@@ -807,7 +807,7 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		callExpr = fmt.Sprintf("%s.%s(%s)", castArgs[0], f.Name, strings.Join(castArgs[1:], ", "))
 	} else {
 		callExpr = fmt.Sprintf("_ffi_pkg.%s(%s)", f.Name, strings.Join(castArgs, ", "))
-	}
+		}
 
 	if hasError && len(f.Results) == 1 {
 		// Returns only error
@@ -827,7 +827,7 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		// Single or multiple non-error results
 		buf.WriteString(fmt.Sprintf("\t\t_val := %s\n", callExpr))
 		buf.WriteString("\t\treturn SkyOk(_val)\n")
-	}
+		}
 
 	buf.WriteString("\t}()\n")
 	buf.WriteString("}\n\n")
@@ -858,7 +858,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 		return fmt.Sprintf("sky_asContext(%s)", varName)
 	case "interface{}", "any":
 		return varName
-	}
+		}
 	// Pointer type: nil-safe cast using import alias
 	if strings.HasPrefix(goType, "*") {
 		innerType := goType[1:]
@@ -879,12 +879,12 @@ func generateTypeCast(varName, goType, pkg string) string {
 			}
 		}
 		return fmt.Sprintf("func() %s { if %s == nil { return nil }; return %s.(%s) }()", goTypeAlias, varName, varName, goTypeAlias)
-	}
+		}
 	// Same-package custom types: cast via type conversion
 	if strings.HasPrefix(goType, pkg+".") {
 		typeName := goType[len(pkg)+1:]
 		return fmt.Sprintf("_ffi_pkg.%s(sky_asInt(%s))", typeName, varName)
-	}
+		}
 	// Ancestor package types
 	for _, a := range buildAncestorPkgs(pkg) {
 		if strings.HasPrefix(goType, a+".") {
@@ -892,7 +892,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 			shortPkg := lastPathSegment(a)
 			return fmt.Sprintf("%s.%s(sky_asInt(%s))", shortPkg, typeName, varName)
 		}
-	}
+		}
 	// Other: pass through (Go will handle at runtime)
 	return varName
 }
@@ -927,13 +927,13 @@ func mapGoTypeToSky(goType, pkg string, ancestors []string) string {
 		return "Char"
 	case "context.Context":
 		return "Context"
-	}
+		}
 	if strings.HasPrefix(goType, "[]") {
 		return "List Any"
-	}
+		}
 	if strings.HasPrefix(goType, "map[") {
 		return "Any"
-	}
+		}
 	if strings.HasPrefix(goType, "*") {
 		inner := goType[1:]
 		skyInner := mapGoTypeToSky(inner, pkg, ancestors)
@@ -941,27 +941,27 @@ func mapGoTypeToSky(goType, pkg string, ancestors []string) string {
 			return "Maybe " + skyInner
 		}
 		return skyInner
-	}
+		}
 	if strings.Contains(goType, ".") {
 		parts := strings.Split(goType, ".")
 		return parts[len(parts)-1]
-	}
+		}
 	return goType
 }
 
 func buildReturnType(results []ParamDef, pkg string, ancestors []string) string {
 	if len(results) == 0 {
 		return "Result String ()"
-	}
+		}
 	if len(results) == 1 && results[0].Type == "error" {
 		return "Result String ()"
-	}
+		}
 	if len(results) == 1 {
 		return "Result String " + mapGoTypeToSky(results[0].Type, pkg, ancestors)
-	}
+		}
 	if len(results) == 2 && results[1].Type == "error" {
 		return "Result String " + mapGoTypeToSky(results[0].Type, pkg, ancestors)
-	}
+		}
 	return "Result String Any"
 }
 
@@ -969,7 +969,7 @@ func isPrimitive(t string) bool {
 	switch t {
 	case "string", "int", "int64", "float64", "bool":
 		return true
-	}
+		}
 	return false
 }
 
@@ -1003,10 +1003,10 @@ func scanSourceForUsedSymbols(alias, srcRoot string) map[string]bool {
 func isSymbolUsed(name string, used map[string]bool) bool {
 	if len(used) == 0 {
 		return true // No filter = include all
-	}
+		}
 	if used[name] || used[lowerFirst(name)] {
 		return true
-	}
+		}
 	// For types referenced by field accessors:
 	// used symbol "checkoutSessionID" → PascalCase "CheckoutSessionID"
 	// type "CheckoutSession" should match because the used symbol STARTS WITH the type name
@@ -1022,6 +1022,13 @@ func isSymbolUsed(name string, used map[string]bool) bool {
 				return true
 			}
 		}
+		// For constructors: "newTypeName" → type "TypeName"
+		if strings.HasPrefix(sym, "new") && len(sym) > 3 {
+			typeName := capitalise(sym[3:])
+			if typeName == name {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -1034,7 +1041,7 @@ func (t TypeDef) HasTypeParams(data InspectData) bool {
 		if m.HasTypeParams {
 			return true
 		}
-	}
+		}
 	return false
 }
 
@@ -1057,7 +1064,7 @@ func pkgToModuleName(pkg string) string {
 				result = append(result, combined)
 			}
 		}
-	}
+		}
 	return strings.Join(result, ".")
 }
 
@@ -1085,7 +1092,7 @@ func extractAlias(pkg string) string {
 		if len(cleaned) > 0 {
 			aliases = append(aliases, capitalise(cleaned))
 		}
-	}
+		}
 
 	// Scan source for "import ... as <Alias>" patterns
 	filepath.Walk("src", func(path string, info os.FileInfo, err error) error {
@@ -1129,7 +1136,7 @@ func moduleLooksLikePkg(moduleName, pkg string) bool {
 func lowerFirst(s string) string {
 	if s == "" {
 		return s
-	}
+		}
 	r := []rune(s)
 	r[0] = unicode.ToLower(r[0])
 	return string(r)
@@ -1138,7 +1145,7 @@ func lowerFirst(s string) string {
 func capitalise(s string) string {
 	if s == "" {
 		return s
-	}
+		}
 	r := []rune(s)
 	r[0] = unicode.ToUpper(r[0])
 	return string(r)
@@ -1147,14 +1154,14 @@ func capitalise(s string) string {
 func lastPathSegment(pkgPath string) string {
 	if idx := strings.LastIndex(pkgPath, "/"); idx >= 0 {
 		return pkgPath[idx+1:]
-	}
+		}
 	return pkgPath
 }
 
 func shortTypeName(goType string) string {
 	if idx := strings.LastIndex(goType, "."); idx >= 0 {
 		return goType[idx+1:]
-	}
+		}
 	return goType
 }
 
@@ -1162,6 +1169,6 @@ func mapSlice[T, U any](s []T, f func(T) U) []U {
 	result := make([]U, len(s))
 	for i, v := range s {
 		result[i] = f(v)
-	}
+		}
 	return result
 }
