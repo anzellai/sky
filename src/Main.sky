@@ -500,7 +500,14 @@ doInit basePath projectName shouldCreateDir =
                             ()
                     else
                         ()
-                _ = println (String.join "\n" [ "  sky build       Compile to binary", "  sky run         Build and run" ])
+                _ =
+                    println
+                        (
+                        String.join "\n"
+                            [ "  sky build       Compile to binary"
+                            , "  sky run         Build and run"
+                            ]
+                        )
             in
                 ()
 
