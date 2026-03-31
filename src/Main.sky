@@ -496,14 +496,11 @@ doInit basePath projectName shouldCreateDir =
                     if shouldCreateDir then
                         let
                             _ = println ("  cd " ++ projectName)
-                            _ = println "  sky run"
                         in
                             ()
                     else
-                        let
-                            _ = println "  sky run"
-                        in
-                            ()
+                        ()
+                _ = println (String.join "\n" [ "  sky build       Compile to binary", "  sky run         Build and run" ])
             in
                 ()
 
