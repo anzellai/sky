@@ -412,12 +412,12 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 
 ### Build Times (current)
 
-| Project | Modules | Time | CPU | Notes |
+| Project | Modules | Cold | Warm | Notes |
 |---|---|---|---|---|
-| hello-world | 1 | <1s | — | Single module |
-| skyvote | 32+2 FFI | 1.7s | 180% | SQLite + Sky.Live |
-| **skyshop** | 43+14 FFI | **1:02** | 316% | Stripe, Firebase, Tailwind |
-| compiler | 28 | 5.6s | 312% | Self-hosted, 2800 Go decls |
+| hello-world | 1 | <1s | <1s | Single module |
+| skyvote | 32+2 FFI | 1.7s | 1.7s | SQLite + Sky.Live |
+| **skyshop** | 43+14 FFI | **1:30** | **0:59** | Stripe, Firebase, Tailwind |
+| compiler | 28 | 5.6s | 5.6s | Self-hosted, 3200 Go decls |
 
 ### Priority Optimisation Roadmap
 
@@ -429,11 +429,15 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 - DONE: String.join in hot paths — O(n²) → O(n) concat
 - DONE: Incremental compilation — cache lowered modules
 - DONE: `-gcflags="all=-l"` in go build
+- DONE: Usage-driven FFI generation — `sky-ffi-gen` native tool, Stripe 8896 types → 3
+- DONE: `sky_equal` type-switch — direct comparison instead of `fmt.Sprintf`
+- DONE: Incremental cache reads — warm builds skip type-check + lowering for cached modules
+- DONE: SkyName tag extraction — one map lookup per case, not per branch
+- DONE: `sky_asString` type-switch — `strconv.Itoa` instead of `fmt.Sprintf` for ints
+- DONE: ASCII fast path for `String.slice`/`length` — skip `[]rune` for ASCII strings
 
 **TODO:**
-- Smarter cache invalidation — detect source changes per-module
-- Symbol-level tree-shaking — collect wrapper refs during lowering, skip unused
+- Smarter cache invalidation — hash source content per-module, not just declaration counts
 - Selective import emission — only emit Go imports for referenced packages
-- Preserve go.mod/go.sum across builds — allow Go incremental build
-- Multi-level caching — type-check results, inspector output, wrapper generation
+- Struct-based ADT values — Go structs instead of `map[string]any` for custom ADTs
 - Go generics support in FFI pipeline
