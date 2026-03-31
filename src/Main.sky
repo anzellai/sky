@@ -347,12 +347,18 @@ extractDirName cwd =
 
 
 initProject projectName shouldCreateDir =
+    if shouldCreateDir then
+        let
+            _ = File.mkdirAll projectName
+            basePath = projectName ++ "/"
+        in
+            doInit basePath projectName shouldCreateDir
+    else
+        doInit "" projectName shouldCreateDir
+
+
+doInit basePath projectName shouldCreateDir =
     let
-        basePath =
-            if shouldCreateDir then
-                projectName ++ "/"
-            else
-                ""
         tomlPath = basePath ++ "sky.toml"
         tomlExists =
             case File.readFile tomlPath of
@@ -364,15 +370,16 @@ initProject projectName shouldCreateDir =
                     False
     in
         if tomlExists then
-            println
-                (tomlPath ++ " already exists. Project already initialised.")
-        else
             let
                 _ =
-                    if shouldCreateDir then
-                        File.mkdirAll basePath
-                    else
-                        ()
+                    println
+                        (
+                        tomlPath ++ " already exists. Project already initialised."
+                        )
+            in
+                ()
+        else
+            let
                 tomlContent =
                     String.join "\n"
                         [ "name = \"" ++ projectName ++ "\""
@@ -487,9 +494,16 @@ initProject projectName shouldCreateDir =
                 _ = println "Get started:"
                 _ =
                     if shouldCreateDir then
-                        println ("  cd " ++ projectName ++ " && sky run")
+                        let
+                            _ = println ("  cd " ++ projectName)
+                            _ = println "  sky run"
+                        in
+                            ()
                     else
-                        println "  sky run"
+                        let
+                            _ = println "  sky run"
+                        in
+                            ()
             in
                 ()
 
