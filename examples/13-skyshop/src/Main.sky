@@ -85,7 +85,7 @@ refreshProducts model =
 
 refreshCart model =
     case model.user of
-        
+
         Just user ->
             let
                 userId = Db.getField "id" user
@@ -101,6 +101,9 @@ refreshCart model =
 
                     Err _ ->
                         { model | cart = Nothing , cartItems = [] }
+
+        Nothing ->
+            { model | cart = Nothing , cartItems = [] }
 
 
 refreshOrders model =
@@ -287,6 +290,12 @@ handleAddToCart productId model =
                          , notificationType = "error"
                          }, Cmd.none)
 
+        Nothing ->
+            ({ model
+             | page = AuthSignInPage
+             , authError = "Please sign in to add items."
+             }, Cmd.none)
+
 
 handleUpdateCartItemQty : String -> String -> Model -> (Model, Cmd Msg)
 handleUpdateCartItemQty itemId qtyStr model =
@@ -368,6 +377,9 @@ handleStartCheckout model =
                                              | notification = "Checkout failed: " ++ e
                                              , notificationType = "error"
                                              }, Cmd.none)
+
+        Nothing ->
+            ({ model | page = AuthSignInPage }, Cmd.none)
 
 
 handleVerifyPayment : String -> Model -> (Model, Cmd Msg)

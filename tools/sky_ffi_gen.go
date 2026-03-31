@@ -640,14 +640,11 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 	buf.WriteString(fmt.Sprintf("func %s(%s) any {\n", wrapperName,
 		strings.Join(mapSlice(paramNames, func(n string) string { return n + " any" }), ", ")))
 
-	// Classify: pure / fallible / effectful
+	// All FFI calls are effectful — wrapped in panic recovery, return SkyOk/SkyErr
 	hasError := len(f.Results) > 0 && f.Results[len(f.Results)-1].Type == "error"
-	isPure := len(f.Results) == 1 && !hasError
 
-	if !isPure {
-		buf.WriteString("\treturn func() (ret any) {\n")
-		buf.WriteString("\t\tdefer func() { if r := recover(); r != nil { ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n")
-	}
+	buf.WriteString("\treturn func() (ret any) {\n")
+	buf.WriteString("\t\tdefer func() { if r := recover(); r != nil { ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n")
 
 	// Cast arguments
 	castArgs := []string{}
@@ -699,9 +696,7 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		callExpr = fmt.Sprintf("_ffi_pkg.%s(%s)", f.Name, strings.Join(castArgs, ", "))
 	}
 
-	if isPure {
-		buf.WriteString(fmt.Sprintf("\treturn %s\n", callExpr))
-	} else if hasError && len(f.Results) == 1 {
+	if hasError && len(f.Results) == 1 {
 		// Returns only error
 		buf.WriteString(fmt.Sprintf("\t\t_err := %s\n", callExpr))
 		buf.WriteString("\t\tif _err != nil { return SkyErr(_err.Error()) }\n")
@@ -716,14 +711,12 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		buf.WriteString(fmt.Sprintf("\t\t%s\n", callExpr))
 		buf.WriteString("\t\treturn SkyOk(struct{}{})\n")
 	} else {
-		// Single non-error result, effectful
+		// Single or multiple non-error results
 		buf.WriteString(fmt.Sprintf("\t\t_val := %s\n", callExpr))
 		buf.WriteString("\t\treturn SkyOk(_val)\n")
 	}
 
-	if !isPure {
-		buf.WriteString("\t}()\n")
-	}
+	buf.WriteString("\t}()\n")
 	buf.WriteString("}\n\n")
 	return buf.String(), imports
 }
@@ -753,14 +746,41 @@ func generateTypeCast(varName, goType, pkg string) string {
 	case "interface{}", "any":
 		return varName
 	}
-	// Pointer type: nil-safe cast
+	// Pointer type: nil-safe cast using import alias
 	if strings.HasPrefix(goType, "*") {
 		innerType := goType[1:]
-		shortType := shortTypeName(innerType)
-		return fmt.Sprintf("func() %s { if %s == nil { return nil }; return %s.(%s) }()", goType, varName, varName, goType)
-		_ = shortType
+		goTypeAlias := goType
+		// Replace full package path with _ffi_pkg alias for same-package types
+		if strings.HasPrefix(innerType, pkg+".") {
+			typeName := innerType[len(pkg)+1:]
+			goTypeAlias = "*_ffi_pkg." + typeName
+		} else {
+			// Check ancestor packages
+			for _, a := range buildAncestorPkgs(pkg) {
+				if strings.HasPrefix(innerType, a+".") {
+					typeName := innerType[len(a)+1:]
+					shortPkg := shortTypeName(a)
+					goTypeAlias = "*" + shortPkg + "." + typeName
+					break
+				}
+			}
+		}
+		return fmt.Sprintf("func() %s { if %s == nil { return nil }; return %s.(%s) }()", goTypeAlias, varName, varName, goTypeAlias)
 	}
-	// Other: direct type assertion
+	// Same-package custom types: cast via type conversion
+	if strings.HasPrefix(goType, pkg+".") {
+		typeName := goType[len(pkg)+1:]
+		return fmt.Sprintf("_ffi_pkg.%s(sky_asInt(%s))", typeName, varName)
+	}
+	// Ancestor package types
+	for _, a := range buildAncestorPkgs(pkg) {
+		if strings.HasPrefix(goType, a+".") {
+			typeName := goType[len(a)+1:]
+			shortPkg := shortTypeName(a)
+			return fmt.Sprintf("%s.%s(sky_asInt(%s))", shortPkg, typeName, varName)
+		}
+	}
+	// Other: pass through (Go will handle at runtime)
 	return varName
 }
 
