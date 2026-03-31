@@ -4,13 +4,13 @@
 # Build artifacts
 bin/
 dist/
+sky-out/app
 
 # Dependencies
 node_modules/
 
-# Sky compiler cache and deps
+# Sky compiler cache and deps (all projects including examples)
 .skycache/
-!examples/*/.skycache/
 .skydeps/
 
 # Environment and secrets
@@ -32,7 +32,6 @@ data/
 test-*.js
 test-*.ts
 firebaseadminsdk*.json
-uploads/
 uploads/
 examples/13-skyshop/assets/
 examples/**/sky-out/
