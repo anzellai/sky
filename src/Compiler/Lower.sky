@@ -2103,7 +2103,9 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return map[string]any{} }"
     , GoDeclRaw
-          "func sky_equal(a, b any) bool { return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
+          "func sky_equal(a, b any) bool { switch av := a.(type) { case string: if bv, ok := b.(string); ok { return av == bv }; case int: if bv, ok := b.(int); ok { return av == bv }; case bool: if bv, ok := b.(bool); ok { return av == bv }; case float64: if bv, ok := b.(float64); ok { return av == bv } }; return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
+    , GoDeclRaw
+          "func sky_isAscii(s string) bool { for i := 0; i < len(s); i++ { if s[i] > 127 { return false } }; return true }"
     , GoDeclRaw
           "func sky_concat(a, b any) any { if la, ok := a.([]any); ok { if lb, ok := b.([]any); ok { return append(la, lb...) } }; return sky_asString(a) + sky_asString(b) }"
     , GoDeclRaw
@@ -2115,7 +2117,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_stringToLower(v any) any { return strings.ToLower(sky_asString(v)) }"
     , GoDeclRaw
-          "func sky_stringLength(v any) any { return len([]rune(sky_asString(v))) }"
+          "func sky_stringLength(v any) any { s := sky_asString(v); if sky_isAscii(s) { return len(s) }; return len([]rune(s)) }"
     , GoDeclRaw
           "func sky_stringTrim(v any) any { return strings.TrimSpace(sky_asString(v)) }"
     , GoDeclRaw
@@ -2145,7 +2147,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_stringIsEmpty(v any) any { return sky_asString(v) == \"\" }"
     , GoDeclRaw
-          "func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); runes := []rune(str); a := sky_asInt(start); b := sky_asInt(end); if a < 0 { a = 0 }; if b > len(runes) { b = len(runes) }; if a > b { return \"\" }; return string(runes[a:b]) } } }"
+          "func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); a := sky_asInt(start); b := sky_asInt(end); if a < 0 { a = 0 }; if sky_isAscii(str) { if b > len(str) { b = len(str) }; if a > b { return \"\" }; return str[a:b] }; runes := []rune(str); if b > len(runes) { b = len(runes) }; if a > b { return \"\" }; return string(runes[a:b]) } } }"
     , GoDeclRaw
           "func sky_stringJoin(sep any) any { return func(list any) any { parts := sky_asList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = sky_asString(p) }; return strings.Join(ss, sky_asString(sep)) } }"
     , GoDeclRaw
