@@ -1635,8 +1635,27 @@ lowerCaseToSwitch : LowerCtx -> GoExpr -> (List CaseBranch) -> String
 lowerCaseToSwitch ctx subjectExpr branches =
     let
         subjectCode = emitGoExprInline subjectExpr
+        hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
+        tagExtract =
+            if hasCustomAdtBranch then
+                "__sky_tag := sky_asMap(__subject)[\"SkyName\"]; "
+            else
+                ""
     in
-        String.join "" [ "func() any { __subject := " , subjectCode , "; " , String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) , " panic(\"non-exhaustive case expression\") }()" ]
+        String.join "" [ "func() any { __subject := " , subjectCode , "; " , tagExtract , String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) , " panic(\"non-exhaustive case expression\") }()" ]
+
+
+branchIsCustomAdt branch =
+    case branch.pattern of
+
+        PConstructor parts _ _ ->
+            let
+                name = lastPartOf parts
+            in
+                name /= "Ok" && name /= "Err" && name /= "Just" && name /= "Nothing" && name /= "True" && name /= "False"
+
+        _ ->
+            False
 
 
 emitBranchCode : LowerCtx -> (Int, CaseBranch) -> String
@@ -1680,6 +1699,8 @@ patternToCondition ctx varName pat =
                         String.join "" [ "sky_asBool(" , varName , ") == true" ]
                     else if ctorName == "False" then
                         String.join "" [ "sky_asBool(" , varName , ") == false" ]
+                    else if varName == "__subject" then
+                        String.join "" [ "__sky_tag == \"" , ctorName , "\"" ]
                     else
                         String.join "" [ "sky_asMap(" , varName , ")[\"SkyName\"] == \"" , ctorName , "\"" ]
                 subConds = subPatternConditions ctx varName ctorName args 0
@@ -2061,7 +2082,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asFloat(v any) float64 { switch x := v.(type) { case float64: return x; case int: return float64(x); default: return 0 } }"
     , GoDeclRaw
-          "func sky_asString(v any) string { if s, ok := v.(string); ok { return s }; return fmt.Sprintf(\"%v\", v) }"
+          "func sky_asString(v any) string { switch x := v.(type) { case string: return x; case int: return strconv.Itoa(x); case bool: if x { return \"true\" }; return \"false\"; case float64: return strconv.FormatFloat(x, 'f', -1, 64); default: return fmt.Sprintf(\"%v\", v) } }"
     , GoDeclRaw
           "func sky_asBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"
     , GoDeclRaw
