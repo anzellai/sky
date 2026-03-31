@@ -2145,7 +2145,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_stringIsEmpty(v any) any { return sky_asString(v) == \"\" }"
     , GoDeclRaw
-          "func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); return str[sky_asInt(start):sky_asInt(end)] } } }"
+          "func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); runes := []rune(str); a := sky_asInt(start); b := sky_asInt(end); if a < 0 { a = 0 }; if b > len(runes) { b = len(runes) }; if a > b { return \"\" }; return string(runes[a:b]) } } }"
     , GoDeclRaw
           "func sky_stringJoin(sep any) any { return func(list any) any { parts := sky_asList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = sky_asString(p) }; return strings.Join(ss, sky_asString(sep)) } }"
     , GoDeclRaw

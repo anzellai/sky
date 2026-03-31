@@ -235,7 +235,7 @@ verifyPayment orderId =
 
 
 verifyStripeSession cartId sessionId =
-    case Session.get sessionId js of
+    case Session.get sessionId Nothing of
         
         Ok sess ->
             let
