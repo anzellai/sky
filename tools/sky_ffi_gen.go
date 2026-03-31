@@ -219,7 +219,7 @@ func main() {
 		}
 	}
 
-	// --- Fields ---
+	// --- Fields (getters) + Constructors + Setters ---
 	for _, t := range inspect.Types {
 		if t.Kind != "struct" || t.HasTypeParams(inspect) {
 			continue
@@ -227,6 +227,12 @@ func main() {
 		if isLarge && !isSymbolUsed(t.Name, usedSymbols) {
 			continue
 		}
+
+		// Constructor: newTypeName : () -> TypeName
+		skyiCtor, wrapCtor := generateStructConstructor(t, pkgName, safePkg)
+		skyi.WriteString(skyiCtor)
+		wrapper.WriteString(wrapCtor)
+
 		for _, field := range t.Fields {
 			if field.Name == "" || !unicode.IsUpper(rune(field.Name[0])) {
 				continue
@@ -234,9 +240,16 @@ func main() {
 			if isUnsafeFieldType(field.Type) {
 				continue
 			}
+
+			// Getter
 			skyiField, wrapField := generateFieldAccessor(field, t, pkgName, safePkg)
 			skyi.WriteString(skyiField)
 			wrapper.WriteString(wrapField)
+
+			// Setter: typeNameSetFieldName : value -> TypeName -> TypeName
+			skyiSetter, wrapSetter := generateFieldSetter(field, t, pkgName, safePkg)
+			skyi.WriteString(skyiSetter)
+			wrapper.WriteString(wrapSetter)
 		}
 	}
 
@@ -266,6 +279,15 @@ func main() {
 		wrapper.WriteString(wrapConst)
 	}
 
+	// Detect ancestor package references in wrapper code
+	wrapperCode := wrapper.String()
+	for _, a := range ancestors {
+		alias := lastPathSegment(a)
+		if strings.Contains(wrapperCode, alias+".") {
+			extraImports[a] = true
+		}
+	}
+
 	// Finalise wrapper imports
 	var importBlock strings.Builder
 	importBlock.WriteString("package sky_wrappers\n\nimport (\n")
@@ -273,7 +295,8 @@ func main() {
 	importBlock.WriteString(fmt.Sprintf("\t_ffi_reflect \"reflect\"\n"))
 	importBlock.WriteString(fmt.Sprintf("\t_ffi_pkg \"%s\"\n", pkgName))
 	for imp := range extraImports {
-		importBlock.WriteString(fmt.Sprintf("\t\"%s\"\n", imp))
+		alias := lastPathSegment(imp)
+		importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
 	}
 	importBlock.WriteString(")\n\nvar _ = _ffi_fmt.Sprintf\nvar _ = _ffi_reflect.TypeOf\n\n")
 
@@ -567,6 +590,96 @@ func generateFieldAccessor(field FieldDef, t TypeDef, pkg, safePkg string) (stri
 	return skyi.String(), wrap.String()
 }
 
+func generateStructConstructor(t TypeDef, pkg, safePkg string) (string, string) {
+	skyName := "new" + t.Name
+	wrapperName := fmt.Sprintf("Sky_%s_NEW_%s", safePkg, t.Name)
+
+	var skyi strings.Builder
+	skyi.WriteString(fmt.Sprintf("%s : () -> %s\n", skyName, t.Name))
+	skyi.WriteString(fmt.Sprintf("%s _ =\n", skyName))
+	skyi.WriteString(fmt.Sprintf("    %s ()\n\n", wrapperName))
+
+	var wrap strings.Builder
+	wrap.WriteString(fmt.Sprintf("func %s(_ any) any {\n", wrapperName))
+	wrap.WriteString(fmt.Sprintf("\treturn &_ffi_pkg.%s{}\n", t.Name))
+	wrap.WriteString("}\n\n")
+
+	return skyi.String(), wrap.String()
+}
+
+func generateFieldSetter(field FieldDef, t TypeDef, pkg, safePkg string) (string, string) {
+	skyName := lowerFirst(t.Name) + "Set" + capitalise(field.Name)
+	wrapperName := fmt.Sprintf("Sky_%s_SET_%s_%s", safePkg, t.Name, field.Name)
+
+	skyValType := mapGoTypeToSky(field.Type, pkg, nil)
+	// For pointer fields, the setter takes the inner type (not Maybe)
+	if strings.HasPrefix(field.Type, "*") {
+		inner := field.Type[1:]
+		skyValType = mapGoTypeToSky(inner, pkg, nil)
+	}
+
+	// Setter signature: value -> TypeName -> TypeName (for pipeline chaining)
+	var skyi strings.Builder
+	skyi.WriteString(fmt.Sprintf("%s : %s -> %s -> %s\n", skyName, skyValType, t.Name, t.Name))
+	skyi.WriteString(fmt.Sprintf("%s val receiver =\n", skyName))
+	skyi.WriteString(fmt.Sprintf("    %s val receiver\n\n", wrapperName))
+
+	var wrap strings.Builder
+	wrap.WriteString(fmt.Sprintf("func %s(val any, receiver any) any {\n", wrapperName))
+	wrap.WriteString("\tv := _ffi_reflect.ValueOf(receiver)\n")
+	wrap.WriteString("\tfor v.Kind() == _ffi_reflect.Ptr { v = v.Elem() }\n")
+	wrap.WriteString("\tif v.Kind() != _ffi_reflect.Struct { return receiver }\n")
+	wrap.WriteString(fmt.Sprintf("\tf := v.FieldByName(\"%s\")\n", field.Name))
+	wrap.WriteString("\tif !f.IsValid() || !f.CanSet() { return receiver }\n")
+
+	// Handle different field types
+	if strings.HasPrefix(field.Type, "*string") {
+		wrap.WriteString("\ts := sky_asString(val)\n")
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(&s))\n")
+	} else if strings.HasPrefix(field.Type, "*int64") {
+		wrap.WriteString("\tn := int64(sky_asInt(val))\n")
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(&n))\n")
+	} else if strings.HasPrefix(field.Type, "*int") {
+		wrap.WriteString("\tn := sky_asInt(val)\n")
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(&n))\n")
+	} else if strings.HasPrefix(field.Type, "*float64") {
+		wrap.WriteString("\tn := sky_asFloat(val)\n")
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(&n))\n")
+	} else if strings.HasPrefix(field.Type, "*bool") {
+		wrap.WriteString("\tb := sky_asBool(val)\n")
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(&b))\n")
+	} else if field.Type == "string" {
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(sky_asString(val)))\n")
+	} else if field.Type == "int" || field.Type == "int64" {
+		wrap.WriteString(fmt.Sprintf("\tf.Set(_ffi_reflect.ValueOf(%s(sky_asInt(val))))\n", field.Type))
+	} else if field.Type == "float64" {
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(sky_asFloat(val)))\n")
+	} else if field.Type == "bool" {
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(sky_asBool(val)))\n")
+	} else if field.Type == "[]string" {
+		wrap.WriteString("\tf.Set(_ffi_reflect.ValueOf(sky_asStringSlice(val)))\n")
+	} else if strings.HasPrefix(field.Type, "*") {
+		// Pointer to struct or other type — pass through as-is
+		wrap.WriteString("\tif val != nil { f.Set(_ffi_reflect.ValueOf(val)) }\n")
+	} else if strings.HasPrefix(field.Type, "[]") {
+		// Slice — convert from Sky list
+		wrap.WriteString("\titems := sky_asList(val)\n")
+		wrap.WriteString(fmt.Sprintf("\tslice := _ffi_reflect.MakeSlice(f.Type(), len(items), len(items))\n"))
+		wrap.WriteString("\tfor i, item := range items {\n")
+		wrap.WriteString("\t\tif item != nil { slice.Index(i).Set(_ffi_reflect.ValueOf(item).Elem()) }\n")
+		wrap.WriteString("\t}\n")
+		wrap.WriteString("\tf.Set(slice)\n")
+	} else {
+		// Other types — try direct set via reflection
+		wrap.WriteString("\tif val != nil { f.Set(_ffi_reflect.ValueOf(val).Convert(f.Type())) }\n")
+	}
+
+	wrap.WriteString("\treturn receiver\n")
+	wrap.WriteString("}\n\n")
+
+	return skyi.String(), wrap.String()
+}
+
 func generateVarAccessor(v VarDef, pkg, safePkg string) (string, string) {
 	skyName := lowerFirst(v.Name)
 	getterName := fmt.Sprintf("Sky_%s_%s", safePkg, v.Name)
@@ -759,7 +872,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 			for _, a := range buildAncestorPkgs(pkg) {
 				if strings.HasPrefix(innerType, a+".") {
 					typeName := innerType[len(a)+1:]
-					shortPkg := shortTypeName(a)
+					shortPkg := lastPathSegment(a)
 					goTypeAlias = "*" + shortPkg + "." + typeName
 					break
 				}
@@ -776,7 +889,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 	for _, a := range buildAncestorPkgs(pkg) {
 		if strings.HasPrefix(goType, a+".") {
 			typeName := goType[len(a)+1:]
-			shortPkg := shortTypeName(a)
+			shortPkg := lastPathSegment(a)
 			return fmt.Sprintf("%s.%s(sky_asInt(%s))", shortPkg, typeName, varName)
 		}
 	}
@@ -1029,6 +1142,13 @@ func capitalise(s string) string {
 	r := []rune(s)
 	r[0] = unicode.ToUpper(r[0])
 	return string(r)
+}
+
+func lastPathSegment(pkgPath string) string {
+	if idx := strings.LastIndex(pkgPath, "/"); idx >= 0 {
+		return pkgPath[idx+1:]
+	}
+	return pkgPath
 }
 
 func shortTypeName(goType string) string {
