@@ -17,6 +17,7 @@ import Compiler.Types exposing (..)
 import Compiler.Env as Env
 import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
+import Compiler.Pipeline as Pipeline
 
 type alias ExportedDecl =
     { name : String , signature : String , defLine : Int }
@@ -212,15 +213,18 @@ analyzeAndPublishDiagnostics state uri text =
             
             Ok mod ->
                 let
-                    stdlibEnv = Resolver.buildStdlibEnv
-                    checkResult = Checker.checkModule mod (Just stdlibEnv)
+                    filePath = uriToFilePath uri
+                    ( combinedEnv , registry , aliases ) =
+                        Pipeline.buildCheckEnv filePath mod
+                    checkResult =
+                        Checker.checkModuleWithRegistryAndAliases mod (Just combinedEnv) (Just registry) (Just aliases)
                     diagnostics =
                         case checkResult of
-                            
+
                             Ok result ->
                                 List.map (\msg -> makeDiagnostic 1 msg)
                                     result.diagnostics
-                            
+
                             Err err ->
                                 [ makeDiagnostic 1 err ]
                     stateWithDeps = resolveAndCacheImports state uri mod.imports
