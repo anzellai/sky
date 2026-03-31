@@ -415,7 +415,8 @@ func isTypeSafe(goType string, pkg string, ancestors []string) bool {
 		"uint", "uint8", "uint16", "uint32", "uint64",
 		"float32", "float64", "error", "interface{}", "any",
 		"[]byte", "[]string", "[]int", "[]float64", "[]bool", "[]any",
-		"context.Context":
+		"context.Context",
+		"io.Reader", "io.Writer", "io.ReadCloser", "io.WriteCloser":
 		return true
 		}
 	// Byte arrays
