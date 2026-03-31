@@ -10,7 +10,7 @@ Exceptions: protocol identifiers (LSP `initialize`), CSS/HTML property names (`c
 
 1. **If it compiles, it works.** No runtime surprises from FFI. No panic leakage. No nil leakage. No partial bindings. All edge cases represented in types.
 2. **Dev experience is top priority.** Clear errors, predictable behaviour, no user-written FFI, no confusing hidden behaviour.
-3. **Root-cause fixes only.** Never patch over bugs. Fix at the correct abstraction layer (lexer, parser, type system, lowering, or interop generator).
+3. **Root-cause fixes only.** Never patch over bugs. Fix at the correct abstraction layer (lexer, parser, type system, lowering, or interop generator). **Never suppress, hide, or work around type errors or warnings.** If the type checker reports an issue, either the code is wrong or the type checker is wrong — fix whichever is the root cause.
 4. **Production-grade architecture.** Must scale to large Go packages (Stripe SDK). Must support real backend systems. Must remain maintainable.
 
 ## Effect Boundary: Task

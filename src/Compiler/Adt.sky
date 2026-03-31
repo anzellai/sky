@@ -21,6 +21,10 @@ emptyRegistry : AdtRegistry
 emptyRegistry = Dict.empty
 
 
+mergeRegistries : AdtRegistry -> AdtRegistry -> AdtRegistry
+mergeRegistries a b = Dict.union a b
+
+
 lookupConstructor : String -> AdtRegistry -> Maybe Scheme
 lookupConstructor ctorName registry =
     lookupCtorInEntries ctorName (Dict.values registry)

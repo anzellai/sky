@@ -1270,6 +1270,14 @@ var checkModule = Compiler_Checker_CheckModule
 
 var CheckModule = Compiler_Checker_CheckModule
 
+var checkModuleWithRegistry = Compiler_Checker_CheckModuleWithRegistry
+
+var CheckModuleWithRegistry = Compiler_Checker_CheckModuleWithRegistry
+
+var checkModuleWithRegistryAndAliases = Compiler_Checker_CheckModuleWithRegistryAndAliases
+
+var CheckModuleWithRegistryAndAliases = Compiler_Checker_CheckModuleWithRegistryAndAliases
+
 var registerTypeAliases = Compiler_Checker_RegisterTypeAliases
 
 var RegisterTypeAliases = Compiler_Checker_RegisterTypeAliases
@@ -1353,6 +1361,10 @@ var CheckExprExhaustiveness = Compiler_Checker_CheckExprExhaustiveness
 var emptyRegistry = Compiler_Adt_EmptyRegistry()
 
 var EmptyRegistry = Compiler_Adt_EmptyRegistry()
+
+var mergeRegistries = Compiler_Adt_MergeRegistries
+
+var MergeRegistries = Compiler_Adt_MergeRegistries
 
 var lookupConstructor = Compiler_Adt_LookupConstructor
 
@@ -2588,6 +2600,10 @@ func Compiler_Adt_EmptyRegistry() any {
 	return sky_dictEmpty()
 }
 
+func Compiler_Adt_MergeRegistries(a any, b any) any {
+	return sky_call(sky_dictUnion(a), b)
+}
+
 func Compiler_Adt_LookupConstructor(ctorName any, registry any) any {
 	return Compiler_Adt_LookupCtorInEntries(ctorName, sky_dictValues(registry))
 }
@@ -3554,6 +3570,14 @@ var FileAlreadyExists = Compiler_Pipeline_FileAlreadyExists
 
 var CopyFfiWrapperFallback = Compiler_Pipeline_CopyFfiWrapperFallback
 
+var BuildImportedRegistry = Compiler_Pipeline_BuildImportedRegistry
+
+var BuildImportedAliases = Compiler_Pipeline_BuildImportedAliases
+
+var AddModuleAliases = Compiler_Pipeline_AddModuleAliases
+
+var AddModuleRegistry = Compiler_Pipeline_AddModuleRegistry
+
 var BuildAliasMap = Compiler_Pipeline_BuildAliasMap
 
 var GeneratePrefixAliases = Compiler_Pipeline_GeneratePrefixAliases
@@ -3939,7 +3963,7 @@ func Compiler_Pipeline_CompileMultiModule(entryPath any, outDir any, srcRoot any
 }
 
 func Compiler_Pipeline_CompileMultiModuleEntry(outDir any, projectRoot any, entryMod any, aliasMap any, stdlibEnv any, depDecls any, loadedModules any) any {
-	return func() any { entryCheckResult := Compiler_Checker_CheckModule(entryMod, SkyJust(stdlibEnv)); _ = entryCheckResult; entryRegistry := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  panic("non-exhaustive case expression") }() }(); _ = entryRegistry; diagnostics := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["diagnostics"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return []any{} };  panic("non-exhaustive case expression") }() }(); _ = diagnostics; return func() any { func() any { if sky_asBool(sky_not(sky_listIsEmpty(diagnostics))) { return sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("   [!] ", d)) }), diagnostics) }; return []any{} }(); return Compiler_Pipeline_EmitMultiModuleGo(outDir, projectRoot, entryMod, entryRegistry, aliasMap, depDecls, loadedModules) }() }()
+	return func() any { importedRegistry := Compiler_Pipeline_BuildImportedRegistry(loadedModules); _ = importedRegistry; importedAliases := Compiler_Pipeline_BuildImportedAliases(loadedModules); _ = importedAliases; entryCheckResult := Compiler_Checker_CheckModuleWithRegistryAndAliases(entryMod, SkyJust(stdlibEnv), SkyJust(importedRegistry), SkyJust(importedAliases)); _ = entryCheckResult; entryRegistry := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["registry"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return Compiler_Adt_EmptyRegistry() };  panic("non-exhaustive case expression") }() }(); _ = entryRegistry; diagnostics := func() any { return func() any { __subject := entryCheckResult; if sky_asSkyResult(__subject).SkyName == "Ok" { result := sky_asSkyResult(__subject).OkValue; _ = result; return sky_asMap(result)["diagnostics"] };  if sky_asSkyResult(__subject).SkyName == "Err" { return []any{} };  panic("non-exhaustive case expression") }() }(); _ = diagnostics; return func() any { func() any { if sky_asBool(sky_not(sky_listIsEmpty(diagnostics))) { return sky_call(sky_listMap(func(d any) any { return sky_println(sky_concat("   [!] ", d)) }), diagnostics) }; return []any{} }(); return Compiler_Pipeline_EmitMultiModuleGo(outDir, projectRoot, entryMod, entryRegistry, aliasMap, depDecls, loadedModules) }() }()
 }
 
 func Compiler_Pipeline_EmitMultiModuleGo(outDir any, projectRoot any, entryMod any, entryRegistry any, aliasMap any, depDecls any, loadedModules any) any {
@@ -4164,6 +4188,22 @@ func Compiler_Pipeline_FileAlreadyExists(path any) any {
 
 func Compiler_Pipeline_CopyFfiWrapperFallback(outDir any, projectRoot any, modName any, mainGoCode any, combinedSrc any) any {
 	return func() any { return func() any { __subject := sky_fileRead(combinedSrc); if sky_asSkyResult(__subject).SkyName == "Ok" { content := sky_asSkyResult(__subject).OkValue; _ = content; return func() any { safeName := sky_call(sky_stringJoin("_"), sky_call(sky_listMap(Compiler_Pipeline_FfiSafePart), sky_call(sky_stringSplit("."), modName))); _ = safeName; rewritten := sky_call(sky_call(sky_stringReplace("package sky_wrappers"), "package main"), content); _ = rewritten; wrapperDst := sky_concat(outDir, sky_concat("/sky_ffi_", sky_concat(safeName, ".go"))); _ = wrapperDst; sky_call(sky_fileWrite(wrapperDst), rewritten); return sky_println(sky_concat("   Copied wrapper: ", wrapperDst)) }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return func() any { if sky_asBool(!sky_equal(projectRoot, ".")) { return Compiler_Pipeline_CopyOneFfiWrapper(outDir, ".", modName, mainGoCode) }; return struct{}{} }() };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Pipeline_BuildImportedRegistry(modules any) any {
+	return func() any { counter := sky_refNew(5000); _ = counter; return sky_call(sky_call(sky_listFoldl(func(__pa0 any) any { return func(__pa1 any) any { return Compiler_Pipeline_AddModuleRegistry(counter, __pa0, __pa1) } }), Compiler_Adt_EmptyRegistry()), modules) }()
+}
+
+func Compiler_Pipeline_BuildImportedAliases(modules any) any {
+	return func() any { counter := sky_refNew(6000); _ = counter; return sky_call(sky_call(sky_listFoldl(func(__pa0 any) any { return func(__pa1 any) any { return Compiler_Pipeline_AddModuleAliases(counter, __pa0, __pa1) } }), sky_dictEmpty()), modules) }()
+}
+
+func Compiler_Pipeline_AddModuleAliases(counter any, pair any, acc any) any {
+	return func() any { mod := sky_snd(pair); _ = mod; __tup_w_aliases := Compiler_Checker_RegisterTypeAliases(counter, sky_asMap(mod)["declarations"], Compiler_Env_CreatePreludeEnv()); aliases := sky_asTuple2(__tup_w_aliases).V1; _ = aliases; return sky_call(sky_dictUnion(acc), aliases) }()
+}
+
+func Compiler_Pipeline_AddModuleRegistry(counter any, pair any, acc any) any {
+	return func() any { mod := sky_snd(pair); _ = mod; __tup_reg_w_w := Compiler_Adt_RegisterAdts(counter, sky_asMap(mod)["declarations"]); reg := sky_asTuple3(__tup_reg_w_w).V0; _ = reg; return Compiler_Adt_MergeRegistries(acc, reg) }()
 }
 
 func Compiler_Pipeline_BuildAliasMap(imports any) any {
@@ -5135,7 +5175,15 @@ func Compiler_Checker_MakeTypedDecl(n any, s any, t any) any {
 }
 
 func Compiler_Checker_CheckModule(mod any, imports any) any {
-	return func() any { counter := sky_refNew(100); _ = counter; baseEnv := func() any { return func() any { __subject := imports; if sky_asSkyMaybe(__subject).SkyName == "Just" { importedEnv := sky_asSkyMaybe(__subject).JustValue; _ = importedEnv; return Compiler_Env_Union(importedEnv, Compiler_Env_CreatePreludeEnv()) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return Compiler_Env_CreatePreludeEnv() };  panic("non-exhaustive case expression") }() }(); _ = baseEnv; moduleName := sky_call(sky_stringJoin("."), sky_asMap(mod)["name"]); _ = moduleName; __tup_aliasEnv_typeAliases := Compiler_Checker_RegisterTypeAliases(counter, sky_asMap(mod)["declarations"], baseEnv); aliasEnv := sky_asTuple2(__tup_aliasEnv_typeAliases).V0; _ = aliasEnv; typeAliases := sky_asTuple2(__tup_aliasEnv_typeAliases).V1; _ = typeAliases; qualifiedAliases := Compiler_Checker_AddQualifiedAliases(moduleName, sky_asMap(mod)["imports"], typeAliases); _ = qualifiedAliases; Compiler_Unify_SetTypeAliases(qualifiedAliases); __tup_registry_adtEnv_adtDiags := Compiler_Adt_RegisterAdts(counter, sky_asMap(mod)["declarations"]); registry := sky_asTuple3(__tup_registry_adtEnv_adtDiags).V0; _ = registry; adtEnv := sky_asTuple3(__tup_registry_adtEnv_adtDiags).V1; _ = adtEnv; adtDiags := sky_asTuple3(__tup_registry_adtEnv_adtDiags).V2; _ = adtDiags; env0 := Compiler_Env_Union(adtEnv, aliasEnv); _ = env0; annotations := Compiler_Checker_CollectAnnotations(sky_asMap(mod)["declarations"]); _ = annotations; env1 := Compiler_Checker_PreRegisterFunctions(counter, sky_asMap(mod)["declarations"], env0); _ = env1; __tup_typedDecls_finalEnv_inferDiags := Compiler_Checker_InferAllDeclarations(counter, registry, env1, sky_asMap(mod)["declarations"], annotations, qualifiedAliases); typedDecls := sky_asTuple3(__tup_typedDecls_finalEnv_inferDiags).V0; _ = typedDecls; finalEnv := sky_asTuple3(__tup_typedDecls_finalEnv_inferDiags).V1; _ = finalEnv; inferDiags := sky_asTuple3(__tup_typedDecls_finalEnv_inferDiags).V2; _ = inferDiags; exhaustDiags := Compiler_Checker_CheckAllExhaustiveness(registry, sky_asMap(mod)["declarations"]); _ = exhaustDiags; allDiags := sky_listConcat([]any{adtDiags, inferDiags, exhaustDiags}); _ = allDiags; return SkyOk(map[string]any{"env": finalEnv, "registry": registry, "declarations": typedDecls, "diagnostics": allDiags, "typeAliases": qualifiedAliases}) }()
+	return Compiler_Checker_CheckModuleWithRegistry(mod, imports, SkyNothing())
+}
+
+func Compiler_Checker_CheckModuleWithRegistry(mod any, imports any, importedRegistry any) any {
+	return Compiler_Checker_CheckModuleWithRegistryAndAliases(mod, imports, importedRegistry, SkyNothing())
+}
+
+func Compiler_Checker_CheckModuleWithRegistryAndAliases(mod any, imports any, importedRegistry any, importedAliases any) any {
+	return func() any { counter := sky_refNew(100); _ = counter; baseEnv := func() any { return func() any { __subject := imports; if sky_asSkyMaybe(__subject).SkyName == "Just" { importedEnv := sky_asSkyMaybe(__subject).JustValue; _ = importedEnv; return Compiler_Env_Union(importedEnv, Compiler_Env_CreatePreludeEnv()) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return Compiler_Env_CreatePreludeEnv() };  panic("non-exhaustive case expression") }() }(); _ = baseEnv; moduleName := sky_call(sky_stringJoin("."), sky_asMap(mod)["name"]); _ = moduleName; __tup_aliasEnv_localAliases := Compiler_Checker_RegisterTypeAliases(counter, sky_asMap(mod)["declarations"], baseEnv); aliasEnv := sky_asTuple2(__tup_aliasEnv_localAliases).V0; _ = aliasEnv; localAliases := sky_asTuple2(__tup_aliasEnv_localAliases).V1; _ = localAliases; mergedAliases := func() any { return func() any { __subject := importedAliases; if sky_asSkyMaybe(__subject).SkyName == "Just" { ia := sky_asSkyMaybe(__subject).JustValue; _ = ia; return sky_call(sky_dictUnion(localAliases), ia) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return localAliases };  panic("non-exhaustive case expression") }() }(); _ = mergedAliases; qualifiedAliases := Compiler_Checker_AddQualifiedAliases(moduleName, sky_asMap(mod)["imports"], mergedAliases); _ = qualifiedAliases; Compiler_Unify_SetTypeAliases(qualifiedAliases); __tup_localRegistry_adtEnv_adtDiags := Compiler_Adt_RegisterAdts(counter, sky_asMap(mod)["declarations"]); localRegistry := sky_asTuple3(__tup_localRegistry_adtEnv_adtDiags).V0; _ = localRegistry; adtEnv := sky_asTuple3(__tup_localRegistry_adtEnv_adtDiags).V1; _ = adtEnv; adtDiags := sky_asTuple3(__tup_localRegistry_adtEnv_adtDiags).V2; _ = adtDiags; registry := func() any { return func() any { __subject := importedRegistry; if sky_asSkyMaybe(__subject).SkyName == "Just" { ir := sky_asSkyMaybe(__subject).JustValue; _ = ir; return Compiler_Adt_MergeRegistries(localRegistry, ir) };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return localRegistry };  panic("non-exhaustive case expression") }() }(); _ = registry; env0 := Compiler_Env_Union(adtEnv, aliasEnv); _ = env0; annotations := Compiler_Checker_CollectAnnotations(sky_asMap(mod)["declarations"]); _ = annotations; env1 := Compiler_Checker_PreRegisterFunctions(counter, sky_asMap(mod)["declarations"], env0); _ = env1; __tup_typedDecls_finalEnv_inferDiags := Compiler_Checker_InferAllDeclarations(counter, registry, env1, sky_asMap(mod)["declarations"], annotations, qualifiedAliases); typedDecls := sky_asTuple3(__tup_typedDecls_finalEnv_inferDiags).V0; _ = typedDecls; finalEnv := sky_asTuple3(__tup_typedDecls_finalEnv_inferDiags).V1; _ = finalEnv; inferDiags := sky_asTuple3(__tup_typedDecls_finalEnv_inferDiags).V2; _ = inferDiags; exhaustDiags := Compiler_Checker_CheckAllExhaustiveness(registry, sky_asMap(mod)["declarations"]); _ = exhaustDiags; allDiags := sky_listConcat([]any{adtDiags, inferDiags, exhaustDiags}); _ = allDiags; return SkyOk(map[string]any{"env": finalEnv, "registry": registry, "declarations": typedDecls, "diagnostics": allDiags, "typeAliases": qualifiedAliases}) }()
 }
 
 func Compiler_Checker_RegisterTypeAliases(counter any, decls any, env any) any {
@@ -5293,7 +5341,7 @@ func Compiler_Infer_InferRecordUpdate(counter any, registry any, env any, base a
 }
 
 func Compiler_Infer_InferRecordUpdateWithBase(counter any, registry any, env any, fields any, baseResult any) any {
-	return func() any { return func() any { __subject := Compiler_Infer_InferRecordUpdateFields(counter, registry, env, fields, sky_asMap(baseResult)["substitution"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { fieldSub := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V0; _ = fieldSub; fieldTypes := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1; _ = fieldTypes; return func() any { combinedSub := composeSubs(fieldSub, sky_asMap(baseResult)["substitution"]); _ = combinedSub; baseType := applySub(combinedSub, sky_asMap(baseResult)["type_"]); _ = baseType; return SkyOk(map[string]any{"substitution": combinedSub, "type_": TRecord(fieldTypes)}) }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := Compiler_Infer_InferRecordUpdateFields(counter, registry, env, fields, sky_asMap(baseResult)["substitution"]); if sky_asSkyResult(__subject).SkyName == "Err" { e := sky_asSkyResult(__subject).ErrValue; _ = e; return SkyErr(e) };  if sky_asSkyResult(__subject).SkyName == "Ok" { fieldSub := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V0; _ = fieldSub; fieldTypes := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1; _ = fieldTypes; return func() any { combinedSub := composeSubs(fieldSub, sky_asMap(baseResult)["substitution"]); _ = combinedSub; baseType := applySub(combinedSub, sky_asMap(baseResult)["type_"]); _ = baseType; return SkyOk(map[string]any{"substitution": combinedSub, "type_": baseType}) }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Compiler_Infer_InferFieldAccess(counter any, registry any, env any, target any, fieldName any) any {
@@ -6121,15 +6169,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 3, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 7, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 0, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 6, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -7393,7 +7441,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 1, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 0, "SkyName": "Fallible"} }; return map[string]any{"Tag": 1, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Ffi_WrapperGen_GenerateWrapperFile(safePkg any, pkgName any, funcs any, methods any, fieldAccessors any) any {
@@ -7843,6 +7891,14 @@ var writeWrapperIfNew = Compiler_Pipeline_WriteWrapperIfNew
 var fileAlreadyExists = Compiler_Pipeline_FileAlreadyExists
 
 var copyFfiWrapperFallback = Compiler_Pipeline_CopyFfiWrapperFallback
+
+var buildImportedRegistry = Compiler_Pipeline_BuildImportedRegistry
+
+var buildImportedAliases = Compiler_Pipeline_BuildImportedAliases
+
+var addModuleAliases = Compiler_Pipeline_AddModuleAliases
+
+var addModuleRegistry = Compiler_Pipeline_AddModuleRegistry
 
 var buildAliasMap = Compiler_Pipeline_BuildAliasMap
 

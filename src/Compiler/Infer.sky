@@ -208,7 +208,7 @@ inferRecordUpdateWithBase counter registry env fields baseResult =
                 combinedSub = composeSubs fieldSub baseResult.substitution
                 baseType = applySub combinedSub baseResult.type_
             in
-                Ok { substitution = combinedSub , type_ = TRecord fieldTypes }
+                Ok { substitution = combinedSub , type_ = baseType }
 
 
 inferFieldAccess : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> String -> Result String InferResult
@@ -1197,10 +1197,8 @@ checkAnnotation counter env inferredType annotation typeAliases =
                 checkAnnotationInner expandedInferred expandedAnnot
 
 
-checkAnnotationInner : Type -> Type -> List String
 checkAnnotationInner inferredType annotType =
     case unify inferredType annotType of
-
         Ok _ ->
             []
 

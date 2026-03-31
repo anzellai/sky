@@ -180,13 +180,15 @@ compileMultiModule entryPath outDir srcRoot entryMod =
 compileMultiModuleEntry : String -> String -> Ast.Module -> (Dict.Dict String String) -> Env.TypeEnv -> (List GoDecl) -> (List (String, Ast.Module)) -> Result String String
 compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls loadedModules =
     let
-        entryCheckResult = Checker.checkModule entryMod (Just stdlibEnv)
+        importedRegistry = buildImportedRegistry loadedModules
+        importedAliases = buildImportedAliases loadedModules
+        entryCheckResult =
+            Checker.checkModuleWithRegistryAndAliases entryMod (Just stdlibEnv) (Just importedRegistry) (Just importedAliases)
         entryRegistry =
             case entryCheckResult of
-                
                 Ok result ->
                     result.registry
-                
+
                 Err _ ->
                     Adt.emptyRegistry
         diagnostics =
@@ -1515,6 +1517,39 @@ copyFfiWrapperFallback outDir projectRoot modName mainGoCode combinedSrc =
                 copyOneFfiWrapper outDir "." modName mainGoCode
             else
                 ()
+
+
+buildImportedRegistry : (List (String, Ast.Module)) -> Adt.AdtRegistry
+buildImportedRegistry modules =
+    let
+        counter = Ref.new 5000
+    in
+        List.foldl (addModuleRegistry counter) Adt.emptyRegistry modules
+
+
+buildImportedAliases : (List (String, Ast.Module)) -> Dict.Dict String Type
+buildImportedAliases modules =
+    let
+        counter = Ref.new 6000
+    in
+        List.foldl (addModuleAliases counter) Dict.empty modules
+
+
+addModuleAliases counter pair acc =
+    let
+        mod = snd pair
+        ( _ , aliases ) =
+            Checker.registerTypeAliases counter mod.declarations Env.createPreludeEnv
+    in
+        Dict.union acc aliases
+
+
+addModuleRegistry counter pair acc =
+    let
+        mod = snd pair
+        ( reg , _ , _ ) = Adt.registerAdts counter mod.declarations
+    in
+        Adt.mergeRegistries acc reg
 
 
 buildAliasMap : (List Ast.ImportDecl) -> Dict.Dict String String
