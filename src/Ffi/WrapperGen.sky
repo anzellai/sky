@@ -110,33 +110,22 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
                 candidateParent
             else
                 ""
-        hasParentTypeRef =
-            if String.isEmpty parentPkg then
-                False
-            else
-                let
-                    parentShort = shortPkgName parentPkg
-                    allTypes =
-                        List.concatMap
-                            (
-                            \f -> List.append (List.map snd f.params) f.results
-                            )
-                            funcs
-                    allMethodTypes =
-                        List.concatMap
-                            (
-                            \m -> List.append (List.map snd m.params) m.results
-                            )
-                            methods
-                in
-                    List.any (\t -> String.contains (parentShort ++ ".") t)
-                        (List.append allTypes allMethodTypes)
+        allTypeRefs =
+            let
+                funcTypes =
+                    List.concatMap
+                        (\f -> List.append (List.map snd f.params) f.results)
+                        funcs
+                methodTypes =
+                    List.concatMap
+                        (\m -> List.append (List.map snd m.params) m.results)
+                        methods
+            in
+                List.append funcTypes methodTypes
+        ancestorPkgs = buildAncestorPkgsW pkgName
         parentImport =
-            if String.isEmpty parentPkg || parentPkg == pkgName || not
-                                                                       hasParentTypeRef then
-                ""
-            else
-                "\t" ++ shortPkgName parentPkg ++ " \"" ++ parentPkg ++ "\"\n"
+            String.join ""
+                (List.filterMap (buildAncestorImportLine pkgName allTypeRefs) ancestorPkgs)
     in
         String.join "\n"
             [ "package sky_wrappers"
@@ -195,9 +184,7 @@ canWrapFuncForPkg pkgName func =
                                                 else
                                                     t
                                         in
-                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || isSupportedTypeForPkg
-                                                                                                                                                                     pkgName
-                                                                                                                                                                     elemType
+                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || String.contains "." elemType || isSupportedTypeForPkg pkgName elemType
                                     else
                                         isSupportedTypeForPkg pkgName t
                     )
@@ -248,9 +235,7 @@ canWrapMethodForPkg pkgName method =
                                                 else
                                                     t
                                         in
-                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || isSupportedTypeForPkg
-                                                                                                                                                                     pkgName
-                                                                                                                                                                     elemType
+                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || String.contains "." elemType || isSupportedTypeForPkg pkgName elemType
                                     else
                                         isSupportedTypeForPkg pkgName t
                     )
@@ -275,70 +260,82 @@ isSupportedTypeForPkg pkgName goType =
                 else
                     sliceElem
         in
-            String.contains "." sliceInner
+            isFromPkgOrAncestorW pkgName sliceInner || String.contains "." sliceInner
+    else
+        isSupportedType goType || isSupportedResultType goType || isFromPkgOrAncestorW pkgName goType || isFromPkgOrAncestorW pkgName (stripPointerW goType)
+
+
+stripPointerW goType =
+    if String.startsWith "*" goType then
+        String.slice 1 (String.length goType) goType
+    else
+        goType
+
+
+isFromPkgOrAncestorW pkgName goType =
+    if String.startsWith (pkgName ++ ".") goType then
+        True
+    else if String.startsWith (pkgName ++ "/") goType then
+        True
+    else
+        checkAncestorPkgsW (buildAncestorPkgsW pkgName) goType
+
+
+buildAncestorPkgsW pkgName =
+    let
+        parts = String.split "/" pkgName
+        firstPart =
+            case parts of
+
+                f :: _ ->
+                    f
+
+                [] ->
+                    ""
+        isExternal = String.contains "." firstPart
+    in
+        if isExternal && List.length parts > 3 then
+            buildAncestorsLoopW (List.reverse (List.drop 1 (List.reverse parts))) []
+        else
+            []
+
+
+buildAncestorsLoopW parts acc =
+    if List.length parts < 3 then
+        acc
     else
         let
-            typeParts = String.split "/" pkgName
-            typeFirstPart =
-                case typeParts of
-                    
-                    f :: _ ->
-                        f
-                    
-                    [  ] ->
-                        ""
-            typeLastPart =
-                case List.reverse typeParts of
-                    
-                    l :: _ ->
-                        l
-                    
-                    [  ] ->
-                        ""
-            typeIsExternal = String.contains "." typeFirstPart
-            candidateParent2 =
-                String.join "/"
-                    (List.reverse (List.drop 1 (List.reverse typeParts)))
-            parentParts2 = String.split "/" candidateParent2
-            typeIsSubPkg =
-                typeIsExternal && List.length parentParts2 >= 3 && not
-                                                                       (
-                                                                       String.startsWith
-                                                                           "v"
-                                                                           typeLastPart && String.length
-                                                                                               typeLastPart <= 3
-                                                                       )
-            parentPkg =
-                if typeIsSubPkg then
-                    candidateParent2
-                else
-                    ""
+            ancestor = String.join "/" parts
+            shorter = List.reverse (List.drop 1 (List.reverse parts))
         in
-            isSupportedType goType || isSupportedResultType goType || String.startsWith
-                                                                          (
-                                                                          pkgName ++ "."
-                                                                          )
-                                                                          goType || String.startsWith
-                                                                                        (
-                                                                                        "*" ++ pkgName ++ "."
-                                                                                        )
-                                                                                        goType || String.startsWith
-                                                                                                      (
-                                                                                                      pkgName ++ "/"
-                                                                                                      )
-                                                                                                      goType || String.startsWith
-                                                                                                                    (
-                                                                                                                    "*" ++ pkgName ++ "/"
-                                                                                                                    )
-                                                                                                                    goType || (
-            not (String.isEmpty parentPkg) && String.startsWith
-                                                  (parentPkg ++ ".")
-                                                  goType
-            ) || (
-            not (String.isEmpty parentPkg) && String.startsWith
-                                                  ("*" ++ parentPkg ++ ".")
-                                                  goType
-            )
+            buildAncestorsLoopW shorter (ancestor :: acc)
+
+
+checkAncestorPkgsW ancestors goType =
+    case ancestors of
+
+        [] ->
+            False
+
+        pkg :: rest ->
+            if String.startsWith (pkg ++ ".") goType then
+                True
+            else
+                checkAncestorPkgsW rest goType
+
+
+buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
+    if ancestorPkg == currentPkg then
+        Nothing
+    else
+        let
+            ancestorShort = shortPkgName ancestorPkg
+            hasRef = List.any (\t -> String.contains (ancestorShort ++ ".") t) allTypeRefs
+        in
+            if hasRef then
+                Just ("\t" ++ ancestorShort ++ " \"" ++ ancestorPkg ++ "\"\n")
+            else
+                Nothing
 
 
 isSupportedType : String -> Bool

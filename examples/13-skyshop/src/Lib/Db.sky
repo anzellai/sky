@@ -13,6 +13,75 @@ import Fmt
 import Os
 
 -- ══════════════════════════════════════════════════════
+-- FIELD ACCESSORS
+-- ══════════════════════════════════════════════════════
+getField field row = Maybe.withDefault "" (Dict.get field row)
+
+
+getInt field row =
+    let
+        val = getField field row
+    in
+        if val == "" then
+            0
+        else
+            val
+                |> String.toInt
+                |> Result.withDefault 0
+
+
+getBool field row =
+    let
+        val = getField field row
+    in
+        val == "1" || val == "true"
+
+
+-- ══════════════════════════════════════════════════════
+-- INIT (no schema needed for Firestore)
+-- ══════════════════════════════════════════════════════
+initDb =
+    case getFirestoreClient () of
+
+        Ok _ ->
+            let
+                _ = println "[DB] Firestore client initialised"
+            in
+                ()
+
+        Err e ->
+            let
+                _ =
+                    println
+                        (
+                        "[DB] ERROR: Failed to initialise Firestore: " ++ errorToString
+                                                                              e
+                        )
+            in
+                ()
+
+
+runQuery q =
+    case Firestore.queryDocuments q ctx of
+
+        Err e ->
+            Err (errorToString e)
+
+        Ok iter ->
+            getAllSnapshots iter
+
+
+getAllSnapshots iter =
+    case Firestore.documentIteratorGetAll iter of
+
+        Ok snapshots ->
+            Ok (List.map snapshotToDict snapshots)
+
+        Err e ->
+            Err (errorToString e)
+
+
+-- ══════════════════════════════════════════════════════
 -- FIRESTORE CLIENT
 -- ══════════════════════════════════════════════════════
 ctx = Context.background ()
@@ -326,70 +395,3 @@ deleteDocRef docRef =
             Err (errorToString e)
 
 
-runQuery q =
-    case Firestore.queryDocuments q ctx of
-        
-        Err e ->
-            Err (errorToString e)
-        
-        Ok iter ->
-            getAllSnapshots iter
-
-
-getAllSnapshots iter =
-    case Firestore.documentIteratorGetAll iter of
-        
-        Ok snapshots ->
-            Ok (List.map snapshotToDict snapshots)
-        
-        Err e ->
-            Err (errorToString e)
-
-
--- ══════════════════════════════════════════════════════
--- FIELD ACCESSORS (same interface as before)
--- ══════════════════════════════════════════════════════
-getField field row = Maybe.withDefault "" (Dict.get field row)
-
-
-getInt field row =
-    let
-        val = getField field row
-    in
-        if val == "" then
-            0
-        else
-            val
-                |> String.toInt
-                |> Result.withDefault 0
-
-
-getBool field row =
-    let
-        val = getField field row
-    in
-        val == "1" || val == "true"
-
-
--- ══════════════════════════════════════════════════════
--- INIT (no schema needed for Firestore)
--- ══════════════════════════════════════════════════════
-initDb =
-    case getFirestoreClient () of
-        
-        Ok _ ->
-            let
-                _ = println "[DB] Firestore client initialised"
-            in
-                ()
-        
-        Err e ->
-            let
-                _ =
-                    println
-                        (
-                        "[DB] ERROR: Failed to initialise Firestore: " ++ errorToString
-                                                                              e
-                        )
-            in
-                ()

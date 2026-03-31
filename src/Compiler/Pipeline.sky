@@ -1605,7 +1605,8 @@ makePrefixAlias prefix decl =
 
 
 isCommonName : String -> Bool
-isCommonName name = name == "main" || name == "_"
+isCommonName name =
+    name == "main" || name == "_" || name == "update" || name == "init" || name == "view" || name == "subscriptions" || name == "guard" || name == "new" || name == "get" || name == "list" || name == "delete" || name == "set" || name == "expire"
 
 
 isSharedValue : String -> Bool
@@ -1778,7 +1779,7 @@ generateAliasesFromModuleInner modName mod =
         List.concatMap
             (
             \name ->
-                if String.isEmpty name || String.startsWith "Sky_" name || name == "_" then
+                if String.isEmpty name || String.startsWith "Sky_" name || name == "_" || isCommonName name then
                     []
                 else
                     let
@@ -1997,8 +1998,100 @@ compileDependencyModuleCached stdlibEnv allModules projectRoot pair =
         _ = File.mkdirAll cacheDir
         cachePath = cacheDir ++ "/" ++ String.replace "." "_" modName ++ ".go"
         sourceHash = String.fromInt (List.length mod.declarations) ++ "-" ++ String.fromInt (List.length mod.imports)
+        cachedContent =
+            case File.readFile cachePath of
+
+                Ok content ->
+                    content
+
+                Err _ ->
+                    ""
     in
-        compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
+        if not (String.isEmpty cachedContent) && isCacheValid cachedContent sourceHash then
+            loadCachedModule modName mod allModules cachedContent
+        else
+            compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
+
+
+loadCachedModule modName mod allModules cachedContent =
+    let
+        prefix = String.replace "." "_" modName
+        code = stripCacheHeader cachedContent
+        cachedDecl = GoDeclRaw code
+        aliases = generateConstructorAliasesFromCode prefix code
+        depImportAliases = generateImportAliases mod.imports allModules
+    in
+        deduplicateDecls (List.concat [ aliases , depImportAliases , [ cachedDecl ] ])
+
+
+generateConstructorAliasesFromCode prefix code =
+    let
+        lines = String.split "\n" code
+        funcLines = List.filter (\l -> String.startsWith "func " l) lines
+        varLines = List.filter (\l -> String.startsWith "var " l) lines
+        funcNames = List.filterMap (extractFuncNameFromLine prefix) funcLines
+        varNames = List.filterMap (extractVarNameFromLine prefix) varLines
+        allNames = List.append funcNames varNames
+    in
+        List.concatMap (makeAliasDecls prefix) allNames
+
+
+extractFuncNameFromLine prefix line =
+    let
+        afterFunc = String.slice 5 (String.length line) line
+        parenIdx = findCharIdx '(' afterFunc 0
+    in
+        if parenIdx > 0 then
+            let
+                fullName = String.slice 0 parenIdx afterFunc
+            in
+                if String.startsWith (prefix ++ "_") fullName then
+                    Just fullName
+                else
+                    Nothing
+        else
+            Nothing
+
+
+extractVarNameFromLine prefix line =
+    let
+        afterVar = String.slice 4 (String.length line) line
+        spaceIdx = findCharIdx ' ' afterVar 0
+    in
+        if spaceIdx > 0 then
+            let
+                fullName = String.slice 0 spaceIdx afterVar
+            in
+                if String.startsWith (prefix ++ "_") fullName then
+                    Just fullName
+                else
+                    Nothing
+        else
+            Nothing
+
+
+makeAliasDecls prefix fullName =
+    let
+        unprefixed = String.slice (String.length prefix + 1) (String.length fullName) fullName
+        lower = decapitaliseFirst unprefixed
+    in
+        if String.isEmpty unprefixed || isCommonName lower then
+            []
+        else
+            [ GoDeclRaw ("var " ++ lower ++ " = " ++ fullName)
+            , GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName)
+            ]
+
+
+decapitaliseFirst s =
+    if String.isEmpty s then
+        s
+    else
+        let
+            first = String.toLower (String.slice 0 1 s)
+            rest = String.slice 1 (String.length s) s
+        in
+            first ++ rest
 
 
 isCacheValid cachedCode sourceHash =
@@ -2065,23 +2158,15 @@ compileFfiModuleLight allModules pair =
         modName = fst pair
         mod = snd pair
         prefix = String.replace "." "_" modName
-        registry =
-            case Checker.checkModule mod Nothing of
-                
-                Ok result ->
-                    result.registry
-                
-                Err _ ->
-                    Adt.emptyRegistry
+        registry = Adt.emptyRegistry
         ctorDecls = Lower.generateConstructorDecls registry mod.declarations
         prefixed = List.map (prefixDecl prefix) ctorDecls
-        aliases = generateConstructorAliases prefix prefixed
         wrapperVars = List.filterMap (makeFfiWrapperVar prefix) mod.declarations
         depImportAliases = generateImportAliases mod.imports allModules
     in
         deduplicateDecls
             (
-            List.concat [ aliases , depImportAliases , prefixed , wrapperVars ]
+            List.concat [ depImportAliases , prefixed , wrapperVars ]
             )
 
 
@@ -2121,6 +2206,8 @@ buildFfiDeclString prefix name params body wrapperName =
     in
         if skyArgCount == 0 then
             "func " ++ goName ++ "() any { return sky_callZeroOrNil(" ++ wrapperName ++ ") }"
+        else if skyArgCount == 2 && String.contains "_SET_" wrapperName then
+            "func " ++ goName ++ "(a0 any) any { return func(a1 any) any { return " ++ wrapperName ++ "(a0, a1) } }"
         else if wrapperArgCount == 0 then
             makeFfiFunc goName wrapperName skyArgCount skyArgCount
         else
@@ -2262,7 +2349,7 @@ makeConstructorAlias prefix decl =
             else
                 ""
     in
-        if String.isEmpty unprefixed || unprefixed == "Main" then
+        if String.isEmpty unprefixed || unprefixed == "Main" || isCommonName (String.toLower (String.slice 0 1 unprefixed) ++ String.slice 1 (String.length unprefixed) unprefixed) then
             Nothing
         else
             let

@@ -13,17 +13,17 @@ import Lsp.JsonRpc as Json
 generateBindings : String -> String -> Result String String
 generateBindings pkgName outDir =
     case Inspector.inspectPackage pkgName of
-        
+
         Err e ->
             Err e
-        
+
         Ok inspectJson ->
             if String.length inspectJson > 50000 then
                 case generateBindingsNative pkgName outDir of
-                    
+
                     Ok content ->
                         Ok content
-                    
+
                     Err _ ->
                         generateBindingsFromJson pkgName outDir inspectJson
             else
@@ -40,10 +40,10 @@ generateBindingsFromJson pkgName outDir inspectJson =
         wrapperResult = WrapperGen.generateWrappers pkgName inspectJson outDir
     in
         case wrapperResult of
-            
+
             Ok _ ->
                 Ok skyiContent
-            
+
             Err e ->
                 Err e
 
@@ -53,7 +53,7 @@ generateBindingsNative pkgName outDir =
     let
         inspectPath = outDir ++ "/inspect.json"
         _ = File.mkdirAll outDir
-        result = Process.run "sky-ffi-gen" [ pkgName , inspectPath , outDir ]
+        result = Process.run "sky-ffi-gen" [ pkgName , inspectPath , outDir , "src" ]
     in
         case result of
             
@@ -427,11 +427,7 @@ allMethodParamsLoop pkgName params variadic idx total =
 
 isSafeTypeForPkg : String -> String -> Bool
 isSafeTypeForPkg pkgName goType =
-    if String.startsWith "func(" goType && not
-                                               (
-                                               String.contains "ResponseWriter"
-                                                   goType
-                                               ) then
+    if String.startsWith "func(" goType && not (String.contains "ResponseWriter" goType) then
         False
     else if String.startsWith "map[" goType && goType /= "map[string]interface{}" && goType /= "map[string]any" && goType /= "map[string]string" then
         False
@@ -444,67 +440,68 @@ isSafeTypeForPkg pkgName goType =
                 else
                     elemType
         in
-            String.startsWith (pkgName ++ ".") innerType || String.contains "."
-                                                                innerType
+            isFromPkgOrAncestor pkgName innerType || String.contains "." innerType
+    else
+        isSafeType goType || isFromPkgOrAncestor pkgName goType || isFromPkgOrAncestor pkgName (stripPointer goType)
+
+
+stripPointer goType =
+    if String.startsWith "*" goType then
+        String.slice 1 (String.length goType) goType
+    else
+        goType
+
+
+isFromPkgOrAncestor pkgName goType =
+    if String.startsWith (pkgName ++ ".") goType then
+        True
+    else if String.startsWith (pkgName ++ "/") goType then
+        True
+    else
+        checkAncestorPkgs (buildAncestorPkgs pkgName) goType
+
+
+buildAncestorPkgs pkgName =
+    let
+        parts = String.split "/" pkgName
+        firstPart =
+            case parts of
+
+                f :: _ ->
+                    f
+
+                [] ->
+                    ""
+        isExternal = String.contains "." firstPart
+    in
+        if isExternal && List.length parts > 3 then
+            buildAncestorsLoop (List.reverse (List.drop 1 (List.reverse parts))) []
+        else
+            []
+
+
+buildAncestorsLoop parts acc =
+    if List.length parts < 3 then
+        acc
     else
         let
-            parts = String.split "/" pkgName
-            firstPart =
-                case parts of
-                    
-                    f :: _ ->
-                        f
-                    
-                    [  ] ->
-                        ""
-            lastPart =
-                case List.reverse parts of
-                    
-                    l :: _ ->
-                        l
-                    
-                    [  ] ->
-                        ""
-            isExternal = String.contains "." firstPart
-            candidateParent =
-                String.join "/"
-                    (List.reverse (List.drop 1 (List.reverse parts)))
-            parentParts = String.split "/" candidateParent
-            isSubPkg =
-                isExternal && List.length parentParts >= 3 && not
-                                                                  (
-                                                                  String.startsWith
-                                                                      "v"
-                                                                      lastPart && String.length
-                                                                                      lastPart <= 3
-                                                                  )
-            parentPkg =
-                if isSubPkg then
-                    candidateParent
-                else
-                    ""
+            ancestor = String.join "/" parts
+            shorter = List.reverse (List.drop 1 (List.reverse parts))
         in
-            isSafeType goType || String.startsWith (pkgName ++ ".") goType || String.startsWith
-                                                                                  (
-                                                                                  "*" ++ pkgName ++ "."
-                                                                                  )
-                                                                                  goType || String.startsWith
-                                                                                                (
-                                                                                                pkgName ++ "/"
-                                                                                                )
-                                                                                                goType || String.startsWith
-                                                                                                              (
-                                                                                                              "*" ++ pkgName ++ "/"
-                                                                                                              )
-                                                                                                              goType || (
-            not (String.isEmpty parentPkg) && String.startsWith
-                                                  (parentPkg ++ ".")
-                                                  goType
-            ) || (
-            not (String.isEmpty parentPkg) && String.startsWith
-                                                  ("*" ++ parentPkg ++ ".")
-                                                  goType
-            )
+            buildAncestorsLoop shorter (ancestor :: acc)
+
+
+checkAncestorPkgs ancestors goType =
+    case ancestors of
+
+        [] ->
+            False
+
+        pkg :: rest ->
+            if String.startsWith (pkg ++ ".") goType then
+                True
+            else
+                checkAncestorPkgs rest goType
 
 
 isSafeType : String -> Bool

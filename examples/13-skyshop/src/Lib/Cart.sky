@@ -288,13 +288,10 @@ setCartState docId newState =
                         )
             in
                 case result of
-                    
+
                     Ok v ->
                         Ok v
-                    
-                    Err e ->
-                        Err e
-                    
+
                     Err e ->
                         Err e
 

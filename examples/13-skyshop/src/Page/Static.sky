@@ -75,25 +75,26 @@ section_ title body =
 -- 404
 -- ══════════════════════════════════════════════════════
 viewNotFound model =
-    Layout.page model
-        (
-        div [ tw [ textCenter , py16 ] ]
-            [ h1 [ tw [ text6xl , fontBold , textGray300 , mb4 ] ]
-                  [ text "404" ]
-            , p [ tw [ textLg , textGray500 , mb6 ] ] [ text "Page not found" ]
-            , a
-                  [ href "/"
-                  , attribute "sky-nav" ""
-                  , tw
-                        [ bgBlue600
-                        , textWhite
-                        , px6
-                        , py3
-                        , roundedLg
-                        , fontSemibold
-                        , inlineBlock
-                        ]
-                  ]
-                  [ text "Go Home" ]
-            ]
-        )
+    let
+        content =
+            div [ tw [ textCenter , py16 ] ]
+                [ h1 [ tw [ text6xl , fontBold , textGray300 , mb4 ] ]
+                      [ text "404" ]
+                , p [ tw [ textLg , textGray500 , mb6 ] ] [ text "Page not found" ]
+                , a
+                      [ href "/"
+                      , attribute "sky-nav" ""
+                      , tw
+                            [ bgBlue600
+                            , textWhite
+                            , px6
+                            , py3
+                            , roundedLg
+                            , fontSemibold
+                            , inlineBlock
+                            ]
+                      ]
+                      [ text "Go Home" ]
+                ]
+    in
+        Layout.page model content

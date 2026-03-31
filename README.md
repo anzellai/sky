@@ -1269,8 +1269,15 @@ SkyShop's build was **hanging indefinitely** -- the compiler never completed. Th
 | 5 | **Parallel wrapper copying** | -- | -- | Concurrent file I/O for FFI wrapper `.go` files |
 | 6 | **String.join optimisation** | 218s CPU | 207s CPU | Replace O(n^2) `++` chains with O(n) `String.join ""` in lowerer hot paths |
 | 7 | **Incremental compilation** | 1:06 | 1:02 | Cache lowered Go declarations in `.skycache/lowered/`; skip re-lowering unchanged modules |
+| 8 | **Usage-driven FFI generation** | 1:02 | -- | Native `sky-ffi-gen` tool scans source for used symbols; Stripe SDK 8896 types → 3 type aliases |
+| 9 | **`sky_equal` type-switch** | 3:41 | 2:01 | Direct string/int/bool comparison instead of `fmt.Sprintf` on both sides |
+| 10 | **Incremental cache reads** | 2:01 | -- | Warm builds load cached `.skycache/lowered/` modules, skipping type-check + lowering |
+| 11 | **FFI light path: skip checker** | -- | -- | `compileFfiModuleLight` uses empty registry instead of running `Checker.checkModule` |
+| 12 | **ASCII `String.slice`/`length`** | -- | -- | Byte indexing fast path for ASCII strings; `[]rune` conversion only for multi-byte UTF-8 |
+| 13 | **SkyName tag extraction** | 2:01 | 0:59 | Extract `__sky_tag` once per case expression instead of `sky_asMap(x)["SkyName"]` per branch |
+| 14 | **`sky_asString` type-switch** | -- | -- | `strconv.Itoa` for ints, direct return for bools; eliminates `fmt.Sprintf` garbage |
 
-**Result: Hanging -> 1:02** (with ~300% CPU utilisation on multi-core machines).
+**Result: Hanging -> 0:59 warm / 1:30 cold** (with ~200% CPU utilisation on multi-core machines).
 
 ### Key Technical Details
 
@@ -1356,21 +1363,67 @@ Dependency modules that haven't changed don't need re-lowering. The compiler cac
 
 On subsequent builds, cached modules skip type-checking and lowering entirely. Cross-module aliases are regenerated fresh each build to avoid duplicates. The cache is invalidated by `sky clean` or by deleting `.skycache/lowered/`.
 
+#### Usage-Driven FFI Generation (Step 8)
+
+Large Go packages like Stripe SDK (8,896 types, 7,824 constants) overwhelm the Sky-based binding generator. The native `sky-ffi-gen` tool (Go binary) solves this by scanning source files for used symbols before generating bindings:
+
+```
+Stripe SDK (github.com/stripe/stripe-go/v84):
+  Inspector output:  8,896 types, 7,824 constants, 43 functions
+  After filtering:   3 type aliases, ~50 field accessors, ~20 constants
+  Reduction:         100x fewer bindings generated
+```
+
+The tool extracts the import alias from `import ... as Stripe`, scans `src/` for `Stripe.funcName` patterns, then filters the `inspect.json` to only include referenced symbols and their transitive type dependencies.
+
+#### Runtime Hot Path Optimisations (Steps 9, 13-14)
+
+Three Go runtime functions dominated compilation time:
+
+**`sky_equal`** (Step 9) -- used for every `==` comparison in Sky. The original implementation converted both values to strings via `fmt.Sprintf` before comparing. The fix adds a type-switch fast path:
+
+```go
+// Before: 2 allocations per comparison
+func sky_equal(a, b any) bool { return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b) }
+
+// After: zero-allocation for matching types
+func sky_equal(a, b any) bool {
+    switch av := a.(type) {
+    case string: if bv, ok := b.(string); ok { return av == bv }
+    case int:    if bv, ok := b.(int); ok { return av == bv }
+    case bool:   if bv, ok := b.(bool); ok { return av == bv }
+    }
+    return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)  // fallback
+}
+```
+
+**SkyName tag extraction** (Step 13) -- pattern matching on custom ADTs generated `sky_asMap(__subject)["SkyName"]` per branch. For a 20-branch `case msg of`, that's 20 map lookups on the same value. Now extracted once:
+
+```go
+// Before: N map lookups for N branches
+if sky_asMap(__subject)["SkyName"] == "Navigate" { ... }
+if sky_asMap(__subject)["SkyName"] == "SetLang" { ... }
+
+// After: 1 map lookup, N string comparisons
+__sky_tag := sky_asMap(__subject)["SkyName"]
+if __sky_tag == "Navigate" { ... }
+if __sky_tag == "SetLang" { ... }
+```
+
 ### Current Build Times
 
-| Project | Modules | Time | Notes |
-|---|---|---|---|
-| hello-world | 1 | <1s | Single module, no deps |
-| skyvote | 32 local + 2 FFI | 1.7s | SQLite + Sky.Live |
-| **skyshop** | 43 local + 14 FFI | **1:02** | Stripe, Firebase, Tailwind, Sky.Live |
-| compiler self-build | 28 local | 5.6s | 2800 Go declarations |
+| Project | Modules | Cold | Warm | Notes |
+|---|---|---|---|---|
+| hello-world | 1 | <1s | <1s | Single module, no deps |
+| skyvote | 32 local + 2 FFI | 1.7s | 1.7s | SQLite + Sky.Live |
+| **skyshop** | 43 local + 14 FFI | **1:30** | **0:59** | Stripe, Firebase, Tailwind, Sky.Live |
+| compiler self-build | 28 local | 5.6s | 5.6s | 3200 Go declarations |
 
 ### What's Next
 
-- **Smarter cache invalidation** -- detect source changes per-module instead of invalidating everything
-- **Symbol-level tree-shaking** -- collect wrapper references during lowering, skip unused FFI symbols (ported from the TS compiler)
+- **Smarter cache invalidation** -- hash source content per-module instead of declaration counts
 - **Selective import emission** -- only emit Go imports for packages actually referenced
-- **Multi-level caching** -- cache type-check results, inspector output, and wrapper generation separately
+- **Struct-based ADT values** -- use Go structs instead of `map[string]any` for custom ADTs (O(1) field access, lower GC pressure)
 
 ## Type Safety Journey
 

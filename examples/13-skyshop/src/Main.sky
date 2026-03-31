@@ -85,25 +85,25 @@ refreshProducts model =
 
 refreshCart model =
     case model.user of
-        
+
         Just user ->
             let
                 userId = Db.getField "id" user
             in
                 case Cart.getOrCreateCart userId of
-                    
+
                     Ok cart ->
                         let
                             cartId = Db.getField "id" cart
                             items = Cart.getCartItems cartId
                         in
                             { model | cart = Just cart , cartItems = items }
-                    
+
                     Err _ ->
-                        model
-                    
-                    Nothing ->
                         { model | cart = Nothing , cartItems = [] }
+
+        Nothing ->
+            { model | cart = Nothing , cartItems = [] }
 
 
 refreshOrders model =
@@ -289,12 +289,12 @@ handleAddToCart productId model =
                          | notification = "Failed to add to cart: " ++ e
                          , notificationType = "error"
                          }, Cmd.none)
-                    
-                    Nothing ->
-                        ({ model
-                         | page = AuthSignInPage
-                         , authError = "Please sign in to add items."
-                         }, Cmd.none)
+
+        Nothing ->
+            ({ model
+             | page = AuthSignInPage
+             , authError = "Please sign in to add items."
+             }, Cmd.none)
 
 
 handleUpdateCartItemQty : String -> String -> Model -> (Model, Cmd Msg)
@@ -374,24 +374,12 @@ handleStartCheckout model =
                                         
                                         Err e ->
                                             ({ model
-                                             | notification = e
-                                             , notificationType = "error"
-                                             }, Cmd.none)
-                                        
-                                        Err e ->
-                                            ({ model
                                              | notification = "Checkout failed: " ++ e
                                              , notificationType = "error"
                                              }, Cmd.none)
-                                        
-                                        Nothing ->
-                                            ({ model
-                                             | notification = "No active cart."
-                                             , notificationType = "error"
-                                             }, Cmd.none)
-                                        
-                                        Nothing ->
-                                            ({ model | page = AuthSignInPage }, Cmd.none)
+
+        Nothing ->
+            ({ model | page = AuthSignInPage }, Cmd.none)
 
 
 handleVerifyPayment : String -> Model -> (Model, Cmd Msg)
@@ -514,17 +502,6 @@ handleVerifyPayment orderId model =
                                     in
                                         ({ base
                                          | notification = e
-                                         , notificationType = "error"
-                                         }, Cmd.none)
-                                
-                                Nothing ->
-                                    let
-                                        _ =
-                                            println
-                                                "[VERIFY] Order is Nothing in handleVerifyPayment"
-                                    in
-                                        ({ base
-                                         | notification = "Order not found."
                                          , notificationType = "error"
                                          }, Cmd.none)
 
@@ -707,180 +684,183 @@ handleUpdateOrderState orderId newState model =
              }, Cmd.none)
 
 
+handleFirebaseAuth token model =
+    case OAuth.handleAuthCallback token of
+
+        Ok user ->
+            let
+                _ =
+                    println
+                        ("[AUTH] Sign in: " ++ Db.getField "email" user)
+                newPage = resolvePostAuthPage model.page
+                updated =
+                    refreshProducts
+                        (refreshCart
+                            { model
+                            | user = Just user
+                            , page = newPage
+                            , notification = "Welcome!"
+                            , notificationType = "success"
+                            , authError = ""
+                            })
+            in
+                (updated, Cmd.none)
+
+        Err e ->
+            let
+                _ = println ("[AUTH] Error: " ++ e ++ " — signing out to self-heal")
+            in
+                handleSignOut { model | authError = e }
+
+
+resolvePostAuthPage page =
+    case page of
+
+        AuthSignInPage ->
+            HomePage
+
+        _ ->
+            page
+
+
+handleTick model =
+    case model.page of
+
+        AdminOrdersPage ->
+            (refreshAdminOrders model, Cmd.none)
+
+        OrdersPage ->
+            (refreshOrders model, Cmd.none)
+
+        _ ->
+            (model, Cmd.none)
+
+
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        
+
         Navigate page ->
             handleNavigate page model
-        
+
         SetLang lang ->
             ({ model | lang = lang }, Cmd.none)
-        
+
         FirebaseAuth token ->
-            case OAuth.handleAuthCallback token of
-                
-                Ok user ->
-                    let
-                        _ =
-                            println
-                                ("[AUTH] Sign in: " ++ Db.getField "email" user)
-                        newPage =
-                            case model.page of
-                                
-                                AuthSignInPage ->
-                                    HomePage
-                                
-                                _ ->
-                                    model.page
-                        updated =
-                            refreshProducts
-                                (
-                                refreshCart
-                                    { model
-                                    | user = Just user
-                                    , page = newPage
-                                    , notification = "Welcome!"
-                                    , notificationType = "success"
-                                    , authError = ""
-                                    }
-                                )
-                    in
-                        (updated, Cmd.none)
-                
-                Err e ->
-                    let
-                        _ = println ("[AUTH] Error: " ++ e ++ " — signing out to self-heal")
-                    in
-                        handleSignOut { model | authError = e }
-                
-                DoSignOut ->
-                    handleSignOut model
-                
-        -- Product browsing
-                SetSearch query ->
-                    let
-                        updated = { model | search = query }
-                    in
-                        (refreshProducts updated, Cmd.none)
-                
-                SetCategoryFilter cat ->
-                    let
-                        updated = { model | categoryFilter = cat }
-                    in
-                        (refreshProducts updated, Cmd.none)
-                
-                SetSortBy sortBy ->
-                    let
-                        updated = { model | sortBy = sortBy }
-                    in
-                        (refreshProducts updated, Cmd.none)
-                
-                ToggleSortDir ->
-                    let
-                        newDir =
-                            if model.sortDir == "asc" then
-                                "desc"
-                            else
-                                "asc"
-                        updated = { model | sortDir = newDir }
-                    in
-                        (refreshProducts updated, Cmd.none)
-                
-                SelectProduct productId ->
-                    (loadProductDetail model productId, Cmd.none)
-                
-        -- Cart
-                UpdateQuantity val ->
-                    ({ model | quantity = val }, Cmd.none)
-                
-                AddToCart productId ->
-                    handleAddToCart productId model
-                
-                UpdateCartItemQty itemId qtyStr ->
-                    handleUpdateCartItemQty itemId qtyStr model
-                
-                RemoveCartItem itemId ->
-                    handleRemoveCartItem itemId model
-                
-                UpdateRemarks val ->
-                    ({ model | cartRemarks = val }, Cmd.none)
-                
-                StartCheckout ->
-                    handleStartCheckout model
-                
-                VerifyPayment cartId ->
-                    handleVerifyPayment cartId model
-                
-        -- Admin product
-                UpdateEditTitle val ->
-                    ({ model | editTitle = val }, Cmd.none)
-                
-                UpdateEditSummary val ->
-                    ({ model | editSummary = val }, Cmd.none)
-                
-                UpdateEditCategory val ->
-                    ({ model | editCategory = val }, Cmd.none)
-                
-                UpdateEditPrice val ->
-                    ({ model | editPrice = val }, Cmd.none)
-                
-                UpdateEditDiscount val ->
-                    ({ model | editDiscount = val }, Cmd.none)
-                
-                UpdateEditCurrency val ->
-                    ({ model | editCurrency = val }, Cmd.none)
-                
-                UpdateEditStock val ->
-                    ({ model | editStock = val }, Cmd.none)
-                
-                ToggleEditPublished ->
-                    ({ model | editPublished = not model.editPublished }, Cmd.none)
-                
-                SubmitProduct ->
-                    handleSubmitProduct model
-                
-                DeleteProduct productId ->
-                    handleDeleteProduct productId model
-                
-                UpdateImageData val ->
-                    ({ model | editImageData = val }, Cmd.none)
-                
-                UploadImage ->
-                    handleUploadImage model
-                
-                DeleteImage imageId ->
-                    handleDeleteImage imageId model
-                
-        -- Admin orders
-                SetAdminOrderFilter filter ->
-                    let
-                        updated = { model | adminOrderFilter = filter }
-                    in
-                        (refreshAdminOrders updated, Cmd.none)
-                
-                UpdateOrderState orderId newState ->
-                    handleUpdateOrderState orderId newState model
-                
-        -- Notifications
-                DismissNotification ->
-                    ({ model | notification = "" , notificationType = "" }, Cmd.none)
-                
-        -- Tick (auto-refresh)
-                Tick ->
-                    case model.page of
-                        
-                        AdminOrdersPage ->
-                            (refreshAdminOrders model, Cmd.none)
-                        
-                        OrdersPage ->
-                            (refreshOrders model, Cmd.none)
-                        
-                        _ ->
-                            (model, Cmd.none)
-                        
-                        NoOp ->
-                            (model, Cmd.none)
+            handleFirebaseAuth token model
+
+        DoSignOut ->
+            handleSignOut model
+
+        SetSearch query ->
+            let
+                updated = { model | search = query }
+            in
+                (refreshProducts updated, Cmd.none)
+
+        SetCategoryFilter cat ->
+            let
+                updated = { model | categoryFilter = cat }
+            in
+                (refreshProducts updated, Cmd.none)
+
+        SetSortBy sortBy ->
+            let
+                updated = { model | sortBy = sortBy }
+            in
+                (refreshProducts updated, Cmd.none)
+
+        ToggleSortDir ->
+            let
+                newDir =
+                    if model.sortDir == "asc" then
+                        "desc"
+                    else
+                        "asc"
+                updated = { model | sortDir = newDir }
+            in
+                (refreshProducts updated, Cmd.none)
+
+        SelectProduct productId ->
+            (loadProductDetail model productId, Cmd.none)
+
+        UpdateQuantity val ->
+            ({ model | quantity = val }, Cmd.none)
+
+        AddToCart productId ->
+            handleAddToCart productId model
+
+        UpdateCartItemQty itemId qtyStr ->
+            handleUpdateCartItemQty itemId qtyStr model
+
+        RemoveCartItem itemId ->
+            handleRemoveCartItem itemId model
+
+        UpdateRemarks val ->
+            ({ model | cartRemarks = val }, Cmd.none)
+
+        StartCheckout ->
+            handleStartCheckout model
+
+        VerifyPayment cartId ->
+            handleVerifyPayment cartId model
+
+        UpdateEditTitle val ->
+            ({ model | editTitle = val }, Cmd.none)
+
+        UpdateEditSummary val ->
+            ({ model | editSummary = val }, Cmd.none)
+
+        UpdateEditCategory val ->
+            ({ model | editCategory = val }, Cmd.none)
+
+        UpdateEditPrice val ->
+            ({ model | editPrice = val }, Cmd.none)
+
+        UpdateEditDiscount val ->
+            ({ model | editDiscount = val }, Cmd.none)
+
+        UpdateEditCurrency val ->
+            ({ model | editCurrency = val }, Cmd.none)
+
+        UpdateEditStock val ->
+            ({ model | editStock = val }, Cmd.none)
+
+        ToggleEditPublished ->
+            ({ model | editPublished = not model.editPublished }, Cmd.none)
+
+        SubmitProduct ->
+            handleSubmitProduct model
+
+        DeleteProduct productId ->
+            handleDeleteProduct productId model
+
+        UpdateImageData val ->
+            ({ model | editImageData = val }, Cmd.none)
+
+        UploadImage ->
+            handleUploadImage model
+
+        DeleteImage imageId ->
+            handleDeleteImage imageId model
+
+        SetAdminOrderFilter filter ->
+            let
+                updated = { model | adminOrderFilter = filter }
+            in
+                (refreshAdminOrders updated, Cmd.none)
+
+        UpdateOrderState orderId newState ->
+            handleUpdateOrderState orderId newState model
+
+        DismissNotification ->
+            ({ model | notification = "" , notificationType = "" }, Cmd.none)
+
+        Tick ->
+            handleTick model
+
+        NoOp ->
+            (model, Cmd.none)
 
 
 -- ══════════════════════════════════════════════════════
