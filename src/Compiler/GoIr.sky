@@ -51,3 +51,4 @@ type GoDecl
     = GoDeclFunc GoFuncDecl
     | GoDeclVar String GoExpr
     | GoDeclRaw String
+    | GoDeclType String String

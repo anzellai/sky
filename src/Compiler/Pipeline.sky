@@ -868,7 +868,6 @@ makeGoPackage decls =
     , { path = "encoding/json" , alias_ = "encoding_json" }
     , { path = "time" , alias_ = "" }
     , { path = "context" , alias_ = "" }
-    , { path = "reflect" , alias_ = "" }
     ]
     , declarations = decls
     }
@@ -1664,6 +1663,9 @@ getDeclName decl =
             else
                 ""
 
+        GoDeclType name _ ->
+            name
+
 
 extractVarName : String -> String
 extractVarName code =
@@ -2341,6 +2343,16 @@ generateConstructorAliases prefix decls =
 
 makeConstructorAlias : String -> GoDecl -> Maybe GoDecl
 makeConstructorAlias prefix decl =
+    case decl of
+
+        GoDeclType _ _ ->
+            Nothing
+
+        _ ->
+            makeConstructorAliasInner prefix decl
+
+
+makeConstructorAliasInner prefix decl =
     let
         fullName = getDeclName decl
         prefixLen = String.length prefix + 1
@@ -2390,6 +2402,16 @@ generateOriginalAliases prefix decls =
 
 makeOriginalAlias : String -> GoDecl -> Maybe GoDecl
 makeOriginalAlias prefix decl =
+    case decl of
+
+        GoDeclType _ _ ->
+            Nothing
+
+        _ ->
+            makeOriginalAliasInner prefix decl
+
+
+makeOriginalAliasInner prefix decl =
     let
         name = getDeclName decl
     in
@@ -2414,6 +2436,9 @@ isExportableDecl decl =
             name /= "_"
         
         GoDeclRaw _ ->
+            True
+
+        GoDeclType _ _ ->
             True
 
 
@@ -2575,6 +2600,9 @@ prefixDecl prefix decl =
         
         GoDeclRaw code ->
             decl
+
+        GoDeclType name body ->
+            GoDeclType (prefix ++ "_" ++ capitalizeFirst name) body
 
 
 compileSource : String -> String -> String -> Result String String

@@ -1768,6 +1768,8 @@ var GenerateConstructorDecls = Compiler_Lower_GenerateConstructorDecls
 
 var GenerateCtorsForDecl = Compiler_Lower_GenerateCtorsForDecl
 
+var GenerateAdtStruct = Compiler_Lower_GenerateAdtStruct
+
 var GenerateCtorFunc = Compiler_Lower_GenerateCtorFunc
 
 var GenerateHelperDecls = Compiler_Lower_GenerateHelperDecls
@@ -1885,6 +1887,8 @@ var GoDeclFunc = Compiler_GoIr_GoDeclFunc
 var GoDeclVar = Compiler_GoIr_GoDeclVar
 
 var GoDeclRaw = Compiler_GoIr_GoDeclRaw
+
+var GoDeclType = Compiler_GoIr_GoDeclType
 
 var initState = Compiler_ParserCore_InitState
 
@@ -2281,7 +2285,11 @@ func Compiler_Lower_GenerateConstructorDecls(registry any, decls any) any {
 }
 
 func Compiler_Lower_GenerateCtorsForDecl(registry any, decl any) any {
-	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "TypeDecl" { typeName := sky_asMap(__subject)["V0"]; _ = typeName; variants := sky_asMap(__subject)["V2"]; _ = variants; return sky_call(sky_listIndexedMap(func(__pa0 any) any { return func(__pa1 any) any { return Compiler_Lower_GenerateCtorFunc(typeName, __pa0, __pa1) } }), variants) };  if true { return []any{} };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "TypeDecl" { typeName := sky_asMap(__subject)["V0"]; _ = typeName; variants := sky_asMap(__subject)["V2"]; _ = variants; return func() any { maxArity := sky_call(sky_call(sky_listFoldl(func(v any) any { return func(acc any) any { return func() any { if sky_asBool(sky_numCompare(">", sky_listLength(sky_asMap(v)["fields"]), acc)) { return sky_listLength(sky_asMap(v)["fields"]) }; return acc }() } }), 0), variants); _ = maxArity; structDecl := Compiler_Lower_GenerateAdtStruct(typeName, maxArity); _ = structDecl; ctorFuncs := sky_call(sky_listIndexedMap(func(__pa0 any) any { return func(__pa1 any) any { return Compiler_Lower_GenerateCtorFunc(typeName, __pa0, __pa1) } }), variants); _ = ctorFuncs; return append([]any{structDecl}, sky_asList(ctorFuncs)...) }() };  if true { return []any{} };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Lower_GenerateAdtStruct(typeName any, maxArity any) any {
+	return func() any { fields := func() any { if sky_asBool(sky_equal(maxArity, 0)) { return "struct { Tag int }" }; return func() any { vFields := sky_call(sky_stringJoin("; "), sky_call(sky_listMap(func(i any) any { return sky_concat("V", sky_concat(sky_stringFromInt(i), " any")) }), sky_call(sky_listRange(0), sky_numBinop("-", maxArity, 1)))); _ = vFields; return sky_concat("struct { Tag int; ", sky_concat(vFields, " }")) }() }(); _ = fields; return GoDeclType(Compiler_Lower_SanitizeGoIdent(typeName), fields) }()
 }
 
 func Compiler_Lower_GenerateCtorFunc(typeName any, tagIndex any, variant any) any {
@@ -2726,6 +2734,8 @@ func Compiler_Adt_ResolveTypeVarExpr(paramMap any, name any) any {
 	return func() any { return func() any { __subject := sky_call(sky_dictGet(name), paramMap); if sky_asSkyMaybe(__subject).SkyName == "Just" { tv := sky_asSkyMaybe(__subject).JustValue; _ = tv; return tv };  if sky_asSkyMaybe(__subject).SkyName == "Nothing" { return TVar(0, SkyJust(name)) };  panic("non-exhaustive case expression") }() }()
 }
 
+type Compiler_Types_Type struct { Tag int; V0 any; V1 any }
+
 func Compiler_Types_TVar(v0 any, v1 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "TVar", "V0": v0, "V1": v1}
 }
@@ -2858,6 +2868,8 @@ func Compiler_Types_FormatFunFrom(fromT any) any {
 	return func() any { return func() any { __subject := fromT; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "TFun" { return sky_concat("(", sky_concat(Compiler_Types_FormatType(fromT), ")")) };  if true { return Compiler_Types_FormatType(fromT) };  panic("non-exhaustive case expression") }() }()
 }
 
+type Compiler_GoIr_GoExpr struct { Tag int; V0 any; V1 any; V2 any }
+
 func Compiler_GoIr_GoIdent(v0 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "GoIdent", "V0": v0}
 }
@@ -2912,6 +2924,8 @@ func Compiler_GoIr_GoIndexExpr(v0 any, v1 any) any {
 
 var Compiler_GoIr_GoNilExpr = map[string]any{"Tag": 13, "SkyName": "GoNilExpr"}
 
+type Compiler_GoIr_GoStmt struct { Tag int; V0 any; V1 any; V2 any }
+
 func Compiler_GoIr_GoExprStmt(v0 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "GoExprStmt", "V0": v0}
 }
@@ -2938,6 +2952,8 @@ func Compiler_GoIr_GoBlock(v0 any) any {
 	return map[string]any{"Tag": 6, "SkyName": "GoBlock", "V0": v0}
 }
 
+type Compiler_GoIr_GoDecl struct { Tag int; V0 any; V1 any }
+
 func Compiler_GoIr_GoDeclFunc(v0 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "GoDeclFunc", "V0": v0}
 }
@@ -2948,6 +2964,10 @@ func Compiler_GoIr_GoDeclVar(v0 any, v1 any) any {
 
 func Compiler_GoIr_GoDeclRaw(v0 any) any {
 	return map[string]any{"Tag": 2, "SkyName": "GoDeclRaw", "V0": v0}
+}
+
+func Compiler_GoIr_GoDeclType(v0 any, v1 any) any {
+	return map[string]any{"Tag": 3, "SkyName": "GoDeclType", "V0": v0, "V1": v1}
 }
 
 func Compiler_ParserCore_InitState(tokens any) any {
@@ -3314,6 +3334,8 @@ func Compiler_Parser_ParseFunParams(state any) any {
 	return func() any { if sky_asBool(matchKind(TkEquals, state)) { return SkyTuple2{V0: []any{}, V1: state} }; if sky_asBool(matchKind(TkIdentifier, state)) { return func() any { __tup_tok_s1 := advance(state); tok := sky_asTuple2(__tup_tok_s1).V0; _ = tok; s1 := sky_asTuple2(__tup_tok_s1).V1; _ = s1; pat := func() any { if sky_asBool(sky_equal(sky_asMap(tok)["lexeme"], "_")) { return PWildcard(emptySpan) }; return PVariable(sky_asMap(tok)["lexeme"], emptySpan) }(); _ = pat; __tup_rest_s2 := Compiler_Parser_ParseFunParams(s1); rest := sky_asTuple2(__tup_rest_s2).V0; _ = rest; s2 := sky_asTuple2(__tup_rest_s2).V1; _ = s2; return SkyTuple2{V0: append([]any{pat}, sky_asList(rest)...), V1: s2} }() }; if sky_asBool(matchKind(TkLParen, state)) { return func() any { return func() any { __subject := Compiler_ParserPattern_ParsePatternExpr(state); if sky_asSkyResult(__subject).SkyName == "Ok" { pat := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V0; _ = pat; s1 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1; _ = s1; return func() any { __tup_rest_s2 := Compiler_Parser_ParseFunParams(s1); rest := sky_asTuple2(__tup_rest_s2).V0; _ = rest; s2 := sky_asTuple2(__tup_rest_s2).V1; _ = s2; return SkyTuple2{V0: append([]any{pat}, sky_asList(rest)...), V1: s2} }() };  if sky_asSkyResult(__subject).SkyName == "Err" { return SkyTuple2{V0: []any{}, V1: state} };  panic("non-exhaustive case expression") }() }() }; return SkyTuple2{V0: []any{}, V1: state} }()
 }
 
+type Compiler_Ast_Expression struct { Tag int; V0 any; V1 any; V2 any; V3 any }
+
 func Compiler_Ast_IdentifierExpr(v0 any, v1 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "IdentifierExpr", "V0": v0, "V1": v1}
 }
@@ -3398,6 +3420,8 @@ func Compiler_Ast_ParenExpr(v0 any, v1 any) any {
 	return map[string]any{"Tag": 20, "SkyName": "ParenExpr", "V0": v0, "V1": v1}
 }
 
+type Compiler_Ast_Pattern struct { Tag int; V0 any; V1 any; V2 any }
+
 func Compiler_Ast_PWildcard(v0 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "PWildcard", "V0": v0}
 }
@@ -3434,6 +3458,8 @@ func Compiler_Ast_PRecord(v0 any, v1 any) any {
 	return map[string]any{"Tag": 8, "SkyName": "PRecord", "V0": v0, "V1": v1}
 }
 
+type Compiler_Ast_LiteralValue struct { Tag int; V0 any }
+
 func Compiler_Ast_LitInt(v0 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "LitInt", "V0": v0}
 }
@@ -3453,6 +3479,8 @@ func Compiler_Ast_LitChar(v0 any) any {
 func Compiler_Ast_LitBool(v0 any) any {
 	return map[string]any{"Tag": 4, "SkyName": "LitBool", "V0": v0}
 }
+
+type Compiler_Ast_TypeExpr struct { Tag int; V0 any; V1 any; V2 any }
 
 func Compiler_Ast_TypeRef(v0 any, v1 any, v2 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "TypeRef", "V0": v0, "V1": v1, "V2": v2}
@@ -3478,6 +3506,8 @@ func Compiler_Ast_UnitTypeExpr(v0 any) any {
 	return map[string]any{"Tag": 5, "SkyName": "UnitTypeExpr", "V0": v0}
 }
 
+type Compiler_Ast_Declaration struct { Tag int; V0 any; V1 any; V2 any; V3 any }
+
 func Compiler_Ast_FunDecl(v0 any, v1 any, v2 any, v3 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "FunDecl", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
 }
@@ -3498,6 +3528,8 @@ func Compiler_Ast_ForeignImportDecl(v0 any, v1 any, v2 any, v3 any) any {
 	return map[string]any{"Tag": 4, "SkyName": "ForeignImportDecl", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
 }
 
+type Compiler_Ast_ExposingClause struct { Tag int; V0 any }
+
 var Compiler_Ast_ExposeAll = map[string]any{"Tag": 0, "SkyName": "ExposeAll"}
 
 func Compiler_Ast_ExposeList(v0 any) any {
@@ -3505,6 +3537,8 @@ func Compiler_Ast_ExposeList(v0 any) any {
 }
 
 var Compiler_Ast_ExposeNone = map[string]any{"Tag": 2, "SkyName": "ExposeNone"}
+
+type Compiler_Token_TokenKind struct { Tag int }
 
 var Compiler_Token_TkIdentifier = map[string]any{"Tag": 0, "SkyName": "TkIdentifier"}
 
@@ -3810,9 +3844,13 @@ var GenerateConstructorAliases = Compiler_Pipeline_GenerateConstructorAliases
 
 var MakeConstructorAlias = Compiler_Pipeline_MakeConstructorAlias
 
+var MakeConstructorAliasInner = Compiler_Pipeline_MakeConstructorAliasInner
+
 var GenerateOriginalAliases = Compiler_Pipeline_GenerateOriginalAliases
 
 var MakeOriginalAlias = Compiler_Pipeline_MakeOriginalAlias
+
+var MakeOriginalAliasInner = Compiler_Pipeline_MakeOriginalAliasInner
 
 var IsExportableDecl = Compiler_Pipeline_IsExportableDecl
 
@@ -4009,6 +4047,8 @@ var lowerRecordUpdate = Compiler_Lower_LowerRecordUpdate
 var generateConstructorDecls = Compiler_Lower_GenerateConstructorDecls
 
 var generateCtorsForDecl = Compiler_Lower_GenerateCtorsForDecl
+
+var generateAdtStruct = Compiler_Lower_GenerateAdtStruct
 
 var generateCtorFunc = Compiler_Lower_GenerateCtorFunc
 
@@ -4379,7 +4419,7 @@ func Compiler_Pipeline_DeduplicateDeclsLoop(decls any, seen any, acc any) any {
 }
 
 func Compiler_Pipeline_GetDeclName(decl any) any {
-	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { funcDecl := sky_asMap(__subject)["V0"]; _ = funcDecl; return sky_asMap(funcDecl)["name"] };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if __sky_tag == "GoDeclRaw" { code := sky_asMap(__subject)["V0"]; _ = code; return func() any { if sky_asBool(sky_call(sky_stringStartsWith("var "), code)) { return Compiler_Pipeline_ExtractVarName(code) }; if sky_asBool(sky_call(sky_stringStartsWith("func "), code)) { return Compiler_Pipeline_ExtractFuncName(code) }; if sky_asBool(sky_call(sky_stringStartsWith("type "), code)) { return Compiler_Pipeline_ExtractTypeName(code) }; return "" }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { funcDecl := sky_asMap(__subject)["V0"]; _ = funcDecl; return sky_asMap(funcDecl)["name"] };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  if __sky_tag == "GoDeclRaw" { code := sky_asMap(__subject)["V0"]; _ = code; return func() any { if sky_asBool(sky_call(sky_stringStartsWith("var "), code)) { return Compiler_Pipeline_ExtractVarName(code) }; if sky_asBool(sky_call(sky_stringStartsWith("func "), code)) { return Compiler_Pipeline_ExtractFuncName(code) }; if sky_asBool(sky_call(sky_stringStartsWith("type "), code)) { return Compiler_Pipeline_ExtractTypeName(code) }; return "" }() };  if __sky_tag == "GoDeclType" { name := sky_asMap(__subject)["V0"]; _ = name; return name };  panic("non-exhaustive case expression") }() }()
 }
 
 func Compiler_Pipeline_ExtractVarName(code any) any {
@@ -4567,6 +4607,10 @@ func Compiler_Pipeline_GenerateConstructorAliases(prefix any, decls any) any {
 }
 
 func Compiler_Pipeline_MakeConstructorAlias(prefix any, decl any) any {
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclType" { return SkyNothing() };  if true { return Compiler_Pipeline_MakeConstructorAliasInner(prefix, decl) };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Pipeline_MakeConstructorAliasInner(prefix any, decl any) any {
 	return func() any { fullName := Compiler_Pipeline_GetDeclName(decl); _ = fullName; prefixLen := sky_numBinop("+", sky_stringLength(prefix), 1); _ = prefixLen; unprefixed := func() any { if sky_asBool(sky_call(sky_stringStartsWith(sky_concat(prefix, "_")), fullName)) { return sky_call(sky_call(sky_stringSlice(prefixLen), sky_stringLength(fullName)), fullName) }; return "" }(); _ = unprefixed; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(unprefixed)) || sky_asBool(sky_asBool(sky_equal(unprefixed, "Main")) || sky_asBool(Compiler_Pipeline_IsCommonName(sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)))))) { return SkyNothing() }; return func() any { firstChar := sky_call(sky_call(sky_stringSlice(0), 1), unprefixed); _ = firstChar; aliasName := func() any { if sky_asBool(Compiler_Pipeline_IsSharedValue(sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)))) { return sky_concat(sky_stringToLower(sky_call(sky_call(sky_stringSlice(0), 1), unprefixed)), sky_call(sky_call(sky_stringSlice(1), sky_stringLength(unprefixed)), unprefixed)) }; return unprefixed }(); _ = aliasName; return func() any { if sky_asBool(sky_asBool(sky_equal(firstChar, sky_stringToUpper(firstChar))) || sky_asBool(Compiler_Pipeline_IsSharedValue(aliasName))) { return SkyJust(GoDeclRaw(sky_concat("var ", sky_concat(aliasName, sky_concat(" = ", fullName))))) }; return SkyNothing() }() }() }() }()
 }
 
@@ -4575,11 +4619,15 @@ func Compiler_Pipeline_GenerateOriginalAliases(prefix any, decls any) any {
 }
 
 func Compiler_Pipeline_MakeOriginalAlias(prefix any, decl any) any {
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclType" { return SkyNothing() };  if true { return Compiler_Pipeline_MakeOriginalAliasInner(prefix, decl) };  panic("non-exhaustive case expression") }() }()
+}
+
+func Compiler_Pipeline_MakeOriginalAliasInner(prefix any, decl any) any {
 	return func() any { name := Compiler_Pipeline_GetDeclName(decl); _ = name; return func() any { if sky_asBool(sky_asBool(sky_stringIsEmpty(name)) || sky_asBool(sky_asBool(sky_equal(name, "_")) || sky_asBool(sky_asBool(sky_equal(name, "main")) || sky_asBool(Compiler_Pipeline_IsCommonName(name))))) { return SkyNothing() }; return func() any { prefixedName := sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(name))); _ = prefixedName; return SkyJust(GoDeclRaw(sky_concat("var ", sky_concat(name, sky_concat(" = ", prefixedName))))) }() }() }()
 }
 
 func Compiler_Pipeline_IsExportableDecl(decl any) any {
-	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { funcDecl := sky_asMap(__subject)["V0"]; _ = funcDecl; return sky_asBool(!sky_equal(sky_asMap(funcDecl)["name"], "_")) && sky_asBool(!sky_equal(sky_asMap(funcDecl)["name"], "main")) };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; return !sky_equal(name, "_") };  if __sky_tag == "GoDeclRaw" { return true };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { funcDecl := sky_asMap(__subject)["V0"]; _ = funcDecl; return sky_asBool(!sky_equal(sky_asMap(funcDecl)["name"], "_")) && sky_asBool(!sky_equal(sky_asMap(funcDecl)["name"], "main")) };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; return !sky_equal(name, "_") };  if __sky_tag == "GoDeclRaw" { return true };  if __sky_tag == "GoDeclType" { return true };  panic("non-exhaustive case expression") }() }()
 }
 
 func Compiler_Pipeline_DirOfPath(path any) any {
@@ -4631,7 +4679,7 @@ func Compiler_Pipeline_FfiSafePartLoop(s any, idx any, acc any) any {
 }
 
 func Compiler_Pipeline_PrefixDecl(prefix any, decl any) any {
-	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { funcDecl := sky_asMap(__subject)["V0"]; _ = funcDecl; return func() any { if sky_asBool(sky_equal(sky_asMap(funcDecl)["name"], "main")) { return decl }; return GoDeclFunc(sky_recordUpdate(funcDecl, map[string]any{"name": sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(sky_asMap(funcDecl)["name"])))})) }() };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; expr := sky_asMap(__subject)["V1"]; _ = expr; return func() any { if sky_asBool(sky_asBool(sky_equal(name, "_")) || sky_asBool(sky_call(sky_stringStartsWith("var _ ="), name))) { return decl }; return GoDeclVar(sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(name))), expr) }() };  if __sky_tag == "GoDeclRaw" { code := sky_asMap(__subject)["V0"]; _ = code; return decl };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { funcDecl := sky_asMap(__subject)["V0"]; _ = funcDecl; return func() any { if sky_asBool(sky_equal(sky_asMap(funcDecl)["name"], "main")) { return decl }; return GoDeclFunc(sky_recordUpdate(funcDecl, map[string]any{"name": sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(sky_asMap(funcDecl)["name"])))})) }() };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; expr := sky_asMap(__subject)["V1"]; _ = expr; return func() any { if sky_asBool(sky_asBool(sky_equal(name, "_")) || sky_asBool(sky_call(sky_stringStartsWith("var _ ="), name))) { return decl }; return GoDeclVar(sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(name))), expr) }() };  if __sky_tag == "GoDeclRaw" { code := sky_asMap(__subject)["V0"]; _ = code; return decl };  if __sky_tag == "GoDeclType" { name := sky_asMap(__subject)["V0"]; _ = name; body := sky_asMap(__subject)["V1"]; _ = body; return GoDeclType(sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(name))), body) };  panic("non-exhaustive case expression") }() }()
 }
 
 func Compiler_Pipeline_CompileSource(filePath any, outDir any, source any) any {
@@ -4895,7 +4943,7 @@ func Compiler_Emit_EmitImports(imports any) any {
 }
 
 func Compiler_Emit_EmitDecl(decl any) any {
-	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { fd := sky_asMap(__subject)["V0"]; _ = fd; return Compiler_Emit_EmitFuncDecl(fd) };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; expr := sky_asMap(__subject)["V1"]; _ = expr; return sky_concat("var ", sky_concat(name, sky_concat(" = ", Compiler_Emit_EmitExpr(expr)))) };  if __sky_tag == "GoDeclRaw" { code := sky_asMap(__subject)["V0"]; _ = code; return code };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := decl; __sky_tag := sky_asMap(__subject)["SkyName"]; if __sky_tag == "GoDeclFunc" { fd := sky_asMap(__subject)["V0"]; _ = fd; return Compiler_Emit_EmitFuncDecl(fd) };  if __sky_tag == "GoDeclVar" { name := sky_asMap(__subject)["V0"]; _ = name; expr := sky_asMap(__subject)["V1"]; _ = expr; return sky_concat("var ", sky_concat(name, sky_concat(" = ", Compiler_Emit_EmitExpr(expr)))) };  if __sky_tag == "GoDeclRaw" { code := sky_asMap(__subject)["V0"]; _ = code; return code };  if __sky_tag == "GoDeclType" { name := sky_asMap(__subject)["V0"]; _ = name; body := sky_asMap(__subject)["V1"]; _ = body; return sky_concat("type ", sky_concat(name, sky_concat(" ", body))) };  panic("non-exhaustive case expression") }() }()
 }
 
 func Compiler_Emit_EmitFuncDecl(fd any) any {
@@ -6306,6 +6354,8 @@ func Formatter_Format_QuoteString(s any) any {
 	return s
 }
 
+type Formatter_Doc_Doc struct { Tag int; V0 any }
+
 func Formatter_Doc_DocText(v0 any) any {
 	return map[string]any{"Tag": 0, "SkyName": "DocText", "V0": v0}
 }
@@ -6337,15 +6387,15 @@ func Formatter_Doc_Text(s any) any {
 }
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 0, "SkyName": "DocLine"}
+	return map[string]any{"Tag": 1, "SkyName": "DocLine"}
 }
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 5, "SkyName": "DocHardline"}
+	return map[string]any{"Tag": 6, "SkyName": "DocHardline"}
 }
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocSoftline"}
+	return map[string]any{"Tag": 5, "SkyName": "DocSoftline"}
 }
 
 func Formatter_Doc_Concat(parts any) any {
@@ -6958,9 +7008,13 @@ var generateConstructorAliases = Compiler_Pipeline_GenerateConstructorAliases
 
 var makeConstructorAlias = Compiler_Pipeline_MakeConstructorAlias
 
+var makeConstructorAliasInner = Compiler_Pipeline_MakeConstructorAliasInner
+
 var generateOriginalAliases = Compiler_Pipeline_GenerateOriginalAliases
 
 var makeOriginalAlias = Compiler_Pipeline_MakeOriginalAlias
+
+var makeOriginalAliasInner = Compiler_Pipeline_MakeOriginalAliasInner
 
 var isExportableDecl = Compiler_Pipeline_IsExportableDecl
 
@@ -7950,6 +8004,8 @@ func Ffi_Inspector_InspectorGoCode() any {
 	return sky_call(sky_stringJoin("\n"), []any{"package main", "", "import (", "\t\"encoding/json\"", "\t\"fmt\"", "\t// go/importer removed: packages.Load handles module-aware loading", "\t\"go/types\"", "\t\"os\"", "\t_ \"strings\"", "\t\"golang.org/x/tools/go/packages\"", ")", "", "type Output struct {", "\tName   string     `json:\"name\"`", "\tPath   string     `json:\"path\"`", "\tTypes  []TypeDecl `json:\"types\"`", "\tFuncs  []FuncDecl `json:\"funcs\"`", "\tVars   []VarDecl  `json:\"vars\"`", "\tConsts []ConstDecl `json:\"consts\"`", "}", "", "type TypeDecl struct {", "\tName    string      `json:\"name\"`", "\tKind    string      `json:\"kind\"`", "\tFields  []FieldDecl `json:\"fields,omitempty\"`", "\tMethods []MethodDecl `json:\"methods,omitempty\"`", "}", "", "type FieldDecl struct {", "\tName string `json:\"name\"`", "\tType string `json:\"type\"`", "}", "", "type MethodDecl struct {", "\tName          string      `json:\"name\"`", "\tParams        []ParamDecl `json:\"params\"`", "\tResults       []ParamDecl `json:\"results\"`", "\tVariadic      bool        `json:\"variadic,omitempty\"`", "\tHasTypeParams bool        `json:\"hasTypeParams,omitempty\"`", "}", "", "type FuncDecl struct {", "\tName          string      `json:\"name\"`", "\tParams        []ParamDecl `json:\"params\"`", "\tResults       []ParamDecl `json:\"results\"`", "\tVariadic      bool        `json:\"variadic,omitempty\"`", "\tHasTypeParams bool        `json:\"hasTypeParams,omitempty\"`", "}", "", "type ParamDecl struct {", "\tName string `json:\"name\"`", "\tType string `json:\"type\"`", "}", "", "type VarDecl struct {", "\tName string `json:\"name\"`", "\tType string `json:\"type\"`", "}", "", "type ConstDecl struct {", "\tName  string `json:\"name\"`", "\tType  string `json:\"type\"`", "\tValue string `json:\"value,omitempty\"`", "}", "", "func typeStr(t types.Type) string {", "\tswitch u := t.(type) {", "\tcase *types.Named:", "\t\tobj := u.Obj()", "\t\tpkg := obj.Pkg()", "\t\tif pkg != nil {", "\t\t\treturn pkg.Path() + \".\" + obj.Name()", "\t\t}", "\t\treturn obj.Name()", "\tcase *types.Pointer:", "\t\treturn \"*\" + typeStr(u.Elem())", "\tcase *types.Slice:", "\t\treturn \"[]\" + typeStr(u.Elem())", "\tcase *types.Map:", "\t\treturn \"map[\" + typeStr(u.Key()) + \"]\" + typeStr(u.Elem())", "\tcase *types.Interface:", "\t\tif u.Empty() { return \"interface{}\" }", "\t\treturn \"interface{}\"", "\tdefault:", "\t\treturn t.String()", "\t}", "}", "", "func main() {", "\tif len(os.Args) < 2 {", "\t\tfmt.Fprintln(os.Stderr, \"usage: inspector <package>\")", "\t\tos.Exit(1)", "\t}", "\tminimal := len(os.Args) > 2 && os.Args[1] == \"--minimal\"", "\tpkgPath := os.Args[len(os.Args)-1]", "", "\tvar pkg *types.Package", "\tif minimal {", "\t\t// Minimal mode: load types only (no syntax/deps) for faster inspection", "\t\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName}", "\t\tpkgs, err := packages.Load(cfg, pkgPath)", "\t\tif err != nil {", "\t\t\tfmt.Fprintf(os.Stderr, \"load error: %v\\n\", err)", "\t\t\tos.Exit(1)", "\t\t}", "\t\tif len(pkgs) == 0 || pkgs[0].Types == nil {", "\t\t\tfmt.Fprintln(os.Stderr, \"no types found\")", "\t\t\tos.Exit(1)", "\t\t}", "\t\tpkg = pkgs[0].Types", "\t} else {", "\t\tcfg := &packages.Config{Mode: packages.NeedTypes | packages.NeedName | packages.NeedImports | packages.NeedDeps | packages.NeedSyntax}", "\t\tpkgs, err := packages.Load(cfg, pkgPath)", "\t\tif err != nil {", "\t\t\tfmt.Fprintf(os.Stderr, \"load error: %v\\n\", err)", "\t\t\tos.Exit(1)", "\t\t}", "\t\tif len(pkgs) == 0 || pkgs[0].Types == nil {", "\t\t\tfmt.Fprintln(os.Stderr, \"no types found\")", "\t\t\tos.Exit(1)", "\t\t}", "\t\tpkg = pkgs[0].Types", "\t}", "", "\tscope := pkg.Scope()", "\tout := Output{Name: pkg.Name(), Path: pkg.Path()}", "", "\tfor _, name := range scope.Names() {", "\t\tobj := scope.Lookup(name)", "\t\tif !obj.Exported() { continue }", "\t\tswitch o := obj.(type) {", "\t\tcase *types.TypeName:", "\t\t\tnamed, ok := o.Type().(*types.Named)", "\t\t\tif !ok { continue }", "\t\t\t// Skip generic types — can't be used from any-typed Sky code", "\t\t\tif named.TypeParams() != nil && named.TypeParams().Len() > 0 { continue }", "\t\t\ttd := TypeDecl{Name: name}", "\t\t\tswitch u := named.Underlying().(type) {", "\t\t\tcase *types.Struct:", "\t\t\t\ttd.Kind = \"struct\"", "\t\t\t\tfor i := 0; i < u.NumFields(); i++ {", "\t\t\t\t\tf := u.Field(i)", "\t\t\t\t\tif f.Exported() {", "\t\t\t\t\t\ttd.Fields = append(td.Fields, FieldDecl{Name: f.Name(), Type: typeStr(f.Type())})", "\t\t\t\t\t}", "\t\t\t\t}", "\t\t\tcase *types.Interface:", "\t\t\t\ttd.Kind = \"interface\"", "\t\t\t\tfor i := 0; i < u.NumMethods(); i++ {", "\t\t\t\t\tm := u.Method(i)", "\t\t\t\t\tif !m.Exported() { continue }", "\t\t\t\t\tsig := m.Type().(*types.Signature)", "\t\t\t\t\tmd := MethodDecl{Name: m.Name(), Variadic: sig.Variadic(), HasTypeParams: sig.TypeParams() != nil && sig.TypeParams().Len() > 0}", "\t\t\t\t\tfor j := 0; j < sig.Params().Len(); j++ {", "\t\t\t\t\t\tp := sig.Params().At(j)", "\t\t\t\t\t\tmd.Params = append(md.Params, ParamDecl{Name: p.Name(), Type: typeStr(p.Type())})", "\t\t\t\t\t}", "\t\t\t\t\tfor j := 0; j < sig.Results().Len(); j++ {", "\t\t\t\t\t\tr := sig.Results().At(j)", "\t\t\t\t\t\tmd.Results = append(md.Results, ParamDecl{Name: r.Name(), Type: typeStr(r.Type())})", "\t\t\t\t\t}", "\t\t\t\t\ttd.Methods = append(td.Methods, md)", "\t\t\t\t}", "\t\t\tdefault:", "\t\t\t\ttd.Kind = \"other\"", "\t\t\t}", "\t\t\tmset := types.NewMethodSet(types.NewPointer(named))", "\t\t\tfor i := 0; i < mset.Len(); i++ {", "\t\t\t\tm := mset.At(i)", "\t\t\t\tfn, ok := m.Obj().(*types.Func)", "\t\t\t\tif !ok || !fn.Exported() { continue }", "\t\t\t\tsig := fn.Type().(*types.Signature)", "\t\t\t\thasTP := sig.TypeParams() != nil && sig.TypeParams().Len() > 0", "\t\t\t\tif sig.RecvTypeParams() != nil && sig.RecvTypeParams().Len() > 0 { hasTP = true }", "\t\t\t\tmd := MethodDecl{Name: fn.Name(), Variadic: sig.Variadic(), HasTypeParams: hasTP}", "\t\t\t\tfor j := 0; j < sig.Params().Len(); j++ {", "\t\t\t\t\tp := sig.Params().At(j)", "\t\t\t\t\tmd.Params = append(md.Params, ParamDecl{Name: p.Name(), Type: typeStr(p.Type())})", "\t\t\t\t}", "\t\t\t\tfor j := 0; j < sig.Results().Len(); j++ {", "\t\t\t\t\tr := sig.Results().At(j)", "\t\t\t\t\tmd.Results = append(md.Results, ParamDecl{Name: r.Name(), Type: typeStr(r.Type())})", "\t\t\t\t}", "\t\t\t\ttd.Methods = append(td.Methods, md)", "\t\t\t}", "\t\t\tout.Types = append(out.Types, td)", "\t\tcase *types.Func:", "\t\t\tsig := o.Type().(*types.Signature)", "\t\t\tfd := FuncDecl{Name: name, Variadic: sig.Variadic(), HasTypeParams: sig.TypeParams() != nil && sig.TypeParams().Len() > 0}", "\t\t\tfor i := 0; i < sig.Params().Len(); i++ {", "\t\t\t\tp := sig.Params().At(i)", "\t\t\t\tfd.Params = append(fd.Params, ParamDecl{Name: p.Name(), Type: typeStr(p.Type())})", "\t\t\t}", "\t\t\tfor i := 0; i < sig.Results().Len(); i++ {", "\t\t\t\tr := sig.Results().At(i)", "\t\t\t\tfd.Results = append(fd.Results, ParamDecl{Name: r.Name(), Type: typeStr(r.Type())})", "\t\t\t}", "\t\t\tout.Funcs = append(out.Funcs, fd)", "\t\tcase *types.Var:", "\t\t\tout.Vars = append(out.Vars, VarDecl{Name: name, Type: typeStr(o.Type())})", "\t\tcase *types.Const:", "\t\t\tout.Consts = append(out.Consts, ConstDecl{Name: name, Type: typeStr(o.Type()), Value: o.Val().String()})", "\t\t}", "\t}", "", "\tenc := json.NewEncoder(os.Stdout)", "\tenc.SetIndent(\"\", \"  \")", "\tif err := enc.Encode(out); err != nil {", "\t\tfmt.Fprintf(os.Stderr, \"encode error: %v\\n\", err)", "\t\tos.Exit(1)", "\t}", "}"})
 }
 
+type Ffi_WrapperGen_FuncKind struct { Tag int }
+
 var Ffi_WrapperGen_Pure = map[string]any{"Tag": 0, "SkyName": "Pure"}
 
 var Ffi_WrapperGen_Fallible = map[string]any{"Tag": 1, "SkyName": "Fallible"}
@@ -7961,7 +8017,7 @@ func Ffi_WrapperGen_GenerateWrappers(pkgName any, inspectJson any, outDir any) a
 }
 
 func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
-	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 2, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 1, "SkyName": "Fallible"} }; return map[string]any{"Tag": 2, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
+	return func() any { return func() any { __subject := results; if len(sky_asList(__subject)) == 0 { return map[string]any{"Tag": 0, "SkyName": "Effectful"} };  if len(sky_asList(__subject)) == 1 { single := sky_asList(__subject)[0]; _ = single; return func() any { if sky_asBool(sky_equal(single, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() };  if true { return func() any { lastResult := func() any { return func() any { __subject := sky_listReverse(results); if len(sky_asList(__subject)) > 0 { last := sky_asList(__subject)[0]; _ = last; return last };  if len(sky_asList(__subject)) == 0 { return "" };  panic("non-exhaustive case expression") }() }(); _ = lastResult; return func() any { if sky_asBool(sky_equal(lastResult, "error")) { return map[string]any{"Tag": 2, "SkyName": "Fallible"} }; return map[string]any{"Tag": 0, "SkyName": "Effectful"} }() }() };  panic("non-exhaustive case expression") }() }()
 }
 
 func Ffi_WrapperGen_GenerateWrapperFile(safePkg any, pkgName any, funcs any, methods any, fieldAccessors any) any {
