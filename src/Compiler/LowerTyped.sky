@@ -46,14 +46,178 @@ compileSource filePath outDir source =
 
             Ok mod ->
                 let
-                    goCode = generateTypedGo mod
+                    srcRoot = dirOfPath filePath
+                    depModules = loadDependencyModules srcRoot mod.imports
+                    depCode = List.map (\triple -> generateDepModule (fst triple) (fst (snd triple)) (snd (snd triple))) depModules
+                    mainCode = generateTypedGo mod
+                    fullCode = insertDepCode mainCode depCode
                     outPath = outDir ++ "/main.go"
                     goModPath = outDir ++ "/go.mod"
                     _ = File.mkdirAll outDir
-                    _ = File.writeFile outPath goCode
+                    _ = File.writeFile outPath fullCode
                     _ = ensureGoMod goModPath
                 in
-                    Ok goCode
+                    Ok fullCode
+
+
+dirOfPath : String -> String
+dirOfPath path =
+    let
+        parts = String.split "/" path
+        dirParts = List.take (List.length parts - 1) parts
+    in
+        String.join "/" dirParts
+
+
+parseAndReturnModule modName alias source =
+    let
+        lexResult = Lexer.lex source
+    in
+        case Parser.parse lexResult.tokens of
+
+            Ok mod ->
+                Just (modName, (alias, mod))
+
+            Err _ ->
+                Nothing
+
+
+loadModuleFromFile srcRoot modName alias moduleParts =
+    let
+        filePath = srcRoot ++ "/" ++ String.join "/" moduleParts ++ ".sky"
+    in
+        case File.readFile filePath of
+
+            Ok source ->
+                parseAndReturnModule modName alias source
+
+            Err _ ->
+                Nothing
+
+
+importAliasName imp =
+    if String.isEmpty imp.alias_ then
+        lastPartOfImport imp.moduleName
+    else
+        imp.alias_
+
+
+lastPartOfImport parts =
+    case List.reverse parts of
+
+        last :: _ ->
+            last
+
+        [] ->
+            ""
+
+
+loadOneImport srcRoot imp =
+    let
+        modName = String.join "." imp.moduleName
+        alias = importAliasName imp
+    in
+        if isStdlibImport modName then
+            Nothing
+        else
+            loadModuleFromFile srcRoot modName alias imp.moduleName
+
+
+loadDependencyModules srcRoot imports =
+    List.filterMap (loadOneImport srcRoot) imports
+
+
+isStdlibImport : String -> Bool
+isStdlibImport name =
+    String.startsWith "Sky.Core" name || String.startsWith "Std." name || String.startsWith "Compiler." name || String.startsWith "Formatter." name || String.startsWith "Lsp." name || String.startsWith "Ffi." name
+
+
+generateDepModule : String -> String -> Module -> String
+generateDepModule modName alias mod =
+    let
+        prefix = String.replace "." "_" modName
+        typeDecls = generateTypeDecls mod.declarations
+        funcDecls = List.filterMap (generatePrefixedFunc prefix alias) mod.declarations
+    in
+        String.join "\n\n"
+            (List.append
+                (List.map (prefixTypeDecl prefix) typeDecls)
+                funcDecls
+            )
+
+
+generatePrefixedFunc : String -> String -> Declaration -> Maybe String
+generatePrefixedFunc prefix alias decl =
+    case decl of
+
+        FunDecl name params body _ ->
+            let
+                goParams = String.join ", " (List.map patternToParam params)
+                goBody = exprToGo body
+                fullName = prefix ++ "_" ++ capitalise name
+                aliasName = alias ++ "_" ++ capitalise name
+                funcDecl = "func " ++ fullName ++ "(" ++ goParams ++ ") any {\n\treturn " ++ goBody ++ "\n}"
+                aliasDecl =
+                    if aliasName /= fullName then
+                        "\nvar " ++ aliasName ++ " = " ++ fullName
+                    else
+                        ""
+            in
+                Just (funcDecl ++ aliasDecl)
+
+        _ ->
+            Nothing
+
+
+prefixTypeDecl : String -> String -> String
+prefixTypeDecl prefix typeStr =
+    if String.startsWith "type " typeStr then
+        let
+            rest = String.slice 5 (String.length typeStr) typeStr
+            spaceIdx = findCharInStr ' ' rest 0
+            typeName =
+                if spaceIdx > 0 then
+                    String.slice 0 spaceIdx rest
+                else
+                    rest
+            after =
+                if spaceIdx > 0 then
+                    String.slice spaceIdx (String.length rest) rest
+                else
+                    ""
+        in
+            "type " ++ prefix ++ "_" ++ capitalise typeName ++ after
+    else
+        typeStr
+
+
+capitalise : String -> String
+capitalise s =
+    if String.isEmpty s then
+        s
+    else
+        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s) s
+
+
+findCharInStr : Char -> String -> Int -> Int
+findCharInStr ch str idx =
+    if idx >= String.length str then
+        -1
+    else if String.slice idx (idx + 1) str == String.fromChar ch then
+        idx
+    else
+        findCharInStr ch str (idx + 1)
+
+
+insertDepCode : String -> List String -> String
+insertDepCode mainCode depCodes =
+    let
+        depSection = String.join "\n\n" (List.filter (\s -> not (String.isEmpty (String.trim s))) depCodes)
+    in
+        if String.isEmpty depSection then
+            mainCode
+        else
+            String.replace "func main()" (depSection ++ "\n\nfunc main()") mainCode
 
 
 ensureGoMod goModPath =
@@ -383,8 +547,26 @@ resolveQualified : List String -> String
 resolveQualified parts =
     let
         joined = String.join "." parts
+        resolved = resolveStdlib joined
     in
-        resolveStdlib joined
+        if resolved == String.replace "." "_" joined then
+            resolveImportAlias parts
+        else
+            resolved
+
+
+resolveImportAlias : List String -> String
+resolveImportAlias parts =
+    case parts of
+
+        alias :: funcParts ->
+            let
+                funcName = String.join "_" funcParts
+            in
+                alias ++ "_" ++ capitalise funcName
+
+        _ ->
+            String.join "_" parts
 
 
 resolveStdlib : String -> String
