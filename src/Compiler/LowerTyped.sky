@@ -1,15 +1,13 @@
 module Compiler.LowerTyped exposing (..)
 
--- Typed Go code generation.
--- Generates Go code where:
--- - ADTs are Go structs with Tag int field
--- - Records are Go structs with typed fields
--- - Pattern matching uses switch on Tag
--- - Functions have typed signatures
--- - No map[string]any for ADTs/records
+-- Typed Go code generation (v2).
+-- Generates clean Go code with:
+-- - ADTs as Go structs with Tag int
+-- - Pattern matching via switch on Tag
+-- - Direct Go types (no map[string]any for ADTs)
+-- - Stdlib mapped to Go stdlib calls
 --
--- This module generates code independently from Lower.sky.
--- It does NOT modify Lower.sky or share its code paths.
+-- Independent from Lower.sky. Does not share code paths.
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.String as String
@@ -22,7 +20,10 @@ import Compiler.Parser as Parser
 import Compiler.Types exposing (..)
 
 
--- Compile a Sky source file to typed Go code
+-- ══════════════════════════════════════════════════════
+-- PUBLIC API
+-- ══════════════════════════════════════════════════════
+
 compileTyped : String -> String -> Result String String
 compileTyped filePath outDir =
     case File.readFile filePath of
@@ -31,60 +32,68 @@ compileTyped filePath outDir =
             Err ("Cannot read: " ++ filePath)
 
         Ok source ->
+            compileSource filePath outDir source
+
+
+compileSource filePath outDir source =
+    let
+        lexResult = Lexer.lex source
+    in
+        case Parser.parse lexResult.tokens of
+
+            Err e ->
+                Err ("Parse error: " ++ e)
+
+            Ok mod ->
+                let
+                    goCode = generateTypedGo mod
+                    outPath = outDir ++ "/main.go"
+                    goModPath = outDir ++ "/go.mod"
+                    _ = File.mkdirAll outDir
+                    _ = File.writeFile outPath goCode
+                    _ = ensureGoMod goModPath
+                in
+                    Ok goCode
+
+
+ensureGoMod goModPath =
+    case File.readFile goModPath of
+
+        Ok _ ->
+            ()
+
+        Err _ ->
             let
-                lexResult = Lexer.lex source
+                _ = File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
             in
-                case Parser.parse lexResult.tokens of
-
-                    Err e ->
-                        Err ("Parse error: " ++ e)
-
-                    Ok mod ->
-                        let
-                            goCode = generateTypedGo mod
-                            outPath = outDir ++ "/main.go"
-                            goModPath = outDir ++ "/go.mod"
-                            _ = File.mkdirAll outDir
-                            _ = File.writeFile outPath goCode
-                            goModExists =
-                                case File.readFile goModPath of
-
-                                    Ok _ ->
-                                        True
-
-                                    Err _ ->
-                                        False
-                            _ =
-                                if goModExists then
-                                    ()
-                                else
-                                    let
-                                        _ = File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
-                                    in
-                                        ()
-                        in
-                            Ok goCode
+                ()
 
 
--- Generate a complete typed Go source file from a module
+-- ══════════════════════════════════════════════════════
+-- GO CODE GENERATION
+-- ══════════════════════════════════════════════════════
+
 generateTypedGo : Module -> String
 generateTypedGo mod =
     let
-        moduleName = String.join "." mod.name
         typeDecls = generateTypeDecls mod.declarations
         funcDecls = generateFuncDecls mod.declarations
         mainDecl = generateMainDecl mod.declarations
     in
-        String.join "\n\n"
+        String.join "\n"
             [ "package main"
             , ""
             , "import ("
             , "\t\"fmt\""
-            , "\t\"os\""
+            , "\t\"strconv\""
+            , "\t\"strings\""
             , ")"
             , ""
             , "var _ = fmt.Sprintf"
-            , "var _ = os.Exit"
+            , "var _ = strconv.Itoa"
+            , "var _ = strings.Join"
+            , ""
+            , runtimeHelpers
             , ""
             , String.join "\n\n" typeDecls
             , ""
@@ -94,7 +103,41 @@ generateTypedGo mod =
             ]
 
 
--- Generate Go struct declarations for ADT types
+runtimeHelpers =
+    String.join "\n"
+        [ "// Result type"
+        , "type SkyResult struct { Tag int; OkValue, ErrValue any }"
+        , "func SkyOk(v any) SkyResult { return SkyResult{Tag: 0, OkValue: v} }"
+        , "func SkyErr(v any) SkyResult { return SkyResult{Tag: 1, ErrValue: v} }"
+        , ""
+        , "// Maybe type"
+        , "type SkyMaybe struct { Tag int; JustValue any }"
+        , "func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, JustValue: v} }"
+        , "func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1} }"
+        , ""
+        , "// Tuple type"
+        , "type SkyTuple2 struct { V0, V1 any }"
+        , ""
+        , "// Task helpers"
+        , "func sky_taskSucceed(v any) func() any { return func() any { return SkyOk(v) } }"
+        , "func sky_taskFail(v any) func() any { return func() any { return SkyErr(v) } }"
+        , "func sky_taskRun(task any) any { if t, ok := task.(func() any); ok { return t() }; return task }"
+        , "func sky_taskAndThen(fn any) func(any) any { return func(task any) any { return func() any { r := sky_taskRun(task); if sr, ok := r.(SkyResult); ok && sr.Tag == 1 { return r }; if sr, ok := r.(SkyResult); ok { return sky_taskRun(fn.(func(any) any)(sr.OkValue)) }; return sky_taskRun(fn.(func(any) any)(r)) }  } }"
+        , "func sky_taskMap(fn any) func(any) any { return func(task any) any { return func() any { r := sky_taskRun(task); if sr, ok := r.(SkyResult); ok && sr.Tag == 1 { return r }; if sr, ok := r.(SkyResult); ok { return SkyOk(fn.(func(any) any)(sr.OkValue)) }; return SkyOk(fn.(func(any) any)(r)) } } }"
+        , ""
+        , "// String helpers"
+        , "func sky_concat(a, b any) string { return fmt.Sprintf(\"%v\", a) + fmt.Sprintf(\"%v\", b) }"
+        , "func sky_stringFromInt(v any) string { if n, ok := v.(int); ok { return strconv.Itoa(n) }; return fmt.Sprintf(\"%v\", v) }"
+        , ""
+        , "// Println"
+        , "func sky_println(args ...any) any { fmt.Println(args...); return struct{}{} }"
+        ]
+
+
+-- ══════════════════════════════════════════════════════
+-- TYPE DECLARATIONS
+-- ══════════════════════════════════════════════════════
+
 generateTypeDecls : List Declaration -> List String
 generateTypeDecls decls =
     List.filterMap generateOneTypeDecl decls
@@ -105,21 +148,24 @@ generateOneTypeDecl decl =
     case decl of
 
         TypeDecl name _ variants _ ->
-            let
-                maxArity = List.foldl (\v acc -> if List.length v.fields > acc then List.length v.fields else acc) 0 variants
-                fields =
-                    if maxArity == 0 then
-                        "Tag int"
-                    else
-                        String.join "; "
-                            ("Tag int" :: List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1)))
-                structDecl = "type " ++ name ++ " struct { " ++ fields ++ " }"
-                ctors = List.indexedMap (generateTypedCtor name) variants
-            in
-                Just (String.join "\n" (structDecl :: ctors))
+            Just (generateAdtDecl name variants)
 
         _ ->
             Nothing
+
+
+generateAdtDecl name variants =
+    let
+        maxArity = List.foldl (\v acc -> if List.length v.fields > acc then List.length v.fields else acc) 0 variants
+        fields =
+            if maxArity == 0 then
+                "Tag int"
+            else
+                String.join "; " ("Tag int" :: List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1)))
+        structDecl = "type " ++ name ++ " struct { " ++ fields ++ " }"
+        ctors = List.indexedMap (generateTypedCtor name) variants
+    in
+        String.join "\n" (structDecl :: ctors)
 
 
 generateTypedCtor : String -> Int -> TypeVariant -> String
@@ -137,7 +183,10 @@ generateTypedCtor typeName tagIndex variant =
                 "func " ++ variant.name ++ "(" ++ params ++ ") " ++ typeName ++ " { return " ++ typeName ++ "{" ++ fields ++ "} }"
 
 
--- Generate Go function declarations
+-- ══════════════════════════════════════════════════════
+-- FUNCTION DECLARATIONS
+-- ══════════════════════════════════════════════════════
+
 generateFuncDecls : List Declaration -> List String
 generateFuncDecls decls =
     List.filterMap generateOneFuncDecl decls
@@ -152,6 +201,9 @@ generateOneFuncDecl decl =
                 Nothing
             else
                 Just (generateFunc name params body)
+
+        TypeAnnotDecl _ _ _ ->
+            Nothing
 
         _ ->
             Nothing
@@ -180,7 +232,10 @@ patternToParam pat =
             "_ any"
 
 
--- Generate main function
+-- ══════════════════════════════════════════════════════
+-- MAIN FUNCTION
+-- ══════════════════════════════════════════════════════
+
 generateMainDecl : List Declaration -> String
 generateMainDecl decls =
     case findMain decls of
@@ -201,7 +256,7 @@ findMain decls =
 
         decl :: rest ->
             if isMainDecl decl then
-                extractMainBody decl
+                extractBody decl
             else
                 findMain rest
 
@@ -217,8 +272,8 @@ isMainDecl decl =
             False
 
 
-extractMainBody : Declaration -> Maybe Expression
-extractMainBody decl =
+extractBody : Declaration -> Maybe Expression
+extractBody decl =
     case decl of
 
         FunDecl _ _ body _ ->
@@ -228,7 +283,10 @@ extractMainBody decl =
             Nothing
 
 
--- Expression to Go code
+-- ══════════════════════════════════════════════════════
+-- EXPRESSION LOWERING
+-- ══════════════════════════════════════════════════════
+
 exprToGo : Expression -> String
 exprToGo expr =
     case expr of
@@ -236,10 +294,10 @@ exprToGo expr =
         StringLitExpr s _ ->
             "\"" ++ s ++ "\""
 
-        IntLitExpr n _ ->
+        IntLitExpr n _ _ ->
             String.fromInt n
 
-        FloatLitExpr f _ ->
+        FloatLitExpr f _ _ ->
             String.fromFloat f
 
         BoolLitExpr b _ ->
@@ -248,8 +306,14 @@ exprToGo expr =
             else
                 "false"
 
+        CharLitExpr c _ ->
+            "'" ++ c ++ "'"
+
+        UnitExpr _ ->
+            "struct{}{}"
+
         IdentifierExpr name _ ->
-            resolveIdentifier name
+            resolveIdent name
 
         QualifiedExpr parts _ ->
             resolveQualified parts
@@ -257,67 +321,493 @@ exprToGo expr =
         CallExpr callee args _ ->
             generateCall callee args
 
-        LetExpr bindings body _ ->
-            letToGo bindings body
-
         BinaryExpr op left right _ ->
-            exprToGo left ++ " " ++ mapOperator op ++ " " ++ exprToGo right
+            generateBinary op left right
+
+        LetExpr bindings body _ ->
+            generateLet bindings body
+
+        IfExpr cond thenE elseE _ ->
+            generateIf cond thenE elseE
+
+        CaseExpr subject branches _ ->
+            generateCase subject branches
+
+        LambdaExpr params body _ ->
+            generateLambda params body
+
+        TupleExpr items _ ->
+            generateTuple items
+
+        ListExpr items _ ->
+            generateList items
+
+        ParenExpr inner _ ->
+            "(" ++ exprToGo inner ++ ")"
+
+        NegateExpr inner _ ->
+            "-(" ++ exprToGo inner ++ ")"
+
+        RecordExpr fields _ ->
+            generateRecord fields
+
+        FieldAccessExpr target field _ ->
+            generateFieldAccess target field
+
+        RecordUpdateExpr base fields _ ->
+            generateRecordUpdate base fields
 
         _ ->
-            "nil /* unsupported expression */"
+            "nil"
 
 
-resolveIdentifier : String -> String
-resolveIdentifier name =
+-- ══════════════════════════════════════════════════════
+-- IDENTIFIER RESOLUTION
+-- ══════════════════════════════════════════════════════
+
+resolveIdent : String -> String
+resolveIdent name =
     if name == "println" then
         "sky_println"
+    else if name == "identity" then
+        "func(v any) any { return v }"
+    else if name == "not" then
+        "func(v any) any { if b, ok := v.(bool); ok { return !b }; return false }"
+    else if name == "errorToString" then
+        "func(v any) any { return fmt.Sprintf(\"%v\", v) }"
     else
         name
 
 
 resolveQualified : List String -> String
 resolveQualified parts =
-    String.join "_" parts
+    let
+        joined = String.join "." parts
+    in
+        resolveStdlib joined
 
+
+resolveStdlib : String -> String
+resolveStdlib name =
+    if name == "String.fromInt" then
+        "sky_stringFromInt"
+    else if name == "String.toInt" then
+        "func(s any) any { n, err := strconv.Atoi(fmt.Sprintf(\"%v\", s)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(n) }"
+    else if name == "String.length" then
+        "func(s any) any { return len([]rune(fmt.Sprintf(\"%v\", s))) }"
+    else if name == "String.isEmpty" then
+        "func(s any) any { return fmt.Sprintf(\"%v\", s) == \"\" }"
+    else if name == "String.contains" then
+        "func(sub any) any { return func(s any) any { return strings.Contains(fmt.Sprintf(\"%v\", s), fmt.Sprintf(\"%v\", sub)) } }"
+    else if name == "String.replace" then
+        "func(old any) any { return func(new_ any) any { return func(s any) any { return strings.ReplaceAll(fmt.Sprintf(\"%v\", s), fmt.Sprintf(\"%v\", old), fmt.Sprintf(\"%v\", new_)) } } }"
+    else if name == "String.trim" then
+        "func(s any) any { return strings.TrimSpace(fmt.Sprintf(\"%v\", s)) }"
+    else if name == "String.toUpper" then
+        "func(s any) any { return strings.ToUpper(fmt.Sprintf(\"%v\", s)) }"
+    else if name == "String.toLower" then
+        "func(s any) any { return strings.ToLower(fmt.Sprintf(\"%v\", s)) }"
+    else if name == "String.split" then
+        "func(sep any) any { return func(s any) any { parts := strings.Split(fmt.Sprintf(\"%v\", s), fmt.Sprintf(\"%v\", sep)); result := make([]any, len(parts)); for i, p := range parts { result[i] = p }; return result } }"
+    else if name == "String.join" then
+        "func(sep any) any { return func(list any) any { items, _ := list.([]any); ss := make([]string, len(items)); for i, p := range items { ss[i] = fmt.Sprintf(\"%v\", p) }; return strings.Join(ss, fmt.Sprintf(\"%v\", sep)) } }"
+    else if name == "String.startsWith" then
+        "func(prefix any) any { return func(s any) any { return strings.HasPrefix(fmt.Sprintf(\"%v\", s), fmt.Sprintf(\"%v\", prefix)) } }"
+    else if name == "List.map" then
+        "func(fn any) any { return func(list any) any { items, _ := list.([]any); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(item) }; return result } }"
+    else if name == "List.filter" then
+        "func(fn any) any { return func(list any) any { items, _ := list.([]any); var result []any; for _, item := range items { if b, ok := fn.(func(any) any)(item).(bool); ok && b { result = append(result, item) } }; if result == nil { return []any{} }; return result } }"
+    else if name == "List.foldl" then
+        "func(fn any) any { return func(init any) any { return func(list any) any { acc := init; for _, item := range list.([]any) { acc = fn.(func(any) any)(item).(func(any) any)(acc) }; return acc } } }"
+    else if name == "List.head" then
+        "func(list any) any { items, _ := list.([]any); if len(items) > 0 { return SkyJust(items[0]) }; return SkyNothing() }"
+    else if name == "List.length" then
+        "func(list any) any { items, _ := list.([]any); return len(items) }"
+    else if name == "List.isEmpty" then
+        "func(list any) any { items, _ := list.([]any); return len(items) == 0 }"
+    else if name == "List.reverse" then
+        "func(list any) any { items, _ := list.([]any); result := make([]any, len(items)); for i, v := range items { result[len(items)-1-i] = v }; return result }"
+    else if name == "List.append" then
+        "func(a any) any { return func(b any) any { la, _ := a.([]any); lb, _ := b.([]any); return append(la, lb...) } }"
+    else if name == "List.drop" then
+        "func(n any) any { return func(list any) any { items, _ := list.([]any); nn, _ := n.(int); if nn >= len(items) { return []any{} }; return items[nn:] } }"
+    else if name == "List.take" then
+        "func(n any) any { return func(list any) any { items, _ := list.([]any); nn, _ := n.(int); if nn >= len(items) { return items }; return items[:nn] } }"
+    else if name == "List.filterMap" then
+        "func(fn any) any { return func(list any) any { items, _ := list.([]any); var result []any; for _, item := range items { r := fn.(func(any) any)(item); if m, ok := r.(SkyMaybe); ok && m.Tag == 0 { result = append(result, m.JustValue) } }; if result == nil { return []any{} }; return result } }"
+    else if name == "Dict.empty" then
+        "map[string]any{}"
+    else if name == "Dict.insert" then
+        "func(k any) any { return func(v any) any { return func(d any) any { m, _ := d.(map[string]any); result := make(map[string]any); for mk, mv := range m { result[mk] = mv }; result[fmt.Sprintf(\"%v\", k)] = v; return result } } }"
+    else if name == "Dict.get" then
+        "func(k any) any { return func(d any) any { m, _ := d.(map[string]any); if v, ok := m[fmt.Sprintf(\"%v\", k)]; ok { return SkyJust(v) }; return SkyNothing() } }"
+    else if name == "Dict.fromList" then
+        "func(list any) any { items, _ := list.([]any); result := make(map[string]any); for _, item := range items { t, _ := item.(SkyTuple2); result[fmt.Sprintf(\"%v\", t.V0)] = t.V1 }; return result }"
+    else if name == "Maybe.withDefault" then
+        "func(def any) any { return func(m any) any { if mb, ok := m.(SkyMaybe); ok && mb.Tag == 0 { return mb.JustValue }; return def } }"
+    else if name == "Maybe.map" then
+        "func(fn any) any { return func(m any) any { if mb, ok := m.(SkyMaybe); ok && mb.Tag == 0 { return SkyJust(fn.(func(any) any)(mb.JustValue)) }; return SkyNothing() } }"
+    else if name == "Result.withDefault" then
+        "func(def any) any { return func(r any) any { if sr, ok := r.(SkyResult); ok && sr.Tag == 0 { return sr.OkValue }; return def } }"
+    else if name == "Result.map" then
+        "func(fn any) any { return func(r any) any { if sr, ok := r.(SkyResult); ok && sr.Tag == 0 { return SkyOk(fn.(func(any) any)(sr.OkValue)) }; return r } }"
+    else if name == "Result.andThen" then
+        "func(fn any) any { return func(r any) any { if sr, ok := r.(SkyResult); ok && sr.Tag == 0 { return fn.(func(any) any)(sr.OkValue) }; return r } }"
+    else if name == "Task.succeed" then
+        "sky_taskSucceed"
+    else if name == "Task.fail" then
+        "sky_taskFail"
+    else if name == "Task.andThen" then
+        "sky_taskAndThen"
+    else if name == "Task.map" then
+        "sky_taskMap"
+    else if name == "Task.run" then
+        "sky_taskRun"
+    else if name == "Task.perform" then
+        "func(task any) any { r := sky_taskRun(task); if sr, ok := r.(SkyResult); ok && sr.Tag == 0 { return sr.OkValue }; return r }"
+    else
+        String.replace "." "_" name
+
+
+-- ══════════════════════════════════════════════════════
+-- CALL GENERATION
+-- ══════════════════════════════════════════════════════
 
 generateCall : Expression -> List Expression -> String
 generateCall callee args =
     let
-        calleeStr = exprToGo callee
+        flatArgs = flattenCallArgs callee args
+        rootCallee = flatCallRoot callee
+        calleeStr = exprToGo rootCallee
+        argStrs = List.map exprToGo flatArgs
     in
         if calleeStr == "sky_println" then
-            "fmt.Println(" ++ String.join ", " (List.map exprToGo args) ++ ")"
+            "sky_println(" ++ String.join ", " argStrs ++ ")"
         else
-            calleeStr ++ "(" ++ String.join ", " (List.map exprToGo args) ++ ")"
+            calleeStr ++ "(" ++ String.join ", " argStrs ++ ")"
 
 
-mapOperator : String -> String
-mapOperator op =
-    if op == "++" then
-        "+"
-    else
-        op
+flattenCallArgs : Expression -> List Expression -> List Expression
+flattenCallArgs callee args =
+    case callee of
+
+        CallExpr innerCallee innerArgs _ ->
+            flattenCallArgs innerCallee (List.append innerArgs args)
+
+        _ ->
+            args
 
 
-letToGo : List LetBinding -> Expression -> String
-letToGo bindings body =
+flatCallRoot : Expression -> Expression
+flatCallRoot expr =
+    case expr of
+
+        CallExpr innerCallee _ _ ->
+            flatCallRoot innerCallee
+
+        _ ->
+            expr
+
+
+generateCurriedCall : String -> List String -> String
+generateCurriedCall callee args =
+    case args of
+
+        [] ->
+            callee
+
+        arg :: rest ->
+            generateCurriedCall (callee ++ "(" ++ arg ++ ")") rest
+
+
+-- ══════════════════════════════════════════════════════
+-- BINARY EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+generateBinary : String -> Expression -> Expression -> String
+generateBinary op left right =
     let
-        bindingStrs = List.map letBindingToGo bindings
+        l = exprToGo left
+        r = exprToGo right
+    in
+        if op == "++" then
+            "sky_concat(" ++ l ++ ", " ++ r ++ ")"
+        else if op == "|>" then
+            generatePipeline left right
+        else if op == "<|" then
+            exprToGo right ++ "(" ++ l ++ ")"
+        else if op == "==" then
+            "(" ++ l ++ " == " ++ r ++ ")"
+        else if op == "/=" || op == "!=" then
+            "(" ++ l ++ " != " ++ r ++ ")"
+        else if op == "&&" then
+            "(" ++ l ++ ".(bool) && " ++ r ++ ".(bool))"
+        else if op == "||" then
+            "(" ++ l ++ ".(bool) || " ++ r ++ ".(bool))"
+        else
+            "(" ++ l ++ " " ++ op ++ " " ++ r ++ ")"
+
+
+generatePipeline : Expression -> Expression -> String
+generatePipeline value fn =
+    let
+        valStr = exprToGo value
+    in
+        case fn of
+
+            CallExpr callee args _ ->
+                let
+                    fnStr = exprToGo callee
+                    argStrs = List.map exprToGo args
+                in
+                    if List.isEmpty args then
+                        fnStr ++ "(" ++ valStr ++ ")"
+                    else
+                        generateCurriedCall fnStr (List.append argStrs [ valStr ])
+
+            _ ->
+                exprToGo fn ++ "(" ++ valStr ++ ")"
+
+
+-- ══════════════════════════════════════════════════════
+-- LET EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+generateLet : List LetBinding -> Expression -> String
+generateLet bindings body =
+    let
+        bindingStrs = List.map generateBinding bindings
         bodyStr = exprToGo body
     in
         "func() any {\n\t\t" ++ String.join "\n\t\t" bindingStrs ++ "\n\t\treturn " ++ bodyStr ++ "\n\t}()"
 
 
-letBindingToGo : LetBinding -> String
-letBindingToGo binding =
+generateBinding : LetBinding -> String
+generateBinding binding =
     let
-        name =
-            case binding.pattern of
+        name = patternName binding.pattern
+        val = exprToGo binding.value
+    in
+        if name == "_" then
+            "_ = " ++ val
+        else
+            name ++ " := " ++ val ++ "; _ = " ++ name
 
-                PVariable n _ ->
-                    n
+
+patternName : Pattern -> String
+patternName pat =
+    case pat of
+
+        PVariable n _ ->
+            n
+
+        PWildcard _ ->
+            "_"
+
+        _ ->
+            "_"
+
+
+-- ══════════════════════════════════════════════════════
+-- IF EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+generateIf : Expression -> Expression -> Expression -> String
+generateIf cond thenE elseE =
+    let
+        condStr = exprToGo cond
+        thenStr = exprToGo thenE
+        elseStr = exprToGo elseE
+    in
+        "func() any { if " ++ asBool condStr ++ " { return " ++ thenStr ++ " }; return " ++ elseStr ++ " }()"
+
+
+asBool : String -> String
+asBool s =
+    if String.contains "==" s || String.contains "!=" s || String.contains "<" s || String.contains ">" s || String.contains "&&" s || String.contains "||" s then
+        s
+    else
+        s ++ ".(bool)"
+
+
+-- ══════════════════════════════════════════════════════
+-- CASE EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+generateCase : Expression -> List CaseBranch -> String
+generateCase subject branches =
+    let
+        subjectStr = exprToGo subject
+        branchStrs = List.map (generateBranch subjectStr) branches
+    in
+        "func() any { __subject := " ++ subjectStr ++ "; " ++ String.join " " branchStrs ++ " panic(\"non-exhaustive case\") }()"
+
+
+generateBranch : String -> CaseBranch -> String
+generateBranch subjectVar branch =
+    let
+        cond = patternCondition "__subject" branch.pattern
+        binds = patternBindings "__subject" branch.pattern
+        body = exprToGo branch.body
+    in
+        "if " ++ cond ++ " { " ++ binds ++ "return " ++ body ++ " }; "
+
+
+patternCondition : String -> Pattern -> String
+patternCondition varName pat =
+    case pat of
+
+        PWildcard _ ->
+            "true"
+
+        PVariable _ _ ->
+            "true"
+
+        PConstructor parts _ _ ->
+            let
+                ctorName = lastPart parts
+            in
+                if ctorName == "Ok" then
+                    "func() bool { sr, ok := " ++ varName ++ ".(SkyResult); return ok && sr.Tag == 0 }()"
+                else if ctorName == "Err" then
+                    "func() bool { sr, ok := " ++ varName ++ ".(SkyResult); return ok && sr.Tag == 1 }()"
+                else if ctorName == "Just" then
+                    "func() bool { m, ok := " ++ varName ++ ".(SkyMaybe); return ok && m.Tag == 0 }()"
+                else if ctorName == "Nothing" then
+                    "func() bool { m, ok := " ++ varName ++ ".(SkyMaybe); return ok && m.Tag == 1 }()"
+                else if ctorName == "True" then
+                    varName ++ " == true"
+                else if ctorName == "False" then
+                    varName ++ " == false"
+                else
+                    "true"
+
+        PLiteral lit _ ->
+            literalCondition varName lit
+
+        _ ->
+            "true"
+
+
+literalCondition : String -> LiteralValue -> String
+literalCondition varName lit =
+    case lit of
+
+        LitInt n ->
+            varName ++ " == " ++ String.fromInt n
+
+        LitString s ->
+            varName ++ " == " ++ s
+
+        LitFloat f ->
+            varName ++ " == " ++ String.fromFloat f
+
+
+patternBindings : String -> Pattern -> String
+patternBindings varName pat =
+    case pat of
+
+        PVariable name _ ->
+            name ++ " := " ++ varName ++ "; _ = " ++ name ++ "; "
+
+        PConstructor parts args _ ->
+            let
+                ctorName = lastPart parts
+            in
+                if ctorName == "Ok" then
+                    bindCtorArgs "OkValue" "SkyResult" varName args
+                else if ctorName == "Err" then
+                    bindCtorArgs "ErrValue" "SkyResult" varName args
+                else if ctorName == "Just" then
+                    bindCtorArgs "JustValue" "SkyMaybe" varName args
+                else
+                    ""
+
+        _ ->
+            ""
+
+
+bindCtorArgs : String -> String -> String -> List Pattern -> String
+bindCtorArgs fieldName typeName varName args =
+    case args of
+
+        arg :: [] ->
+            case arg of
+
+                PVariable name _ ->
+                    name ++ " := " ++ varName ++ ".(" ++ typeName ++ ")." ++ fieldName ++ "; _ = " ++ name ++ "; "
 
                 _ ->
-                    "_"
+                    ""
+
+        _ ->
+            ""
+
+
+lastPart : List String -> String
+lastPart parts =
+    case List.reverse parts of
+
+        last :: _ ->
+            last
+
+        [] ->
+            ""
+
+
+-- ══════════════════════════════════════════════════════
+-- LAMBDA EXPRESSIONS
+-- ══════════════════════════════════════════════════════
+
+generateLambda : List Pattern -> Expression -> String
+generateLambda params body =
+    let
+        paramStrs = List.map patternToParam params
+        bodyStr = exprToGo body
     in
-        name ++ " := " ++ exprToGo binding.value ++ "; _ = " ++ name
+        "func(" ++ String.join ", " paramStrs ++ ") any { return " ++ bodyStr ++ " }"
+
+
+-- ══════════════════════════════════════════════════════
+-- COLLECTIONS
+-- ══════════════════════════════════════════════════════
+
+generateTuple : List Expression -> String
+generateTuple items =
+    case items of
+
+        a :: b :: [] ->
+            "SkyTuple2{V0: " ++ exprToGo a ++ ", V1: " ++ exprToGo b ++ "}"
+
+        _ ->
+            "nil"
+
+
+generateList : List Expression -> String
+generateList items =
+    if List.isEmpty items then
+        "[]any{}"
+    else
+        "[]any{" ++ String.join ", " (List.map exprToGo items) ++ "}"
+
+
+generateRecord : List NamedExpr -> String
+generateRecord fields =
+    let
+        fieldStrs = List.map (\f -> "\"" ++ f.name ++ "\": " ++ exprToGo f.value) fields
+    in
+        "map[string]any{" ++ String.join ", " fieldStrs ++ "}"
+
+
+generateFieldAccess : Expression -> String -> String
+generateFieldAccess target field =
+    exprToGo target ++ ".(map[string]any)[\"" ++ field ++ "\"]"
+
+
+generateRecordUpdate : Expression -> List NamedExpr -> String
+generateRecordUpdate base fields =
+    let
+        baseStr = exprToGo base
+        updateStrs = List.map (\f -> "result[\"" ++ f.name ++ "\"] = " ++ exprToGo f.value) fields
+    in
+        "func() any { m, _ := " ++ baseStr ++ ".(map[string]any); result := make(map[string]any); for k, v := range m { result[k] = v }; " ++ String.join "; " updateStrs ++ "; return result }()"
