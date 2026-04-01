@@ -285,7 +285,6 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
         outPath = outDir ++ "/main.go"
         _ = File.mkdirAll outDir
         _ = File.writeFile outPath goCode
-        _ = trimWrapperImports outPath
         _ = println ("   Wrote " ++ outPath)
         _ =
             println
@@ -2984,7 +2983,6 @@ compileCheckedModule filePath outDir mod result =
         outPath = outDir ++ "/main.go"
         _ = File.mkdirAll outDir
         _ = File.writeFile outPath goCode
-        _ = trimWrapperImports outPath
         _ = println ("   Wrote " ++ outPath)
         _ =
             if List.foldl
