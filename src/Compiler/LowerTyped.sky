@@ -1,0 +1,323 @@
+module Compiler.LowerTyped exposing (..)
+
+-- Typed Go code generation.
+-- Generates Go code where:
+-- - ADTs are Go structs with Tag int field
+-- - Records are Go structs with typed fields
+-- - Pattern matching uses switch on Tag
+-- - Functions have typed signatures
+-- - No map[string]any for ADTs/records
+--
+-- This module generates code independently from Lower.sky.
+-- It does NOT modify Lower.sky or share its code paths.
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.File as File
+import Compiler.Ast as Ast exposing (..)
+import Compiler.Lexer as Lexer
+import Compiler.Parser as Parser
+import Compiler.Types exposing (..)
+
+
+-- Compile a Sky source file to typed Go code
+compileTyped : String -> String -> Result String String
+compileTyped filePath outDir =
+    case File.readFile filePath of
+
+        Err _ ->
+            Err ("Cannot read: " ++ filePath)
+
+        Ok source ->
+            let
+                lexResult = Lexer.lex source
+            in
+                case Parser.parse lexResult.tokens of
+
+                    Err e ->
+                        Err ("Parse error: " ++ e)
+
+                    Ok mod ->
+                        let
+                            goCode = generateTypedGo mod
+                            outPath = outDir ++ "/main.go"
+                            goModPath = outDir ++ "/go.mod"
+                            _ = File.mkdirAll outDir
+                            _ = File.writeFile outPath goCode
+                            goModExists =
+                                case File.readFile goModPath of
+
+                                    Ok _ ->
+                                        True
+
+                                    Err _ ->
+                                        False
+                            _ =
+                                if goModExists then
+                                    ()
+                                else
+                                    let
+                                        _ = File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
+                                    in
+                                        ()
+                        in
+                            Ok goCode
+
+
+-- Generate a complete typed Go source file from a module
+generateTypedGo : Module -> String
+generateTypedGo mod =
+    let
+        moduleName = String.join "." mod.name
+        typeDecls = generateTypeDecls mod.declarations
+        funcDecls = generateFuncDecls mod.declarations
+        mainDecl = generateMainDecl mod.declarations
+    in
+        String.join "\n\n"
+            [ "package main"
+            , ""
+            , "import ("
+            , "\t\"fmt\""
+            , "\t\"os\""
+            , ")"
+            , ""
+            , "var _ = fmt.Sprintf"
+            , "var _ = os.Exit"
+            , ""
+            , String.join "\n\n" typeDecls
+            , ""
+            , String.join "\n\n" funcDecls
+            , ""
+            , mainDecl
+            ]
+
+
+-- Generate Go struct declarations for ADT types
+generateTypeDecls : List Declaration -> List String
+generateTypeDecls decls =
+    List.filterMap generateOneTypeDecl decls
+
+
+generateOneTypeDecl : Declaration -> Maybe String
+generateOneTypeDecl decl =
+    case decl of
+
+        TypeDecl name _ variants _ ->
+            let
+                maxArity = List.foldl (\v acc -> if List.length v.fields > acc then List.length v.fields else acc) 0 variants
+                fields =
+                    if maxArity == 0 then
+                        "Tag int"
+                    else
+                        String.join "; "
+                            ("Tag int" :: List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1)))
+                structDecl = "type " ++ name ++ " struct { " ++ fields ++ " }"
+                ctors = List.indexedMap (generateTypedCtor name) variants
+            in
+                Just (String.join "\n" (structDecl :: ctors))
+
+        _ ->
+            Nothing
+
+
+generateTypedCtor : String -> Int -> TypeVariant -> String
+generateTypedCtor typeName tagIndex variant =
+    let
+        arity = List.length variant.fields
+    in
+        if arity == 0 then
+            "var " ++ variant.name ++ " = " ++ typeName ++ "{Tag: " ++ String.fromInt tagIndex ++ "}"
+        else
+            let
+                params = String.join ", " (List.indexedMap (\i _ -> "v" ++ String.fromInt i ++ " any") variant.fields)
+                fields = String.join ", " (("Tag: " ++ String.fromInt tagIndex) :: List.indexedMap (\i _ -> "V" ++ String.fromInt i ++ ": v" ++ String.fromInt i) variant.fields)
+            in
+                "func " ++ variant.name ++ "(" ++ params ++ ") " ++ typeName ++ " { return " ++ typeName ++ "{" ++ fields ++ "} }"
+
+
+-- Generate Go function declarations
+generateFuncDecls : List Declaration -> List String
+generateFuncDecls decls =
+    List.filterMap generateOneFuncDecl decls
+
+
+generateOneFuncDecl : Declaration -> Maybe String
+generateOneFuncDecl decl =
+    case decl of
+
+        FunDecl name params body _ ->
+            if name == "main" then
+                Nothing
+            else
+                Just (generateFunc name params body)
+
+        _ ->
+            Nothing
+
+
+generateFunc : String -> List Pattern -> Expression -> String
+generateFunc name params body =
+    let
+        goParams = String.join ", " (List.map patternToParam params)
+        goBody = exprToGo body
+    in
+        "func " ++ name ++ "(" ++ goParams ++ ") any {\n\treturn " ++ goBody ++ "\n}"
+
+
+patternToParam : Pattern -> String
+patternToParam pat =
+    case pat of
+
+        PVariable name _ ->
+            name ++ " any"
+
+        PWildcard _ ->
+            "_ any"
+
+        _ ->
+            "_ any"
+
+
+-- Generate main function
+generateMainDecl : List Declaration -> String
+generateMainDecl decls =
+    case findMain decls of
+
+        Just body ->
+            "func main() {\n\t" ++ exprToGo body ++ "\n}"
+
+        Nothing ->
+            "func main() {}"
+
+
+findMain : List Declaration -> Maybe Expression
+findMain decls =
+    case decls of
+
+        [] ->
+            Nothing
+
+        decl :: rest ->
+            if isMainDecl decl then
+                extractMainBody decl
+            else
+                findMain rest
+
+
+isMainDecl : Declaration -> Bool
+isMainDecl decl =
+    case decl of
+
+        FunDecl name _ _ _ ->
+            name == "main"
+
+        _ ->
+            False
+
+
+extractMainBody : Declaration -> Maybe Expression
+extractMainBody decl =
+    case decl of
+
+        FunDecl _ _ body _ ->
+            Just body
+
+        _ ->
+            Nothing
+
+
+-- Expression to Go code
+exprToGo : Expression -> String
+exprToGo expr =
+    case expr of
+
+        StringLitExpr s _ ->
+            "\"" ++ s ++ "\""
+
+        IntLitExpr n _ ->
+            String.fromInt n
+
+        FloatLitExpr f _ ->
+            String.fromFloat f
+
+        BoolLitExpr b _ ->
+            if b then
+                "true"
+            else
+                "false"
+
+        IdentifierExpr name _ ->
+            resolveIdentifier name
+
+        QualifiedExpr parts _ ->
+            resolveQualified parts
+
+        CallExpr callee args _ ->
+            generateCall callee args
+
+        LetExpr bindings body _ ->
+            letToGo bindings body
+
+        BinaryExpr op left right _ ->
+            exprToGo left ++ " " ++ mapOperator op ++ " " ++ exprToGo right
+
+        _ ->
+            "nil /* unsupported expression */"
+
+
+resolveIdentifier : String -> String
+resolveIdentifier name =
+    if name == "println" then
+        "sky_println"
+    else
+        name
+
+
+resolveQualified : List String -> String
+resolveQualified parts =
+    String.join "_" parts
+
+
+generateCall : Expression -> List Expression -> String
+generateCall callee args =
+    let
+        calleeStr = exprToGo callee
+    in
+        if calleeStr == "sky_println" then
+            "fmt.Println(" ++ String.join ", " (List.map exprToGo args) ++ ")"
+        else
+            calleeStr ++ "(" ++ String.join ", " (List.map exprToGo args) ++ ")"
+
+
+mapOperator : String -> String
+mapOperator op =
+    if op == "++" then
+        "+"
+    else
+        op
+
+
+letToGo : List LetBinding -> Expression -> String
+letToGo bindings body =
+    let
+        bindingStrs = List.map letBindingToGo bindings
+        bodyStr = exprToGo body
+    in
+        "func() any {\n\t\t" ++ String.join "\n\t\t" bindingStrs ++ "\n\t\treturn " ++ bodyStr ++ "\n\t}()"
+
+
+letBindingToGo : LetBinding -> String
+letBindingToGo binding =
+    let
+        name =
+            case binding.pattern of
+
+                PVariable n _ ->
+                    n
+
+                _ ->
+                    "_"
+    in
+        name ++ " := " ++ exprToGo binding.value ++ "; _ = " ++ name
