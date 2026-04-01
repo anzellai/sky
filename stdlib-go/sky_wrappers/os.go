@@ -108,7 +108,7 @@ func Sky_os_Exit(arg0 any) any {
 
 func Sky_os_Expand(arg0 any, arg1 any) string {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 string) string {
 		return _skyFn1(p0).(string)
 	}
@@ -340,7 +340,7 @@ func Sky_os_Pipe() SkyResult {
 	if err != nil {
 		return SkyErr(err)
 	}
-	return SkyOk(Tuple2{V0: _r0, V1: _r1})
+	return SkyOk(SkyTuple2{V0: _r0, V1: _r1})
 }
 
 func Sky_os_ReadDir(arg0 any) SkyResult {
@@ -1069,7 +1069,7 @@ func Sky_os_ProcessWait(this any) SkyResult {
 func Sky_os_ProcessWithHandle(this any, arg0 any) SkyResult {
 	var _this *os.Process
 	if _p, ok := this.(*os.Process); ok { _this = _p } else { _v := this.(os.Process); _this = &_v }
-	_skyFn0 := sky_asFunc(arg0)
+	_skyFn0 := arg0.(func(any) any)
 	_arg0 := func(p0 uintptr) {
 		_skyFn0(p0)
 	}

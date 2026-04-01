@@ -78,7 +78,7 @@ func Sky_io_NopCloser(arg0 any) io.ReadCloser {
 
 func Sky_io_Pipe() any {
 	_r0, _r1 := io.Pipe()
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_io_ReadAll(arg0 any) SkyResult {
@@ -371,7 +371,7 @@ func Sky_io_RuneReaderReadRune(this any) SkyResult {
 	if err != nil {
 		return SkyErr(err)
 	}
-	return SkyOk(Tuple2{V0: _r0, V1: _r1})
+	return SkyOk(SkyTuple2{V0: _r0, V1: _r1})
 }
 
 func Sky_io_RuneScannerUnreadRune(this any) SkyResult {
@@ -389,7 +389,7 @@ func Sky_io_SectionReaderOuter(this any) any {
 	if _p, ok := this.(*io.SectionReader); ok { _this = _p } else { _v := this.(io.SectionReader); _this = &_v }
 
 	_r0, _r1, _r2 := _this.Outer()
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_io_SectionReaderRead(this any, arg0 any) SkyResult {

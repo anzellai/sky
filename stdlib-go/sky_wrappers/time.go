@@ -11,7 +11,7 @@ func Sky_time_After(arg0 any) <-chan time.Time {
 
 func Sky_time_AfterFunc(arg0 any, arg1 any) *time.Timer {
 	_arg0 := arg0.(time.Duration)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func() {
 		_skyFn1(nil)
 	}
@@ -505,7 +505,7 @@ func Sky_time_TimeClock(this any) any {
 	_this := this.(*time.Time)
 
 	_r0, _r1, _r2 := _this.Clock()
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_time_TimeCompare(this any, arg0 any) int {
@@ -518,7 +518,7 @@ func Sky_time_TimeDate(this any) any {
 	_this := this.(*time.Time)
 
 	_r0, _r1, _r2 := _this.Date()
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_time_TimeDay(this any) int {
@@ -575,7 +575,7 @@ func Sky_time_TimeISOWeek(this any) any {
 	_this := this.(*time.Time)
 
 	_r0, _r1 := _this.ISOWeek()
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_time_TimeIn(this any, arg0 any) time.Time {
@@ -768,14 +768,14 @@ func Sky_time_TimeZone(this any) any {
 	_this := this.(*time.Time)
 
 	_r0, _r1 := _this.Zone()
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_time_TimeZoneBounds(this any) any {
 	_this := this.(*time.Time)
 
 	_r0, _r1 := _this.ZoneBounds()
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_time_TimerReset(this any, arg0 any) bool {

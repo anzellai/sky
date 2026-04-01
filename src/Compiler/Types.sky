@@ -382,6 +382,53 @@ goRecordType fields =
         "struct { " ++ String.join "; " fieldStrs ++ " }"
 
 
+extractFunParams : Type -> (List Type, Type)
+extractFunParams t =
+    extractFunParamsAcc t []
+
+
+extractFunParamsAcc : Type -> List Type -> (List Type, Type)
+extractFunParamsAcc t acc =
+    case t of
+
+        TFun fromT toT ->
+            extractFunParamsAcc toT (List.append acc [ fromT ])
+
+        _ ->
+            (acc, t)
+
+
+resolveSchemeType : Scheme -> Type
+resolveSchemeType scheme =
+    let
+        quantVars = scheme.quantified
+    in
+        replaceQuantifiedVars quantVars scheme.type_
+
+
+replaceQuantifiedVars : List Int -> Type -> Type
+replaceQuantifiedVars quantVars t =
+    case t of
+
+        TVar id _ ->
+            if List.any (\q -> q == id) quantVars then
+                TConst "any"
+            else
+                t
+
+        TFun fromT toT ->
+            TFun (replaceQuantifiedVars quantVars fromT) (replaceQuantifiedVars quantVars toT)
+
+        TApp ctor args ->
+            TApp (replaceQuantifiedVars quantVars ctor) (List.map (replaceQuantifiedVars quantVars) args)
+
+        TTuple items ->
+            TTuple (List.map (replaceQuantifiedVars quantVars) items)
+
+        _ ->
+            t
+
+
 formatVarName : Int -> (Maybe String) -> String
 formatVarName id name =
     case name of

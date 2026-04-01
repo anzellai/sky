@@ -7,7 +7,7 @@ import (
 
 func Sky_context_AfterFunc(arg0 any, arg1 any) func() bool {
 	_arg0 := arg0.(context.Context)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func() {
 		_skyFn1(nil)
 	}
@@ -34,20 +34,20 @@ func Sky_context_TODO() context.Context {
 func Sky_context_WithCancel(arg0 any) any {
 	_arg0 := arg0.(context.Context)
 	_r0, _r1 := context.WithCancel(_arg0)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_context_WithCancelCause(arg0 any) any {
 	_arg0 := arg0.(context.Context)
 	_r0, _r1 := context.WithCancelCause(_arg0)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_context_WithDeadline(arg0 any, arg1 any) any {
 	_arg0 := arg0.(context.Context)
 	_arg1 := arg1.(time.Time)
 	_r0, _r1 := context.WithDeadline(_arg0, _arg1)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_context_WithDeadlineCause(arg0 any, arg1 any, arg2 any) any {
@@ -55,14 +55,14 @@ func Sky_context_WithDeadlineCause(arg0 any, arg1 any, arg2 any) any {
 	_arg1 := arg1.(time.Time)
 	_arg2 := arg2.(error)
 	_r0, _r1 := context.WithDeadlineCause(_arg0, _arg1, _arg2)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_context_WithTimeout(arg0 any, arg1 any) any {
 	_arg0 := arg0.(context.Context)
 	_arg1 := arg1.(time.Duration)
 	_r0, _r1 := context.WithTimeout(_arg0, _arg1)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_context_WithTimeoutCause(arg0 any, arg1 any, arg2 any) any {
@@ -70,7 +70,7 @@ func Sky_context_WithTimeoutCause(arg0 any, arg1 any, arg2 any) any {
 	_arg1 := arg1.(time.Duration)
 	_arg2 := arg2.(error)
 	_r0, _r1 := context.WithTimeoutCause(_arg0, _arg1, _arg2)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_context_WithValue(arg0 any, arg1 any, arg2 any) context.Context {

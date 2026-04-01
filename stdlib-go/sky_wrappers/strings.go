@@ -31,7 +31,7 @@ func Sky_strings_ContainsAny(arg0 any, arg1 any) bool {
 
 func Sky_strings_ContainsFunc(arg0 any, arg1 any) bool {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -54,7 +54,7 @@ func Sky_strings_Cut(arg0 any, arg1 any) any {
 	_arg0 := arg0.(string)
 	_arg1 := arg1.(string)
 	_r0, _r1, _r2 := strings.Cut(_arg0, _arg1)
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_strings_CutPrefix(arg0 any, arg1 any) any {
@@ -90,7 +90,7 @@ func Sky_strings_Fields(arg0 any) []string {
 
 func Sky_strings_FieldsFunc(arg0 any, arg1 any) []string {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -129,7 +129,7 @@ func Sky_strings_IndexByte(arg0 any, arg1 any) int {
 
 func Sky_strings_IndexFunc(arg0 any, arg1 any) int {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -168,7 +168,7 @@ func Sky_strings_LastIndexByte(arg0 any, arg1 any) int {
 
 func Sky_strings_LastIndexFunc(arg0 any, arg1 any) int {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -176,7 +176,7 @@ func Sky_strings_LastIndexFunc(arg0 any, arg1 any) int {
 }
 
 func Sky_strings_Map(arg0 any, arg1 any) string {
-	_skyFn0 := sky_asFunc(arg0)
+	_skyFn0 := arg0.(func(any) any)
 	_arg0 := func(p0 rune) rune {
 		return _skyFn0(p0).(rune)
 	}
@@ -296,7 +296,7 @@ func Sky_strings_Trim(arg0 any, arg1 any) string {
 
 func Sky_strings_TrimFunc(arg0 any, arg1 any) string {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -311,7 +311,7 @@ func Sky_strings_TrimLeft(arg0 any, arg1 any) string {
 
 func Sky_strings_TrimLeftFunc(arg0 any, arg1 any) string {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -332,7 +332,7 @@ func Sky_strings_TrimRight(arg0 any, arg1 any) string {
 
 func Sky_strings_TrimRightFunc(arg0 any, arg1 any) string {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 rune) bool {
 		return _skyFn1(p0).(bool)
 	}
@@ -480,7 +480,7 @@ func Sky_strings_ReaderReadRune(this any) SkyResult {
 	if err != nil {
 		return SkyErr(err)
 	}
-	return SkyOk(Tuple2{V0: _r0, V1: _r1})
+	return SkyOk(SkyTuple2{V0: _r0, V1: _r1})
 }
 
 func Sky_strings_ReaderReset(this any, arg0 any) any {

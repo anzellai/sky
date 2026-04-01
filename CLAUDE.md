@@ -433,6 +433,10 @@ main =
     - Session store: `RebuildADT` handles custom ADTs recursively
     - Exhaustive.sky module checks pattern coverage against ADT registry
 
+22. **Lexer: `alias` keyword blocks parameter names** — FIXED. `isKeyword` in Token.sky listed `alias` as a keyword, causing the lexer to emit `TkKeyword` instead of `TkIdentifier` for `alias`. Functions with `alias` as a parameter name (e.g. `generateDepModule modName alias mod =`) failed to parse because `parseFunParams` only accepts `TkIdentifier` tokens. Fix: remove `alias` from `isKeyword` — it's only contextual in `type alias` declarations, where `dispatchDeclaration` already uses string comparison. Impact: 5 functions in LowerTyped.sky were silently dropped.
+
+23. **Parser: long-line formatter splits dropping functions** — FIXED. Very long single-line expressions split by the formatter across multiple lines (e.g. `String.startsWith` with `"["` on the next line at column 518) caused `parseFunDecl` to fail because `parseExpr` couldn't handle the deep-column continuation. Fix: split `isSafeType` (BindingGen.sky) and `isSupportedType` (WrapperGen.sky) into helper functions. Impact: 2 critical FFI functions were silently dropped.
+
 ### Techniques from TS Compiler (to port)
 
 The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build, ~500ms incremental) through techniques not yet ported:

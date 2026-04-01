@@ -24,6 +24,7 @@ type alias LowerCtx =
     , localFunctionArity : Dict.Dict String Int
     , exposedStdlib : Dict.Dict String String
     , paramNames : Set.Set String
+    , typedDecls : Dict.Dict String Scheme
     }
 
 
@@ -43,6 +44,7 @@ emptyCtx =
     , localFunctionArity = Dict.empty
     , exposedStdlib = Dict.empty
     , paramNames = Set.empty
+    , typedDecls = Dict.empty
     }
 
 
@@ -124,18 +126,40 @@ lowerModule registry mod =
 
 
 lowerDeclarations : LowerCtx -> (List Declaration) -> List GoDecl
-lowerDeclarations ctx decls = List.filterMap (lowerDecl ctx) decls
+lowerDeclarations ctx decls = List.concatMap (lowerDeclWithType ctx) decls
 
 
-lowerDecl : LowerCtx -> Declaration -> Maybe GoDecl
-lowerDecl ctx decl =
+lowerDeclWithType : LowerCtx -> Declaration -> List GoDecl
+lowerDeclWithType ctx decl =
     case decl of
-        
+
         FunDecl name params body _ ->
-            Just (lowerFunction ctx name params body)
-        
+            let
+                funcDecl = lowerFunction ctx name params body
+                typeComment = makeTypeComment ctx name
+            in
+                if String.isEmpty typeComment then
+                    [ funcDecl ]
+                else
+                    [ GoDeclRaw typeComment , funcDecl ]
+
         _ ->
-            Nothing
+            []
+
+
+makeTypeComment : LowerCtx -> String -> String
+makeTypeComment ctx name =
+    case Dict.get name ctx.typedDecls of
+
+        Just scheme ->
+            let
+                resolvedType = resolveSchemeType scheme
+                prettyType = formatType resolvedType
+            in
+                "// sky:type " ++ name ++ " : " ++ prettyType
+
+        Nothing ->
+            ""
 
 
 lowerFunction : LowerCtx -> String -> (List Pattern) -> Expression -> GoDecl
@@ -1638,7 +1662,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
         hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
         tagExtract =
             if hasCustomAdtBranch then
-                "__sky_tag := sky_asMap(__subject)[\"SkyName\"]; "
+                "__sky_tag := sky_getSkyName(__subject); "
             else
                 ""
     in
@@ -2001,7 +2025,7 @@ generateCtorsForDecl registry decl =
             let
                 maxArity = List.foldl (\v acc -> if List.length v.fields > acc then List.length v.fields else acc) 0 variants
                 structDecl = generateAdtStruct typeName maxArity
-                ctorFuncs = List.indexedMap (generateCtorFunc typeName) variants
+                ctorFuncs = List.indexedMap (generateCtorFunc typeName "") variants
             in
                 structDecl :: ctorFuncs
 
@@ -2013,18 +2037,18 @@ generateAdtStruct typeName maxArity =
     let
         fields =
             if maxArity == 0 then
-                "struct { Tag int }"
+                "struct { Tag int; SkyName string }"
             else
                 let
                     vFields = String.join "; " (List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1)))
                 in
-                    "struct { Tag int; " ++ vFields ++ " }"
+                    "struct { Tag int; SkyName string; " ++ vFields ++ " }"
     in
         GoDeclType (sanitizeGoIdent typeName) fields
 
 
-generateCtorFunc : String -> Int -> TypeVariant -> GoDecl
-generateCtorFunc typeName tagIndex variant =
+generateCtorFunc : String -> String -> Int -> TypeVariant -> GoDecl
+generateCtorFunc typeName prefix tagIndex variant =
     let
         arity = List.length variant.fields
     in
@@ -2077,6 +2101,8 @@ generateHelperDecls =
           "func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, SkyName: \"Just\", JustValue: v} }"
     , GoDeclRaw
           "func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
+    , GoDeclRaw
+          "func sky_getSkyName(v any) string { if m, ok := v.(map[string]any); ok { if s, ok := m[\"SkyName\"].(string); ok { return s }; return \"\" }; return \"\" }"
     , GoDeclRaw
           "func sky_asInt(v any) int { switch x := v.(type) { case int: return x; case float64: return int(x); default: return 0 } }"
     , GoDeclRaw
@@ -2393,7 +2419,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_buildMux(routes []any, prefix string) *net_http.ServeMux { mux := net_http.NewServeMux(); for _, r := range routes { rm := sky_asMap(r); if rm == nil { continue }; skyName, _ := rm[\"SkyName\"].(string); switch skyName { case \"RouteEntry\": method := sky_asString(rm[\"V0\"]); pattern := prefix + sky_asString(rm[\"V1\"]); handler := rm[\"V2\"]; muxPattern := pattern; if method != \"*\" { muxPattern = method + \" \" + pattern }; mux.HandleFunc(muxPattern, sky_makeHandler(handler)); case \"RouteGroup\": groupPrefix := prefix + sky_asString(rm[\"V0\"]); groupRoutes := sky_asList(rm[\"V1\"]); subMux := sky_buildMux(groupRoutes, groupPrefix); mux.Handle(groupPrefix+\"/\", subMux); case \"RouteStatic\": urlPrefix := prefix + sky_asString(rm[\"V0\"]); dirPath := sky_asString(rm[\"V1\"]); fs := net_http.FileServer(net_http.Dir(dirPath)); mux.Handle(urlPrefix+\"/\", net_http.StripPrefix(urlPrefix, fs)) } }; return mux }"
     , GoDeclRaw
-          "func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); fn, ok := handler.(func(any) any); if !ok { net_http.Error(w, \"Invalid handler\", 500); return }; taskResult := fn(skyReq); var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"
+          "func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); var taskResult any; if fn, ok := handler.(func(any) any); ok { taskResult = fn(skyReq) } else if fn2, ok := handler.(func(any, any) any); ok { taskResult = fn2(nil, skyReq) } else { net_http.Error(w, \"Invalid handler: \" + fmt.Sprintf(\"%T\", handler), 500); return }; var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"
     , GoDeclRaw
           "func sky_buildRequest(r *net_http.Request) map[string]any { body, _ := io.ReadAll(r.Body); r.Body = io.NopCloser(strings.NewReader(string(body))); _ = r.ParseForm(); formValues := make([]any, 0); for k, vs := range r.Form { for _, v := range vs { formValues = append(formValues, SkyTuple2{k, v}) } }; headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; params := make([]any, 0); protocol := \"http\"; if r.TLS != nil { protocol = \"https\" }; return map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": params, \"query\": query, \"cookies\": cookies, \"formValues\": formValues, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": protocol} }"
     , GoDeclRaw

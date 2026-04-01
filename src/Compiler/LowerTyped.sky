@@ -69,27 +69,27 @@ dirOfPath path =
         String.join "/" dirParts
 
 
-parseAndReturnModule modName alias source =
+parseAndReturnModule modName modAlias source =
     let
         lexResult = Lexer.lex source
     in
         case Parser.parse lexResult.tokens of
 
             Ok mod ->
-                Just (modName, (alias, mod))
+                Just (modName, (modAlias, mod))
 
             Err _ ->
                 Nothing
 
 
-loadModuleFromFile srcRoot modName alias moduleParts =
+loadModuleFromFile srcRoot modName modAlias moduleParts =
     let
         filePath = srcRoot ++ "/" ++ String.join "/" moduleParts ++ ".sky"
     in
         case File.readFile filePath of
 
             Ok source ->
-                parseAndReturnModule modName alias source
+                parseAndReturnModule modName modAlias source
 
             Err _ ->
                 Nothing
@@ -115,12 +115,12 @@ lastPartOfImport parts =
 loadOneImport srcRoot imp =
     let
         modName = String.join "." imp.moduleName
-        alias = importAliasName imp
+        modAlias = importAliasName imp
     in
         if isStdlibImport modName then
             Nothing
         else
-            loadModuleFromFile srcRoot modName alias imp.moduleName
+            loadModuleFromFile srcRoot modName modAlias imp.moduleName
 
 
 loadDependencyModules srcRoot imports =
@@ -133,11 +133,11 @@ isStdlibImport name =
 
 
 generateDepModule : String -> String -> Module -> String
-generateDepModule modName alias mod =
+generateDepModule modName modAlias mod =
     let
         prefix = String.replace "." "_" modName
         typeDecls = generateTypeDecls mod.declarations
-        funcDecls = List.filterMap (generatePrefixedFunc prefix alias) mod.declarations
+        funcDecls = List.filterMap (generatePrefixedFunc prefix modAlias) mod.declarations
     in
         String.join "\n\n"
             (List.append
@@ -147,7 +147,7 @@ generateDepModule modName alias mod =
 
 
 generatePrefixedFunc : String -> String -> Declaration -> Maybe String
-generatePrefixedFunc prefix alias decl =
+generatePrefixedFunc prefix modAlias decl =
     case decl of
 
         FunDecl name params body _ ->
@@ -155,11 +155,11 @@ generatePrefixedFunc prefix alias decl =
                 goParams = String.join ", " (List.map patternToParam params)
                 goBody = exprToGo body
                 fullName = prefix ++ "_" ++ capitalise name
-                aliasName = alias ++ "_" ++ capitalise name
+                aliasGoName = modAlias ++ "_" ++ capitalise name
                 funcDecl = "func " ++ fullName ++ "(" ++ goParams ++ ") any {\n\treturn " ++ goBody ++ "\n}"
                 aliasDecl =
-                    if aliasName /= fullName then
-                        "\nvar " ++ aliasName ++ " = " ++ fullName
+                    if aliasGoName /= fullName then
+                        "\nvar " ++ aliasGoName ++ " = " ++ fullName
                     else
                         ""
             in
@@ -559,11 +559,11 @@ resolveImportAlias : List String -> String
 resolveImportAlias parts =
     case parts of
 
-        alias :: funcParts ->
+        modAlias :: funcParts ->
             let
                 funcName = String.join "_" funcParts
             in
-                alias ++ "_" ++ capitalise funcName
+                modAlias ++ "_" ++ capitalise funcName
 
         _ ->
             String.join "_" parts

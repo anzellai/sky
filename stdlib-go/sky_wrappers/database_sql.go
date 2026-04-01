@@ -95,7 +95,7 @@ func Sky_database_sql_ColumnTypeDecimalSize(this any) any {
 	_this := this.(*sql.ColumnType)
 
 	_r0, _r1, _r2 := _this.DecimalSize()
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_database_sql_ColumnTypeLength(this any) any {
@@ -215,7 +215,7 @@ func Sky_database_sql_ConnQueryRowContext(this any, arg0 any, arg1 any, arg2 any
 
 func Sky_database_sql_ConnRaw(this any, arg0 any) SkyResult {
 	_this := this.(*sql.Conn)
-	_skyFn0 := sky_asFunc(arg0)
+	_skyFn0 := arg0.(func(any) any)
 	_arg0 := func(p0 any) error {
 		return _skyFn0(p0).(error)
 	}
@@ -1247,6 +1247,12 @@ func Sky_database_sql_TxExecResult(db any, query any, args any) any {
 }
 
 // Auto-generated convenience wrapper: query on Tx returning list of dicts
+// QueryToMaps is a convenience alias that delegates to DBQueryToMaps.
+// Sky code uses Sql.queryToMaps which lowers to Database_Sql_QueryToMaps.
+func Sky_database_sql_QueryToMaps(db any, query any, args any) any {
+	return Sky_database_sql_DBQueryToMaps(db, query, args)
+}
+
 func Sky_database_sql_TxQueryToMaps(db any, query any, args any) any {
 	_db := db.(*sql.Tx)
 	_query := sky_asString(query)

@@ -230,7 +230,7 @@ func mainGoDCE(outDir string) int {
 		newCode := header + bodyCode
 		os.WriteFile(mainGoPath, []byte(newCode), 0644)
 
-		// Run goimports to fix imports
+		// Run goimports to fix imports (adds missing ones)
 		runTrimImports(mainGoPath)
 
 		// Ensure skylive_rt import if needed

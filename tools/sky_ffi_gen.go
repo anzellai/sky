@@ -288,6 +288,21 @@ func main() {
 		}
 		}
 
+	// Detect standard library type references in wrapper code
+	stdlibRefs := map[string]string{
+		"io.":      "io",
+		"net.":     "net",
+		"time.":    "time",
+		"log.":     "log",
+		"context.": "context",
+		"sync.":    "sync",
+	}
+	for prefix, imp := range stdlibRefs {
+		if imp != pkgName && strings.Contains(wrapperCode, prefix) {
+			extraImports[imp] = true
+		}
+	}
+
 	// Finalise wrapper imports
 	var importBlock strings.Builder
 	importBlock.WriteString("package sky_wrappers\n\nimport (\n")
@@ -549,7 +564,7 @@ func generateMethodBinding(m FuncDef, t TypeDef, pkg, safePkg string, ancestors 
 		}
 	skyi.WriteString("\n\n")
 
-	wrap, imports := generateGoWrapper(m, pkg, safePkg, wrapperName, true, t.Name, ancestors)
+	wrap, imports := generateGoWrapper(m, pkg, safePkg, wrapperName, true, t.Name, ancestors, t.Kind)
 	return skyi.String(), wrap, imports
 }
 
@@ -738,7 +753,7 @@ func generateConstAccessor(c ConstDef, pkg, safePkg string) (string, string) {
 
 // --- Go wrapper generation ---
 
-func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod bool, typeName string, ancestors []string) (string, []string) {
+func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod bool, typeName string, ancestors []string, typeKind ...string) (string, []string) {
 	var buf strings.Builder
 	var imports []string
 
@@ -761,14 +776,20 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 	buf.WriteString("\t\tdefer func() { if r := recover(); r != nil { ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n")
 
 	// Cast arguments
+	isInterface := len(typeKind) > 0 && typeKind[0] == "interface"
 	castArgs := []string{}
 	if isMethod {
-		castExpr := generateTypeCast("receiver", "*_ffi_pkg."+typeName, pkg)
-		if castExpr != "receiver" {
-			buf.WriteString(fmt.Sprintf("\t\t_receiver := %s\n", castExpr))
+		if isInterface {
+			buf.WriteString(fmt.Sprintf("\t\t_receiver := receiver.(_ffi_pkg.%s)\n", typeName))
 			castArgs = append(castArgs, "_receiver")
 		} else {
-			castArgs = append(castArgs, "receiver.(*_ffi_pkg."+typeName+")")
+			castExpr := generateTypeCast("receiver", "*_ffi_pkg."+typeName, pkg)
+			if castExpr != "receiver" {
+				buf.WriteString(fmt.Sprintf("\t\t_receiver := %s\n", castExpr))
+				castArgs = append(castArgs, "_receiver")
+			} else {
+				castArgs = append(castArgs, "receiver.(*_ffi_pkg."+typeName+")")
+			}
 		}
 		}
 
@@ -859,7 +880,29 @@ func generateTypeCast(varName, goType, pkg string) string {
 		return fmt.Sprintf("sky_asContext(%s)", varName)
 	case "interface{}", "any":
 		return varName
+	case "io.Reader":
+		return fmt.Sprintf("%s.(io.Reader)", varName)
+	case "io.Writer":
+		return fmt.Sprintf("%s.(io.Writer)", varName)
+	case "io.ReadCloser":
+		return fmt.Sprintf("%s.(io.ReadCloser)", varName)
+	case "io.WriteCloser":
+		return fmt.Sprintf("%s.(io.WriteCloser)", varName)
+	case "io.Closer":
+		return fmt.Sprintf("%s.(io.Closer)", varName)
+	case "io.ReadWriter":
+		return fmt.Sprintf("%s.(io.ReadWriter)", varName)
+	case "io.ReadSeeker":
+		return fmt.Sprintf("%s.(io.ReadSeeker)", varName)
+	case "net.Listener":
+		return fmt.Sprintf("%s.(net.Listener)", varName)
+	case "net.Conn":
+		return fmt.Sprintf("%s.(net.Conn)", varName)
 		}
+	// Function types: pass through (Sky functions are already func(any)any)
+	if strings.HasPrefix(goType, "func(") {
+		return varName
+	}
 	// Pointer type: nil-safe cast using import alias
 	if strings.HasPrefix(goType, "*") {
 		innerType := goType[1:]
@@ -881,17 +924,19 @@ func generateTypeCast(varName, goType, pkg string) string {
 		}
 		return fmt.Sprintf("func() %s { if %s == nil { return nil }; return %s.(%s) }()", goTypeAlias, varName, varName, goTypeAlias)
 		}
-	// Same-package custom types: cast via type conversion
+	// Same-package custom types: use type assertion
 	if strings.HasPrefix(goType, pkg+".") {
 		typeName := goType[len(pkg)+1:]
-		return fmt.Sprintf("_ffi_pkg.%s(sky_asInt(%s))", typeName, varName)
+		qualType := "_ffi_pkg." + typeName
+		return fmt.Sprintf("func() %s { if v, ok := %s.(%s); ok { return v }; var zero %s; return zero }()", qualType, varName, qualType, qualType)
 		}
-	// Ancestor package types
+	// Ancestor package types: use type assertion
 	for _, a := range buildAncestorPkgs(pkg) {
 		if strings.HasPrefix(goType, a+".") {
 			typeName := goType[len(a)+1:]
 			shortPkg := lastPathSegment(a)
-			return fmt.Sprintf("%s.%s(sky_asInt(%s))", shortPkg, typeName, varName)
+			qualType := shortPkg + "." + typeName
+			return fmt.Sprintf("func() %s { if v, ok := %s.(%s); ok { return v }; var zero %s; return zero }()", qualType, varName, qualType, qualType)
 		}
 		}
 	// Other: pass through (Go will handle at runtime)

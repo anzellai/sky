@@ -80,35 +80,38 @@ cmdBuildTyped _ =
                 Nothing ->
                     "src/Main.sky"
         outDir = "sky-out"
+        result = LowerTyped.compileTyped entryFile outDir
     in
-        case LowerTyped.compileTyped entryFile outDir of
+        cmdBuildTypedResult result outDir
 
-            Err e ->
-                let
-                    _ = println ("Error: " ++ e)
-                in
-                    Process.exit 1
 
-            Ok _ ->
-                let
-                    _ = println "Typed Go code generated"
-                    _ = println "Running go build..."
-                    buildResult =
-                        Process.run "sh"
-                            [ "-c"
-                            , "cd " ++ outDir ++ " && go build -o app"
-                            ]
-                in
-                    case buildResult of
+cmdBuildTypedResult result outDir =
+    case result of
 
-                        Ok _ ->
-                            println ("Build complete: " ++ outDir ++ "/app")
+        Err e ->
+            println ("Error: " ++ e)
 
-                        Err e ->
-                            let
-                                _ = println ("go build failed: " ++ errorToString e)
-                            in
-                                Process.exit 1
+        Ok _ ->
+            let
+                _ = println "Typed Go code generated"
+                _ = println "Running go build..."
+                buildResult =
+                    Process.run "sh"
+                        [ "-c"
+                        , "cd " ++ outDir ++ " && go build -o app"
+                        ]
+            in
+                cmdBuildTypedGo buildResult outDir
+
+
+cmdBuildTypedGo buildResult outDir =
+    case buildResult of
+
+        Ok _ ->
+            println ("Build complete: " ++ outDir ++ "/app")
+
+        Err e ->
+            println ("go build failed: " ++ errorToString e)
 
 
 cmdBuild _ =

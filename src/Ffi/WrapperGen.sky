@@ -340,23 +340,38 @@ buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
 
 isSupportedType : String -> Bool
 isSupportedType goType =
-    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "io.Reader" || goType == "io.Writer" || goType == "io.ReadCloser" || goType == "io.WriteCloser" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool" || String.startsWith
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     "["
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     goType || (
+    isSupportedPrimitive goType || isSupportedCompound goType
+
+
+isSupportedPrimitive : String -> Bool
+isSupportedPrimitive goType =
+    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "io.Reader" || goType == "io.Writer" || goType == "io.ReadCloser" || goType == "io.WriteCloser" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool"
+
+
+isSupportedCompound : String -> Bool
+isSupportedCompound goType =
+    String.startsWith "[" goType || String.startsWith "func(" goType || String.startsWith "map[" goType || isSupportedDotType goType || isSupportedPointer goType || isSupportedSlice goType
+
+
+isSupportedDotType : String -> Bool
+isSupportedDotType goType =
     String.contains "." goType && not (needsExtraImport goType)
-    ) || (
-    String.startsWith "*" goType && isSupportedType
-                                        (
-                                        String.slice 1 (String.length goType)
-                                            goType
-                                        )
-    ) || (
-    String.startsWith "[]" goType && isSupportedType
-                                         (
-                                         String.slice 2 (String.length goType)
-                                             goType
-                                         )
-    ) || String.startsWith "func(" goType || String.startsWith "map[" goType
+
+
+isSupportedPointer : String -> Bool
+isSupportedPointer goType =
+    if String.startsWith "*" goType then
+        isSupportedType (String.slice 1 (String.length goType) goType)
+    else
+        False
+
+
+isSupportedSlice : String -> Bool
+isSupportedSlice goType =
+    if String.startsWith "[]" goType then
+        isSupportedType (String.slice 2 (String.length goType) goType)
+    else
+        False
 
 
 needsExtraImport : String -> Bool
@@ -459,11 +474,7 @@ generateFuncWrapper safePkg pkgName func =
         baseParamList =
             List.indexedMap (\i p -> "arg" ++ String.fromInt i ++ " any")
                 func.params
-        paramList =
-            if List.isEmpty baseParamList then
-                [ "_ any" ]
-            else
-                baseParamList
+        paramList = baseParamList
         paramStr = String.join ", " paramList
         allArgCasts = List.indexedMap (\i p -> generateArgCast i p) func.params
         argNames =
@@ -519,27 +530,13 @@ generateMethodWrapper safePkg pkgName method =
                                   (\i p -> "arg" ++ String.fromInt i ++ " any")
                                   method.params
         paramStr = String.join ", " paramList
+        shortPkg = shortPkgName pkgName
+        qualType = shortPkg ++ "." ++ method.typeName
         receiverCast =
             if method.isInterface then
-                "_receiver := receiver.(" ++ shortPkgName pkgName ++ "." ++ method.typeName ++ ")"
+                "var _receiver " ++ qualType ++ "; if _v, ok := receiver.(" ++ qualType ++ "); ok { _receiver = _v }"
             else
-                String.join ""
-                    [ "var _receiver *"
-                    , shortPkgName pkgName
-                    , "."
-                    , method.typeName
-                    , "; if _p, ok := receiver.(*"
-                    , shortPkgName pkgName
-                    , "."
-                    , method.typeName
-                    , "); ok { _receiver = _p } else if _v, ok := receiver.("
-                    , shortPkgName pkgName
-                    , "."
-                    , method.typeName
-                    , "); ok { _receiver = &_v }; if _receiver == nil { return SkyErr(\"nil receiver: expected "
-                    , method.typeName
-                    , "\") }"
-                    ]
+                "var _receiver *" ++ qualType ++ "; if _p, ok := receiver.(*" ++ qualType ++ "); ok { _receiver = _p } else if _v, ok := receiver.(" ++ qualType ++ "); ok { _receiver = &_v }; if _receiver == nil { return SkyErr(\"nil receiver: expected " ++ method.typeName ++ "\") }"
         allMethodArgCasts =
             List.indexedMap (\i p -> generateArgCast i p) method.params
         argNames =
