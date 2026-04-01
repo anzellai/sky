@@ -1638,7 +1638,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
         hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
         tagExtract =
             if hasCustomAdtBranch then
-                "__sky_tag := sky_asMap(__subject)[\"SkyName\"]; "
+                "__sky_tag := sky_getTag(__subject); "
             else
                 ""
     in
@@ -1700,9 +1700,12 @@ patternToCondition ctx varName pat =
                     else if ctorName == "False" then
                         String.join "" [ "sky_asBool(" , varName , ") == false" ]
                     else if varName == "__subject" then
-                        String.join "" [ "__sky_tag == \"" , ctorName , "\"" ]
+                        let
+                            tagIdx = lookupCtorTag ctx ctorName
+                        in
+                            String.join "" [ "__sky_tag == " , String.fromInt tagIdx ]
                     else
-                        String.join "" [ "sky_asMap(" , varName , ")[\"SkyName\"] == \"" , ctorName , "\"" ]
+                        String.join "" [ "sky_getTag(" , varName , ") == " , String.fromInt (lookupCtorTag ctx ctorName) ]
                 subConds = subPatternConditions ctx varName ctorName args 0
             in
                 if String.isEmpty subConds then
@@ -1757,7 +1760,7 @@ subPatternConditions ctx varName ctorName args idx =
                     else if ctorName == "Just" then
                         "sky_asSkyMaybe(" ++ varName ++ ").JustValue"
                     else
-                        "sky_asMap(" ++ varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
+                        "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
                 subCond = patternToCondition ctx fieldAccess pat
                 restCond =
                     subPatternConditions ctx varName ctorName rest (idx + 1)
@@ -1886,7 +1889,7 @@ bindAdtConstructorArgs ctx varName argPats idx =
         pat :: rest ->
             let
                 fieldAccess =
-                    "sky_asMap(" ++ varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
+                    "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
                 binding = patternToBindings ctx fieldAccess pat
             in
                 binding ++ bindAdtConstructorArgs ctx varName rest (idx + 1)
@@ -1988,6 +1991,17 @@ lowerRecordUpdate ctx base fields =
         GoCallExpr (GoIdent "sky_recordUpdate") [ goBase , goFields ]
 
 
+lookupCtorTag : LowerCtx -> String -> Int
+lookupCtorTag ctx ctorName =
+    case Dict.get ctorName ctx.importedConstructors of
+
+        Just info ->
+            info.tagIndex
+
+        Nothing ->
+            -1
+
+
 generateConstructorDecls : AdtRegistry -> (List Declaration) -> List GoDecl
 generateConstructorDecls registry decls =
     List.concatMap (generateCtorsForDecl registry) decls
@@ -1996,68 +2010,62 @@ generateConstructorDecls registry decls =
 generateCtorsForDecl : AdtRegistry -> Declaration -> List GoDecl
 generateCtorsForDecl registry decl =
     case decl of
-        
+
         TypeDecl typeName _ variants _ ->
-            List.indexedMap (generateCtorFunc typeName) variants
-        
+            let
+                maxArity = List.foldl (\v acc -> if List.length v.fields > acc then List.length v.fields else acc) 0 variants
+                structDecl = generateAdtStruct typeName maxArity
+                ctorFuncs = List.indexedMap (generateCtorFunc typeName) variants
+            in
+                structDecl :: ctorFuncs
+
         _ ->
             []
+
+
+generateAdtStruct typeName maxArity =
+    let
+        goName = sanitizeGoIdent typeName
+        fields =
+            String.join "; "
+                (
+                "Tag int" :: List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1))
+                )
+    in
+        if maxArity == 0 then
+            GoDeclRaw ("type " ++ goName ++ " struct { Tag int }")
+        else
+            GoDeclRaw ("type " ++ goName ++ " struct { " ++ fields ++ " }")
 
 
 generateCtorFunc : String -> Int -> TypeVariant -> GoDecl
 generateCtorFunc typeName tagIndex variant =
     let
         arity = List.length variant.fields
+        goTypeName = sanitizeGoIdent typeName
     in
         if arity == 0 then
-            GoDeclVar (sanitizeGoIdent variant.name)
+            GoDeclRaw
                 (
-                GoMapLit
-                    [ (GoStringLit "Tag", GoBasicLit (String.fromInt tagIndex))
-                    , (GoStringLit "SkyName", GoStringLit variant.name)
-                    ]
+                "var " ++ sanitizeGoIdent variant.name ++ " = " ++ goTypeName ++ "{Tag: " ++ String.fromInt tagIndex ++ "}"
                 )
         else
             let
-                params =
-                    List.indexedMap
+                paramList =
+                    String.join ", "
+                        (List.indexedMap (\i _ -> "v" ++ String.fromInt i ++ " any") variant.fields)
+                fieldInits =
+                    String.join ", "
                         (
-                        \i _ ->
-                            { name = "v" ++ String.fromInt i , type_ = "any" }
+                        ("Tag: " ++ String.fromInt tagIndex) :: List.indexedMap
+                                                                     (\i _ -> "V" ++ String.fromInt i ++ ": v" ++ String.fromInt i)
+                                                                     variant.fields
                         )
-                        variant.fields
-                fields =
-                    [ ("Tag", GoBasicLit (String.fromInt tagIndex))
-                    , ("SkyName", GoStringLit variant.name)
-                    ] ++ List.indexedMap
-                             (
-                             \i _ ->
-                                 ("V" ++ String.fromInt i, GoIdent
-                                                               (
-                                                               "v" ++ String.fromInt
-                                                                          i
-                                                               ))
-                             )
-                             variant.fields
             in
-                GoDeclFunc
-                    { name = sanitizeGoIdent variant.name
-                    , params = params
-                    , returnType = "any"
-                    , body = [ GoReturn
-                                   (
-                                   GoMapLit
-                                       (
-                                       List.map
-                                           (
-                                           \pair ->
-                                               (GoStringLit (fst pair), snd pair)
-                                           )
-                                           fields
-                                       )
-                                   )
-                    ]
-                    }
+                GoDeclRaw
+                    (
+                    "func " ++ sanitizeGoIdent variant.name ++ "(" ++ paramList ++ ") " ++ goTypeName ++ " { return " ++ goTypeName ++ "{" ++ fieldInits ++ "} }"
+                    )
 
 
 generateHelperDecls : List GoDecl
@@ -2069,6 +2077,10 @@ generateHelperDecls =
           "type SkyResult struct { Tag int; SkyName string; OkValue, ErrValue any }"
     , GoDeclRaw
           "type SkyMaybe struct { Tag int; SkyName string; JustValue any }"
+    , GoDeclRaw
+          "func sky_getTag(v any) int { rv := reflect.ValueOf(v); if rv.Kind() == reflect.Struct { f := rv.FieldByName(\"Tag\"); if f.IsValid() { return int(f.Int()) } }; if m, ok := v.(map[string]any); ok { if t, ok := m[\"Tag\"].(int); ok { return t } }; return -1 }"
+    , GoDeclRaw
+          "func sky_adtField(v any, idx int) any { rv := reflect.ValueOf(v); if rv.Kind() == reflect.Struct { f := rv.FieldByName(fmt.Sprintf(\"V%d\", idx)); if f.IsValid() { return f.Interface() } }; if m, ok := v.(map[string]any); ok { return m[fmt.Sprintf(\"V%d\", idx)] }; return nil }"
     , GoDeclRaw
           "func SkyOk(v any) SkyResult { return SkyResult{Tag: 0, SkyName: \"Ok\", OkValue: v} }"
     , GoDeclRaw
