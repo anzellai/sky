@@ -49,6 +49,9 @@ emitDecl decl =
         GoDeclRaw code ->
             code
 
+        GoDeclType name body ->
+            "type " ++ name ++ " " ++ body
+
 
 emitFuncDecl : GoFuncDecl -> String
 emitFuncDecl fd =

@@ -24,6 +24,7 @@ type alias LowerCtx =
     , localFunctionArity : Dict.Dict String Int
     , exposedStdlib : Dict.Dict String String
     , paramNames : Set.Set String
+    , typedDecls : Dict.Dict String Scheme
     }
 
 
@@ -43,6 +44,7 @@ emptyCtx =
     , localFunctionArity = Dict.empty
     , exposedStdlib = Dict.empty
     , paramNames = Set.empty
+    , typedDecls = Dict.empty
     }
 
 
@@ -90,7 +92,7 @@ lowerModule registry mod =
             { emptyCtx
             | registry = registry
             , localFunctions = collectLocalFunctions mod.declarations
-            , importedConstructors = buildConstructorMap registry
+            , importedConstructors = Dict.union (buildConstructorMapFromDecls mod.declarations) (buildConstructorMap registry)
             , exposedStdlib = exposed
             , localFunctionArity = collectLocalFunctionArities mod.declarations
             }
@@ -124,18 +126,40 @@ lowerModule registry mod =
 
 
 lowerDeclarations : LowerCtx -> (List Declaration) -> List GoDecl
-lowerDeclarations ctx decls = List.filterMap (lowerDecl ctx) decls
+lowerDeclarations ctx decls = List.concatMap (lowerDeclWithType ctx) decls
 
 
-lowerDecl : LowerCtx -> Declaration -> Maybe GoDecl
-lowerDecl ctx decl =
+lowerDeclWithType : LowerCtx -> Declaration -> List GoDecl
+lowerDeclWithType ctx decl =
     case decl of
-        
+
         FunDecl name params body _ ->
-            Just (lowerFunction ctx name params body)
-        
+            let
+                funcDecl = lowerFunction ctx name params body
+                typeComment = makeTypeComment ctx name
+            in
+                if String.isEmpty typeComment then
+                    [ funcDecl ]
+                else
+                    [ GoDeclRaw typeComment , funcDecl ]
+
         _ ->
-            Nothing
+            []
+
+
+makeTypeComment : LowerCtx -> String -> String
+makeTypeComment ctx name =
+    case Dict.get name ctx.typedDecls of
+
+        Just scheme ->
+            let
+                resolvedType = resolveSchemeType scheme
+                prettyType = formatType resolvedType
+            in
+                "// sky:type " ++ name ++ " : " ++ prettyType
+
+        Nothing ->
+            ""
 
 
 lowerFunction : LowerCtx -> String -> (List Pattern) -> Expression -> GoDecl
@@ -1638,7 +1662,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
         hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
         tagExtract =
             if hasCustomAdtBranch then
-                "__sky_tag := sky_asMap(__subject)[\"SkyName\"]; "
+                "__sky_tag := sky_getSkyName(__subject); "
             else
                 ""
     in
@@ -1770,6 +1794,17 @@ subPatternConditions ctx varName ctorName args idx =
                     subCond ++ " && " ++ restCond
 
 
+lookupCtorTagIndex : LowerCtx -> String -> Int
+lookupCtorTagIndex ctx ctorName =
+    case Dict.get ctorName ctx.importedConstructors of
+
+        Just info ->
+            info.tagIndex
+
+        Nothing ->
+            0
+
+
 literalCondition varName lit =
     case lit of
         
@@ -1879,10 +1914,10 @@ bindConstructorArgs ctx varName wrapperFn fieldName argPats =
 bindAdtConstructorArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
 bindAdtConstructorArgs ctx varName argPats idx =
     case argPats of
-        
-        [  ] ->
+
+        [] ->
             ""
-        
+
         pat :: rest ->
             let
                 fieldAccess =
@@ -1996,73 +2031,66 @@ generateConstructorDecls registry decls =
 generateCtorsForDecl : AdtRegistry -> Declaration -> List GoDecl
 generateCtorsForDecl registry decl =
     case decl of
-        
+
         TypeDecl typeName _ variants _ ->
-            List.indexedMap (generateCtorFunc typeName) variants
-        
+            let
+                ctorFuncs = List.indexedMap (generateCtorFunc typeName "") variants
+            in
+                ctorFuncs
+
         _ ->
             []
 
 
-generateCtorFunc : String -> Int -> TypeVariant -> GoDecl
-generateCtorFunc typeName tagIndex variant =
+generateAdtStruct typeName maxArity =
+    let
+        fields =
+            if maxArity == 0 then
+                "struct { Tag int; SkyName string }"
+            else
+                let
+                    vFields = String.join "; " (List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1)))
+                in
+                    "struct { Tag int; SkyName string; " ++ vFields ++ " }"
+    in
+        GoDeclType (sanitizeGoIdent typeName) fields
+
+
+generateCtorFunc : String -> String -> Int -> TypeVariant -> GoDecl
+generateCtorFunc typeName prefix tagIndex variant =
     let
         arity = List.length variant.fields
+        tagStr = String.fromInt tagIndex
     in
         if arity == 0 then
             GoDeclVar (sanitizeGoIdent variant.name)
                 (
                 GoMapLit
-                    [ (GoStringLit "Tag", GoBasicLit (String.fromInt tagIndex))
+                    [ (GoStringLit "Tag", GoBasicLit tagStr)
                     , (GoStringLit "SkyName", GoStringLit variant.name)
                     ]
                 )
         else
             let
                 params =
-                    List.indexedMap
-                        (
-                        \i _ ->
-                            { name = "v" ++ String.fromInt i , type_ = "any" }
-                        )
-                        variant.fields
+                    List.indexedMap (\i _ -> { name = "v" ++ String.fromInt i , type_ = "any" }) variant.fields
                 fields =
-                    [ ("Tag", GoBasicLit (String.fromInt tagIndex))
+                    [ ("Tag", GoBasicLit tagStr)
                     , ("SkyName", GoStringLit variant.name)
-                    ] ++ List.indexedMap
-                             (
-                             \i _ ->
-                                 ("V" ++ String.fromInt i, GoIdent
-                                                               (
-                                                               "v" ++ String.fromInt
-                                                                          i
-                                                               ))
-                             )
-                             variant.fields
+                    ] ++ List.indexedMap (\i _ -> ("V" ++ String.fromInt i, GoIdent ("v" ++ String.fromInt i))) variant.fields
             in
                 GoDeclFunc
                     { name = sanitizeGoIdent variant.name
                     , params = params
                     , returnType = "any"
-                    , body = [ GoReturn
-                                   (
-                                   GoMapLit
-                                       (
-                                       List.map
-                                           (
-                                           \pair ->
-                                               (GoStringLit (fst pair), snd pair)
-                                           )
-                                           fields
-                                       )
-                                   )
-                    ]
+                    , body = [ GoReturn (GoMapLit (List.map (\pair -> (GoStringLit (fst pair), snd pair)) fields)) ]
                     }
 
 
 generateHelperDecls : List GoDecl
 generateHelperDecls =
     [ GoDeclRaw "var skyVersion = \"dev\""
+    , GoDeclRaw "type SkyADT struct { Tag int; V0, V1, V2, V3, V4 any }"
     , GoDeclRaw "type SkyTuple2 struct { V0, V1 any }"
     , GoDeclRaw "type SkyTuple3 struct { V0, V1, V2 any }"
     , GoDeclRaw
@@ -2077,6 +2105,12 @@ generateHelperDecls =
           "func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, SkyName: \"Just\", JustValue: v} }"
     , GoDeclRaw
           "func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"
+    , GoDeclRaw
+          "func sky_adtTag(v any) int { if a, ok := v.(SkyADT); ok { return a.Tag }; if m, ok := v.(map[string]any); ok { return sky_asInt(m[\"Tag\"]) }; return -1 }"
+    , GoDeclRaw
+          "func sky_adtField(v any, idx int) any { if a, ok := v.(SkyADT); ok { switch idx { case 0: return a.V0; case 1: return a.V1; case 2: return a.V2; case 3: return a.V3; case 4: return a.V4 }; return nil }; if m, ok := v.(map[string]any); ok { return m[fmt.Sprintf(\"V%d\", idx)] }; return nil }"
+    , GoDeclRaw
+          "func sky_getSkyName(v any) string { if m, ok := v.(map[string]any); ok { if s, ok := m[\"SkyName\"].(string); ok { return s }; return \"\" }; return \"\" }"
     , GoDeclRaw
           "func sky_asInt(v any) int { switch x := v.(type) { case int: return x; case float64: return int(x); default: return 0 } }"
     , GoDeclRaw
@@ -2393,7 +2427,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_buildMux(routes []any, prefix string) *net_http.ServeMux { mux := net_http.NewServeMux(); for _, r := range routes { rm := sky_asMap(r); if rm == nil { continue }; skyName, _ := rm[\"SkyName\"].(string); switch skyName { case \"RouteEntry\": method := sky_asString(rm[\"V0\"]); pattern := prefix + sky_asString(rm[\"V1\"]); handler := rm[\"V2\"]; muxPattern := pattern; if method != \"*\" { muxPattern = method + \" \" + pattern }; mux.HandleFunc(muxPattern, sky_makeHandler(handler)); case \"RouteGroup\": groupPrefix := prefix + sky_asString(rm[\"V0\"]); groupRoutes := sky_asList(rm[\"V1\"]); subMux := sky_buildMux(groupRoutes, groupPrefix); mux.Handle(groupPrefix+\"/\", subMux); case \"RouteStatic\": urlPrefix := prefix + sky_asString(rm[\"V0\"]); dirPath := sky_asString(rm[\"V1\"]); fs := net_http.FileServer(net_http.Dir(dirPath)); mux.Handle(urlPrefix+\"/\", net_http.StripPrefix(urlPrefix, fs)) } }; return mux }"
     , GoDeclRaw
-          "func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); fn, ok := handler.(func(any) any); if !ok { net_http.Error(w, \"Invalid handler\", 500); return }; taskResult := fn(skyReq); var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"
+          "func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); var taskResult any; if fn, ok := handler.(func(any) any); ok { taskResult = fn(skyReq) } else if fn2, ok := handler.(func(any, any) any); ok { taskResult = fn2(nil, skyReq) } else { net_http.Error(w, \"Invalid handler: \" + fmt.Sprintf(\"%T\", handler), 500); return }; var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"
     , GoDeclRaw
           "func sky_buildRequest(r *net_http.Request) map[string]any { body, _ := io.ReadAll(r.Body); r.Body = io.NopCloser(strings.NewReader(string(body))); _ = r.ParseForm(); formValues := make([]any, 0); for k, vs := range r.Form { for _, v := range vs { formValues = append(formValues, SkyTuple2{k, v}) } }; headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; params := make([]any, 0); protocol := \"http\"; if r.TLS != nil { protocol = \"https\" }; return map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": params, \"query\": query, \"cookies\": cookies, \"formValues\": formValues, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": protocol} }"
     , GoDeclRaw
@@ -2684,6 +2718,31 @@ buildConstructorMap registry =
         )
         Dict.empty
         registry
+
+
+buildConstructorMapFromDecls : List Declaration -> Dict.Dict String CtorInfo
+buildConstructorMapFromDecls decls =
+    List.foldl
+        (\decl acc ->
+            case decl of
+
+                TypeDecl typeName _ variants _ ->
+                    List.foldl
+                        (\pair innerAcc ->
+                            let
+                                idx = fst pair
+                                variant = snd pair
+                            in
+                                Dict.insert variant.name { adtName = typeName , tagIndex = idx , arity = List.length variant.fields } innerAcc
+                        )
+                        acc
+                        (zipIndex variants)
+
+                _ ->
+                    acc
+        )
+        Dict.empty
+        decls
 
 
 addCtorsFromList : String -> (List (String, Scheme)) -> Int -> (Dict.Dict String CtorInfo) -> Dict.Dict String CtorInfo

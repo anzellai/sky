@@ -225,7 +225,7 @@ func sky_asList(v any) []any {
 	return []any{}
 }
 
-func sky_asFunc(v any) func(any) any {
+func v any.(func(any) any) func(any) any {
 	if f, ok := v.(func(any) any); ok { return f }
 	return func(_ any) any { return nil }
 }
@@ -271,12 +271,12 @@ func sky_asMapAny(v any) map[any]any {
 
 func sky_asTuple2(v any) Tuple2 {
 	if t, ok := v.(Tuple2); ok { return t }
-	return Tuple2{}
+	return SkyTuple2{}
 }
 
 func sky_asTuple3(v any) Tuple3 {
 	if t, ok := v.(Tuple3); ok { return t }
-	return Tuple3{}
+	return SkyTuple3{}
 }
 
 func sky_asSkyResult(v any) SkyResult {
@@ -303,7 +303,7 @@ func Sky_AsString(v any) string { return sky_asString(v) }
 func Sky_AsBool(v any) bool { return sky_asBool(v) }
 func Sky_AsFloat(v any) float64 { return sky_asFloat(v) }
 func Sky_AsList(v any) []any { return sky_asList(v) }
-func Sky_AsFunc(v any) func(any) any { return sky_asFunc(v) }
+func Sky_AsFunc(v any) func(any) any { return v.(func(any) any) }
 func Sky_AsMap(v any) map[string]any { return sky_asMap(v) }
 func Sky_AsMapAny(v any) map[any]any { return sky_asMapAny(v) }
 func Sky_AsTuple2(v any) Tuple2 { return sky_asTuple2(v) }
@@ -317,7 +317,7 @@ func Sky_list_Map(fn any, list any) any {
 	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	for i, item := range lst {
-		result[i] = sky_asFunc(fn)(item)
+		result[i] = fn.(func(any) any)(item)
 	}
 	return result
 }
@@ -326,7 +326,7 @@ func Sky_list_Filter(fn any, list any) any {
 	lst := sky_asList(list)
 	result := []any{}
 	for _, item := range lst {
-		if sky_asFunc(fn)(item) == true {
+		if fn.(func(any) any)(item) == true {
 			result = append(result, item)
 		}
 	}
@@ -337,7 +337,7 @@ func Sky_list_Foldl(fn any, acc any, list any) any {
 	lst := sky_asList(list)
 	result := acc
 	for _, item := range lst {
-		result = sky_asFunc(sky_asFunc(fn)(item))(result)
+		result = sky_asFunc(fn.(func(any) any)(item))(result)
 	}
 	return result
 }
@@ -346,7 +346,7 @@ func Sky_list_Foldr(fn any, acc any, list any) any {
 	lst := sky_asList(list)
 	result := acc
 	for i := len(lst) - 1; i >= 0; i-- {
-		result = sky_asFunc(sky_asFunc(fn)(lst[i]))(result)
+		result = sky_asFunc(fn.(func(any) any)(lst[i]))(result)
 	}
 	return result
 }
@@ -520,7 +520,7 @@ func Sky_list_ConcatMap(fn any, list any) any {
 	lst := sky_asList(list)
 	result := []any{}
 	for _, item := range lst {
-		inner := sky_asFunc(fn)(item)
+		inner := fn.(func(any) any)(item)
 		if innerLst, ok := inner.([]any); ok {
 			result = append(result, innerLst...)
 		}
@@ -532,7 +532,7 @@ func Sky_list_IndexedMap(fn any, list any) any {
 	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	for i, item := range lst {
-		result[i] = sky_asFunc(sky_asFunc(fn)(i))(item)
+		result[i] = sky_asFunc(fn.(func(any) any)(i))(item)
 	}
 	return result
 }
@@ -542,7 +542,7 @@ func Sky_list_Zip(listA any, listB any) any {
 	b := sky_asList(listB)
 	n := len(a); if len(b) < n { n = len(b) }
 	result := make([]any, n)
-	for i := 0; i < n; i++ { result[i] = Tuple2{a[i], b[i]} }
+	for i := 0; i < n; i++ { result[i] = SkyTuple2{a[i], b[i]} }
 	return result
 }
 
@@ -555,16 +555,16 @@ func Sky_list_Unzip(list any) any {
 		as[i] = t.V0
 		bs[i] = t.V1
 	}
-	return Tuple2{as, bs}
+	return SkyTuple2{as, bs}
 }
 
 func Sky_list_Map2(fn any, listA any, listB any) any {
 	a := sky_asList(listA)
 	b := sky_asList(listB)
-	f := sky_asFunc(fn)
+	f := fn.(func(any) any)
 	n := len(a); if len(b) < n { n = len(b) }
 	result := make([]any, n)
-	for i := 0; i < n; i++ { result[i] = sky_asFunc(f(a[i]))(b[i]) }
+	for i := 0; i < n; i++ { result[i] = f(a[i].(func(any) any))(b[i]) }
 	return result
 }
 
@@ -591,7 +591,7 @@ func Sky_list_Minimum(list any) any {
 func Sky_list_Find(pred any, list any) any {
 	lst := sky_asList(list)
 	if len(lst) == 0 { return SkyNothing() }
-	fn := sky_asFunc(pred)
+	fn := pred.(func(any) any)
 	for _, item := range lst {
 		if sky_asBool(fn(item)) { return SkyJust(item) }
 	}
@@ -600,7 +600,7 @@ func Sky_list_Find(pred any, list any) any {
 
 func Sky_list_FilterMap(fn any, list any) any {
 	lst := sky_asList(list)
-	f := sky_asFunc(fn)
+	f := fn.(func(any) any)
 	result := []any{}
 	for _, item := range lst {
 		maybe := f(item)
@@ -829,7 +829,7 @@ func Sky_dict_Map(fn any, dict any) any {
 	m := sky_asMapAny(dict)
 	result := make(map[any]any, len(m))
 	for k, v := range m {
-		result[k] = sky_asFunc(sky_asFunc(fn)(k))(v)
+		result[k] = sky_asFunc(fn.(func(any) any)(k))(v)
 	}
 	return result
 }
@@ -838,7 +838,7 @@ func Sky_dict_Foldl(fn any, acc any, dict any) any {
 	m := sky_asMapAny(dict)
 	result := acc
 	for k, v := range m {
-		result = sky_asFunc(sky_asFunc(sky_asFunc(fn)(k))(v))(result)
+		result = sky_asFunc(sky_asFunc(fn.(func(any) any)(k))(v))(result)
 	}
 	return result
 }
@@ -859,7 +859,7 @@ func Sky_dict_ToList(dict any) any {
 	m := sky_asMapAny(dict)
 	result := make([]any, 0, len(m))
 	for k, v := range m {
-		result = append(result, Tuple2{V0: k, V1: v})
+		result = append(result, SkyTuple2{V0: k, V1: v})
 	}
 	return result
 }
@@ -891,7 +891,7 @@ func Sky_dict_Update(key any, fn any, dict any) any {
 	} else {
 		maybeVal = SkyNothing()
 	}
-	newMaybe := sky_asFunc(fn)(maybeVal)
+	newMaybe := fn.(func(any) any)(maybeVal)
 	if m, ok := newMaybe.(SkyMaybe); ok && m.Tag == 0 {
 		result[key] = m.JustValue
 	} else {
@@ -932,7 +932,7 @@ func Sky_json_EncodeList(fn any, list any) any {
 	lst := sky_asList(list)
 	result := make([]any, len(lst))
 	for i, item := range lst {
-		result[i] = sky_asFunc(fn)(item)
+		result[i] = fn.(func(any) any)(item)
 	}
 	return result
 }
@@ -1016,7 +1016,7 @@ func Sky_json_DecodeList(fn any, val any) any {
 	if !ok { return SkyErr("not a list") }
 	result := make([]any, 0, len(lst))
 	for i, item := range lst {
-		decoded := sky_asFunc(fn)(item)
+		decoded := fn.(func(any) any)(item)
 		dv := reflect.ValueOf(decoded)
 		if dv.Kind() == reflect.Struct {
 			tag := dv.FieldByName("Tag")
@@ -1042,8 +1042,8 @@ func Sky_json_Map2(fn any, r1 any, r2 any) any {
 	}
 	val1 := v1.FieldByName("OkValue").Interface()
 	val2 := v2.FieldByName("OkValue").Interface()
-	f := sky_asFunc(fn)
-	result := sky_asFunc(f(val1))(val2)
+	f := fn.(func(any) any)
+	result := f(val1.(func(any) any))(val2)
 	return SkyOk(result)
 }
 
@@ -1057,8 +1057,8 @@ func Sky_json_Map3(fn any, r1 any, r2 any, r3 any) any {
 	val1 := v1.FieldByName("OkValue").Interface()
 	val2 := v2.FieldByName("OkValue").Interface()
 	val3 := v3.FieldByName("OkValue").Interface()
-	f := sky_asFunc(fn)
-	result := sky_asFunc(sky_asFunc(f(val1))(val2))(val3)
+	f := fn.(func(any) any)
+	result := sky_asFunc(f(val1.(func(any) any))(val2))(val3)
 	return SkyOk(result)
 }
 
@@ -1075,8 +1075,8 @@ func Sky_json_Map4(fn any, r1 any, r2 any, r3 any, r4 any) any {
 	val2 := v2.FieldByName("OkValue").Interface()
 	val3 := v3.FieldByName("OkValue").Interface()
 	val4 := v4.FieldByName("OkValue").Interface()
-	f := sky_asFunc(fn)
-	result := sky_asFunc(sky_asFunc(sky_asFunc(f(val1))(val2))(val3))(val4)
+	f := fn.(func(any) any)
+	result := sky_asFunc(sky_asFunc(f(val1.(func(any) any))(val2))(val3))(val4)
 	return SkyOk(result)
 }
 
@@ -1149,7 +1149,7 @@ func Sky_json_decoder_Nullable(decoder any) any {
 		if val == nil {
 			return SkyOk(SkyNothing())
 		}
-		result := sky_asFunc(decoder)(val)
+		result := decoder.(func(any) any)(val)
 		r := reflect.ValueOf(result)
 		if sky_getTag(r) == 1 {
 			return result
@@ -1168,7 +1168,7 @@ func Sky_json_decoder_Field(fieldName any, decoder any) any {
 		if !exists {
 			return SkyErr("Expecting an OBJECT with a field named '" + f + "'")
 		}
-		return sky_asFunc(decoder)(v)
+		return decoder.(func(any) any)(v)
 	}
 }
 
@@ -1189,7 +1189,7 @@ func Sky_json_decoder_Index(idx any, decoder any) any {
 		if i < 0 || i >= len(lst) {
 			return SkyErr(fmt.Sprintf("Expecting a LONGER array. Need index %d but only see %d entries", i, len(lst)))
 		}
-		return sky_asFunc(decoder)(lst[i])
+		return decoder.(func(any) any)(lst[i])
 	}
 }
 
@@ -1198,7 +1198,7 @@ func Sky_json_decoder_List(decoder any) any {
 		lst, ok := val.([]any)
 		if !ok { return SkyErr("Expecting a LIST") }
 		result := make([]any, 0, len(lst))
-		d := sky_asFunc(decoder)
+		d := decoder.(func(any) any)
 		for i, item := range lst {
 			decoded := d(item)
 			r := reflect.ValueOf(decoded)
@@ -1216,7 +1216,7 @@ func Sky_json_decoder_Dict(decoder any) any {
 		m, ok := val.(map[string]any)
 		if !ok { return SkyErr("Expecting an OBJECT") }
 		result := make(map[any]any, len(m))
-		d := sky_asFunc(decoder)
+		d := decoder.(func(any) any)
 		for k, v := range m {
 			decoded := d(v)
 			r := reflect.ValueOf(decoded)
@@ -1234,21 +1234,21 @@ func Sky_json_decoder_KeyValuePairs(decoder any) any {
 		m, ok := val.(map[string]any)
 		if !ok { return SkyErr("Expecting an OBJECT") }
 		result := make([]any, 0, len(m))
-		d := sky_asFunc(decoder)
+		d := decoder.(func(any) any)
 		for k, v := range m {
 			decoded := d(v)
 			r := reflect.ValueOf(decoded)
 			if sky_getTag(r) == 1 {
 				return SkyErr(fmt.Sprintf("Problem at field '%s': %v", k, r.FieldByName("ErrValue").Interface()))
 			}
-			result = append(result, Tuple2{V0: k, V1: r.FieldByName("OkValue").Interface()})
+			result = append(result, SkyTuple2{V0: k, V1: r.FieldByName("OkValue").Interface()})
 		}
 		return SkyOk(result)
 	}
 }
 
 func sky_json_decoder_runAndCheck(decoder any, val any) (any, bool) {
-	result := sky_asFunc(decoder)(val)
+	result := decoder.(func(any) any)(val)
 	r := reflect.ValueOf(result)
 	if sky_getTag(r) == 1 {
 		return result, false
@@ -1260,7 +1260,7 @@ func Sky_json_decoder_Map(fn any, decoder any) any {
 	return func(val any) any {
 		inner, ok := sky_json_decoder_runAndCheck(decoder, val)
 		if !ok { return inner }
-		return SkyOk(sky_asFunc(fn)(inner))
+		return SkyOk(fn.(func(any) any)(inner))
 	}
 }
 
@@ -1270,8 +1270,8 @@ func Sky_json_decoder_Map2(fn any, d1 any, d2 any) any {
 		if !ok1 { return v1 }
 		v2, ok2 := sky_json_decoder_runAndCheck(d2, val)
 		if !ok2 { return v2 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(f(v1))(v2))
+		f := fn.(func(any) any)
+		return SkyOk(f(v1.(func(any) any))(v2))
 	}
 }
 
@@ -1283,8 +1283,8 @@ func Sky_json_decoder_Map3(fn any, d1 any, d2 any, d3 any) any {
 		if !ok2 { return v2 }
 		v3, ok3 := sky_json_decoder_runAndCheck(d3, val)
 		if !ok3 { return v3 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(sky_asFunc(f(v1))(v2))(v3))
+		f := fn.(func(any) any)
+		return SkyOk(sky_asFunc(f(v1.(func(any) any))(v2))(v3))
 	}
 }
 
@@ -1298,8 +1298,8 @@ func Sky_json_decoder_Map4(fn any, d1 any, d2 any, d3 any, d4 any) any {
 		if !ok3 { return v3 }
 		v4, ok4 := sky_json_decoder_runAndCheck(d4, val)
 		if !ok4 { return v4 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(f(v1))(v2))(v3))(v4))
+		f := fn.(func(any) any)
+		return SkyOk(sky_asFunc(sky_asFunc(f(v1.(func(any) any))(v2))(v3))(v4))
 	}
 }
 
@@ -1315,8 +1315,8 @@ func Sky_json_decoder_Map5(fn any, d1 any, d2 any, d3 any, d4 any, d5 any) any {
 		if !ok4 { return v4 }
 		v5, ok5 := sky_json_decoder_runAndCheck(d5, val)
 		if !ok5 { return v5 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1))(v2))(v3))(v4))(v5))
+		f := fn.(func(any) any)
+		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(f(v1.(func(any) any))(v2))(v3))(v4))(v5))
 	}
 }
 
@@ -1334,8 +1334,8 @@ func Sky_json_decoder_Map6(fn any, d1 any, d2 any, d3 any, d4 any, d5 any, d6 an
 		if !ok5 { return v5 }
 		v6, ok6 := sky_json_decoder_runAndCheck(d6, val)
 		if !ok6 { return v6 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1))(v2))(v3))(v4))(v5))(v6))
+		f := fn.(func(any) any)
+		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1.(func(any) any))(v2))(v3))(v4))(v5))(v6))
 	}
 }
 
@@ -1355,8 +1355,8 @@ func Sky_json_decoder_Map7(fn any, d1 any, d2 any, d3 any, d4 any, d5 any, d6 an
 		if !ok6 { return v6 }
 		v7, ok7 := sky_json_decoder_runAndCheck(d7, val)
 		if !ok7 { return v7 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1))(v2))(v3))(v4))(v5))(v6))(v7))
+		f := fn.(func(any) any)
+		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1.(func(any) any))(v2))(v3))(v4))(v5))(v6))(v7))
 	}
 }
 
@@ -1378,8 +1378,8 @@ func Sky_json_decoder_Map8(fn any, d1 any, d2 any, d3 any, d4 any, d5 any, d6 an
 		if !ok7 { return v7 }
 		v8, ok8 := sky_json_decoder_runAndCheck(d8, val)
 		if !ok8 { return v8 }
-		f := sky_asFunc(fn)
-		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1))(v2))(v3))(v4))(v5))(v6))(v7))(v8))
+		f := fn.(func(any) any)
+		return SkyOk(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(sky_asFunc(f(v1.(func(any) any))(v2))(v3))(v4))(v5))(v6))(v7))(v8))
 	}
 }
 
@@ -1387,8 +1387,8 @@ func Sky_json_decoder_AndThen(fn any, decoder any) any {
 	return func(val any) any {
 		inner, ok := sky_json_decoder_runAndCheck(decoder, val)
 		if !ok { return inner }
-		newDecoder := sky_asFunc(fn)(inner)
-		return sky_asFunc(newDecoder)(val)
+		newDecoder := fn.(func(any) any)(inner)
+		return newDecoder.(func(any) any)(val)
 	}
 }
 
@@ -1396,7 +1396,7 @@ func Sky_json_decoder_OneOf(decoders any) any {
 	return func(val any) any {
 		lst := sky_asList(decoders)
 		for _, d := range lst {
-			result := sky_asFunc(d)(val)
+			result := d.(func(any) any)(val)
 			r := reflect.ValueOf(result)
 			if sky_getTag(r) == 0 {
 				return result
@@ -1408,7 +1408,7 @@ func Sky_json_decoder_OneOf(decoders any) any {
 
 func Sky_json_decoder_Maybe(decoder any) any {
 	return func(val any) any {
-		result := sky_asFunc(decoder)(val)
+		result := decoder.(func(any) any)(val)
 		r := reflect.ValueOf(result)
 		if sky_getTag(r) == 1 {
 			return SkyOk(SkyNothing())
@@ -1420,20 +1420,20 @@ func Sky_json_decoder_Maybe(decoder any) any {
 
 func Sky_json_decoder_Lazy(thunk any) any {
 	return func(val any) any {
-		decoder := sky_asFunc(thunk)(struct{}{})
-		return sky_asFunc(decoder)(val)
+		decoder := thunk.(func(any) any)(struct{}{})
+		return decoder.(func(any) any)(val)
 	}
 }
 
 func Sky_json_decoder_DecodeValue(decoder any, value any) any {
-	return sky_asFunc(decoder)(value)
+	return decoder.(func(any) any)(value)
 }
 
 func Sky_json_decoder_DecodeString(decoder any, s any) any {
 	var parsed any
 	err := json.Unmarshal([]byte(sky_asString(s)), &parsed)
 	if err != nil { return SkyErr(err.Error()) }
-	return sky_asFunc(decoder)(parsed)
+	return decoder.(func(any) any)(parsed)
 }
 
 // ============= Result Operations =============
@@ -1464,7 +1464,7 @@ func Sky_maybe_Map(fn any, maybe any) any {
 		if m.Tag == 1 {
 			return maybe
 		}
-		return SkyJust(sky_asFunc(fn)(m.JustValue))
+		return SkyJust(fn.(func(any) any)(m.JustValue))
 	}
 	return maybe
 }
@@ -1474,7 +1474,7 @@ func Sky_maybe_AndThen(fn any, maybe any) any {
 		if m.Tag == 1 {
 			return maybe
 		}
-		return sky_asFunc(fn)(m.JustValue)
+		return fn.(func(any) any)(m.JustValue)
 	}
 	return maybe
 }
@@ -1498,7 +1498,7 @@ func Sky_result_Map(fn any, result any) any {
 			return result
 		}
 		inner := r.FieldByName("OkValue").Interface()
-		return SkyOk(sky_asFunc(fn)(inner))
+		return SkyOk(fn.(func(any) any)(inner))
 	}
 	return result
 }
@@ -1510,7 +1510,7 @@ func Sky_result_AndThen(fn any, result any) any {
 			return result
 		}
 		inner := r.FieldByName("OkValue").Interface()
-		return sky_asFunc(fn)(inner)
+		return fn.(func(any) any)(inner)
 	}
 	return result
 }
@@ -1522,7 +1522,7 @@ func Sky_result_MapError(fn any, result any) any {
 			return result
 		}
 		inner := r.FieldByName("ErrValue").Interface()
-		return SkyErr(sky_asFunc(fn)(inner))
+		return SkyErr(fn.(func(any) any)(inner))
 	}
 	return result
 }
@@ -1733,7 +1733,7 @@ func Sky_array_Slice(start any, end any, arr any) any {
 
 func Sky_array_Map(f any, arr any) any {
 	a := sky_asList(arr)
-	fn := sky_asFunc(f)
+	fn := f.(func(any) any)
 	result := make([]any, len(a))
 	for i, v := range a { result[i] = fn(v) }
 	return result
@@ -1741,17 +1741,17 @@ func Sky_array_Map(f any, arr any) any {
 
 func Sky_array_Foldl(f any, acc any, arr any) any {
 	a := sky_asList(arr)
-	fn := sky_asFunc(f)
+	fn := f.(func(any) any)
 	result := acc
-	for _, v := range a { result = sky_asFunc(fn(v))(result) }
+	for _, v := range a { result = fn(v.(func(any) any))(result) }
 	return result
 }
 
 func Sky_array_Foldr(f any, acc any, arr any) any {
 	a := sky_asList(arr)
-	fn := sky_asFunc(f)
+	fn := f.(func(any) any)
 	result := acc
-	for i := len(a) - 1; i >= 0; i-- { result = sky_asFunc(fn(a[i]))(result) }
+	for i := len(a) - 1; i >= 0; i-- { result = fn(a[i].(func(any) any))(result) }
 	return result
 }
 
@@ -1761,9 +1761,9 @@ func Sky_array_Append(a any, b any) any {
 
 func Sky_array_IndexedMap(f any, arr any) any {
 	a := sky_asList(arr)
-	fn := sky_asFunc(f)
+	fn := f.(func(any) any)
 	result := make([]any, len(a))
-	for i, v := range a { result[i] = sky_asFunc(fn(i))(v) }
+	for i, v := range a { result[i] = fn(i.(func(any) any))(v) }
 	return result
 }
 
@@ -1966,7 +1966,7 @@ func Sky_ref_Set(val any, ref any) any {
 
 func Sky_ref_Modify(fn any, ref any) any {
 	r := ref.(*SkyRef)
-	f := sky_asFunc(fn)
+	f := fn.(func(any) any)
 	r.Value = f(r.Value)
 	return struct{}{}
 }

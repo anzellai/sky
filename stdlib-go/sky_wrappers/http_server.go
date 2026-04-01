@@ -90,12 +90,15 @@ func skyMakeHandler(handler any) func(http.ResponseWriter, *http.Request) {
 		skyReq := skyBuildRequest(r)
 
 		// Call Sky handler: handler(request) -> Task String Response
-		fn, ok := handler.(func(any) any)
-		if !ok {
+		var taskResult any
+		if fn, ok := handler.(func(any) any); ok {
+			taskResult = fn(skyReq)
+		} else if fn2, ok := handler.(func(any, any) any); ok {
+			taskResult = fn2(nil, skyReq)
+		} else {
 			http.Error(w, "Invalid handler", 500)
 			return
 		}
-		taskResult := fn(skyReq)
 
 		// Execute the Task thunk
 		var skyResp any
@@ -143,19 +146,19 @@ func skyBuildRequest(r *http.Request) map[string]any {
 	headers := make([]any, 0)
 	for k, vs := range r.Header {
 		for _, v := range vs {
-			headers = append(headers, Tuple2{k, v})
+			headers = append(headers, SkyTuple2{k, v})
 		}
 	}
 
 	cookies := make([]any, 0)
 	for _, c := range r.Cookies() {
-		cookies = append(cookies, Tuple2{c.Name, c.Value})
+		cookies = append(cookies, SkyTuple2{c.Name, c.Value})
 	}
 
 	query := make([]any, 0)
 	for k, vs := range r.URL.Query() {
 		for _, v := range vs {
-			query = append(query, Tuple2{k, v})
+			query = append(query, SkyTuple2{k, v})
 		}
 	}
 

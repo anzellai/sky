@@ -36,3 +36,4 @@ uploads/
 examples/13-skyshop/assets/
 examples/**/sky-out/
 *.tmp
+bootstrap/app

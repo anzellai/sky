@@ -70,9 +70,9 @@ func Sky_net_http_Handle(arg0 any, arg1 any) any {
 
 func Sky_net_http_HandleFunc(arg0 any, arg1 any) any {
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 http.ResponseWriter, p1 *http.Request) {
-		sky_asFunc(_skyFn1(p0))(p1)
+		_skyFn1(p0.(func(any) any))(p1)
 	}
 	http.HandleFunc(_arg0, _arg1)
 	return struct{}{}
@@ -192,7 +192,7 @@ func Sky_net_http_ParseCookie(arg0 any) SkyResult {
 func Sky_net_http_ParseHTTPVersion(arg0 any) any {
 	_arg0 := arg0.(string)
 	_r0, _r1, _r2 := http.ParseHTTPVersion(_arg0)
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_net_http_ParseSetCookie(arg0 any) SkyResult {
@@ -979,7 +979,7 @@ func Sky_net_http_ClientConnRoundTrip(this any, arg0 any) SkyResult {
 func Sky_net_http_ClientConnSetStateHook(this any, arg0 any) any {
 	var _this *http.ClientConn
 	if _p, ok := this.(*http.ClientConn); ok { _this = _p } else { _v := this.(http.ClientConn); _this = &_v }
-	_skyFn0 := sky_asFunc(arg0)
+	_skyFn0 := arg0.(func(any) any)
 	_arg0 := func(p0 *http.ClientConn) {
 		_skyFn0(p0)
 	}
@@ -1398,7 +1398,7 @@ func Sky_net_http_HijackerHijack(this any) SkyResult {
 	if err != nil {
 		return SkyErr(err)
 	}
-	return SkyOk(Tuple2{V0: _r0, V1: _r1})
+	return SkyOk(SkyTuple2{V0: _r0, V1: _r1})
 }
 
 func Sky_net_http_MaxBytesErrorError(this any) string {
@@ -1528,7 +1528,7 @@ func Sky_net_http_RequestBasicAuth(this any) any {
 	if _p, ok := this.(*http.Request); ok { _this = _p } else { _v := this.(http.Request); _this = &_v }
 
 	_r0, _r1, _r2 := _this.BasicAuth()
-	return Tuple3{V0: _r0, V1: _r1, V2: _r2}
+	return SkyTuple3{V0: _r0, V1: _r1, V2: _r2}
 }
 
 func Sky_net_http_RequestClone(this any, arg0 any) *http.Request {
@@ -1578,7 +1578,7 @@ func Sky_net_http_RequestFormFile(this any, arg0 any) SkyResult {
 	if err != nil {
 		return SkyErr(err)
 	}
-	return SkyOk(Tuple2{V0: _r0, V1: _r1})
+	return SkyOk(SkyTuple2{V0: _r0, V1: _r1})
 }
 
 func Sky_net_http_RequestFormValue(this any, arg0 any) string {
@@ -2029,7 +2029,7 @@ func Sky_net_http_ResponseControllerHijack(this any) SkyResult {
 	if err != nil {
 		return SkyErr(err)
 	}
-	return SkyOk(Tuple2{V0: _r0, V1: _r1})
+	return SkyOk(SkyTuple2{V0: _r0, V1: _r1})
 }
 
 func Sky_net_http_ResponseControllerSetReadDeadline(this any, arg0 any) SkyResult {
@@ -2101,9 +2101,9 @@ func Sky_net_http_ServeMuxHandleFunc(this any, arg0 any, arg1 any) any {
 	var _this *http.ServeMux
 	if _p, ok := this.(*http.ServeMux); ok { _this = _p } else { _v := this.(http.ServeMux); _this = &_v }
 	_arg0 := arg0.(string)
-	_skyFn1 := sky_asFunc(arg1)
+	_skyFn1 := arg1.(func(any) any)
 	_arg1 := func(p0 http.ResponseWriter, p1 *http.Request) {
-		sky_asFunc(_skyFn1(p0))(p1)
+		_skyFn1(p0.(func(any) any))(p1)
 	}
 	_this.HandleFunc(_arg0, _arg1)
 	return struct{}{}
@@ -2115,7 +2115,7 @@ func Sky_net_http_ServeMuxHandler(this any, arg0 any) any {
 	var _arg0 *http.Request
 	if arg0 != nil && arg0 != "nil" { _arg0 = arg0.(*http.Request) }
 	_r0, _r1 := _this.Handler(_arg0)
-	return Tuple2{V0: _r0, V1: _r1}
+	return SkyTuple2{V0: _r0, V1: _r1}
 }
 
 func Sky_net_http_ServeMuxServeHTTP(this any, arg0 any, arg1 any) any {
@@ -2165,7 +2165,7 @@ func Sky_net_http_ServerListenAndServeTLS(this any, arg0 any, arg1 any) SkyResul
 func Sky_net_http_ServerRegisterOnShutdown(this any, arg0 any) any {
 	var _this *http.Server
 	if _p, ok := this.(*http.Server); ok { _this = _p } else { _v := this.(http.Server); _this = &_v }
-	_skyFn0 := sky_asFunc(arg0)
+	_skyFn0 := arg0.(func(any) any)
 	_arg0 := func() {
 		_skyFn0(nil)
 	}

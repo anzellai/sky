@@ -506,23 +506,38 @@ checkAncestorPkgs ancestors goType =
 
 isSafeType : String -> Bool
 isSafeType goType =
-    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "io.Reader" || goType == "io.Writer" || goType == "io.ReadCloser" || goType == "io.WriteCloser" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool" || String.startsWith
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     "["
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     goType || (
+    isSafePrimitive goType || isSafeCompound goType
+
+
+isSafePrimitive : String -> Bool
+isSafePrimitive goType =
+    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "io.Reader" || goType == "io.Writer" || goType == "io.ReadCloser" || goType == "io.WriteCloser" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool"
+
+
+isSafeCompound : String -> Bool
+isSafeCompound goType =
+    String.startsWith "[" goType || String.startsWith "func(" goType || String.startsWith "map[" goType || isSafeDotType goType || isSafePointer goType || isSafeSlice goType
+
+
+isSafeDotType : String -> Bool
+isSafeDotType goType =
     String.contains "." goType && not (needsExtraImportBinding goType)
-    ) || (
-    String.startsWith "*" goType && isSafeType
-                                        (
-                                        String.slice 1 (String.length goType)
-                                            goType
-                                        )
-    ) || (
-    String.startsWith "[]" goType && isSafeType
-                                         (
-                                         String.slice 2 (String.length goType)
-                                             goType
-                                         )
-    ) || String.startsWith "func(" goType || String.startsWith "map[" goType
+
+
+isSafePointer : String -> Bool
+isSafePointer goType =
+    if String.startsWith "*" goType then
+        isSafeType (String.slice 1 (String.length goType) goType)
+    else
+        False
+
+
+isSafeSlice : String -> Bool
+isSafeSlice goType =
+    if String.startsWith "[]" goType then
+        isSafeType (String.slice 2 (String.length goType) goType)
+    else
+        False
 
 
 needsExtraImportBinding : String -> Bool
@@ -636,26 +651,22 @@ generateFuncBinding pkgName funcJson =
                         paramStr = String.join " " paramNames
                         callArgs = String.join " " paramNames
                         hasParams = not (List.isEmpty paramElements)
-                        finalParamStr =
-                            if hasParams then
-                                paramStr
-                            else
-                                "_"
                         finalTypeSignature =
                             if hasParams then
                                 typeSignature
                             else
-                                "() -> " ++ skyReturnType
+                                skyReturnType
                     in
-                        Just
-                            (
-                            skyName ++ " : " ++ finalTypeSignature ++ "\n" ++ skyName ++ " " ++ finalParamStr ++ " =\n" ++ "    " ++ wrapperName ++ (
-                            if hasParams then
-                                " " ++ callArgs
-                            else
-                                " ()"
-                            )
-                            )
+                        if hasParams then
+                            Just
+                                (
+                                skyName ++ " : " ++ finalTypeSignature ++ "\n" ++ skyName ++ " " ++ paramStr ++ " =\n" ++ "    " ++ wrapperName ++ " " ++ callArgs
+                                )
+                        else
+                            Just
+                                (
+                                skyName ++ " : " ++ finalTypeSignature ++ "\n" ++ skyName ++ " =\n" ++ "    " ++ wrapperName ++ " ()"
+                                )
 
 
 buildReturnType : (List String) -> String
