@@ -1527,7 +1527,7 @@ loadStdlibExtraFunctions safeName autoContent =
                 let
                     prefix = "Sky_" ++ safeName ++ "_"
                     stdlibFuncs = extractGoFunctions prefix stdlibContent
-                    missingFuncs = List.filter (\pair -> not (String.contains (fst pair) autoContent)) stdlibFuncs
+                    missingFuncs = List.filter (\pair -> not (String.contains (fst pair ++ "(") autoContent)) stdlibFuncs
                 in
                     String.join "\n\n" (List.map snd missingFuncs)
 

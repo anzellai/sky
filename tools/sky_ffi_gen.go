@@ -266,12 +266,25 @@ func main() {
 		wrapper.WriteString(wrapVar)
 		}
 
+	// Collect method wrapper names to detect collisions with constants
+	methodWrapperNames := map[string]bool{}
+	for _, t := range inspect.Types {
+		for _, m := range t.Methods {
+			methodWrapperNames[fmt.Sprintf("Sky_%s_%s%s", safePkg, t.Name, m.Name)] = true
+		}
+	}
+
 	// --- Constants ---
 	for _, c := range inspect.Consts {
 		if c.Name == "" || reservedKeywords[lowerFirst(c.Name)] {
 			continue
 		}
 		if isLarge && !isSymbolUsed(c.Name, usedSymbols) {
+			continue
+		}
+		constWrapperName := fmt.Sprintf("Sky_%s_%s", safePkg, c.Name)
+		if methodWrapperNames[constWrapperName] {
+			fmt.Fprintf(os.Stderr, "[SKIP] const %s collides with method wrapper %s\n", c.Name, constWrapperName)
 			continue
 		}
 		skyiConst, wrapConst := generateConstAccessor(c, pkgName, safePkg)
@@ -845,8 +858,12 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		// Void
 		buf.WriteString(fmt.Sprintf("\t\t%s\n", callExpr))
 		buf.WriteString("\t\treturn SkyOk(struct{}{})\n")
+	} else if len(f.Results) == 2 {
+		// Two non-error results → tuple
+		buf.WriteString(fmt.Sprintf("\t\t_r0, _r1 := %s\n", callExpr))
+		buf.WriteString("\t\treturn SkyOk(SkyTuple2{V0: _r0, V1: _r1})\n")
 	} else {
-		// Single or multiple non-error results
+		// Single non-error result
 		buf.WriteString(fmt.Sprintf("\t\t_val := %s\n", callExpr))
 		buf.WriteString("\t\treturn SkyOk(_val)\n")
 		}
@@ -864,6 +881,8 @@ func generateTypeCast(varName, goType, pkg string) string {
 		return fmt.Sprintf("sky_asInt(%s)", varName)
 	case "int64":
 		return fmt.Sprintf("sky_asInt64(%s)", varName)
+	case "uint64":
+		return fmt.Sprintf("uint64(sky_asInt(%s))", varName)
 	case "float64":
 		return fmt.Sprintf("sky_asFloat(%s)", varName)
 	case "float32":
@@ -899,9 +918,16 @@ func generateTypeCast(varName, goType, pkg string) string {
 	case "net.Conn":
 		return fmt.Sprintf("%s.(net.Conn)", varName)
 		}
-	// Function types: pass through (Sky functions are already func(any)any)
+	// Function types: type assertion to the concrete function type
 	if strings.HasPrefix(goType, "func(") {
-		return varName
+		// Replace full package paths with short aliases
+		castType := goType
+		for _, a := range buildAncestorPkgs(pkg) {
+			shortPkg := lastPathSegment(a)
+			castType = strings.ReplaceAll(castType, a+".", shortPkg+".")
+		}
+		castType = strings.ReplaceAll(castType, pkg+".", "_ffi_pkg.")
+		return fmt.Sprintf("%s.(%s)", varName, castType)
 	}
 	// Pointer type: nil-safe cast using import alias
 	if strings.HasPrefix(goType, "*") {
@@ -939,6 +965,22 @@ func generateTypeCast(varName, goType, pkg string) string {
 			return fmt.Sprintf("func() %s { if v, ok := %s.(%s); ok { return v }; var zero %s; return zero }()", qualType, varName, qualType, qualType)
 		}
 		}
+	// Typed slices: convert []any to []ElementType
+	if strings.HasPrefix(goType, "[]") {
+		elemType := goType[2:]
+		castElem := elemType
+		if strings.HasPrefix(elemType, pkg+".") {
+			castElem = "_ffi_pkg." + elemType[len(pkg)+1:]
+		} else {
+			for _, a := range buildAncestorPkgs(pkg) {
+				if strings.HasPrefix(elemType, a+".") {
+					castElem = lastPathSegment(a) + "." + elemType[len(a)+1:]
+					break
+				}
+			}
+		}
+		return fmt.Sprintf("func() []%s { lst := sky_asList(%s); out := make([]%s, len(lst)); for i, v := range lst { if cv, ok := v.(%s); ok { out[i] = cv } }; return out }()", castElem, varName, castElem, castElem)
+	}
 	// Other: pass through (Go will handle at runtime)
 	return varName
 }
