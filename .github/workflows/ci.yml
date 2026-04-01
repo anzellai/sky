@@ -34,6 +34,7 @@ jobs:
           go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go
           go build -o /usr/local/bin/trim-imports tools/trim_imports.go
           go build -o /usr/local/bin/sky-dce tools/sky_dce.go
+          go build -o /usr/local/bin/sky-ffi-gen tools/sky_ffi_gen.go
 
       # Bootstrap: build compiler from committed Go source (sky-out/main.go)
       - name: Bootstrap compiler from Go source
