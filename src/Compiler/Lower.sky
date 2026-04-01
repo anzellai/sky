@@ -92,7 +92,7 @@ lowerModule registry mod =
             { emptyCtx
             | registry = registry
             , localFunctions = collectLocalFunctions mod.declarations
-            , importedConstructors = buildConstructorMap registry
+            , importedConstructors = Dict.union (buildConstructorMapFromDecls mod.declarations) (buildConstructorMap registry)
             , exposedStdlib = exposed
             , localFunctionArity = collectLocalFunctionArities mod.declarations
             }
@@ -595,7 +595,10 @@ cssNameToPropertyLoop name idx acc =
 
 lowerConstructorValue : String -> CtorInfo -> GoExpr
 lowerConstructorValue name info =
-    GoRawExpr ("SkyADT{Tag: " ++ String.fromInt info.tagIndex ++ "}")
+    GoMapLit
+        [ (GoStringLit "Tag", GoBasicLit (String.fromInt info.tagIndex))
+        , (GoStringLit "SkyName", GoStringLit name)
+        ]
 
 
 lowerQualified : LowerCtx -> (List String) -> GoExpr
@@ -1659,7 +1662,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
         hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
         tagExtract =
             if hasCustomAdtBranch then
-                "__sky_tag := sky_adtTag(__subject); "
+                "__sky_tag := sky_getSkyName(__subject); "
             else
                 ""
     in
@@ -1720,14 +1723,10 @@ patternToCondition ctx varName pat =
                         String.join "" [ "sky_asBool(" , varName , ") == true" ]
                     else if ctorName == "False" then
                         String.join "" [ "sky_asBool(" , varName , ") == false" ]
+                    else if varName == "__subject" then
+                        String.join "" [ "__sky_tag == \"" , ctorName , "\"" ]
                     else
-                        let
-                            tagIdx = lookupCtorTagIndex ctx ctorName
-                        in
-                            if varName == "__subject" then
-                                "__sky_tag == " ++ String.fromInt tagIdx
-                            else
-                                "sky_adtTag(" ++ varName ++ ") == " ++ String.fromInt tagIdx
+                        String.join "" [ "sky_asMap(" , varName , ")[\"SkyName\"] == \"" , ctorName , "\"" ]
                 subConds = subPatternConditions ctx varName ctorName args 0
             in
                 if String.isEmpty subConds then
@@ -1782,7 +1781,7 @@ subPatternConditions ctx varName ctorName args idx =
                     else if ctorName == "Just" then
                         "sky_asSkyMaybe(" ++ varName ++ ").JustValue"
                     else
-                        "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
+                        "sky_asMap(" ++ varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
                 subCond = patternToCondition ctx fieldAccess pat
                 restCond =
                     subPatternConditions ctx varName ctorName rest (idx + 1)
@@ -1922,7 +1921,7 @@ bindAdtConstructorArgs ctx varName argPats idx =
         pat :: rest ->
             let
                 fieldAccess =
-                    "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
+                    "sky_asMap(" ++ varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
                 binding = patternToBindings ctx fieldAccess pat
             in
                 binding ++ bindAdtConstructorArgs ctx varName rest (idx + 1)
@@ -2065,20 +2064,26 @@ generateCtorFunc typeName prefix tagIndex variant =
     in
         if arity == 0 then
             GoDeclVar (sanitizeGoIdent variant.name)
-                (GoRawExpr ("SkyADT{Tag: " ++ tagStr ++ "}"))
+                (
+                GoMapLit
+                    [ (GoStringLit "Tag", GoBasicLit tagStr)
+                    , (GoStringLit "SkyName", GoStringLit variant.name)
+                    ]
+                )
         else
             let
                 params =
-                    List.map (\i -> { name = "v" ++ String.fromInt i , type_ = "any" }) (List.range 0 (arity - 1))
-                fieldAssigns =
-                    String.join ", " (List.map (\i -> "V" ++ String.fromInt i ++ ": v" ++ String.fromInt i) (List.range 0 (arity - 1)))
-                structLit = "SkyADT{Tag: " ++ tagStr ++ ", " ++ fieldAssigns ++ "}"
+                    List.indexedMap (\i _ -> { name = "v" ++ String.fromInt i , type_ = "any" }) variant.fields
+                fields =
+                    [ ("Tag", GoBasicLit tagStr)
+                    , ("SkyName", GoStringLit variant.name)
+                    ] ++ List.indexedMap (\i _ -> ("V" ++ String.fromInt i, GoIdent ("v" ++ String.fromInt i))) variant.fields
             in
                 GoDeclFunc
                     { name = sanitizeGoIdent variant.name
                     , params = params
                     , returnType = "any"
-                    , body = [ GoReturn (GoRawExpr structLit) ]
+                    , body = [ GoReturn (GoMapLit (List.map (\pair -> (GoStringLit (fst pair), snd pair)) fields)) ]
                     }
 
 
@@ -2713,6 +2718,31 @@ buildConstructorMap registry =
         )
         Dict.empty
         registry
+
+
+buildConstructorMapFromDecls : List Declaration -> Dict.Dict String CtorInfo
+buildConstructorMapFromDecls decls =
+    List.foldl
+        (\decl acc ->
+            case decl of
+
+                TypeDecl typeName _ variants _ ->
+                    List.foldl
+                        (\pair innerAcc ->
+                            let
+                                idx = fst pair
+                                variant = snd pair
+                            in
+                                Dict.insert variant.name { adtName = typeName , tagIndex = idx , arity = List.length variant.fields } innerAcc
+                        )
+                        acc
+                        (zipIndex variants)
+
+                _ ->
+                    acc
+        )
+        Dict.empty
+        decls
 
 
 addCtorsFromList : String -> (List (String, Scheme)) -> Int -> (Dict.Dict String CtorInfo) -> Dict.Dict String CtorInfo

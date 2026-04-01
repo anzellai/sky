@@ -36,13 +36,13 @@ jobs:
           go build -o /usr/local/bin/sky-dce tools/sky_dce.go
           go build -o /usr/local/bin/sky-ffi-gen tools/sky_ffi_gen.go
 
-      # Bootstrap: build compiler from committed Go source (sky-out/main.go)
+      # Bootstrap: build compiler from committed Go source (bootstrap/main.go)
       - name: Bootstrap compiler from Go source
         run: |
-          cd sky-out
+          cd bootstrap
           go build -gcflags=all=-l -o app .
           cd ..
-          cp -f sky-out/app /usr/local/bin/sky
+          cp -f bootstrap/app /usr/local/bin/sky
           sky --version
 
       # Phase 1: compile from Sky source
