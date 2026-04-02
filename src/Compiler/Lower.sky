@@ -1725,9 +1725,9 @@ patternToCondition ctx varName pat =
                             tagIdx = lookupCtorTagIndex ctx ctorName
                         in
                             if varName == "__subject" then
-                                "(__sky_tag == " ++ String.fromInt tagIdx ++ " || __sky_name == \"" ++ ctorName ++ "\")"
+                                "(__sky_name == \"" ++ ctorName ++ "\" || (__sky_name == \"\" && __sky_tag == " ++ String.fromInt tagIdx ++ "))"
                             else
-                                "(sky_adtTag(" ++ varName ++ ") == " ++ String.fromInt tagIdx ++ " || sky_getSkyName(" ++ varName ++ ") == \"" ++ ctorName ++ "\")"
+                                "(sky_getSkyName(" ++ varName ++ ") == \"" ++ ctorName ++ "\" || (sky_getSkyName(" ++ varName ++ ") == \"\" && sky_adtTag(" ++ varName ++ ") == " ++ String.fromInt tagIdx ++ "))"
                 subConds = subPatternConditions ctx varName ctorName args 0
             in
                 if String.isEmpty subConds then
