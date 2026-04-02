@@ -1428,18 +1428,21 @@ func sky_equal(a, b any) bool {
 }
 ```
 
-**SkyName tag extraction** (Step 13) -- pattern matching on custom ADTs generated `sky_asMap(__subject)["SkyName"]` per branch. For a 20-branch `case msg of`, that's 20 map lookups on the same value. Now extracted once:
+**SkyADT struct + integer tag matching** (Steps 13, v0.7.11–v0.7.14) -- ADT values were `map[string]any{"Tag": 0, "SkyName": "Navigate", "V0": page}`. Now they're Go structs with integer tag comparison:
 
 ```go
-// Before: N map lookups for N branches
-if sky_asMap(__subject)["SkyName"] == "Navigate" { ... }
-if sky_asMap(__subject)["SkyName"] == "SetLang" { ... }
-
-// After: 1 map lookup, N string comparisons
+// Before: map allocation + string comparison per branch
 __sky_tag := sky_asMap(__subject)["SkyName"]
-if __sky_tag == "Navigate" { ... }
-if __sky_tag == "SetLang" { ... }
+if __sky_tag == "Navigate" { page := sky_asMap(__subject)["V0"]; ... }
+if __sky_tag == "SetLang" { lang := sky_asMap(__subject)["V0"]; ... }
+
+// After: struct value + integer comparison + direct field access
+__sky_tag := sky_adtTag(__subject)  // returns int from SkyADT.Tag
+if __sky_tag == 0 { page := sky_adtField(__subject, 0); ... }
+if __sky_tag == 1 { lang := sky_adtField(__subject, 0); ... }
 ```
+
+The `SkyADT` struct eliminates map allocation per ADT value. Pattern matching is O(1) integer comparison instead of O(n) string hashing. Field access is a direct struct field read instead of map lookup.
 
 ### Current Build Times
 
@@ -1450,15 +1453,32 @@ if __sky_tag == "SetLang" { ... }
 | **skyshop** | 43 local + 14 FFI | **1:30** | **0:59** | Stripe, Firebase, Tailwind, Sky.Live |
 | compiler self-build | 28 local | 5.6s | 5.6s | 3200 Go declarations |
 
-### What's Next
+### What's Next (v1.0 — Fully Typed Codegen)
 
-- **Smarter cache invalidation** -- hash source content per-module instead of declaration counts
-- **Selective import emission** -- only emit Go imports for packages actually referenced
-- **Struct-based ADT values** -- use Go structs instead of `map[string]any` for custom ADTs (O(1) field access, lower GC pressure)
+The current compiler (v0.7.x) uses `any` for function parameters and returns. ADT values use typed Go structs (SkyADT) with integer tag matching, but function boundaries remain untyped. The v1.0 goal is to eliminate `any` from all generated code.
+
+**Why this matters:**
+- **"If it compiles, it works"** — the Go compiler becomes a second type checker, catching mismatches at the Go level
+- **Performance** — typed code avoids type assertions, enables Go compiler optimisations (inlining, escape analysis)
+- **Interop** — typed functions can be called from Go directly without `any` casting
+
+**What v1.0 requires:**
+1. Replace `sky_call(f, arg)` calling convention with direct `f(arg)` calls — every call site must know the callee's concrete type
+2. Replace `func f(a any) any` signatures with `func f(a int) int` — using inferred types from the type checker (already plumbed via `typedDecls`)
+3. Go generic core types — `SkyMaybe[T]`, `SkyResult[E, T]`, `SkyTuple2[A, B]` with parameterised constructors
+4. Typed records — generate Go structs for each record shape instead of `map[string]any`
+
+**Already done toward v1.0:**
+- Type plumbing: inferred types flow from Checker → Pipeline → LowerCtx (`typedDecls : Dict String Scheme`)
+- Type annotations: `// sky:type funcName : Type` comments emitted on all function declarations
+- `typeToGo` function maps Sky types to Go type strings (`Int → int`, `List String → []string`, etc.)
+- `extractFunParams` decomposes function types into parameter types + return type
+- Smarter cache invalidation — hash source content per-module instead of declaration counts
+- Selective import emission — only emit Go imports for packages actually referenced
 
 ## Type Safety Journey
 
-Sky's core principle is **"if it compiles, it works"**. A comprehensive audit identified 33 type safety gaps and all have been addressed. The compiler now self-hosts cleanly with strict type checking -- all 14 examples compile with zero warnings.
+Sky's core principle is **"if it compiles, it works"**. A comprehensive audit identified 33 type safety gaps and all have been addressed. The compiler now self-hosts cleanly with strict type checking -- all 15 examples compile with zero warnings.
 
 ### Parser: Indentation-Based Case Scoping
 

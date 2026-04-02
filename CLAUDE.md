@@ -383,7 +383,7 @@ main =
 
 1. **Formatter↔compiler compat** — FIXED. All 32 modules format, compile, and self-host. Formatting is idempotent (running `sky fmt` twice produces identical output). Seven fixes in Format.sky: (a) `getLexemeAt1` field access, (b) annotation-function pairing via `formatDeclPairs`, (c) flat `else if` chains via `isExprIf`, (d) record field layout on indented new line, (e) `formatCall` with `align` + `indent` + `line` — long function calls break arguments onto indented new lines while keeping short calls on one line; `align` ensures argument column >= callee column so the parser's `parseApplicationArgs` column check passes, (f) `quoteString` identity (AST stores raw escaped strings, no re-escaping needed), (g) stale `live_init.go` cleanup in Pipeline.sky prevents build failures when switching between Live and non-Live projects.
 
-2. **Lowerer limitation with new functions** — PARTIALLY FIXED. (a) Nested `case` inside `case` inside `let` — uses IIFEs (anonymous function literals), no blank function names observed. Works correctly for all 30 compiler modules. (b) ADT constructor sub-pattern matching — FIXED. `patternToCondition` now recursively checks sub-patterns of constructors via `subPatternConditions`. e.g. `Cons head Nil` generates `SkyName == "Cons" && V1.SkyName == "Nil"` instead of just `SkyName == "Cons"`. (c) **New functions in dependency modules are not emitted** — adding a new function to a dependency module (e.g. Pipeline.sky) and calling it from Main.sky generates the call site but NOT the function definition in Go output. Workaround: modify existing functions instead of adding new ones, or add helper functions that are only called within the same module (internal calls work).
+2. **Lowerer limitation with new functions** — FIXED. (a) Nested `case` inside `case` inside `let` — uses IIFEs (anonymous function literals), no blank function names observed. Works correctly for all 30 compiler modules. (b) ADT constructor sub-pattern matching — FIXED. `patternToCondition` now recursively checks sub-patterns of constructors via `subPatternConditions`. (c) **New functions in dependency modules** — FIXED (v0.7.13). Root cause was parser `(expr).field` not supported. `parsePrimary` only handled field access for simple identifiers. Expressions like `(snd pair).declarations` caused parse failures that silently dropped functions. Fix: `applyFieldAccess` in `parseApplication`/`parseApplicationArgs`.
 
 12. **Parser: `getLexemeAt1` field access** — FIXED. `(peekAt 1 state).lexeme` returned the full token object instead of `.lexeme` string because the lowerer dropped field access on parenthesised expressions. Fixed by using a let-binding. This caused `type alias` declarations to be silently skipped during parsing.
 
@@ -437,6 +437,18 @@ main =
 
 23. **Parser: long-line formatter splits dropping functions** — FIXED. Very long single-line expressions split by the formatter across multiple lines (e.g. `String.startsWith` with `"["` on the next line at column 518) caused `parseFunDecl` to fail because `parseExpr` couldn't handle the deep-column continuation. Fix: split `isSafeType` (BindingGen.sky) and `isSupportedType` (WrapperGen.sky) into helper functions. Impact: 2 critical FFI functions were silently dropped.
 
+24. **Parser: `(expr).field` not supported** — FIXED (v0.7.13). Field access was only handled for simple identifiers (`x.field`). Parenthesised expressions like `(snd pair).declarations` or `(fst x).name` caused parse failures that silently dropped entire functions via `parseDeclsHelper` error recovery. Fix: added `applyFieldAccess` after `parsePrimary` in `parseApplication` and `parseApplicationArgs`. Supports chained access: `(expr).a.b.c`. This was the root cause of known issue #2c — new functions in dependency modules not being emitted.
+
+25. **FFI: type alias emission** — FIXED. Opaque FFI types (e.g. `time.Duration`) generated `var Duration = Time_Duration` where `Time_Duration` was a Go type, not a value. Fix: `generateAliasesFromModuleInner` filters type names from alias generation. Also handles capitalised name collisions (e.g. `dBStats` → `DBStats` collides with type `DBStats`).
+
+26. **FFI: interface pointer dereference** — FIXED. `sky-ffi-gen` generated `receiver.(*Interface)` for Go interfaces, but Go doesn't allow pointers to interfaces. Fix: detect interface types via `kind` field in inspect JSON and use `receiver.(Interface)` assertion. Also fixed: interface params cast via `sky_asInt()` → proper type assertion.
+
+27. **FFI: zero-arity wrapper params** — FIXED. `generateFuncWrapper` added `_ any` dummy param for zero-arity Go functions. Fix: empty param list for zero-arity. Also fixed BindingGen to not generate dummy `_` param in `.skyi` declarations.
+
+28. **FFI: callback function types** — FIXED. `generateTypeCast` passed `any` where Go expected concrete function types like `func(http.ResponseWriter, *http.Request)`. Fix: generate type assertion for `func(...)` types with package path aliasing.
+
+29. **FFI: method/constant name collision** — FIXED. Go type `Kind` has method `String()` → `Sky_log_slog_KindString`. Go constant `KindString` → also `Sky_log_slog_KindString`. Fix: `sky-ffi-gen` collects method wrapper names and skips colliding constants.
+
 ### Techniques from TS Compiler (to port)
 
 The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build, ~500ms incremental) through techniques not yet ported:
@@ -485,8 +497,48 @@ The TypeScript compiler (`ts-compiler/`) achieved fast builds (~2-3s first build
 - DONE: Rune-based `String.slice` — fixes UTF-8 truncation for multi-byte characters
 - DONE: Sky.Live Update wrapper — preserves model on FFI panics instead of corrupting session
 
-**TODO:**
+**Done (v0.7.10–v0.7.14):**
+- DONE: Struct-based ADT values — `SkyADT{Tag: N, SkyName: "Name", V0: val}` replaces `map[string]any`
+- DONE: Integer tag matching — `sky_adtTag(subject) == N` replaces `sky_getSkyName(subject) == "Name"`
+- DONE: Struct field access — `sky_adtField(subject, 0)` replaces `sky_asMap(subject)["V0"]`
+- DONE: Ordered variant names — `RegisteredAdt.variantNames` ensures deterministic tag index assignment
+- DONE: Type plumbing — `typedDecls : Dict String Scheme` threaded from Checker to LowerCtx
+- DONE: Type annotations — `// sky:type funcName : Type` comments on all function declarations
+- DONE: Parser `(expr).field` — field access on any expression, not just identifiers
+- DONE: FFI interface handling — non-pointer receiver for interfaces in `sky-ffi-gen`
+- DONE: FFI callback types — function type assertions for `func(ResponseWriter, *Request)` etc.
+- DONE: FFI method/constant collision detection — skips colliding constants
+- DONE: FFI typed slices — `[]any` → `[]slog.Attr` conversion
+- DONE: FFI zero-arity fix — correct wrapper signatures for `time.Now()` etc.
+- DONE: Bootstrap directory — `bootstrap/main.go` for clean CI builds
+
+**TODO (v1.0 — fully typed codegen):**
+- Typed function parameters — requires replacing `sky_call(f, arg)` calling convention with direct Go function calls
+- Typed function returns — requires all callers to handle concrete return types
+- Go generic core types — `SkyMaybe[T]`, `SkyResult[E, T]`, `SkyTuple2[A, B]` with parameterised constructors
+- Typed records — generate Go structs for each record shape instead of `map[string]any`
 - Smarter cache invalidation — hash source content per-module, not just declaration counts
 - Selective import emission — only emit Go imports for referenced packages
-- Struct-based ADT values — Go structs instead of `map[string]any` for custom ADTs
-- Go generics support in FFI pipeline
+
+### v1.0 Typed Codegen Roadmap
+
+The current compiler (v0.7.x) uses `any` for function parameters and returns, with `sky_call(f, arg)` for all function application. This means the Go compiler cannot validate types across function boundaries. The v1.0 goal is to eliminate `any` from generated code entirely.
+
+**Why this matters:**
+- "If it compiles, it works" — the Go compiler becomes a second type checker, catching mismatches the Sky type checker might miss
+- Performance — typed code avoids map allocations, type assertions, and reflection
+- Interop — typed functions can be called directly from Go without `any` casting
+
+**What v0.7.x achieves (current):**
+- ADT values are Go structs (SkyADT) — eliminates map allocation per ADT value
+- Pattern matching uses integer comparison — O(1) vs O(n) string comparison
+- Type information flows from checker to lowerer — inferred types available during code generation
+
+**What v1.0 requires:**
+1. Replace `sky_call(f, arg)` with direct function calls — every call site must know the callee's type
+2. Replace `func f(a any) any` with `func f(a int) int` — every function signature must use concrete types
+3. Handle polymorphic functions — either Go generics or monomorphisation
+4. Generate Go structs for records — each unique `{ name : String, age : Int }` becomes a named Go struct
+5. Parameterise core types — `SkyMaybe[T]`, `SkyResult[E, T]` with typed constructors and accessors
+
+This is a calling-convention rewrite that affects every function in the compiler and all generated code. It cannot be done incrementally — all callers and callees must change simultaneously.
