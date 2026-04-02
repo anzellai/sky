@@ -1659,7 +1659,7 @@ lowerCaseToSwitch ctx subjectExpr branches =
         hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
         tagExtract =
             if hasCustomAdtBranch then
-                "__sky_tag := sky_getSkyName(__subject); "
+                "__sky_tag := sky_adtTag(__subject); "
             else
                 ""
     in
@@ -1720,10 +1720,14 @@ patternToCondition ctx varName pat =
                         String.join "" [ "sky_asBool(" , varName , ") == true" ]
                     else if ctorName == "False" then
                         String.join "" [ "sky_asBool(" , varName , ") == false" ]
-                    else if varName == "__subject" then
-                        String.join "" [ "__sky_tag == \"" , ctorName , "\"" ]
                     else
-                        String.join "" [ "sky_getSkyName(" , varName , ") == \"" , ctorName , "\"" ]
+                        let
+                            tagIdx = lookupCtorTagIndex ctx ctorName
+                        in
+                            if varName == "__subject" then
+                                "__sky_tag == " ++ String.fromInt tagIdx
+                            else
+                                "sky_adtTag(" ++ varName ++ ") == " ++ String.fromInt tagIdx
                 subConds = subPatternConditions ctx varName ctorName args 0
             in
                 if String.isEmpty subConds then

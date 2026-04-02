@@ -234,7 +234,7 @@ emitMultiModuleGo outDir projectRoot entryMod entryRegistry aliasMap depDecls lo
             { baseCtx
             | registry = entryRegistry
             , localFunctions = Lower.collectLocalFunctions entryMod.declarations
-            , importedConstructors = Lower.buildConstructorMap entryRegistry
+            , importedConstructors = Dict.union (buildAllCtorMaps entryMod loadedModules) (Lower.buildConstructorMap entryRegistry)
             , importAliases = aliasMap
             , exposedStdlib = entryExposed
             , localFunctionArity = Lower.collectLocalFunctionArities
@@ -1839,6 +1839,15 @@ makePrefixAlias prefix decl =
                     Just (GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName))
 
 
+buildAllCtorMaps : Ast.Module -> List (String, Ast.Module) -> Dict.Dict String Lower.CtorInfo
+buildAllCtorMaps currentMod allModules =
+    let
+        fromCurrent = Lower.buildConstructorMapFromDecls currentMod.declarations
+        fromAll = List.foldl (\pair acc -> Dict.union (Lower.buildConstructorMapFromDecls (snd pair).declarations) acc) Dict.empty allModules
+    in
+        Dict.union fromCurrent fromAll
+
+
 isCommonName : String -> Bool
 isCommonName name =
     name == "main" || name == "_" || name == "update" || name == "init" || name == "view" || name == "subscriptions" || name == "guard" || name == "new" || name == "get" || name == "list" || name == "delete" || name == "set" || name == "expire"
@@ -2432,7 +2441,7 @@ compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash =
             { depBaseCtx
             | registry = registry
             , localFunctions = localFns
-            , importedConstructors = Lower.buildConstructorMap registry
+            , importedConstructors = Dict.union (buildAllCtorMaps mod allModules) (Lower.buildConstructorMap registry)
             , modulePrefix = prefix
             , importAliases = depAliasMap
             , localFunctionArity = Lower.collectLocalFunctionArities mod.declarations
@@ -2618,7 +2627,7 @@ compileDependencyModuleFull stdlibEnv allModules pair =
             { depBaseCtx
             | registry = registry
             , localFunctions = localFns
-            , importedConstructors = Lower.buildConstructorMap registry
+            , importedConstructors = Dict.union (buildAllCtorMaps mod allModules) (Lower.buildConstructorMap registry)
             , modulePrefix = prefix
             , importAliases = depAliasMap
             , localFunctionArity = Lower.collectLocalFunctionArities
