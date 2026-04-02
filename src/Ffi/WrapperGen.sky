@@ -44,6 +44,7 @@ classifyFunc results funcName =
         single :: [  ] ->
             if single == "error" then
                 Fallible
+            
             else
                 Effectful
         
@@ -60,6 +61,7 @@ classifyFunc results funcName =
             in
                 if lastResult == "error" then
                     Fallible
+                
                 else
                     Effectful
 
@@ -74,6 +76,7 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
         reflectImport =
             if hasFields then
                 "\t_ffi_reflect \"reflect\"\n"
+            
             else
                 ""
         parts = String.split "/" pkgName
@@ -98,16 +101,17 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
             String.join "/" (List.reverse (List.drop 1 (List.reverse parts)))
         parentParts = String.split "/" candidateParent
         isSubPkg =
-            isExternal && List.length parentParts >= 3 && not
-                                                              (
-                                                              String.startsWith
-                                                                  "v"
-                                                                  lastPart && String.length
-                                                                                  lastPart <= 3
-                                                              )
+            isExternal
+                && List.length parentParts >= 3
+                && not
+                       (
+                       String.startsWith "v" lastPart
+                           && String.length lastPart <= 3
+                       )
         parentPkg =
             if isSubPkg then
                 candidateParent
+            
             else
                 ""
         allTypeRefs =
@@ -125,14 +129,18 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
         ancestorPkgs = buildAncestorPkgsW pkgName
         parentImport =
             String.join ""
-                (List.filterMap (buildAncestorImportLine pkgName allTypeRefs) ancestorPkgs)
+                (
+                List.filterMap (buildAncestorImportLine pkgName allTypeRefs)
+                    ancestorPkgs
+                )
     in
         String.join "\n"
             [ "package sky_wrappers"
             , ""
             , "import ("
             , "\t_ffi_fmt \"fmt\""
-            , reflectImport ++ parentImport ++ "\t" ++ shortPkg ++ " \"" ++ pkgName ++ "\""
+            , reflectImport
+                ++ parentImport ++ "\t" ++ shortPkg ++ " \"" ++ pkgName ++ "\""
             , ")"
             , ""
             , "var _ = _ffi_fmt.Sprintf"
@@ -158,6 +166,7 @@ canWrapFuncForPkg : String -> FuncEntry -> Bool
 canWrapFuncForPkg pkgName func =
     if func.hasTypeParams then
         False
+    
     else
         let
             paramCount = List.length func.params
@@ -181,17 +190,27 @@ canWrapFuncForPkg pkgName func =
                                                     String.slice 2
                                                         (String.length t)
                                                         t
+                                                
                                                 else
                                                     t
                                         in
-                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || String.contains "." elemType || isSupportedTypeForPkg pkgName elemType
+                                            elemType == "any"
+                                                || elemType == "interface{}"
+                                                || elemType == "string"
+                                                || elemType == "byte"
+                                                || elemType == "int"
+                                                || String.contains "." elemType
+                                                || isSupportedTypeForPkg pkgName
+                                                       elemType
+                                    
                                     else
                                         isSupportedTypeForPkg pkgName t
                     )
                     (zipIndex func.params 0)
         in
-            paramsOk && List.all (\r -> isSupportedTypeForPkg pkgName r)
-                            func.results && List.length func.results <= 2
+            paramsOk
+                && List.all (\r -> isSupportedTypeForPkg pkgName r) func.results
+                && List.length func.results <= 2
 
 
 zipIndex : (List a) -> Int -> List (Int, a)
@@ -202,13 +221,14 @@ zipIndex items idx =
             []
         
         item :: rest ->
-            (idx, item) :: zipIndex rest (idx + 1)
+            ( idx, item ) :: zipIndex rest (idx + 1)
 
 
 canWrapMethodForPkg : String -> MethodEntry -> Bool
 canWrapMethodForPkg pkgName method =
     if method.hasTypeParams then
         False
+    
     else
         let
             mParamCount = List.length method.params
@@ -232,42 +252,67 @@ canWrapMethodForPkg pkgName method =
                                                     String.slice 2
                                                         (String.length t)
                                                         t
+                                                
                                                 else
                                                     t
                                         in
-                                            elemType == "any" || elemType == "interface{}" || elemType == "string" || elemType == "byte" || elemType == "int" || String.contains "." elemType || isSupportedTypeForPkg pkgName elemType
+                                            elemType == "any"
+                                                || elemType == "interface{}"
+                                                || elemType == "string"
+                                                || elemType == "byte"
+                                                || elemType == "int"
+                                                || String.contains "." elemType
+                                                || isSupportedTypeForPkg pkgName
+                                                       elemType
+                                    
                                     else
                                         isSupportedTypeForPkg pkgName t
                     )
                     (zipIndex method.params 0)
         in
-            mParamsOk && List.all (\r -> isSupportedTypeForPkg pkgName r)
-                             method.results && List.length method.results <= 2
+            mParamsOk
+                && List.all (\r -> isSupportedTypeForPkg pkgName r)
+                       method.results
+                && List.length method.results <= 2
 
 
 isSupportedTypeForPkg : String -> String -> Bool
 isSupportedTypeForPkg pkgName goType =
     if String.startsWith "func(" goType && not (isAdaptableFuncType goType) then
         False
-    else if String.startsWith "map[" goType && goType /= "map[string]interface{}" && goType /= "map[string]any" then
+    
+    else if String.startsWith "map[" goType
+        && goType /= "map[string]interface{}"
+        && goType /= "map[string]any" then
         False
-    else if String.startsWith "[]" goType && goType /= "[]byte" && goType /= "[]string" && goType /= "[]any" then
+    
+    else if String.startsWith "[]" goType
+        && goType /= "[]byte"
+        && goType /= "[]string"
+        && goType /= "[]any" then
         let
             sliceElem = String.slice 2 (String.length goType) goType
             sliceInner =
                 if String.startsWith "*" sliceElem then
                     String.slice 1 (String.length sliceElem) sliceElem
+                
                 else
                     sliceElem
         in
-            isFromPkgOrAncestorW pkgName sliceInner || String.contains "." sliceInner
+            isFromPkgOrAncestorW pkgName sliceInner
+                || String.contains "." sliceInner
+    
     else
-        isSupportedType goType || isSupportedResultType goType || isFromPkgOrAncestorW pkgName goType || isFromPkgOrAncestorW pkgName (stripPointerW goType)
+        isSupportedType goType
+            || isSupportedResultType goType
+            || isFromPkgOrAncestorW pkgName goType
+            || isFromPkgOrAncestorW pkgName (stripPointerW goType)
 
 
 stripPointerW goType =
     if String.startsWith "*" goType then
         String.slice 1 (String.length goType) goType
+    
     else
         goType
 
@@ -275,8 +320,10 @@ stripPointerW goType =
 isFromPkgOrAncestorW pkgName goType =
     if String.startsWith (pkgName ++ ".") goType then
         True
+    
     else if String.startsWith (pkgName ++ "/") goType then
         True
+    
     else
         checkAncestorPkgsW (buildAncestorPkgsW pkgName) goType
 
@@ -286,16 +333,19 @@ buildAncestorPkgsW pkgName =
         parts = String.split "/" pkgName
         firstPart =
             case parts of
-
+                
                 f :: _ ->
                     f
-
-                [] ->
+                
+                [  ] ->
                     ""
         isExternal = String.contains "." firstPart
     in
         if isExternal && List.length parts > 3 then
-            buildAncestorsLoopW (List.reverse (List.drop 1 (List.reverse parts))) []
+            buildAncestorsLoopW
+                (List.reverse (List.drop 1 (List.reverse parts)))
+                []
+        
         else
             []
 
@@ -303,6 +353,7 @@ buildAncestorPkgsW pkgName =
 buildAncestorsLoopW parts acc =
     if List.length parts < 3 then
         acc
+    
     else
         let
             ancestor = String.join "/" parts
@@ -313,13 +364,14 @@ buildAncestorsLoopW parts acc =
 
 checkAncestorPkgsW ancestors goType =
     case ancestors of
-
-        [] ->
+        
+        [  ] ->
             False
-
+        
         pkg :: rest ->
             if String.startsWith (pkg ++ ".") goType then
                 True
+            
             else
                 checkAncestorPkgsW rest goType
 
@@ -327,13 +379,17 @@ checkAncestorPkgsW ancestors goType =
 buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
     if ancestorPkg == currentPkg then
         Nothing
+    
     else
         let
             ancestorShort = shortPkgName ancestorPkg
-            hasRef = List.any (\t -> String.contains (ancestorShort ++ ".") t) allTypeRefs
+            hasRef =
+                List.any (\t -> String.contains (ancestorShort ++ ".") t)
+                    allTypeRefs
         in
             if hasRef then
                 Just ("\t" ++ ancestorShort ++ " \"" ++ ancestorPkg ++ "\"\n")
+            
             else
                 Nothing
 
@@ -345,12 +401,43 @@ isSupportedType goType =
 
 isSupportedPrimitive : String -> Bool
 isSupportedPrimitive goType =
-    goType == "string" || goType == "bool" || goType == "int" || goType == "[]byte" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" || goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" || goType == "float32" || goType == "float64" || goType == "interface{}" || goType == "any" || goType == "error" || goType == "context.Context" || goType == "io.Reader" || goType == "io.Writer" || goType == "io.ReadCloser" || goType == "io.WriteCloser" || goType == "[]string" || goType == "[]int" || goType == "[]float64" || goType == "[]bool"
+    goType == "string"
+        || goType == "bool"
+        || goType == "int"
+        || goType == "[]byte"
+        || goType == "int8"
+        || goType == "int16"
+        || goType == "int32"
+        || goType == "int64"
+        || goType == "uint"
+        || goType == "uint8"
+        || goType == "uint16"
+        || goType == "uint32"
+        || goType == "uint64"
+        || goType == "float32"
+        || goType == "float64"
+        || goType == "interface{}"
+        || goType == "any"
+        || goType == "error"
+        || goType == "context.Context"
+        || goType == "io.Reader"
+        || goType == "io.Writer"
+        || goType == "io.ReadCloser"
+        || goType == "io.WriteCloser"
+        || goType == "[]string"
+        || goType == "[]int"
+        || goType == "[]float64"
+        || goType == "[]bool"
 
 
 isSupportedCompound : String -> Bool
 isSupportedCompound goType =
-    String.startsWith "[" goType || String.startsWith "func(" goType || String.startsWith "map[" goType || isSupportedDotType goType || isSupportedPointer goType || isSupportedSlice goType
+    String.startsWith "[" goType
+        || String.startsWith "func(" goType
+        || String.startsWith "map[" goType
+        || isSupportedDotType goType
+        || isSupportedPointer goType
+        || isSupportedSlice goType
 
 
 isSupportedDotType : String -> Bool
@@ -362,6 +449,7 @@ isSupportedPointer : String -> Bool
 isSupportedPointer goType =
     if String.startsWith "*" goType then
         isSupportedType (String.slice 1 (String.length goType) goType)
+    
     else
         False
 
@@ -370,6 +458,7 @@ isSupportedSlice : String -> Bool
 isSupportedSlice goType =
     if String.startsWith "[]" goType then
         isSupportedType (String.slice 2 (String.length goType) goType)
+    
     else
         False
 
@@ -380,62 +469,38 @@ needsExtraImport goType =
         t =
             if String.startsWith "*" goType then
                 String.slice 1 (String.length goType) goType
+            
             else
                 goType
     in
-        String.contains "/" t || String.startsWith "io." t || String.startsWith
-                                                                  "hash."
-                                                                  t || String.startsWith
-                                                                           "context."
-                                                                           t || String.startsWith
-                                                                                    "sync."
-                                                                                    t || String.startsWith
-                                                                                             "net."
-                                                                                             t || String.startsWith
-                                                                                                      "crypto."
-                                                                                                      t || String.startsWith
-                                                                                                               "encoding."
-                                                                                                               t || String.startsWith
-                                                                                                                        "reflect."
-                                                                                                                        t || String.startsWith
-                                                                                                                                 "testing."
-                                                                                                                                 t || String.startsWith
-                                                                                                                                          "log."
-                                                                                                                                          t || String.startsWith
-                                                                                                                                                   "regexp."
-                                                                                                                                                   t || String.startsWith
-                                                                                                                                                            "mime."
-                                                                                                                                                            t || String.startsWith
-                                                                                                                                                                     "html."
-                                                                                                                                                                     t || String.startsWith
-                                                                                                                                                                              "text."
-                                                                                                                                                                              t || String.startsWith
-                                                                                                                                                                                       "bufio."
-                                                                                                                                                                                       t || String.startsWith
-                                                                                                                                                                                                "fs."
-                                                                                                                                                                                                t || String.startsWith
-                                                                                                                                                                                                         "os."
-                                                                                                                                                                                                         t || String.startsWith
-                                                                                                                                                                                                                  "time."
-                                                                                                                                                                                                                  t || String.startsWith
-                                                                                                                                                                                                                           "fmt."
-                                                                                                                                                                                                                           t || String.startsWith
-                                                                                                                                                                                                                                    "sort."
-                                                                                                                                                                                                                                    t || String.startsWith
-                                                                                                                                                                                                                                             "math."
-                                                                                                                                                                                                                                             t || String.startsWith
-                                                                                                                                                                                                                                                      "strings."
-                                                                                                                                                                                                                                                      t || String.startsWith
-                                                                                                                                                                                                                                                               "bytes."
-                                                                                                                                                                                                                                                               t || String.startsWith
-                                                                                                                                                                                                                                                                        "strconv."
-                                                                                                                                                                                                                                                                        t || String.startsWith
-                                                                                                                                                                                                                                                                                 "database."
-                                                                                                                                                                                                                                                                                 t || String.startsWith
-                                                                                                                                                                                                                                                                                          "sql."
-                                                                                                                                                                                                                                                                                          t || String.startsWith
-                                                                                                                                                                                                                                                                                                   "unicode."
-                                                                                                                                                                                                                                                                                                   t
+        String.contains "/" t
+            || String.startsWith "io." t
+            || String.startsWith "hash." t
+            || String.startsWith "context." t
+            || String.startsWith "sync." t
+            || String.startsWith "net." t
+            || String.startsWith "crypto." t
+            || String.startsWith "encoding." t
+            || String.startsWith "reflect." t
+            || String.startsWith "testing." t
+            || String.startsWith "log." t
+            || String.startsWith "regexp." t
+            || String.startsWith "mime." t
+            || String.startsWith "html." t
+            || String.startsWith "text." t
+            || String.startsWith "bufio." t
+            || String.startsWith "fs." t
+            || String.startsWith "os." t
+            || String.startsWith "time." t
+            || String.startsWith "fmt." t
+            || String.startsWith "sort." t
+            || String.startsWith "math." t
+            || String.startsWith "strings." t
+            || String.startsWith "bytes." t
+            || String.startsWith "strconv." t
+            || String.startsWith "database." t
+            || String.startsWith "sql." t
+            || String.startsWith "unicode." t
 
 
 isAdaptableFuncType : String -> Bool
@@ -488,7 +553,10 @@ generateFuncWrapper safePkg pkgName func =
                 [  ] ->
                     ""
         canSpreadDirect =
-            lastParamType == "[]any" || lastParamType == "[]string" || lastParamType == "[]byte" || lastParamType == "[]int"
+            lastParamType == "[]any"
+                || lastParamType == "[]string"
+                || lastParamType == "[]byte"
+                || lastParamType == "[]int"
         lastArgIdx = List.length argNames - 1
         lastArgName = "_arg" ++ String.fromInt lastArgIdx
         argNamesForCall =
@@ -498,27 +566,35 @@ generateFuncWrapper safePkg pkgName func =
                 in
                     if canSpreadDirect then
                         List.append allButLast [ lastArgName ++ "..." ]
+                    
                     else
                         allButLast
+            
             else
                 argNames
         argCasts =
-            if func.variadic && not canSpreadDirect && not
-                                                           (
-                                                           List.isEmpty
-                                                               allArgCasts
-                                                           ) then
+            if func.variadic
+                && not canSpreadDirect
+                && not (List.isEmpty allArgCasts) then
                 List.take (List.length allArgCasts - 1) allArgCasts
+            
             else
                 allArgCasts
         castStr = String.join "\n\t" argCasts
         goCall =
-            shortPkgName pkgName ++ "." ++ func.name ++ "(" ++ String.join ", "
-                                                                   argNamesForCall ++ ")"
+            shortPkgName pkgName
+                ++ "."
+                    ++ func.name
+                        ++ "(" ++ String.join ", " argNamesForCall ++ ")"
         kind = classifyFunc func.results func.name
         returnCode = wrapReturn kind func.results goCall
     in
-        "func " ++ wrapperName ++ "(" ++ paramStr ++ ") any {\n\t" ++ castStr ++ "\n\t" ++ returnCode ++ "\n}"
+        "func "
+            ++ wrapperName
+                ++ "("
+                    ++ paramStr
+                        ++ ") any {\n\t"
+                            ++ castStr ++ "\n\t" ++ returnCode ++ "\n}"
 
 
 generateMethodWrapper : String -> String -> MethodEntry -> String
@@ -534,9 +610,20 @@ generateMethodWrapper safePkg pkgName method =
         qualType = shortPkg ++ "." ++ method.typeName
         receiverCast =
             if method.isInterface then
-                "var _receiver " ++ qualType ++ "; if _v, ok := receiver.(" ++ qualType ++ "); ok { _receiver = _v }"
+                "var _receiver "
+                    ++ qualType
+                        ++ "; if _v, ok := receiver.("
+                            ++ qualType ++ "); ok { _receiver = _v }"
+            
             else
-                "var _receiver *" ++ qualType ++ "; if _p, ok := receiver.(*" ++ qualType ++ "); ok { _receiver = _p } else if _v, ok := receiver.(" ++ qualType ++ "); ok { _receiver = &_v }; if _receiver == nil { return SkyErr(\"nil receiver: expected " ++ method.typeName ++ "\") }"
+                "var _receiver *"
+                    ++ qualType
+                        ++ "; if _p, ok := receiver.(*"
+                            ++ qualType
+                                ++ "); ok { _receiver = _p } else if _v, ok := receiver.("
+                                    ++ qualType
+                                        ++ "); ok { _receiver = &_v }; if _receiver == nil { return SkyErr(\"nil receiver: expected "
+                                            ++ method.typeName ++ "\") }"
         allMethodArgCasts =
             List.indexedMap (\i p -> generateArgCast i p) method.params
         argNames =
@@ -550,7 +637,10 @@ generateMethodWrapper safePkg pkgName method =
                 [  ] ->
                     ""
         mCanSpreadDirect =
-            mLastParamType == "[]any" || mLastParamType == "[]string" || mLastParamType == "[]byte" || mLastParamType == "[]int"
+            mLastParamType == "[]any"
+                || mLastParamType == "[]string"
+                || mLastParamType == "[]byte"
+                || mLastParamType == "[]int"
         mLastArgIdx = List.length argNames - 1
         mLastArgName = "_arg" ++ String.fromInt mLastArgIdx
         argNamesForCall =
@@ -560,27 +650,33 @@ generateMethodWrapper safePkg pkgName method =
                 in
                     if mCanSpreadDirect then
                         List.append allButLast [ mLastArgName ++ "..." ]
+                    
                     else
                         allButLast
+            
             else
                 argNames
         methodArgCasts =
-            if method.variadic && not mCanSpreadDirect && not
-                                                              (
-                                                              List.isEmpty
-                                                                  allMethodArgCasts
-                                                              ) then
+            if method.variadic
+                && not mCanSpreadDirect
+                && not (List.isEmpty allMethodArgCasts) then
                 List.take (List.length allMethodArgCasts - 1) allMethodArgCasts
+            
             else
                 allMethodArgCasts
         castStr = String.join "\n\t" (receiverCast :: methodArgCasts)
         goCall =
-            "_receiver." ++ method.name ++ "(" ++ String.join ", "
-                                                      argNamesForCall ++ ")"
+            "_receiver."
+                ++ method.name ++ "(" ++ String.join ", " argNamesForCall ++ ")"
         kind = classifyFunc method.results method.name
         returnCode = wrapReturn kind method.results goCall
     in
-        "func " ++ wrapperName ++ "(" ++ paramStr ++ ") any {\n\t" ++ castStr ++ "\n\t" ++ returnCode ++ "\n}"
+        "func "
+            ++ wrapperName
+                ++ "("
+                    ++ paramStr
+                        ++ ") any {\n\t"
+                            ++ castStr ++ "\n\t" ++ returnCode ++ "\n}"
 
 
 generateArgCast : Int -> (String, String) -> String
@@ -617,6 +713,7 @@ wrapPureReturn results goCall =
         single :: [  ] ->
             if String.startsWith "[" single && String.contains "]" single then
                 "result := " ++ goCall ++ "\n\treturn result[:]"
+            
             else
                 "return " ++ goCall
         
@@ -630,8 +727,12 @@ wrapPureReturn results goCall =
                             results
                         )
             in
-                vars ++ " := " ++ goCall ++ "\n\t" ++ "return SkyTuple" ++ String.fromInt
-                                                                               n ++ "{" ++ vars ++ "}"
+                vars
+                    ++ " := "
+                        ++ goCall
+                            ++ "\n\t"
+                                ++ "return SkyTuple"
+                                    ++ String.fromInt n ++ "{" ++ vars ++ "}"
 
 
 wrapFallibleReturn : (List String) -> String -> String
@@ -640,9 +741,22 @@ wrapFallibleReturn results goCall =
         hasValueReturn = List.length results > 1
     in
         if hasValueReturn then
-            "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ "result, err := " ++ goCall ++ "\n\t\t" ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++ "return SkyOk(result)\n\t}()"
+            "return func() (__ret any) {\n\t\t"
+                ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t"
+                    ++ "result, err := "
+                        ++ goCall
+                            ++ "\n\t\t"
+                                ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t"
+                                    ++ "return SkyOk(result)\n\t}()"
+        
         else
-            "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ "err := " ++ goCall ++ "\n\t\t" ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
+            "return func() (__ret any) {\n\t\t"
+                ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t"
+                    ++ "err := "
+                        ++ goCall
+                            ++ "\n\t\t"
+                                ++ "if err != nil { return SkyErr(err.Error()) }\n\t\t"
+                                    ++ "return SkyOk(struct{}{})\n\t}()"
 
 
 wrapEffectfulReturn : (List String) -> String -> String
@@ -650,7 +764,9 @@ wrapEffectfulReturn results goCall =
     case results of
         
         [  ] ->
-            "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
+            "return func() (__ret any) {\n\t\t"
+                ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t"
+                    ++ goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
         
         single :: [  ] ->
             let
@@ -659,10 +775,17 @@ wrapEffectfulReturn results goCall =
                 resultExpr =
                     if isFixedArray then
                         "result[:]"
+                    
                     else
                         "result"
             in
-                "return func() (__ret any) {\n\t\t" ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t" ++ "result := " ++ goCall ++ "\n\t\t" ++ "return SkyOk(" ++ resultExpr ++ ")\n\t}()"
+                "return func() (__ret any) {\n\t\t"
+                    ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t"
+                        ++ "result := "
+                            ++ goCall
+                                ++ "\n\t\t"
+                                    ++ "return SkyOk("
+                                        ++ resultExpr ++ ")\n\t}()"
         
         _ ->
             let
@@ -716,6 +839,7 @@ parseFuncEntry json =
     in
         if String.isEmpty name then
             Nothing
+        
         else
             let
                 paramsArrayStr = Json.jsonGetArrayRaw "params" json
@@ -738,7 +862,7 @@ parseFuncEntry json =
 
 parseParamPair : String -> (String, String)
 parseParamPair json =
-    (Json.jsonGetString "name" json, Json.jsonGetString "type" json)
+    ( Json.jsonGetString "name" json, Json.jsonGetString "type" json )
 
 
 extractMethods : String -> List MethodEntry
@@ -770,6 +894,7 @@ extractFieldsFromType safePkg typeJson =
         if kind == "struct" && not (isGenericType typeJson) then
             List.filterMap (\f -> generateFieldAccessor safePkg typeName f)
                 fieldElements
+        
         else
             []
 
@@ -782,47 +907,77 @@ generateFieldAccessor safePkg typeName fieldJson =
     in
         if String.isEmpty fieldName || not (isSafeFieldType fieldType) then
             Nothing
+        
         else if String.startsWith "*" fieldType then
             Just
                 (
-                "func Sky_" ++ safePkg ++ "_FIELD_" ++ typeName ++ "_" ++ fieldName ++ "(receiver any) any {\n" ++ "\tv := _ffi_reflect.ValueOf(receiver)\n" ++ "\tfor v.Kind() == _ffi_reflect.Ptr { v = v.Elem() }\n" ++ "\tif v.Kind() == _ffi_reflect.Struct {\n" ++ "\t\tf := v.FieldByName(\"" ++ fieldName ++ "\")\n" ++ "\t\tif f.IsValid() {\n" ++ "\t\t\tif f.IsNil() { return SkyNothing() }\n" ++ "\t\t\treturn SkyJust(f.Interface())\n" ++ "\t\t}\n" ++ "\t}\n" ++ "\treturn SkyNothing()\n" ++ "}"
+                "func Sky_"
+                    ++ safePkg
+                        ++ "_FIELD_"
+                            ++ typeName
+                                ++ "_"
+                                    ++ fieldName
+                                        ++ "(receiver any) any {\n"
+                                            ++ "\tv := _ffi_reflect.ValueOf(receiver)\n"
+                                                ++ "\tfor v.Kind() == _ffi_reflect.Ptr { v = v.Elem() }\n"
+                                                    ++ "\tif v.Kind() == _ffi_reflect.Struct {\n"
+                                                        ++ "\t\tf := v.FieldByName(\""
+                                                            ++ fieldName
+                                                                ++ "\")\n"
+                                                                    ++ "\t\tif f.IsValid() {\n"
+                                                                        ++ "\t\t\tif f.IsNil() { return SkyNothing() }\n"
+                                                                            ++ "\t\t\treturn SkyJust(f.Interface())\n"
+                                                                                ++ "\t\t}\n"
+                                                                                    ++ "\t}\n"
+                                                                                        ++ "\treturn SkyNothing()\n"
+                                                                                            ++ "}"
                 )
+        
         else
             Just
                 (
-                "func Sky_" ++ safePkg ++ "_FIELD_" ++ typeName ++ "_" ++ fieldName ++ "(receiver any) any {\n" ++ "\tv := _ffi_reflect.ValueOf(receiver)\n" ++ "\tfor v.Kind() == _ffi_reflect.Ptr { v = v.Elem() }\n" ++ "\tif v.Kind() == _ffi_reflect.Struct {\n" ++ "\t\tf := v.FieldByName(\"" ++ fieldName ++ "\")\n" ++ "\t\tif f.IsValid() { return f.Interface() }\n" ++ "\t}\n" ++ "\treturn nil\n" ++ "}"
+                "func Sky_"
+                    ++ safePkg
+                        ++ "_FIELD_"
+                            ++ typeName
+                                ++ "_"
+                                    ++ fieldName
+                                        ++ "(receiver any) any {\n"
+                                            ++ "\tv := _ffi_reflect.ValueOf(receiver)\n"
+                                                ++ "\tfor v.Kind() == _ffi_reflect.Ptr { v = v.Elem() }\n"
+                                                    ++ "\tif v.Kind() == _ffi_reflect.Struct {\n"
+                                                        ++ "\t\tf := v.FieldByName(\""
+                                                            ++ fieldName
+                                                                ++ "\")\n"
+                                                                    ++ "\t\tif f.IsValid() { return f.Interface() }\n"
+                                                                        ++ "\t}\n"
+                                                                            ++ "\treturn nil\n"
+                                                                                ++ "}"
                 )
 
 
 isSafeFieldType : String -> Bool
 isSafeFieldType fieldType =
-    not (String.startsWith "func(" fieldType) && not
-                                                     (
-                                                     String.startsWith "chan "
-                                                         fieldType
-                                                     ) && not
-                                                              (
-                                                              String.contains
-                                                                  "unsafe.Pointer"
-                                                                  fieldType
-                                                              ) && not
-                                                                       (
-                                                                       String.contains
-                                                                           "sync."
-                                                                           fieldType
-                                                                       )
+    not (String.startsWith "func(" fieldType)
+        && not (String.startsWith "chan " fieldType)
+        && not (String.contains "unsafe.Pointer" fieldType)
+        && not (String.contains "sync." fieldType)
 
 
 varTypeCast : String -> String
 varTypeCast goType =
     if goType == "string" then
         "sky_asString"
+    
     else if goType == "int" then
         "sky_asInt"
+    
     else if goType == "bool" then
         "sky_asBool"
+    
     else if goType == "float64" then
         "sky_asFloat"
+    
     else
         "sky_asString"
 
@@ -846,11 +1001,18 @@ generateConstAccessor safePkg shortPkg pkgName constJson =
     in
         if String.isEmpty name then
             Nothing
+        
         else if String.startsWith (pkgName ++ ".") constType then
             Just
                 (
-                "func Sky_" ++ safePkg ++ "_" ++ name ++ "(_ any) any {\n\treturn " ++ shortPkg ++ "." ++ name ++ "\n}"
+                "func Sky_"
+                    ++ safePkg
+                        ++ "_"
+                            ++ name
+                                ++ "(_ any) any {\n\treturn "
+                                    ++ shortPkg ++ "." ++ name ++ "\n}"
                 )
+        
         else
             Nothing
 
@@ -877,22 +1039,68 @@ generateVarAccessor safePkg shortPkg varJson =
     in
         if String.isEmpty name then
             Nothing
+        
         else if varType == "[]string" then
             Just
                 (
-                "func Sky_" ++ safePkg ++ "_" ++ name ++ "(_ any) any {\n" ++ "\tsrc := " ++ shortPkg ++ "." ++ name ++ "\n" ++ "\tresult := make([]any, len(src))\n" ++ "\tfor i, v := range src { result[i] = v }\n" ++ "\treturn result\n" ++ "}"
+                "func Sky_"
+                    ++ safePkg
+                        ++ "_"
+                            ++ name
+                                ++ "(_ any) any {\n"
+                                    ++ "\tsrc := "
+                                        ++ shortPkg
+                                            ++ "."
+                                                ++ name
+                                                    ++ "\n"
+                                                        ++ "\tresult := make([]any, len(src))\n"
+                                                            ++ "\tfor i, v := range src { result[i] = v }\n"
+                                                                ++ "\treturn result\n"
+                                                                    ++ "}"
                 )
+        
         else if varType == "error" then
             Nothing
+        
         else if varType == "string" then
             Just
                 (
-                "func Sky_" ++ safePkg ++ "_" ++ name ++ "(_ any) any {\n" ++ "\treturn " ++ shortPkg ++ "." ++ name ++ "\n" ++ "}\n\n" ++ "func Sky_" ++ safePkg ++ "_Set" ++ name ++ "(v any) any {\n" ++ "\t" ++ shortPkg ++ "." ++ name ++ " = sky_asString(v)\n" ++ "\treturn struct{}{}\n" ++ "}"
+                "func Sky_"
+                    ++ safePkg
+                        ++ "_"
+                            ++ name
+                                ++ "(_ any) any {\n"
+                                    ++ "\treturn "
+                                        ++ shortPkg
+                                            ++ "."
+                                                ++ name
+                                                    ++ "\n"
+                                                        ++ "}\n\n"
+                                                            ++ "func Sky_"
+                                                                ++ safePkg
+                                                                    ++ "_Set"
+                                                                        ++ name
+                                                                            ++ "(v any) any {\n"
+                                                                                ++ "\t"
+                                                                                    ++ shortPkg
+                                                                                        ++ "."
+                                                                                            ++ name
+                                                                                                ++ " = sky_asString(v)\n"
+                                                                                                    ++ "\treturn struct{}{}\n"
+                                                                                                        ++ "}"
                 )
+        
         else
             Just
                 (
-                "func Sky_" ++ safePkg ++ "_" ++ name ++ "(_ any) any {\n" ++ "\treturn " ++ shortPkg ++ "." ++ name ++ "\n" ++ "}"
+                "func Sky_"
+                    ++ safePkg
+                        ++ "_"
+                            ++ name
+                                ++ "(_ any) any {\n"
+                                    ++ "\treturn "
+                                        ++ shortPkg
+                                            ++ "." ++ name ++ "\n" ++ "}"
                 )
 
 
@@ -916,6 +1124,7 @@ extractMethodsFromType typeJson =
     in
         if isGenericType typeJson then
             []
+        
         else
             List.filterMap
                 (\m -> parseMethodEntry typeName (typeKind == "interface") m)
@@ -929,6 +1138,7 @@ parseMethodEntry typeName isIface json =
     in
         if String.isEmpty name then
             Nothing
+        
         else
             let
                 paramsArrayStr = Json.jsonGetArrayRaw "params" json

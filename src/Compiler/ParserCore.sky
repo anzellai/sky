@@ -49,6 +49,7 @@ previous state =
             
             Nothing ->
                 { kind = TkEOF , lexeme = "" , span = emptySpan }
+    
     else
         { kind = TkEOF , lexeme = "" , span = emptySpan }
 
@@ -59,9 +60,10 @@ advance state =
         token = peek state
     in
         if tokenKindEq token.kind TkEOF then
-            (token, state)
+            ( token, state )
+        
         else
-            (token, { state | pos = state.pos + 1 })
+            ( token, { state | pos = state.pos + 1 } )
 
 
 matchKind : TokenKind -> ParserState -> Bool
@@ -86,7 +88,8 @@ consume kind state =
         t = peek state
     in
         if tokenKindEq t.kind kind then
-            Ok (t, { state | pos = state.pos + 1 })
+            Ok ( t, { state | pos = state.pos + 1 } )
+        
         else
             let
                 sp = t.span
@@ -94,10 +97,17 @@ consume kind state =
             in
                 Err
                     (
-                    "Expected " ++ tokenKindStr kind ++ " but got " ++ tokenKindStr
-                                                                           t.kind ++ " '" ++ t.lexeme ++ "' at " ++ String.fromInt
-                                                                                                                        st.line ++ ":" ++ String.fromInt
-                                                                                                                                              st.column
+                    "Expected "
+                        ++ tokenKindStr kind
+                            ++ " but got "
+                                ++ tokenKindStr t.kind
+                                    ++ " '"
+                                        ++ t.lexeme
+                                            ++ "' at "
+                                                ++ String.fromInt st.line
+                                                    ++ ":"
+                                                        ++ String.fromInt
+                                                               st.column
                     )
 
 
@@ -107,7 +117,8 @@ consumeLex kind lex state =
         t = peek state
     in
         if tokenKindEq t.kind kind && t.lexeme == lex then
-            Ok (t, { state | pos = state.pos + 1 })
+            Ok ( t, { state | pos = state.pos + 1 } )
+        
         else
             let
                 sp = t.span
@@ -115,9 +126,13 @@ consumeLex kind lex state =
             in
                 Err
                     (
-                    "Expected " ++ lex ++ " but got '" ++ t.lexeme ++ "' at " ++ String.fromInt
-                                                                                     st.line ++ ":" ++ String.fromInt
-                                                                                                           st.column
+                    "Expected "
+                        ++ lex
+                            ++ " but got '"
+                                ++ t.lexeme
+                                    ++ "' at "
+                                        ++ String.fromInt st.line
+                                            ++ ":" ++ String.fromInt st.column
                     )
 
 
@@ -209,17 +224,19 @@ parseQualifiedParts : (List String) -> ParserState -> (List String, ParserState)
 parseQualifiedParts parts state =
     if matchKind TkDot state then
         let
-            ( dotTok , s1 ) = advance state
+            ( dotTok, s1 ) = advance state
         in
             if matchKind TkUpperIdentifier s1 || matchKind TkIdentifier s1 then
                 let
-                    ( tok , s2 ) = advance s1
+                    ( tok, s2 ) = advance s1
                 in
                     parseQualifiedParts (List.append parts [ tok.lexeme ]) s2
+            
             else
-                (parts, state)
+                ( parts, state )
+    
     else
-        (parts, state)
+        ( parts, state )
 
 
 peekLexeme : ParserState -> String

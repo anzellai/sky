@@ -16,6 +16,7 @@ checkExhaustiveness registry subjectType branches =
     in
         if hasCatchAll patterns then
             Nothing
+        
         else
             checkTypeExhaustiveness registry subjectType patterns
 
@@ -30,6 +31,7 @@ hasCatchAll patterns =
         pat :: rest ->
             if isCatchAll pat then
                 True
+            
             else
                 hasCatchAll rest
 
@@ -54,12 +56,13 @@ isCatchAll pat =
 checkTypeExhaustiveness : AdtRegistry -> Type -> (List Pattern) -> Maybe String
 checkTypeExhaustiveness registry subjectType patterns =
     case subjectType of
+        
         TConst typeName ->
             checkConstTypeExhaustiveness registry typeName patterns
-
+        
         TApp (TConst typeName) _ ->
             checkConstTypeExhaustiveness registry typeName patterns
-
+        
         _ ->
             Nothing
 
@@ -68,11 +71,13 @@ checkConstTypeExhaustiveness : AdtRegistry -> String -> (List Pattern) -> Maybe 
 checkConstTypeExhaustiveness registry typeName patterns =
     if typeName == "Bool" then
         checkBoolExhaustiveness patterns
+    
     else
         case Dict.get typeName registry of
+            
             Just adt ->
                 checkAdtExhaustiveness adt patterns
-
+            
             Nothing ->
                 Nothing
 
@@ -86,10 +91,13 @@ checkBoolExhaustiveness patterns =
     in
         if hasTrue && hasFalse then
             Nothing
+        
         else if hasTrue then
             Just "Missing pattern: False"
+        
         else if hasFalse then
             Just "Missing pattern: True"
+        
         else
             Just "Missing patterns: True, False"
 
@@ -113,6 +121,7 @@ collectBoolPatterns patterns acc =
                 PLiteral (LitBool b) _ ->
                     if b then
                         collectBoolPatterns rest (Set.insert "True" acc)
+                    
                     else
                         collectBoolPatterns rest (Set.insert "False" acc)
                 
@@ -129,6 +138,7 @@ checkAdtExhaustiveness adt patterns =
     in
         if Set.isEmpty missing then
             Nothing
+        
         else
             let
                 missingList = Set.toList missing

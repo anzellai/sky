@@ -9,53 +9,82 @@ mapGoTypeToSky : String -> String
 mapGoTypeToSky goType =
     if goType == "string" then
         "String"
+    
     else if goType == "bool" then
         "Bool"
-    else if goType == "int" || goType == "int8" || goType == "int16" || goType == "int32" || goType == "int64" then
+    
+    else if goType == "int"
+        || goType == "int8"
+        || goType == "int16"
+        || goType == "int32"
+        || goType == "int64" then
         "Int"
-    else if goType == "uint" || goType == "uint8" || goType == "uint16" || goType == "uint32" || goType == "uint64" then
+    
+    else if goType == "uint"
+        || goType == "uint8"
+        || goType == "uint16"
+        || goType == "uint32"
+        || goType == "uint64" then
         "Int"
+    
     else if goType == "float32" || goType == "float64" then
         "Float"
+    
     else if goType == "[]byte" then
         "Bytes"
+    
     else if String.startsWith "[" goType && String.endsWith "byte" goType then
         "Bytes"
+    
     else if goType == "error" then
         "Error"
+    
     else if goType == "interface{}" || goType == "any" then
         "Any"
+    
     else if goType == "[]string" then
         "List String"
+    
     else if goType == "[]int" then
         "List Int"
+    
     else if goType == "[]float64" then
         "List Float"
+    
     else if goType == "[]bool" then
         "List Bool"
+    
     else if String.startsWith "[]" goType then
         "List Any"
+    
     else if goType == "rune" then
         "Char"
+    
     else if String.startsWith "map[" goType then
         "Any"
+    
     else if String.startsWith "func(" goType then
         mapGoFuncType goType
+    
     else if String.startsWith "*" goType then
         let
             inner = String.slice 1 (String.length goType) goType
         in
             if isGoPrimitive inner then
                 "Maybe " ++ mapGoTypeToSky inner
+            
             else
                 mapGoTypeToSky inner
+    
     else if String.startsWith "[]" goType then
         let
             elem = String.slice 2 (String.length goType) goType
         in
             "List " ++ mapGoTypeToSky elem
+    
     else if String.startsWith "map[" goType then
         "Any"
+    
     else if String.contains "." goType then
         let
             parts = String.split "." goType
@@ -67,66 +96,105 @@ mapGoTypeToSky goType =
                 
                 [  ] ->
                     goType
+    
     else
         goType
 
 
 isGoPrimitive : String -> Bool
 isGoPrimitive t =
-    t == "string" || t == "int" || t == "int8" || t == "int16" || t == "int32" || t == "int64" || t == "uint" || t == "uint8" || t == "uint16" || t == "uint32" || t == "uint64" || t == "float32" || t == "float64" || t == "bool" || t == "rune"
+    t == "string"
+        || t == "int"
+        || t == "int8"
+        || t == "int16"
+        || t == "int32"
+        || t == "int64"
+        || t == "uint"
+        || t == "uint8"
+        || t == "uint16"
+        || t == "uint32"
+        || t == "uint64"
+        || t == "float32"
+        || t == "float64"
+        || t == "bool"
+        || t == "rune"
 
 
 goTypeToAssertion : String -> String
 goTypeToAssertion goType =
     if goType == "string" then
         "sky_asString"
+    
     else if goType == "int" then
         "sky_asInt"
+    
     else if goType == "int64" then
         "sky_asInt64"
+    
     else if goType == "int8" || goType == "int16" || goType == "int32" then
         "sky_asInt"
+    
     else if goType == "uint" then
         "sky_asUint"
+    
     else if goType == "uint8" then
         "sky_asUint8"
+    
     else if goType == "uint16" then
         "sky_asUint16"
+    
     else if goType == "uint32" then
         "sky_asUint32"
+    
     else if goType == "uint64" then
         "sky_asUint64"
+    
     else if goType == "float64" then
         "sky_asFloat"
+    
     else if goType == "float32" then
         "sky_asFloat32"
+    
     else if goType == "bool" then
         "sky_asBool"
+    
     else if goType == "[]byte" then
         "sky_asBytes"
+    
     else if goType == "context.Context" then
         "sky_asContext"
+    
     else if goType == "[]string" then
         "sky_asStringSlice"
+    
     else if goType == "error" then
         "sky_asError"
+    
     else if goType == "interface{}" || goType == "any" then
         ""
-    else if String.startsWith "func(" goType && String.contains "ResponseWriter"
-                                                    goType then
+    
+    else if String.startsWith "func(" goType
+        && String.contains "ResponseWriter" goType then
         "sky_asHttpHandler"
+    
     else if String.startsWith "func(" goType then
         ""
+    
     else if goType == "map[string]string" then
         "sky_asMapStringString"
+    
     else if goType == "map[string]interface{}" then
         "sky_asMapStringAny"
+    
     else if String.startsWith "map[" goType then
         ""
+    
     else if String.startsWith "[" goType && String.contains "]byte" goType then
         "sky_asFixedBytes"
+    
     else if String.startsWith "[]" goType then
         "sky_asList"
+    
     else
         "sky_asType"
 
@@ -138,25 +206,47 @@ goTypeToCast goType argName =
     in
         if assertion == "" then
             argName
+        
         else if assertion == "sky_asType" && String.startsWith "*" goType then
             -- Nil-safe cast for pointer types
-            "func() " ++ shortTypeName goType ++ " { if " ++ argName ++ " == nil { return nil }; return " ++ argName ++ ".(" ++ shortTypeName
-                                                                                                                                    goType ++ ") }()"
+            "func() "
+                ++ shortTypeName goType
+                    ++ " { if "
+                        ++ argName
+                            ++ " == nil { return nil }; return "
+                                ++ argName
+                                    ++ ".(" ++ shortTypeName goType ++ ") }()"
+        
         else if assertion == "sky_asType" then
             -- Safe comma-ok assertion for non-pointer opaque types (returns zero value on mismatch)
-            "func() " ++ shortTypeName goType ++ " { if v, ok := " ++ argName ++ ".(" ++ shortTypeName
-                                                                                             goType ++ "); ok { return v }; var zero " ++ shortTypeName
-                                                                                                                                              goType ++ "; return zero }()"
+            "func() "
+                ++ shortTypeName goType
+                    ++ " { if v, ok := "
+                        ++ argName
+                            ++ ".("
+                                ++ shortTypeName goType
+                                    ++ "); ok { return v }; var zero "
+                                        ++ shortTypeName goType
+                                            ++ "; return zero }()"
+        
         else
             assertion ++ "(" ++ argName ++ ")"
 
 
 shortTypeName : String -> String
 shortTypeName goType =
+    -- Map common Go function patterns to Sky types
+    -- func() → () -> Any
+    -- func(string) → String -> Any
+    -- func(string) error → String -> Result String ()
+    -- func(string, string) string → String -> String -> String
+    -- For complex/unrecognised patterns, fall back to Any
     if String.startsWith "*" goType then
         "*" ++ shortTypeName (String.slice 1 (String.length goType) goType)
+    
     else if String.startsWith "[]" goType then
         "[]" ++ shortTypeName (String.slice 2 (String.length goType) goType)
+    
     else if String.contains "." goType then
         let
             lastDot = findLastDot goType (String.length goType - 1)
@@ -172,6 +262,7 @@ shortTypeName goType =
                         pkgPath
         in
             shortPkg ++ "." ++ typeName
+    
     else
         goType
 
@@ -180,8 +271,10 @@ findLastDot : String -> Int -> Int
 findLastDot s idx =
     if idx < 0 then
         0
+    
     else if String.slice idx (idx + 1) s == "." then
         idx
+    
     else
         findLastDot s (idx - 1)
 
@@ -190,26 +283,23 @@ lowerCamelCase : String -> String
 lowerCamelCase s =
     if String.isEmpty s then
         ""
+    
     else
-        String.toLower (String.slice 0 1 s) ++ String.slice 1 (String.length s)
-                                                   s
+        String.toLower (String.slice 0 1 s)
+            ++ String.slice 1 (String.length s) s
 
 
 mapGoFuncType : String -> String
 mapGoFuncType goType =
-    -- Map common Go function patterns to Sky types
-    -- func() → () -> Any
-    -- func(string) → String -> Any
-    -- func(string) error → String -> Result String ()
-    -- func(string, string) string → String -> String -> String
-    -- For complex/unrecognised patterns, fall back to Any
     if goType == "func()" then
-        "Any"
-    else if goType == "func() error" then
-        "Any"
-    else
         -- Unrecognised function type — map to Any
         -- Future: parse param/return types and generate proper Sky function type
+        "Any"
+    
+    else if goType == "func() error" then
+        "Any"
+    
+    else
         "Any"
 
 

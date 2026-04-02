@@ -31,8 +31,7 @@ makeTypedDecl n s t = { name = n , scheme = s , prettyType = formatType t }
 
 
 checkModule : Module -> (Maybe Env.TypeEnv) -> Result String CheckResult
-checkModule mod imports =
-    checkModuleWithRegistry mod imports Nothing
+checkModule mod imports = checkModuleWithRegistry mod imports Nothing
 
 
 checkModuleWithRegistry mod imports importedRegistry =
@@ -44,38 +43,40 @@ checkModuleWithRegistryAndAliases mod imports importedRegistry importedAliases =
         counter = Ref.new 100
         baseEnv =
             case imports of
-
+                
                 Just importedEnv ->
                     Env.union importedEnv Env.createPreludeEnv
-
+                
                 Nothing ->
                     Env.createPreludeEnv
         moduleName = String.join "." mod.name
-        ( aliasEnv , localAliases ) =
+        ( aliasEnv, localAliases ) =
             registerTypeAliases counter mod.declarations baseEnv
         mergedAliases =
             case importedAliases of
+                
                 Just ia ->
                     Dict.union localAliases ia
-
+                
                 Nothing ->
                     localAliases
         qualifiedAliases =
             addQualifiedAliases moduleName mod.imports mergedAliases
         _ = Unify.setTypeAliases qualifiedAliases
-        ( localRegistry , adtEnv , adtDiags ) =
+        ( localRegistry, adtEnv, adtDiags ) =
             Adt.registerAdts counter mod.declarations
         registry =
             case importedRegistry of
+                
                 Just ir ->
                     Adt.mergeRegistries localRegistry ir
-
+                
                 Nothing ->
                     localRegistry
         env0 = Env.union adtEnv aliasEnv
         annotations = collectAnnotations mod.declarations
         env1 = preRegisterFunctions counter mod.declarations env0
-        ( typedDecls , finalEnv , inferDiags ) =
+        ( typedDecls, finalEnv, inferDiags ) =
             inferAllDeclarations counter registry env1 mod.declarations
                 annotations
                 qualifiedAliases
@@ -99,10 +100,10 @@ registerTypeAliases counter decls env =
 registerTypeAliasesLoop : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
 registerTypeAliasesLoop counter decls env aliases =
     case decls of
-
+        
         [  ] ->
-            ( env , aliases )
-
+            ( env, aliases )
+        
         decl :: rest ->
             registerOneTypeAlias counter decl rest env aliases
 
@@ -110,7 +111,7 @@ registerTypeAliasesLoop counter decls env aliases =
 registerOneTypeAlias : (Ref.Ref Int) -> Declaration -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
 registerOneTypeAlias counter decl rest env aliases =
     case decl of
-
+        
         TypeAliasDecl aliasName aliasParams aliasBody _ ->
             let
                 paramVars =
@@ -120,7 +121,7 @@ registerOneTypeAlias counter decl rest env aliases =
                 newAliases = Dict.insert aliasName resolvedType aliases
             in
                 registerTypeAliasesLoop counter rest env newAliases
-
+        
         _ ->
             registerTypeAliasesLoop counter rest env aliases
 
@@ -128,8 +129,7 @@ registerOneTypeAlias counter decl rest env aliases =
 addQualifiedAliases : String -> (List ImportDecl) -> (Dict.Dict String Type) -> Dict.Dict String Type
 addQualifiedAliases moduleName imports aliases =
     let
-        withModuleName =
-            addModuleQualifiedAll moduleName aliases
+        withModuleName = addModuleQualifiedAll moduleName aliases
     in
         List.foldl (addImportQualifiedAliases aliases) withModuleName imports
 
@@ -138,6 +138,7 @@ addModuleQualifiedAll : String -> (Dict.Dict String Type) -> Dict.Dict String Ty
 addModuleQualifiedAll moduleName aliases =
     if String.isEmpty moduleName then
         aliases
+    
     else
         Dict.foldl (addOneModuleQualified moduleName) aliases aliases
 
@@ -214,10 +215,10 @@ inferAllDeclarations counter registry env decls annotations typeAliases =
 inferDeclsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (Dict.Dict String Type) -> (List TypedDecl) -> (List String) -> (List TypedDecl, Env.TypeEnv, List String)
 inferDeclsLoop counter registry env decls annotations typeAliases typedDecls diagnostics =
     case decls of
-
+        
         [  ] ->
-            (List.reverse typedDecls, env, diagnostics)
-
+            ( List.reverse typedDecls, env, diagnostics )
+        
         decl :: rest ->
             inferOneDecl counter registry env decl rest annotations typeAliases
                 typedDecls
@@ -226,13 +227,13 @@ inferDeclsLoop counter registry env decls annotations typeAliases typedDecls dia
 
 inferOneDecl counter registry env decl rest annotations typeAliases typedDecls diagnostics =
     case decl of
-
+        
         FunDecl name _ _ _ ->
             inferOneFunDecl counter registry env name decl rest annotations
                 typeAliases
                 typedDecls
                 diagnostics
-
+        
         _ ->
             inferDeclsLoop counter registry env rest annotations typeAliases
                 typedDecls
@@ -244,14 +245,14 @@ inferOneFunDecl counter registry env fnName decl rest annotations typeAliases ty
         annotation = Dict.get fnName annotations
     in
         case Infer.inferDeclaration counter registry env decl annotation typeAliases of
-
+            
             Ok inferResult ->
                 addTypedDeclAndContinue counter registry env rest annotations
                     typeAliases
                     typedDecls
                     diagnostics
                     inferResult
-
+            
             Err e ->
                 inferDeclsLoop counter registry env rest annotations typeAliases
                     typedDecls

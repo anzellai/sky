@@ -26,8 +26,10 @@ findCharIdx : Char -> String -> Int -> Int
 findCharIdx ch str idx =
     if idx >= String.length str then
         -1
+    
     else if String.slice idx (idx + 1) str == String.fromChar ch then
         idx
+    
     else
         findCharIdx ch str (idx + 1)
 
@@ -36,8 +38,10 @@ findLastSlash : String -> Int -> Int
 findLastSlash path idx =
     if idx < 0 then
         -1
+    
     else if String.slice idx (idx + 1) path == "/" then
         idx
+    
     else
         findLastSlash path (idx - 1)
 
@@ -50,7 +54,12 @@ compile filePath outDir =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "rm -f " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go " ++ outDir ++ "/live_init.go 2>/dev/null"
+                , "rm -f "
+                    ++ outDir
+                        ++ "/sky_ffi_*.go "
+                            ++ outDir
+                                ++ "/sky_*.go "
+                                    ++ outDir ++ "/live_init.go 2>/dev/null"
                 ]
     in
         case File.readFile filePath of
@@ -74,7 +83,8 @@ compile filePath outDir =
                                     List.foldl
                                         (
                                         \imp acc ->
-                                            acc || not
+                                            acc
+                                                || not
                                                        (
                                                        Resolver.isStdlib
                                                            (
@@ -89,6 +99,7 @@ compile filePath outDir =
                                 if hasLocalImports then
                                     compileMultiModule filePath outDir srcRoot
                                         mod
+                                
                                 else
                                     compileSource filePath outDir source
 
@@ -124,7 +135,7 @@ buildCheckEnv entryFilePath mod =
         importedRegistry = buildImportedRegistry localModules
         importedAliases = buildImportedAliases localModules
     in
-        ( combinedEnv , importedRegistry , importedAliases )
+        ( combinedEnv, importedRegistry, importedAliases )
 
 
 compileMultiModule : String -> String -> String -> Ast.Module -> Result String String
@@ -155,24 +166,32 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         _ =
             println
                 (
-                "   [MULTI] Loaded " ++ String.fromInt
-                                            (List.length localModules) ++ " local + " ++ String.fromInt
-                                                                                             (
-                                                                                             List.length
-                                                                                                 ffiModules
-                                                                                             ) ++ " FFI modules"
+                "   [MULTI] Loaded "
+                    ++ String.fromInt (List.length localModules)
+                        ++ " local + "
+                            ++ String.fromInt (List.length ffiModules)
+                                ++ " FFI modules"
                 )
         aliasMap = buildAliasMap entryMod.imports
         stdlibEnv = Resolver.buildStdlibEnv
         depTypeEnv = Resolver.buildDepTypeEnv entryMod.imports typeCheckModules
         combinedEnv = Env.union depTypeEnv stdlibEnv
         localNames = Set.fromList (List.map fst localModules)
-        ffiNames = Set.fromList (List.filter (\n -> not (Set.member n localNames)) (List.map fst ffiModules))
+        ffiNames =
+            Set.fromList
+                (
+                List.filter (\n -> not (Set.member n localNames))
+                    (List.map fst ffiModules)
+                )
         projectRoot = dirOfPath srcRoot
         depDecls =
             List.concat
-                (List.parallelMap
-                    (compileDependencyModule combinedEnv loadedModules ffiNames projectRoot)
+                (
+                List.parallelMap
+                    (
+                    compileDependencyModule combinedEnv loadedModules ffiNames
+                        projectRoot
+                    )
                     loadedModules
                 )
     in
@@ -187,28 +206,31 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
         importedRegistry = buildImportedRegistry loadedModules
         importedAliases = buildImportedAliases loadedModules
         entryCheckResult =
-            Checker.checkModuleWithRegistryAndAliases entryMod (Just stdlibEnv) (Just importedRegistry) (Just importedAliases)
+            Checker.checkModuleWithRegistryAndAliases entryMod (Just stdlibEnv)
+                (Just importedRegistry)
+                (Just importedAliases)
         entryRegistry =
             case entryCheckResult of
+                
                 Ok result ->
                     result.registry
-
+                
                 Err _ ->
                     Adt.emptyRegistry
         diagnostics =
             case entryCheckResult of
-
+                
                 Ok result ->
                     result.diagnostics
-
+                
                 Err _ ->
                     []
         entryTypedDecls =
             case entryCheckResult of
-
+                
                 Ok result ->
                     result.declarations
-
+                
                 Err _ ->
                     []
     in
@@ -216,6 +238,7 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
             _ =
                 if not (List.isEmpty diagnostics) then
                     List.map (\d -> println ("   [!] " ++ d)) diagnostics
+                
                 else
                     []
         in
@@ -233,14 +256,17 @@ emitMultiModuleGo outDir projectRoot entryMod entryRegistry aliasMap depDecls lo
         typedDeclDict = buildTypedDeclDict entryTypedDecls
         entryCtx =
             { baseCtx
-            | registry = entryRegistry
-            , localFunctions = Lower.collectLocalFunctions entryMod.declarations
-            , importedConstructors = Dict.union (buildAllCtorMaps entryMod loadedModules) (Lower.buildConstructorMap entryRegistry)
-            , importAliases = aliasMap
-            , exposedStdlib = entryExposed
-            , localFunctionArity = Lower.collectLocalFunctionArities
-                                       entryMod.declarations
-            , typedDecls = typedDeclDict
+                | registry = entryRegistry
+                , localFunctions =
+                    Lower.collectLocalFunctions entryMod.declarations
+                , importedConstructors =
+                    Dict.union (buildAllCtorMaps entryMod loadedModules)
+                        (Lower.buildConstructorMap entryRegistry)
+                , importAliases = aliasMap
+                , exposedStdlib = entryExposed
+                , localFunctionArity =
+                    Lower.collectLocalFunctionArities entryMod.declarations
+                , typedDecls = typedDeclDict
             }
         entryGoDecls = Lower.lowerDeclarations entryCtx entryMod.declarations
         entryCtorDecls =
@@ -290,7 +316,9 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
         _ =
             println
                 (
-                "   " ++ String.fromInt (List.length allDecls) ++ " total Go declarations"
+                "   "
+                    ++ String.fromInt (List.length allDecls)
+                        ++ " total Go declarations"
                 )
         _ =
             if List.foldl
@@ -301,6 +329,7 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
                    False
                    imports then
                 copyLiveRuntime outDir
+            
             else
                 ()
         _ = writeParallelHelpers outDir goCode
@@ -314,12 +343,15 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
 
 writeParallelHelpers : String -> String -> ()
 writeParallelHelpers outDir goCode =
-    if String.contains "sky_taskParallel" goCode || String.contains "sky_parallelMap" goCode then
+    if String.contains "sky_taskParallel" goCode
+        || String.contains "sky_parallelMap" goCode then
         let
-            helperCode = "package main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc sky_taskParallel(tasks any) any {\n\treturn func() any {\n\t\titems := sky_asList(tasks)\n\t\tn := len(items)\n\t\tresults := make([]any, n)\n\t\terrs := make([]any, n)\n\t\tvar wg sync.WaitGroup\n\t\twg.Add(n)\n\t\tfor i, t := range items {\n\t\t\tgo func(idx int, task any) {\n\t\t\t\tdefer wg.Done()\n\t\t\t\tdefer func() {\n\t\t\t\t\tif r := recover(); r != nil {\n\t\t\t\t\t\terrs[idx] = fmt.Sprintf(\"Task panic: %v\", r)\n\t\t\t\t\t}\n\t\t\t\t}()\n\t\t\t\tr := sky_runTask(task)\n\t\t\t\tsr := sky_asSkyResult(r)\n\t\t\t\tif sr.Tag == 1 {\n\t\t\t\t\terrs[idx] = sr.ErrValue\n\t\t\t\t} else {\n\t\t\t\t\tresults[idx] = sr.OkValue\n\t\t\t\t}\n\t\t\t}(i, t)\n\t\t}\n\t\twg.Wait()\n\t\tfor i := 0; i < n; i++ {\n\t\t\tif errs[i] != nil {\n\t\t\t\treturn SkyErr(errs[i])\n\t\t\t}\n\t\t}\n\t\treturn SkyOk(results)\n\t}\n}\n\nfunc sky_parallelMap(f any) any {\n\treturn func(items any) any {\n\t\tlist := sky_asList(items)\n\t\tn := len(list)\n\t\tresults := make([]any, n)\n\t\tvar wg sync.WaitGroup\n\t\twg.Add(n)\n\t\tfor i, item := range list {\n\t\t\tgo func(idx int, it any) {\n\t\t\t\tdefer wg.Done()\n\t\t\t\tfn := f.(func(any) any)\n\t\t\t\tresults[idx] = fn(it)\n\t\t\t}(i, item)\n\t\t}\n\t\twg.Wait()\n\t\treturn results\n\t}\n}\n"
+            helperCode =
+                "package main\n\nimport (\n\t\"fmt\"\n\t\"sync\"\n)\n\nfunc sky_taskParallel(tasks any) any {\n\treturn func() any {\n\t\titems := sky_asList(tasks)\n\t\tn := len(items)\n\t\tresults := make([]any, n)\n\t\terrs := make([]any, n)\n\t\tvar wg sync.WaitGroup\n\t\twg.Add(n)\n\t\tfor i, t := range items {\n\t\t\tgo func(idx int, task any) {\n\t\t\t\tdefer wg.Done()\n\t\t\t\tdefer func() {\n\t\t\t\t\tif r := recover(); r != nil {\n\t\t\t\t\t\terrs[idx] = fmt.Sprintf(\"Task panic: %v\", r)\n\t\t\t\t\t}\n\t\t\t\t}()\n\t\t\t\tr := sky_runTask(task)\n\t\t\t\tsr := sky_asSkyResult(r)\n\t\t\t\tif sr.Tag == 1 {\n\t\t\t\t\terrs[idx] = sr.ErrValue\n\t\t\t\t} else {\n\t\t\t\t\tresults[idx] = sr.OkValue\n\t\t\t\t}\n\t\t\t}(i, t)\n\t\t}\n\t\twg.Wait()\n\t\tfor i := 0; i < n; i++ {\n\t\t\tif errs[i] != nil {\n\t\t\t\treturn SkyErr(errs[i])\n\t\t\t}\n\t\t}\n\t\treturn SkyOk(results)\n\t}\n}\n\nfunc sky_parallelMap(f any) any {\n\treturn func(items any) any {\n\t\tlist := sky_asList(items)\n\t\tn := len(list)\n\t\tresults := make([]any, n)\n\t\tvar wg sync.WaitGroup\n\t\twg.Add(n)\n\t\tfor i, item := range list {\n\t\t\tgo func(idx int, it any) {\n\t\t\t\tdefer wg.Done()\n\t\t\t\tfn := f.(func(any) any)\n\t\t\t\tresults[idx] = fn(it)\n\t\t\t}(i, item)\n\t\t}\n\t\twg.Wait()\n\t\treturn results\n\t}\n}\n"
             _ = File.writeFile (outDir ++ "/sky_parallel.go") helperCode
         in
             ()
+    
     else
         ()
 
@@ -329,13 +361,14 @@ runNativeDce outDir goCode =
     let
         _ =
             case Process.run "sky-dce" [ outDir ] of
-
+                
                 Ok output ->
                     if not (String.isEmpty (String.trim output)) then
                         println (String.trim output)
+                    
                     else
                         ()
-
+                
                 Err _ ->
                     ()
     in
@@ -346,10 +379,9 @@ copyLiveRuntime : String -> ()
 copyLiveRuntime outDir =
     let
         skyBinDir =
-            case Process.run "sh"
-                     [ "-c"
-                     , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
-                     ] of
+            case Process.run "sh" [ "-c"
+            , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
+            ] of
                 
                 Ok dir ->
                     String.trim dir
@@ -417,12 +449,16 @@ writeNativeJsonFile outDir =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "cat > " ++ outDir ++ "/sky_json_native.go << 'GOEOF'\npackage main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\nfunc sky_nativeFindInString(needle any, haystack any, idx any) any {\n\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\nfunc sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 91 || c == 123 { depth++ } else if c == 93 || c == 125 { depth--; if depth == 0 { return str[:i+1] } }\n\t}\n\treturn str\n}\n\nfunc sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 123 || c == 91 { depth++ } else if c == 125 || c == 93 { depth-- } else if c == 44 && depth == 0 {\n\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n\t\t}\n\t}\n\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n\tif result == nil { return []any{} }; return result\n}\n\nfunc sky_nativeJsonSplitArray(arrayStr any) any {\n\tstr := strings.TrimSpace(sky_asString(arrayStr))\n\tif len(str) < 2 { return []any{} }\n\tinner := strings.TrimSpace(str[1:len(str)-1])\n\tif len(inner) == 0 { return []any{} }\n\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\nGOEOF"
+                , "cat > "
+                    ++ outDir
+                        ++ "/sky_json_native.go << 'GOEOF'\npackage main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\nfunc sky_nativeFindInString(needle any, haystack any, idx any) any {\n\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\nfunc sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 91 || c == 123 { depth++ } else if c == 93 || c == 125 { depth--; if depth == 0 { return str[:i+1] } }\n\t}\n\treturn str\n}\n\nfunc sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n\tfor i := 0; i < len(str); i++ {\n\t\tc := str[i]; if esc { esc = false; continue }; if c == 92 && inStr { esc = true; continue }\n\t\tif c == 34 { inStr = !inStr; continue }; if inStr { continue }\n\t\tif c == 123 || c == 91 { depth++ } else if c == 125 || c == 93 { depth-- } else if c == 44 && depth == 0 {\n\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n\t\t}\n\t}\n\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n\tif result == nil { return []any{} }; return result\n}\n\nfunc sky_nativeJsonSplitArray(arrayStr any) any {\n\tstr := strings.TrimSpace(sky_asString(arrayStr))\n\tif len(str) < 2 { return []any{} }\n\tinner := strings.TrimSpace(str[1:len(str)-1])\n\tif len(inner) == 0 { return []any{} }\n\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\nGOEOF"
                 ]
         _ =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ outDir ++ " && python3 -c \"import re; f=open('main.go'); c=f.read(); f.close(); c=re.sub(r'(?<!func )Lsp_JsonRpc_FindInString\\(', 'sky_nativeFindInString(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBracketed\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBraced\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_SplitJsonElements\\(', 'sky_nativeSplitJsonElements(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_JsonSplitArray\\(', 'sky_nativeJsonSplitArray(', c); f=open('main.go','w'); f.write(c); f.close()\""
+                , "cd "
+                    ++ outDir
+                        ++ " && python3 -c \"import re; f=open('main.go'); c=f.read(); f.close(); c=re.sub(r'(?<!func )Lsp_JsonRpc_FindInString\\(', 'sky_nativeFindInString(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBracketed\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_ExtractBraced\\(', 'sky_nativeExtractBracketed(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_SplitJsonElements\\(', 'sky_nativeSplitJsonElements(', c); c=re.sub(r'(?<!func )Lsp_JsonRpc_JsonSplitArray\\(', 'sky_nativeJsonSplitArray(', c); f=open('main.go','w'); f.write(c); f.close()\""
                 ]
     in
         ()
@@ -430,7 +466,35 @@ writeNativeJsonFile outDir =
 
 nativeJsonHelperCode : String
 nativeJsonHelperCode =
-    "package main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\n" ++ "func sky_nativeFindInString(needle any, haystack any, idx any) any {\n" ++ "\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n" ++ "\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n" ++ "\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\n" ++ "func sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n" ++ "\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n" ++ "\tfor i := 0; i < len(str); i++ {\n" ++ "\t\tc := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }\n" ++ "\t\tif c == '\"' { inStr = !inStr; continue }; if inStr { continue }\n" ++ "\t\tif c == '[' || c == '{' { depth++ } else if c == ']' || c == '}' { depth--; if depth == 0 { return str[:i+1] } }\n" ++ "\t}\n\treturn str\n}\n\n" ++ "func sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n" ++ "\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n" ++ "\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n" ++ "\tfor i := 0; i < len(str); i++ {\n" ++ "\t\tc := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }\n" ++ "\t\tif c == '\"' { inStr = !inStr; continue }; if inStr { continue }\n" ++ "\t\tif c == '{' || c == '[' { depth++ } else if c == '}' || c == ']' { depth-- } else if c == ',' && depth == 0 {\n" ++ "\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n" ++ "\t\t}\n\t}\n" ++ "\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n" ++ "\tif result == nil { return []any{} }; return result\n}\n\n" ++ "func sky_nativeJsonSplitArray(arrayStr any) any {\n" ++ "\tstr := strings.TrimSpace(sky_asString(arrayStr))\n" ++ "\tif len(str) < 2 { return []any{} }\n" ++ "\tinner := strings.TrimSpace(str[1:len(str)-1])\n" ++ "\tif len(inner) == 0 { return []any{} }\n" ++ "\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\n"
+    "package main\n\nimport \"strings\"\n\nvar _ = strings.TrimSpace\n\n"
+        ++ "func sky_nativeFindInString(needle any, haystack any, idx any) any {\n"
+            ++ "\tn := sky_asString(needle); h := sky_asString(haystack); i := sky_asInt(idx)\n"
+                ++ "\tif i > 0 && i < len(h) { h = h[i:] } else if i >= len(h) { return -1 }\n"
+                    ++ "\tpos := strings.Index(h, n); if pos < 0 { return -1 }; return i + pos\n}\n\n"
+                        ++ "func sky_nativeExtractBracketed(remaining any, _ any, _ any) any {\n"
+                            ++ "\tstr := sky_asString(remaining); depth := 0; inStr := false; esc := false\n"
+                                ++ "\tfor i := 0; i < len(str); i++ {\n"
+                                    ++ "\t\tc := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }\n"
+                                        ++ "\t\tif c == '\"' { inStr = !inStr; continue }; if inStr { continue }\n"
+                                            ++ "\t\tif c == '[' || c == '{' { depth++ } else if c == ']' || c == '}' { depth--; if depth == 0 { return str[:i+1] } }\n"
+                                                ++ "\t}\n\treturn str\n}\n\n"
+                                                    ++ "func sky_nativeSplitJsonElements(s any, _ any, _ any, _ any, _ any) any {\n"
+                                                        ++ "\tstr := strings.TrimSpace(sky_asString(s)); if len(str) == 0 { return []any{} }\n"
+                                                            ++ "\tvar result []any; depth := 0; start := 0; inStr := false; esc := false\n"
+                                                                ++ "\tfor i := 0; i < len(str); i++ {\n"
+                                                                    ++ "\t\tc := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }\n"
+                                                                        ++ "\t\tif c == '\"' { inStr = !inStr; continue }; if inStr { continue }\n"
+                                                                            ++ "\t\tif c == '{' || c == '[' { depth++ } else if c == '}' || c == ']' { depth-- } else if c == ',' && depth == 0 {\n"
+                                                                                ++ "\t\t\telem := strings.TrimSpace(str[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1\n"
+                                                                                    ++ "\t\t}\n\t}\n"
+                                                                                        ++ "\tlast := strings.TrimSpace(str[start:]); if len(last) > 0 { result = append(result, last) }\n"
+                                                                                            ++ "\tif result == nil { return []any{} }; return result\n}\n\n"
+                                                                                                ++ "func sky_nativeJsonSplitArray(arrayStr any) any {\n"
+                                                                                                    ++ "\tstr := strings.TrimSpace(sky_asString(arrayStr))\n"
+                                                                                                        ++ "\tif len(str) < 2 { return []any{} }\n"
+                                                                                                            ++ "\tinner := strings.TrimSpace(str[1:len(str)-1])\n"
+                                                                                                                ++ "\tif len(inner) == 0 { return []any{} }\n"
+                                                                                                                    ++ "\treturn sky_nativeSplitJsonElements(inner, nil, nil, nil, nil)\n}\n"
 
 
 fixUnusedVars : String -> String
@@ -443,7 +507,10 @@ eliminateDeadCode outDir mainGoCode =
         listResult =
             Process.run "sh"
                 [ "-c"
-                , "ls " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null | sort -u"
+                , "ls "
+                    ++ outDir
+                        ++ "/sky_ffi_*.go "
+                            ++ outDir ++ "/sky_*.go 2>/dev/null | sort -u"
                 ]
     in
         case listResult of
@@ -467,13 +534,15 @@ eliminateDeadCode outDir mainGoCode =
                     if totalBefore > totalAfter then
                         println
                             (
-                            "   [DCE] Eliminated " ++ String.fromInt
-                                                          (
-                                                          totalBefore - totalAfter
-                                                          ) ++ " unused wrapper functions (" ++ String.fromInt
-                                                                                                    totalBefore ++ " -> " ++ String.fromInt
-                                                                                                                                  totalAfter ++ ")"
+                            "   [DCE] Eliminated "
+                                ++ String.fromInt (totalBefore - totalAfter)
+                                    ++ " unused wrapper functions ("
+                                        ++ String.fromInt totalBefore
+                                            ++ " -> "
+                                                ++ String.fromInt totalAfter
+                                                    ++ ")"
                             )
+                    
                     else
                         ()
             
@@ -516,14 +585,16 @@ trimWrapperFile filePath mainGoCode =
                 if List.isEmpty allKept then
                     Process.run "rm" [ "-f" , filePath ]
                         |> (\_ -> ())
+                
                 else
                     let
                         trimmed =
-                            sections.header ++ "\n\n" ++ String.join "\n\n"
-                                                             allKept ++ "\n"
+                            sections.header
+                                ++ "\n\n" ++ String.join "\n\n" allKept ++ "\n"
                     in
                         if trimmed /= content then
                             File.writeFile filePath trimmed
+                        
                         else
                             ()
         
@@ -537,7 +608,10 @@ trimWrapperImports filePath =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "goimports -w " ++ filePath ++ " 2>/dev/null || trim-imports " ++ filePath ++ " 2>/dev/null || true"
+                , "goimports -w "
+                    ++ filePath
+                        ++ " 2>/dev/null || trim-imports "
+                            ++ filePath ++ " 2>/dev/null || true"
                 ]
     in
         ()
@@ -558,6 +632,7 @@ trimWrapperContent wrapperCode mainGoCode =
     in
         if List.isEmpty allKept then
             header ++ "\n"
+        
         else
             header ++ "\n\n" ++ String.join "\n\n" allKept ++ "\n"
 
@@ -569,6 +644,7 @@ isWrapperUsed funcBlock mainGoCode =
     in
         if String.isEmpty funcName then
             True
+        
         else
             String.contains funcName mainGoCode
 
@@ -581,6 +657,7 @@ isHelperFunc funcBlock =
     in
         if String.isEmpty funcName then
             True
+        
         else
             firstChar == String.toLower firstChar
 
@@ -594,8 +671,10 @@ extractWrapperFuncName block =
         in
             if parenIdx > 0 then
                 String.slice 0 parenIdx afterFunc
+            
             else
                 ""
+    
     else
         ""
 
@@ -622,6 +701,7 @@ splitWrapperLoop lines header funcs currentFunc inFunc =
                 finalFuncs =
                     if String.isEmpty (String.trim currentFunc) then
                         funcs
+                    
                     else
                         List.append funcs [ String.trim currentFunc ]
             in
@@ -633,13 +713,16 @@ splitWrapperLoop lines header funcs currentFunc inFunc =
                     updatedFuncs =
                         if String.isEmpty (String.trim currentFunc) then
                             funcs
+                        
                         else
                             List.append funcs [ String.trim currentFunc ]
                 in
                     splitWrapperLoop rest header updatedFuncs line True
+            
             else if inFunc then
                 splitWrapperLoop rest header funcs (currentFunc ++ "\n" ++ line)
                     True
+            
             else
                 splitWrapperLoop rest (header ++ "\n" ++ line) funcs currentFunc
                     False
@@ -672,6 +755,7 @@ dceMainGo outDir goCode =
                     in
                         if String.startsWith "func " cleaned then
                             Just cleaned
+                        
                         else
                             Nothing
                 )
@@ -685,16 +769,18 @@ dceMainGo outDir goCode =
                     in
                         if String.isEmpty name then
                             acc
+                        
                         else
                             Dict.insert name block acc
                 )
                 Dict.empty
                 pureFuncBlocks
         wrapperContent =
-            case Process.run "sh"
-                     [ "-c"
-                     , "cat " ++ outDir ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null"
-                     ] of
+            case Process.run "sh" [ "-c"
+            , "cat "
+                ++ outDir
+                    ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null"
+            ] of
                 
                 Ok content ->
                     content
@@ -726,10 +812,12 @@ dceMainGo outDir goCode =
                 varsSection =
                     if List.isEmpty allVarLines then
                         ""
+                    
                     else
                         "\n" ++ String.join "\n" allVarLines
                 bodyCode =
-                    varsSection ++ "\n\n" ++ String.join "\n\n" keptFuncs ++ "\n"
+                    varsSection
+                        ++ "\n\n" ++ String.join "\n\n" keptFuncs ++ "\n"
                 trimmedHeader = trimUnusedImports sections.header bodyCode
                 newCode = trimmedHeader ++ bodyCode
                 outPath = outDir ++ "/main.go"
@@ -739,19 +827,27 @@ dceMainGo outDir goCode =
                     if String.contains "skylive_rt" bodyCode then
                         Process.run "sh"
                             [ "-c"
-                            , "grep -q 'sky-app/skylive_rt' " ++ outPath ++ " || sed -i '' 's/^import (/import (\\n\\tskylive_rt \"sky-app\\/skylive_rt\"/' " ++ outPath
+                            , "grep -q 'sky-app/skylive_rt' "
+                                ++ outPath
+                                    ++ " || sed -i '' 's/^import (/import (\\n\\tskylive_rt \"sky-app\\/skylive_rt\"/' "
+                                        ++ outPath
                             ]
+                    
                     else
                         Ok ""
                 _ =
                     println
                         (
-                        "   [DCE] Eliminated " ++ String.fromInt eliminated ++ " unreachable functions from main.go (" ++ String.fromInt
-                                                                                                                              totalFuncs ++ " -> " ++ String.fromInt
-                                                                                                                                                          keptCount ++ ")"
+                        "   [DCE] Eliminated "
+                            ++ String.fromInt eliminated
+                                ++ " unreachable functions from main.go ("
+                                    ++ String.fromInt totalFuncs
+                                        ++ " -> "
+                                            ++ String.fromInt keptCount ++ ")"
                         )
             in
                 ()
+        
         else
             ()
 
@@ -769,6 +865,7 @@ trimUnusedImports header bodyCode =
             Ok trimmed ->
                 if String.length (String.trim trimmed) > 10 then
                     trimmed
+                
                 else
                     header
             
@@ -786,6 +883,7 @@ buildReachableSet pending visited funcMap =
         name :: rest ->
             if Dict.member name visited then
                 buildReachableSet rest visited funcMap
+            
             else
                 let
                     newVisited = Dict.insert name True visited
@@ -801,11 +899,12 @@ buildReachableSet pending visited funcMap =
                         List.filter
                             (
                             \n ->
-                                n /= name && (
-                                String.contains n body || String.contains
-                                                              (shortFuncName n)
-                                                              body
-                                )
+                                n /= name
+                                    && (
+                                    String.contains n body
+                                        || String.contains (shortFuncName n)
+                                               body
+                                    )
                             )
                             (Dict.keys funcMap)
                     newPending = List.append rest referenced
@@ -823,6 +922,7 @@ collectBlankImports imports =
                     modName = String.join "." imp.moduleName
                 in
                     Just { path = skyModuleToGoImport modName , alias_ = "_" }
+            
             else
                 Nothing
         )
@@ -845,14 +945,11 @@ shortFuncName fullName =
             if String.length last > 2 then
                 let
                     lower =
-                        String.toLower (String.slice 0 1 last) ++ String.slice 1
-                                                                      (
-                                                                      String.length
-                                                                          last
-                                                                      )
-                                                                      last
+                        String.toLower (String.slice 0 1 last)
+                            ++ String.slice 1 (String.length last) last
                 in
                     lower
+            
             else
                 fullName
         
@@ -863,24 +960,25 @@ shortFuncName fullName =
 makeGoPackage : (List GoDecl) -> GoPackage
 makeGoPackage decls =
     { name = "main"
-    , imports = [ { path = "fmt" , alias_ = "" }
-    , { path = "bufio" , alias_ = "" }
-    , { path = "io" , alias_ = "" }
-    , { path = "os" , alias_ = "" }
-    , { path = "os/exec" , alias_ = "exec" }
-    , { path = "net/http" , alias_ = "net_http" }
-    , { path = "strconv" , alias_ = "" }
-    , { path = "strings" , alias_ = "" }
-    , { path = "sort" , alias_ = "" }
-    , { path = "math" , alias_ = "" }
-    , { path = "crypto/sha256" , alias_ = "crypto_sha256" }
-    , { path = "crypto/md5" , alias_ = "crypto_md5" }
-    , { path = "encoding/hex" , alias_ = "hex" }
-    , { path = "encoding/base64" , alias_ = "base64" }
-    , { path = "encoding/json" , alias_ = "encoding_json" }
-    , { path = "time" , alias_ = "" }
-    , { path = "context" , alias_ = "" }
-    ]
+    , imports =
+        [ { path = "fmt" , alias_ = "" }
+        , { path = "bufio" , alias_ = "" }
+        , { path = "io" , alias_ = "" }
+        , { path = "os" , alias_ = "" }
+        , { path = "os/exec" , alias_ = "exec" }
+        , { path = "net/http" , alias_ = "net_http" }
+        , { path = "strconv" , alias_ = "" }
+        , { path = "strings" , alias_ = "" }
+        , { path = "sort" , alias_ = "" }
+        , { path = "math" , alias_ = "" }
+        , { path = "crypto/sha256" , alias_ = "crypto_sha256" }
+        , { path = "crypto/md5" , alias_ = "crypto_md5" }
+        , { path = "encoding/hex" , alias_ = "hex" }
+        , { path = "encoding/base64" , alias_ = "base64" }
+        , { path = "encoding/json" , alias_ = "encoding_json" }
+        , { path = "time" , alias_ = "" }
+        , { path = "context" , alias_ = "" }
+        ]
     , declarations = decls
     }
 
@@ -899,8 +997,10 @@ loadLocalModules srcRoot imports acc =
             in
                 if Resolver.isStdlib modName || isModuleLoaded modName acc then
                     loadLocalModules srcRoot rest acc
+                
                 else if imp.alias_ == "_" then
                     loadLocalModules srcRoot rest acc
+                
                 else
                     case File.readFile filePath of
                         
@@ -937,7 +1037,7 @@ loadLocalModules srcRoot imports acc =
                                             withTransitive =
                                                 loadLocalModules srcRoot
                                                     transImports
-                                                    ((modName, mod) :: acc)
+                                                    (( modName, mod ) :: acc)
                                         in
                                             loadLocalModules srcRoot rest
                                                 withTransitive
@@ -956,6 +1056,7 @@ loadFromCandidatesOrSkip : String -> String -> (List String) -> (List Ast.Import
 loadFromCandidatesOrSkip srcRoot modName candidates rest acc =
     if List.isEmpty candidates then
         loadLocalModules srcRoot rest acc
+    
     else
         tryOneSkydepCandidate srcRoot modName candidates rest acc
 
@@ -975,6 +1076,7 @@ tryOneSkydepCandidate srcRoot modName candidates rest acc =
     in
         if String.isEmpty firstPath then
             loadLocalModules srcRoot rest acc
+        
         else
             case File.readFile firstPath of
                 
@@ -1014,7 +1116,7 @@ parseAndLoadSkydep srcRoot modName source restCandidates rest acc =
                             depMod.imports
                     withDep =
                         loadLocalModules depSrcRoot depTransImports
-                            ((modName, depMod) :: acc)
+                            (( modName, depMod ) :: acc)
                 in
                     loadLocalModules srcRoot rest withDep
 
@@ -1051,7 +1153,10 @@ skydepSrcRoot srcRoot modName =
         findResult =
             Process.run "sh"
                 [ "-c"
-                , "find " ++ skydepsDir ++ " -path '*/src/" ++ modName ++ ".sky' 2>/dev/null | head -1"
+                , "find "
+                    ++ skydepsDir
+                        ++ " -path '*/src/"
+                            ++ modName ++ ".sky' 2>/dev/null | head -1"
                 ]
     in
         case findResult of
@@ -1067,6 +1172,7 @@ skydepSrcRoot srcRoot modName =
                 in
                     if String.isEmpty trimmed then
                         srcRoot
+                    
                     else
                         srcDir
             
@@ -1087,15 +1193,17 @@ loadOneFfiRaw srcRoot imp =
     in
         if Resolver.isStdlib modName || imp.alias_ == "_" then
             Nothing
+        
         else
             let
                 projectRoot = dirOfPath srcRoot
                 skyiPath = Resolver.resolveBindingPath projectRoot modName
             in
                 case File.readFile skyiPath of
+                    
                     Ok skyiSource ->
                         parseSimpleFfiBinding modName skyiSource
-
+                    
                     Err _ ->
                         Nothing
 
@@ -1105,9 +1213,10 @@ parseSimpleFfiBinding modName skyiSource =
         lexResult = Lexer.lex skyiSource
     in
         case Parser.parse lexResult.tokens of
+            
             Ok skyiMod ->
-                Just (modName, skyiMod)
-
+                Just ( modName, skyiMod )
+            
             Err _ ->
                 Nothing
 
@@ -1116,7 +1225,8 @@ loadFfiBindings : String -> (List Ast.ImportDecl) -> List (String, Ast.Module)
 loadFfiBindings srcRoot imports =
     let
         deduped = deduplicateFfiImports imports Dict.empty
-        results = List.parallelMap (\imp -> loadOneFfiBinding srcRoot imp) deduped
+        results =
+            List.parallelMap (\imp -> loadOneFfiBinding srcRoot imp) deduped
     in
         List.filterMap identity results
 
@@ -1139,6 +1249,7 @@ deduplicateOneImport imp rest seen =
     in
         if Dict.member modName seen then
             deduplicateFfiImports rest seen
+        
         else
             List.append [ imp ]
                 (deduplicateFfiImports rest (Dict.insert modName True seen))
@@ -1151,15 +1262,18 @@ loadOneFfiBinding srcRoot imp =
     in
         if Resolver.isStdlib modName || imp.alias_ == "_" then
             Nothing
+        
         else
             let
                 projectRoot = dirOfPath srcRoot
                 skyiPath = Resolver.resolveBindingPath projectRoot modName
             in
                 case File.readFile skyiPath of
+                    
                     Ok skyiSource ->
-                        parseFfiBinding projectRoot modName imp srcRoot skyiPath skyiSource
-
+                        parseFfiBinding projectRoot modName imp srcRoot skyiPath
+                            skyiSource
+                    
                     Err _ ->
                         Nothing
 
@@ -1169,34 +1283,36 @@ parseFfiBinding projectRoot modName imp srcRoot skyiPath skyiSource =
         filteredSource =
             if String.length skyiSource > 10000 then
                 preFilterSkyi skyiPath imp srcRoot skyiSource
+            
             else
                 skyiSource
         lexResult = Lexer.lex filteredSource
     in
         case Parser.parse lexResult.tokens of
+            
             Ok skyiMod ->
                 let
                     withStdlib = injectStdlibBindings modName skyiMod
-                    filtered =
-                        filterFfiModule projectRoot modName withStdlib
+                    filtered = filterFfiModule projectRoot modName withStdlib
                 in
-                    Just (modName, filtered)
-
+                    Just ( modName, filtered )
+            
             Err _ ->
                 Nothing
 
 
 preFilterSkyi skyiPath imp srcRoot skyiSource =
-    case Process.run "sh"
-             [ "-c"
-             , "skyi-filter " ++ skyiPath ++ " " ++ importAlias imp ++ " " ++ srcRoot
-             ] of
+    case Process.run "sh" [ "-c"
+    , "skyi-filter " ++ skyiPath ++ " " ++ importAlias imp ++ " " ++ srcRoot
+    ] of
+        
         Ok s ->
             if String.length (String.trim s) > 20 then
                 s
+            
             else
                 skyiSource
-
+        
         Err _ ->
             skyiSource
 
@@ -1209,10 +1325,13 @@ filterFfiModule projectRoot modName mod =
         prefix =
             if projectRoot == "." then
                 ""
+            
             else
                 projectRoot ++ "/"
         wrapperSrc =
-            prefix ++ ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
+            prefix
+                ++ ".skycache/go/"
+                    ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
         combinedSrc = prefix ++ ".skycache/go/wrappers/" ++ safeName ++ ".go"
         cwdWrapperSrc =
             ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
@@ -1232,6 +1351,7 @@ filterFfiModule projectRoot modName mod =
                         Err _ ->
                             if projectRoot == "." then
                                 ""
+                            
                             else
                                 case File.readFile cwdWrapperSrc of
                                     
@@ -1249,10 +1369,10 @@ filterFfiModule projectRoot modName mod =
         stdlibWrapperPath = findStdlibWrapperPath safeName
         stdlibContent =
             case File.readFile stdlibWrapperPath of
-
+                
                 Ok content ->
                     content
-
+                
                 Err _ ->
                     ""
         allWrapperContent = wrapperContent ++ "\n" ++ stdlibContent
@@ -1265,16 +1385,17 @@ filterFfiModule projectRoot modName mod =
 declHasWrapper : String -> Ast.Declaration -> Bool
 declHasWrapper wrapperContent decl =
     case decl of
-
+        
         Ast.FunDecl _ _ body _ ->
             let
                 wrapperName = extractWrapperName body
             in
                 if String.isEmpty wrapperName then
                     True
+                
                 else
                     String.contains (wrapperName ++ "(") wrapperContent
-
+        
         _ ->
             True
 
@@ -1286,6 +1407,7 @@ extractWrapperName expr =
         Ast.IdentifierExpr name _ ->
             if String.startsWith "Sky_" name then
                 name
+            
             else
                 ""
         
@@ -1304,7 +1426,8 @@ tryLoadBinding srcRoot modName rest acc =
         _ =
             println
                 (
-                "   [FFI] Looking for binding: " ++ modName ++ " at " ++ skyiPath
+                "   [FFI] Looking for binding: "
+                    ++ modName ++ " at " ++ skyiPath
                 )
     in
         case File.readFile skyiPath of
@@ -1321,22 +1444,27 @@ tryLoadBinding srcRoot modName rest acc =
                                 _ =
                                     println
                                         (
-                                        "   [FFI] Parsed binding: " ++ modName ++ " (" ++ String.fromInt
-                                                                                              (
-                                                                                              List.length
-                                                                                                  skyiMod.declarations
-                                                                                              ) ++ " declarations)"
+                                        "   [FFI] Parsed binding: "
+                                            ++ modName
+                                                ++ " ("
+                                                    ++ String.fromInt
+                                                           (
+                                                           List.length
+                                                               skyiMod.declarations
+                                                           )
+                                                        ++ " declarations)"
                                         )
                             in
                                 loadLocalModules srcRoot rest
-                                    ((modName, skyiMod) :: acc)
+                                    (( modName, skyiMod ) :: acc)
                         
                         Err e ->
                             let
                                 _ =
                                     println
                                         (
-                                        "   [FFI] Parse error in binding " ++ modName ++ ": " ++ e
+                                        "   [FFI] Parse error in binding "
+                                            ++ modName ++ ": " ++ e
                                         )
                             in
                                 loadLocalModules srcRoot rest acc
@@ -1346,7 +1474,8 @@ tryLoadBinding srcRoot modName rest acc =
                                 _ =
                                     println
                                         (
-                                        "   [FFI] Binding not found: " ++ skyiPath
+                                        "   [FFI] Binding not found: "
+                                            ++ skyiPath
                                         )
                             in
                                 loadLocalModules srcRoot rest acc
@@ -1364,6 +1493,7 @@ copyFfiWrappers outDir projectRoot imports mainGoCode =
                     in
                         if Resolver.isStdlib mn || imp.alias_ == "_" then
                             Nothing
+                        
                         else
                             Just mn
                 )
@@ -1371,7 +1501,10 @@ copyFfiWrappers outDir projectRoot imports mainGoCode =
         uniqueModNames = Set.toList (Set.fromList allModNames)
         _ =
             List.parallelMap
-                (\modName -> copyOneFfiWrapper outDir projectRoot modName mainGoCode)
+                (
+                \modName ->
+                    copyOneFfiWrapper outDir projectRoot modName mainGoCode
+                )
                 uniqueModNames
         _ = copyProjectWrappers outDir projectRoot mainGoCode
     in
@@ -1384,6 +1517,7 @@ copyProjectWrappers outDir projectRoot mainGoCode =
         prefix =
             if projectRoot == "." then
                 ""
+            
             else
                 projectRoot ++ "/"
         dirs = [ prefix ++ "sky_wrappers" ]
@@ -1394,47 +1528,44 @@ copyProjectWrappers outDir projectRoot mainGoCode =
 copyWrapperDir : String -> String -> String -> ()
 copyWrapperDir outDir wrapperDir mainGoCode =
     case Process.run "sh" [ "-c" , "ls " ++ wrapperDir ++ "/*.go 2>/dev/null" ] of
-
+        
         Ok output ->
             let
                 files =
                     List.filter (\f -> not (String.isEmpty (String.trim f)))
                         (String.split "\n" output)
             in
-                List.foldl
-                    (\filePath _ -> copyOneWrapperFile outDir filePath)
+                List.foldl (\filePath _ -> copyOneWrapperFile outDir filePath)
                     ()
                     files
-
+        
         Err _ ->
             ()
 
 
 copyOneWrapperFile : String -> String -> ()
 copyOneWrapperFile outDir filePath =
-    if String.contains "00_sky_helpers" filePath || String.contains
-                                                        "fmt.go"
-                                                        filePath then
+    if String.contains "00_sky_helpers" filePath
+        || String.contains "fmt.go" filePath then
         ()
+    
     else
         let
             readResult = File.readFile filePath
         in
             case readResult of
-
+                
                 Ok content ->
                     let
                         rewritten =
-                            String.replace
-                                "package sky_wrappers"
-                                "package main"
+                            String.replace "package sky_wrappers" "package main"
                                 content
                         fileName = fileNameFromPath filePath
                         dst = outDir ++ "/sky_" ++ fileName
                         _ = File.writeFile dst rewritten
                     in
                         ()
-
+                
                 Err _ ->
                     ()
 
@@ -1442,10 +1573,10 @@ copyOneWrapperFile outDir filePath =
 fileNameFromPath : String -> String
 fileNameFromPath filePath =
     case List.reverse (String.split "/" filePath) of
-
+        
         last :: _ ->
             last
-
+        
         [  ] ->
             "wrapper.go"
 
@@ -1459,34 +1590,36 @@ copyOneFfiWrapper outDir projectRoot modName mainGoCode =
         modulePrefix =
             String.join "_" (List.map ffiPascalPart (String.split "." modName))
         hasReferences =
-            String.contains wrapperPrefix mainGoCode || String.contains
-                                                            (
-                                                            modulePrefix ++ "_"
-                                                            )
-                                                            mainGoCode
+            String.contains wrapperPrefix mainGoCode
+                || String.contains (modulePrefix ++ "_") mainGoCode
         prefix =
             if projectRoot == "." then
                 ""
+            
             else
                 projectRoot ++ "/"
         wrapperSrc =
-            prefix ++ ".skycache/go/" ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
+            prefix
+                ++ ".skycache/go/"
+                    ++ safeName ++ "/sky_wrappers/" ++ safeName ++ ".go"
     in
         if not hasReferences then
             ()
+        
         else
             let
                 combinedSrc =
                     prefix ++ ".skycache/go/wrappers/" ++ safeName ++ ".go"
             in
                 case File.readFile wrapperSrc of
-
+                    
                     Ok content ->
                         writeWrapperIfNew outDir safeName content
-
+                    
                     Err _ ->
                         copyFfiWrapperFallback outDir projectRoot modName
-                            mainGoCode combinedSrc
+                            mainGoCode
+                            combinedSrc
 
 
 writeWrapperIfNew : String -> String -> String -> ()
@@ -1497,18 +1630,18 @@ writeWrapperIfNew outDir safeName content =
     in
         if alreadyCopied then
             ()
+        
         else
             let
                 stdlibExtra = loadStdlibExtraFunctions safeName content
                 merged =
                     if String.isEmpty stdlibExtra then
                         content
+                    
                     else
                         content ++ "\n" ++ stdlibExtra
                 rewritten =
-                    String.replace "package sky_wrappers"
-                        "package main"
-                        merged
+                    String.replace "package sky_wrappers" "package main" merged
                 _ = File.writeFile wrapperDst rewritten
             in
                 println ("   Copied wrapper: " ++ wrapperDst)
@@ -1520,15 +1653,25 @@ loadStdlibExtraFunctions safeName autoContent =
         stdlibPath = findStdlibWrapperPath safeName
     in
         case File.readFile stdlibPath of
-
+            
             Err _ ->
                 ""
-
+            
             Ok stdlibContent ->
                 let
                     prefix = "Sky_" ++ safeName ++ "_"
                     stdlibFuncs = extractGoFunctions prefix stdlibContent
-                    missingFuncs = List.filter (\pair -> not (String.contains (fst pair ++ "(") autoContent)) stdlibFuncs
+                    missingFuncs =
+                        List.filter
+                            (
+                            \pair ->
+                                not
+                                    (
+                                    String.contains (fst pair ++ "(")
+                                        autoContent
+                                    )
+                            )
+                            stdlibFuncs
                 in
                     String.join "\n\n" (List.map snd missingFuncs)
 
@@ -1541,27 +1684,28 @@ extractGoFunctions prefix content =
         extractGoFuncsLoop prefix lines [] ""
 
 
-extractGoFuncsLoop : String -> List String -> List (String, String) -> String -> List (String, String)
+extractGoFuncsLoop : String -> (List String) -> (List (String, String)) -> String -> List (String, String)
 extractGoFuncsLoop prefix lines acc currentName =
     case lines of
-
-        [] ->
+        
+        [  ] ->
             List.reverse acc
-
+        
         line :: rest ->
             if String.startsWith ("func " ++ prefix) line then
-                extractGoFuncBody prefix rest acc line 1 [line]
+                extractGoFuncBody prefix rest acc line 1 [ line ]
+            
             else
                 extractGoFuncsLoop prefix rest acc ""
 
 
-extractGoFuncBody : String -> List String -> List (String, String) -> String -> Int -> List String -> List (String, String)
+extractGoFuncBody : String -> (List String) -> (List (String, String)) -> String -> Int -> (List String) -> List (String, String)
 extractGoFuncBody prefix lines acc headerLine depth bodyLines =
     case lines of
-
-        [] ->
+        
+        [  ] ->
             List.reverse acc
-
+        
         line :: rest ->
             let
                 opens = countChar '{' line
@@ -1570,12 +1714,17 @@ extractGoFuncBody prefix lines acc headerLine depth bodyLines =
             in
                 if newDepth <= 0 then
                     let
-                        fullBody = String.join "\n" (List.reverse (line :: bodyLines))
+                        fullBody =
+                            String.join "\n" (List.reverse (line :: bodyLines))
                         funcName = extractGoFuncNameFromHeader headerLine
                     in
-                        extractGoFuncsLoop prefix rest ((funcName, fullBody) :: acc) ""
+                        extractGoFuncsLoop prefix rest
+                            (( funcName, fullBody ) :: acc)
+                            ""
+                
                 else
-                    extractGoFuncBody prefix rest acc headerLine newDepth (line :: bodyLines)
+                    extractGoFuncBody prefix rest acc headerLine newDepth
+                        (line :: bodyLines)
 
 
 extractGoFuncNameFromHeader : String -> String
@@ -1586,41 +1735,58 @@ extractGoFuncNameFromHeader line =
     in
         if parenIdx > 0 then
             String.slice 0 parenIdx afterFunc
+        
         else
             afterFunc
 
 
 countChar : Char -> String -> Int
 countChar ch str =
-    List.foldl (\c acc -> if c == ch then acc + 1 else acc) 0 (String.toList str)
+    List.foldl
+        (
+        \c acc ->
+            if c == ch then
+                acc + 1
+            
+            else
+                acc
+        )
+        0
+        (String.toList str)
 
 
 injectStdlibBindings : String -> Ast.Module -> Ast.Module
 injectStdlibBindings modName mod =
     let
-        safeName = String.join "_" (List.map ffiSafePart (String.split "." modName))
+        safeName =
+            String.join "_" (List.map ffiSafePart (String.split "." modName))
         stdlibPath = findStdlibWrapperPath safeName
         stdlibContent =
             case File.readFile stdlibPath of
-
+                
                 Ok content ->
                     content
-
+                
                 Err _ ->
                     ""
         extraSource = buildStdlibBindingSource safeName stdlibContent mod
     in
         if String.isEmpty extraSource then
             mod
+        
         else
             let
                 lexResult = Lexer.lex extraSource
             in
                 case Parser.parse lexResult.tokens of
-
+                    
                     Ok extraMod ->
-                        { mod | declarations = List.append mod.declarations extraMod.declarations }
-
+                        { mod
+                            | declarations =
+                                List.append mod.declarations
+                                    extraMod.declarations
+                        }
+                    
                     Err _ ->
                         mod
 
@@ -1629,21 +1795,27 @@ buildStdlibBindingSource : String -> String -> Ast.Module -> String
 buildStdlibBindingSource safeName content mod =
     if String.isEmpty content then
         ""
+    
     else
         let
             prefix = "Sky_" ++ safeName ++ "_"
             goLines = String.split "\n" content
-            funcLines = List.filter (\l -> String.startsWith ("func " ++ prefix) l) goLines
+            funcLines =
+                List.filter (\l -> String.startsWith ("func " ++ prefix) l)
+                    goLines
             existingNames = List.concatMap extractDeclNames mod.declarations
-            newDecls = List.filterMap (buildOneStdlibBinding prefix existingNames) funcLines
+            newDecls =
+                List.filterMap (buildOneStdlibBinding prefix existingNames)
+                    funcLines
         in
             if List.isEmpty newDecls then
                 ""
+            
             else
                 "module Stub exposing (..)\n\n" ++ String.join "\n\n" newDecls
 
 
-buildOneStdlibBinding : String -> List String -> String -> Maybe String
+buildOneStdlibBinding : String -> (List String) -> String -> Maybe String
 buildOneStdlibBinding prefix existingNames line =
     let
         afterFunc = String.slice 5 (String.length line) line
@@ -1651,6 +1823,7 @@ buildOneStdlibBinding prefix existingNames line =
         fullName =
             if parenIdx > 0 then
                 String.slice 0 parenIdx afterFunc
+            
             else
                 ""
         argStr =
@@ -1659,28 +1832,43 @@ buildOneStdlibBinding prefix existingNames line =
                     closeIdx = findCharIdx ')' afterFunc (parenIdx + 1)
                 in
                     String.slice (parenIdx + 1) closeIdx afterFunc
+            
             else
                 ""
         argCount =
             if String.isEmpty argStr then
                 0
+            
             else
                 List.length (String.split "," argStr)
     in
         if String.startsWith prefix fullName then
             let
-                shortName = String.slice (String.length prefix) (String.length fullName) fullName
+                shortName =
+                    String.slice (String.length prefix) (String.length fullName)
+                        fullName
                 lowerName = decapitaliseFirst shortName
             in
                 if List.any (\n -> n == lowerName) existingNames then
                     Nothing
+                
                 else
                     let
-                        paramNames = List.map (\i -> "a" ++ String.fromInt i) (List.range 0 (argCount - 1))
+                        paramNames =
+                            List.map (\i -> "a" ++ String.fromInt i)
+                                (List.range 0 (argCount - 1))
                         paramStr = String.join " " paramNames
                         argStr2 = String.join " " paramNames
                     in
-                        Just (lowerName ++ " " ++ paramStr ++ " =\n    " ++ fullName ++ " " ++ argStr2)
+                        Just
+                            (
+                            lowerName
+                                ++ " "
+                                    ++ paramStr
+                                        ++ " =\n    "
+                                            ++ fullName ++ " " ++ argStr2
+                            )
+        
         else
             Nothing
 
@@ -1689,14 +1877,13 @@ findStdlibWrapperPath : String -> String
 findStdlibWrapperPath safeName =
     let
         skyBinDir =
-            case Process.run "sh"
-                     [ "-c"
-                     , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
-                     ] of
-
+            case Process.run "sh" [ "-c"
+            , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
+            ] of
+                
                 Ok dir ->
                     String.trim dir
-
+                
                 Err _ ->
                     "."
         candidates =
@@ -1707,16 +1894,17 @@ findStdlibWrapperPath safeName =
         findFirstExisting candidates
 
 
-findFirstExisting : List String -> String
+findFirstExisting : (List String) -> String
 findFirstExisting paths =
     case paths of
-
-        [] ->
+        
+        [  ] ->
             ""
-
+        
         path :: rest ->
             if fileAlreadyExists path then
                 path
+            
             else
                 findFirstExisting rest
 
@@ -1724,10 +1912,10 @@ findFirstExisting paths =
 fileAlreadyExists : String -> Bool
 fileAlreadyExists path =
     case File.readFile path of
-
+        
         Ok _ ->
             True
-
+        
         Err _ ->
             False
 
@@ -1735,25 +1923,23 @@ fileAlreadyExists path =
 copyFfiWrapperFallback : String -> String -> String -> String -> String -> ()
 copyFfiWrapperFallback outDir projectRoot modName mainGoCode combinedSrc =
     case File.readFile combinedSrc of
-
+        
         Ok content ->
             let
                 safeName =
                     String.join "_"
                         (List.map ffiSafePart (String.split "." modName))
                 rewritten =
-                    String.replace "package sky_wrappers"
-                        "package main"
-                        content
-                wrapperDst =
-                    outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
+                    String.replace "package sky_wrappers" "package main" content
+                wrapperDst = outDir ++ "/sky_ffi_" ++ safeName ++ ".go"
                 _ = File.writeFile wrapperDst rewritten
             in
                 println ("   Copied wrapper: " ++ wrapperDst)
-
+        
         Err _ ->
             if projectRoot /= "." then
                 copyOneFfiWrapper outDir "." modName mainGoCode
+            
             else
                 ()
 
@@ -1768,7 +1954,7 @@ buildAdtEnvFromModules modules =
 addModuleAdtEnv counter pair acc =
     let
         mod = snd pair
-        ( _ , adtEnv , _ ) = Adt.registerAdts counter mod.declarations
+        ( _, adtEnv, _ ) = Adt.registerAdts counter mod.declarations
     in
         Env.union acc adtEnv
 
@@ -1792,8 +1978,9 @@ buildImportedAliases modules =
 addModuleAliases counter pair acc =
     let
         mod = snd pair
-        ( _ , aliases ) =
-            Checker.registerTypeAliases counter mod.declarations Env.createPreludeEnv
+        ( _, aliases ) =
+            Checker.registerTypeAliases counter mod.declarations
+                Env.createPreludeEnv
     in
         Dict.union acc aliases
 
@@ -1801,7 +1988,7 @@ addModuleAliases counter pair acc =
 addModuleRegistry counter pair acc =
     let
         mod = snd pair
-        ( reg , _ , _ ) = Adt.registerAdts counter mod.declarations
+        ( reg, _, _ ) = Adt.registerAdts counter mod.declarations
     in
         Adt.mergeRegistries acc reg
 
@@ -1822,8 +2009,10 @@ makePrefixAlias prefix decl =
     in
         if String.isEmpty fullName then
             Nothing
+        
         else if not (String.startsWith prefix fullName) then
             Nothing
+        
         else
             let
                 unprefixed =
@@ -1834,39 +2023,182 @@ makePrefixAlias prefix decl =
             in
                 if String.isEmpty unprefixed then
                     Nothing
+                
                 else if isCommonName unprefixed then
                     Nothing
+                
                 else
                     Just (GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName))
 
 
-buildAllCtorMaps : Ast.Module -> List (String, Ast.Module) -> Dict.Dict String Lower.CtorInfo
+buildAllCtorMaps : Ast.Module -> (List (String, Ast.Module)) -> Dict.Dict String Lower.CtorInfo
 buildAllCtorMaps currentMod allModules =
     let
         fromCurrent = Lower.buildConstructorMapFromDecls currentMod.declarations
-        fromAll = List.foldl (\pair acc -> Dict.union (Lower.buildConstructorMapFromDecls (snd pair).declarations) acc) Dict.empty allModules
+        fromAll =
+            List.foldl
+                (
+                \pair acc ->
+                    Dict.union
+                        (
+                        Lower.buildConstructorMapFromDecls
+                            (snd pair).declarations
+                        )
+                        acc
+                )
+                Dict.empty
+                allModules
     in
         Dict.union fromCurrent fromAll
 
 
 isCommonName : String -> Bool
 isCommonName name =
-    name == "main" || name == "_" || name == "update" || name == "init" || name == "view" || name == "subscriptions" || name == "guard" || name == "new" || name == "get" || name == "list" || name == "delete" || name == "set" || name == "expire"
+    name == "main"
+        || name == "_"
+        || name == "update"
+        || name == "init"
+        || name == "view"
+        || name == "subscriptions"
+        || name == "guard"
+        || name == "new"
+        || name == "get"
+        || name == "list"
+        || name == "delete"
+        || name == "set"
+        || name == "expire"
 
 
-buildTypedDeclDict : List Checker.TypedDecl -> Dict.Dict String Scheme
+buildTypedDeclDict : (List Checker.TypedDecl) -> Dict.Dict String Scheme
 buildTypedDeclDict decls =
     List.foldl (\d acc -> Dict.insert d.name d.scheme acc) Dict.empty decls
 
 
 isGoPackageName : String -> Bool
 isGoPackageName name =
-    name == "time" || name == "log" || name == "context" || name == "os" || name == "io" || name == "strings" || name == "fmt" || name == "sort" || name == "math" || name == "sync" || name == "net" || name == "bytes" || name == "errors" || name == "strconv" || name == "reflect" || name == "encoding" || name == "crypto" || name == "hash" || name == "bufio"
+    name == "time"
+        || name == "log"
+        || name == "context"
+        || name == "os"
+        || name == "io"
+        || name == "strings"
+        || name == "fmt"
+        || name == "sort"
+        || name == "math"
+        || name == "sync"
+        || name == "net"
+        || name == "bytes"
+        || name == "errors"
+        || name == "strconv"
+        || name == "reflect"
+        || name == "encoding"
+        || name == "crypto"
+        || name == "hash"
+        || name == "bufio"
 
 
 isSharedValue : String -> Bool
 isSharedValue name =
-    name == "emptySub" || name == "emptySpan" || name == "emptyResult" || name == "emptyRegistry" || name == "emptyCtx" || name == "applySub" || name == "freshVar" || name == "unify" || name == "composeSubs" || name == "freeVars" || name == "freeVarsInScheme" || name == "instantiate" || name == "generalize" || name == "mono" || name == "formatType" || name == "applySubToScheme" || name == "initState" || name == "filterLayout" || name == "consume" || name == "consumeLex" || name == "matchKind" || name == "matchLexeme" || name == "matchKindLex" || name == "advance" || name == "peek" || name == "peekAt" || name == "previous" || name == "tokenKindEq" || name == "tokenKindStr" || name == "parseQualifiedParts" || name == "isKeyword" || name == "peekLexeme" || name == "peekColumn" || name == "peekKind" || name == "peekAt1Kind" || name == "getLexemeAt1" || name == "dispatchDeclaration" || name == "parseDeclsHelper" || name == "addDeclAndContinue" || name == "prependToResult" || name == "buildVariant" || name == "finishVariant" || name == "prependVariant" || name == "applyTypeArgs" || name == "resolveTypeApp" || name == "parseVariantFields" || name == "parseTypeParams" || name == "parseTypeVariants" || name == "parseTypeExpr" || name == "parseTypeApp" || name == "parseTypeArgs" || name == "parseTypePrimary" || name == "parseTupleTypeRest" || name == "parseRecordType" || name == "parseRecordTypeFields" || name == "parseExposingClause" || name == "parseExposedItems" || name == "parseModuleName" || name == "parseModuleNameParts" || name == "parseOptionalExposing" || name == "parseImports" || name == "parseImport" || name == "parseForeignImport" || name == "parseTypeAlias" || name == "parseTypeDecl" || name == "parseTypeAnnot" || name == "parseFunDecl" || name == "parseFunParams" || name == "parseDeclaration" || name == "parseDeclarations" || name == "parseModule" || name == "isStartOfPrimary" || name == "getOperatorInfo" || name == "parseExpr" || name == "parseExprLoop" || name == "parseApplication" || name == "parseApplicationArgs" || name == "parsePrimary" || name == "parseCaseExpr" || name == "parseCaseBranches" || name == "parseIfExpr" || name == "parseLetExpr" || name == "parseLetBindings" || name == "parseLambdaExpr" || name == "parseLambdaParams" || name == "parseRecordOrUpdate" || name == "parseRecordFields" || name == "parseParenOrTuple" || name == "parseTupleRest" || name == "parseListExpr" || name == "parseListItems" || name == "parseQualifiedOrConstructor" || name == "parseFieldAccess" || name == "parsePatternExpr" || name == "parsePrimaryPattern" || name == "parsePatternArgs" || name == "parseTuplePatternRest" || name == "parsePatternList" || name == "parseVariantFields" || name == "parseTypeArgs"
+    name == "emptySub"
+        || name == "emptySpan"
+        || name == "emptyResult"
+        || name == "emptyRegistry"
+        || name == "emptyCtx"
+        || name == "applySub"
+        || name == "freshVar"
+        || name == "unify"
+        || name == "composeSubs"
+        || name == "freeVars"
+        || name == "freeVarsInScheme"
+        || name == "instantiate"
+        || name == "generalize"
+        || name == "mono"
+        || name == "formatType"
+        || name == "applySubToScheme"
+        || name == "initState"
+        || name == "filterLayout"
+        || name == "consume"
+        || name == "consumeLex"
+        || name == "matchKind"
+        || name == "matchLexeme"
+        || name == "matchKindLex"
+        || name == "advance"
+        || name == "peek"
+        || name == "peekAt"
+        || name == "previous"
+        || name == "tokenKindEq"
+        || name == "tokenKindStr"
+        || name == "parseQualifiedParts"
+        || name == "isKeyword"
+        || name == "peekLexeme"
+        || name == "peekColumn"
+        || name == "peekKind"
+        || name == "peekAt1Kind"
+        || name == "getLexemeAt1"
+        || name == "dispatchDeclaration"
+        || name == "parseDeclsHelper"
+        || name == "addDeclAndContinue"
+        || name == "prependToResult"
+        || name == "buildVariant"
+        || name == "finishVariant"
+        || name == "prependVariant"
+        || name == "applyTypeArgs"
+        || name == "resolveTypeApp"
+        || name == "parseVariantFields"
+        || name == "parseTypeParams"
+        || name == "parseTypeVariants"
+        || name == "parseTypeExpr"
+        || name == "parseTypeApp"
+        || name == "parseTypeArgs"
+        || name == "parseTypePrimary"
+        || name == "parseTupleTypeRest"
+        || name == "parseRecordType"
+        || name == "parseRecordTypeFields"
+        || name == "parseExposingClause"
+        || name == "parseExposedItems"
+        || name == "parseModuleName"
+        || name == "parseModuleNameParts"
+        || name == "parseOptionalExposing"
+        || name == "parseImports"
+        || name == "parseImport"
+        || name == "parseForeignImport"
+        || name == "parseTypeAlias"
+        || name == "parseTypeDecl"
+        || name == "parseTypeAnnot"
+        || name == "parseFunDecl"
+        || name == "parseFunParams"
+        || name == "parseDeclaration"
+        || name == "parseDeclarations"
+        || name == "parseModule"
+        || name == "isStartOfPrimary"
+        || name == "getOperatorInfo"
+        || name == "parseExpr"
+        || name == "parseExprLoop"
+        || name == "parseApplication"
+        || name == "parseApplicationArgs"
+        || name == "parsePrimary"
+        || name == "parseCaseExpr"
+        || name == "parseCaseBranches"
+        || name == "parseIfExpr"
+        || name == "parseLetExpr"
+        || name == "parseLetBindings"
+        || name == "parseLambdaExpr"
+        || name == "parseLambdaParams"
+        || name == "parseRecordOrUpdate"
+        || name == "parseRecordFields"
+        || name == "parseParenOrTuple"
+        || name == "parseTupleRest"
+        || name == "parseListExpr"
+        || name == "parseListItems"
+        || name == "parseQualifiedOrConstructor"
+        || name == "parseFieldAccess"
+        || name == "parsePatternExpr"
+        || name == "parsePrimaryPattern"
+        || name == "parsePatternArgs"
+        || name == "parseTuplePatternRest"
+        || name == "parsePatternList"
+        || name == "parseVariantFields"
+        || name == "parseTypeArgs"
 
 
 deduplicateDecls : (List GoDecl) -> List GoDecl
@@ -1886,6 +2218,7 @@ deduplicateDeclsLoop decls seen acc =
             in
                 if String.isEmpty name then
                     deduplicateDeclsLoop rest seen (decl :: acc)
+                
                 else
                     case Dict.get name seen of
                         
@@ -1911,13 +2244,16 @@ getDeclName decl =
         GoDeclRaw code ->
             if String.startsWith "var " code then
                 extractVarName code
+            
             else if String.startsWith "func " code then
                 extractFuncName code
+            
             else if String.startsWith "type " code then
                 extractTypeName code
+            
             else
                 ""
-
+        
         GoDeclType name _ ->
             name
 
@@ -1930,6 +2266,7 @@ extractVarName code =
     in
         if spaceIdx > 0 then
             String.slice 0 spaceIdx afterVar
+        
         else
             ""
 
@@ -1942,6 +2279,7 @@ extractFuncName code =
     in
         if parenIdx > 0 then
             String.slice 0 parenIdx afterFunc
+        
         else
             ""
 
@@ -1954,6 +2292,7 @@ extractTypeName code =
     in
         if spaceIdx > 0 then
             String.slice 0 spaceIdx afterType
+        
         else
             ""
 
@@ -1970,6 +2309,7 @@ generateAliasesForImport allModules imp =
     in
         if Resolver.isStdlib modName then
             []
+        
         else
             generateAliasesFromModule modName allModules
 
@@ -1992,6 +2332,7 @@ isFfiModule modName mod =
         \decl acc ->
             if acc then
                 True
+            
             else
                 case decl of
                     
@@ -2038,8 +2379,12 @@ generateAliasesFromModuleInner modName mod =
         List.concatMap
             (
             \name ->
-                if String.isEmpty name || String.startsWith "Sky_" name || name == "_" || isCommonName name then
+                if String.isEmpty name
+                    || String.startsWith "Sky_" name
+                    || name == "_"
+                    || isCommonName name then
                     []
+                
                 else
                     let
                         safeName = Lower.sanitizeGoIdent name
@@ -2048,25 +2393,39 @@ generateAliasesFromModuleInner modName mod =
                     in
                         if hasBadSuffix then
                             []
-                        else if List.any (\t -> t == name || t == capitalizeFirst name) typeNames then
+                        
+                        else if List.any
+                                    (
+                                    \t -> t == name || t == capitalizeFirst name
+                                    )
+                                    typeNames then
                             []
+                        
                         else if isGoPackageName safeName then
                             []
+                        
                         else
                             let
                                 callSuffix =
                                     if isZeroArityInModule name mod then
                                         "()"
+                                    
                                     else
                                         ""
                             in
                                 [ GoDeclRaw
                                       (
-                                      "var " ++ safeName ++ " = " ++ prefixedName ++ callSuffix
+                                      "var "
+                                          ++ safeName
+                                              ++ " = "
+                                                  ++ prefixedName ++ callSuffix
                                       )
                                 , GoDeclRaw
                                       (
-                                      "var " ++ capitalizeFirst safeName ++ " = " ++ prefixedName ++ callSuffix
+                                      "var "
+                                          ++ capitalizeFirst safeName
+                                              ++ " = "
+                                                  ++ prefixedName ++ callSuffix
                                       )
                                 ]
             )
@@ -2110,6 +2469,7 @@ isZeroArityInModule name mod =
                 Ast.FunDecl dName params _ _ ->
                     if dName == name then
                         List.isEmpty params
+                    
                     else
                         acc
                 
@@ -2130,6 +2490,7 @@ findModule modName modules =
         pair :: rest ->
             if fst pair == modName then
                 Just (snd pair)
+            
             else
                 findModule modName rest
 
@@ -2139,17 +2500,16 @@ extractExportedNames mod = List.concatMap extractDeclNames mod.declarations
 
 
 extractTypeNames : Ast.Module -> List String
-extractTypeNames mod =
-    List.filterMap extractTypeDeclName mod.declarations
+extractTypeNames mod = List.filterMap extractTypeDeclName mod.declarations
 
 
 extractTypeDeclName : Ast.Declaration -> Maybe String
 extractTypeDeclName decl =
     case decl of
-
+        
         Ast.TypeDecl name _ _ _ ->
             Just name
-
+        
         _ ->
             Nothing
 
@@ -2227,6 +2587,7 @@ deduplicateFfiModules modules acc =
         pair :: rest ->
             if isModuleLoaded (fst pair) acc then
                 deduplicateFfiModules rest acc
+            
             else
                 deduplicateFfiModules rest (pair :: acc)
 
@@ -2238,6 +2599,7 @@ addImportAlias imp acc =
     in
         if Resolver.isStdlib modName then
             acc
+        
         else
             Dict.insert (importAlias imp) modName acc
 
@@ -2252,6 +2614,7 @@ importAlias imp =
             
             [  ] ->
                 ""
+    
     else
         imp.alias_
 
@@ -2263,6 +2626,7 @@ compileDependencyModule stdlibEnv allModules ffiNames projectRoot pair =
     in
         if Set.member modName ffiNames then
             compileFfiModuleLight allModules pair
+        
         else
             compileDependencyModuleCached stdlibEnv allModules projectRoot pair
 
@@ -2274,24 +2638,30 @@ compileDependencyModuleCached stdlibEnv allModules projectRoot pair =
         cacheDir =
             if String.isEmpty projectRoot then
                 ".skycache/lowered"
+            
             else
                 projectRoot ++ "/.skycache/lowered"
         _ = File.mkdirAll cacheDir
         cachePath = cacheDir ++ "/" ++ String.replace "." "_" modName ++ ".go"
-        sourceHash = String.fromInt (List.length mod.declarations) ++ "-" ++ String.fromInt (List.length mod.imports)
+        sourceHash =
+            String.fromInt (List.length mod.declarations)
+                ++ "-" ++ String.fromInt (List.length mod.imports)
         cachedContent =
             case File.readFile cachePath of
-
+                
                 Ok content ->
                     content
-
+                
                 Err _ ->
                     ""
     in
-        if not (String.isEmpty cachedContent) && isCacheValid cachedContent sourceHash then
+        if not (String.isEmpty cachedContent)
+            && isCacheValid cachedContent sourceHash then
             loadCachedModule modName mod allModules cachedContent
+        
         else
-            compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash
+            compileDependencyModuleAndCache stdlibEnv allModules pair cachePath
+                sourceHash
 
 
 loadCachedModule modName mod allModules cachedContent =
@@ -2302,7 +2672,8 @@ loadCachedModule modName mod allModules cachedContent =
         aliases = generateConstructorAliasesFromCode prefix code
         depImportAliases = generateImportAliases mod.imports allModules
     in
-        deduplicateDecls (List.concat [ aliases , depImportAliases , [ cachedDecl ] ])
+        deduplicateDecls
+            (List.concat [ aliases , depImportAliases , [ cachedDecl ] ])
 
 
 generateConstructorAliasesFromCode prefix code =
@@ -2315,7 +2686,9 @@ generateConstructorAliasesFromCode prefix code =
         varNames = List.filterMap (extractVarNameFromLine prefix) varLines
         typeNamesSet = List.filterMap (extractTypeNameFromLine prefix) typeLines
         allNames = List.append funcNames varNames
-        filteredNames = List.filter (\n -> not (List.any (\t -> t == n) typeNamesSet)) allNames
+        filteredNames =
+            List.filter (\n -> not (List.any (\t -> t == n) typeNamesSet))
+                allNames
     in
         List.concatMap (makeAliasDecls prefix) filteredNames
 
@@ -2331,8 +2704,10 @@ extractFuncNameFromLine prefix line =
             in
                 if String.startsWith (prefix ++ "_") fullName then
                     Just fullName
+                
                 else
                     Nothing
+        
         else
             Nothing
 
@@ -2348,8 +2723,10 @@ extractVarNameFromLine prefix line =
             in
                 if String.startsWith (prefix ++ "_") fullName then
                     Just fullName
+                
                 else
                     Nothing
+        
         else
             Nothing
 
@@ -2366,19 +2743,24 @@ extractTypeNameFromLine prefix line =
             in
                 if String.startsWith (prefix ++ "_") typeName then
                     Just typeName
+                
                 else
                     Nothing
+        
         else
             Nothing
 
 
 makeAliasDecls prefix fullName =
     let
-        unprefixed = String.slice (String.length prefix + 1) (String.length fullName) fullName
+        unprefixed =
+            String.slice (String.length prefix + 1) (String.length fullName)
+                fullName
         lower = decapitaliseFirst unprefixed
     in
         if String.isEmpty unprefixed || isCommonName lower then
             []
+        
         else
             [ GoDeclRaw ("var " ++ lower ++ " = " ++ fullName)
             , GoDeclRaw ("var " ++ unprefixed ++ " = " ++ fullName)
@@ -2388,6 +2770,7 @@ makeAliasDecls prefix fullName =
 decapitaliseFirst s =
     if String.isEmpty s then
         s
+    
     else
         let
             first = String.toLower (String.slice 0 1 s)
@@ -2402,12 +2785,14 @@ isCacheValid cachedCode sourceHash =
 
 stripCacheHeader code =
     case String.split "\n" code of
+        
         header :: rest ->
             if String.startsWith "// hash:" header then
                 String.join "\n" rest
+            
             else
                 code
-
+        
         _ ->
             code
 
@@ -2420,18 +2805,18 @@ compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash =
         checkResult = Checker.checkModule mod Nothing
         registry =
             case checkResult of
-
+                
                 Ok result ->
                     result.registry
-
+                
                 Err _ ->
                     Adt.emptyRegistry
         depTypedDecls =
             case checkResult of
-
+                
                 Ok result ->
                     buildTypedDeclDict result.declarations
-
+                
                 Err _ ->
                     Dict.empty
         depBaseCtx = Lower.emptyCtx
@@ -2440,20 +2825,24 @@ compileDependencyModuleAndCache stdlibEnv allModules pair cachePath sourceHash =
         depExposed = Lower.buildExposedStdlib mod.imports
         ctx =
             { depBaseCtx
-            | registry = registry
-            , localFunctions = localFns
-            , importedConstructors = Dict.union (buildAllCtorMaps mod allModules) (Lower.buildConstructorMap registry)
-            , modulePrefix = prefix
-            , importAliases = depAliasMap
-            , localFunctionArity = Lower.collectLocalFunctionArities mod.declarations
-            , exposedStdlib = depExposed
-            , typedDecls = depTypedDecls
+                | registry = registry
+                , localFunctions = localFns
+                , importedConstructors =
+                    Dict.union (buildAllCtorMaps mod allModules)
+                        (Lower.buildConstructorMap registry)
+                , modulePrefix = prefix
+                , importAliases = depAliasMap
+                , localFunctionArity =
+                    Lower.collectLocalFunctionArities mod.declarations
+                , exposedStdlib = depExposed
+                , typedDecls = depTypedDecls
             }
         goDecls = Lower.lowerDeclarations ctx mod.declarations
         ctorDecls = Lower.generateConstructorDecls registry mod.declarations
         filtered = List.filter isExportableDecl (List.append ctorDecls goDecls)
         prefixed = List.map (prefixDecl prefix) filtered
-        prefixedCode = String.join "\n\n" (List.map (\d -> Emit.emitDecl d) prefixed)
+        prefixedCode =
+            String.join "\n\n" (List.map (\d -> Emit.emitDecl d) prefixed)
         cacheContent = "// hash:" ++ sourceHash ++ "\n" ++ prefixedCode
         cacheWriteDir = dirOfPath cachePath
         _ = File.mkdirAll cacheWriteDir
@@ -2477,9 +2866,7 @@ compileFfiModuleLight allModules pair =
         depImportAliases = generateImportAliases mod.imports allModules
     in
         deduplicateDecls
-            (
-            List.concat [ depImportAliases , prefixed , wrapperVars ]
-            )
+            (List.concat [ depImportAliases , prefixed , wrapperVars ])
 
 
 makeFfiWrapperVar : String -> Ast.Declaration -> Maybe GoDecl
@@ -2502,9 +2889,18 @@ buildFfiVarDecl prefix name params body =
         declStr = buildFfiDeclString prefix name params body wrapperName
     in
         if not (String.isEmpty literalVal) then
-            Just (GoDeclRaw ("func " ++ goName ++ "() any { return " ++ literalVal ++ " }"))
+            Just
+                (
+                GoDeclRaw
+                    (
+                    "func "
+                        ++ goName ++ "() any { return " ++ literalVal ++ " }"
+                    )
+                )
+        
         else if String.isEmpty wrapperName then
             Nothing
+        
         else
             Just (GoDeclRaw declStr)
 
@@ -2517,11 +2913,20 @@ buildFfiDeclString prefix name params body wrapperName =
         wrapperArgCount = countWrapperArgs body
     in
         if skyArgCount == 0 then
-            "func " ++ goName ++ "(_ ...any) any { return sky_callZeroOrNil(" ++ wrapperName ++ ") }"
+            "func "
+                ++ goName
+                    ++ "(_ ...any) any { return sky_callZeroOrNil("
+                        ++ wrapperName ++ ") }"
+        
         else if skyArgCount == 2 && String.contains "_SET_" wrapperName then
-            "func " ++ goName ++ "(a0 any) any { return func(a1 any) any { return " ++ wrapperName ++ "(a0, a1) } }"
+            "func "
+                ++ goName
+                    ++ "(a0 any) any { return func(a1 any) any { return "
+                        ++ wrapperName ++ "(a0, a1) } }"
+        
         else if wrapperArgCount == 0 then
             makeFfiFunc goName wrapperName skyArgCount skyArgCount
+        
         else
             makeFfiFunc goName wrapperName skyArgCount wrapperArgCount
 
@@ -2551,7 +2956,12 @@ makeFfiFunc goName wrapperName skyArgCount wrapperArgCount =
         callArgNames = List.take wrapperArgCount argNames
         callArgs = String.join ", " callArgNames
     in
-        "func " ++ goName ++ "(" ++ argList ++ ") any { return " ++ wrapperName ++ "(" ++ callArgs ++ ") }"
+        "func "
+            ++ goName
+                ++ "("
+                    ++ argList
+                        ++ ") any { return "
+                            ++ wrapperName ++ "(" ++ callArgs ++ ") }"
 
 
 extractWrapperNameFromBody : Ast.Expression -> String
@@ -2561,6 +2971,7 @@ extractWrapperNameFromBody expr =
         Ast.IdentifierExpr name _ ->
             if String.startsWith "Sky_" name then
                 name
+            
             else
                 ""
         
@@ -2570,6 +2981,7 @@ extractWrapperNameFromBody expr =
             in
                 if String.startsWith "Sky_" name then
                     name
+                
                 else
                     ""
         
@@ -2586,22 +2998,23 @@ extractWrapperNameFromBody expr =
 extractLiteralFromBody : Ast.Expression -> String
 extractLiteralFromBody expr =
     case expr of
-
+        
         Ast.StringLitExpr s _ ->
             "\"" ++ s ++ "\""
-
+        
         Ast.IntLitExpr _ raw _ ->
             raw
-
+        
         Ast.FloatLitExpr _ raw _ ->
             raw
-
+        
         Ast.BoolLitExpr b _ ->
             if b then
                 "true"
+            
             else
                 "false"
-
+        
         _ ->
             ""
 
@@ -2626,14 +3039,16 @@ compileDependencyModuleFull stdlibEnv allModules pair =
         depExposed = Lower.buildExposedStdlib mod.imports
         ctx =
             { depBaseCtx
-            | registry = registry
-            , localFunctions = localFns
-            , importedConstructors = Dict.union (buildAllCtorMaps mod allModules) (Lower.buildConstructorMap registry)
-            , modulePrefix = prefix
-            , importAliases = depAliasMap
-            , localFunctionArity = Lower.collectLocalFunctionArities
-                                       mod.declarations
-            , exposedStdlib = depExposed
+                | registry = registry
+                , localFunctions = localFns
+                , importedConstructors =
+                    Dict.union (buildAllCtorMaps mod allModules)
+                        (Lower.buildConstructorMap registry)
+                , modulePrefix = prefix
+                , importAliases = depAliasMap
+                , localFunctionArity =
+                    Lower.collectLocalFunctionArities mod.declarations
+                , exposedStdlib = depExposed
             }
         goDecls = Lower.lowerDeclarations ctx mod.declarations
         ctorDecls = Lower.generateConstructorDecls registry mod.declarations
@@ -2653,10 +3068,10 @@ generateConstructorAliases prefix decls =
 makeConstructorAlias : String -> GoDecl -> Maybe GoDecl
 makeConstructorAlias prefix decl =
     case decl of
-
+        
         GoDeclType _ _ ->
             Nothing
-
+        
         _ ->
             makeConstructorAliasInner prefix decl
 
@@ -2668,38 +3083,40 @@ makeConstructorAliasInner prefix decl =
         unprefixed =
             if String.startsWith (prefix ++ "_") fullName then
                 String.slice prefixLen (String.length fullName) fullName
+            
             else
                 ""
     in
-        if String.isEmpty unprefixed || unprefixed == "Main" || isCommonName (String.toLower (String.slice 0 1 unprefixed) ++ String.slice 1 (String.length unprefixed) unprefixed) then
+        if String.isEmpty unprefixed
+            || unprefixed == "Main"
+            || isCommonName
+                   (
+                   String.toLower (String.slice 0 1 unprefixed)
+                       ++ String.slice 1 (String.length unprefixed) unprefixed
+                   ) then
             Nothing
+        
         else
             let
                 firstChar = String.slice 0 1 unprefixed
                 aliasName =
                     if isSharedValue
                            (
-                           String.toLower (String.slice 0 1 unprefixed) ++ String.slice
-                                                                               1
-                                                                               (
-                                                                               String.length
-                                                                                   unprefixed
-                                                                               )
-                                                                               unprefixed
+                           String.toLower (String.slice 0 1 unprefixed)
+                               ++ String.slice 1 (String.length unprefixed)
+                                      unprefixed
                            ) then
-                        String.toLower (String.slice 0 1 unprefixed) ++ String.slice
-                                                                            1
-                                                                            (
-                                                                            String.length
-                                                                                unprefixed
-                                                                            )
-                                                                            unprefixed
+                        String.toLower (String.slice 0 1 unprefixed)
+                            ++ String.slice 1 (String.length unprefixed)
+                                   unprefixed
+                    
                     else
                         unprefixed
             in
-                if firstChar == String.toUpper firstChar || isSharedValue
-                                                                aliasName then
+                if firstChar == String.toUpper firstChar
+                    || isSharedValue aliasName then
                     Just (GoDeclRaw ("var " ++ aliasName ++ " = " ++ fullName))
+                
                 else
                     Nothing
 
@@ -2712,10 +3129,10 @@ generateOriginalAliases prefix decls =
 makeOriginalAlias : String -> GoDecl -> Maybe GoDecl
 makeOriginalAlias prefix decl =
     case decl of
-
+        
         GoDeclType _ _ ->
             Nothing
-
+        
         _ ->
             makeOriginalAliasInner prefix decl
 
@@ -2724,9 +3141,12 @@ makeOriginalAliasInner prefix decl =
     let
         name = getDeclName decl
     in
-        if String.isEmpty name || name == "_" || name == "main" || isCommonName
-                                                                       name then
+        if String.isEmpty name
+            || name == "_"
+            || name == "main"
+            || isCommonName name then
             Nothing
+        
         else
             let
                 prefixedName = prefix ++ "_" ++ capitalizeFirst name
@@ -2746,7 +3166,7 @@ isExportableDecl decl =
         
         GoDeclRaw _ ->
             True
-
+        
         GoDeclType _ _ ->
             True
 
@@ -2758,28 +3178,24 @@ dirOfPath path =
     in
         if lastSlash > 0 then
             String.slice 0 lastSlash path
+        
         else
             "."
 
 
 needsStdlibWrapper : String -> Bool
 needsStdlibWrapper modName =
-    String.startsWith "Sky.Core.Json" modName || String.startsWith "Std.Html"
-                                                     modName || String.startsWith
-                                                                    "Std.Css"
-                                                                    modName || String.startsWith
-                                                                                   "Std.Live"
-                                                                                   modName || String.startsWith
-                                                                                                  "Std.Cmd"
-                                                                                                  modName || String.startsWith
-                                                                                                                 "Std.Sub"
-                                                                                                                 modName || String.startsWith
-                                                                                                                                "Std.Task"
-                                                                                                                                modName || String.startsWith
-                                                                                                                                               "Std.Time"
-                                                                                                                                               modName || String.startsWith
-                                                                                                                                                              "Std.Program"
-                                                                                                                                                              modName || modName == "Sky.Core.Result" || modName == "Sky.Core.Maybe"
+    String.startsWith "Sky.Core.Json" modName
+        || String.startsWith "Std.Html" modName
+        || String.startsWith "Std.Css" modName
+        || String.startsWith "Std.Live" modName
+        || String.startsWith "Std.Cmd" modName
+        || String.startsWith "Std.Sub" modName
+        || String.startsWith "Std.Task" modName
+        || String.startsWith "Std.Time" modName
+        || String.startsWith "Std.Program" modName
+        || modName == "Sky.Core.Result"
+        || modName == "Sky.Core.Maybe"
 
 
 buildStdlibGoImports : (List Ast.ImportDecl) -> List GoImport
@@ -2798,11 +3214,13 @@ importToGoImport imp =
         if Resolver.isStdlib modName then
             Just
                 { path = "sky-out/" ++ String.join "/" imp.moduleName
-                , alias_ = "sky_" ++ String.toLower
-                                         (String.replace "." "_" modName)
+                , alias_ =
+                    "sky_" ++ String.toLower (String.replace "." "_" modName)
                 }
+        
         else if imp.alias_ == "_" then
             Just { path = skyModuleToGoImport modName , alias_ = "_" }
+        
         else
             Nothing
 
@@ -2825,18 +3243,26 @@ skyModuleToGoImportLoop parts acc pastTld =
         part :: rest ->
             if pastTld then
                 skyModuleToGoImportLoop rest (List.append acc [ part ]) True
+            
             else if isTld part then
                 let
                     domain = String.join "." (List.append acc [ part ])
                 in
                     skyModuleToGoImportLoop rest [ domain ] True
+            
             else
                 skyModuleToGoImportLoop rest (List.append acc [ part ]) False
 
 
 isTld : String -> Bool
 isTld s =
-    s == "com" || s == "org" || s == "io" || s == "net" || s == "dev" || s == "co" || s == "ai"
+    s == "com"
+        || s == "org"
+        || s == "io"
+        || s == "net"
+        || s == "dev"
+        || s == "co"
+        || s == "ai"
 
 
 copyStdlibGo : String -> Result String ()
@@ -2859,9 +3285,10 @@ capitalizeFirst : String -> String
 capitalizeFirst s =
     if String.isEmpty s then
         ""
+    
     else
-        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s)
-                                                   s
+        String.toUpper (String.slice 0 1 s)
+            ++ String.slice 1 (String.length s) s
 
 
 ffiPascalPart : String -> String
@@ -2876,6 +3303,7 @@ ffiSafePartLoop : String -> Int -> String -> String
 ffiSafePartLoop s idx acc =
     if idx >= String.length s then
         String.toLower acc
+    
     else
         let
             ch = String.slice idx (idx + 1) s
@@ -2884,6 +3312,7 @@ ffiSafePartLoop s idx acc =
         in
             if needsUnderscore then
                 ffiSafePartLoop s (idx + 1) (acc ++ "_" ++ ch)
+            
             else
                 ffiSafePartLoop s (idx + 1) (acc ++ ch)
 
@@ -2895,21 +3324,23 @@ prefixDecl prefix decl =
         GoDeclFunc funcDecl ->
             if funcDecl.name == "main" then
                 decl
+            
             else
                 GoDeclFunc
                     { funcDecl
-                    | name = prefix ++ "_" ++ capitalizeFirst funcDecl.name
+                        | name = prefix ++ "_" ++ capitalizeFirst funcDecl.name
                     }
         
         GoDeclVar name expr ->
             if name == "_" || String.startsWith "var _ =" name then
                 decl
+            
             else
                 GoDeclVar (prefix ++ "_" ++ capitalizeFirst name) expr
         
         GoDeclRaw code ->
             decl
-
+        
         GoDeclType name body ->
             GoDeclType (prefix ++ "_" ++ capitalizeFirst name) body
 
@@ -2922,7 +3353,9 @@ compileSource filePath outDir source =
         _ =
             println
                 (
-                "   " ++ String.fromInt (List.length lexResult.tokens) ++ " tokens"
+                "   "
+                    ++ String.fromInt (List.length lexResult.tokens)
+                        ++ " tokens"
                 )
     in
         case Parser.parse lexResult.tokens of
@@ -2937,12 +3370,12 @@ compileSource filePath outDir source =
                     _ =
                         println
                             (
-                            "   " ++ String.fromInt
-                                         (List.length mod.declarations) ++ " declarations, " ++ String.fromInt
-                                                                                                    (
-                                                                                                    List.length
-                                                                                                        mod.imports
-                                                                                                    ) ++ " imports"
+                            "   "
+                                ++ String.fromInt (List.length mod.declarations)
+                                    ++ " declarations, "
+                                        ++ String.fromInt
+                                               (List.length mod.imports)
+                                            ++ " imports"
                             )
                 in
                     compileModule filePath outDir mod
@@ -2955,7 +3388,8 @@ compileModule filePath outDir mod =
         _ =
             println
                 (
-                "-- Type Checking (src: " ++ inferSrcRoot filePath mod.name ++ ")"
+                "-- Type Checking (src: "
+                    ++ inferSrcRoot filePath mod.name ++ ")"
                 )
         stdlibEnv = Resolver.buildStdlibEnv
         checkResult = Checker.checkModule mod (Just stdlibEnv)
@@ -2972,8 +3406,10 @@ compileModule filePath outDir mod =
                     in
                         Err
                             (
-                            String.fromInt (List.length result.diagnostics) ++ " type error(s) found"
+                            String.fromInt (List.length result.diagnostics)
+                                ++ " type error(s) found"
                             )
+                
                 else
                     compileCheckedModule filePath outDir mod result
 
@@ -2986,7 +3422,9 @@ compileCheckedModule filePath outDir mod result =
         _ =
             println
                 (
-                "   " ++ String.fromInt (List.length goPackage.declarations) ++ " Go declarations"
+                "   "
+                    ++ String.fromInt (List.length goPackage.declarations)
+                        ++ " Go declarations"
                 )
         _ = println ("-- Emitting Go")
         goCode = Emit.emitPackage goPackage
@@ -3003,6 +3441,7 @@ compileCheckedModule filePath outDir mod result =
                    False
                    mod.imports then
                 copyLiveRuntime outDir
+            
             else
                 ()
         _ = writeParallelHelpers outDir goCode
@@ -3068,8 +3507,10 @@ inferSrcRoot filePath moduleName =
             in
                 if rootLen > 0 then
                     String.slice 0 rootLen filePath
+                
                 else
                     "."
+        
         else
             "src"
 
@@ -3081,6 +3522,7 @@ inferSrcRootFromEntry entryPath =
             idx = findSubstring "/src/" entryPath
         in
             String.slice 0 (idx + 4) entryPath
+    
     else
         "src"
 
@@ -3093,9 +3535,11 @@ findSubstringAt : String -> String -> Int -> Int
 findSubstringAt needle haystack idx =
     if idx >= String.length haystack then
         0
+    
     else if String.startsWith needle
                 (String.slice idx (String.length haystack) haystack) then
         idx
+    
     else
         findSubstringAt needle haystack (idx + 1)
 
@@ -3112,7 +3556,9 @@ printDiagnostics diags =
                 _ =
                     println
                         (
-                        "   [!] " ++ String.fromInt (List.length diags) ++ " diagnostics:"
+                        "   [!] "
+                            ++ String.fromInt (List.length diags)
+                                ++ " diagnostics:"
                         )
                 _ = List.map (\d -> println ("     " ++ d)) diags
             in

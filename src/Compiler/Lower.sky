@@ -90,11 +90,14 @@ lowerModule registry mod =
         exposed = buildExposedStdlib mod.imports
         ctx =
             { emptyCtx
-            | registry = registry
-            , localFunctions = collectLocalFunctions mod.declarations
-            , importedConstructors = Dict.union (buildConstructorMapFromDecls mod.declarations) (buildConstructorMap registry)
-            , exposedStdlib = exposed
-            , localFunctionArity = collectLocalFunctionArities mod.declarations
+                | registry = registry
+                , localFunctions = collectLocalFunctions mod.declarations
+                , importedConstructors =
+                    Dict.union (buildConstructorMapFromDecls mod.declarations)
+                        (buildConstructorMap registry)
+                , exposedStdlib = exposed
+                , localFunctionArity =
+                    collectLocalFunctionArities mod.declarations
             }
         goDecls = lowerDeclarations ctx mod.declarations
         ctorDecls = generateConstructorDecls registry mod.declarations
@@ -132,7 +135,7 @@ lowerDeclarations ctx decls = List.concatMap (lowerDeclWithType ctx) decls
 lowerDeclWithType : LowerCtx -> Declaration -> List GoDecl
 lowerDeclWithType ctx decl =
     case decl of
-
+        
         FunDecl name params body _ ->
             let
                 funcDecl = lowerFunction ctx name params body
@@ -140,9 +143,10 @@ lowerDeclWithType ctx decl =
             in
                 if String.isEmpty typeComment then
                     [ funcDecl ]
+                
                 else
                     [ GoDeclRaw typeComment , funcDecl ]
-
+        
         _ ->
             []
 
@@ -150,14 +154,14 @@ lowerDeclWithType ctx decl =
 makeTypeComment : LowerCtx -> String -> String
 makeTypeComment ctx name =
     case Dict.get name ctx.typedDecls of
-
+        
         Just scheme ->
             let
                 resolvedType = resolveSchemeType scheme
                 prettyType = formatType resolvedType
             in
                 "// sky:type " ++ name ++ " : " ++ prettyType
-
+        
         Nothing ->
             ""
 
@@ -169,18 +173,20 @@ lowerFunction ctx name params body =
         goName =
             if isMain then
                 "main"
+            
             else
                 sanitizeGoIdent name
         goParams = List.map lowerParam params
         returnType =
             if isMain then
                 ""
+            
             else
                 "any"
         pNames = List.filterMap extractPatternName params
         bodyCtx =
             { ctx
-            | paramNames = Set.union ctx.paramNames (Set.fromList pNames)
+                | paramNames = Set.union ctx.paramNames (Set.fromList pNames)
             }
         paramBindings = generateParamBindings bodyCtx params
         goBody =
@@ -190,11 +196,13 @@ lowerFunction ctx name params body =
                           (
                           GoRawExpr
                               (
-                              "sky_runMainTask(" ++ emitGoExprInline
-                                                        (lowerExpr bodyCtx body) ++ ")"
+                              "sky_runMainTask("
+                                  ++ emitGoExprInline (lowerExpr bodyCtx body)
+                                      ++ ")"
                               )
                           )
                     ]
+            
             else
                 List.append paramBindings [ GoReturn (lowerExpr bodyCtx body) ]
     in
@@ -228,6 +236,7 @@ generateOneParamBinding ctx pat =
             in
                 if String.isEmpty bindings then
                     []
+                
                 else
                     [ GoExprStmt (GoRawExpr bindings) ]
         
@@ -271,6 +280,7 @@ lowerExpr ctx expr =
         BoolLitExpr b _ ->
             if b then
                 GoIdent "true"
+            
             else
                 GoIdent "false"
         
@@ -291,28 +301,26 @@ lowerExpr ctx expr =
                 if n == 2 then
                     GoRawExpr
                         (
-                        "SkyTuple2{V0: " ++ emitGoExprInline (listGet 0 goItems) ++ ", V1: " ++ emitGoExprInline
-                                                                                                    (
-                                                                                                    listGet
-                                                                                                        1
-                                                                                                        goItems
-                                                                                                    ) ++ "}"
+                        "SkyTuple2{V0: "
+                            ++ emitGoExprInline (listGet 0 goItems)
+                                ++ ", V1: "
+                                    ++ emitGoExprInline (listGet 1 goItems)
+                                        ++ "}"
                         )
+                
                 else if n == 3 then
                     GoRawExpr
                         (
-                        "SkyTuple3{V0: " ++ emitGoExprInline (listGet 0 goItems) ++ ", V1: " ++ emitGoExprInline
-                                                                                                    (
-                                                                                                    listGet
-                                                                                                        1
-                                                                                                        goItems
-                                                                                                    ) ++ ", V2: " ++ emitGoExprInline
-                                                                                                                         (
-                                                                                                                         listGet
-                                                                                                                             2
-                                                                                                                             goItems
-                                                                                                                         ) ++ "}"
+                        "SkyTuple3{V0: "
+                            ++ emitGoExprInline (listGet 0 goItems)
+                                ++ ", V1: "
+                                    ++ emitGoExprInline (listGet 1 goItems)
+                                        ++ ", V2: "
+                                            ++ emitGoExprInline
+                                                   (listGet 2 goItems)
+                                                ++ "}"
                         )
+                
                 else
                     GoSliceLit goItems
         
@@ -322,7 +330,7 @@ lowerExpr ctx expr =
         RecordExpr fields _ ->
             GoMapLit
                 (
-                List.map (\f -> (GoStringLit f.name, lowerExpr ctx f.value))
+                List.map (\f -> ( GoStringLit f.name, lowerExpr ctx f.value ))
                     fields
                 )
         
@@ -366,44 +374,62 @@ lowerIdentifier ctx name =
         Just info ->
             if info.arity == 0 then
                 lowerConstructorValue name info
+            
             else
                 GoIdent (sanitizeGoIdent name)
         
         Nothing ->
             if name == "Ok" then
                 GoIdent "SkyOk"
+            
             else if name == "Err" then
                 GoIdent "SkyErr"
+            
             else if name == "Just" then
                 GoIdent "SkyJust"
+            
             else if name == "Nothing" then
                 GoCallExpr (GoIdent "SkyNothing") []
+            
             else if name == "True" then
                 GoIdent "true"
+            
             else if name == "False" then
                 GoIdent "false"
+            
             else if name == "not" then
                 GoIdent "sky_not"
+            
             else if name == "fst" then
                 GoIdent "sky_fst"
+            
             else if name == "snd" then
                 GoIdent "sky_snd"
+            
             else if name == "errorToString" then
                 GoIdent "sky_errorToString"
+            
             else if name == "println" then
                 GoIdent "sky_println"
+            
             else if name == "identity" then
                 GoIdent "sky_identity"
+            
             else if name == "always" then
                 GoIdent "sky_always"
+            
             else if name == "js" then
                 GoIdent "sky_js"
+            
             else if name == "modBy" then
                 GoIdent "sky_modBy"
+            
             else if name == "clamp" then
                 GoIdent "sky_clamp"
+            
             else if Set.member name ctx.paramNames then
                 GoIdent (sanitizeGoIdent name)
+            
             else
                 case Dict.get name ctx.exposedStdlib of
                     
@@ -411,23 +437,24 @@ lowerIdentifier ctx name =
                         lowerStdlibExposed modPath name
                     
                     Nothing ->
-                        if not (String.isEmpty ctx.modulePrefix) && listContains
-                                                                        name
-                                                                        ctx.localFunctions then
+                        if not (String.isEmpty ctx.modulePrefix)
+                            && listContains name ctx.localFunctions then
                             let
                                 goName =
-                                    ctx.modulePrefix ++ "_" ++ capitalizeFirst
-                                                                   (
-                                                                   sanitizeGoIdent
-                                                                       name
-                                                                   )
+                                    ctx.modulePrefix
+                                        ++ "_"
+                                            ++ capitalizeFirst
+                                                   (sanitizeGoIdent name)
                             in
                                 if isZeroArityFn name ctx then
                                     GoCallExpr (GoIdent goName) []
+                                
                                 else
                                     GoIdent goName
+                        
                         else if isZeroArityFn name ctx then
                             GoCallExpr (GoIdent (sanitizeGoIdent name)) []
+                        
                         else
                             GoIdent (sanitizeGoIdent name)
 
@@ -437,60 +464,89 @@ lowerStdlibExposed modPath name =
     if modPath == "Std.Html" then
         if name == "doctype" then
             GoIdent "sky_htmlDoctype"
+        
         else if name == "titleNode" then
             GoIdent "sky_htmlTitleNode"
+        
         else if name == "text" then
             GoIdent "sky_htmlText"
+        
         else if name == "raw" then
             GoIdent "sky_htmlRaw"
+        
         else if name == "styleNode" then
             GoIdent "sky_htmlStyleNode"
-        else if name == "input" || name == "br" || name == "hr" || name == "img" || name == "meta" then
+        
+        else if name == "input"
+            || name == "br"
+            || name == "hr"
+            || name == "img"
+            || name == "meta" then
             GoCallExpr (GoIdent "sky_htmlVoid") [ GoStringLit name ]
+        
         else if name == "render" || name == "toString" then
             GoIdent "sky_htmlRender"
+        
         else if name == "escapeHtml" then
             GoIdent "sky_htmlEscapeHtml"
+        
         else if name == "escapeAttr" then
             GoIdent "sky_htmlEscapeAttr"
+        
         else if name == "attrToString" then
             GoIdent "sky_htmlAttrToString"
+        
         else if name == "node" then
             GoIdent "sky_htmlEl"
+        
         else if name == "voidNode" then
             GoIdent "sky_htmlVoid"
+        
         else
             let
                 tagName =
                     if name == "mainNode" then
                         "main"
+                    
                     else if name == "headerNode" then
                         "header"
+                    
                     else if name == "footerNode" then
                         "footer"
+                    
                     else if name == "codeNode" then
                         "code"
+                    
                     else if name == "linkNode" then
                         "link"
+                    
                     else if name == "htmlNode" then
                         "html"
+                    
                     else if name == "headNode" then
                         "head"
+                    
                     else
                         name
             in
                 GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit tagName ]
+    
     else if modPath == "Std.Html.Attributes" then
         if name == "attribute" then
             GoIdent "sky_attrCustom"
+        
         else if name == "boolAttribute" then
             GoIdent "sky_attrBool"
+        
         else if name == "dataAttribute" then
             GoIdent "sky_attrData"
+        
         else if name == "type_" then
             GoCallExpr (GoIdent "sky_attrSimple") [ GoStringLit "type" ]
+        
         else
             GoCallExpr (GoIdent "sky_attrSimple") [ GoStringLit name ]
+    
     else if modPath == "Std.Live.Events" then
         if String.startsWith "on" name then
             let
@@ -498,76 +554,109 @@ lowerStdlibExposed modPath name =
                     String.toLower (String.slice 2 (String.length name) name)
             in
                 GoCallExpr (GoIdent "sky_evtHandler") [ GoStringLit evtName ]
+        
         else
             GoIdent ("sky_evt_" ++ name)
+    
     else if modPath == "Std.Css" then
         if name == "stylesheet" then
             GoIdent "sky_cssStylesheet"
+        
         else if name == "rule" then
             GoIdent "sky_cssRule"
+        
         else if name == "property" then
             GoIdent "sky_cssProp"
+        
         else if name == "styles" then
             GoIdent "sky_cssStyles"
+        
         else if name == "px" then
             GoIdent "sky_cssPx"
+        
         else if name == "rem" then
             GoIdent "sky_cssRem"
+        
         else if name == "em" then
             GoIdent "sky_cssEm"
+        
         else if name == "pct" then
             GoIdent "sky_cssPct"
+        
         else if name == "hex" then
             GoIdent "sky_cssHex"
+        
         else if name == "rgb" then
             GoIdent "sky_cssRgb"
+        
         else if name == "rgba" then
             GoIdent "sky_cssRgba"
+        
         else if name == "margin2" then
             GoIdent "sky_cssMargin2"
+        
         else if name == "padding2" then
             GoIdent "sky_cssPadding2"
+        
         else if name == "media" then
             GoIdent "sky_cssMedia"
+        
         else if name == "keyframes" then
             GoIdent "sky_cssKeyframes"
+        
         else if name == "frame" then
             GoIdent "sky_cssFrame"
+        
         else if name == "transitionProp" then
             GoIdent "sky_cssTransitionProp"
+        
         else if name == "shadow" then
             GoIdent "sky_cssShadow"
+        
         else if name == "margin4" then
             GoIdent "sky_cssMargin4"
+        
         else
             GoCallExpr (GoIdent "sky_cssPropFn")
                 [ GoStringLit (cssNameToProperty name) ]
+    
     else if modPath == "Std.Live" then
         if name == "app" then
             GoIdent "sky_liveApp"
+        
         else if name == "route" then
             GoIdent "sky_liveRoute"
+        
         else
             GoIdent ("sky_live_" ++ name)
+    
     else if modPath == "Std.Cmd" then
         if name == "none" then
             GoCallExpr (GoIdent "sky_cmdNone") []
+        
         else if name == "batch" then
             GoIdent "sky_cmdBatch"
+        
         else
             GoIdent ("sky_cmd_" ++ name)
+    
     else if modPath == "Std.Sub" then
         if name == "none" then
             GoCallExpr (GoIdent "sky_subNone") []
+        
         else if name == "batch" then
             GoIdent "sky_subBatch"
+        
         else
             GoIdent ("sky_sub_" ++ name)
+    
     else if modPath == "Std.Time" then
         if name == "every" then
             GoIdent "sky_timeEvery"
+        
         else
             GoIdent ("sky_time_" ++ name)
+    
     else
         GoIdent (sanitizeGoIdent name)
 
@@ -580,22 +669,53 @@ cssNameToPropertyLoop : String -> Int -> String -> String
 cssNameToPropertyLoop name idx acc =
     if idx >= String.length name then
         acc
+    
     else
         let
             ch = String.slice idx (idx + 1) name
             isUpper =
-                ch == "A" || ch == "B" || ch == "C" || ch == "D" || ch == "E" || ch == "F" || ch == "G" || ch == "H" || ch == "I" || ch == "J" || ch == "K" || ch == "L" || ch == "M" || ch == "N" || ch == "O" || ch == "P" || ch == "Q" || ch == "R" || ch == "S" || ch == "T" || ch == "U" || ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z"
+                ch == "A"
+                    || ch == "B"
+                    || ch == "C"
+                    || ch == "D"
+                    || ch == "E"
+                    || ch == "F"
+                    || ch == "G"
+                    || ch == "H"
+                    || ch == "I"
+                    || ch == "J"
+                    || ch == "K"
+                    || ch == "L"
+                    || ch == "M"
+                    || ch == "N"
+                    || ch == "O"
+                    || ch == "P"
+                    || ch == "Q"
+                    || ch == "R"
+                    || ch == "S"
+                    || ch == "T"
+                    || ch == "U"
+                    || ch == "V"
+                    || ch == "W"
+                    || ch == "X"
+                    || ch == "Y"
+                    || ch == "Z"
         in
             if isUpper && idx > 0 then
                 cssNameToPropertyLoop name (idx + 1)
                     (acc ++ "-" ++ String.toLower ch)
+            
             else
                 cssNameToPropertyLoop name (idx + 1) (acc ++ ch)
 
 
 lowerConstructorValue : String -> CtorInfo -> GoExpr
 lowerConstructorValue name info =
-    GoRawExpr ("SkyADT{Tag: " ++ String.fromInt info.tagIndex ++ ", SkyName: \"" ++ name ++ "\"}")
+    GoRawExpr
+        (
+        "SkyADT{Tag: "
+            ++ String.fromInt info.tagIndex ++ ", SkyName: \"" ++ name ++ "\"}"
+        )
 
 
 lowerQualified : LowerCtx -> (List String) -> GoExpr
@@ -604,515 +724,756 @@ lowerQualified ctx parts =
         qualName = String.join "." parts
         qualifier =
             case List.head parts of
-
+                
                 Just q ->
                     q
-
+                
                 Nothing ->
                     ""
         isUserImport = Dict.member qualifier ctx.importAliases
     in
         if isUserImport && List.length parts == 2 then
             lowerQualifiedImport ctx parts
+        
         else if qualName == "String.fromInt" then
             GoIdent "sky_stringFromInt"
+        
         else if qualName == "String.fromFloat" then
             GoIdent "sky_stringFromFloat"
+        
         else if qualName == "String.toUpper" then
             GoIdent "sky_stringToUpper"
+        
         else if qualName == "String.toLower" then
             GoIdent "sky_stringToLower"
+        
         else if qualName == "String.length" then
             GoIdent "sky_stringLength"
+        
         else if qualName == "String.join" then
             GoIdent "sky_stringJoin"
+        
         else if qualName == "String.contains" then
             GoIdent "sky_stringContains"
+        
         else if qualName == "String.trim" then
             GoIdent "sky_stringTrim"
+        
         else if qualName == "String.isEmpty" then
             GoIdent "sky_stringIsEmpty"
+        
         else if qualName == "String.startsWith" then
             GoIdent "sky_stringStartsWith"
+        
         else if qualName == "String.endsWith" then
             GoIdent "sky_stringEndsWith"
+        
         else if qualName == "String.split" then
             GoIdent "sky_stringSplit"
+        
         else if qualName == "String.replace" then
             GoIdent "sky_stringReplace"
+        
         else if qualName == "String.toInt" then
             GoIdent "sky_stringToInt"
+        
         else if qualName == "String.toFloat" then
             GoIdent "sky_stringToFloat"
+        
         else if qualName == "String.append" then
             GoIdent "sky_stringAppend"
+        
         else if qualName == "String.slice" then
             GoIdent "sky_stringSlice"
+        
         else if qualName == "List.map" then
             GoIdent "sky_listMap"
+        
         else if qualName == "List.filter" then
             GoIdent "sky_listFilter"
+        
         else if qualName == "List.foldl" then
             GoIdent "sky_listFoldl"
+        
         else if qualName == "List.foldr" then
             GoIdent "sky_listFoldr"
+        
         else if qualName == "List.length" then
             GoIdent "sky_listLength"
+        
         else if qualName == "List.head" then
             GoIdent "sky_listHead"
+        
         else if qualName == "List.reverse" then
             GoIdent "sky_listReverse"
+        
         else if qualName == "List.isEmpty" then
             GoIdent "sky_listIsEmpty"
+        
         else if qualName == "List.append" then
             GoIdent "sky_listAppend"
+        
         else if qualName == "List.concatMap" then
             GoIdent "sky_listConcatMap"
+        
         else if qualName == "List.filterMap" then
             GoIdent "sky_listFilterMap"
+        
         else if qualName == "List.indexedMap" then
             GoIdent "sky_listIndexedMap"
+        
         else if qualName == "List.concat" then
             GoIdent "sky_listConcat"
+        
         else if qualName == "List.drop" then
             GoIdent "sky_listDrop"
+        
         else if qualName == "List.member" then
             GoIdent "sky_listMember"
+        
         else if qualName == "Log.println" then
             GoIdent "sky_println"
+        
         else if qualName == "Args.skyVersion" then
             GoIdent "skyVersion"
+        
         else if qualName == "File.readFile" then
             GoIdent "sky_fileRead"
+        
         else if qualName == "File.writeFile" then
             GoIdent "sky_fileWrite"
+        
         else if qualName == "File.mkdirAll" then
             GoIdent "sky_fileMkdirAll"
+        
         else if qualName == "Process.exit" then
             GoIdent "sky_processExit"
+        
         else if qualName == "Process.run" then
             GoIdent "sky_processRun"
+        
         else if qualName == "Args.getArgs" then
             GoIdent "sky_processGetArgs"
+        
         else if qualName == "Args.getArg" then
             GoIdent "sky_processGetArg"
+        
         else if qualName == "Ref.new" then
             GoIdent "sky_refNew"
+        
         else if qualName == "Ref.get" then
             GoIdent "sky_refGet"
+        
         else if qualName == "Ref.set" then
             GoIdent "sky_refSet"
+        
         else if qualName == "Dict.empty" then
             GoCallExpr (GoIdent "sky_dictEmpty") []
+        
         else if qualName == "Dict.insert" then
             GoIdent "sky_dictInsert"
+        
         else if qualName == "Dict.get" then
             GoIdent "sky_dictGet"
+        
         else if qualName == "Dict.keys" then
             GoIdent "sky_dictKeys"
+        
         else if qualName == "Dict.values" then
             GoIdent "sky_dictValues"
+        
         else if qualName == "Dict.toList" then
             GoIdent "sky_dictToList"
+        
         else if qualName == "Dict.fromList" then
             GoIdent "sky_dictFromList"
+        
         else if qualName == "Dict.map" then
             GoIdent "sky_dictMap"
+        
         else if qualName == "Dict.foldl" then
             GoIdent "sky_dictFoldl"
+        
         else if qualName == "Dict.union" then
             GoIdent "sky_dictUnion"
+        
         else if qualName == "Dict.remove" then
             GoIdent "sky_dictRemove"
+        
         else if qualName == "Dict.member" then
             GoIdent "sky_dictMember"
+        
         else if qualName == "Set.empty" then
             GoCallExpr (GoIdent "sky_setEmpty") []
+        
         else if qualName == "Set.singleton" then
             GoIdent "sky_setSingleton"
+        
         else if qualName == "Set.insert" then
             GoIdent "sky_setInsert"
+        
         else if qualName == "Set.member" then
             GoIdent "sky_setMember"
+        
         else if qualName == "Set.union" then
             GoIdent "sky_setUnion"
+        
         else if qualName == "Set.diff" then
             GoIdent "sky_setDiff"
+        
         else if qualName == "Set.toList" then
             GoIdent "sky_setToList"
+        
         else if qualName == "Set.fromList" then
             GoIdent "sky_setFromList"
+        
         else if qualName == "Set.isEmpty" then
             GoIdent "sky_setIsEmpty"
+        
         else if qualName == "Set.remove" then
             GoIdent "sky_setRemove"
+        
         else if qualName == "Char.isUpper" then
             GoIdent "sky_charIsUpper"
+        
         else if qualName == "Char.isLower" then
             GoIdent "sky_charIsLower"
+        
         else if qualName == "Char.isDigit" then
             GoIdent "sky_charIsDigit"
+        
         else if qualName == "Char.isAlpha" then
             GoIdent "sky_charIsAlpha"
+        
         else if qualName == "Char.isAlphaNum" then
             GoIdent "sky_charIsAlphaNum"
+        
         else if qualName == "Char.toUpper" then
             GoIdent "sky_charToUpper"
+        
         else if qualName == "Char.toLower" then
             GoIdent "sky_charToLower"
+        
         else if qualName == "String.fromChar" then
             GoIdent "sky_stringFromChar"
+        
         else if qualName == "String.toList" then
             GoIdent "sky_stringToList"
+        
         else if qualName == "String.toBytes" then
             GoIdent "sky_stringToBytes"
+        
         else if qualName == "String.fromBytes" then
             GoIdent "sky_stringFromBytes"
+        
         else if qualName == "Io.readLine" then
             GoIdent "sky_readLine"
+        
         else if qualName == "Io.readAllStdin" then
             GoIdent "sky_readAllStdin"
+        
         else if qualName == "Io.readBytes" then
             GoIdent "sky_readBytes"
+        
         else if qualName == "Io.writeStdout" then
             GoIdent "sky_writeStdout"
+        
         else if qualName == "Io.writeStderr" then
             GoIdent "sky_writeStderr"
+        
         else if qualName == "Server.listen" then
             GoIdent "sky_serverListen"
+        
         else if qualName == "Server.get" then
             GoIdent "sky_serverGet"
+        
         else if qualName == "Server.post" then
             GoIdent "sky_serverPost"
+        
         else if qualName == "Server.put" then
             GoIdent "sky_serverPut"
+        
         else if qualName == "Server.delete" then
             GoIdent "sky_serverDelete"
+        
         else if qualName == "Server.any" then
             GoIdent "sky_serverAny"
+        
         else if qualName == "Server.group" then
             GoIdent "sky_serverGroup"
+        
         else if qualName == "Server.static" then
             GoIdent "sky_serverStatic"
+        
         else if qualName == "Server.text" then
             GoIdent "sky_serverText"
+        
         else if qualName == "Server.html" then
             GoIdent "sky_serverHtml"
+        
         else if qualName == "Server.json" then
             GoIdent "sky_serverJson"
+        
         else if qualName == "Server.redirect" then
             GoIdent "sky_serverRedirect"
+        
         else if qualName == "Server.withStatus" then
             GoIdent "sky_serverWithStatus"
+        
         else if qualName == "Server.withHeader" then
             GoIdent "sky_serverWithHeader"
+        
         else if qualName == "Server.withCookie" then
             GoIdent "sky_serverWithCookie"
+        
         else if qualName == "Server.param" then
             GoIdent "sky_serverParam"
+        
         else if qualName == "Server.queryParam" then
             GoIdent "sky_serverQueryParam"
+        
         else if qualName == "Server.header" then
             GoIdent "sky_serverHeader"
+        
         else if qualName == "Server.getCookie" then
             GoIdent "sky_serverGetCookie"
+        
         else if qualName == "Server.cookie" then
             GoIdent "sky_serverCookie"
+        
         else if qualName == "Server.body" then
             GoIdent "sky_serverBody"
+        
         else if qualName == "Server.method" then
             GoIdent "sky_serverMethod"
+        
         else if qualName == "Server.formValue" then
             GoIdent "sky_serverFormValue"
+        
         else if qualName == "Task.succeed" then
             GoIdent "sky_taskSucceed"
+        
         else if qualName == "Task.fail" then
             GoIdent "sky_taskFail"
+        
         else if qualName == "Task.andThen" then
             GoIdent "sky_taskAndThen"
+        
         else if qualName == "Task.map" then
             GoIdent "sky_taskMap"
+        
         else if qualName == "Task.perform" then
             GoIdent "sky_taskPerform"
+        
         else if qualName == "Task.run" then
             GoIdent "sky_taskRun"
+        
         else if qualName == "Task.sequence" then
             GoIdent "sky_taskSequence"
+        
         else if qualName == "Task.lazy" then
             GoIdent "sky_taskLazy"
+        
         else if qualName == "Task.parallel" then
             GoIdent "sky_taskParallel"
+        
         else if qualName == "List.parallelMap" then
             GoIdent "sky_parallelMap"
+        
         else if qualName == "Result.map" then
             GoIdent "sky_resultMap"
+        
         else if qualName == "Result.withDefault" then
             GoIdent "sky_resultWithDefault"
+        
         else if qualName == "Result.andThen" then
             GoIdent "sky_resultAndThen"
+        
         else if qualName == "Result.mapError" then
             GoIdent "sky_resultMapError"
+        
         else if qualName == "Maybe.withDefault" || qualName == "withDefault" then
             GoIdent "sky_maybeWithDefault"
+        
         else if qualName == "Maybe.map" then
             GoIdent "sky_maybeMap"
+        
         else if qualName == "Maybe.andThen" then
             GoIdent "sky_maybeAndThen"
+        
         else if qualName == "List.take" then
             GoIdent "sky_listTake"
+        
         else if qualName == "List.sort" then
             GoIdent "sky_listSort"
+        
         else if qualName == "List.sortBy" then
             GoIdent "sky_listSortBy"
+        
         else if qualName == "List.zip" then
             GoIdent "sky_listZip"
+        
         else if qualName == "List.range" then
             GoIdent "sky_listRange"
+        
         else if qualName == "List.find" then
             GoIdent "sky_listFind"
+        
         else if qualName == "List.minimum" then
             GoIdent "sky_listMinimum"
+        
         else if qualName == "List.any" then
             GoIdent "sky_listAny"
+        
         else if qualName == "List.all" then
             GoIdent "sky_listAll"
+        
         else if qualName == "List.singleton" then
             GoIdent "sky_listSingleton"
+        
         else if qualName == "List.intersperse" then
             GoIdent "sky_listIntersperse"
+        
         else if qualName == "String.left" then
             GoIdent "sky_stringLeft"
+        
         else if qualName == "String.right" then
             GoIdent "sky_stringRight"
+        
         else if qualName == "String.padLeft" then
             GoIdent "sky_stringPadLeft"
+        
         else if qualName == "String.lines" then
             GoIdent "sky_stringLines"
+        
         else if qualName == "String.words" then
             GoIdent "sky_stringWords"
+        
         else if qualName == "String.repeat" then
             GoIdent "sky_stringRepeat"
+        
         else if qualName == "Math.sqrt" then
             GoIdent "sky_mathSqrt"
+        
         else if qualName == "Math.pow" then
             GoIdent "sky_mathPow"
+        
         else if qualName == "Math.abs" then
             GoIdent "sky_mathAbs"
+        
         else if qualName == "Math.floor" then
             GoIdent "sky_mathFloor"
+        
         else if qualName == "Math.ceil" then
             GoIdent "sky_mathCeil"
+        
         else if qualName == "Math.round" then
             GoIdent "sky_mathRound"
+        
         else if qualName == "Math.min" then
             GoIdent "sky_mathMin"
+        
         else if qualName == "Math.max" then
             GoIdent "sky_mathMax"
+        
         else if qualName == "Math.pi" then
             GoBasicLit "3.141592653589793"
+        
         else if qualName == "Math.modBy" then
             GoIdent "sky_modBy"
+        
         else if qualName == "Crypto.sha256" then
             GoIdent "sky_cryptoSha256"
+        
         else if qualName == "Crypto.md5" then
             GoIdent "sky_cryptoMd5"
+        
         else if qualName == "Encoding.hexEncode" then
             GoIdent "sky_encodingHexEncode"
+        
         else if qualName == "Encoding.base64Encode" then
             GoIdent "sky_encodingBase64Encode"
+        
         else if qualName == "Encoding.base64Decode" then
             GoIdent "sky_encodingBase64Decode"
+        
         else if qualName == "Time.now" then
             GoIdent "sky_timeNow"
+        
         else if qualName == "Time.posixToMillis" then
             GoIdent "sky_timePosixToMillis"
+        
         else if qualName == "Http.getString" then
             GoIdent "sky_httpGetString"
+        
         else if qualName == "Http.get" then
             GoIdent "sky_httpGet"
+        
         else if qualName == "Http.post" then
             GoIdent "sky_httpPost"
+        
         else if qualName == "Http.request" then
             GoIdent "sky_httpRequest"
+        
         else if qualName == "Encode.string" then
             GoIdent "sky_jsonEncString"
+        
         else if qualName == "Encode.int" then
             GoIdent "sky_jsonEncInt"
+        
         else if qualName == "Encode.float" then
             GoIdent "sky_jsonEncFloat"
+        
         else if qualName == "Encode.bool" then
             GoIdent "sky_jsonEncBool"
+        
         else if qualName == "Encode.null" then
             GoCallExpr (GoIdent "sky_jsonEncNull") []
+        
         else if qualName == "Encode.list" then
             GoIdent "sky_jsonEncList"
+        
         else if qualName == "Encode.object" then
             GoIdent "sky_jsonEncObject"
+        
         else if qualName == "Encode.encode" then
             GoIdent "sky_jsonEncode"
+        
         else if qualName == "Decode.decodeString" then
             GoIdent "sky_jsonDecString"
+        
         else if qualName == "Decode.string" then
             GoIdent "sky_jsonDecoder_string"
+        
         else if qualName == "Decode.int" then
             GoIdent "sky_jsonDecoder_int"
+        
         else if qualName == "Decode.float" then
             GoIdent "sky_jsonDecoder_float"
+        
         else if qualName == "Decode.bool" then
             GoIdent "sky_jsonDecoder_bool"
+        
         else if qualName == "Decode.field" then
             GoIdent "sky_jsonDecField"
+        
         else if qualName == "Decode.list" then
             GoIdent "sky_jsonDecList"
+        
         else if qualName == "Decode.map" then
             GoIdent "sky_jsonDecMap"
+        
         else if qualName == "Decode.map2" then
             GoIdent "sky_jsonDecMap2"
+        
         else if qualName == "Decode.map3" then
             GoIdent "sky_jsonDecMap3"
+        
         else if qualName == "Decode.map4" then
             GoIdent "sky_jsonDecMap4"
+        
         else if qualName == "Decode.succeed" then
             GoIdent "sky_jsonDecSucceed"
+        
         else if qualName == "Decode.fail" then
             GoIdent "sky_jsonDecFail"
+        
         else if qualName == "Decode.andThen" then
             GoIdent "sky_jsonDecAndThen"
+        
         else if qualName == "Decode.oneOf" then
             GoIdent "sky_jsonDecOneOf"
+        
         else if qualName == "Decode.nullable" then
             GoIdent "sky_jsonDecNullable"
+        
         else if qualName == "Decode.at" then
             GoIdent "sky_jsonDecAt"
+        
         else if qualName == "Pipeline.required" then
             GoIdent "sky_jsonPipeRequired"
+        
         else if qualName == "Pipeline.optional" then
             GoIdent "sky_jsonPipeOptional"
+        
         else if qualName == "Pipeline.decode" then
             GoIdent "sky_jsonPipeDecode"
+        
         else if qualName == "Cmd.none" then
             GoCallExpr (GoIdent "sky_cmdNone") []
+        
         else if qualName == "Cmd.batch" then
             GoIdent "sky_cmdBatch"
+        
         else if qualName == "Sub.none" then
             GoCallExpr (GoIdent "sky_subNone") []
+        
         else if qualName == "Sub.batch" then
             GoIdent "sky_subBatch"
+        
         else if qualName == "Time.every" then
             GoIdent "sky_timeEvery"
+        
         else if qualName == "Html.div" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "div" ]
+        
         else if qualName == "Html.span" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "span" ]
+        
         else if qualName == "Html.p" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "p" ]
+        
         else if qualName == "Html.h1" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "h1" ]
+        
         else if qualName == "Html.h2" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "h2" ]
+        
         else if qualName == "Html.h3" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "h3" ]
+        
         else if qualName == "Html.h4" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "h4" ]
+        
         else if qualName == "Html.h5" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "h5" ]
+        
         else if qualName == "Html.h6" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "h6" ]
+        
         else if qualName == "Html.button" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "button" ]
+        
         else if qualName == "Html.a" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "a" ]
+        
         else if qualName == "Html.img" then
             GoCallExpr (GoIdent "sky_htmlVoid") [ GoStringLit "img" ]
+        
         else if qualName == "Html.input" then
             GoCallExpr (GoIdent "sky_htmlVoid") [ GoStringLit "input" ]
+        
         else if qualName == "Html.br" then
             GoCallExpr (GoIdent "sky_htmlVoid") [ GoStringLit "br" ]
+        
         else if qualName == "Html.hr" then
             GoCallExpr (GoIdent "sky_htmlVoid") [ GoStringLit "hr" ]
+        
         else if qualName == "Html.form" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "form" ]
+        
         else if qualName == "Html.label" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "label" ]
+        
         else if qualName == "Html.textarea" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "textarea" ]
+        
         else if qualName == "Html.select" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "select" ]
+        
         else if qualName == "Html.option" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "option" ]
+        
         else if qualName == "Html.ul" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "ul" ]
+        
         else if qualName == "Html.ol" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "ol" ]
+        
         else if qualName == "Html.li" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "li" ]
+        
         else if qualName == "Html.table" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "table" ]
+        
         else if qualName == "Html.thead" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "thead" ]
+        
         else if qualName == "Html.tbody" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "tbody" ]
+        
         else if qualName == "Html.tr" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "tr" ]
+        
         else if qualName == "Html.th" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "th" ]
+        
         else if qualName == "Html.td" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "td" ]
+        
         else if qualName == "Html.nav" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "nav" ]
+        
         else if qualName == "Html.header" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "header" ]
+        
         else if qualName == "Html.footer" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "footer" ]
+        
         else if qualName == "Html.section" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "section" ]
+        
         else if qualName == "Html.article" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "article" ]
+        
         else if qualName == "Html.aside" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "aside" ]
+        
         else if qualName == "Html.main_" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "main" ]
+        
         else if qualName == "Html.pre" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "pre" ]
+        
         else if qualName == "Html.code" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "code" ]
+        
         else if qualName == "Html.em" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "em" ]
+        
         else if qualName == "Html.strong" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "strong" ]
+        
         else if qualName == "Html.small" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "small" ]
+        
         else if qualName == "Html.blockquote" then
             GoCallExpr (GoIdent "sky_htmlEl") [ GoStringLit "blockquote" ]
+        
         else if qualName == "Html.text" then
             GoIdent "sky_htmlText"
+        
         else if qualName == "Html.raw" then
             GoIdent "sky_htmlRaw"
+        
         else if qualName == "Html.styleNode" then
             GoIdent "sky_htmlStyleNode"
+        
         else if String.startsWith "Attr." qualName then
             let
                 attrName = String.slice 5 (String.length qualName) qualName
             in
                 lowerStdlibExposed "Std.Html.Attributes" attrName
+        
         else if String.startsWith "Events." qualName then
             let
                 evtName = String.slice 7 (String.length qualName) qualName
             in
                 lowerStdlibExposed "Std.Live.Events" evtName
-        else if String.startsWith "Css." qualName && not
-                                                         (
-                                                         Dict.member "Css"
-                                                             ctx.importAliases
-                                                         ) then
+        
+        else if String.startsWith "Css." qualName
+            && not (Dict.member "Css" ctx.importAliases) then
             let
                 cssName = String.slice 4 (String.length qualName) qualName
             in
                 lowerStdlibExposed "Std.Css" cssName
+        
         else if qualName == "Live.app" then
             GoIdent "sky_liveApp"
+        
         else if qualName == "Live.route" then
             GoIdent "sky_liveRoute"
+        
         else if List.length parts == 2 then
             let
                 modPart =
@@ -1146,6 +1507,7 @@ lowerQualified ctx parts =
                     Nothing ->
                         GoSelectorExpr (GoIdent (String.toLower modPart))
                             funcPart
+        
         else
             GoIdent (sanitizeGoIdent qualName)
 
@@ -1155,35 +1517,33 @@ lowerQualifiedImport ctx parts =
     let
         modPart =
             case List.head parts of
-
+                
                 Just p ->
                     p
-
+                
                 Nothing ->
                     ""
         funcPart =
             case List.head (List.drop 1 parts) of
-
+                
                 Just p ->
                     p
-
+                
                 Nothing ->
                     ""
     in
         case Dict.get modPart ctx.importAliases of
-
+            
             Just qualModName ->
                 let
                     prefix = String.replace "." "_" qualModName
                     safeFuncPart = sanitizeGoIdent funcPart
-                    goName =
-                        prefix ++ "_" ++ capitalizeFirst safeFuncPart
+                    goName = prefix ++ "_" ++ capitalizeFirst safeFuncPart
                 in
                     GoCallExpr (GoIdent goName) []
-
+            
             Nothing ->
-                GoSelectorExpr (GoIdent (String.toLower modPart))
-                    funcPart
+                GoSelectorExpr (GoIdent (String.toLower modPart)) funcPart
 
 
 lowerCall : LowerCtx -> Expression -> (List Expression) -> GoExpr
@@ -1214,37 +1574,40 @@ lowerCall ctx callee args =
 lowerCallDirect : LowerCtx -> Expression -> GoExpr -> (List GoExpr) -> GoExpr
 lowerCallDirect ctx flatCallee goCallee goArgs =
     case goCallee of
-
+        
         GoCallExpr innerFn innerArgs ->
             if List.isEmpty innerArgs then
                 GoCallExpr innerFn goArgs
+            
             else if List.length goArgs == 1 then
                 GoCallExpr (GoIdent "sky_call")
                     (List.append [ goCallee ] goArgs)
+            
             else if List.length goArgs == 2 then
                 GoCallExpr (GoIdent "sky_call2")
                     (List.append [ goCallee ] goArgs)
+            
             else if List.length goArgs == 3 then
                 GoCallExpr (GoIdent "sky_call3")
                     (List.append [ goCallee ] goArgs)
+            
             else
                 GoCallExpr (GoIdent "sky_call")
                     (List.append [ goCallee ] goArgs)
-
+        
         GoRawExpr code ->
             lowerCallRawExpr goCallee goArgs code
-
+        
         _ ->
             if isDynamicCallee ctx flatCallee then
                 if List.length goArgs == 1 then
                     GoCallExpr (GoIdent "sky_call")
                         [ goCallee , listGet 0 goArgs ]
+                
                 else if List.length goArgs == 2 then
                     GoCallExpr (GoIdent "sky_call2")
-                        [ goCallee
-                        , listGet 0 goArgs
-                        , listGet 1 goArgs
-                        ]
+                        [ goCallee , listGet 0 goArgs , listGet 1 goArgs ]
+                
                 else if List.length goArgs == 3 then
                     GoCallExpr (GoIdent "sky_call3")
                         [ goCallee
@@ -1252,8 +1615,10 @@ lowerCallDirect ctx flatCallee goCallee goArgs =
                         , listGet 1 goArgs
                         , listGet 2 goArgs
                         ]
+                
                 else
                     GoCallExpr goCallee goArgs
+            
             else
                 GoCallExpr goCallee goArgs
 
@@ -1262,6 +1627,7 @@ lowerCallRawExpr : GoExpr -> (List GoExpr) -> String -> GoExpr
 lowerCallRawExpr goCallee goArgs code =
     if String.endsWith "()" code then
         lowerCallRawExprZeroArity goCallee goArgs
+    
     else
         GoCallExpr goCallee goArgs
 
@@ -1269,11 +1635,10 @@ lowerCallRawExpr goCallee goArgs code =
 lowerCallRawExprZeroArity : GoExpr -> (List GoExpr) -> GoExpr
 lowerCallRawExprZeroArity goCallee goArgs =
     case goArgs of
-
+        
         singleArg :: [  ] ->
-            GoCallExpr (GoIdent "sky_call")
-                [ goCallee , singleArg ]
-
+            GoCallExpr (GoIdent "sky_call") [ goCallee , singleArg ]
+        
         _ ->
             GoCallExpr goCallee goArgs
 
@@ -1329,25 +1694,63 @@ extractPatternName pat =
 
 isWellKnownIdent : String -> Bool
 isWellKnownIdent name =
-    name == "Ok" || name == "Err" || name == "Just" || name == "Nothing" || name == "True" || name == "False" || name == "not" || name == "fst" || name == "snd" || name == "identity" || name == "always" || name == "errorToString" || name == "println" || name == "js" || name == "modBy" || name == "clamp" || String.startsWith
-                                                                                                                                                                                                                                                                                                                        "sky_"
-                                                                                                                                                                                                                                                                                                                        name || String.startsWith
-                                                                                                                                                                                                                                                                                                                                    "Sky"
-                                                                                                                                                                                                                                                                                                                                    name || isUpperStart
-                                                                                                                                                                                                                                                                                                                                                name || (
-    String.contains "_" name && not (String.startsWith "_" name)
-    )
+    name == "Ok"
+        || name == "Err"
+        || name == "Just"
+        || name == "Nothing"
+        || name == "True"
+        || name == "False"
+        || name == "not"
+        || name == "fst"
+        || name == "snd"
+        || name == "identity"
+        || name == "always"
+        || name == "errorToString"
+        || name == "println"
+        || name == "js"
+        || name == "modBy"
+        || name == "clamp"
+        || String.startsWith "sky_" name
+        || String.startsWith "Sky" name
+        || isUpperStart name
+        || (String.contains "_" name && not (String.startsWith "_" name))
 
 
 isUpperStart : String -> Bool
 isUpperStart s =
     if String.isEmpty s then
         False
+    
     else
         let
             c = String.slice 0 1 s
         in
-            c == "A" || c == "B" || c == "C" || c == "D" || c == "E" || c == "F" || c == "G" || c == "H" || c == "I" || c == "J" || c == "K" || c == "L" || c == "M" || c == "N" || c == "O" || c == "P" || c == "Q" || c == "R" || c == "S" || c == "T" || c == "U" || c == "V" || c == "W" || c == "X" || c == "Y" || c == "Z"
+            c == "A"
+                || c == "B"
+                || c == "C"
+                || c == "D"
+                || c == "E"
+                || c == "F"
+                || c == "G"
+                || c == "H"
+                || c == "I"
+                || c == "J"
+                || c == "K"
+                || c == "L"
+                || c == "M"
+                || c == "N"
+                || c == "O"
+                || c == "P"
+                || c == "Q"
+                || c == "R"
+                || c == "S"
+                || c == "T"
+                || c == "U"
+                || c == "V"
+                || c == "W"
+                || c == "X"
+                || c == "Y"
+                || c == "Z"
 
 
 type alias PartialApp =
@@ -1357,29 +1760,33 @@ type alias PartialApp =
 checkPartialApplication : LowerCtx -> Expression -> Int -> Maybe PartialApp
 checkPartialApplication ctx callee argCount =
     case callee of
+        
         IdentifierExpr name _ ->
             checkPartialIdent ctx name argCount
-
+        
         _ ->
             Nothing
 
 
 checkPartialIdent ctx name argCount =
     case Dict.get name ctx.localFunctionArity of
+        
         Just arity ->
             if argCount < arity then
                 let
                     goName =
                         if String.isEmpty ctx.modulePrefix then
                             sanitizeGoIdent name
+                        
                         else
-                            ctx.modulePrefix ++ "_" ++ capitalizeFirst
-                                                           (sanitizeGoIdent name)
+                            ctx.modulePrefix
+                                ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
                 in
                     Just { goFuncName = goName , totalArity = arity }
+            
             else
                 Nothing
-
+        
         Nothing ->
             Nothing
 
@@ -1408,14 +1815,17 @@ buildCurriedClosure params innerCall =
             innerCall
         
         p :: rest ->
-            "func(" ++ p ++ " any) any { return " ++ buildCurriedClosure rest
-                                                         innerCall ++ " }"
+            "func("
+                ++ p
+                    ++ " any) any { return "
+                        ++ buildCurriedClosure rest innerCall ++ " }"
 
 
 listRange : Int -> Int -> List Int
 listRange start end =
     if start > end then
         []
+    
     else
         start :: listRange (start + 1) end
 
@@ -1423,7 +1833,7 @@ listRange start end =
 flattenCall : LowerCtx -> Expression -> (List Expression) -> (Expression, List Expression)
 flattenCall ctx callee args =
     case callee of
-
+        
         CallExpr innerCallee innerArgs _ ->
             let
                 isLocal = isCalleeLocalImport ctx innerCallee
@@ -1431,24 +1841,27 @@ flattenCall ctx callee args =
             in
                 if isLocal then
                     flattenCall ctx innerCallee (List.append innerArgs args)
+                
                 else if isExposed then
-                    (callee, args)
+                    ( callee, args )
+                
                 else if isStdlibCallee innerCallee then
-                    (callee, args)
+                    ( callee, args )
+                
                 else
                     flattenCall ctx innerCallee (List.append innerArgs args)
-
+        
         _ ->
-            (callee, args)
+            ( callee, args )
 
 
 isCalleeLocalImport : LowerCtx -> Expression -> Bool
 isCalleeLocalImport ctx expr =
     case expr of
-
+        
         QualifiedExpr parts _ ->
             isQualifiedLocalImport ctx parts
-
+        
         _ ->
             False
 
@@ -1456,13 +1869,13 @@ isCalleeLocalImport ctx expr =
 isQualifiedLocalImport : LowerCtx -> (List String) -> Bool
 isQualifiedLocalImport ctx parts =
     case List.head parts of
-
+        
         Just modName ->
             Dict.member modName ctx.importAliases
-
+        
         Nothing ->
             False
-
+        
         _ ->
             False
 
@@ -1470,10 +1883,10 @@ isQualifiedLocalImport ctx parts =
 isCalleeExposedStdlib : LowerCtx -> Expression -> Bool
 isCalleeExposedStdlib ctx expr =
     case expr of
-
+        
         IdentifierExpr idName _ ->
             Dict.member idName ctx.exposedStdlib
-
+        
         _ ->
             False
 
@@ -1484,12 +1897,13 @@ lowerLambda ctx params body =
         lambdaParamNames = List.filterMap extractPatternName params
         lambdaCtx =
             { ctx
-            | paramNames = Set.union ctx.paramNames
-                               (Set.fromList lambdaParamNames)
+                | paramNames =
+                    Set.union ctx.paramNames (Set.fromList lambdaParamNames)
             }
     in
         if List.isEmpty params then
             lowerExpr lambdaCtx body
+        
         else if List.length params == 1 then
             let
                 singleParam =
@@ -1506,11 +1920,13 @@ lowerLambda ctx params body =
                 fullBody =
                     if String.isEmpty tupleBindings then
                         "return " ++ bodyStr
+                    
                     else
                         tupleBindings ++ " return " ++ bodyStr
             in
                 GoRawExpr
                     ("func(" ++ paramStr ++ ") any { " ++ fullBody ++ " }")
+        
         else
             let
                 firstParam =
@@ -1536,7 +1952,8 @@ lowerIf : LowerCtx -> Expression -> Expression -> Expression -> GoExpr
 lowerIf ctx condition thenBranch elseBranch =
     GoRawExpr
         (
-        "func() any { " ++ flattenIfElse ctx condition thenBranch elseBranch ++ " }()"
+        "func() any { "
+            ++ flattenIfElse ctx condition thenBranch elseBranch ++ " }()"
         )
 
 
@@ -1544,9 +1961,9 @@ flattenIfElse : LowerCtx -> Expression -> Expression -> Expression -> String
 flattenIfElse ctx condition thenBranch elseBranch =
     let
         ifPart =
-            "if sky_asBool(" ++ exprToGoString ctx condition ++ ") { return " ++ exprToGoString
-                                                                                     ctx
-                                                                                     thenBranch ++ " }; "
+            "if sky_asBool("
+                ++ exprToGoString ctx condition
+                    ++ ") { return " ++ exprToGoString ctx thenBranch ++ " }; "
     in
         case elseBranch of
             
@@ -1563,13 +1980,18 @@ lowerLet ctx bindings body =
         boundNames = List.filterMap extractBindingName bindings
         bodyCtx =
             { ctx
-            | paramNames = Set.union ctx.paramNames (Set.fromList boundNames)
+                | paramNames =
+                    Set.union ctx.paramNames (Set.fromList boundNames)
             }
         stmts = List.concatMap (lowerLetBinding bodyCtx) bindings
         returnStmt = [ GoReturn (lowerExpr bodyCtx body) ]
         allStmts = List.append stmts returnStmt
     in
-        GoRawExpr (String.join "" [ "func() any { " , stmtsToGoString allStmts , " }()" ])
+        GoRawExpr
+            (
+            String.join ""
+                [ "func() any { " , stmtsToGoString allStmts , " }()" ]
+            )
 
 
 extractBindingName : LetBinding -> Maybe String
@@ -1614,22 +2036,22 @@ lowerLetBinding ctx binding =
 lambdaTupleBindings : Pattern -> String
 lambdaTupleBindings pat =
     case pat of
-
+        
         PTuple items _ ->
             let
                 size = List.length items
                 assertFn =
                     if size >= 3 then
                         "sky_asTuple3"
+                    
                     else
                         "sky_asTuple2"
                 bindings =
-                    List.indexedMap
-                        (\idx p -> emitTupleBinding assertFn idx p)
+                    List.indexedMap (\idx p -> emitTupleBinding assertFn idx p)
                         items
             in
                 String.join "" bindings
-
+        
         _ ->
             ""
 
@@ -1637,14 +2059,18 @@ lambdaTupleBindings pat =
 emitTupleBinding : String -> Int -> Pattern -> String
 emitTupleBinding assertFn idx p =
     case p of
-
+        
         PVariable name _ ->
             let
                 goName = sanitizeGoIdent name
             in
-                goName ++ " := " ++ assertFn ++ "(_p).V" ++ String.fromInt
-                                                                idx ++ "; _ = " ++ goName ++ "; "
-
+                goName
+                    ++ " := "
+                        ++ assertFn
+                            ++ "(_p).V"
+                                ++ String.fromInt idx
+                                    ++ "; _ = " ++ goName ++ "; "
+        
         _ ->
             ""
 
@@ -1662,6 +2088,7 @@ extractTupleBindings tmpName items idx tupleSize =
                 assertFn =
                     if tupleSize >= 3 then
                         "sky_asTuple3"
+                    
                     else
                         "sky_asTuple2"
                 extract =
@@ -1707,21 +2134,35 @@ lowerCaseToSwitch ctx subjectExpr branches =
         tagExtract =
             if hasCustomAdtBranch then
                 "__sky_tag := sky_adtTag(__subject); __sky_name := sky_getSkyName(__subject); _ = __sky_name; "
+            
             else
                 ""
     in
-        String.join "" [ "func() any { __subject := " , subjectCode , "; " , tagExtract , String.join " " (List.map (emitBranchCode ctx) (zipIndex branches)) , " panic(\"non-exhaustive case expression\") }()" ]
+        String.join ""
+            [ "func() any { __subject := "
+            , subjectCode
+            , "; "
+            , tagExtract
+            , String.join " "
+                  (List.map (emitBranchCode ctx) (zipIndex branches))
+            , " panic(\"non-exhaustive case expression\") }()"
+            ]
 
 
 branchIsCustomAdt branch =
     case branch.pattern of
-
+        
         PConstructor parts _ _ ->
             let
                 name = lastPartOf parts
             in
-                name /= "Ok" && name /= "Err" && name /= "Just" && name /= "Nothing" && name /= "True" && name /= "False"
-
+                name /= "Ok"
+                    && name /= "Err"
+                    && name /= "Just"
+                    && name /= "Nothing"
+                    && name /= "True"
+                    && name /= "False"
+        
         _ ->
             False
 
@@ -1733,13 +2174,22 @@ emitBranchCode ctx pair =
         patVarNames = extractPatternVarNames branch.pattern
         branchCtx =
             { ctx
-            | paramNames = Set.union ctx.paramNames (Set.fromList patVarNames)
+                | paramNames =
+                    Set.union ctx.paramNames (Set.fromList patVarNames)
             }
         condition = patternToCondition branchCtx "__subject" branch.pattern
         bindings = patternToBindings branchCtx "__subject" branch.pattern
         bodyCode = exprToGoString branchCtx branch.body
     in
-        String.join "" [ "if " , condition , " { " , bindings , "return " , bodyCode , " }; " ]
+        String.join ""
+            [ "if "
+            , condition
+            , " { "
+            , bindings
+            , "return "
+            , bodyCode
+            , " }; "
+            ]
 
 
 patternToCondition : LowerCtx -> String -> Pattern -> String
@@ -1760,25 +2210,58 @@ patternToCondition ctx varName pat =
                 ctorName = lastPartOf parts
                 baseCond =
                     if ctorName == "Ok" || ctorName == "Err" then
-                        String.join "" [ "sky_asSkyResult(" , varName , ").SkyName == \"" , ctorName , "\"" ]
+                        String.join ""
+                            [ "sky_asSkyResult("
+                            , varName
+                            , ").SkyName == \""
+                            , ctorName
+                            , "\""
+                            ]
+                    
                     else if ctorName == "Just" || ctorName == "Nothing" then
-                        String.join "" [ "sky_asSkyMaybe(" , varName , ").SkyName == \"" , ctorName , "\"" ]
+                        String.join ""
+                            [ "sky_asSkyMaybe("
+                            , varName
+                            , ").SkyName == \""
+                            , ctorName
+                            , "\""
+                            ]
+                    
                     else if ctorName == "True" then
                         String.join "" [ "sky_asBool(" , varName , ") == true" ]
+                    
                     else if ctorName == "False" then
-                        String.join "" [ "sky_asBool(" , varName , ") == false" ]
+                        String.join ""
+                            [ "sky_asBool(" , varName , ") == false" ]
+                    
                     else
                         let
                             tagIdx = lookupCtorTagIndex ctx ctorName
                         in
                             if varName == "__subject" then
-                                "(__sky_name == \"" ++ ctorName ++ "\" || (__sky_name == \"\" && __sky_tag == " ++ String.fromInt tagIdx ++ "))"
+                                "(__sky_name == \""
+                                    ++ ctorName
+                                        ++ "\" || (__sky_name == \"\" && __sky_tag == "
+                                            ++ String.fromInt tagIdx ++ "))"
+                            
                             else
-                                "(sky_getSkyName(" ++ varName ++ ") == \"" ++ ctorName ++ "\" || (sky_getSkyName(" ++ varName ++ ") == \"\" && sky_adtTag(" ++ varName ++ ") == " ++ String.fromInt tagIdx ++ "))"
+                                "(sky_getSkyName("
+                                    ++ varName
+                                        ++ ") == \""
+                                            ++ ctorName
+                                                ++ "\" || (sky_getSkyName("
+                                                    ++ varName
+                                                        ++ ") == \"\" && sky_adtTag("
+                                                            ++ varName
+                                                                ++ ") == "
+                                                                    ++ String.fromInt
+                                                                           tagIdx
+                                                                        ++ "))"
                 subConds = subPatternConditions ctx varName ctorName args 0
             in
                 if String.isEmpty subConds then
                     baseCond
+                
                 else
                     baseCond ++ " && " ++ subConds
         
@@ -1786,8 +2269,13 @@ patternToCondition ctx varName pat =
             "true"
         
         PList items _ ->
-            String.join "" [ "len(sky_asList(" , varName , ")) == " , String.fromInt (List.length items) ]
-
+            String.join ""
+                [ "len(sky_asList("
+                , varName
+                , ")) == "
+                , String.fromInt (List.length items)
+                ]
+        
         PCons head tail _ ->
             let
                 tailCond = patternToCondition ctx "__cons_tail" tail
@@ -1795,10 +2283,13 @@ patternToCondition ctx varName pat =
             in
                 if String.contains "== 0" tailCond then
                     lenCheck ++ " == 1"
+                
                 else if String.contains "== 1" tailCond then
                     lenCheck ++ " == 2"
+                
                 else if String.contains "== 2" tailCond then
                     lenCheck ++ " == 3"
+                
                 else
                     lenCheck ++ " > 0"
         
@@ -1824,20 +2315,26 @@ subPatternConditions ctx varName ctorName args idx =
                 fieldAccess =
                     if ctorName == "Ok" then
                         "sky_asSkyResult(" ++ varName ++ ").OkValue"
+                    
                     else if ctorName == "Err" then
                         "sky_asSkyResult(" ++ varName ++ ").ErrValue"
+                    
                     else if ctorName == "Just" then
                         "sky_asSkyMaybe(" ++ varName ++ ").JustValue"
+                    
                     else
-                        "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
+                        "sky_adtField("
+                            ++ varName ++ ", " ++ String.fromInt idx ++ ")"
                 subCond = patternToCondition ctx fieldAccess pat
                 restCond =
                     subPatternConditions ctx varName ctorName rest (idx + 1)
             in
                 if subCond == "true" then
                     restCond
+                
                 else if String.isEmpty restCond then
                     subCond
+                
                 else
                     subCond ++ " && " ++ restCond
 
@@ -1845,10 +2342,10 @@ subPatternConditions ctx varName ctorName args idx =
 lookupCtorTagIndex : LowerCtx -> String -> Int
 lookupCtorTagIndex ctx ctorName =
     case Dict.get ctorName ctx.importedConstructors of
-
+        
         Just info ->
             info.tagIndex
-
+        
         Nothing ->
             0
 
@@ -1868,6 +2365,7 @@ literalCondition varName lit =
         LitBool b ->
             if b then
                 "sky_asBool(" ++ varName ++ ") == true"
+            
             else
                 "sky_asBool(" ++ varName ++ ") == false"
         
@@ -1901,12 +2399,15 @@ patternToBindings ctx varName pat =
                 if ctorName == "Ok" then
                     bindConstructorArgs ctx varName "sky_asSkyResult" "OkValue"
                         argPats
+                
                 else if ctorName == "Err" then
                     bindConstructorArgs ctx varName "sky_asSkyResult" "ErrValue"
                         argPats
+                
                 else if ctorName == "Just" then
                     bindConstructorArgs ctx varName "sky_asSkyMaybe" "JustValue"
                         argPats
+                
                 else
                     bindAdtConstructorArgs ctx varName argPats 0
         
@@ -1928,16 +2429,18 @@ patternToBindings ctx varName pat =
                 headBinding ++ tailBinding
         
         PAs inner name _ ->
-            sanitizeGoIdent name ++ " := " ++ varName ++ "; " ++ patternToBindings
-                                                                     ctx
-                                                                     varName
-                                                                     inner
+            sanitizeGoIdent name
+                ++ " := "
+                    ++ varName ++ "; " ++ patternToBindings ctx varName inner
         
         PRecord fields _ ->
             List.foldl
                 (
                 \f acc ->
-                    acc ++ sanitizeGoIdent f ++ " := sky_asMap(" ++ varName ++ ")[\"" ++ f ++ "\"]; "
+                    acc
+                        ++ sanitizeGoIdent f
+                            ++ " := sky_asMap("
+                                ++ varName ++ ")[\"" ++ f ++ "\"]; "
                 )
                 ""
                 fields
@@ -1962,14 +2465,15 @@ bindConstructorArgs ctx varName wrapperFn fieldName argPats =
 bindAdtConstructorArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
 bindAdtConstructorArgs ctx varName argPats idx =
     case argPats of
-
-        [] ->
+        
+        [  ] ->
             ""
-
+        
         pat :: rest ->
             let
                 fieldAccess =
-                    "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
+                    "sky_adtField("
+                        ++ varName ++ ", " ++ String.fromInt idx ++ ")"
                 binding = patternToBindings ctx fieldAccess pat
             in
                 binding ++ bindAdtConstructorArgs ctx varName rest (idx + 1)
@@ -1989,14 +2493,16 @@ bindTupleArgs ctx varName items idx =
                 let
                     fieldAccess =
                         if totalItems <= 2 then
-                            "sky_asTuple2(" ++ varName ++ ").V" ++ String.fromInt
-                                                                       idx
+                            "sky_asTuple2("
+                                ++ varName ++ ").V" ++ String.fromInt idx
+                        
                         else if totalItems <= 3 then
-                            "sky_asTuple3(" ++ varName ++ ").V" ++ String.fromInt
-                                                                       idx
+                            "sky_asTuple3("
+                                ++ varName ++ ").V" ++ String.fromInt idx
+                        
                         else
-                            "sky_asList(" ++ varName ++ ")[" ++ String.fromInt
-                                                                    idx ++ "]"
+                            "sky_asList("
+                                ++ varName ++ ")[" ++ String.fromInt idx ++ "]"
                     binding = patternToBindings ctx fieldAccess pat
                 in
                     binding ++ bindTupleArgs ctx varName rest (idx + 1)
@@ -2012,7 +2518,8 @@ bindListArgs ctx varName items idx =
         pat :: rest ->
             let
                 elemAccess =
-                    "sky_asList(" ++ varName ++ ")[" ++ String.fromInt idx ++ "]"
+                    "sky_asList("
+                        ++ varName ++ ")[" ++ String.fromInt idx ++ "]"
                 binding = patternToBindings ctx elemAccess pat
             in
                 binding ++ bindListArgs ctx varName rest (idx + 1)
@@ -2026,33 +2533,127 @@ lowerBinary ctx op left right =
     in
         if op == "|>" then
             GoCallExpr (GoIdent "sky_call") [ goRight , goLeft ]
+        
         else if op == "<|" then
             GoCallExpr (GoIdent "sky_call") [ goLeft , goRight ]
+        
         else if op == "::" then
             GoCallExpr (GoIdent "append")
                 [ GoSliceLit [ goLeft ]
-                , GoRawExpr (String.join "" [ "sky_asList(" , emitGoExprInline goRight , ")..." ])
+                , GoRawExpr
+                      (
+                      String.join ""
+                          [ "sky_asList(" , emitGoExprInline goRight , ")..." ]
+                      )
                 ]
+        
         else if op == "++" then
-            GoRawExpr (String.join "" [ "sky_concat(" , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_concat("
+                    , emitGoExprInline goLeft
+                    , ", "
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "+" || op == "-" || op == "*" || op == "%" then
-            GoRawExpr (String.join "" [ "sky_numBinop(\"" , op , "\", " , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_numBinop(\""
+                    , op
+                    , "\", "
+                    , emitGoExprInline goLeft
+                    , ", "
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "/" then
-            GoRawExpr (String.join "" [ "sky_asFloat(" , emitGoExprInline goLeft , ") / sky_asFloat(" , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_asFloat("
+                    , emitGoExprInline goLeft
+                    , ") / sky_asFloat("
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "//" then
-            GoRawExpr (String.join "" [ "sky_asInt(" , emitGoExprInline goLeft , ") / sky_asInt(" , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_asInt("
+                    , emitGoExprInline goLeft
+                    , ") / sky_asInt("
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "/=" then
-            GoRawExpr (String.join "" [ "!sky_equal(" , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "!sky_equal("
+                    , emitGoExprInline goLeft
+                    , ", "
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "==" then
             GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ]
+        
         else if op == "!=" then
-            GoUnaryExpr "!" (GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ])
+            GoUnaryExpr "!"
+                (GoCallExpr (GoIdent "sky_equal") [ goLeft , goRight ])
+        
         else if op == "<" || op == "<=" || op == ">" || op == ">=" then
-            GoRawExpr (String.join "" [ "sky_numCompare(\"" , op , "\", " , emitGoExprInline goLeft , ", " , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_numCompare(\""
+                    , op
+                    , "\", "
+                    , emitGoExprInline goLeft
+                    , ", "
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "&&" then
-            GoRawExpr (String.join "" [ "sky_asBool(" , emitGoExprInline goLeft , ") && sky_asBool(" , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_asBool("
+                    , emitGoExprInline goLeft
+                    , ") && sky_asBool("
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else if op == "||" then
-            GoRawExpr (String.join "" [ "sky_asBool(" , emitGoExprInline goLeft , ") || sky_asBool(" , emitGoExprInline goRight , ")" ])
+            GoRawExpr
+                (
+                String.join ""
+                    [ "sky_asBool("
+                    , emitGoExprInline goLeft
+                    , ") || sky_asBool("
+                    , emitGoExprInline goRight
+                    , ")"
+                    ]
+                )
+        
         else
             GoBinaryExpr op goLeft goRight
 
@@ -2064,7 +2665,7 @@ lowerRecordUpdate ctx base fields =
         goFields =
             GoMapLit
                 (
-                List.map (\f -> (GoStringLit f.name, lowerExpr ctx f.value))
+                List.map (\f -> ( GoStringLit f.name, lowerExpr ctx f.value ))
                     fields
                 )
     in
@@ -2079,13 +2680,14 @@ generateConstructorDecls registry decls =
 generateCtorsForDecl : AdtRegistry -> Declaration -> List GoDecl
 generateCtorsForDecl registry decl =
     case decl of
-
+        
         TypeDecl typeName _ variants _ ->
             let
-                ctorFuncs = List.indexedMap (generateCtorFunc typeName "") variants
+                ctorFuncs =
+                    List.indexedMap (generateCtorFunc typeName "") variants
             in
                 ctorFuncs
-
+        
         _ ->
             []
 
@@ -2095,9 +2697,15 @@ generateAdtStruct typeName maxArity =
         fields =
             if maxArity == 0 then
                 "struct { Tag int; SkyName string }"
+            
             else
                 let
-                    vFields = String.join "; " (List.map (\i -> "V" ++ String.fromInt i ++ " any") (List.range 0 (maxArity - 1)))
+                    vFields =
+                        String.join "; "
+                            (
+                            List.map (\i -> "V" ++ String.fromInt i ++ " any")
+                                (List.range 0 (maxArity - 1))
+                            )
                 in
                     "struct { Tag int; SkyName string; " ++ vFields ++ " }"
     in
@@ -2112,14 +2720,35 @@ generateCtorFunc typeName prefix tagIndex variant =
     in
         if arity == 0 then
             GoDeclVar (sanitizeGoIdent variant.name)
-                (GoRawExpr ("SkyADT{Tag: " ++ tagStr ++ ", SkyName: \"" ++ variant.name ++ "\"}"))
+                (
+                GoRawExpr
+                    (
+                    "SkyADT{Tag: "
+                        ++ tagStr ++ ", SkyName: \"" ++ variant.name ++ "\"}"
+                    )
+                )
+        
         else
             let
                 params =
-                    List.map (\i -> { name = "v" ++ String.fromInt i , type_ = "any" }) (List.range 0 (arity - 1))
+                    List.map
+                        (
+                        \i -> { name = "v" ++ String.fromInt i , type_ = "any" }
+                        )
+                        (List.range 0 (arity - 1))
                 fieldsList =
-                    String.join ", " (List.map (\i -> "v" ++ String.fromInt i) (List.range 0 (arity - 1)))
-                structLit = "SkyADT{Tag: " ++ tagStr ++ ", SkyName: \"" ++ variant.name ++ "\", Fields: []any{" ++ fieldsList ++ "}}"
+                    String.join ", "
+                        (
+                        List.map (\i -> "v" ++ String.fromInt i)
+                            (List.range 0 (arity - 1))
+                        )
+                structLit =
+                    "SkyADT{Tag: "
+                        ++ tagStr
+                            ++ ", SkyName: \""
+                                ++ variant.name
+                                    ++ "\", Fields: []any{"
+                                        ++ fieldsList ++ "}}"
             in
                 GoDeclFunc
                     { name = sanitizeGoIdent variant.name
@@ -2184,11 +2813,14 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"
     , GoDeclRaw "func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"
-    , GoDeclRaw "func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; return ai + bi }"
-    , GoDeclRaw "func sky_numCompare(op string, a, b any) bool { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"<\": return af < bf; case \"<=\": return af <= bf; case \">\": return af > bf; case \">=\": return af >= bf }; return false }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"<\": return ai < bi; case \"<=\": return ai <= bi; case \">\": return ai > bi; case \">=\": return ai >= bi }; return false }"
+    , GoDeclRaw
+          "func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; return ai + bi }"
+    , GoDeclRaw
+          "func sky_numCompare(op string, a, b any) bool { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"<\": return af < bf; case \"<=\": return af <= bf; case \">\": return af > bf; case \">=\": return af >= bf }; return false }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"<\": return ai < bi; case \"<=\": return ai <= bi; case \">\": return ai > bi; case \">=\": return ai >= bi }; return false }"
     , GoDeclRaw
           "func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; if fn, ok := v.(func(any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { sky_call(fn(w), r) } }; panic(fmt.Sprintf(\"sky_asHttpHandler: cannot convert %T\", v)) }"
-    , GoDeclRaw "func sky_callZeroOrNil(f any) any { if fn, ok := f.(func() any); ok { return fn() }; if fn, ok := f.(func(any) any); ok { return fn(nil) }; return f }"
+    , GoDeclRaw
+          "func sky_callZeroOrNil(f any) any { if fn, ok := f.(func() any); ok { return fn() }; if fn, ok := f.(func(any) any); ok { return fn(nil) }; return f }"
     , GoDeclRaw "func sky_asUint(v any) uint { return uint(sky_asInt(v)) }"
     , GoDeclRaw "func sky_asUint8(v any) uint8 { return uint8(sky_asInt(v)) }"
     , GoDeclRaw
@@ -2308,7 +2940,8 @@ generateHelperDecls =
           "func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"
     , GoDeclRaw "func sky_refNew(v any) any { return &SkyRef{Value: v} }"
     , GoDeclRaw "type SkyRef struct { Value any }"
-    , GoDeclRaw "func sky_refGet(r any) any { if ref, ok := r.(*SkyRef); ok { return ref.Value }; panic(\"sky_refGet: not a Ref\") }"
+    , GoDeclRaw
+          "func sky_refGet(r any) any { if ref, ok := r.(*SkyRef); ok { return ref.Value }; panic(\"sky_refGet: not a Ref\") }"
     , GoDeclRaw
           "func sky_refSet(v any) any { return func(r any) any { if ref, ok := r.(*SkyRef); ok { ref.Value = v; return struct{}{} }; panic(\"sky_refSet: not a Ref\") } }"
     , GoDeclRaw "func sky_dictEmpty() any { return map[string]any{} }"
@@ -2391,7 +3024,8 @@ generateHelperDecls =
     , GoDeclRaw "func sky_identity(v any) any { return v }"
     , GoDeclRaw
           "func sky_always(a any) any { return func(b any) any { return a } }"
-    , GoDeclRaw "func sky_js(v any) any { if s, ok := v.(string); ok && s == \"nil\" { return nil }; return v }"
+    , GoDeclRaw
+          "func sky_js(v any) any { if s, ok := v.(string); ok && s == \"nil\" { return nil }; return v }"
     , GoDeclRaw
           "func sky_call(f any, arg any) any { if fn, ok := f.(func(any) any); ok { return fn(arg) }; if s, ok := f.(string); ok { if args, ok := arg.([]any); ok { parts := make([]string, len(args)); for i, a := range args { parts[i] = sky_asString(a) }; return s + \"(\" + strings.Join(parts, \", \") + \")\" }; return s + \" \" + sky_asString(arg) }; panic(fmt.Sprintf(\"sky_call: cannot call %T\", f)) }"
     , GoDeclRaw
@@ -2555,9 +3189,12 @@ generateHelperDecls =
     , GoDeclRaw "func sky_timePosixToMillis(t any) any { return sky_asInt(t) }"
     , GoDeclRaw
           "func sky_httpGetString(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(body)) } }"
-    , GoDeclRaw "func sky_httpGet(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"
-    , GoDeclRaw "func sky_httpPost(url any) any { return func(body any) any { return func() any { resp, err := net_http.Post(sky_asString(url), \"application/json\", strings.NewReader(sky_asString(body))); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); b, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(b), \"headers\": hdrs}) } } }"
-    , GoDeclRaw "func sky_httpRequest(opts any) any { return func() any { m := sky_asMap(opts); method := sky_asString(m[\"method\"]); url := sky_asString(m[\"url\"]); reqBody := sky_asString(m[\"body\"]); req, err := net_http.NewRequest(method, url, strings.NewReader(reqBody)); if err != nil { return SkyErr(err.Error()) }; for _, h := range sky_asList(m[\"headers\"]) { t := h.(SkyTuple2); req.Header.Set(sky_asString(t.V0), sky_asString(t.V1)) }; client := &net_http.Client{}; resp, err := client.Do(req); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"
+    , GoDeclRaw
+          "func sky_httpGet(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"
+    , GoDeclRaw
+          "func sky_httpPost(url any) any { return func(body any) any { return func() any { resp, err := net_http.Post(sky_asString(url), \"application/json\", strings.NewReader(sky_asString(body))); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); b, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(b), \"headers\": hdrs}) } } }"
+    , GoDeclRaw
+          "func sky_httpRequest(opts any) any { return func() any { m := sky_asMap(opts); method := sky_asString(m[\"method\"]); url := sky_asString(m[\"url\"]); reqBody := sky_asString(m[\"body\"]); req, err := net_http.NewRequest(method, url, strings.NewReader(reqBody)); if err != nil { return SkyErr(err.Error()) }; for _, h := range sky_asList(m[\"headers\"]) { t := h.(SkyTuple2); req.Header.Set(sky_asString(t.V0), sky_asString(t.V1)) }; client := &net_http.Client{}; resp, err := client.Do(req); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"
     , GoDeclRaw "func sky_jsonEncString(v any) any { return sky_asString(v) }"
     , GoDeclRaw "func sky_jsonEncInt(v any) any { return sky_asInt(v) }"
     , GoDeclRaw "func sky_jsonEncFloat(v any) any { return sky_asFloat(v) }"
@@ -2754,20 +3391,26 @@ buildConstructorMap registry =
         (
         \typeName adt acc ->
             List.foldl
-                (\pair innerAcc ->
+                (
+                \pair innerAcc ->
                     let
                         idx = fst pair
                         ctorName = snd pair
                         ctorArity =
                             case Dict.get ctorName adt.constructors of
-
+                                
                                 Just scheme ->
                                     countCtorArity scheme.type_ 0
-
+                                
                                 Nothing ->
                                     0
                     in
-                        Dict.insert ctorName { adtName = typeName , tagIndex = idx , arity = ctorArity } innerAcc
+                        Dict.insert ctorName
+                            { adtName = typeName
+                            , tagIndex = idx
+                            , arity = ctorArity
+                            }
+                            innerAcc
                 )
                 acc
                 (zipIndex adt.variantNames)
@@ -2779,32 +3422,39 @@ buildConstructorMap registry =
 countCtorArity : Type -> Int -> Int
 countCtorArity t acc =
     case t of
-
+        
         TFun _ toT ->
             countCtorArity toT (acc + 1)
-
+        
         _ ->
             acc
 
 
-buildConstructorMapFromDecls : List Declaration -> Dict.Dict String CtorInfo
+buildConstructorMapFromDecls : (List Declaration) -> Dict.Dict String CtorInfo
 buildConstructorMapFromDecls decls =
     List.foldl
-        (\decl acc ->
+        (
+        \decl acc ->
             case decl of
-
+                
                 TypeDecl typeName _ variants _ ->
                     List.foldl
-                        (\pair innerAcc ->
+                        (
+                        \pair innerAcc ->
                             let
                                 idx = fst pair
                                 variant = snd pair
                             in
-                                Dict.insert variant.name { adtName = typeName , tagIndex = idx , arity = List.length variant.fields } innerAcc
+                                Dict.insert variant.name
+                                    { adtName = typeName
+                                    , tagIndex = idx
+                                    , arity = List.length variant.fields
+                                    }
+                                    innerAcc
                         )
                         acc
                         (zipIndex variants)
-
+                
                 _ ->
                     acc
         )
@@ -2845,36 +3495,127 @@ sanitizeGoIdent : String -> String
 sanitizeGoIdent name =
     if isGoKeyword name then
         name ++ "_"
+    
     else
         name
 
 
 isGoKeyword : String -> Bool
 isGoKeyword name =
-    name == "go" || name == "type" || name == "func" || name == "var" || name == "return" || name == "if" || name == "else" || name == "for" || name == "range" || name == "switch" || name == "case" || name == "default" || name == "break" || name == "continue" || name == "select" || name == "chan" || name == "map" || name == "struct" || name == "interface" || name == "package" || name == "import" || name == "const" || name == "defer" || name == "fallthrough" || name == "goto" || name == "init" || name == "make" || name == "new" || name == "len" || name == "cap" || name == "append" || name == "copy" || name == "delete" || name == "close" || name == "exec" || name == "error" || name == "string" || name == "int" || name == "float64" || name == "bool" || name == "byte" || name == "rune" || name == "any" || name == "nil" || name == "panic" || name == "recover" || name == "print" || name == "println" || name == "int8" || name == "int16" || name == "int32" || name == "int64" || name == "uint" || name == "uint8" || name == "uint16" || name == "uint32" || name == "uint64" || name == "float32" || name == "complex64" || name == "complex128" || name == "uintptr"
+    name == "go"
+        || name == "type"
+        || name == "func"
+        || name == "var"
+        || name == "return"
+        || name == "if"
+        || name == "else"
+        || name == "for"
+        || name == "range"
+        || name == "switch"
+        || name == "case"
+        || name == "default"
+        || name == "break"
+        || name == "continue"
+        || name == "select"
+        || name == "chan"
+        || name == "map"
+        || name == "struct"
+        || name == "interface"
+        || name == "package"
+        || name == "import"
+        || name == "const"
+        || name == "defer"
+        || name == "fallthrough"
+        || name == "goto"
+        || name == "init"
+        || name == "make"
+        || name == "new"
+        || name == "len"
+        || name == "cap"
+        || name == "append"
+        || name == "copy"
+        || name == "delete"
+        || name == "close"
+        || name == "exec"
+        || name == "error"
+        || name == "string"
+        || name == "int"
+        || name == "float64"
+        || name == "bool"
+        || name == "byte"
+        || name == "rune"
+        || name == "any"
+        || name == "nil"
+        || name == "panic"
+        || name == "recover"
+        || name == "print"
+        || name == "println"
+        || name == "int8"
+        || name == "int16"
+        || name == "int32"
+        || name == "int64"
+        || name == "uint"
+        || name == "uint8"
+        || name == "uint16"
+        || name == "uint32"
+        || name == "uint64"
+        || name == "float32"
+        || name == "complex64"
+        || name == "complex128"
+        || name == "uintptr"
 
 
 isStdlibCallee : Expression -> Bool
 isStdlibCallee expr =
     case expr of
+        
         QualifiedExpr parts _ ->
             isStdlibQualified parts
-
+        
         IdentifierExpr name _ ->
             String.startsWith "sky_" name
-
+        
         CallExpr innerCallee _ _ ->
             isStdlibCallee innerCallee
-
+        
         _ ->
             False
 
 
 isStdlibQualified parts =
     case List.head parts of
+        
         Just first ->
-            first == "String" || first == "List" || first == "Dict" || first == "Set" || first == "File" || first == "Process" || first == "Ref" || first == "Io" || first == "Args" || first == "Log" || first == "Task" || first == "Server" || first == "Result" || first == "Maybe" || first == "Math" || first == "Crypto" || first == "Encoding" || first == "Time" || first == "Http" || first == "Encode" || first == "Decode" || first == "Pipeline" || first == "Cmd" || first == "Sub" || first == "Html" || first == "Attr" || first == "Events" || first == "Css" || first == "Live"
-
+            first == "String"
+                || first == "List"
+                || first == "Dict"
+                || first == "Set"
+                || first == "File"
+                || first == "Process"
+                || first == "Ref"
+                || first == "Io"
+                || first == "Args"
+                || first == "Log"
+                || first == "Task"
+                || first == "Server"
+                || first == "Result"
+                || first == "Maybe"
+                || first == "Math"
+                || first == "Crypto"
+                || first == "Encoding"
+                || first == "Time"
+                || first == "Http"
+                || first == "Encode"
+                || first == "Decode"
+                || first == "Pipeline"
+                || first == "Cmd"
+                || first == "Sub"
+                || first == "Html"
+                || first == "Attr"
+                || first == "Events"
+                || first == "Css"
+                || first == "Live"
+        
         Nothing ->
             False
 
@@ -2899,7 +3640,236 @@ getPatVarName pat =
 
 isParamOrBuiltin : String -> Bool
 isParamOrBuiltin name =
-    String.length name <= 2 || name == "acc" || name == "rest" || name == "state" || name == "env" || name == "ctx" || name == "mod" || name == "decl" || name == "decls" || name == "items" || name == "fields" || name == "args" || name == "params" || name == "body" || name == "name" || name == "result" || name == "pair" || name == "counter" || name == "registry" || name == "sub" || name == "pat" || name == "left" || name == "right" || name == "inner" || name == "source" || name == "code" || name == "token" || name == "tokens" || name == "parts" || name == "prefix" || name == "msg" || name == "key" || name == "val" || name == "value" || name == "expr" || name == "span" || name == "type_" || name == "scheme" || name == "entry" || name == "binding" || name == "branch" || name == "variant" || name == "modName" || name == "filePath" || name == "outDir" || name == "goCode" || name == "goPackage" || name == "goDecls" || name == "goArgs" || name == "goCallee" || name == "goName" || name == "goMod" || name == "funcPart" || name == "modPart" || name == "qualName" || name == "aliasMap" || name == "stdlibEnv" || name == "depDecls" || name == "entryMod" || name == "loadedModules" || name == "entryRegistry" || name == "entryCtx" || name == "baseCtx" || name == "entryGoDecls" || name == "entryCtorDecls" || name == "helperDecls" || name == "allDecls" || name == "rawGoCode" || name == "outPath" || name == "localImports" || name == "depBaseCtx" || name == "depAliasMap" || name == "checkResult" || name == "lexResult" || name == "filtered" || name == "prefixed" || name == "aliases" || name == "goType" || name == "impMap" || name == "imp" || name == "imports" || name == "header" || name == "opToken" || name == "info" || name == "prec" || name == "assoc" || name == "nextMin" || name == "condition" || name == "thenBranch" || name == "elseBranch" || name == "subject" || name == "bindings" || name == "callee" || name == "fn" || name == "remaining" || name == "idx" || name == "ch" || name == "str" || name == "count" || name == "len" || name == "start" || name == "end" || name == "line" || name == "character" || name == "position" || name == "textDoc" || name == "uri" || name == "text" || name == "content" || name == "json" || name == "varName" || name == "pattern" || name == "arity" || name == "closure" || name == "separator" || name == "list" || name == "item" || name == "elem" || name == "init" || name == "doc" || name == "indent" || name == "width" || name == "wrapperResult" || name == "skyiContent" || name == "pkgName" || name == "safePkg" || name == "cacheDir" || name == "cachePath" || name == "inspectorDir" || name == "buildResult" || name == "output" || name == "goModContent" || name == "mainPath" || name == "runtimeCode" || name == "runtimeDir" || name == "inspectJson" || name == "wrapperCode" || name == "wrapperDir" || name == "moduleName" || name == "funcName" || name == "funcInfo" || name == "methodInfo" || name == "receiverCast" || name == "argCasts" || name == "castStr" || name == "argNames" || name == "goCall" || name == "returnCode" || name == "wrapperName" || name == "paramList" || name == "paramStr" || name == "assertion" || name == "entryFile" || name == "command" || name == "formatted" || name == "readErr" || name == "parseErr" || name == "srcRoot" || name == "hasLocalImports" || name == "error" || name == "diagnostics" || name == "severity" || name == "annotation" || name == "bodyResult" || name == "condResult" || name == "leftResult" || name == "rightResult" || name == "patResult" || name == "bodyType" || name == "funType" || name == "selfType" || name == "selfVar" || name == "paramVars" || name == "bindResult" || name == "paramSub" || name == "envWithSelf" || name == "resolvedParamTypes" || name == "bodySub" || name == "finalSub" || name == "finalType" || name == "scheme" || name == "typed" || name == "newEnv" || name == "annotations" || name == "inferDiags" || name == "exhaustDiags" || name == "adtDiags" || name == "aliasEnv" || name == "adtEnv" || name == "env0" || name == "env1" || name == "newRegistry" || name == "newDiags" || name == "ctorSchemes" || name == "adt" || name == "paramMap" || name == "resultType" || name == "fieldTypes" || name == "ctorType" || name == "quantified" || name == "elemVar" || name == "listType" || name == "elemType" || name == "headPat" || name == "tailPat" || name == "headResult" || name == "tailResult" || name == "innerPat" || name == "argPats" || name == "argTypes" || name == "ctorName" || name == "instType" || name == "splitResult" || name == "subjectType" || name == "patterns" || name == "covered" || name == "missing" || name == "allCtors" || name == "coveredCtors" || name == "missingList" || name == "headerLine" || name == "contentLength" || name == "blankLine" || name == "searchKey" || name == "keyIdx" || name == "afterKey" || name == "colonIdx" || name == "afterColon" || name == "numStr" || name == "raw"
+    String.length name <= 2
+        || name == "acc"
+        || name == "rest"
+        || name == "state"
+        || name == "env"
+        || name == "ctx"
+        || name == "mod"
+        || name == "decl"
+        || name == "decls"
+        || name == "items"
+        || name == "fields"
+        || name == "args"
+        || name == "params"
+        || name == "body"
+        || name == "name"
+        || name == "result"
+        || name == "pair"
+        || name == "counter"
+        || name == "registry"
+        || name == "sub"
+        || name == "pat"
+        || name == "left"
+        || name == "right"
+        || name == "inner"
+        || name == "source"
+        || name == "code"
+        || name == "token"
+        || name == "tokens"
+        || name == "parts"
+        || name == "prefix"
+        || name == "msg"
+        || name == "key"
+        || name == "val"
+        || name == "value"
+        || name == "expr"
+        || name == "span"
+        || name == "type_"
+        || name == "scheme"
+        || name == "entry"
+        || name == "binding"
+        || name == "branch"
+        || name == "variant"
+        || name == "modName"
+        || name == "filePath"
+        || name == "outDir"
+        || name == "goCode"
+        || name == "goPackage"
+        || name == "goDecls"
+        || name == "goArgs"
+        || name == "goCallee"
+        || name == "goName"
+        || name == "goMod"
+        || name == "funcPart"
+        || name == "modPart"
+        || name == "qualName"
+        || name == "aliasMap"
+        || name == "stdlibEnv"
+        || name == "depDecls"
+        || name == "entryMod"
+        || name == "loadedModules"
+        || name == "entryRegistry"
+        || name == "entryCtx"
+        || name == "baseCtx"
+        || name == "entryGoDecls"
+        || name == "entryCtorDecls"
+        || name == "helperDecls"
+        || name == "allDecls"
+        || name == "rawGoCode"
+        || name == "outPath"
+        || name == "localImports"
+        || name == "depBaseCtx"
+        || name == "depAliasMap"
+        || name == "checkResult"
+        || name == "lexResult"
+        || name == "filtered"
+        || name == "prefixed"
+        || name == "aliases"
+        || name == "goType"
+        || name == "impMap"
+        || name == "imp"
+        || name == "imports"
+        || name == "header"
+        || name == "opToken"
+        || name == "info"
+        || name == "prec"
+        || name == "assoc"
+        || name == "nextMin"
+        || name == "condition"
+        || name == "thenBranch"
+        || name == "elseBranch"
+        || name == "subject"
+        || name == "bindings"
+        || name == "callee"
+        || name == "fn"
+        || name == "remaining"
+        || name == "idx"
+        || name == "ch"
+        || name == "str"
+        || name == "count"
+        || name == "len"
+        || name == "start"
+        || name == "end"
+        || name == "line"
+        || name == "character"
+        || name == "position"
+        || name == "textDoc"
+        || name == "uri"
+        || name == "text"
+        || name == "content"
+        || name == "json"
+        || name == "varName"
+        || name == "pattern"
+        || name == "arity"
+        || name == "closure"
+        || name == "separator"
+        || name == "list"
+        || name == "item"
+        || name == "elem"
+        || name == "init"
+        || name == "doc"
+        || name == "indent"
+        || name == "width"
+        || name == "wrapperResult"
+        || name == "skyiContent"
+        || name == "pkgName"
+        || name == "safePkg"
+        || name == "cacheDir"
+        || name == "cachePath"
+        || name == "inspectorDir"
+        || name == "buildResult"
+        || name == "output"
+        || name == "goModContent"
+        || name == "mainPath"
+        || name == "runtimeCode"
+        || name == "runtimeDir"
+        || name == "inspectJson"
+        || name == "wrapperCode"
+        || name == "wrapperDir"
+        || name == "moduleName"
+        || name == "funcName"
+        || name == "funcInfo"
+        || name == "methodInfo"
+        || name == "receiverCast"
+        || name == "argCasts"
+        || name == "castStr"
+        || name == "argNames"
+        || name == "goCall"
+        || name == "returnCode"
+        || name == "wrapperName"
+        || name == "paramList"
+        || name == "paramStr"
+        || name == "assertion"
+        || name == "entryFile"
+        || name == "command"
+        || name == "formatted"
+        || name == "readErr"
+        || name == "parseErr"
+        || name == "srcRoot"
+        || name == "hasLocalImports"
+        || name == "error"
+        || name == "diagnostics"
+        || name == "severity"
+        || name == "annotation"
+        || name == "bodyResult"
+        || name == "condResult"
+        || name == "leftResult"
+        || name == "rightResult"
+        || name == "patResult"
+        || name == "bodyType"
+        || name == "funType"
+        || name == "selfType"
+        || name == "selfVar"
+        || name == "paramVars"
+        || name == "bindResult"
+        || name == "paramSub"
+        || name == "envWithSelf"
+        || name == "resolvedParamTypes"
+        || name == "bodySub"
+        || name == "finalSub"
+        || name == "finalType"
+        || name == "scheme"
+        || name == "typed"
+        || name == "newEnv"
+        || name == "annotations"
+        || name == "inferDiags"
+        || name == "exhaustDiags"
+        || name == "adtDiags"
+        || name == "aliasEnv"
+        || name == "adtEnv"
+        || name == "env0"
+        || name == "env1"
+        || name == "newRegistry"
+        || name == "newDiags"
+        || name == "ctorSchemes"
+        || name == "adt"
+        || name == "paramMap"
+        || name == "resultType"
+        || name == "fieldTypes"
+        || name == "ctorType"
+        || name == "quantified"
+        || name == "elemVar"
+        || name == "listType"
+        || name == "elemType"
+        || name == "headPat"
+        || name == "tailPat"
+        || name == "headResult"
+        || name == "tailResult"
+        || name == "innerPat"
+        || name == "argPats"
+        || name == "argTypes"
+        || name == "ctorName"
+        || name == "instType"
+        || name == "splitResult"
+        || name == "subjectType"
+        || name == "patterns"
+        || name == "covered"
+        || name == "missing"
+        || name == "allCtors"
+        || name == "coveredCtors"
+        || name == "missingList"
+        || name == "headerLine"
+        || name == "contentLength"
+        || name == "blankLine"
+        || name == "searchKey"
+        || name == "keyIdx"
+        || name == "afterKey"
+        || name == "colonIdx"
+        || name == "afterColon"
+        || name == "numStr"
+        || name == "raw"
 
 
 lowerArgExpr : LowerCtx -> Expression -> GoExpr
@@ -2907,18 +3877,20 @@ lowerArgExpr ctx expr =
     case expr of
         
         IdentifierExpr name _ ->
-            if not (String.isEmpty ctx.modulePrefix) && listContains name
-                                                            ctx.localFunctions then
+            if not (String.isEmpty ctx.modulePrefix)
+                && listContains name ctx.localFunctions then
                 let
                     goName =
-                        ctx.modulePrefix ++ "_" ++ capitalizeFirst
-                                                       (sanitizeGoIdent name)
+                        ctx.modulePrefix
+                            ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
                     fnArity = getFnArity name ctx
                 in
                     if fnArity > 1 then
                         makeCurryWrapper goName fnArity
+                    
                     else
                         lowerExpr ctx expr
+            
             else
                 lowerExpr ctx expr
         
@@ -2953,18 +3925,24 @@ makeCurryWrapper goName arity =
     if arity == 2 then
         GoRawExpr
             (
-            "func(__ca0 any) any { return func(__ca1 any) any { return " ++ goName ++ "(__ca0, __ca1) } }"
+            "func(__ca0 any) any { return func(__ca1 any) any { return "
+                ++ goName ++ "(__ca0, __ca1) } }"
             )
+    
     else if arity == 3 then
         GoRawExpr
             (
-            "func(__ca0 any) any { return func(__ca1 any) any { return func(__ca2 any) any { return " ++ goName ++ "(__ca0, __ca1, __ca2) } } }"
+            "func(__ca0 any) any { return func(__ca1 any) any { return func(__ca2 any) any { return "
+                ++ goName ++ "(__ca0, __ca1, __ca2) } } }"
             )
+    
     else if arity == 4 then
         GoRawExpr
             (
-            "func(__ca0 any) any { return func(__ca1 any) any { return func(__ca2 any) any { return func(__ca3 any) any { return " ++ goName ++ "(__ca0, __ca1, __ca2, __ca3) } } } }"
+            "func(__ca0 any) any { return func(__ca1 any) any { return func(__ca2 any) any { return func(__ca3 any) any { return "
+                ++ goName ++ "(__ca0, __ca1, __ca2, __ca3) } } } }"
             )
+    
     else
         GoIdent goName
 
@@ -2976,6 +3954,7 @@ listContains needle haystack =
         \item acc ->
             if acc then
                 True
+            
             else
                 item == needle
         )
@@ -3017,9 +3996,10 @@ capitalizeFirst : String -> String
 capitalizeFirst s =
     if String.isEmpty s then
         ""
+    
     else
-        String.toUpper (String.slice 0 1 s) ++ String.slice 1 (String.length s)
-                                                   s
+        String.toUpper (String.slice 0 1 s)
+            ++ String.slice 1 (String.length s) s
 
 
 lastPartOf : (List String) -> String
@@ -3056,60 +4036,104 @@ zipIndexLoop idx items =
             []
         
         x :: rest ->
-            (idx, x) :: zipIndexLoop (idx + 1) rest
+            ( idx, x ) :: zipIndexLoop (idx + 1) rest
 
 
 emitGoExprInline : GoExpr -> String
 emitGoExprInline expr =
     case expr of
-
+        
         GoIdent name ->
             name
-
+        
         GoBasicLit val ->
             val
-
+        
         GoStringLit s ->
             String.join "" [ "\"" , s , "\"" ]
-
+        
         GoCallExpr fn args ->
             let
                 fnStr = emitGoExprInline fn
                 calleeStr =
                     if String.endsWith ")" fnStr then
                         fnStr ++ ".(func(any) any)"
+                    
                     else
                         fnStr
             in
-                String.join "" [ calleeStr , "(" , String.join ", " (List.map emitGoExprInline args) , ")" ]
-
+                String.join ""
+                    [ calleeStr
+                    , "("
+                    , String.join ", " (List.map emitGoExprInline args)
+                    , ")"
+                    ]
+        
         GoSelectorExpr target sel ->
             String.join "" [ emitGoExprInline target , "." , sel ]
-
+        
         GoSliceLit items ->
-            String.join "" [ "[]any{" , String.join ", " (List.map emitGoExprInline items) , "}" ]
-
+            String.join ""
+                [ "[]any{"
+                , String.join ", " (List.map emitGoExprInline items)
+                , "}"
+                ]
+        
         GoMapLit entries ->
-            String.join "" [ "map[string]any{" , String.join ", " (List.map emitMapEntry entries) , "}" ]
-
+            String.join ""
+                [ "map[string]any{"
+                , String.join ", " (List.map emitMapEntry entries)
+                , "}"
+                ]
+        
         GoFuncLit params body ->
-            String.join "" [ "func(" , String.join ", " (List.map emitInlineParam params) , ") any { return " , emitGoExprInline body , " }" ]
-
+            String.join ""
+                [ "func("
+                , String.join ", " (List.map emitInlineParam params)
+                , ") any { return "
+                , emitGoExprInline body
+                , " }"
+                ]
+        
         GoRawExpr code ->
             code
-
+        
         GoCompositeLit typeName fields ->
-            String.join "" [ typeName , "{" , String.join ", " (List.map (\pair -> String.join "" [ fst pair , ": " , emitGoExprInline (snd pair) ]) fields) , "}" ]
-
+            String.join ""
+                [ typeName
+                , "{"
+                , String.join ", "
+                      (
+                      List.map
+                          (
+                          \pair ->
+                              String.join ""
+                                  [ fst pair
+                                  , ": "
+                                  , emitGoExprInline (snd pair)
+                                  ]
+                          )
+                          fields
+                      )
+                , "}"
+                ]
+        
         GoBinaryExpr op left right ->
-            String.join "" [ emitGoExprInline left , " " , op , " " , emitGoExprInline right ]
-
+            String.join ""
+                [ emitGoExprInline left
+                , " "
+                , op
+                , " "
+                , emitGoExprInline right
+                ]
+        
         GoUnaryExpr op operand ->
             String.join "" [ op , emitGoExprInline operand ]
-
+        
         GoIndexExpr target index ->
-            String.join "" [ emitGoExprInline target , "[" , emitGoExprInline index , "]" ]
-
+            String.join ""
+                [ emitGoExprInline target , "[" , emitGoExprInline index , "]" ]
+        
         GoNilExpr ->
             "nil"
 
@@ -3167,8 +4191,11 @@ stmtToGoString stmt =
             "return"
         
         GoIf cond thenBody elseBody ->
-            "if " ++ emitGoExprInline cond ++ " { " ++ stmtsToGoString thenBody ++ " } else { " ++ stmtsToGoString
-                                                                                                       elseBody ++ " }"
+            "if "
+                ++ emitGoExprInline cond
+                    ++ " { "
+                        ++ stmtsToGoString thenBody
+                            ++ " } else { " ++ stmtsToGoString elseBody ++ " }"
         
         GoBlock body ->
             stmtsToGoString body

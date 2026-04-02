@@ -36,20 +36,28 @@ runCommand : String -> (List String) -> ()
 runCommand command args =
     if command == "build" then
         cmdBuild args
+    
     else if command == "run" then
         cmdRun args
+    
     else if command == "check" then
         cmdCheck args
+    
     else if command == "fmt" then
         cmdFmt args
+    
     else if command == "lsp" then
         cmdLsp args
+    
     else if command == "inspect" then
         cmdInspect args
+    
     else if command == "clean" then
         cmdClean args
+    
     else if command == "version" || command == "--version" || command == "-v" then
         println "sky v0.6.0"
+    
     else
         cmdHelp ()
 
@@ -91,7 +99,9 @@ cmdBuild args =
                     buildResult =
                         Process.run "sh"
                             [ "-c"
-                            , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app"
+                            , "cd "
+                                ++ outDir
+                                    ++ " && go build -gcflags=all=-l -o app"
                             ]
                 in
                     case buildResult of
@@ -145,7 +155,8 @@ cmdCheck args =
                     _ =
                         println
                             (
-                            "Cannot read: " ++ entryFile ++ " (" ++ readErr ++ ")"
+                            "Cannot read: "
+                                ++ entryFile ++ " (" ++ readErr ++ ")"
                             )
                 in
                     Process.exit 1
@@ -178,7 +189,10 @@ cmdCheck args =
                                                     \d ->
                                                         println
                                                             (
-                                                            "  " ++ d.name ++ " : " ++ d.prettyType
+                                                            "  "
+                                                                ++ d.name
+                                                                    ++ " : "
+                                                                        ++ d.prettyType
                                                             )
                                                     )
                                                     result.declarations
@@ -194,16 +208,21 @@ cmdCheck args =
                                             if List.isEmpty result.diagnostics then
                                                 println
                                                     (
-                                                    "Type check passed: " ++ entryFile
+                                                    "Type check passed: "
+                                                        ++ entryFile
                                                     )
+                                            
                                             else
                                                 println
                                                     (
-                                                    "Type check passed with " ++ String.fromInt
-                                                                                     (
-                                                                                     List.length
-                                                                                         result.diagnostics
-                                                                                     ) ++ " warnings: " ++ entryFile
+                                                    "Type check passed with "
+                                                        ++ String.fromInt
+                                                               (
+                                                               List.length
+                                                                   result.diagnostics
+                                                               )
+                                                            ++ " warnings: "
+                                                                ++ entryFile
                                                     )
                                     
                                     Err e ->
@@ -236,7 +255,8 @@ cmdFmt args =
                     _ =
                         println
                             (
-                            "Cannot read: " ++ filePath ++ " (" ++ readErr ++ ")"
+                            "Cannot read: "
+                                ++ filePath ++ " (" ++ readErr ++ ")"
                             )
                 in
                     Process.exit 1
@@ -259,6 +279,7 @@ cmdFmt args =
                             in
                                 if formatted == source then
                                     ()
+                                
                                 else
                                     let
                                         _ = File.writeFile filePath formatted
@@ -280,6 +301,7 @@ cmdInspect args =
     in
         if String.isEmpty pkgName then
             println "Usage: sky inspect <go-package>"
+        
         else
             case Inspector.inspectPackage pkgName of
                 

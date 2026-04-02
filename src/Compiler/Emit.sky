@@ -12,6 +12,7 @@ emitPackage pkg =
         imports =
             if List.isEmpty pkg.imports then
                 ""
+            
             else
                 emitImports pkg.imports ++ "\n"
         decls = String.join "\n\n" (List.map emitDecl pkg.declarations)
@@ -28,6 +29,7 @@ emitImports imports =
                 \imp ->
                     if imp.alias_ == "" then
                         "\t\"" ++ imp.path ++ "\""
+                    
                     else
                         "\t" ++ imp.alias_ ++ " \"" ++ imp.path ++ "\""
                 )
@@ -48,7 +50,7 @@ emitDecl decl =
         
         GoDeclRaw code ->
             code
-
+        
         GoDeclType name body ->
             "type " ++ name ++ " " ++ body
 
@@ -60,11 +62,13 @@ emitFuncDecl fd =
         ret =
             if fd.returnType == "" then
                 ""
+            
             else
                 " " ++ fd.returnType
         body = String.join "\n" (List.map (\s -> "\t" ++ emitStmt s) fd.body)
     in
-        "func " ++ fd.name ++ "(" ++ params ++ ")" ++ ret ++ " {\n" ++ body ++ "\n}"
+        "func "
+            ++ fd.name ++ "(" ++ params ++ ")" ++ ret ++ " {\n" ++ body ++ "\n}"
 
 
 emitParam : GoParam -> String
@@ -97,8 +101,13 @@ emitStmt stmt =
             in
                 if List.isEmpty elseStmts then
                     "if " ++ emitExpr cond ++ " {\n\t" ++ thenBody ++ "\n}"
+                
                 else
-                    "if " ++ emitExpr cond ++ " {\n\t" ++ thenBody ++ "\n} else {\n\t" ++ elseBody ++ "\n}"
+                    "if "
+                        ++ emitExpr cond
+                            ++ " {\n\t"
+                                ++ thenBody
+                                    ++ "\n} else {\n\t" ++ elseBody ++ "\n}"
         
         GoBlock stmts ->
             String.join "\n\t" (List.map emitStmt stmts)
@@ -118,7 +127,8 @@ emitExpr expr =
             goQuote value
         
         GoCallExpr fn args ->
-            emitExpr fn ++ "(" ++ String.join ", " (List.map emitExpr args) ++ ")"
+            emitExpr fn
+                ++ "(" ++ String.join ", " (List.map emitExpr args) ++ ")"
         
         GoSelectorExpr target sel ->
             emitExpr target ++ "." ++ sel

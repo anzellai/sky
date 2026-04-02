@@ -36,35 +36,49 @@ main =
 runCommand command =
     if command == "build" then
         cmdBuild ()
+    
     else if command == "run" then
         cmdRun ()
+    
     else if command == "check" then
         cmdCheck ()
+    
     else if command == "fmt" then
         cmdFmt ()
+    
     else if command == "clean" then
         cmdClean ()
+    
     else if command == "lsp" then
         LspServer.startServer ()
+    
     else if command == "init" then
         cmdInit ()
+    
     else if command == "add" then
         cmdAdd ()
+    
     else if command == "install" then
         cmdInstall ()
+    
     else if command == "remove" then
         cmdRemove ()
+    
     else if command == "update" then
         cmdUpdate ()
+    
     else if command == "upgrade" then
         cmdUpgrade ()
+    
     else if command == "build-typed" then
         cmdBuildTyped ()
+    
     else if command == "version" || command == "--version" || command == "-v" then
         let
             _ = println ("sky " ++ Args.skyVersion)
         in
             ()
+    
     else
         cmdHelp ()
 
@@ -73,10 +87,10 @@ cmdBuildTyped _ =
     let
         entryFile =
             case Args.getArg 2 of
-
+                
                 Just f ->
                     f
-
+                
                 Nothing ->
                     "src/Main.sky"
         outDir = "sky-out"
@@ -87,29 +101,27 @@ cmdBuildTyped _ =
 
 cmdBuildTypedResult result outDir =
     case result of
-
+        
         Err e ->
             println ("Error: " ++ e)
-
+        
         Ok _ ->
             let
                 _ = println "Typed Go code generated"
                 _ = println "Running go build..."
                 buildResult =
                     Process.run "sh"
-                        [ "-c"
-                        , "cd " ++ outDir ++ " && go build -o app"
-                        ]
+                        [ "-c" , "cd " ++ outDir ++ " && go build -o app" ]
             in
                 cmdBuildTypedGo buildResult outDir
 
 
 cmdBuildTypedGo buildResult outDir =
     case buildResult of
-
+        
         Ok _ ->
             println ("Build complete: " ++ outDir ++ "/app")
-
+        
         Err e ->
             println ("go build failed: " ++ errorToString e)
 
@@ -153,16 +165,19 @@ buildGoProject outDir =
         _ =
             if goModExists then
                 ()
+            
             else
                 let
                     _ = File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
                 in
                     ()
         hasFfiWrappers =
-            case Process.run "sh"
-                     [ "-c"
-                     , "ls " ++ outDir ++ "/sky_*.go " ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
-                     ] of
+            case Process.run "sh" [ "-c"
+            , "ls "
+                ++ outDir
+                    ++ "/sky_*.go "
+                        ++ outDir ++ "/skylive_rt/*.go 2>/dev/null | head -1"
+            ] of
                 
                 Ok output ->
                     not (String.isEmpty (String.trim output))
@@ -184,13 +199,17 @@ buildGoProject outDir =
                 in
                     Process.run "sh"
                         [ "-c" , "cd " ++ outDir ++ " && go mod tidy 2>&1" ]
+            
             else
                 Ok ""
         _ = println "Running go build..."
         buildResult =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ outDir ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion=" ++ Args.skyVersion ++ "' -o app"
+                , "cd "
+                    ++ outDir
+                        ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion="
+                            ++ Args.skyVersion ++ "' -o app"
                 ]
     in
         handleBuildResult outDir buildResult
@@ -209,6 +228,7 @@ handleBuildResult outDir buildResult =
         Err e ->
             if String.contains "no required module" (errorToString e) then
                 retryBuildWithTidy outDir e
+            
             else
                 let
                     _ = println ("go build failed: " ++ errorToString e)
@@ -312,7 +332,7 @@ checkSource entryFile source =
             
             Ok mod ->
                 let
-                    ( combinedEnv , registry , aliases ) =
+                    ( combinedEnv, registry, aliases ) =
                         Pipeline.buildCheckEnv entryFile mod
                     checkResult =
                         Checker.checkModuleWithRegistryAndAliases mod
@@ -332,6 +352,7 @@ handleCheckResult entryFile checkResult =
                     _ = println ("Type check passed: " ++ entryFile)
                 in
                     ()
+            
             else
                 let
                     _ =
@@ -343,11 +364,10 @@ handleCheckResult entryFile checkResult =
                         _ =
                             println
                                 (
-                                "Type check failed with " ++ String.fromInt
-                                                                 (
-                                                                 List.length
-                                                                     result.diagnostics
-                                                                 ) ++ " error(s): " ++ entryFile
+                                "Type check failed with "
+                                    ++ String.fromInt
+                                           (List.length result.diagnostics)
+                                        ++ " error(s): " ++ entryFile
                                 )
                     in
                         Process.exit 1
@@ -361,7 +381,44 @@ handleCheckResult entryFile checkResult =
 
 isGoStdlib : String -> Bool
 isGoStdlib name =
-    name == "archive" || name == "bufio" || name == "bytes" || name == "compress" || name == "container" || name == "context" || name == "crypto" || name == "database" || name == "debug" || name == "embed" || name == "encoding" || name == "errors" || name == "flag" || name == "fmt" || name == "go" || name == "hash" || name == "html" || name == "image" || name == "io" || name == "log" || name == "math" || name == "mime" || name == "net" || name == "os" || name == "path" || name == "reflect" || name == "regexp" || name == "runtime" || name == "sort" || name == "strconv" || name == "strings" || name == "sync" || name == "syscall" || name == "testing" || name == "text" || name == "time" || name == "unicode" || name == "unsafe"
+    name == "archive"
+        || name == "bufio"
+        || name == "bytes"
+        || name == "compress"
+        || name == "container"
+        || name == "context"
+        || name == "crypto"
+        || name == "database"
+        || name == "debug"
+        || name == "embed"
+        || name == "encoding"
+        || name == "errors"
+        || name == "flag"
+        || name == "fmt"
+        || name == "go"
+        || name == "hash"
+        || name == "html"
+        || name == "image"
+        || name == "io"
+        || name == "log"
+        || name == "math"
+        || name == "mime"
+        || name == "net"
+        || name == "os"
+        || name == "path"
+        || name == "reflect"
+        || name == "regexp"
+        || name == "runtime"
+        || name == "sort"
+        || name == "strconv"
+        || name == "strings"
+        || name == "sync"
+        || name == "syscall"
+        || name == "testing"
+        || name == "text"
+        || name == "time"
+        || name == "unicode"
+        || name == "unsafe"
 
 
 cmdInit _ =
@@ -401,6 +458,7 @@ initProject projectName shouldCreateDir =
             basePath = projectName ++ "/"
         in
             doInit basePath projectName shouldCreateDir
+    
     else
         doInit "" projectName shouldCreateDir
 
@@ -422,10 +480,12 @@ doInit basePath projectName shouldCreateDir =
                 _ =
                     println
                         (
-                        tomlPath ++ " already exists. Project already initialised."
+                        tomlPath
+                            ++ " already exists. Project already initialised."
                         )
             in
                 ()
+        
         else
             let
                 tomlContent =
@@ -480,6 +540,7 @@ doInit basePath projectName shouldCreateDir =
                 _ =
                     if mainExists then
                         ()
+                    
                     else
                         let
                             _ = File.writeFile mainPath mainContent
@@ -497,6 +558,7 @@ doInit basePath projectName shouldCreateDir =
                 _ =
                     if gitignoreExists then
                         ()
+                    
                     else
                         let
                             _ = File.writeFile gitignorePath gitignoreContent
@@ -506,6 +568,7 @@ doInit basePath projectName shouldCreateDir =
                 displayPath =
                     if shouldCreateDir then
                         projectName ++ "/"
+                    
                     else
                         "./"
                 _ = println ("Initialised Sky project: " ++ projectName)
@@ -517,6 +580,7 @@ doInit basePath projectName shouldCreateDir =
                 _ =
                     if mainExists then
                         ()
+                    
                     else
                         let
                             _ = println "  src/Main.sky    Entry point"
@@ -525,6 +589,7 @@ doInit basePath projectName shouldCreateDir =
                 _ =
                     if gitignoreExists then
                         ()
+                    
                     else
                         let
                             _ = println "  .gitignore      Git ignore rules"
@@ -536,6 +601,7 @@ doInit basePath projectName shouldCreateDir =
                             _ = println "  CLAUDE.md       AI assistant context"
                         in
                             ()
+                    
                     else
                         ()
                 _ = println ""
@@ -546,6 +612,7 @@ doInit basePath projectName shouldCreateDir =
                             _ = println ("  cd " ++ projectName)
                         in
                             ()
+                    
                     else
                         ()
                 _ =
@@ -629,12 +696,15 @@ cmdAdd _ =
             in
                 if isGoStdlib firstPart || isGoStdlib pkg then
                     addGoStdlib pkg
+                
                 else if String.contains "." firstPart then
                     detectAndInstall pkg
+                
                 else
                     println
                         (
-                        "Unknown package: " ++ pkg ++ ". Use github.com/owner/repo format."
+                        "Unknown package: "
+                            ++ pkg ++ ". Use github.com/owner/repo format."
                         )
 
 
@@ -681,6 +751,7 @@ detectClonedPackageType pkg tmpDir =
     in
         if hasSkyToml then
             installAsSkyPackage pkg tmpDir
+        
         else
             installAsGoPackage pkg tmpDir
 
@@ -704,6 +775,7 @@ installAsGoPackage pkg tmpDir =
         _ =
             if String.isEmpty tmpDir then
                 ()
+            
             else
                 let
                     _ = Process.run "rm" [ "-rf" , tmpDir ]
@@ -818,24 +890,27 @@ installFromSkyToml _ =
 
 installTomlDeps lines section =
     case lines of
-
+        
         [  ] ->
             ()
-
+        
         line :: rest ->
             let
                 trimmed = String.trim line
                 isGoDepsHeader =
-                    trimmed == "[\"go.dependencies\"]" || trimmed == "[go.dependencies]"
-                isSkyDepsHeader =
-                    trimmed == "[dependencies]"
+                    trimmed == "[\"go.dependencies\"]"
+                        || trimmed == "[go.dependencies]"
+                isSkyDepsHeader = trimmed == "[dependencies]"
             in
                 if isGoDepsHeader then
                     installTomlDeps rest "go"
+                
                 else if isSkyDepsHeader then
                     installTomlDeps rest "sky"
+                
                 else if String.startsWith "[" trimmed then
                     installTomlDeps rest ""
+                
                 else if section == "sky" && String.contains "=" trimmed then
                     let
                         pkg =
@@ -846,10 +921,10 @@ installTomlDeps lines section =
                                     String.trim
                                         (
                                         case String.split "=" trimmed of
-
+                                            
                                             key :: _ ->
                                                 key
-
+                                            
                                             [  ] ->
                                                 ""
                                         )
@@ -858,40 +933,64 @@ installTomlDeps lines section =
                         targetDir = ".skydeps/" ++ pkg
                         alreadyInstalled =
                             case File.readFile (targetDir ++ "/sky.toml") of
-
+                                
                                 Ok _ ->
                                     True
-
+                                
                                 Err _ ->
                                     False
                     in
                         if String.isEmpty pkg || alreadyInstalled then
                             installTomlDeps rest "sky"
+                        
                         else
                             let
-                                _ = println ("   Installing Sky package: " ++ pkg ++ "...")
-                                tmpDir = "/tmp/sky-dep-" ++ String.replace "/" "_" (String.replace "." "_" pkg)
+                                _ =
+                                    println
+                                        (
+                                        "   Installing Sky package: "
+                                            ++ pkg ++ "..."
+                                        )
+                                tmpDir =
+                                    "/tmp/sky-dep-"
+                                        ++ String.replace "/" "_"
+                                               (String.replace "." "_" pkg)
                                 _ = Process.run "rm" [ "-rf" , tmpDir ]
                                 cloneResult =
                                     Process.run "git"
-                                        [ "clone" , "--depth" , "1" , "https://" ++ pkg , tmpDir ]
+                                        [ "clone"
+                                        , "--depth"
+                                        , "1"
+                                        , "https://" ++ pkg
+                                        , tmpDir
+                                        ]
                             in
                                 case cloneResult of
-
+                                    
                                     Ok _ ->
                                         let
                                             _ = File.mkdirAll targetDir
-                                            _ = Process.run "rm" [ "-rf" , targetDir ]
-                                            _ = Process.run "mv" [ tmpDir , targetDir ]
+                                            _ =
+                                                Process.run "rm"
+                                                    [ "-rf" , targetDir ]
+                                            _ =
+                                                Process.run "mv"
+                                                    [ tmpDir , targetDir ]
                                             _ = println ("   Installed " ++ pkg)
                                         in
                                             installTomlDeps rest "sky"
-
+                                    
                                     Err _ ->
                                         let
-                                            _ = println ("   Warning: could not install " ++ pkg)
+                                            _ =
+                                                println
+                                                    (
+                                                    "   Warning: could not install "
+                                                        ++ pkg
+                                                    )
                                         in
                                             installTomlDeps rest "sky"
+                
                 else if section == "go" && String.contains "=" trimmed then
                     let
                         pkg =
@@ -902,10 +1001,10 @@ installTomlDeps lines section =
                                     String.trim
                                         (
                                         case String.split "=" trimmed of
-
+                                            
                                             key :: _ ->
                                                 key
-
+                                            
                                             [  ] ->
                                                 ""
                                         )
@@ -921,24 +1020,25 @@ installTomlDeps lines section =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
                         case File.readFile bindingPath of
-
+                            
                             Ok _ ->
                                 installTomlDeps rest "go"
-
+                            
                             Err _ ->
                                 let
                                     firstPart =
                                         case String.split "/" pkg of
-
+                                            
                                             first :: _ ->
                                                 first
-
+                                            
                                             [  ] ->
                                                 pkg
                                     _ =
                                         println
                                             (
-                                            "   Generating bindings for " ++ pkg ++ "..."
+                                            "   Generating bindings for "
+                                                ++ pkg ++ "..."
                                             )
                                 in
                                     if isGoStdlib firstPart || isGoStdlib pkg then
@@ -953,13 +1053,16 @@ installTomlDeps lines section =
                                                         cacheDir
                                             in
                                                 installTomlDeps rest "go"
+                                    
                                     else if String.contains "." firstPart then
                                         let
                                             _ = detectAndInstall pkg
                                         in
                                             installTomlDeps rest "go"
+                                    
                                     else
                                         installTomlDeps rest "go"
+                
                 else
                     installTomlDeps rest section
 
@@ -998,37 +1101,13 @@ scanFileForFfiImports filePath =
                     List.filter
                         (
                         \l ->
-                            String.startsWith "import " l && not
-                                                                 (
-                                                                 String.contains
-                                                                     "Sky.Core"
-                                                                     l
-                                                                 ) && not
-                                                                          (
-                                                                          String.contains
-                                                                              "Std."
-                                                                              l
-                                                                          ) && not
-                                                                                   (
-                                                                                   String.contains
-                                                                                       "Compiler."
-                                                                                       l
-                                                                                   ) && not
-                                                                                            (
-                                                                                            String.contains
-                                                                                                "Formatter."
-                                                                                                l
-                                                                                            ) && not
-                                                                                                     (
-                                                                                                     String.contains
-                                                                                                         "Lsp."
-                                                                                                         l
-                                                                                                     ) && not
-                                                                                                              (
-                                                                                                              String.contains
-                                                                                                                  "Ffi."
-                                                                                                                  l
-                                                                                                              )
+                            String.startsWith "import " l
+                                && not (String.contains "Sky.Core" l)
+                                && not (String.contains "Std." l)
+                                && not (String.contains "Compiler." l)
+                                && not (String.contains "Formatter." l)
+                                && not (String.contains "Lsp." l)
+                                && not (String.contains "Ffi." l)
                         )
                         lines
                 _ = List.map (\l -> processImportLine l) importLines
@@ -1048,24 +1127,29 @@ processImportLine line =
                     
                     Nothing ->
                         ""
+            
             else
                 ""
-        localSkyPath = "src/" ++ String.join "/" (String.split "." modName) ++ ".sky"
+        localSkyPath =
+            "src/" ++ String.join "/" (String.split "." modName) ++ ".sky"
         isLocalFile =
             case File.readFile localSkyPath of
-
+                
                 Ok _ ->
                     True
-
+                
                 Err _ ->
                     False
     in
         if String.isEmpty modName || Resolver.isStdlib modName then
             ()
+        
         else if isLocalFile then
             ()
+        
         else if isLocalSkydep modName then
             ()
+        
         else
             let
                 goPath = Resolver.moduleNameToGoPath modName
@@ -1075,23 +1159,24 @@ processImportLine line =
                 bindingPath = ".skycache/go/" ++ safeName ++ "/bindings.skyi"
             in
                 case File.readFile bindingPath of
-
+                    
                     Ok _ ->
                         ()
-
+                    
                     Err _ ->
                         let
                             _ =
                                 println
                                     (
-                                    "   Generating bindings for " ++ goPath ++ "..."
+                                    "   Generating bindings for "
+                                        ++ goPath ++ "..."
                                     )
                             firstPart =
                                 case String.split "/" goPath of
-
+                                    
                                     first :: _ ->
                                         first
-
+                                    
                                     [  ] ->
                                         ""
                         in
@@ -1102,8 +1187,10 @@ processImportLine line =
                                     _ = ensureGoModDir ()
                                 in
                                     generateGoBindings goPath cacheDir
+                            
                             else if String.contains "." firstPart then
                                 detectAndInstall goPath
+                            
                             else
                                 ()
 
@@ -1114,31 +1201,43 @@ isLocalSkydep modName =
         moduleFile = String.join "/" (String.split "." modName) ++ ".sky"
         findResult =
             Process.run "sh"
-                [ "-c"
-                , "find .skydeps -name 'src' -type d 2>/dev/null"
-                ]
+                [ "-c" , "find .skydeps -name 'src' -type d 2>/dev/null" ]
     in
         case findResult of
-
+            
             Ok output ->
                 let
                     dirs =
                         List.filter (\d -> not (String.isEmpty (String.trim d)))
                             (String.split "\n" output)
                 in
-                    List.any (\d -> case File.readFile (d ++ "/" ++ moduleFile) of
-                        Ok _ -> True
-                        Err _ -> False) dirs
-
+                    List.any
+                        (
+                        \d ->
+                            case File.readFile (d ++ "/" ++ moduleFile) of
+                                
+                                Ok _ ->
+                                    True
+                                
+                                Err _ ->
+                                    False
+                        )
+                        dirs
+            
             Err _ ->
                 False
 
 
 preFilterBindings _ =
-    case Process.run "sh"
-             [ "-c"
-             , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do " ++ "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); " ++ "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then " ++ "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); " ++ "out=\"${f%.skyi}.filtered.skyi\"; " ++ "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && " ++ "echo \"   Pre-filtered $f\"; " ++ "fi; done"
-             ] of
+    case Process.run "sh" [ "-c"
+    , "for f in $(find .skycache/go -name 'bindings.skyi' 2>/dev/null); do "
+        ++ "sz=$(wc -c < \"$f\" 2>/dev/null | tr -d ' '); "
+            ++ "if [ \"$sz\" -gt 10000 ] 2>/dev/null; then "
+                ++ "alias=$(head -1 \"$f\" | awk '{print $2}' | awk -F. '{print $NF}'); "
+                    ++ "out=\"${f%.skyi}.filtered.skyi\"; "
+                        ++ "skyi-filter \"$f\" \"$alias\" src > \"$out\" 2>/dev/null && "
+                            ++ "echo \"   Pre-filtered $f\"; " ++ "fi; done"
+    ] of
         
         Ok output ->
             if not (String.isEmpty (String.trim output)) then
@@ -1146,6 +1245,7 @@ preFilterBindings _ =
                     _ = println (String.trim output)
                 in
                     ()
+            
             else
                 ()
         
@@ -1172,6 +1272,7 @@ cmdUpdate _ =
 updateDepsLoop lines section inDeps =
     if List.isEmpty lines then
         ()
+    
     else
         let
             line =
@@ -1187,17 +1288,21 @@ updateDepsLoop lines section inDeps =
         in
             if isTomlSectionHeader trimmed then
                 updateDepsLoop rest trimmed (isSkyOrGoDepSection trimmed)
+            
             else if inDeps && String.contains "=" trimmed then
                 let
                     _ = updateOneDep trimmed section
                 in
                     updateDepsLoop rest section True
+            
             else
                 updateDepsLoop rest section inDeps
 
 
 isSkyOrGoDepSection header =
-    header == "[dependencies]" || header == "[go.dependencies]" || header == "[\"go.dependencies\"]"
+    header == "[dependencies]"
+        || header == "[go.dependencies]"
+        || header == "[\"go.dependencies\"]"
 
 
 updateOneDep depLine section =
@@ -1206,8 +1311,11 @@ updateOneDep depLine section =
     in
         if String.isEmpty pkgName then
             ()
-        else if section == "[go.dependencies]" || section == "[\"go.dependencies\"]" then
+        
+        else if section == "[go.dependencies]"
+            || section == "[\"go.dependencies\"]" then
             updateGoDep pkgName
+        
         else
             updateSkyDep pkgName
 
@@ -1218,7 +1326,8 @@ updateGoDep pkgName =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "cd .skycache/gomod && go get " ++ pkgName ++ "@latest 2>/dev/null"
+                , "cd .skycache/gomod && go get "
+                    ++ pkgName ++ "@latest 2>/dev/null"
                 ]
     in
         ()
@@ -1243,6 +1352,7 @@ cmdUpgrade _ =
     in
         if String.isEmpty latest then
             println "Could not determine latest version."
+        
         else
             doUpgrade latest
 
@@ -1254,6 +1364,7 @@ doUpgrade latest =
     in
         if not isDev && compareVersions latest current <= 0 then
             println ("Already up to date (v" ++ current ++ ").")
+        
         else
             performUpgrade latest current
 
@@ -1267,6 +1378,7 @@ performUpgrade latest current =
     in
         if String.isEmpty skyBin then
             println "Could not find sky binary path. Please upgrade manually."
+        
         else
             downloadAndInstall latest platform arch skyBin
 
@@ -1304,7 +1416,10 @@ retrySudoDownload latest url skyBin err =
                 sudoResult =
                     Process.run "sh"
                         [ "-c"
-                        , "curl -fsSL '" ++ url ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && sudo mv /tmp/sky-upgrade '" ++ skyBin ++ "'"
+                        , "curl -fsSL '"
+                            ++ url
+                                ++ "' -o /tmp/sky-upgrade && chmod +x /tmp/sky-upgrade && sudo mv /tmp/sky-upgrade '"
+                                    ++ skyBin ++ "'"
                         ]
             in
                 case sudoResult of
@@ -1315,18 +1430,24 @@ retrySudoDownload latest url skyBin err =
                         in
                             println
                                 (
-                                "Sky upgraded to v" ++ latest ++ " successfully!"
+                                "Sky upgraded to v"
+                                    ++ latest ++ " successfully!"
                                 )
                     
                     Err e2 ->
                         println
                             (
-                            "Upgrade failed: " ++ errorToString e2 ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
+                            "Upgrade failed: "
+                                ++ errorToString e2
+                                    ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
                             )
+        
         else
             println
                 (
-                "Upgrade failed: " ++ errMsg ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
+                "Upgrade failed: "
+                    ++ errMsg
+                        ++ "\nDownload manually from: https://github.com/anzellai/sky/releases"
                 )
 
 
@@ -1336,7 +1457,15 @@ downloadBinary url destPath =
         result =
             Process.run "sh"
                 [ "-c"
-                , "curl -fsSL '" ++ url ++ "' -o '" ++ tmpPath ++ "' && chmod +x '" ++ tmpPath ++ "' && mv '" ++ tmpPath ++ "' '" ++ destPath ++ "'"
+                , "curl -fsSL '"
+                    ++ url
+                        ++ "' -o '"
+                            ++ tmpPath
+                                ++ "' && chmod +x '"
+                                    ++ tmpPath
+                                        ++ "' && mv '"
+                                            ++ tmpPath
+                                                ++ "' '" ++ destPath ++ "'"
                 ]
     in
         result
@@ -1369,6 +1498,7 @@ detectPlatform _ =
             in
                 if raw == "darwin" then
                     "darwin"
+                
                 else
                     "linux"
         
@@ -1385,6 +1515,7 @@ detectArch _ =
             in
                 if raw == "arm64" || raw == "aarch64" then
                     "arm64"
+                
                 else
                     "x64"
         
@@ -1441,14 +1572,17 @@ compareVersionParts a b =
                 [  ] ->
                     if x > 0 then
                         1
+                    
                     else
                         compareVersionParts restA []
                 
                 y :: restB ->
                     if x > y then
                         1
+                    
                     else if x < y then
                         -1
+                    
                     else
                         compareVersionParts restA restB
 
@@ -1462,6 +1596,7 @@ compareVersionParts2 a b =
         y :: restB ->
             if y > 0 then
                 -1
+            
             else
                 compareVersionParts2 a restB
 
@@ -1495,6 +1630,7 @@ fetchLatestVersionFresh _ =
                     _ =
                         if not (String.isEmpty version) then
                             writeUpdateCache version
+                        
                         else
                             ()
                 in
@@ -1518,6 +1654,7 @@ fetchLatestVersionCached _ =
     in
         if String.isEmpty cacheContent then
             fetchLatestVersionSlow ()
+        
         else
             checkCacheFreshness cachePath cacheContent
 
@@ -1525,10 +1662,13 @@ fetchLatestVersionCached _ =
 checkCacheFreshness cachePath cacheContent =
     let
         isFresh =
-            case Process.run "sh"
-                     [ "-c"
-                     , "[ $(( $(date +%s) - $(stat -f %m '" ++ cachePath ++ "' 2>/dev/null || stat -c %Y '" ++ cachePath ++ "' 2>/dev/null || echo 0) )) -lt 86400 ] && echo fresh"
-                     ] of
+            case Process.run "sh" [ "-c"
+            , "[ $(( $(date +%s) - $(stat -f %m '"
+                ++ cachePath
+                    ++ "' 2>/dev/null || stat -c %Y '"
+                        ++ cachePath
+                            ++ "' 2>/dev/null || echo 0) )) -lt 86400 ] && echo fresh"
+            ] of
                 
                 Ok out ->
                     String.contains "fresh" out
@@ -1538,6 +1678,7 @@ checkCacheFreshness cachePath cacheContent =
     in
         if isFresh then
             cacheContent
+        
         else
             fetchLatestVersionSlow ()
 
@@ -1558,6 +1699,7 @@ fetchLatestVersionSlow _ =
                     _ =
                         if not (String.isEmpty version) then
                             writeUpdateCache version
+                        
                         else
                             ()
                 in
@@ -1584,6 +1726,7 @@ checkForUpdates _ =
     in
         if isDev then
             ()
+        
         else
             checkForUpdatesReal current
 
@@ -1598,11 +1741,13 @@ checkForUpdatesReal current =
                 _ =
                     println
                         (
-                        "   A newer version of Sky is available: v" ++ latest ++ " (current: v" ++ current ++ ")"
+                        "   A newer version of Sky is available: v"
+                            ++ latest ++ " (current: v" ++ current ++ ")"
                         )
                 _ = println "   Run 'sky upgrade' to update."
             in
                 ()
+        
         else
             ()
 
@@ -1628,6 +1773,7 @@ removePackage pkg =
     in
         if removedFromToml then
             println ("Removed " ++ pkg)
+        
         else
             println ("Package " ++ pkg ++ " not found in dependencies.")
 
@@ -1663,13 +1809,13 @@ addGoDepToToml pkg version =
                 lines = String.split "\n" content
                 depLine = pkg ++ " = \"" ++ version ++ "\""
                 hasGoDeps =
-                    listContains "[go.dependencies]" lines || listContains
-                                                                  "[\"go.dependencies\"]"
-                                                                  lines
+                    listContains "[go.dependencies]" lines
+                        || listContains "[\"go.dependencies\"]" lines
                 alreadyHas = tomlHasDep pkg lines
             in
                 if alreadyHas then
                     ()
+                
                 else if hasGoDeps then
                     let
                         newContent =
@@ -1681,6 +1827,7 @@ addGoDepToToml pkg version =
                                     (String.join "\n" newContent)
                         in
                             ()
+                
                 else
                     let
                         newLines =
@@ -1710,6 +1857,7 @@ addSkyDepToToml pkg version =
             in
                 if alreadyHas then
                     ()
+                
                 else if hasDeps then
                     let
                         newContent =
@@ -1721,6 +1869,7 @@ addSkyDepToToml pkg version =
                                     (String.join "\n" newContent)
                         in
                             ()
+                
                 else
                     let
                         newLines =
@@ -1742,6 +1891,7 @@ listContains needle lines =
         line :: rest ->
             if String.trim line == needle then
                 True
+            
             else
                 listContains needle rest
 
@@ -1759,6 +1909,7 @@ tomlHasDep pkg lines =
             in
                 if key == pkg then
                     True
+                
                 else
                     tomlHasDep pkg rest
 
@@ -1773,6 +1924,7 @@ insertAfterSectionLoop sectionName newLine lines acc foundSection =
         [  ] ->
             if foundSection then
                 List.append acc [ newLine ]
+            
             else
                 List.append acc [ "" , sectionName , newLine ]
         
@@ -1780,12 +1932,16 @@ insertAfterSectionLoop sectionName newLine lines acc foundSection =
             let
                 trimmed = String.trim line
             in
-                if trimmed == sectionName || trimmed == "[\"go.dependencies\"]" && sectionName == "[go.dependencies]" then
+                if trimmed == sectionName
+                    || trimmed == "[\"go.dependencies\"]"
+                        && sectionName == "[go.dependencies]" then
                     insertAfterSectionLoop sectionName newLine rest
                         (List.append acc [ line ])
                         True
+                
                 else if foundSection && isTomlSectionHeader trimmed then
                     List.concat [ acc , [ newLine , "" ] , [ line ] , rest ]
+                
                 else
                     insertAfterSectionLoop sectionName newLine rest
                         (List.append acc [ line ])
@@ -1806,6 +1962,7 @@ removeDepFromToml pkg =
             in
                 if newContent == content then
                     False
+                
                 else
                     let
                         _ = File.writeFile "sky.toml" newContent
@@ -1826,6 +1983,7 @@ removeDepLines pkg lines =
             in
                 if key == pkg && String.contains "=" trimmed then
                     removeDepLines pkg rest
+                
                 else
                     line :: removeDepLines pkg rest
 
@@ -1844,6 +2002,7 @@ cmdFmt _ =
     in
         if useStdin then
             fmtStdin ()
+        
         else
             case File.readFile filePath of
                 
@@ -1878,14 +2037,32 @@ fmtFileSource filePath source =
                 in
                     if String.isEmpty (String.trim withComments) then
                         let
-                            _ = println ("Format error: empty output, file unchanged: " ++ filePath)
+                            _ =
+                                println
+                                    (
+                                    "Format error: empty output, file unchanged: "
+                                        ++ filePath
+                                    )
                         in
                             ()
-                    else if sourceCodeLines > 3 && outputCodeLines * 3 < sourceCodeLines * 2 then
+                    
+                    else if sourceCodeLines > 3
+                        && outputCodeLines * 3 < sourceCodeLines * 2 then
                         let
-                            _ = println ("Format error: output lost too many lines (" ++ String.fromInt outputCodeLines ++ " vs " ++ String.fromInt sourceCodeLines ++ "), file unchanged: " ++ filePath)
+                            _ =
+                                println
+                                    (
+                                    "Format error: output lost too many lines ("
+                                        ++ String.fromInt outputCodeLines
+                                            ++ " vs "
+                                                ++ String.fromInt
+                                                       sourceCodeLines
+                                                    ++ "), file unchanged: "
+                                                        ++ filePath
+                                    )
                         in
                             ()
+                    
                     else
                         let
                             _ = File.writeFile filePath withComments
@@ -1899,11 +2076,13 @@ countCodeLines text =
     List.length
         (
         List.filter
-            (\l ->
+            (
+            \l ->
                 let
                     trimmed = String.trim l
                 in
-                    not (String.isEmpty trimmed) && not (String.startsWith "--" trimmed)
+                    not (String.isEmpty trimmed)
+                        && not (String.startsWith "--" trimmed)
             )
             (String.split "\n" text)
         )
@@ -1930,8 +2109,9 @@ collectCommentGroups lines currentComments acc =
         [  ] ->
             if List.isEmpty currentComments then
                 List.reverse acc
+            
             else
-                List.reverse ((List.reverse currentComments, "") :: acc)
+                List.reverse (( List.reverse currentComments, "" ) :: acc)
         
         line :: rest ->
             let
@@ -1939,14 +2119,19 @@ collectCommentGroups lines currentComments acc =
             in
                 if isCommentLine trimmed then
                     collectCommentGroups rest (line :: currentComments) acc
+                
                 else if String.isEmpty trimmed then
                     collectCommentGroups rest currentComments acc
+                
                 else if not (List.isEmpty currentComments) then
                     let
                         anchorWord = extractAnchorWord trimmed
                     in
                         collectCommentGroups rest []
-                            ((List.reverse currentComments, anchorWord) :: acc)
+                            (
+                            ( List.reverse currentComments, anchorWord ) :: acc
+                            )
+                
                 else
                     collectCommentGroups rest [] acc
 
@@ -1977,6 +2162,7 @@ insertCommentGroups groups fmtLines acc =
                 if String.isEmpty anchor then
                     insertCommentGroups restGroups fmtLines
                         (List.append acc comments)
+                
                 else
                     insertBeforeAnchorOnce comments anchor restGroups fmtLines
                         acc
@@ -1993,6 +2179,7 @@ insertBeforeAnchorOnce comments anchor restGroups fmtLines acc =
             if String.startsWith anchor (String.trim fmtLine) then
                 insertCommentGroups restGroups fmtRest
                     (List.concat [ acc , comments , [ fmtLine ] ])
+            
             else
                 insertBeforeAnchorOnce comments anchor restGroups fmtRest
                     (List.append acc [ fmtLine ])

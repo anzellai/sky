@@ -26,40 +26,41 @@ emptyResult = { substitution = emptySub , bindings = [] }
 checkPattern : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> Type -> Result String PatternResult
 checkPattern counter registry env pat expectedType =
     case pat of
+        
         PWildcard _ ->
             Ok emptyResult
-
+        
         PVariable name _ ->
             checkPatternVar counter env name expectedType
-
+        
         PLiteral lit _ ->
             checkPatternLiteral counter env lit expectedType
-
+        
         PTuple items _ ->
             checkPatternTuple counter registry env items expectedType
-
+        
         PList items _ ->
             checkPatternListPat counter registry env items expectedType
-
+        
         PCons headPat tailPat _ ->
             checkPatternCons counter registry env headPat tailPat expectedType
-
+        
         PAs innerPat name _ ->
             checkPatternAs counter registry env innerPat name expectedType
-
+        
         PConstructor parts argPats _ ->
             checkPatternCtorPat counter registry env parts argPats expectedType
-
+        
         PRecord fields _ ->
             checkPatternRecord fields expectedType
-
+        
         _ ->
             Ok emptyResult
 
 
 checkPatternVar : (Ref.Ref Int) -> Env.TypeEnv -> String -> Type -> Result String PatternResult
 checkPatternVar counter env name expectedType =
-    Ok { substitution = emptySub , bindings = [ (name, expectedType) ] }
+    Ok { substitution = emptySub , bindings = [ ( name, expectedType ) ] }
 
 
 checkPatternLiteral : (Ref.Ref Int) -> Env.TypeEnv -> LiteralValue -> Type -> Result String PatternResult
@@ -67,140 +68,117 @@ checkPatternLiteral counter env lit expectedType =
     let
         litType = literalType lit
     in
-    case unify expectedType litType of
-        Err e ->
-            Err ("Pattern literal type mismatch: " ++ e)
-
-        Ok sub ->
-            Ok { substitution = sub , bindings = [] }
+        case unify expectedType litType of
+            
+            Err e ->
+                Err ("Pattern literal type mismatch: " ++ e)
+            
+            Ok sub ->
+                Ok { substitution = sub , bindings = [] }
 
 
 checkPatternTuple : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> Type -> Result String PatternResult
 checkPatternTuple counter registry env items expectedType =
     let
-        freshVars =
-            List.map (\item -> freshVar counter Nothing)
-                items
+        freshVars = List.map (\item -> freshVar counter Nothing) items
         tupleType = TTuple freshVars
     in
-    case unify expectedType tupleType of
-        Err e ->
-            Err ("Tuple pattern mismatch: " ++ e)
-
-        Ok sub ->
-            checkPatternList counter registry env items
-                (
-                List.map (\x -> applySub sub x)
-                    freshVars
-                )
-                sub
-                []
+        case unify expectedType tupleType of
+            
+            Err e ->
+                Err ("Tuple pattern mismatch: " ++ e)
+            
+            Ok sub ->
+                checkPatternList counter registry env items
+                    (List.map (\x -> applySub sub x) freshVars)
+                    sub
+                    []
 
 
 checkPatternListPat : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> Type -> Result String PatternResult
 checkPatternListPat counter registry env items expectedType =
     let
         elemVar = freshVar counter (Just "elem")
-        listType =
-            TApp (TConst "List") [ elemVar ]
+        listType = TApp (TConst "List") [ elemVar ]
     in
-    case unify expectedType listType of
-        Err e ->
-            Err
-                (
-                "List pattern mismatch: " ++ e
-                )
-
-        Ok sub ->
-            let
-                elemType =
-                    applySub sub elemVar
-            in
-            checkPatternListSame counter
-                registry
-                env
-                items
-                elemType
-                sub
-                []
+        case unify expectedType listType of
+            
+            Err e ->
+                Err ("List pattern mismatch: " ++ e)
+            
+            Ok sub ->
+                let
+                    elemType = applySub sub elemVar
+                in
+                    checkPatternListSame counter registry env items elemType sub
+                        []
 
 
 checkPatternCons : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> Pattern -> Type -> Result String PatternResult
 checkPatternCons counter registry env headPat tailPat expectedType =
     let
-        elemVar =
-            freshVar counter
-                (Just "elem")
-        listType =
-            TApp (TConst "List")
-                [ elemVar ]
+        elemVar = freshVar counter (Just "elem")
+        listType = TApp (TConst "List") [ elemVar ]
     in
-    case unify expectedType listType of
-        Err e ->
-            Err
-                (
-                "Cons pattern mismatch: " ++ e
-                )
-
-        Ok sub1 ->
-            let
-                elemType =
-                    applySub sub1 elemVar
-            in
-            checkConsHead counter registry env headPat tailPat elemType sub1 listType
+        case unify expectedType listType of
+            
+            Err e ->
+                Err ("Cons pattern mismatch: " ++ e)
+            
+            Ok sub1 ->
+                let
+                    elemType = applySub sub1 elemVar
+                in
+                    checkConsHead counter registry env headPat tailPat elemType
+                        sub1
+                        listType
 
 
 checkConsHead : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> Pattern -> Type -> Substitution -> Type -> Result String PatternResult
 checkConsHead counter registry env headPat tailPat elemType sub1 listType =
     case checkPattern counter registry env headPat elemType of
+        
         Err e ->
             Err e
-
+        
         Ok headResult ->
             let
-                sub2 =
-                    composeSubs
-                        headResult.substitution
-                        sub1
-                tailExpected =
-                    applySub sub2 listType
+                sub2 = composeSubs headResult.substitution sub1
+                tailExpected = applySub sub2 listType
             in
-            checkConsTail counter registry env tailPat tailExpected sub2 headResult.bindings
+                checkConsTail counter registry env tailPat tailExpected sub2
+                    headResult.bindings
 
 
 checkConsTail : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> Type -> Substitution -> (List Binding) -> Result String PatternResult
 checkConsTail counter registry env tailPat tailExpected sub2 headBindings =
     case checkPattern counter registry env tailPat tailExpected of
+        
         Err e ->
             Err e
-
+        
         Ok tailResult ->
             let
-                finalSub =
-                    composeSubs
-                        tailResult.substitution
-                        sub2
+                finalSub = composeSubs tailResult.substitution sub2
             in
-            Ok
-                { substitution = finalSub
-                , bindings = List.append
-                                 headBindings
-                                 tailResult.bindings
-                }
+                Ok
+                    { substitution = finalSub
+                    , bindings = List.append headBindings tailResult.bindings
+                    }
 
 
 checkPatternAs : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> String -> Type -> Result String PatternResult
 checkPatternAs counter registry env innerPat name expectedType =
     case checkPattern counter registry env innerPat expectedType of
+        
         Err e ->
             Err e
-
+        
         Ok result ->
             Ok
                 { result
-                | bindings = (name, applySub
-                                        result.substitution
-                                        expectedType) :: result.bindings
+                    | bindings =
+                        ( name, applySub result.substitution expectedType ) :: result.bindings
                 }
 
 
@@ -209,62 +187,43 @@ checkPatternCtorPat counter registry env parts argPats expectedType =
     let
         ctorName =
             case List.reverse parts of
+                
                 last :: _ ->
                     last
-
+                
                 [  ] ->
                     ""
     in
-    case Adt.lookupConstructor ctorName registry of
-        Just scheme ->
-            checkConstructorPattern
-                counter
-                registry
-                env
-                ctorName
-                scheme
-                argPats
-                expectedType
-
-        Nothing ->
-            checkPatternCtorFromEnv counter registry env ctorName argPats expectedType
+        case Adt.lookupConstructor ctorName registry of
+            
+            Just scheme ->
+                checkConstructorPattern counter registry env ctorName scheme
+                    argPats
+                    expectedType
+            
+            Nothing ->
+                checkPatternCtorFromEnv counter registry env ctorName argPats
+                    expectedType
 
 
 checkPatternCtorFromEnv : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> (List Pattern) -> Type -> Result String PatternResult
 checkPatternCtorFromEnv counter registry env ctorName argPats expectedType =
     case Env.lookup ctorName env of
+        
         Nothing ->
-            Err
-                (
-                "Unknown constructor in pattern: " ++ ctorName
-                )
-
+            Err ("Unknown constructor in pattern: " ++ ctorName)
+        
         Just scheme ->
-            checkConstructorPattern
-                counter
-                registry
-                env
-                ctorName
-                scheme
-                argPats
+            checkConstructorPattern counter registry env ctorName scheme argPats
                 expectedType
 
 
 checkPatternRecord : (List String) -> Type -> Result String PatternResult
 checkPatternRecord fields expectedType =
     let
-        fieldBindings =
-            List.map
-                (
-                \f ->
-                    (f, expectedType)
-                )
-                fields
+        fieldBindings = List.map (\f -> ( f, expectedType )) fields
     in
-    Ok
-        { substitution = emptySub
-        , bindings = fieldBindings
-        }
+        Ok { substitution = emptySub , bindings = fieldBindings }
 
 
 checkConstructorPattern : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> Scheme -> (List Pattern) -> Type -> Result String PatternResult
@@ -275,52 +234,53 @@ checkConstructorPattern counter registry env ctorName scheme argPats expectedTyp
         argTypes = fst splitResult
         resultType = snd splitResult
     in
-    if List.length argPats /= List.length argTypes then
-        Err
-            (
-            "Constructor " ++ ctorName ++ " expects " ++ String.fromInt
-                                                             (
-                                                             List.length
-                                                                 argTypes
-                                                             ) ++ " arguments, got " ++ String.fromInt
-                                                                                            (
-                                                                                            List.length
-                                                                                                argPats
-                                                                                            )
-            )
-    else
-        case unify expectedType resultType of
-            Err e ->
-                Err ("Constructor pattern type mismatch: " ++ e)
-
-            Ok sub ->
-                checkPatternList counter registry env argPats
-                    (List.map (\x -> applySub sub x) argTypes)
-                    sub
-                    []
+        if List.length argPats /= List.length argTypes then
+            Err
+                (
+                "Constructor "
+                    ++ ctorName
+                        ++ " expects "
+                            ++ String.fromInt (List.length argTypes)
+                                ++ " arguments, got "
+                                    ++ String.fromInt (List.length argPats)
+                )
+        
+        else
+            case unify expectedType resultType of
+                
+                Err e ->
+                    Err ("Constructor pattern type mismatch: " ++ e)
+                
+                Ok sub ->
+                    checkPatternList counter registry env argPats
+                        (List.map (\x -> applySub sub x) argTypes)
+                        sub
+                        []
 
 
 splitFunType : Type -> (List Type, Type)
 splitFunType t =
     case t of
+        
         TFun fromT toT ->
             let
                 inner = splitFunType toT
                 rest = fst inner
                 result = snd inner
             in
-            (fromT :: rest, result)
-
+                ( fromT :: rest, result )
+        
         _ ->
-            ([], t)
+            ( [], t )
 
 
 checkPatternList : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Substitution -> (List (String, Type)) -> Result String PatternResult
 checkPatternList counter registry env pats types sub bindings =
     case pats of
+        
         [  ] ->
             checkPatternListEmpty types sub bindings
-
+        
         p :: ps ->
             checkPatternListCons counter registry env p ps types sub bindings
 
@@ -328,9 +288,10 @@ checkPatternList counter registry env pats types sub bindings =
 checkPatternListEmpty : (List Type) -> Substitution -> (List (String, Type)) -> Result String PatternResult
 checkPatternListEmpty types sub bindings =
     case types of
+        
         [  ] ->
             Ok { substitution = sub , bindings = bindings }
-
+        
         _ ->
             Err "Pattern/type count mismatch"
 
@@ -338,9 +299,10 @@ checkPatternListEmpty types sub bindings =
 checkPatternListCons : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> (List Pattern) -> (List Type) -> Substitution -> (List (String, Type)) -> Result String PatternResult
 checkPatternListCons counter registry env p ps types sub bindings =
     case types of
+        
         [  ] ->
             Err "Pattern/type count mismatch"
-
+        
         t :: ts ->
             checkPatternListPair counter registry env p ps t ts sub bindings
 
@@ -348,9 +310,10 @@ checkPatternListCons counter registry env p ps types sub bindings =
 checkPatternListPair : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> (List Pattern) -> Type -> (List Type) -> Substitution -> (List (String, Type)) -> Result String PatternResult
 checkPatternListPair counter registry env p ps t ts sub bindings =
     case checkPattern counter registry env p (applySub sub t) of
+        
         Err e ->
             Err e
-
+        
         Ok result ->
             checkPatternList counter registry env ps ts
                 (composeSubs result.substitution sub)
@@ -360,14 +323,16 @@ checkPatternListPair counter registry env p ps t ts sub bindings =
 checkPatternListSame : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> Type -> Substitution -> (List (String, Type)) -> Result String PatternResult
 checkPatternListSame counter registry env pats elemType sub bindings =
     case pats of
+        
         [  ] ->
             Ok { substitution = sub , bindings = bindings }
-
+        
         p :: rest ->
             case checkPattern counter registry env p (applySub sub elemType) of
+                
                 Err e ->
                     Err e
-
+                
                 Ok result ->
                     checkPatternListSame counter registry env rest elemType
                         (composeSubs result.substitution sub)
@@ -377,17 +342,18 @@ checkPatternListSame counter registry env pats elemType sub bindings =
 literalType : LiteralValue -> Type
 literalType lit =
     case lit of
+        
         LitInt _ ->
             TConst "Int"
-
+        
         LitFloat _ ->
             TConst "Float"
-
+        
         LitString _ ->
             TConst "String"
-
+        
         LitBool _ ->
             TConst "Bool"
-
+        
         LitChar _ ->
             TConst "Char"

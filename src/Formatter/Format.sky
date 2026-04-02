@@ -23,7 +23,7 @@ formatModule mod =
                     , hardline
                     , hardline
                     , concat
-                        (List.map (\d -> concat [ d , hardline ]) importDocs)
+                          (List.map (\d -> concat [ d , hardline ]) importDocs)
                     , hardline
                     , declDocs
                     ]
@@ -241,12 +241,12 @@ formatTypeDecl name params variants =
                     concat
                         [ header
                         , indent
-                            (
-                            concat
-                                [ hardline
-                                , joinDocs (firstDoc :: restDocs) hardline
-                                ]
-                            )
+                              (
+                              concat
+                                  [ hardline
+                                  , joinDocs (firstDoc :: restDocs) hardline
+                                  ]
+                              )
                         ]
 
 
@@ -261,14 +261,14 @@ formatVariant variant =
             concat
                 [ text variant.name
                 , indent
-                    (
-                    concat
-                        (
-                        List.map
-                            (\f -> concat [ line , formatTypeExprParens f ])
-                            variant.fields
-                        )
-                    )
+                      (
+                      concat
+                          (
+                          List.map
+                              (\f -> concat [ line , formatTypeExprParens f ])
+                              variant.fields
+                          )
+                      )
                 ]
             )
 
@@ -385,11 +385,11 @@ formatTuple items =
                     [ text "( "
                     , formatExpr first
                     , concat
-                        (
-                        List.map
-                            (\item -> concat [ text ", " , formatExpr item ])
-                            rest
-                        )
+                          (
+                          List.map
+                              (\item -> concat [ text ", " , formatExpr item ])
+                              rest
+                          )
                     , text " )"
                     ]
                 )
@@ -409,14 +409,14 @@ formatList items =
                     [ text "[ "
                     , formatExpr first
                     , concat
-                        (
-                        List.map
-                            (
-                            \item ->
-                                concat [ line , text ", " , formatExpr item ]
-                            )
-                            rest
-                        )
+                          (
+                          List.map
+                              (
+                              \item ->
+                                  concat [ line , text ", " , formatExpr item ]
+                              )
+                              rest
+                          )
                     , line
                     , text "]"
                     ]
@@ -437,11 +437,13 @@ formatRecord fields =
                     [ text "{ "
                     , formatField first
                     , concat
-                        (
-                        List.map
-                            (\f -> concat [ line , text ", " , formatField f ])
-                            rest
-                        )
+                          (
+                          List.map
+                              (
+                              \f -> concat [ line , text ", " , formatField f ]
+                              )
+                              rest
+                          )
                     , line
                     , text "}"
                     ]
@@ -468,32 +470,40 @@ formatRecordUpdate base fields =
             [ text "{ "
             , formatExpr base
             , indent
-                (
-                concat
-                    [ line
-                    , text "| "
-                    , joinDocs (List.map formatField fields)
-                        (concat [ line , text ", " ])
-                    ]
-                )
+                  (
+                  concat
+                      [ line
+                      , text "| "
+                      , joinDocs (List.map formatField fields)
+                            (concat [ line , text ", " ])
+                      ]
+                  )
             , line
             , text "}"
             ]
         )
 
 
+-- align ensures continuation args are at column >= callee start,
+-- which the parser's column-based layout rules require.
 formatCall : Expression -> (List Expression) -> Doc
 formatCall callee args =
     group
         (
-        concat
-            [ formatExpr callee
-            , indent
-                (
-                concat
-                    (List.map (\arg -> concat [ line , formatExpr arg ]) args)
-                )
-            ]
+        align
+            (
+            concat
+                [ formatExpr callee
+                , indent
+                      (
+                      concat
+                          (
+                          List.map (\arg -> concat [ line , formatExpr arg ])
+                              args
+                          )
+                      )
+                ]
+            )
         )
 
 
@@ -518,7 +528,7 @@ formatBinary op leftExpr rightExpr =
             concat
                 [ formatExpr leftExpr
                 , indent
-                    (concat [ hardline , text "|> " , formatExpr rightExpr ])
+                      (concat [ hardline , text "|> " , formatExpr rightExpr ])
                 ]
             )
     
@@ -528,7 +538,7 @@ formatBinary op leftExpr rightExpr =
             concat
                 [ formatExpr leftExpr
                 , indent
-                    (concat [ hardline , text "<| " , formatExpr rightExpr ])
+                      (concat [ hardline , text "<| " , formatExpr rightExpr ])
                 ]
             )
     
@@ -550,22 +560,22 @@ formatBinary op leftExpr rightExpr =
                 concat
                     [ formatExpr firstOp
                     , indent
-                        (
-                        concat
-                            (
-                            List.map
-                                (
-                                \e ->
-                                    concat
-                                        [ line
-                                        , text op
-                                        , text " "
-                                        , formatExpr e
-                                        ]
-                                )
-                                restOps
-                            )
-                        )
+                          (
+                          concat
+                              (
+                              List.map
+                                  (
+                                  \e ->
+                                      concat
+                                          [ line
+                                          , text op
+                                          , text " "
+                                          , formatExpr e
+                                          ]
+                                  )
+                                  restOps
+                              )
+                          )
                     ]
                 )
     
@@ -678,21 +688,43 @@ formatLetBinding binding =
     concat
         [ hardline
         , group
-            (
-            concat
-                [ formatPattern binding.pattern
-                , text " ="
-                , indent (concat [ line , formatExpr binding.value ])
-                ]
-            )
+              (
+              concat
+                  [ formatPattern binding.pattern
+                  , text " ="
+                  , indent (concat [ line , formatExpr binding.value ])
+                  ]
+              )
         ]
+
+
+formatExprFlat : Expression -> Doc
+formatExprFlat expr =
+    case expr of
+        
+        CallExpr callee args _ ->
+            concat
+                [ formatExprFlat callee
+                , concat
+                      (
+                      List.map
+                          (\arg -> concat [ text " " , formatExprFlat arg ])
+                          args
+                      )
+                ]
+        
+        ParenExpr inner _ ->
+            concat [ text "(" , formatExprFlat inner , text ")" ]
+        
+        _ ->
+            formatExpr expr
 
 
 formatCase : Expression -> (List CaseBranch) -> Doc
 formatCase subject branches =
     concat
         [ text "case "
-        , formatExpr subject
+        , formatExprFlat subject
         , text " of"
         , indent (concat (List.map formatBranch branches))
         ]
@@ -732,20 +764,20 @@ formatPattern pat =
                         concat
                             [ text ctorName
                             , indent
-                                (
-                                concat
-                                    (
-                                    List.map
-                                        (
-                                        \p ->
-                                            concat
-                                                [ text " "
-                                                , formatPatternParens p
-                                                ]
-                                        )
-                                        argPats
-                                    )
-                                )
+                                  (
+                                  concat
+                                      (
+                                      List.map
+                                          (
+                                          \p ->
+                                              concat
+                                                  [ text " "
+                                                  , formatPatternParens p
+                                                  ]
+                                          )
+                                          argPats
+                                      )
+                                  )
                             ]
                         )
         
@@ -842,20 +874,20 @@ formatTypeExpr texpr =
                         concat
                             [ text name
                             , indent
-                                (
-                                concat
-                                    (
-                                    List.map
-                                        (
-                                        \a ->
-                                            concat
-                                                [ text " "
-                                                , formatTypeExprParens a
-                                                ]
-                                        )
-                                        args
-                                    )
-                                )
+                                  (
+                                  concat
+                                      (
+                                      List.map
+                                          (
+                                          \a ->
+                                              concat
+                                                  [ text " "
+                                                  , formatTypeExprParens a
+                                                  ]
+                                          )
+                                          args
+                                      )
+                                  )
                             ]
                         )
         
@@ -921,14 +953,15 @@ formatRecordType fields =
                     [ text "{ "
                     , formatNamedType first
                     , concat
-                        (
-                        List.map
-                            (
-                            \f ->
-                                concat [ line , text ", " , formatNamedType f ]
-                            )
-                            rest
-                        )
+                          (
+                          List.map
+                              (
+                              \f ->
+                                  concat
+                                      [ line , text ", " , formatNamedType f ]
+                              )
+                              rest
+                          )
                     , line
                     , text "}"
                     ]

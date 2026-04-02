@@ -55,4 +55,18 @@ emptySpan =
 
 isKeyword : String -> Bool
 isKeyword word =
-    word == "module" || word == "exposing" || word == "import" || word == "as" || word == "type" || word == "let" || word == "in" || word == "if" || word == "then" || word == "else" || word == "case" || word == "of" || word == "foreign" || word == "port" || word == "from"
+    word == "module"
+        || word == "exposing"
+        || word == "import"
+        || word == "as"
+        || word == "type"
+        || word == "let"
+        || word == "in"
+        || word == "if"
+        || word == "then"
+        || word == "else"
+        || word == "case"
+        || word == "of"
+        || word == "foreign"
+        || word == "port"
+        || word == "from"

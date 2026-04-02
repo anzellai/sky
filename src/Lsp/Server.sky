@@ -79,22 +79,31 @@ handleMessage : ServerState -> String -> String -> String -> ServerState
 handleMessage state id method body =
     if method == "initialize" then
         handleInitialize state id
+    
     else if method == "initialized" then
         state
+    
     else if method == "shutdown" then
         sendAndReturn (makeResponse id jsonNull) state
+    
     else if method == "textDocument/didOpen" then
         handleDidOpen state body
+    
     else if method == "textDocument/didChange" then
         handleDidChange state body
+    
     else if method == "textDocument/hover" then
         handleHover state id body
+    
     else if method == "textDocument/completion" then
         handleCompletion state id body
+    
     else if method == "textDocument/definition" then
         handleDefinition state id body
+    
     else if method == "textDocument/formatting" then
         handleFormatting state id body
+    
     else
         state
 
@@ -120,24 +129,24 @@ handleInitialize state id =
     let
         capabilities =
             jsonObject
-                [ ("textDocumentSync", jsonInt 1)
-                , ("hoverProvider", jsonBool True)
-                , ("completionProvider", jsonObject
-                                             [ ("triggerCharacters", jsonArray
-                                                                         [ jsonString
-                                                                               "."
-                                                                         ])
-                                             ])
-                , ("definitionProvider", jsonBool True)
-                , ("documentFormattingProvider", jsonBool True)
+                [ ( "textDocumentSync", jsonInt 1 )
+                , ( "hoverProvider", jsonBool True )
+                , ( "completionProvider", jsonObject
+                                              [ ( "triggerCharacters", jsonArray
+                                                                           [ jsonString
+                                                                                 "."
+                                                                           ] )
+                                              ] )
+                , ( "definitionProvider", jsonBool True )
+                , ( "documentFormattingProvider", jsonBool True )
                 ]
         result =
             jsonObject
-                [ ("capabilities", capabilities)
-                , ("serverInfo", jsonObject
-                                     [ ("name", jsonString "sky-lsp")
-                                     , ("version", jsonString "0.1.0")
-                                     ])
+                [ ( "capabilities", capabilities )
+                , ( "serverInfo", jsonObject
+                                      [ ( "name", jsonString "sky-lsp" )
+                                      , ( "version", jsonString "0.1.0" )
+                                      ] )
                 ]
     in
         sendAndReturn (makeResponse id result) state
@@ -174,6 +183,7 @@ handleDidChange state body =
                     
                     Nothing ->
                         ""
+            
             else
                 changes
         newDocs = Dict.insert uri text state.documents
@@ -195,9 +205,9 @@ analyzeAndPublishDiagnostics state uri text =
                 let
                     diag =
                         jsonObject
-                            [ ("range", makeRange 0 0 0 1)
-                            , ("severity", jsonInt 1)
-                            , ("message", jsonString parseErr)
+                            [ ( "range", makeRange 0 0 0 1 )
+                            , ( "severity", jsonInt 1 )
+                            , ( "message", jsonString parseErr )
                             ]
                 in
                     sendNotifyAndReturn
@@ -205,8 +215,8 @@ analyzeAndPublishDiagnostics state uri text =
                         makeNotification "textDocument/publishDiagnostics"
                             (
                             jsonObject
-                                [ ("uri", jsonString uri)
-                                , ("diagnostics", jsonArray [ diag ])
+                                [ ( "uri", jsonString uri )
+                                , ( "diagnostics", jsonArray [ diag ] )
                                 ]
                             )
                         )
@@ -215,17 +225,20 @@ analyzeAndPublishDiagnostics state uri text =
             Ok mod ->
                 let
                     filePath = uriToFilePath uri
-                    ( combinedEnv , registry , aliases ) =
+                    ( combinedEnv, registry, aliases ) =
                         Pipeline.buildCheckEnv filePath mod
                     checkResult =
-                        Checker.checkModuleWithRegistryAndAliases mod (Just combinedEnv) (Just registry) (Just aliases)
+                        Checker.checkModuleWithRegistryAndAliases mod
+                            (Just combinedEnv)
+                            (Just registry)
+                            (Just aliases)
                     diagnostics =
                         case checkResult of
-
+                            
                             Ok result ->
                                 List.map (\msg -> makeDiagnostic 1 msg)
                                     result.diagnostics
-
+                            
                             Err err ->
                                 [ makeDiagnostic 1 err ]
                     stateWithDeps = resolveAndCacheImports state uri mod.imports
@@ -243,8 +256,8 @@ publishAndUpdateState state uri mod checkResult diagnostics =
                 makeNotification "textDocument/publishDiagnostics"
                     (
                     jsonObject
-                        [ ("uri", jsonString uri)
-                        , ("diagnostics", jsonArray diagnostics)
+                        [ ( "uri", jsonString uri )
+                        , ( "diagnostics", jsonArray diagnostics )
                         ]
                     )
                 )
@@ -267,6 +280,7 @@ resolveAndCacheImports state uri imports =
         fp =
             if String.startsWith "file://" uri then
                 String.slice 7 (String.length uri) uri
+            
             else
                 uri
         parts = String.split "/" fp
@@ -274,6 +288,7 @@ resolveAndCacheImports state uri imports =
         srcRoot =
             if srcIdx >= 0 then
                 String.join "/" (List.take (srcIdx + 1) parts)
+            
             else
                 case List.reverse (String.split "/" fp) of
                     
@@ -298,6 +313,7 @@ resolveImportsLoop : String -> String -> (List ImportDecl) -> ServerState -> Ser
 resolveImportsLoop srcRoot projectRoot imports st =
     if List.isEmpty imports then
         st
+    
     else
         let
             hd =
@@ -326,6 +342,7 @@ resolveOneImportInline : String -> String -> String -> (List String) -> String -
 resolveOneImportInline sr pr mn mp ra st =
     if Resolver.isStdlib mn then
         st
+    
     else
         let
             al =
@@ -337,6 +354,7 @@ resolveOneImportInline sr pr mn mp ra st =
                         
                         [  ] ->
                             ""
+                
                 else
                     ra
         in
@@ -423,13 +441,14 @@ insertDepIfParsed fp al mn parseResult st =
 insertDep : String -> String -> String -> (List ExportedDecl) -> ServerState -> ServerState
 insertDep fp al mn exps st =
     { st
-    | depCache = Dict.insert al
-                     { filePath = fp
-                     , alias_ = al
-                     , moduleName = mn
-                     , exports = exps
-                     }
-                     st.depCache
+        | depCache =
+            Dict.insert al
+                { filePath = fp
+                , alias_ = al
+                , moduleName = mn
+                , exports = exps
+                }
+                st.depCache
     }
 
 
@@ -470,6 +489,7 @@ extractAllDecls decls acc =
                 FunDecl name params _ span ->
                     if hasAnnotation name acc then
                         extractAllDecls rest acc
+                    
                     else
                         extractAllDecls rest
                             (
@@ -507,6 +527,7 @@ inferSigFromParams params =
     in
         if n == 0 then
             "a"
+        
         else
             String.join " -> " (List.append (List.take n vars) [ "result" ])
 
@@ -589,6 +610,7 @@ renderTypeRef : String -> (List TypeExpr) -> String
 renderTypeRef base args =
     if List.isEmpty args then
         base
+    
     else
         base ++ " " ++ String.join " " (List.map renderTE args)
 
@@ -603,6 +625,7 @@ uriToFilePath : String -> String
 uriToFilePath uri =
     if String.startsWith "file://" uri then
         String.slice 7 (String.length uri) uri
+    
     else
         uri
 
@@ -619,6 +642,7 @@ deriveSrcRoot filePath =
     in
         if srcIdx >= 0 then
             String.join "/" (List.take (srcIdx + 1) parts)
+        
         else
             case List.reverse (String.split "/" filePath) of
                 
@@ -639,6 +663,7 @@ findLastSrcIdx parts idx lastFound =
         part :: rest ->
             if part == "src" then
                 findLastSrcIdx rest (idx + 1) idx
+            
             else
                 findLastSrcIdx rest (idx + 1) lastFound
 
@@ -679,6 +704,7 @@ findExport name exports =
         exp :: rest ->
             if exp.name == name then
                 Just exp
+            
             else
                 findExport name rest
 
@@ -686,23 +712,23 @@ findExport name exports =
 makeDiagnostic : Int -> String -> String
 makeDiagnostic severity msg =
     jsonObject
-        [ ("range", makeRange 0 0 0 1)
-        , ("severity", jsonInt severity)
-        , ("message", jsonString msg)
+        [ ( "range", makeRange 0 0 0 1 )
+        , ( "severity", jsonInt severity )
+        , ( "message", jsonString msg )
         ]
 
 
 makeRange : Int -> Int -> Int -> Int -> String
 makeRange startLine startChar endLine endChar =
     jsonObject
-        [ ("start", jsonObject
-                        [ ("line", jsonInt startLine)
-                        , ("character", jsonInt startChar)
-                        ])
-        , ("end", jsonObject
-                      [ ("line", jsonInt endLine)
-                      , ("character", jsonInt endChar)
-                      ])
+        [ ( "start", jsonObject
+                         [ ( "line", jsonInt startLine )
+                         , ( "character", jsonInt startChar )
+                         ] )
+        , ( "end", jsonObject
+                       [ ( "line", jsonInt endLine )
+                       , ( "character", jsonInt endChar )
+                       ] )
         ]
 
 
@@ -734,20 +760,24 @@ getHoverForPosition state uri line character =
                 info =
                     if String.isEmpty word then
                         ""
+                    
                     else
                         lookupTypeInfo state uri word source
             in
                 if String.isEmpty info then
                     jsonNull
+                
                 else
                     jsonObject
-                        [ ("contents", jsonObject
-                                           [ ("kind", jsonString "markdown")
-                                           , ("value", jsonString
-                                                           (
-                                                           "```sky\n" ++ info ++ "\n```"
-                                                           ))
-                                           ])
+                        [ ( "contents", jsonObject
+                                            [ ( "kind", jsonString "markdown" )
+                                            , ( "value", jsonString
+                                                             (
+                                                             "```sky\n"
+                                                                 ++ info
+                                                                     ++ "\n```"
+                                                             ) )
+                                            ] )
                         ]
 
 
@@ -781,11 +811,13 @@ lookupTypeInfo state uri word source =
                     
                     Nothing ->
                         ""
+            
             else
                 ""
         fromStdlibMap =
             if String.isEmpty fromDep then
                 lookupStdlibType word
+            
             else
                 fromDep
         fromAnnotation =
@@ -794,10 +826,12 @@ lookupTypeInfo state uri word source =
                     (
                     if isQualified then
                         funcName
+                    
                     else
                         word
                     )
                     source
+            
             else
                 fromStdlibMap
         fromTypeCheck =
@@ -809,6 +843,7 @@ lookupTypeInfo state uri word source =
                     
                     Nothing ->
                         ""
+            
             else
                 fromAnnotation
         fromAst =
@@ -820,11 +855,13 @@ lookupTypeInfo state uri word source =
                     
                     Nothing ->
                         ""
+            
             else
                 fromTypeCheck
         fromLocal =
             if String.isEmpty fromAst then
                 inferLocalBinding state uri word source line
+            
             else
                 fromAst
     in
@@ -845,119 +882,119 @@ lookupStdlibType name =
 stdlibTypeMap : Dict.Dict String String
 stdlibTypeMap =
     Dict.fromList
-        [ ("identity", "a -> a")
-        , ("not", "Bool -> Bool")
-        , ("always", "a -> b -> a")
-        , ("fst", "( a, b ) -> a")
-        , ("snd", "( a, b ) -> b")
-        , ("clamp", "comparable -> comparable -> comparable -> comparable")
-        , ("modBy", "Int -> Int -> Int")
-        , ("errorToString", "Error -> String")
-        , ("Ok", "a -> Result e a")
-        , ("Err", "e -> Result e a")
-        , ("Just", "a -> Maybe a")
-        , ("Nothing", "Maybe a")
-        , ("True", "Bool")
-        , ("False", "Bool")
-        , ("println", "String -> ()")
-        , ("String.toUpper", "String -> String")
-        , ("String.toLower", "String -> String")
-        , ("String.length", "String -> Int")
-        , ("String.fromInt", "Int -> String")
-        , ("String.fromFloat", "Float -> String")
-        , ("String.join", "String -> List String -> String")
-        , ("String.split", "String -> String -> List String")
-        , ("String.contains", "String -> String -> Bool")
-        , ("String.startsWith", "String -> String -> Bool")
-        , ("String.trim", "String -> String")
-        , ("String.isEmpty", "String -> Bool")
-        , ("String.slice", "Int -> Int -> String -> String")
-        , ("String.replace", "String -> String -> String -> String")
-        , ("String.toInt", "String -> Maybe Int")
-        , ("String.append", "String -> String -> String")
-        , ("String.toBytes", "String -> Bytes")
-        , ("List.map", "(a -> b) -> List a -> List b")
-        , ("List.filter", "(a -> Bool) -> List a -> List a")
-        , ("List.foldl", "(a -> b -> b) -> b -> List a -> b")
-        , ("List.foldr", "(a -> b -> b) -> b -> List a -> b")
-        , ("List.head", "List a -> Maybe a")
-        , ("List.length", "List a -> Int")
-        , ("List.reverse", "List a -> List a")
-        , ("List.isEmpty", "List a -> Bool")
-        , ("List.append", "List a -> List a -> List a")
-        , ("List.concat", "List (List a) -> List a")
-        , ("List.concatMap", "(a -> List b) -> List a -> List b")
-        , ("List.take", "Int -> List a -> List a")
-        , ("List.drop", "Int -> List a -> List a")
-        , ("List.sort", "List comparable -> List comparable")
-        , ("List.sortBy", "(a -> comparable) -> List a -> List a")
-        , ("List.filterMap", "(a -> Maybe b) -> List a -> List b")
-        , ("List.indexedMap", "(Int -> a -> b) -> List a -> List b")
-        , ("List.zip", "List a -> List b -> List ( a, b )")
-        , ("Dict.empty", "Dict k v")
-        , ("Dict.insert", "k -> v -> Dict k v -> Dict k v")
-        , ("Dict.get", "k -> Dict k v -> Maybe v")
-        , ("Dict.remove", "k -> Dict k v -> Dict k v")
-        , ("Dict.keys", "Dict k v -> List k")
-        , ("Dict.values", "Dict k v -> List v")
-        , ("Dict.member", "k -> Dict k v -> Bool")
-        , ("Dict.map", "(k -> v -> w) -> Dict k v -> Dict k w")
-        , ("Dict.union", "Dict k v -> Dict k v -> Dict k v")
-        , ("Dict.fromList", "List ( k, v ) -> Dict k v")
-        , ("Set.empty", "Set a")
-        , ("Set.insert", "a -> Set a -> Set a")
-        , ("Set.remove", "a -> Set a -> Set a")
-        , ("Set.member", "a -> Set a -> Bool")
-        , ("Set.fromList", "List a -> Set a")
-        , ("Maybe.withDefault", "a -> Maybe a -> a")
-        , ("Maybe.map", "(a -> b) -> Maybe a -> Maybe b")
-        , ("Maybe.andThen", "(a -> Maybe b) -> Maybe a -> Maybe b")
-        , ("Result.withDefault", "a -> Result e a -> a")
-        , ("Result.map", "(a -> b) -> Result e a -> Result e b")
-        , ("Result.andThen", "(a -> Result e b) -> Result e a -> Result e b")
-        , ("Result.mapError", "(e -> f) -> Result e a -> Result f a")
-        , ("Task.succeed", "a -> Task err a")
-        , ("Task.fail", "err -> Task err a")
-        , ("Task.andThen", "(a -> Task err b) -> Task err a -> Task err b")
-        , ("Task.map", "(a -> b) -> Task err a -> Task err b")
-        , ("Task.perform", "Task err a -> a")
-        , ("Task.run", "Task err a -> Result err a")
-        , ("Task.sequence", "List (Task err a) -> Task err (List a)")
-        , ("File.readFile", "String -> Task String String")
-        , ("File.writeFile", "String -> String -> Task String ()")
-        , ("File.mkdirAll", "String -> Task String ()")
-        , ("File.readDir", "String -> Task String (List String)")
-        , ("File.exists", "String -> Task String Bool")
-        , ("Process.run", "String -> List String -> Task String String")
-        , ("Process.exit", "Int -> ()")
-        , ("Process.getCwd", "() -> Task String String")
-        , ("Io.readLine", "() -> Task String String")
-        , ("Io.writeStdout", "String -> Task String ()")
-        , ("Io.writeStderr", "String -> Task String ()")
-        , ("Time.now", "() -> Task String Int")
-        , ("Http.get", "String -> Task String Response")
-        , ("Http.post", "String -> String -> Task String Response")
-        , ("Server.listen", "Int -> List Route -> Task String ()")
-        , ("Server.get", "String -> Handler -> Route")
-        , ("Server.post", "String -> Handler -> Route")
-        , ("Server.any", "String -> Handler -> Route")
-        , ("Server.text", "String -> Response")
-        , ("Server.html", "String -> Response")
-        , ("Server.json", "String -> Response")
-        , ("Server.redirect", "String -> Response")
-        , ("Server.withStatus", "Int -> Response -> Response")
-        , ("Server.withHeader", "String -> String -> Response -> Response")
-        , ("Server.withCookie", "String -> String -> String -> Response -> Response")
-        , ("Server.queryParam", "String -> Request -> Maybe String")
-        , ("Server.formValue", "String -> Request -> String")
-        , ("Server.method", "Request -> String")
-        , ("Server.body", "Request -> String")
-        , ("Server.getCookie", "String -> Request -> Maybe String")
-        , ("Ref.new", "a -> Ref a")
-        , ("Ref.get", "Ref a -> a")
-        , ("Ref.set", "a -> Ref a -> ()")
-        , ("Args.getArgs", "() -> List String")
-        , ("Args.getArg", "Int -> Maybe String")
+        [ ( "identity", "a -> a" )
+        , ( "not", "Bool -> Bool" )
+        , ( "always", "a -> b -> a" )
+        , ( "fst", "( a, b ) -> a" )
+        , ( "snd", "( a, b ) -> b" )
+        , ( "clamp", "comparable -> comparable -> comparable -> comparable" )
+        , ( "modBy", "Int -> Int -> Int" )
+        , ( "errorToString", "Error -> String" )
+        , ( "Ok", "a -> Result e a" )
+        , ( "Err", "e -> Result e a" )
+        , ( "Just", "a -> Maybe a" )
+        , ( "Nothing", "Maybe a" )
+        , ( "True", "Bool" )
+        , ( "False", "Bool" )
+        , ( "println", "String -> ()" )
+        , ( "String.toUpper", "String -> String" )
+        , ( "String.toLower", "String -> String" )
+        , ( "String.length", "String -> Int" )
+        , ( "String.fromInt", "Int -> String" )
+        , ( "String.fromFloat", "Float -> String" )
+        , ( "String.join", "String -> List String -> String" )
+        , ( "String.split", "String -> String -> List String" )
+        , ( "String.contains", "String -> String -> Bool" )
+        , ( "String.startsWith", "String -> String -> Bool" )
+        , ( "String.trim", "String -> String" )
+        , ( "String.isEmpty", "String -> Bool" )
+        , ( "String.slice", "Int -> Int -> String -> String" )
+        , ( "String.replace", "String -> String -> String -> String" )
+        , ( "String.toInt", "String -> Maybe Int" )
+        , ( "String.append", "String -> String -> String" )
+        , ( "String.toBytes", "String -> Bytes" )
+        , ( "List.map", "(a -> b) -> List a -> List b" )
+        , ( "List.filter", "(a -> Bool) -> List a -> List a" )
+        , ( "List.foldl", "(a -> b -> b) -> b -> List a -> b" )
+        , ( "List.foldr", "(a -> b -> b) -> b -> List a -> b" )
+        , ( "List.head", "List a -> Maybe a" )
+        , ( "List.length", "List a -> Int" )
+        , ( "List.reverse", "List a -> List a" )
+        , ( "List.isEmpty", "List a -> Bool" )
+        , ( "List.append", "List a -> List a -> List a" )
+        , ( "List.concat", "List (List a) -> List a" )
+        , ( "List.concatMap", "(a -> List b) -> List a -> List b" )
+        , ( "List.take", "Int -> List a -> List a" )
+        , ( "List.drop", "Int -> List a -> List a" )
+        , ( "List.sort", "List comparable -> List comparable" )
+        , ( "List.sortBy", "(a -> comparable) -> List a -> List a" )
+        , ( "List.filterMap", "(a -> Maybe b) -> List a -> List b" )
+        , ( "List.indexedMap", "(Int -> a -> b) -> List a -> List b" )
+        , ( "List.zip", "List a -> List b -> List ( a, b )" )
+        , ( "Dict.empty", "Dict k v" )
+        , ( "Dict.insert", "k -> v -> Dict k v -> Dict k v" )
+        , ( "Dict.get", "k -> Dict k v -> Maybe v" )
+        , ( "Dict.remove", "k -> Dict k v -> Dict k v" )
+        , ( "Dict.keys", "Dict k v -> List k" )
+        , ( "Dict.values", "Dict k v -> List v" )
+        , ( "Dict.member", "k -> Dict k v -> Bool" )
+        , ( "Dict.map", "(k -> v -> w) -> Dict k v -> Dict k w" )
+        , ( "Dict.union", "Dict k v -> Dict k v -> Dict k v" )
+        , ( "Dict.fromList", "List ( k, v ) -> Dict k v" )
+        , ( "Set.empty", "Set a" )
+        , ( "Set.insert", "a -> Set a -> Set a" )
+        , ( "Set.remove", "a -> Set a -> Set a" )
+        , ( "Set.member", "a -> Set a -> Bool" )
+        , ( "Set.fromList", "List a -> Set a" )
+        , ( "Maybe.withDefault", "a -> Maybe a -> a" )
+        , ( "Maybe.map", "(a -> b) -> Maybe a -> Maybe b" )
+        , ( "Maybe.andThen", "(a -> Maybe b) -> Maybe a -> Maybe b" )
+        , ( "Result.withDefault", "a -> Result e a -> a" )
+        , ( "Result.map", "(a -> b) -> Result e a -> Result e b" )
+        , ( "Result.andThen", "(a -> Result e b) -> Result e a -> Result e b" )
+        , ( "Result.mapError", "(e -> f) -> Result e a -> Result f a" )
+        , ( "Task.succeed", "a -> Task err a" )
+        , ( "Task.fail", "err -> Task err a" )
+        , ( "Task.andThen", "(a -> Task err b) -> Task err a -> Task err b" )
+        , ( "Task.map", "(a -> b) -> Task err a -> Task err b" )
+        , ( "Task.perform", "Task err a -> a" )
+        , ( "Task.run", "Task err a -> Result err a" )
+        , ( "Task.sequence", "List (Task err a) -> Task err (List a)" )
+        , ( "File.readFile", "String -> Task String String" )
+        , ( "File.writeFile", "String -> String -> Task String ()" )
+        , ( "File.mkdirAll", "String -> Task String ()" )
+        , ( "File.readDir", "String -> Task String (List String)" )
+        , ( "File.exists", "String -> Task String Bool" )
+        , ( "Process.run", "String -> List String -> Task String String" )
+        , ( "Process.exit", "Int -> ()" )
+        , ( "Process.getCwd", "() -> Task String String" )
+        , ( "Io.readLine", "() -> Task String String" )
+        , ( "Io.writeStdout", "String -> Task String ()" )
+        , ( "Io.writeStderr", "String -> Task String ()" )
+        , ( "Time.now", "() -> Task String Int" )
+        , ( "Http.get", "String -> Task String Response" )
+        , ( "Http.post", "String -> String -> Task String Response" )
+        , ( "Server.listen", "Int -> List Route -> Task String ()" )
+        , ( "Server.get", "String -> Handler -> Route" )
+        , ( "Server.post", "String -> Handler -> Route" )
+        , ( "Server.any", "String -> Handler -> Route" )
+        , ( "Server.text", "String -> Response" )
+        , ( "Server.html", "String -> Response" )
+        , ( "Server.json", "String -> Response" )
+        , ( "Server.redirect", "String -> Response" )
+        , ( "Server.withStatus", "Int -> Response -> Response" )
+        , ( "Server.withHeader", "String -> String -> Response -> Response" )
+        , ( "Server.withCookie", "String -> String -> String -> Response -> Response" )
+        , ( "Server.queryParam", "String -> Request -> Maybe String" )
+        , ( "Server.formValue", "String -> Request -> String" )
+        , ( "Server.method", "Request -> String" )
+        , ( "Server.body", "Request -> String" )
+        , ( "Server.getCookie", "String -> Request -> Maybe String" )
+        , ( "Ref.new", "a -> Ref a" )
+        , ( "Ref.get", "Ref a -> a" )
+        , ( "Ref.set", "a -> Ref a -> ()" )
+        , ( "Args.getArgs", "() -> List String" )
+        , ( "Args.getArg", "Int -> Maybe String" )
         ]
 
 
@@ -971,6 +1008,7 @@ lookupInTypedDecls name decls =
         td :: rest ->
             if td.name == name then
                 name ++ " : " ++ td.prettyType
+            
             else
                 lookupInTypedDecls name rest
 
@@ -1009,12 +1047,16 @@ inferFromAst name decls =
                         in
                             if paramCount == 0 then
                                 name ++ " : a"
+                            
                             else
-                                name ++ " : " ++ String.join " -> "
-                                                     (
-                                                     List.append typedParams
-                                                         [ "result" ]
-                                                     )
+                                name
+                                    ++ " : "
+                                        ++ String.join " -> "
+                                               (
+                                               List.append typedParams
+                                                   [ "result" ]
+                                               )
+                    
                     else
                         inferFromAst name rest
                 
@@ -1030,6 +1072,7 @@ inferLocalBinding state uri word source line =
     in
         if String.isEmpty rhsExpr then
             ""
+        
         else
             inferRhsType state uri rhsExpr source
 
@@ -1064,8 +1107,10 @@ findAssignmentLineLoop lines pattern idx cursorLine =
                 in
                     if String.isEmpty nextLine then
                         ""
+                    
                     else
                         nextLine
+            
             else
                 findAssignmentLineLoop rest pattern (idx + 1) cursorLine
 
@@ -1089,6 +1134,7 @@ inferRhsType state uri expr source =
     in
         if String.contains "." callee then
             inferQualifiedCallType state uri callee source
+        
         else
             ""
 
@@ -1126,6 +1172,7 @@ inferQualifiedCallType state uri qualName source =
                 in
                     if not (String.isEmpty annotResult) then
                         extractReturnTypeFromAnnot annotResult
+                    
                     else
                         ""
 
@@ -1154,6 +1201,7 @@ extractReturnTypeFromAnnot annot =
             if colonIdx > 0 then
                 String.trim
                     (String.slice (colonIdx + 1) (String.length annot) annot)
+            
             else
                 annot
     in
@@ -1164,8 +1212,10 @@ findCharInString : Char -> String -> Int -> Int
 findCharInString ch str idx =
     if idx >= String.length str then
         -1
+    
     else if String.slice idx (idx + 1) str == String.fromChar ch then
         idx
+    
     else
         findCharInString ch str (idx + 1)
 
@@ -1178,6 +1228,7 @@ getLineAtLoop : Int -> String -> Int -> Int -> String
 getLineAtLoop target source currentLine idx =
     if idx >= String.length source then
         ""
+    
     else
         let
             ch = String.slice idx (idx + 1) source
@@ -1186,15 +1237,19 @@ getLineAtLoop target source currentLine idx =
                 if currentLine == target then
                     String.slice (findLineStart currentLine source idx) idx
                         source
+                
                 else
                     getLineAtLoop target source (currentLine + 1) (idx + 1)
+            
             else if idx == String.length source - 1 then
                 if currentLine == target then
                     String.slice (findLineStart currentLine source idx)
                         (idx + 1)
                         source
+                
                 else
                     ""
+            
             else
                 getLineAtLoop target source currentLine (idx + 1)
 
@@ -1207,12 +1262,14 @@ findLineStartLoop : String -> Int -> Int
 findLineStartLoop source idx =
     if idx < 0 then
         0
+    
     else
         let
             ch = String.slice idx (idx + 1) source
         in
             if ch == "\n" then
                 idx + 1
+            
             else
                 findLineStartLoop source (idx - 1)
 
@@ -1224,11 +1281,13 @@ getWordAt col lineText =
         effectiveCol =
             if col >= len then
                 len - 1
+            
             else
                 col
     in
         if effectiveCol < 0 then
             ""
+        
         else
             let
                 wordStart = findWordStart lineText effectiveCol
@@ -1241,12 +1300,14 @@ findWordStart : String -> Int -> Int
 findWordStart text idx =
     if idx <= 0 then
         0
+    
     else
         let
             ch = String.slice (idx - 1) idx text
         in
             if isIdentChar ch || ch == "." then
                 findWordStart text (idx - 1)
+            
             else
                 idx
 
@@ -1255,19 +1316,83 @@ findWordEnd : String -> Int -> Int
 findWordEnd text idx =
     if idx >= String.length text then
         idx
+    
     else
         let
             ch = String.slice idx (idx + 1) text
         in
             if isIdentChar ch || ch == "." then
                 findWordEnd text (idx + 1)
+            
             else
                 idx
 
 
 isIdentChar : String -> Bool
 isIdentChar ch =
-    ch == "_" || ch == "a" || ch == "b" || ch == "c" || ch == "d" || ch == "e" || ch == "f" || ch == "g" || ch == "h" || ch == "i" || ch == "j" || ch == "k" || ch == "l" || ch == "m" || ch == "n" || ch == "o" || ch == "p" || ch == "q" || ch == "r" || ch == "s" || ch == "t" || ch == "u" || ch == "v" || ch == "w" || ch == "x" || ch == "y" || ch == "z" || ch == "A" || ch == "B" || ch == "C" || ch == "D" || ch == "E" || ch == "F" || ch == "G" || ch == "H" || ch == "I" || ch == "J" || ch == "K" || ch == "L" || ch == "M" || ch == "N" || ch == "O" || ch == "P" || ch == "Q" || ch == "R" || ch == "S" || ch == "T" || ch == "U" || ch == "V" || ch == "W" || ch == "X" || ch == "Y" || ch == "Z" || ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" || ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
+    ch == "_"
+        || ch == "a"
+        || ch == "b"
+        || ch == "c"
+        || ch == "d"
+        || ch == "e"
+        || ch == "f"
+        || ch == "g"
+        || ch == "h"
+        || ch == "i"
+        || ch == "j"
+        || ch == "k"
+        || ch == "l"
+        || ch == "m"
+        || ch == "n"
+        || ch == "o"
+        || ch == "p"
+        || ch == "q"
+        || ch == "r"
+        || ch == "s"
+        || ch == "t"
+        || ch == "u"
+        || ch == "v"
+        || ch == "w"
+        || ch == "x"
+        || ch == "y"
+        || ch == "z"
+        || ch == "A"
+        || ch == "B"
+        || ch == "C"
+        || ch == "D"
+        || ch == "E"
+        || ch == "F"
+        || ch == "G"
+        || ch == "H"
+        || ch == "I"
+        || ch == "J"
+        || ch == "K"
+        || ch == "L"
+        || ch == "M"
+        || ch == "N"
+        || ch == "O"
+        || ch == "P"
+        || ch == "Q"
+        || ch == "R"
+        || ch == "S"
+        || ch == "T"
+        || ch == "U"
+        || ch == "V"
+        || ch == "W"
+        || ch == "X"
+        || ch == "Y"
+        || ch == "Z"
+        || ch == "0"
+        || ch == "1"
+        || ch == "2"
+        || ch == "3"
+        || ch == "4"
+        || ch == "5"
+        || ch == "6"
+        || ch == "7"
+        || ch == "8"
+        || ch == "9"
 
 
 findAnnotationInSource : String -> String -> String
@@ -1282,6 +1407,7 @@ findAnnotationLoop name source idx =
     in
         if idx + searchLen > String.length source then
             ""
+        
         else
             let
                 candidate = String.slice idx (idx + searchLen) source
@@ -1291,6 +1417,7 @@ findAnnotationLoop name source idx =
                         atStart =
                             if idx == 0 then
                                 True
+                            
                             else
                                 String.slice (idx - 1) idx source == "\n"
                     in
@@ -1300,8 +1427,10 @@ findAnnotationLoop name source idx =
                                     extractUntilNewline source (idx + searchLen)
                             in
                                 name ++ " : " ++ restOfLine
+                        
                         else
                             findAnnotationLoop name source (idx + 1)
+                
                 else
                     findAnnotationLoop name source (idx + 1)
 
@@ -1310,12 +1439,14 @@ extractUntilNewline : String -> Int -> String
 extractUntilNewline source idx =
     if idx >= String.length source then
         ""
+    
     else
         let
             ch = String.slice idx (idx + 1) source
         in
             if ch == "\n" then
                 ""
+            
             else
                 ch ++ extractUntilNewline source (idx + 1)
 
@@ -1369,6 +1500,7 @@ handleCompletion state id body =
         keywordItems =
             if isQualified then
                 []
+            
             else
                 List.filterMap
                     (
@@ -1377,10 +1509,11 @@ handleCompletion state id body =
                             Just
                                 (
                                 jsonObject
-                                    [ ("label", jsonString kw)
-                                    , ("kind", jsonInt 14)
+                                    [ ( "label", jsonString kw )
+                                    , ( "kind", jsonInt 14 )
                                     ]
                                 )
+                        
                         else
                             Nothing
                     )
@@ -1388,6 +1521,7 @@ handleCompletion state id body =
         localItems =
             if isQualified then
                 []
+            
             else
                 case Dict.get uri state.astCache of
                     
@@ -1399,11 +1533,13 @@ handleCompletion state id body =
         stdlibItems =
             if isQualified then
                 []
+            
             else
                 completionsFromStdlib prefix
         moduleItems =
             if isQualified then
                 completionsForModule state modulePart
+            
             else
                 []
         allItems =
@@ -1411,8 +1547,8 @@ handleCompletion state id body =
                 [ keywordItems , localItems , stdlibItems , moduleItems ]
         result =
             jsonObject
-                [ ("isIncomplete", jsonBool True)
-                , ("items", jsonArray allItems)
+                [ ( "isIncomplete", jsonBool True )
+                , ( "items", jsonArray allItems )
                 ]
     in
         sendAndReturn (makeResponse id result) state
@@ -1425,11 +1561,13 @@ getCompletionPrefix col lineText =
         effectiveCol =
             if col > len then
                 len
+            
             else
                 col
     in
         if effectiveCol <= 0 then
             ""
+        
         else
             let
                 start = findCompletionStart lineText (effectiveCol - 1)
@@ -1441,12 +1579,14 @@ findCompletionStart : String -> Int -> Int
 findCompletionStart text idx =
     if idx <= 0 then
         0
+    
     else
         let
             ch = String.slice (idx - 1) idx text
         in
             if isIdentChar ch || ch == "." then
                 findCompletionStart text (idx - 1)
+            
             else
                 idx
 
@@ -1459,19 +1599,20 @@ completionsFromAst decls prefix =
 completionFromDecl : Declaration -> String -> Maybe String
 completionFromDecl decl prefix =
     case decl of
-
+        
         FunDecl name _ _ _ ->
             funDeclCompletion name prefix
-
+        
         TypeDecl name _ variants _ ->
             typeDeclCompletion name prefix variants
-
+        
         TypeAliasDecl name _ _ _ ->
             if String.isEmpty prefix || String.startsWith prefix name then
                 Just (makeCompletionItem name "type alias" 22)
+            
             else
                 Nothing
-
+        
         _ ->
             Nothing
 
@@ -1480,10 +1621,10 @@ funDeclCompletion : String -> String -> Maybe String
 funDeclCompletion name prefix =
     if String.isEmpty prefix || String.startsWith prefix name then
         let
-            sig =
-                Maybe.withDefault "function" (Dict.get name stdlibTypeMap)
+            sig = Maybe.withDefault "function" (Dict.get name stdlibTypeMap)
         in
             Just (makeCompletionItem name sig 3)
+    
     else
         Nothing
 
@@ -1494,25 +1635,26 @@ typeDeclCompletion name prefix variants =
         typeItem =
             if String.isEmpty prefix || String.startsWith prefix name then
                 [ makeCompletionItem name "type" 22 ]
+            
             else
                 []
         ctorItems =
             List.filterMap
                 (
                 \v ->
-                    if String.isEmpty prefix || String.startsWith prefix
-                                                    v.name then
+                    if String.isEmpty prefix || String.startsWith prefix v.name then
                         Just (makeCompletionItem v.name name 4)
+                    
                     else
                         Nothing
                 )
                 variants
     in
         case List.append typeItem ctorItems of
-
+            
             first :: _ ->
                 Just first
-
+            
             [  ] ->
                 Nothing
 
@@ -1553,6 +1695,7 @@ completionsFromStdlib prefix =
                                     ""
                     in
                         Just (makeCompletionItem name sig 3)
+                
                 else
                     Nothing
             )
@@ -1579,6 +1722,7 @@ completionsForModule state modulePart =
                                         key
                             in
                                 Just (makeCompletionItem shortName sig 3)
+                        
                         else
                             Nothing
                 )
@@ -1600,9 +1744,9 @@ completionsForModule state modulePart =
 makeCompletionItem : String -> String -> Int -> String
 makeCompletionItem label detail kind =
     jsonObject
-        [ ("label", jsonString label)
-        , ("kind", jsonInt kind)
-        , ("detail", jsonString detail)
+        [ ( "label", jsonString label )
+        , ( "kind", jsonInt kind )
+        , ( "detail", jsonString detail )
         ]
 
 
@@ -1634,8 +1778,10 @@ findDefinitionForPosition state uri line character =
             in
                 if String.isEmpty word then
                     jsonNull
+                
                 else if String.contains "." word then
                     findDefinitionInDep state word source uri
+                
                 else
                     findDefinitionInSource word source uri
 
@@ -1697,13 +1843,14 @@ findDefinitionInSource name source uri =
     in
         if defLine < 0 then
             jsonNull
+        
         else
             let
                 nameLen = String.length name
             in
                 jsonObject
-                    [ ("uri", jsonString uri)
-                    , ("range", makeRange defLine 0 defLine nameLen)
+                    [ ( "uri", jsonString uri )
+                    , ( "range", makeRange defLine 0 defLine nameLen )
                     ]
 
 
@@ -1711,11 +1858,13 @@ findDefLineInSource : String -> String -> Int -> Int -> Int
 findDefLineInSource name source lineNum idx =
     if idx >= String.length source then
         -1
+    
     else
         let
             atStart =
                 if idx == 0 then
                     True
+                
                 else
                     String.slice (idx - 1) idx source == "\n"
         in
@@ -1742,13 +1891,17 @@ findDefLineInSource name source lineNum idx =
                                             findDefLineInSource name source
                                                 lineNum
                                                 (idx + 1)
+                                        
                                         else
                                             lineNum
+                                    
                                     else
                                         lineNum
+                            
                             else
                                 findDefLineInSource name source lineNum
                                     (idx + 1)
+                    
                     else
                         let
                             ch = String.slice idx (idx + 1) source
@@ -1756,15 +1909,18 @@ findDefLineInSource name source lineNum idx =
                             if ch == "\n" then
                                 findDefLineInSource name source (lineNum + 1)
                                     (idx + 1)
+                            
                             else
                                 findDefLineInSource name source lineNum
                                     (idx + 1)
+            
             else
                 let
                     ch = String.slice idx (idx + 1) source
                 in
                     if ch == "\n" then
                         findDefLineInSource name source (lineNum + 1) (idx + 1)
+                    
                     else
                         findDefLineInSource name source lineNum (idx + 1)
 
@@ -1777,35 +1933,40 @@ handleFormatting state id body =
         uri = jsonGetString "uri" textDoc
         docText =
             case Dict.get uri state.documents of
-
+                
                 Just text ->
                     text
-
+                
                 Nothing ->
                     ""
     in
         if String.isEmpty docText then
             sendAndReturn (makeResponse id (jsonArray [])) state
+        
         else
             let
                 lexResult = Lexer.lex docText
             in
                 case Parser.parse lexResult.tokens of
-
+                    
                     Err _ ->
                         sendAndReturn (makeResponse id (jsonArray [])) state
-
+                    
                     Ok mod ->
                         let
                             formatted = Format.formatModule mod
                             lineCount = List.length (String.split "\n" docText)
                             edit =
                                 jsonObject
-                                    [ ("range", makeRange 0 0 lineCount 0)
-                                    , ("newText", jsonString formatted)
+                                    [ ( "range", makeRange 0 0 lineCount 0 )
+                                    , ( "newText", jsonString formatted )
                                     ]
                         in
                             if String.isEmpty (String.trim formatted) then
-                                sendAndReturn (makeResponse id (jsonArray [])) state
+                                sendAndReturn (makeResponse id (jsonArray []))
+                                    state
+                            
                             else
-                                sendAndReturn (makeResponse id (jsonArray [ edit ])) state
+                                sendAndReturn
+                                    (makeResponse id (jsonArray [ edit ]))
+                                    state

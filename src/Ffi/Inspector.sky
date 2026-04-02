@@ -70,6 +70,7 @@ inspectPackage pkgName =
             Ok cached ->
                 if String.length cached > 100000 then
                     runInspectorMinimal pkgName cacheDir cachePath
+                
                 else
                     Ok cached
             
@@ -90,7 +91,9 @@ runInspectorMinimal pkgName cacheDir cachePath =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
+                , "cd "
+                    ++ inspectorDir
+                        ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
                 ]
         _ =
             Process.run "cp"
@@ -99,7 +102,10 @@ runInspectorMinimal pkgName cacheDir cachePath =
         result =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+                , "cd "
+                    ++ gomodDir
+                        ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal "
+                            ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
                 ]
     in
         case result of
@@ -110,8 +116,8 @@ runInspectorMinimal pkgName cacheDir cachePath =
             Err e ->
                 Err
                     (
-                    "Failed to inspect (minimal) " ++ pkgName ++ ": " ++ errorToString
-                                                                             e
+                    "Failed to inspect (minimal) "
+                        ++ pkgName ++ ": " ++ errorToString e
                     )
 
 
@@ -129,7 +135,9 @@ runInspector pkgName cacheDir cachePath =
         buildResult =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ inspectorDir ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
+                , "cd "
+                    ++ inspectorDir
+                        ++ " && go mod tidy 2>/dev/null && go build -gcflags=all=-l -o inspector . 2>&1"
                 ]
     in
         case buildResult of
@@ -147,7 +155,8 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ gomodDir ++ " && go get " ++ pkgName ++ " 2>/dev/null"
+                , "cd "
+                    ++ gomodDir ++ " && go get " ++ pkgName ++ " 2>/dev/null"
                 ]
         _ =
             Process.run "cp"
@@ -156,8 +165,11 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
             if isLargePackage pkgName then
                 Process.run "sh"
                     [ "-c"
-                    , "cd " ++ gomodDir ++ " && go build " ++ pkgName ++ " 2>/dev/null"
+                    , "cd "
+                        ++ gomodDir
+                            ++ " && go build " ++ pkgName ++ " 2>/dev/null"
                     ]
+            
             else
                 Ok ""
         absCache = "../../" ++ cachePath
@@ -165,12 +177,18 @@ runInspectorAfterBuild pkgName cachePath gomodDir inspectorDir =
         flag =
             if useMinimal then
                 " --minimal "
+            
             else
                 " "
         runResult =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector" ++ flag ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+                , "cd "
+                    ++ gomodDir
+                        ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector"
+                            ++ flag
+                                ++ pkgName
+                                    ++ " > " ++ absCache ++ " 2>/dev/null"
                 ]
     in
         case runResult of
@@ -188,7 +206,10 @@ runInspectorRetry pkgName cachePath gomodDir absCache =
         retryResult =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ gomodDir ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal " ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
+                , "cd "
+                    ++ gomodDir
+                        ++ " && GOMEMLIMIT=2GiB GOFLAGS='-gcflags=all=-l' ./inspector --minimal "
+                            ++ pkgName ++ " > " ++ absCache ++ " 2>/dev/null"
                 ]
     in
         case retryResult of
@@ -199,18 +220,17 @@ runInspectorRetry pkgName cachePath gomodDir absCache =
             Err e2 ->
                 Err
                     (
-                    "Failed to inspect package " ++ pkgName ++ ": " ++ errorToString
-                                                                           e2
+                    "Failed to inspect package "
+                        ++ pkgName ++ ": " ++ errorToString e2
                     )
 
 
 isLargePackage : String -> Bool
 isLargePackage pkgName =
-    String.contains "stripe" pkgName || String.contains "aws-sdk" pkgName || String.contains
-                                                                                 "googleapis"
-                                                                                 pkgName || String.contains
-                                                                                                "kubernetes"
-                                                                                                pkgName
+    String.contains "stripe" pkgName
+        || String.contains "aws-sdk" pkgName
+        || String.contains "googleapis" pkgName
+        || String.contains "kubernetes" pkgName
 
 
 safePkgName : String -> String
@@ -233,14 +253,16 @@ copyInspectorSource inspectorDir =
 
 copyFirstFound paths targetPath =
     case paths of
-        [] ->
+        
+        [  ] ->
             File.writeFile targetPath inspectorGoCode
-
+        
         path :: rest ->
             case File.readFile path of
+                
                 Ok content ->
                     File.writeFile targetPath content
-
+                
                 Err _ ->
                     copyFirstFound rest targetPath
 

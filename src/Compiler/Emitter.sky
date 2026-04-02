@@ -66,9 +66,9 @@ lowerModuleForProject registry mod moduleName =
         baseCtx = Lower.emptyCtx
         ctx =
             { baseCtx
-            | registry = registry
-            , localFunctions = Lower.collectLocalFunctions mod.declarations
-            , importedConstructors = Lower.buildConstructorMap registry
+                | registry = registry
+                , localFunctions = Lower.collectLocalFunctions mod.declarations
+                , importedConstructors = Lower.buildConstructorMap registry
             }
         goDecls = Lower.lowerDeclarations ctx mod.declarations
         ctorDecls = Lower.generateConstructorDecls registry mod.declarations
