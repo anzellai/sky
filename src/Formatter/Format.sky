@@ -16,13 +16,14 @@ formatModule mod =
         allDocs =
             if List.isEmpty mod.imports then
                 concat [ header , hardline , hardline , declDocs ]
+            
             else
                 concat
                     [ header
                     , hardline
                     , hardline
                     , concat
-                          (List.map (\d -> concat [ d , hardline ]) importDocs)
+                        (List.map (\d -> concat [ d , hardline ]) importDocs)
                     , hardline
                     , declDocs
                     ]
@@ -61,6 +62,7 @@ formatImport imp =
         aliasDoc =
             if String.isEmpty imp.alias_ then
                 text ""
+            
             else
                 concat [ text " as " , text imp.alias_ ]
         exposingDoc =
@@ -103,6 +105,7 @@ formatDeclPairs docs decls =
                 sep =
                     if isAnnotFunPair then
                         hardline
+                    
                     else
                         concat [ hardline , hardline , hardline ]
             in
@@ -170,7 +173,7 @@ formatDeclaration decl =
             formatFunction name params body
         
         TypeAnnotDecl name typeExpr _ ->
-            concat [ text name , text " : " , formatTypeExpr typeExpr ]
+            formatTypeAnnot name typeExpr
         
         TypeDecl name typeParams variants _ ->
             formatTypeDecl name typeParams variants
@@ -188,6 +191,11 @@ formatDeclaration decl =
                 ]
 
 
+formatTypeAnnot : String -> TypeExpr -> Doc
+formatTypeAnnot name typeExpr =
+    group (concat [ text name , text " : " , formatTypeExpr typeExpr ])
+
+
 formatFunction : String -> (List Pattern) -> Expression -> Doc
 formatFunction name params body =
     let
@@ -195,6 +203,7 @@ formatFunction name params body =
         header =
             if List.isEmpty params then
                 concat [ text name , text " =" ]
+            
             else
                 concat
                     [ text name
@@ -212,6 +221,7 @@ formatTypeDecl name params variants =
         paramStr =
             if List.isEmpty params then
                 ""
+            
             else
                 " " ++ String.join " " params
         header = text ("type " ++ name ++ paramStr)
@@ -231,12 +241,12 @@ formatTypeDecl name params variants =
                     concat
                         [ header
                         , indent
-                              (
-                              concat
-                                  [ hardline
-                                  , joinDocs (firstDoc :: restDocs) hardline
-                                  ]
-                              )
+                            (
+                            concat
+                                [ hardline
+                                , joinDocs (firstDoc :: restDocs) hardline
+                                ]
+                            )
                         ]
 
 
@@ -244,12 +254,23 @@ formatVariant : TypeVariant -> Doc
 formatVariant variant =
     if List.isEmpty variant.fields then
         text variant.name
+    
     else
-        concat
-            [ text variant.name
-            , text " "
-            , joinDocs (List.map formatTypeExprParens variant.fields) (text " ")
-            ]
+        group
+            (
+            concat
+                [ text variant.name
+                , indent
+                    (
+                    concat
+                        (
+                        List.map
+                            (\f -> concat [ line , formatTypeExprParens f ])
+                            variant.fields
+                        )
+                    )
+                ]
+            )
 
 
 formatTypeAlias : String -> (List String) -> TypeExpr -> Doc
@@ -258,6 +279,7 @@ formatTypeAlias name params aliasType =
         paramStr =
             if List.isEmpty params then
                 ""
+            
             else
                 " " ++ String.join " " params
     in
@@ -292,6 +314,7 @@ formatExpr expr =
         BoolLitExpr b _ ->
             if b then
                 text "True"
+            
             else
                 text "False"
         
@@ -314,6 +337,7 @@ formatExpr expr =
             concat [ formatExpr target , text "." , text fieldName ]
         
         CallExpr callee args _ ->
+-- elm-format style: all args on one line, or each on its own line indented 4
             formatCall callee args
         
         LambdaExpr params body _ ->
@@ -358,15 +382,15 @@ formatTuple items =
             group
                 (
                 concat
-                    [ text "("
+                    [ text "( "
                     , formatExpr first
                     , concat
-                          (
-                          List.map
-                              (\item -> concat [ text ", " , formatExpr item ])
-                              rest
-                          )
-                    , text ")"
+                        (
+                        List.map
+                            (\item -> concat [ text ", " , formatExpr item ])
+                            rest
+                        )
+                    , text " )"
                     ]
                 )
 
@@ -385,14 +409,14 @@ formatList items =
                     [ text "[ "
                     , formatExpr first
                     , concat
-                          (
-                          List.map
-                              (
-                              \item ->
-                                  concat [ line , text ", " , formatExpr item ]
-                              )
-                              rest
-                          )
+                        (
+                        List.map
+                            (
+                            \item ->
+                                concat [ line , text ", " , formatExpr item ]
+                            )
+                            rest
+                        )
                     , line
                     , text "]"
                     ]
@@ -409,50 +433,52 @@ formatRecord fields =
         first :: rest ->
             group
                 (
-                align
-                    (
-                    concat
-                        [ text "{ "
-                        , formatField first
-                        , concat
-                              (
-                              List.map
-                                  (
-                                  \f ->
-                                      concat
-                                          [ line , text ", " , formatField f ]
-                                  )
-                                  rest
-                              )
-                        , line
-                        , text "}"
-                        ]
-                    )
+                concat
+                    [ text "{ "
+                    , formatField first
+                    , concat
+                        (
+                        List.map
+                            (\f -> concat [ line , text ", " , formatField f ])
+                            rest
+                        )
+                    , line
+                    , text "}"
+                    ]
                 )
 
 
 formatField : NamedExpr -> Doc
 formatField field =
-    group (concat [ text field.name , text " = " , formatExpr field.value ])
+    group
+        (
+        concat
+            [ text field.name
+            , text " ="
+            , indent (concat [ line , formatExpr field.value ])
+            ]
+        )
 
 
 formatRecordUpdate : Expression -> (List NamedExpr) -> Doc
 formatRecordUpdate base fields =
     group
         (
-        align
-            (
-            concat
-                [ text "{ "
-                , formatExpr base
-                , line
-                , text "| "
-                , joinDocs (List.map formatField fields)
-                      (concat [ line , text ", " ])
-                , line
-                , text "}"
-                ]
-            )
+        concat
+            [ text "{ "
+            , formatExpr base
+            , indent
+                (
+                concat
+                    [ line
+                    , text "| "
+                    , joinDocs (List.map formatField fields)
+                        (concat [ line , text ", " ])
+                    ]
+                )
+            , line
+            , text "}"
+            ]
         )
 
 
@@ -460,20 +486,14 @@ formatCall : Expression -> (List Expression) -> Doc
 formatCall callee args =
     group
         (
-        align
-            (
-            concat
-                [ formatExpr callee
-                , indent
-                      (
-                      concat
-                          (
-                          List.map (\arg -> concat [ line , formatExpr arg ])
-                              args
-                          )
-                      )
-                ]
-            )
+        concat
+            [ formatExpr callee
+            , indent
+                (
+                concat
+                    (List.map (\arg -> concat [ line , formatExpr arg ]) args)
+                )
+            ]
         )
 
 
@@ -492,23 +512,114 @@ formatLambda params body =
 
 formatBinary : String -> Expression -> Expression -> Doc
 formatBinary op leftExpr rightExpr =
-    if op == "|>" || op == "<|" then
-        concat
-            [ formatExpr leftExpr
-            , indent
-                  (
-                  concat
-                      [ hardline , text op , text " " , formatExpr rightExpr ]
-                  )
-            ]
+    if op == "|>" then
+        group
+            (
+            concat
+                [ formatExpr leftExpr
+                , indent
+                    (concat [ hardline , text "|> " , formatExpr rightExpr ])
+                ]
+            )
+    
+    else if op == "<|" then
+        group
+            (
+            concat
+                [ formatExpr leftExpr
+                , indent
+                    (concat [ hardline , text "<| " , formatExpr rightExpr ])
+                ]
+            )
+    
+    else if op == "||" || op == "&&" then
+        let
+            operands = collectBinaryChain op leftExpr rightExpr
+            firstOp =
+                case List.head operands of
+                    
+                    Just e ->
+                        e
+                    
+                    Nothing ->
+                        leftExpr
+            restOps = List.drop 1 operands
+        in
+            group
+                (
+                concat
+                    [ formatExpr firstOp
+                    , indent
+                        (
+                        concat
+                            (
+                            List.map
+                                (
+                                \e ->
+                                    concat
+                                        [ line
+                                        , text op
+                                        , text " "
+                                        , formatExpr e
+                                        ]
+                                )
+                                restOps
+                            )
+                        )
+                    ]
+                )
+    
+    else if op == "++" then
+        group
+            (
+            concat
+                [ formatExpr leftExpr
+                , indent (concat [ line , text "++ " , formatExpr rightExpr ])
+                ]
+            )
+    
     else
-        concat
-            [ formatExpr leftExpr
-            , text " "
-            , text op
-            , text " "
-            , formatExpr rightExpr
-            ]
+        group
+            (
+            concat
+                [ formatExpr leftExpr
+                , text " "
+                , text op
+                , text " "
+                , formatExpr rightExpr
+                ]
+            )
+
+
+collectBinaryChain : String -> Expression -> Expression -> List Expression
+collectBinaryChain op leftExpr rightExpr =
+    let
+        leftParts =
+            case leftExpr of
+                
+                BinaryExpr innerOp innerLeft innerRight _ ->
+                    if innerOp == op then
+                        collectBinaryChain op innerLeft innerRight
+                    
+                    else
+                        [ leftExpr ]
+                
+                _ ->
+                    [ leftExpr ]
+        rightParts =
+            case rightExpr of
+                
+                BinaryExpr innerOp innerLeft innerRight _ ->
+                    if innerOp == op then
+                        collectBinaryChain op innerLeft innerRight
+                    
+                    else
+                        [ rightExpr ]
+                
+                _ ->
+                    [ rightExpr ]
+    in
+        List.append leftParts rightParts
 
 
 formatIf : Expression -> Expression -> Expression -> Doc
@@ -516,10 +627,17 @@ formatIf condition thenBranch elseBranch =
     let
         elseDoc =
             if isExprIf elseBranch then
-                concat [ hardline , text "else " , formatExpr elseBranch ]
+                concat
+                    [ hardline
+                    , hardline
+                    , text "else "
+                    , formatExpr elseBranch
+                    ]
+            
             else
                 concat
                     [ hardline
+                    , hardline
                     , text "else"
                     , indent (concat [ hardline , formatExpr elseBranch ])
                     ]
@@ -560,13 +678,13 @@ formatLetBinding binding =
     concat
         [ hardline
         , group
-              (
-              concat
-                  [ formatPattern binding.pattern
-                  , text " ="
-                  , indent (concat [ line , formatExpr binding.value ])
-                  ]
-              )
+            (
+            concat
+                [ formatPattern binding.pattern
+                , text " ="
+                , indent (concat [ line , formatExpr binding.value ])
+                ]
+            )
         ]
 
 
@@ -607,13 +725,29 @@ formatPattern pat =
             in
                 if List.isEmpty argPats then
                     text ctorName
+                
                 else
-                    concat
-                        [ text ctorName
-                        , text " "
-                        , joinDocs (List.map formatPatternParens argPats)
-                              (text " ")
-                        ]
+                    group
+                        (
+                        concat
+                            [ text ctorName
+                            , indent
+                                (
+                                concat
+                                    (
+                                    List.map
+                                        (
+                                        \p ->
+                                            concat
+                                                [ text " "
+                                                , formatPatternParens p
+                                                ]
+                                        )
+                                        argPats
+                                    )
+                                )
+                            ]
+                        )
         
         PLiteral lit _ ->
             formatLiteral lit
@@ -623,7 +757,7 @@ formatPattern pat =
                 (
                 concat
                     [ text "( "
-                    , joinDocs (List.map formatPattern items) (text " , ")
+                    , joinDocs (List.map formatPattern items) (text ", ")
                     , text " )"
                     ]
                 )
@@ -633,7 +767,7 @@ formatPattern pat =
                 (
                 concat
                     [ text "[ "
-                    , joinDocs (List.map formatPattern items) (text " , ")
+                    , joinDocs (List.map formatPattern items) (text ", ")
                     , text " ]"
                     ]
                 )
@@ -646,7 +780,7 @@ formatPattern pat =
             concat [ formatPattern innerPat , text " as " , text name ]
         
         PRecord fields _ ->
-            text ("{ " ++ String.join " , " fields ++ " }")
+            text ("{ " ++ String.join ", " fields ++ " }")
 
 
 formatPatternParens : Pattern -> Doc
@@ -656,6 +790,7 @@ formatPatternParens pat =
         PConstructor _ args _ ->
             if List.isEmpty args then
                 formatPattern pat
+            
             else
                 concat [ text "(" , formatPattern pat , text ")" ]
         
@@ -685,6 +820,7 @@ formatLiteral lit =
         LitBool b ->
             if b then
                 text "True"
+            
             else
                 text "False"
 
@@ -699,23 +835,42 @@ formatTypeExpr texpr =
             in
                 if List.isEmpty args then
                     text name
+                
                 else
-                    concat
-                        [ text name
-                        , text " "
-                        , joinDocs (List.map formatTypeExprParens args)
-                              (text " ")
-                        ]
+                    group
+                        (
+                        concat
+                            [ text name
+                            , indent
+                                (
+                                concat
+                                    (
+                                    List.map
+                                        (
+                                        \a ->
+                                            concat
+                                                [ text " "
+                                                , formatTypeExprParens a
+                                                ]
+                                        )
+                                        args
+                                    )
+                                )
+                            ]
+                        )
         
         TypeVar name _ ->
             text name
         
         FunType fromT toT _ ->
-            concat
-                [ formatTypeExprParens fromT
-                , text " -> "
-                , formatTypeExpr toT
-                ]
+            group
+                (
+                concat
+                    [ formatTypeExprParens fromT
+                    , text " -> "
+                    , formatTypeExpr toT
+                    ]
+                )
         
         RecordTypeExpr fields _ ->
             formatRecordType fields
@@ -744,6 +899,7 @@ formatTypeExprParens texpr =
         TypeRef _ args _ ->
             if List.isEmpty args then
                 formatTypeExpr texpr
+            
             else
                 concat [ text "(" , formatTypeExpr texpr , text ")" ]
         
@@ -765,15 +921,14 @@ formatRecordType fields =
                     [ text "{ "
                     , formatNamedType first
                     , concat
-                          (
-                          List.map
-                              (
-                              \f ->
-                                  concat
-                                      [ line , text ", " , formatNamedType f ]
-                              )
-                              rest
-                          )
+                        (
+                        List.map
+                            (
+                            \f ->
+                                concat [ line , text ", " , formatNamedType f ]
+                            )
+                            rest
+                        )
                     , line
                     , text "}"
                     ]

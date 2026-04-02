@@ -128,6 +128,87 @@ sky clean                         # Remove sky-out/ dist/
 sky --version                     # sky v0.7.7
 ```
 
+## Code Formatting (`sky fmt`)
+
+The formatter follows **elm-format** style. It is opinionated and deterministic — there are no configuration options.
+
+### Rules
+
+- **4-space indentation** throughout (never tabs)
+- **No max line width** wrapping — short expressions stay on one line, long ones break
+- **"One line or each on its own line"** — function arguments, list items, and record fields either all fit on one line or each gets its own line
+- **Leading commas** for multi-line lists, records, and record types
+- **Trailing newline** at end of file
+- **Blank line between declarations** (two blank lines), one blank line between type annotation and function
+
+### Examples
+
+```elm
+-- Function calls: one line or each arg on its own line
+div [ class "container" ] [ text "hello" ]
+
+someFunction
+    arg1
+    arg2
+    arg3
+
+-- Pipelines: each |> on its own line, indented 4
+value
+    |> transform1
+    |> transform2 arg1
+    |> finalStep
+
+-- Boolean chains: operators at start of line, indented 4
+if condition1
+    || condition2
+    || condition3 then
+    body
+
+else
+    fallback
+
+-- Records: leading commas when multi-line
+{ name = "Alice" , age = 30 }
+
+{ firstName = "Alice"
+, lastName = "Smith"
+, email = "alice@example.com"
+}
+
+-- Record update
+{ model | name = newName , age = newAge }
+
+-- Case: branches indented 4, body indented 4 from pattern
+case msg of
+
+    Increment ->
+        count + 1
+
+    Decrement ->
+        count - 1
+
+-- Let/in: bindings indented 4, body indented 4 from in
+let
+    x = compute
+    y = transform x
+in
+    result
+
+-- else if: flat chains
+if x > 0 then
+    positive
+
+else if x < 0 then
+    negative
+
+else
+    zero
+```
+
+### Safety
+
+The formatter refuses to write if the output loses more than 1/3 of code lines compared to the input. This prevents silent code deletion when the parser recovers from syntax errors with a partial AST.
+
 ## Standard Library
 
 ### Pure Functions (no Task)

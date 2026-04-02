@@ -1136,84 +1136,95 @@ Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow
 - **Import conventions**: Use `exposing (..)` sparingly — when two modules export the same name (e.g., `Std.Html` and `Tailwind` both export `hidden`, `h2`, etc.), the first import wins. Prefer qualified imports (`import Foo as F`) to avoid collisions. If using `Tailwind exposing (..)` alongside `Std.Html exposing (..)`, use `hidden_` (with underscore) for the Tailwind version, and `headerNode`/`footerNode` for HTML5 semantic elements
 - **`//` for integer division**: Use `//` (Elm-style) or regular `/` — both work. `//` always returns `Int`, `modBy divisor n` returns `n % divisor`
 
-## Code Formatting
+## Code Formatting (`sky fmt`)
 
-**Always run `sky fmt <file>.sky` (or `sky fmt <file>.skyi`) after any changes to `.sky` or `.skyi` files.** The formatter is opinionated and canonical — all Sky code must be formatted before committing.
+**Always run `sky fmt <file>.sky` after changes.** The formatter follows **elm-format** style — opinionated, deterministic, no configuration options.
 
 ### Rules
 
-- **Line width**: 80 characters max
-- **Indentation**: 4 spaces (no tabs)
-- **Leading commas**: multi-line lists, records, tuples, and type variants use leading comma/pipe style
+- **4-space indentation** throughout (never tabs)
+- **"One line or each on its own line"** — arguments, list items, record fields either all fit on one line or each gets its own line indented 4 spaces
+- **Leading commas** for multi-line lists, records, and record types
+- **Two blank lines** between top-level declarations
+- **Trailing newline** at end of file
 
-### Declarations
-
-```elm
--- Type annotation on its own line, function body indented 4 spaces
-greet : String -> String
-greet name =
-    "Hello, " ++ name
-
-
--- Two blank lines between top-level declarations
-add : Int -> Int -> Int
-add a b =
-    a + b
-```
-
-### Let-In (always multiline)
+### Function Calls
 
 ```elm
-main =
-    let
-        a = 10
-        b = 20
-    in
-    println (a + b)
+-- Short: stays on one line
+div [ class "container" ] [ text "hello" ]
+
+-- Long: each arg on its own line, indented 4
+someFunction
+    arg1
+    arg2
+    arg3
 ```
 
-`let` and `in` are aligned; bindings indented 4 spaces under `let`; body indented 4 spaces under `in`.
-
-### Case Expressions
+### Pipelines
 
 ```elm
-case msg of
-    Navigate page ->
-        ( { model | page = page }, Cmd.none )
-
-    Increment ->
-        ( { model | count = model.count + 1 }, Cmd.none )
+items
+    |> List.map (\x -> x * 2)
+    |> List.filter (\x -> x > 3)
+    |> List.sort
 ```
 
-Branches indented 4 spaces under `case`; branch body indented 4 spaces under the arrow. Blank line between branches.
+### Boolean Chains
+
+```elm
+if condition1
+    || condition2
+    || condition3 then
+    body
+
+else
+    fallback
+```
 
 ### If-Then-Else
 
 ```elm
 if condition then
     trueValue
+
+else if otherCondition then
+    otherValue
+
 else
-    falseValue
+    fallback
 ```
 
-### ADT Variants (leading pipe)
+### Case Expressions
 
 ```elm
-type Shape
-    = Circle Float
-    | Rectangle Float Float
+case msg of
+
+    Increment ->
+        count + 1
+
+    Decrement ->
+        count - 1
 ```
 
-First variant prefixed with `= `, subsequent with `| `, all indented 4 spaces.
-
-### Records & Lists (leading comma when multi-line)
+### Let-In
 
 ```elm
--- Short form stays on one line
-{ name = "Alice", age = 30 }
-[ 1, 2, 3 ]
+let
+    x = compute
+    y = transform x
+in
+    result
+```
 
--- Multi-line uses leading commas
+### Records & Lists
+
+```elm
+-- Short: one line
+{ name = "Alice" , age = 30 }
+[ 1 , 2 , 3 ]
+
+-- Long: leading commas
 { name = "Alice"
 , age = 30
 , email = "alice@example.com"
@@ -1228,28 +1239,29 @@ First variant prefixed with `= `, subsequent with `| `, all indented 4 spaces.
 ### Record Updates
 
 ```elm
-{ model | count = model.count + 1 }
+{ model | name = newName , age = newAge }
 ```
 
-### Pipeline Operators (always break to new lines)
+### ADT Variants
 
 ```elm
-items
-    |> List.map (\x -> x * 2)
-    |> List.filter (\x -> x > 3)
+type Shape
+    = Circle Float
+    | Rectangle Float Float
 ```
 
-### Module Header & Imports
+### Declarations
 
 ```elm
-module Main exposing (main)
+greet : String -> String
+greet name =
+    "Hello, " ++ name
 
 
-import Std.Log exposing (println)
-import Sky.Core.String as String
+add : Int -> Int -> Int
+add a b =
+    a + b
 ```
-
-Two blank lines between module declaration and imports. One blank line after imports before declarations.
 
 ## Common Patterns
 
