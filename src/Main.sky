@@ -813,26 +813,30 @@ installFromSkyToml _ =
             let
                 lines = String.split "\n" content
             in
-                installTomlDeps lines False
+                installTomlDeps lines ""
 
 
-installTomlDeps lines inGoDeps =
+installTomlDeps lines section =
     case lines of
-        
+
         [  ] ->
             ()
-        
+
         line :: rest ->
             let
                 trimmed = String.trim line
                 isGoDepsHeader =
                     trimmed == "[\"go.dependencies\"]" || trimmed == "[go.dependencies]"
+                isSkyDepsHeader =
+                    trimmed == "[dependencies]"
             in
                 if isGoDepsHeader then
-                    installTomlDeps rest True
-                else if String.startsWith "[" trimmed && not isGoDepsHeader then
-                    installTomlDeps rest False
-                else if inGoDeps && String.contains "=" trimmed then
+                    installTomlDeps rest "go"
+                else if isSkyDepsHeader then
+                    installTomlDeps rest "sky"
+                else if String.startsWith "[" trimmed then
+                    installTomlDeps rest ""
+                else if section == "sky" && String.contains "=" trimmed then
                     let
                         pkg =
                             String.trim
@@ -842,10 +846,66 @@ installTomlDeps lines inGoDeps =
                                     String.trim
                                         (
                                         case String.split "=" trimmed of
-                                            
+
                                             key :: _ ->
                                                 key
-                                            
+
+                                            [  ] ->
+                                                ""
+                                        )
+                                    )
+                                )
+                        targetDir = ".skydeps/" ++ pkg
+                        alreadyInstalled =
+                            case File.readFile (targetDir ++ "/sky.toml") of
+
+                                Ok _ ->
+                                    True
+
+                                Err _ ->
+                                    False
+                    in
+                        if String.isEmpty pkg || alreadyInstalled then
+                            installTomlDeps rest "sky"
+                        else
+                            let
+                                _ = println ("   Installing Sky package: " ++ pkg ++ "...")
+                                tmpDir = "/tmp/sky-dep-" ++ String.replace "/" "_" (String.replace "." "_" pkg)
+                                _ = Process.run "rm" [ "-rf" , tmpDir ]
+                                cloneResult =
+                                    Process.run "git"
+                                        [ "clone" , "--depth" , "1" , "https://" ++ pkg , tmpDir ]
+                            in
+                                case cloneResult of
+
+                                    Ok _ ->
+                                        let
+                                            _ = File.mkdirAll targetDir
+                                            _ = Process.run "rm" [ "-rf" , targetDir ]
+                                            _ = Process.run "mv" [ tmpDir , targetDir ]
+                                            _ = println ("   Installed " ++ pkg)
+                                        in
+                                            installTomlDeps rest "sky"
+
+                                    Err _ ->
+                                        let
+                                            _ = println ("   Warning: could not install " ++ pkg)
+                                        in
+                                            installTomlDeps rest "sky"
+                else if section == "go" && String.contains "=" trimmed then
+                    let
+                        pkg =
+                            String.trim
+                                (
+                                String.replace "\"" ""
+                                    (
+                                    String.trim
+                                        (
+                                        case String.split "=" trimmed of
+
+                                            key :: _ ->
+                                                key
+
                                             [  ] ->
                                                 ""
                                         )
@@ -861,18 +921,18 @@ installTomlDeps lines inGoDeps =
                             ".skycache/go/" ++ safeName ++ "/bindings.skyi"
                     in
                         case File.readFile bindingPath of
-                            
+
                             Ok _ ->
-                                installTomlDeps rest True
-                            
+                                installTomlDeps rest "go"
+
                             Err _ ->
                                 let
                                     firstPart =
                                         case String.split "/" pkg of
-                                            
+
                                             first :: _ ->
                                                 first
-                                            
+
                                             [  ] ->
                                                 pkg
                                     _ =
@@ -892,113 +952,16 @@ installTomlDeps lines inGoDeps =
                                                     generateGoBindings pkg
                                                         cacheDir
                                             in
-                                                installTomlDeps rest True
+                                                installTomlDeps rest "go"
                                     else if String.contains "." firstPart then
                                         let
                                             _ = detectAndInstall pkg
                                         in
-                                            installTomlDeps rest True
+                                            installTomlDeps rest "go"
                                     else
-                                        installTomlDeps rest True
+                                        installTomlDeps rest "go"
                 else
-                    installTomlDeps rest inGoDeps
-
-
-installFromSkyToml _ =
-    case File.readFile "sky.toml" of
-        
-        Err _ ->
-            ()
-        
-        Ok content ->
-            let
-                lines = String.split "\n" content
-            in
-                installTomlDeps lines False
-
-
-installTomlDeps lines inGoDeps =
-    case lines of
-        
-        [  ] ->
-            ()
-        
-        line :: rest ->
-            let
-                trimmed = String.trim line
-                isGoDepsHeader =
-                    trimmed == "[\"go.dependencies\"]" || trimmed == "[go.dependencies]"
-            in
-                if isGoDepsHeader then
-                    installTomlDeps rest True
-                else if String.startsWith "[" trimmed && not isGoDepsHeader then
-                    installTomlDeps rest False
-                else if inGoDeps && String.contains "=" trimmed then
-                    let
-                        pkg =
-                            String.trim
-                                (
-                                String.replace "\"" ""
-                                    (
-                                    String.trim
-                                        (
-                                        case String.split "=" trimmed of
-                                            
-                                            key :: _ ->
-                                                key
-                                            
-                                            [  ] ->
-                                                ""
-                                        )
-                                    )
-                                )
-                        safeName =
-                            String.replace "-" "_"
-                                (
-                                String.replace "/" "_"
-                                    (String.replace "." "_" pkg)
-                                )
-                        bindingPath =
-                            ".skycache/go/" ++ safeName ++ "/bindings.skyi"
-                    in
-                        case File.readFile bindingPath of
-                            
-                            Ok _ ->
-                                installTomlDeps rest True
-                            
-                            Err _ ->
-                                let
-                                    firstPart =
-                                        case String.split "/" pkg of
-                                            
-                                            first :: _ ->
-                                                first
-                                            
-                                            [  ] ->
-                                                pkg
-                                    _ =
-                                        println
-                                            (
-                                            "   Generating bindings for " ++ pkg ++ "..."
-                                            )
-                                in
-                                    if isGoStdlib firstPart || isGoStdlib pkg then
-                                        let
-                                            cacheDir =
-                                                ".skycache/go/" ++ safeName
-                                            _ = File.mkdirAll cacheDir
-                                            _ = generateGoBindings pkg cacheDir
-                                        in
-                                            installTomlDeps rest True
-                                    else if String.contains "." firstPart then
-                                        let
-                                            _ = detectAndInstall pkg
-                                        in
-                                            installTomlDeps rest True
-                                    else
-                                        installTomlDeps rest True
-                else
-                    installTomlDeps rest inGoDeps
+                    installTomlDeps rest section
 
 
 autoGenerateBindings _ =
@@ -1087,8 +1050,21 @@ processImportLine line =
                         ""
             else
                 ""
+        localSkyPath = "src/" ++ String.join "/" (String.split "." modName) ++ ".sky"
+        isLocalFile =
+            case File.readFile localSkyPath of
+
+                Ok _ ->
+                    True
+
+                Err _ ->
+                    False
     in
         if String.isEmpty modName || Resolver.isStdlib modName then
+            ()
+        else if isLocalFile then
+            ()
+        else if isLocalSkydep modName then
             ()
         else
             let
@@ -1099,10 +1075,10 @@ processImportLine line =
                 bindingPath = ".skycache/go/" ++ safeName ++ "/bindings.skyi"
             in
                 case File.readFile bindingPath of
-                    
+
                     Ok _ ->
                         ()
-                    
+
                     Err _ ->
                         let
                             _ =
@@ -1112,10 +1088,10 @@ processImportLine line =
                                     )
                             firstPart =
                                 case String.split "/" goPath of
-                                    
+
                                     first :: _ ->
                                         first
-                                    
+
                                     [  ] ->
                                         ""
                         in
@@ -1130,6 +1106,32 @@ processImportLine line =
                                 detectAndInstall goPath
                             else
                                 ()
+
+
+isLocalSkydep : String -> Bool
+isLocalSkydep modName =
+    let
+        moduleFile = String.join "/" (String.split "." modName) ++ ".sky"
+        findResult =
+            Process.run "sh"
+                [ "-c"
+                , "find .skydeps -name 'src' -type d 2>/dev/null"
+                ]
+    in
+        case findResult of
+
+            Ok output ->
+                let
+                    dirs =
+                        List.filter (\d -> not (String.isEmpty (String.trim d)))
+                            (String.split "\n" output)
+                in
+                    List.any (\d -> case File.readFile (d ++ "/" ++ moduleFile) of
+                        Ok _ -> True
+                        Err _ -> False) dirs
+
+            Err _ ->
+                False
 
 
 preFilterBindings _ =

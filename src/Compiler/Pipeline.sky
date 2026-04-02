@@ -166,7 +166,8 @@ compileMultiModule entryPath outDir srcRoot entryMod =
         stdlibEnv = Resolver.buildStdlibEnv
         depTypeEnv = Resolver.buildDepTypeEnv entryMod.imports typeCheckModules
         combinedEnv = Env.union depTypeEnv stdlibEnv
-        ffiNames = Set.fromList (List.map fst ffiModules)
+        localNames = Set.fromList (List.map fst localModules)
+        ffiNames = Set.fromList (List.filter (\n -> not (Set.member n localNames)) (List.map fst ffiModules))
         projectRoot = dirOfPath srcRoot
         depDecls =
             List.concat

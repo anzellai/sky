@@ -7218,7 +7218,7 @@ func Ffi_WrapperGen_ExtractFunctions(json any) any {
 	}()
 }
 
-// sky:type parseFuncEntry : any -> Maybe { variadic : t1115 , hasTypeParams : t1118 , name : t1112 , params : t1113 , results : t1114 }
+// sky:type parseFuncEntry : any -> Maybe { name : t1112 , params : t1113 , results : t1114 , variadic : t1115 , hasTypeParams : t1118 }
 
 func Ffi_WrapperGen_ParseFuncEntry(json any) any {
 	return func() any {
@@ -7457,7 +7457,7 @@ func Ffi_WrapperGen_ExtractMethodsFromType(typeJson any) any {
 	}()
 }
 
-// sky:type parseMethodEntry : any -> any -> any -> Maybe { isInterface : t1395 , results : t1439 , typeName : t1394 , hasTypeParams : t1443 , variadic : t1440 , name : t1437 , params : t1438 }
+// sky:type parseMethodEntry : any -> any -> any -> Maybe { name : t1437 , params : t1438 , hasTypeParams : t1443 , results : t1439 , isInterface : t1395 , variadic : t1440 , typeName : t1394 }
 
 func Ffi_WrapperGen_ParseMethodEntry(typeName any, isIface any, json any) any {
 	return func() any {
@@ -9198,7 +9198,7 @@ func Lsp_JsonRpc_ExtractBraced(remaining any, depth any, idx any) any {
 	}()
 }
 
-// sky:type emptyState : { typeCache : t192 , depCache : t193 , documents : t190 , astCache : t191 }
+// sky:type emptyState : { depCache : t193 , documents : t190 , astCache : t191 , typeCache : t192 }
 
 func Lsp_Server_EmptyState() any {
 	return map[string]any{"documents": sky_dictEmpty(), "astCache": sky_dictEmpty(), "typeCache": sky_dictEmpty(), "depCache": sky_dictEmpty()}
@@ -13803,7 +13803,7 @@ func Compiler_Infer_InferExpr(counter any, registry any, env any, expr any) any 
 	}()
 }
 
-// sky:type inferIdentifier : any -> any -> any -> Result any { type_ : t214 , substitution : t211 }
+// sky:type inferIdentifier : any -> any -> any -> Result any { substitution : t211 , type_ : t214 }
 
 func Compiler_Infer_InferIdentifier(counter any, env any, name any) any {
 	return func() any {
@@ -13920,7 +13920,7 @@ func Compiler_Infer_IsUpperStart(name any) any {
 	}()
 }
 
-// sky:type inferQualifiedExpr : any -> any -> any -> any -> Result any { substitution : t249 , type_ : t252 }
+// sky:type inferQualifiedExpr : any -> any -> any -> any -> Result any { type_ : t252 , substitution : t249 }
 
 func Compiler_Infer_InferQualifiedExpr(counter any, registry any, env any, parts any) any {
 	return func() any {
@@ -14078,7 +14078,7 @@ func Compiler_Infer_InferFieldAccessFromType(targetResult any, resultVar any, ta
 	}()
 }
 
-// sky:type inferFieldAccessFromRecord : any -> any -> any -> String -> Result String { substitution : t411 , type_ : t412 }
+// sky:type inferFieldAccessFromRecord : any -> any -> any -> String -> Result String { type_ : t412 , substitution : t411 }
 
 func Compiler_Infer_InferFieldAccessFromRecord(targetResult any, resultVar any, fields any, fieldName any) any {
 	return func() any {
@@ -14179,7 +14179,7 @@ func Compiler_Infer_InferCall(counter any, registry any, env any, callee any, ar
 	}()
 }
 
-// sky:type inferCallArgs : any -> any -> any -> any -> any -> List any -> Result any { substitution : t516 , type_ : t515 }
+// sky:type inferCallArgs : any -> any -> any -> any -> any -> List any -> Result any { type_ : t515 , substitution : t516 }
 
 func Compiler_Infer_InferCallArgs(counter any, registry any, env any, fnType any, sub any, args any) any {
 	return func() any {
@@ -14233,7 +14233,7 @@ func Compiler_Infer_InferCallArg(counter any, registry any, env any, fnType any,
 	}()
 }
 
-// sky:type inferCallArgUnify : any -> any -> any -> any -> any -> any -> any -> List any -> Result String { type_ : t622 , substitution : t624 }
+// sky:type inferCallArgUnify : any -> any -> any -> any -> any -> any -> any -> List any -> Result String { substitution : t624 , type_ : t622 }
 
 func Compiler_Infer_InferCallArgUnify(counter any, registry any, env any, combinedSub any, actualFnType any, expectedFnType any, resultVar any, rest any) any {
 	return func() any {
@@ -14600,7 +14600,7 @@ func Compiler_Infer_InferLetBindingDestructure(counter any, registry any, env an
 	}()
 }
 
-// sky:type inferLetBindingDestructureContinue : any -> any -> any -> List any -> any -> any -> Result any { substitution : t1141 , type_ : t1142 }
+// sky:type inferLetBindingDestructureContinue : any -> any -> any -> List any -> any -> any -> Result any { type_ : t1142 , substitution : t1141 }
 
 func Compiler_Infer_InferLetBindingDestructureContinue(counter any, registry any, newEnv any, rest any, body any, combinedSub any) any {
 	return func() any {
@@ -14648,7 +14648,7 @@ func Compiler_Infer_InferCase(counter any, registry any, env any, subject any, b
 	}()
 }
 
-// sky:type inferCaseBranches : any -> any -> any -> any -> any -> List any -> any -> Result any { type_ : t1195 , substitution : t1184 }
+// sky:type inferCaseBranches : any -> any -> any -> any -> any -> List any -> any -> Result any { substitution : t1184 , type_ : t1195 }
 
 func Compiler_Infer_InferCaseBranches(counter any, registry any, env any, subjectType any, sub any, branches any, resultType any) any {
 	return func() any {
@@ -14729,7 +14729,7 @@ func Compiler_Infer_InferCaseBranchBody(counter any, registry any, env any, subj
 	}()
 }
 
-// sky:type inferCaseBranchUnify : any -> any -> any -> any -> any -> List any -> any -> any -> Result String { type_ : t1350 , substitution : t1356 }
+// sky:type inferCaseBranchUnify : any -> any -> any -> any -> any -> List any -> any -> any -> Result String { type_ : t1346 , substitution : t1356 }
 
 func Compiler_Infer_InferCaseBranchUnify(counter any, registry any, env any, subjectType any, bodySub any, rest any, resultType any, bodyResult any) any {
 	return func() any {
@@ -14927,7 +14927,7 @@ func Compiler_Infer_InferBinaryFloatDiv(lt any, rt any, sub any) any {
 	}()
 }
 
-// sky:type inferBinaryFloatDivRight : any -> any -> any -> Result String { substitution : t1559 , type_ : t1561 }
+// sky:type inferBinaryFloatDivRight : any -> any -> any -> Result String { type_ : t1561 , substitution : t1559 }
 
 func Compiler_Infer_InferBinaryFloatDivRight(rt any, sub any, s1 any) any {
 	return func() any {
@@ -14973,7 +14973,7 @@ func Compiler_Infer_InferBinaryIntDiv(lt any, rt any, sub any) any {
 	}()
 }
 
-// sky:type inferBinaryIntDivRight : any -> any -> any -> Result String { substitution : t1604 , type_ : t1609 }
+// sky:type inferBinaryIntDivRight : any -> any -> any -> Result String { type_ : t1609 , substitution : t1604 }
 
 func Compiler_Infer_InferBinaryIntDivRight(rt any, sub any, s1 any) any {
 	return func() any {
@@ -15078,7 +15078,7 @@ func Compiler_Infer_InferBinaryAppend(lt any, rt any, sub any) any {
 	}()
 }
 
-// sky:type inferBinaryCons : any -> any -> any -> Result String { substitution : t1739 , type_ : t1745 }
+// sky:type inferBinaryCons : any -> any -> any -> Result String { type_ : t1745 , substitution : t1739 }
 
 func Compiler_Infer_InferBinaryCons(lt any, rt any, sub any) any {
 	return func() any {
@@ -15134,7 +15134,7 @@ func Compiler_Infer_InferBinaryPipeRight(counter any, lt any, rt any, sub any) a
 	}()
 }
 
-// sky:type inferBinaryPipeLeft : any -> any -> any -> any -> Result String { substitution : t1814 , type_ : t1818 }
+// sky:type inferBinaryPipeLeft : any -> any -> any -> any -> Result String { type_ : t1818 , substitution : t1814 }
 
 func Compiler_Infer_InferBinaryPipeLeft(counter any, lt any, rt any, sub any) any {
 	return func() any {
@@ -15194,7 +15194,7 @@ func Compiler_Infer_InferBinaryComposeRight(counter any, lt any, rt any, sub any
 	}()
 }
 
-// sky:type inferBinaryComposeRightSecond : any -> any -> any -> any -> any -> any -> any -> Result String { type_ : t1910 , substitution : t1903 }
+// sky:type inferBinaryComposeRightSecond : any -> any -> any -> any -> any -> any -> any -> Result String { substitution : t1903 , type_ : t1910 }
 
 func Compiler_Infer_InferBinaryComposeRightSecond(counter any, sub any, s1 any, rt any, aVar any, bVar any, cVar any) any {
 	return func() any {
@@ -15365,7 +15365,7 @@ func Compiler_Infer_InferFunctionBody(counter any, registry any, env any, name a
 	}()
 }
 
-// sky:type inferFunctionSelfUnify : any -> any -> String -> any -> any -> any -> any -> any -> any -> Result String { scheme : t2185 , diagnostics : t2177 , name : String }
+// sky:type inferFunctionSelfUnify : any -> any -> String -> any -> any -> any -> any -> any -> any -> Result String { diagnostics : t2177 , name : String , scheme : t2185 }
 
 func Compiler_Infer_InferFunctionSelfUnify(counter any, env any, name any, bodySub any, funType any, selfType any, body any, annotation any, typeAliases any) any {
 	return func() any {
@@ -15615,7 +15615,7 @@ func Compiler_Infer_ApplySubToEnv(sub any, env any) any {
 	return sky_call(sky_dictMap(func(kk any) any { return func(scheme any) any { return applySubToScheme(sub, scheme) } }), env)
 }
 
-// sky:type inferTupleItems : any -> any -> any -> List any -> any -> any -> Result any { substitution : t2374 , type_ : t2383 }
+// sky:type inferTupleItems : any -> any -> any -> List any -> any -> any -> Result any { type_ : t2383 , substitution : t2374 }
 
 func Compiler_Infer_InferTupleItems(counter any, registry any, env any, items any, sub any, types any) any {
 	return func() any {
@@ -15636,7 +15636,7 @@ func Compiler_Infer_InferTupleItems(counter any, registry any, env any, items an
 	}()
 }
 
-// sky:type inferTupleItem : any -> any -> any -> any -> List any -> any -> List any -> Result any { type_ : t2425 , substitution : t2435 }
+// sky:type inferTupleItem : any -> any -> any -> any -> List any -> any -> List any -> Result any { substitution : t2435 , type_ : t2425 }
 
 func Compiler_Infer_InferTupleItem(counter any, registry any, env any, item any, rest any, sub any, types any) any {
 	return func() any {
@@ -15667,7 +15667,7 @@ func Compiler_Infer_InferListItems(counter any, registry any, env any, items any
 	}()
 }
 
-// sky:type inferListItemsLoop : any -> any -> any -> List any -> any -> any -> Result any { substitution : t2460 , type_ : t2472 }
+// sky:type inferListItemsLoop : any -> any -> any -> List any -> any -> any -> Result any { type_ : t2472 , substitution : t2460 }
 
 func Compiler_Infer_InferListItemsLoop(counter any, registry any, env any, items any, sub any, elemType any) any {
 	return func() any {
@@ -15713,7 +15713,7 @@ func Compiler_Infer_InferListItem(counter any, registry any, env any, item any, 
 	}()
 }
 
-// sky:type inferListItemUnify : any -> any -> any -> List any -> any -> any -> any -> Result String { type_ : t2546 , substitution : t2560 }
+// sky:type inferListItemUnify : any -> any -> any -> List any -> any -> any -> any -> Result String { substitution : t2560 , type_ : t2552 }
 
 func Compiler_Infer_InferListItemUnify(counter any, registry any, env any, rest any, itemSub any, elemType any, result any) any {
 	return func() any {
@@ -15734,7 +15734,7 @@ func Compiler_Infer_InferListItemUnify(counter any, registry any, env any, rest 
 	}()
 }
 
-// sky:type inferRecordFields : any -> any -> any -> List any -> any -> any -> Result any { type_ : t2575 , substitution : t2566 }
+// sky:type inferRecordFields : any -> any -> any -> List any -> any -> any -> Result any { substitution : t2566 , type_ : t2575 }
 
 func Compiler_Infer_InferRecordFields(counter any, registry any, env any, fields any, sub any, fieldTypes any) any {
 	return func() any {
@@ -15755,7 +15755,7 @@ func Compiler_Infer_InferRecordFields(counter any, registry any, env any, fields
 	}()
 }
 
-// sky:type inferRecordField : any -> any -> any -> any -> List any -> any -> any -> Result any { substitution : t2627 , type_ : t2617 }
+// sky:type inferRecordField : any -> any -> any -> any -> List any -> any -> any -> Result any { substitution : t2627 , type_ : t2621 }
 
 func Compiler_Infer_InferRecordField(counter any, registry any, env any, field any, rest any, sub any, fieldTypes any) any {
 	return func() any {
@@ -15828,7 +15828,7 @@ func Compiler_Infer_InferRecordUpdateField(counter any, registry any, env any, f
 	}()
 }
 
-// sky:type makeTypedDecl : any -> any -> any -> { prettyType : t129 , name : t124 , scheme : t125 }
+// sky:type makeTypedDecl : any -> any -> any -> { name : t124 , scheme : t125 , prettyType : t129 }
 
 func Compiler_Checker_MakeTypedDecl(n any, s any, t any) any {
 	return map[string]any{"name": n, "scheme": s, "prettyType": formatType(t)}
@@ -15846,7 +15846,7 @@ func Compiler_Checker_CheckModuleWithRegistry(mod any, imports any, importedRegi
 	return Compiler_Checker_CheckModuleWithRegistryAndAliases(mod, imports, importedRegistry, SkyNothing())
 }
 
-// sky:type checkModuleWithRegistryAndAliases : any -> Maybe any -> Maybe any -> Maybe any -> Result any { registry : t191 , env : t220 , declarations : t219 , diagnostics : t231 , typeAliases : t183 }
+// sky:type checkModuleWithRegistryAndAliases : any -> Maybe any -> Maybe any -> Maybe any -> Result any { typeAliases : t183 , env : t220 , registry : t191 , declarations : t219 , diagnostics : t231 }
 
 func Compiler_Checker_CheckModuleWithRegistryAndAliases(mod any, imports any, importedRegistry any, importedAliases any) any {
 	return func() any {
@@ -16211,7 +16211,7 @@ func Compiler_Checker_InferOneFunDecl(counter any, registry any, env any, fnName
 	}()
 }
 
-// sky:type addTypedDeclAndContinue : any -> any -> any -> List any -> any -> any -> List { scheme : t468 , prettyType : t469 , name : t470 } -> any -> any -> ( any , any , any )
+// sky:type addTypedDeclAndContinue : any -> any -> any -> List any -> any -> any -> List { name : t470 , scheme : t468 , prettyType : t469 } -> any -> any -> ( any , any , any )
 
 func Compiler_Checker_AddTypedDeclAndContinue(counter any, registry any, env any, rest any, annotations any, typeAliases any, typedDecls any, diagnostics any, inferResult any) any {
 	return func() any {
@@ -17609,7 +17609,7 @@ func Compiler_ParserExpr_ParseCaseExpr(state any) any {
 	}()
 }
 
-// sky:type parseCaseBranches : any -> any -> ( List { pattern : t764 , body : t790 } , any )
+// sky:type parseCaseBranches : any -> any -> ( List { body : t790 , pattern : t764 } , any )
 
 func Compiler_ParserExpr_ParseCaseBranches(branchCol any, state any) any {
 	return func() any {
@@ -18034,7 +18034,7 @@ func Compiler_ParserExpr_ParseRecordOrUpdate(state any) any {
 	}()
 }
 
-// sky:type parseRecordFields : any -> ( List { value : t1179 , name : t1192 } , any )
+// sky:type parseRecordFields : any -> ( List { name : t1192 , value : t1179 } , any )
 
 func Compiler_ParserExpr_ParseRecordFields(state any) any {
 	return func() any {
@@ -18326,7 +18326,7 @@ func Compiler_ParserExpr_ParseFieldAccess(base any, state any) any {
 	}()
 }
 
-// sky:type lex : any -> { diagnostics : List elem , tokens : t128 }
+// sky:type lex : any -> { tokens : t128 , diagnostics : List elem }
 
 func Compiler_Lexer_Lex(source any) any {
 	return func() any {
@@ -18743,7 +18743,7 @@ func Compiler_Lexer_PeekChar(s any, i any) any {
 	return Compiler_Lexer_CharAt(s, i)
 }
 
-// sky:type makeSpan : any -> { start : { offset : t513 , line : t514 , column : t515 } , end : { column : t518 , offset : t516 , line : t517 } }
+// sky:type makeSpan : any -> { start : { offset : t513 , line : t514 , column : t515 } , end : { offset : t516 , line : t517 , column : t518 } }
 
 func Compiler_Lexer_MakeSpan(state any) any {
 	return map[string]any{"start": map[string]any{"offset": sky_asMap(state)["offset"], "line": sky_asMap(state)["line"], "column": sky_asMap(state)["column"]}, "end": map[string]any{"offset": sky_asMap(state)["offset"], "line": sky_asMap(state)["line"], "column": sky_asMap(state)["column"]}}
@@ -18906,7 +18906,9 @@ func Compiler_Pipeline_CompileMultiModule(entryPath any, outDir any, srcRoot any
 		_ = depTypeEnv
 		combinedEnv := Compiler_Env_Union(depTypeEnv, stdlibEnv)
 		_ = combinedEnv
-		ffiNames := sky_setFromList(sky_call(sky_listMap(sky_fst), ffiModules))
+		localNames := sky_setFromList(sky_call(sky_listMap(sky_fst), localModules))
+		_ = localNames
+		ffiNames := sky_setFromList(sky_call(sky_listFilter(func(n any) any { return sky_not(sky_call(sky_setMember(n), localNames)) }), sky_call(sky_listMap(sky_fst), ffiModules)))
 		_ = ffiNames
 		projectRoot := Compiler_Pipeline_DirOfPath(srcRoot)
 		_ = projectRoot
@@ -19400,7 +19402,7 @@ func Compiler_Pipeline_SplitWrapperSections(code any) any {
 	}()
 }
 
-// sky:type splitWrapperLoop : List String -> String -> any -> String -> Bool -> { functions : t1064 , header : t1053 }
+// sky:type splitWrapperLoop : List String -> String -> any -> String -> Bool -> { header : t1069 , functions : t1080 }
 
 func Compiler_Pipeline_SplitWrapperLoop(lines any, header any, funcs any, currentFunc any, inFunc any) any {
 	return func() any {
@@ -19695,7 +19697,7 @@ func Compiler_Pipeline_ShortFuncName(fullName any) any {
 	}()
 }
 
-// sky:type makeGoPackage : any -> { name : String , imports : List { alias_ : String , path : String } , declarations : t1375 }
+// sky:type makeGoPackage : any -> { imports : List { alias_ : String , path : String } , declarations : t1391 , name : String }
 
 func Compiler_Pipeline_MakeGoPackage(decls any) any {
 	return map[string]any{"name": "main", "imports": []any{map[string]any{"path": "fmt", "alias_": ""}, map[string]any{"path": "bufio", "alias_": ""}, map[string]any{"path": "io", "alias_": ""}, map[string]any{"path": "os", "alias_": ""}, map[string]any{"path": "os/exec", "alias_": "exec"}, map[string]any{"path": "net/http", "alias_": "net_http"}, map[string]any{"path": "strconv", "alias_": ""}, map[string]any{"path": "strings", "alias_": ""}, map[string]any{"path": "sort", "alias_": ""}, map[string]any{"path": "math", "alias_": ""}, map[string]any{"path": "crypto/sha256", "alias_": "crypto_sha256"}, map[string]any{"path": "crypto/md5", "alias_": "crypto_md5"}, map[string]any{"path": "encoding/hex", "alias_": "hex"}, map[string]any{"path": "encoding/base64", "alias_": "base64"}, map[string]any{"path": "encoding/json", "alias_": "encoding_json"}, map[string]any{"path": "time", "alias_": ""}, map[string]any{"path": "context", "alias_": ""}}, "declarations": decls}
@@ -22496,7 +22498,7 @@ func Compiler_Pipeline_NeedsStdlibWrapper(modName any) any {
 	return sky_asBool(sky_call(sky_stringStartsWith("Sky.Core.Json"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Html"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Css"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Live"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Cmd"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Sub"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Task"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Time"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Program"), modName)) || sky_asBool(sky_asBool(sky_equal(modName, "Sky.Core.Result")) || sky_asBool(sky_equal(modName, "Sky.Core.Maybe")))))))))))
 }
 
-// sky:type buildStdlibGoImports : any -> List { path : String , alias_ : String }
+// sky:type buildStdlibGoImports : any -> List { alias_ : String , path : String }
 
 func Compiler_Pipeline_BuildStdlibGoImports(imports any) any {
 	return func() any {
@@ -22957,7 +22959,7 @@ func Compiler_Pipeline_PrintTypedDecls(decls any) any {
 	}()
 }
 
-// sky:type emptySpan : { start : { offset : Int , line : Int , column : Int } , end : { column : Int , offset : Int , line : Int } }
+// sky:type emptySpan : { start : { column : Int , offset : Int , line : Int } , end : { offset : Int , line : Int , column : Int } }
 
 func Compiler_Token_EmptySpan() any {
 	return map[string]any{"start": map[string]any{"offset": 0, "line": 0, "column": 0}, "end": map[string]any{"offset": 0, "line": 0, "column": 0}}
@@ -23281,7 +23283,7 @@ func Compiler_Parser_Parse(tokens any) any {
 	}()
 }
 
-// sky:type parseModule : any -> Result any ( { declarations : t300 , span : t305 , exposing_ : t294 , imports : t297 , name : t291 } , any )
+// sky:type parseModule : any -> Result any ( { declarations : t300 , span : t305 , name : t291 , exposing_ : t294 , imports : t297 } , any )
 
 func Compiler_Parser_ParseModule(state any) any {
 	return func() any {
@@ -23554,7 +23556,7 @@ func Compiler_Parser_ParseImports(state any) any {
 	}()
 }
 
-// sky:type parseImport : any -> Result any ( { exposing_ : t542 , span : t547 , moduleName : t521 , alias_ : String } , any )
+// sky:type parseImport : any -> Result any ( { span : t547 , moduleName : t521 , exposing_ : t542 , alias_ : String } , any )
 
 func Compiler_Parser_ParseImport(state any) any {
 	return func() any {
@@ -23944,7 +23946,7 @@ func Compiler_Parser_BuildVariant(name any, s1 any) any {
 	return Compiler_Parser_FinishVariant(sky_asMap(name)["lexeme"], Compiler_Parser_ParseVariantFields(s1))
 }
 
-// sky:type finishVariant : any -> ( any , any ) -> ( List { name : t835 , fields : t865 , span : t866 } , any )
+// sky:type finishVariant : any -> ( any , any ) -> ( List { fields : t865 , name : t835 , span : t866 } , any )
 
 func Compiler_Parser_FinishVariant(variantName any, fieldResult any) any {
 	return func() any {
@@ -24453,7 +24455,7 @@ func Compiler_Parser_ParseFunParams(state any) any {
 	}()
 }
 
-// sky:type initState : any -> { errors : List elem , tokens : t119 , pos : Int }
+// sky:type initState : any -> { pos : Int , errors : List elem , tokens : t119 }
 
 func Compiler_ParserCore_InitState(tokens any) any {
 	return map[string]any{"tokens": tokens, "pos": 0, "errors": []any{}}
@@ -24478,7 +24480,7 @@ func Compiler_ParserCore_Peek(state any) any {
 	}()
 }
 
-// sky:type peekAt : any -> any -> { kind : t149 , lexeme : String , span : t150 }
+// sky:type peekAt : any -> any -> { kind : t149 , span : t150 , lexeme : String }
 
 func Compiler_ParserCore_PeekAt(offset any, state any) any {
 	return func() any {
@@ -24497,7 +24499,7 @@ func Compiler_ParserCore_PeekAt(offset any, state any) any {
 	}()
 }
 
-// sky:type previous : any -> { lexeme : String , kind : t166 , span : t167 }
+// sky:type previous : any -> { kind : t166 , lexeme : String , span : t167 }
 
 func Compiler_ParserCore_Previous(state any) any {
 	return func() any {
@@ -24521,7 +24523,7 @@ func Compiler_ParserCore_Previous(state any) any {
 	}()
 }
 
-// sky:type advance : any -> ( { lexeme : String , span : t183 , kind : t182 } , any )
+// sky:type advance : any -> ( { kind : t183 , lexeme : String , span : t182 } , any )
 
 func Compiler_ParserCore_Advance(state any) any {
 	return func() any {
@@ -24558,7 +24560,7 @@ func Compiler_ParserCore_MatchKindLex(kind any, lex any, state any) any {
 	}()
 }
 
-// sky:type consume : any -> any -> Result String ( { kind : t226 , lexeme : String , span : t227 } , any )
+// sky:type consume : any -> any -> Result String ( { kind : t227 , lexeme : String , span : t226 } , any )
 
 func Compiler_ParserCore_Consume(kind any, state any) any {
 	return func() any {
@@ -24579,7 +24581,7 @@ func Compiler_ParserCore_Consume(kind any, state any) any {
 	}()
 }
 
-// sky:type consumeLex : any -> String -> any -> Result String ( { lexeme : String , span : t272 , kind : t273 } , any )
+// sky:type consumeLex : any -> String -> any -> Result String ( { kind : t273 , lexeme : String , span : t272 } , any )
 
 func Compiler_ParserCore_ConsumeLex(kind any, lex any, state any) any {
 	return func() any {
@@ -25103,7 +25105,7 @@ func Compiler_Types_Instantiate(counter any, scheme any) any {
 	}()
 }
 
-// sky:type generalize : any -> Type -> { type_ : Type , quantified : t331 }
+// sky:type generalize : any -> Type -> { quantified : t331 , type_ : Type }
 
 func Compiler_Types_Generalize(env any, t any) any {
 	return func() any {
@@ -26020,7 +26022,7 @@ func Compiler_Adt_ResolveTypeVarExpr(paramMap any, name any) any {
 	}()
 }
 
-// sky:type emptyResult : { substitution : t122 , bindings : List elem }
+// sky:type emptyResult : { bindings : List elem , substitution : t122 }
 
 func Compiler_PatternCheck_EmptyResult() any {
 	return map[string]any{"substitution": emptySub, "bindings": []any{}}
@@ -26090,13 +26092,13 @@ func Compiler_PatternCheck_CheckPattern(counter any, registry any, env any, pat 
 	}()
 }
 
-// sky:type checkPatternVar : any -> any -> any -> any -> Result any { substitution : t139 , bindings : List ( t133 , t134 ) }
+// sky:type checkPatternVar : any -> any -> any -> any -> Result any { bindings : List ( t133 , t134 ) , substitution : t139 }
 
 func Compiler_PatternCheck_CheckPatternVar(counter any, env any, name any, expectedType any) any {
 	return SkyOk(map[string]any{"substitution": emptySub, "bindings": []any{SkyTuple2{V0: name, V1: expectedType}}})
 }
 
-// sky:type checkPatternLiteral : any -> any -> any -> any -> Result String { bindings : List elem , substitution : t156 }
+// sky:type checkPatternLiteral : any -> any -> any -> any -> Result String { substitution : t156 , bindings : List elem }
 
 func Compiler_PatternCheck_CheckPatternLiteral(counter any, env any, lit any, expectedType any) any {
 	return func() any {
@@ -26494,7 +26496,7 @@ func Compiler_PatternCheck_CheckPatternListPair(counter any, registry any, env a
 	}()
 }
 
-// sky:type checkPatternListSame : any -> any -> any -> List any -> any -> any -> any -> Result any { substitution : t637 , bindings : t638 }
+// sky:type checkPatternListSame : any -> any -> any -> List any -> any -> any -> any -> Result any { bindings : t638 , substitution : t637 }
 
 func Compiler_PatternCheck_CheckPatternListSame(counter any, registry any, env any, pats any, elemType any, sub any, bindings any) any {
 	return func() any {
@@ -26557,7 +26559,7 @@ func Compiler_PatternCheck_LiteralType(lit any) any {
 	}()
 }
 
-// sky:type emptyCtx : { registry : t201 , collectedImports : t205 , modulePrefix : String , typedDecls : t210 , moduleExports : t202 , importAliases : t206 , localFunctions : List elem , importedConstructors : t203 , exposedStdlib : t208 , localFunctionArity : t207 , paramNames : t209 }
+// sky:type emptyCtx : { registry : t201 , localFunctions : List elem , collectedImports : t205 , localFunctionArity : t207 , paramNames : t209 , importAliases : t206 , importedConstructors : t203 , exposedStdlib : t208 , moduleExports : t202 , typedDecls : t210 , modulePrefix : String }
 
 func Compiler_Lower_EmptyCtx() any {
 	return map[string]any{"registry": Compiler_Adt_EmptyRegistry(), "moduleExports": sky_dictEmpty(), "importedConstructors": sky_dictEmpty(), "localFunctions": []any{}, "collectedImports": sky_setEmpty(), "importAliases": sky_dictEmpty(), "modulePrefix": "", "localFunctionArity": sky_dictEmpty(), "exposedStdlib": sky_dictEmpty(), "paramNames": sky_setEmpty(), "typedDecls": sky_dictEmpty()}
@@ -26610,7 +26612,7 @@ func Compiler_Lower_GetExposedNames(imp any) any {
 	}()
 }
 
-// sky:type lowerModule : any -> any -> { declarations : t290 , imports : List { alias_ : String , path : String } , name : String }
+// sky:type lowerModule : any -> any -> { imports : List { path : String , alias_ : String } , name : String , declarations : t290 }
 
 func Compiler_Lower_LowerModule(registry any, mod any) any {
 	return func() any {
@@ -28371,7 +28373,7 @@ func Compiler_Lower_CheckPartialApplication(ctx any, callee any, argCount any) a
 	}()
 }
 
-// sky:type checkPartialIdent : any -> any -> any -> Maybe { totalArity : t1963 , goFuncName : String }
+// sky:type checkPartialIdent : any -> any -> any -> Maybe { goFuncName : String , totalArity : t1963 }
 
 func Compiler_Lower_CheckPartialIdent(ctx any, name any, argCount any) any {
 	return func() any {
@@ -30276,7 +30278,7 @@ func Compiler_Resolver_ResolveProject(entryPath any, srcRoot any) any {
 	}()
 }
 
-// sky:type resolveImports : any -> List any -> List { ast : t329 , filePath : String , checkResult : Maybe t343 , qualifiedName : t344 , name : t342 } -> any -> List String -> ( List { checkResult : Maybe t343 , qualifiedName : t344 , name : t342 , ast : t329 , filePath : String } , List String )
+// sky:type resolveImports : any -> List any -> List { ast : t329 , checkResult : Maybe t343 , name : t344 , qualifiedName : t342 , filePath : String } -> any -> List String -> ( List { name : t344 , qualifiedName : t342 , filePath : String , ast : t329 , checkResult : Maybe t343 } , List String )
 
 func Compiler_Resolver_ResolveImports(srcRoot any, imports any, loaded any, visited any, diagnostics any) any {
 	return func() any {
@@ -32498,7 +32500,7 @@ func installFromSkyToml(_ any) any {
 				return func() any {
 					lines := sky_call(sky_stringSplit("\n"), content)
 					_ = lines
-					return installTomlDeps(lines, false)
+					return installTomlDeps(lines, "")
 				}()
 			}
 			panic("non-exhaustive case expression")
@@ -32506,9 +32508,9 @@ func installFromSkyToml(_ any) any {
 	}()
 }
 
-// sky:type installTomlDeps : List String -> Bool -> Unit
+// sky:type installTomlDeps : List String -> String -> Unit
 
-func installTomlDeps(lines any, inGoDeps any) any {
+func installTomlDeps(lines any, section any) any {
 	return func() any {
 		return func() any {
 			__subject := lines
@@ -32525,14 +32527,87 @@ func installTomlDeps(lines any, inGoDeps any) any {
 					_ = trimmed
 					isGoDepsHeader := sky_asBool(sky_equal(trimmed, "[\"go.dependencies\"]")) || sky_asBool(sky_equal(trimmed, "[go.dependencies]"))
 					_ = isGoDepsHeader
+					isSkyDepsHeader := sky_equal(trimmed, "[dependencies]")
+					_ = isSkyDepsHeader
 					return func() any {
 						if sky_asBool(isGoDepsHeader) {
-							return installTomlDeps(rest, true)
+							return installTomlDeps(rest, "go")
 						}
-						if sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("["), trimmed)) && sky_asBool(sky_not(isGoDepsHeader))) {
-							return installTomlDeps(rest, false)
+						if sky_asBool(isSkyDepsHeader) {
+							return installTomlDeps(rest, "sky")
 						}
-						if sky_asBool(sky_asBool(inGoDeps) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) {
+						if sky_asBool(sky_call(sky_stringStartsWith("["), trimmed)) {
+							return installTomlDeps(rest, "")
+						}
+						if sky_asBool(sky_asBool(sky_equal(section, "sky")) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) {
+							return func() any {
+								pkg := sky_stringTrim(sky_call(sky_call(sky_stringReplace("\""), ""), sky_stringTrim(func() any {
+									return func() any {
+										__subject := sky_call(sky_stringSplit("="), trimmed)
+										if len(sky_asList(__subject)) > 0 {
+											key := sky_asList(__subject)[0]
+											_ = key
+											return key
+										}
+										if len(sky_asList(__subject)) == 0 {
+											return ""
+										}
+										panic("non-exhaustive case expression")
+									}()
+								}())))
+								_ = pkg
+								targetDir := sky_concat(".skydeps/", pkg)
+								_ = targetDir
+								alreadyInstalled := func() any {
+									return func() any {
+										__subject := sky_fileRead(sky_concat(targetDir, "/sky.toml"))
+										if sky_asSkyResult(__subject).SkyName == "Ok" {
+											return true
+										}
+										if sky_asSkyResult(__subject).SkyName == "Err" {
+											return false
+										}
+										panic("non-exhaustive case expression")
+									}()
+								}()
+								_ = alreadyInstalled
+								return func() any {
+									if sky_asBool(sky_asBool(sky_stringIsEmpty(pkg)) || sky_asBool(alreadyInstalled)) {
+										return installTomlDeps(rest, "sky")
+									}
+									return func() any {
+										sky_println(sky_concat("   Installing Sky package: ", sky_concat(pkg, "...")))
+										tmpDir := sky_concat("/tmp/sky-dep-", sky_call(sky_call(sky_stringReplace("/"), "_"), sky_call(sky_call(sky_stringReplace("."), "_"), pkg)))
+										_ = tmpDir
+										sky_call(sky_processRun("rm"), []any{"-rf", tmpDir})
+										cloneResult := sky_call(sky_processRun("git"), []any{"clone", "--depth", "1", sky_concat("https://", pkg), tmpDir})
+										_ = cloneResult
+										return func() any {
+											return func() any {
+												__subject := cloneResult
+												if sky_asSkyResult(__subject).SkyName == "Ok" {
+													return func() any {
+														sky_fileMkdirAll(targetDir)
+														sky_call(sky_processRun("rm"), []any{"-rf", targetDir})
+														sky_call(sky_processRun("mv"), []any{tmpDir, targetDir})
+														sky_println(sky_concat("   Installed ", pkg))
+														return installTomlDeps(rest, "sky")
+													}()
+												}
+												if sky_asSkyResult(__subject).SkyName == "Err" {
+													return func() any {
+														sky_println(sky_concat("   Warning: could not install ", pkg))
+														return installTomlDeps(rest, "sky")
+													}()
+												}
+												panic("non-exhaustive case expression")
+											}()
+										}()
+									}()
+								}()
+							}()
+						}
+						if sky_asBool(sky_asBool(sky_equal(section, "go")) && sky_asBool(sky_call(sky_stringContains("="), trimmed))) {
 							return func() any {
 								pkg := sky_stringTrim(sky_call(sky_call(sky_stringReplace("\""), ""), sky_stringTrim(func() any {
 									return func() any {
@@ -32557,7 +32632,7 @@ func installTomlDeps(lines any, inGoDeps any) any {
 									return func() any {
 										__subject := sky_fileRead(bindingPath)
 										if sky_asSkyResult(__subject).SkyName == "Ok" {
-											return installTomlDeps(rest, true)
+											return installTomlDeps(rest, "go")
 										}
 										if sky_asSkyResult(__subject).SkyName == "Err" {
 											return func() any {
@@ -32583,13 +32658,13 @@ func installTomlDeps(lines any, inGoDeps any) any {
 															cacheDir := sky_concat(".skycache/go/", safeName)
 															_ = cacheDir
 															sky_fileMkdirAll(cacheDir)
-															return func() any { generateGoBindings(pkg, cacheDir); return installTomlDeps(rest, true) }()
+															return func() any { generateGoBindings(pkg, cacheDir); return installTomlDeps(rest, "go") }()
 														}()
 													}
 													if sky_asBool(sky_call(sky_stringContains("."), firstPart)) {
-														return func() any { detectAndInstall(pkg); return installTomlDeps(rest, true) }()
+														return func() any { detectAndInstall(pkg); return installTomlDeps(rest, "go") }()
 													}
-													return installTomlDeps(rest, true)
+													return installTomlDeps(rest, "go")
 												}()
 											}()
 										}
@@ -32598,7 +32673,7 @@ func installTomlDeps(lines any, inGoDeps any) any {
 								}()
 							}()
 						}
-						return installTomlDeps(rest, inGoDeps)
+						return installTomlDeps(rest, section)
 					}()
 				}()
 			}
@@ -32606,10 +32681,6 @@ func installTomlDeps(lines any, inGoDeps any) any {
 		}()
 	}()
 }
-
-// sky:type installFromSkyToml : any -> Unit
-
-// sky:type installTomlDeps : List String -> Bool -> Unit
 
 // sky:type autoGenerateBindings : any -> Unit
 
@@ -32693,8 +32764,29 @@ func processImportLine(line any) any {
 			return ""
 		}()
 		_ = modName
+		localSkyPath := sky_concat("src/", sky_concat(sky_call(sky_stringJoin("/"), sky_call(sky_stringSplit("."), modName)), ".sky"))
+		_ = localSkyPath
+		isLocalFile := func() any {
+			return func() any {
+				__subject := sky_fileRead(localSkyPath)
+				if sky_asSkyResult(__subject).SkyName == "Ok" {
+					return true
+				}
+				if sky_asSkyResult(__subject).SkyName == "Err" {
+					return false
+				}
+				panic("non-exhaustive case expression")
+			}()
+		}()
+		_ = isLocalFile
 		return func() any {
 			if sky_asBool(sky_asBool(sky_stringIsEmpty(modName)) || sky_asBool(Compiler_Resolver_IsStdlib(modName))) {
+				return struct{}{}
+			}
+			if sky_asBool(isLocalFile) {
+				return struct{}{}
+			}
+			if sky_asBool(isLocalSkydep(modName)) {
 				return struct{}{}
 			}
 			return func() any {
@@ -32748,6 +32840,48 @@ func processImportLine(line any) any {
 						panic("non-exhaustive case expression")
 					}()
 				}()
+			}()
+		}()
+	}()
+}
+
+// sky:type isLocalSkydep : String -> Bool
+
+func isLocalSkydep(modName any) any {
+	return func() any {
+		moduleFile := sky_concat(sky_call(sky_stringJoin("/"), sky_call(sky_stringSplit("."), modName)), ".sky")
+		_ = moduleFile
+		findResult := sky_call(sky_processRun("sh"), []any{"-c", "find .skydeps -name 'src' -type d 2>/dev/null"})
+		_ = findResult
+		return func() any {
+			return func() any {
+				__subject := findResult
+				if sky_asSkyResult(__subject).SkyName == "Ok" {
+					output := sky_asSkyResult(__subject).OkValue
+					_ = output
+					return func() any {
+						dirs := sky_call(sky_listFilter(func(d any) any { return sky_not(sky_stringIsEmpty(sky_stringTrim(d))) }), sky_call(sky_stringSplit("\n"), output))
+						_ = dirs
+						return sky_call(sky_listAny(func(d any) any {
+							return func() any {
+								return func() any {
+									__subject := sky_fileRead(sky_concat(d, sky_concat("/", moduleFile)))
+									if sky_asSkyResult(__subject).SkyName == "Ok" {
+										return true
+									}
+									if sky_asSkyResult(__subject).SkyName == "Err" {
+										return false
+									}
+									panic("non-exhaustive case expression")
+								}()
+							}()
+						}), dirs)
+					}()
+				}
+				if sky_asSkyResult(__subject).SkyName == "Err" {
+					return false
+				}
+				panic("non-exhaustive case expression")
 			}()
 		}()
 	}()
