@@ -14,7 +14,7 @@ type alias AdtRegistry =
 
 
 type alias RegisteredAdt =
-    { name : String , arity : Int , constructors : Dict.Dict String Scheme }
+    { name : String , arity : Int , constructors : Dict.Dict String Scheme , variantNames : List String }
 
 
 emptyRegistry : AdtRegistry
@@ -114,7 +114,8 @@ registerOneAdt counter typeName typeParams variants registry env =
                 )
                 Dict.empty
                 variants
-        adt = { name = typeName , arity = arity , constructors = ctorSchemes }
+        variantOrder = List.map (\v -> v.name) variants
+        adt = { name = typeName , arity = arity , constructors = ctorSchemes , variantNames = variantOrder }
         newRegistry = Dict.insert typeName adt registry
         newEnv =
             Dict.foldl (\ctorName scheme acc -> Env.extend ctorName scheme acc)

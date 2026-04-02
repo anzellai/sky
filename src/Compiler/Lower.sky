@@ -1778,7 +1778,7 @@ subPatternConditions ctx varName ctorName args idx =
                     else if ctorName == "Just" then
                         "sky_asSkyMaybe(" ++ varName ++ ").JustValue"
                     else
-                        "sky_asMap(" ++ varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
+                        "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
                 subCond = patternToCondition ctx fieldAccess pat
                 restCond =
                     subPatternConditions ctx varName ctorName rest (idx + 1)
@@ -1918,7 +1918,7 @@ bindAdtConstructorArgs ctx varName argPats idx =
         pat :: rest ->
             let
                 fieldAccess =
-                    "sky_asMap(" ++ varName ++ ")[\"V" ++ String.fromInt idx ++ "\"]"
+                    "sky_adtField(" ++ varName ++ ", " ++ String.fromInt idx ++ ")"
                 binding = patternToBindings ctx fieldAccess pat
             in
                 binding ++ bindAdtConstructorArgs ctx varName rest (idx + 1)
@@ -2702,10 +2702,16 @@ buildConstructorMap registry =
     Dict.foldl
         (
         \typeName adt acc ->
-            let
-                entries = Dict.toList adt.constructors
-            in
-                addCtorsFromList typeName entries 0 acc
+            List.foldl
+                (\pair innerAcc ->
+                    let
+                        idx = fst pair
+                        ctorName = snd pair
+                    in
+                        Dict.insert ctorName { adtName = typeName , tagIndex = idx , arity = 0 } innerAcc
+                )
+                acc
+                (zipIndex adt.variantNames)
         )
         Dict.empty
         registry
