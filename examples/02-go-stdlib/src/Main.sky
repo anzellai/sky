@@ -13,8 +13,8 @@ import Sky.Core.Task as Task
 main =
     let
         nowStr =
-            Time.now ()
-                |> Result.map (\t -> "time: ok")
+            Time.now
+                |> Result.andThen (\t -> Time.timeString t)
                 |> Result.withDefault "unknown"
         _ = println ("Current time: " ++ nowStr)
         data = "Hello, Sky!"

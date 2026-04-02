@@ -602,8 +602,19 @@ lowerQualified : LowerCtx -> (List String) -> GoExpr
 lowerQualified ctx parts =
     let
         qualName = String.join "." parts
+        qualifier =
+            case List.head parts of
+
+                Just q ->
+                    q
+
+                Nothing ->
+                    ""
+        isUserImport = Dict.member qualifier ctx.importAliases
     in
-        if qualName == "String.fromInt" then
+        if isUserImport && List.length parts == 2 then
+            lowerQualifiedImport ctx parts
+        else if qualName == "String.fromInt" then
             GoIdent "sky_stringFromInt"
         else if qualName == "String.fromFloat" then
             GoIdent "sky_stringFromFloat"
@@ -1137,6 +1148,42 @@ lowerQualified ctx parts =
                             funcPart
         else
             GoIdent (sanitizeGoIdent qualName)
+
+
+lowerQualifiedImport : LowerCtx -> (List String) -> GoExpr
+lowerQualifiedImport ctx parts =
+    let
+        modPart =
+            case List.head parts of
+
+                Just p ->
+                    p
+
+                Nothing ->
+                    ""
+        funcPart =
+            case List.head (List.drop 1 parts) of
+
+                Just p ->
+                    p
+
+                Nothing ->
+                    ""
+    in
+        case Dict.get modPart ctx.importAliases of
+
+            Just qualModName ->
+                let
+                    prefix = String.replace "." "_" qualModName
+                    safeFuncPart = sanitizeGoIdent funcPart
+                    goName =
+                        prefix ++ "_" ++ capitalizeFirst safeFuncPart
+                in
+                    GoCallExpr (GoIdent goName) []
+
+            Nothing ->
+                GoSelectorExpr (GoIdent (String.toLower modPart))
+                    funcPart
 
 
 lowerCall : LowerCtx -> Expression -> (List Expression) -> GoExpr
