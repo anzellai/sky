@@ -24,6 +24,7 @@ var skyVersion = "dev"
 
 type SkyADT struct {
 	Tag                int
+	SkyName            string
 	V0, V1, V2, V3, V4 any
 }
 
@@ -488,9 +489,9 @@ var mapGoFuncType = Ffi_TypeMapper_MapGoFuncType
 var MapGoFuncType = Ffi_TypeMapper_MapGoFuncType
 var typeMapperDummy_ = Ffi_TypeMapper_TypeMapperDummy_()
 var TypeMapperDummy_ = Ffi_TypeMapper_TypeMapperDummy_()
-var Ffi_WrapperGen_Pure = map[string]any{"Tag": 0, "SkyName": "Pure"}
-var Ffi_WrapperGen_Fallible = map[string]any{"Tag": 1, "SkyName": "Fallible"}
-var Ffi_WrapperGen_Effectful = map[string]any{"Tag": 2, "SkyName": "Effectful"}
+var Ffi_WrapperGen_Pure = SkyADT{Tag: 0, SkyName: "Pure"}
+var Ffi_WrapperGen_Fallible = SkyADT{Tag: 1, SkyName: "Fallible"}
+var Ffi_WrapperGen_Effectful = SkyADT{Tag: 2, SkyName: "Effectful"}
 var InspectPackage = Ffi_Inspector_InspectPackage
 var RunInspectorMinimal = Ffi_Inspector_RunInspectorMinimal
 var RunInspector = Ffi_Inspector_RunInspector
@@ -693,6 +694,8 @@ var getOperatorInfo = Compiler_ParserExpr_GetOperatorInfo
 var GetOperatorInfo = Compiler_ParserExpr_GetOperatorInfo
 var parseApplication = Compiler_ParserExpr_ParseApplication
 var ParseApplication = Compiler_ParserExpr_ParseApplication
+var applyFieldAccess = Compiler_ParserExpr_ApplyFieldAccess
+var ApplyFieldAccess = Compiler_ParserExpr_ApplyFieldAccess
 var parseApplicationArgs = Compiler_ParserExpr_ParseApplicationArgs
 var ParseApplicationArgs = Compiler_ParserExpr_ParseApplicationArgs
 var isStartOfPrimary = Compiler_ParserExpr_IsStartOfPrimary
@@ -1077,6 +1080,8 @@ var generatePrefixAliases = Compiler_Pipeline_GeneratePrefixAliases
 var GeneratePrefixAliases = Compiler_Pipeline_GeneratePrefixAliases
 var makePrefixAlias = Compiler_Pipeline_MakePrefixAlias
 var MakePrefixAlias = Compiler_Pipeline_MakePrefixAlias
+var buildAllCtorMaps = Compiler_Pipeline_BuildAllCtorMaps
+var BuildAllCtorMaps = Compiler_Pipeline_BuildAllCtorMaps
 var isCommonName = Compiler_Pipeline_IsCommonName
 var IsCommonName = Compiler_Pipeline_IsCommonName
 var buildTypedDeclDict = Compiler_Pipeline_BuildTypedDeclDict
@@ -1274,9 +1279,9 @@ var Walk = Formatter_Doc_Walk
 var WalkParts = Formatter_Doc_WalkParts
 var Flatten = Formatter_Doc_Flatten
 var FlattenParts = Formatter_Doc_FlattenParts
-var Formatter_Doc_DocLine = map[string]any{"Tag": 1, "SkyName": "DocLine"}
-var Formatter_Doc_DocSoftline = map[string]any{"Tag": 2, "SkyName": "DocSoftline"}
-var Formatter_Doc_DocHardline = map[string]any{"Tag": 3, "SkyName": "DocHardline"}
+var Formatter_Doc_DocLine = SkyADT{Tag: 1, SkyName: "DocLine"}
+var Formatter_Doc_DocSoftline = SkyADT{Tag: 2, SkyName: "DocSoftline"}
+var Formatter_Doc_DocHardline = SkyADT{Tag: 3, SkyName: "DocHardline"}
 var FormatModule = Formatter_Format_FormatModule
 var FormatModuleHeader = Formatter_Format_FormatModuleHeader
 var FormatExposing = Formatter_Format_FormatExposing
@@ -1889,6 +1894,8 @@ var collectLocalFunctionArities = Compiler_Lower_CollectLocalFunctionArities
 var CollectLocalFunctionArities = Compiler_Lower_CollectLocalFunctionArities
 var buildConstructorMap = Compiler_Lower_BuildConstructorMap
 var BuildConstructorMap = Compiler_Lower_BuildConstructorMap
+var countCtorArity = Compiler_Lower_CountCtorArity
+var CountCtorArity = Compiler_Lower_CountCtorArity
 var buildConstructorMapFromDecls = Compiler_Lower_BuildConstructorMapFromDecls
 var BuildConstructorMapFromDecls = Compiler_Lower_BuildConstructorMapFromDecls
 var addCtorsFromList = Compiler_Lower_AddCtorsFromList
@@ -1945,35 +1952,35 @@ var fixCurriedCalls = Compiler_Lower_FixCurriedCalls
 var FixCurriedCalls = Compiler_Lower_FixCurriedCalls
 var stmtToGoString = Compiler_Lower_StmtToGoString
 var StmtToGoString = Compiler_Lower_StmtToGoString
-var Compiler_Token_TkIdentifier = map[string]any{"Tag": 0, "SkyName": "TkIdentifier"}
-var Compiler_Token_TkUpperIdentifier = map[string]any{"Tag": 1, "SkyName": "TkUpperIdentifier"}
-var Compiler_Token_TkInteger = map[string]any{"Tag": 2, "SkyName": "TkInteger"}
-var Compiler_Token_TkFloat = map[string]any{"Tag": 3, "SkyName": "TkFloat"}
-var Compiler_Token_TkString = map[string]any{"Tag": 4, "SkyName": "TkString"}
-var Compiler_Token_TkChar = map[string]any{"Tag": 5, "SkyName": "TkChar"}
-var Compiler_Token_TkKeyword = map[string]any{"Tag": 6, "SkyName": "TkKeyword"}
-var Compiler_Token_TkOperator = map[string]any{"Tag": 7, "SkyName": "TkOperator"}
-var Compiler_Token_TkEquals = map[string]any{"Tag": 8, "SkyName": "TkEquals"}
-var Compiler_Token_TkColon = map[string]any{"Tag": 9, "SkyName": "TkColon"}
-var Compiler_Token_TkComma = map[string]any{"Tag": 10, "SkyName": "TkComma"}
-var Compiler_Token_TkDot = map[string]any{"Tag": 11, "SkyName": "TkDot"}
-var Compiler_Token_TkPipe = map[string]any{"Tag": 12, "SkyName": "TkPipe"}
-var Compiler_Token_TkArrow = map[string]any{"Tag": 13, "SkyName": "TkArrow"}
-var Compiler_Token_TkBackslash = map[string]any{"Tag": 14, "SkyName": "TkBackslash"}
-var Compiler_Token_TkLParen = map[string]any{"Tag": 15, "SkyName": "TkLParen"}
-var Compiler_Token_TkRParen = map[string]any{"Tag": 16, "SkyName": "TkRParen"}
-var Compiler_Token_TkLBracket = map[string]any{"Tag": 17, "SkyName": "TkLBracket"}
-var Compiler_Token_TkRBracket = map[string]any{"Tag": 18, "SkyName": "TkRBracket"}
-var Compiler_Token_TkLBrace = map[string]any{"Tag": 19, "SkyName": "TkLBrace"}
-var Compiler_Token_TkRBrace = map[string]any{"Tag": 20, "SkyName": "TkRBrace"}
-var Compiler_Token_TkNewline = map[string]any{"Tag": 21, "SkyName": "TkNewline"}
-var Compiler_Token_TkIndent = map[string]any{"Tag": 22, "SkyName": "TkIndent"}
-var Compiler_Token_TkDedent = map[string]any{"Tag": 23, "SkyName": "TkDedent"}
-var Compiler_Token_TkEOF = map[string]any{"Tag": 24, "SkyName": "TkEOF"}
-var Compiler_Ast_ExposeAll = map[string]any{"Tag": 0, "SkyName": "ExposeAll"}
-var Compiler_Ast_ExposeNone = map[string]any{"Tag": 2, "SkyName": "ExposeNone"}
-var Compiler_GoIr_GoNilExpr = map[string]any{"Tag": 13, "SkyName": "GoNilExpr"}
-var Compiler_GoIr_GoReturnVoid = map[string]any{"Tag": 4, "SkyName": "GoReturnVoid"}
+var Compiler_Token_TkIdentifier = SkyADT{Tag: 0, SkyName: "TkIdentifier"}
+var Compiler_Token_TkUpperIdentifier = SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}
+var Compiler_Token_TkInteger = SkyADT{Tag: 2, SkyName: "TkInteger"}
+var Compiler_Token_TkFloat = SkyADT{Tag: 3, SkyName: "TkFloat"}
+var Compiler_Token_TkString = SkyADT{Tag: 4, SkyName: "TkString"}
+var Compiler_Token_TkChar = SkyADT{Tag: 5, SkyName: "TkChar"}
+var Compiler_Token_TkKeyword = SkyADT{Tag: 6, SkyName: "TkKeyword"}
+var Compiler_Token_TkOperator = SkyADT{Tag: 7, SkyName: "TkOperator"}
+var Compiler_Token_TkEquals = SkyADT{Tag: 8, SkyName: "TkEquals"}
+var Compiler_Token_TkColon = SkyADT{Tag: 9, SkyName: "TkColon"}
+var Compiler_Token_TkComma = SkyADT{Tag: 10, SkyName: "TkComma"}
+var Compiler_Token_TkDot = SkyADT{Tag: 11, SkyName: "TkDot"}
+var Compiler_Token_TkPipe = SkyADT{Tag: 12, SkyName: "TkPipe"}
+var Compiler_Token_TkArrow = SkyADT{Tag: 13, SkyName: "TkArrow"}
+var Compiler_Token_TkBackslash = SkyADT{Tag: 14, SkyName: "TkBackslash"}
+var Compiler_Token_TkLParen = SkyADT{Tag: 15, SkyName: "TkLParen"}
+var Compiler_Token_TkRParen = SkyADT{Tag: 16, SkyName: "TkRParen"}
+var Compiler_Token_TkLBracket = SkyADT{Tag: 17, SkyName: "TkLBracket"}
+var Compiler_Token_TkRBracket = SkyADT{Tag: 18, SkyName: "TkRBracket"}
+var Compiler_Token_TkLBrace = SkyADT{Tag: 19, SkyName: "TkLBrace"}
+var Compiler_Token_TkRBrace = SkyADT{Tag: 20, SkyName: "TkRBrace"}
+var Compiler_Token_TkNewline = SkyADT{Tag: 21, SkyName: "TkNewline"}
+var Compiler_Token_TkIndent = SkyADT{Tag: 22, SkyName: "TkIndent"}
+var Compiler_Token_TkDedent = SkyADT{Tag: 23, SkyName: "TkDedent"}
+var Compiler_Token_TkEOF = SkyADT{Tag: 24, SkyName: "TkEOF"}
+var Compiler_Ast_ExposeAll = SkyADT{Tag: 0, SkyName: "ExposeAll"}
+var Compiler_Ast_ExposeNone = SkyADT{Tag: 2, SkyName: "ExposeNone"}
+var Compiler_GoIr_GoNilExpr = SkyADT{Tag: 13, SkyName: "GoNilExpr"}
+var Compiler_GoIr_GoReturnVoid = SkyADT{Tag: 4, SkyName: "GoReturnVoid"}
 var formatModule = Formatter_Format_FormatModule
 var formatModuleHeader = Formatter_Format_FormatModuleHeader
 var formatExposing = Formatter_Format_FormatExposing
@@ -2237,6 +2244,9 @@ func sky_adtField(v any, idx int) any {
 }
 
 func sky_getSkyName(v any) string {
+	if a, ok := v.(SkyADT); ok {
+		return a.SkyName
+	}
 	if m, ok := v.(map[string]any); ok {
 		if s, ok := m["SkyName"].(string); ok {
 			return s
@@ -2471,6 +2481,9 @@ func sky_asUint64(v any) uint64 { return uint64(sky_asInt(v)) }
 func sky_asMap(v any) map[string]any {
 	if m, ok := v.(map[string]any); ok {
 		return m
+	}
+	if a, ok := v.(SkyADT); ok {
+		return map[string]any{"Tag": a.Tag, "SkyName": a.SkyName, "V0": a.V0, "V1": a.V1, "V2": a.V2, "V3": a.V3, "V4": a.V4}
 	}
 	return map[string]any{}
 }
@@ -5133,13 +5146,13 @@ func Compiler_LowerTyped_GeneratePrefixedFunc(prefix any, modAlias any, decl any
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				params := sky_asMap(__subject)["V1"]
+				params := sky_adtField(__subject, 1)
 				_ = params
-				body := sky_asMap(__subject)["V2"]
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return func() any {
 					goParams := sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_LowerTyped_PatternToParam), params))
@@ -5288,11 +5301,11 @@ func Compiler_LowerTyped_GenerateOneTypeDecl(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				variants := sky_asMap(__subject)["V2"]
+				variants := sky_adtField(__subject, 2)
 				_ = variants
 				return SkyJust(Compiler_LowerTyped_GenerateAdtDecl(name, variants))
 			}
@@ -5373,13 +5386,13 @@ func Compiler_LowerTyped_GenerateOneFuncDecl(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				params := sky_asMap(__subject)["V1"]
+				params := sky_adtField(__subject, 1)
 				_ = params
-				body := sky_asMap(__subject)["V2"]
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return func() any {
 					if sky_asBool(sky_equal(name, "main")) {
@@ -5388,7 +5401,7 @@ func Compiler_LowerTyped_GenerateOneFuncDecl(decl any) any {
 					return SkyJust(Compiler_LowerTyped_GenerateFunc(name, params, body))
 				}()
 			}
-			if __sky_tag == "TypeAnnotDecl" {
+			if __sky_tag == 1 {
 				return SkyNothing()
 			}
 			if true {
@@ -5415,13 +5428,13 @@ func Compiler_LowerTyped_PatternToParam(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_concat(name, " any")
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return "_ any"
 			}
 			if true {
@@ -5481,9 +5494,9 @@ func Compiler_LowerTyped_IsMainDecl(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_equal(name, "main")
 			}
@@ -5499,9 +5512,9 @@ func Compiler_LowerTyped_ExtractBody(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				body := sky_asMap(__subject)["V2"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return SkyJust(body)
 			}
@@ -5517,24 +5530,24 @@ func Compiler_LowerTyped_ExprToGo(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "StringLitExpr" {
-				s := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 4 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return sky_concat("\"", sky_concat(s, "\""))
 			}
-			if __sky_tag == "IntLitExpr" {
-				n := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				n := sky_adtField(__subject, 0)
 				_ = n
 				return sky_stringFromInt(n)
 			}
-			if __sky_tag == "FloatLitExpr" {
-				f := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				f := sky_adtField(__subject, 0)
 				_ = f
 				return sky_stringFromFloat(f)
 			}
-			if __sky_tag == "BoolLitExpr" {
-				b := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				b := sky_adtField(__subject, 0)
 				_ = b
 				return func() any {
 					if sky_asBool(b) {
@@ -5543,106 +5556,106 @@ func Compiler_LowerTyped_ExprToGo(expr any) any {
 					return "false"
 				}()
 			}
-			if __sky_tag == "CharLitExpr" {
-				c := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				c := sky_adtField(__subject, 0)
 				_ = c
 				return sky_concat("'", sky_concat(c, "'"))
 			}
-			if __sky_tag == "UnitExpr" {
+			if __sky_tag == 7 {
 				return "struct{}{}"
 			}
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_LowerTyped_ResolveIdent(name)
 			}
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Compiler_LowerTyped_ResolveQualified(parts)
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Compiler_LowerTyped_GenerateCall(callee, args)
 			}
-			if __sky_tag == "BinaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 18 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				left := sky_asMap(__subject)["V1"]
+				left := sky_adtField(__subject, 1)
 				_ = left
-				right := sky_asMap(__subject)["V2"]
+				right := sky_adtField(__subject, 2)
 				_ = right
 				return Compiler_LowerTyped_GenerateBinary(op, left, right)
 			}
-			if __sky_tag == "LetExpr" {
-				bindings := sky_asMap(__subject)["V0"]
+			if __sky_tag == 16 {
+				bindings := sky_adtField(__subject, 0)
 				_ = bindings
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_LowerTyped_GenerateLet(bindings, body)
 			}
-			if __sky_tag == "IfExpr" {
-				cond := sky_asMap(__subject)["V0"]
+			if __sky_tag == 15 {
+				cond := sky_adtField(__subject, 0)
 				_ = cond
-				thenE := sky_asMap(__subject)["V1"]
+				thenE := sky_adtField(__subject, 1)
 				_ = thenE
-				elseE := sky_asMap(__subject)["V2"]
+				elseE := sky_adtField(__subject, 2)
 				_ = elseE
 				return Compiler_LowerTyped_GenerateIf(cond, thenE, elseE)
 			}
-			if __sky_tag == "CaseExpr" {
-				subject := sky_asMap(__subject)["V0"]
+			if __sky_tag == 17 {
+				subject := sky_adtField(__subject, 0)
 				_ = subject
-				branches := sky_asMap(__subject)["V1"]
+				branches := sky_adtField(__subject, 1)
 				_ = branches
 				return Compiler_LowerTyped_GenerateCase(subject, branches)
 			}
-			if __sky_tag == "LambdaExpr" {
-				params := sky_asMap(__subject)["V0"]
+			if __sky_tag == 14 {
+				params := sky_adtField(__subject, 0)
 				_ = params
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_LowerTyped_GenerateLambda(params, body)
 			}
-			if __sky_tag == "TupleExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_LowerTyped_GenerateTuple(items)
 			}
-			if __sky_tag == "ListExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_LowerTyped_GenerateList(items)
 			}
-			if __sky_tag == "ParenExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 20 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return sky_concat("(", sky_concat(Compiler_LowerTyped_ExprToGo(inner), ")"))
 			}
-			if __sky_tag == "NegateExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 19 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return sky_concat("-(", sky_concat(Compiler_LowerTyped_ExprToGo(inner), ")"))
 			}
-			if __sky_tag == "RecordExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 10 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Compiler_LowerTyped_GenerateRecord(fields)
 			}
-			if __sky_tag == "FieldAccessExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 12 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				field := sky_asMap(__subject)["V1"]
+				field := sky_adtField(__subject, 1)
 				_ = field
 				return Compiler_LowerTyped_GenerateFieldAccess(target, field)
 			}
-			if __sky_tag == "RecordUpdateExpr" {
-				base := sky_asMap(__subject)["V0"]
+			if __sky_tag == 11 {
+				base := sky_adtField(__subject, 0)
 				_ = base
-				fields := sky_asMap(__subject)["V1"]
+				fields := sky_adtField(__subject, 1)
 				_ = fields
 				return Compiler_LowerTyped_GenerateRecordUpdate(base, fields)
 			}
@@ -5863,11 +5876,11 @@ func Compiler_LowerTyped_FlattenCallArgs(callee any, args any) any {
 	return func() any {
 		return func() any {
 			__subject := callee
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "CallExpr" {
-				innerCallee := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 13 {
+				innerCallee := sky_adtField(__subject, 0)
 				_ = innerCallee
-				innerArgs := sky_asMap(__subject)["V1"]
+				innerArgs := sky_adtField(__subject, 1)
 				_ = innerArgs
 				return Compiler_LowerTyped_FlattenCallArgs(innerCallee, sky_call(sky_listAppend(innerArgs), args))
 			}
@@ -5883,9 +5896,9 @@ func Compiler_LowerTyped_FlatCallRoot(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "CallExpr" {
-				innerCallee := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 13 {
+				innerCallee := sky_adtField(__subject, 0)
 				_ = innerCallee
 				return Compiler_LowerTyped_FlatCallRoot(innerCallee)
 			}
@@ -5960,11 +5973,11 @@ func Compiler_LowerTyped_GeneratePipeline(value any, fn any) any {
 		return func() any {
 			return func() any {
 				__subject := fn
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "CallExpr" {
-					callee := sky_asMap(__subject)["V0"]
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 13 {
+					callee := sky_adtField(__subject, 0)
 					_ = callee
-					args := sky_asMap(__subject)["V1"]
+					args := sky_adtField(__subject, 1)
 					_ = args
 					return func() any {
 						fnStr := Compiler_LowerTyped_ExprToGo(callee)
@@ -6021,13 +6034,13 @@ func Compiler_LowerTyped_PatternName(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				n := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				n := sky_adtField(__subject, 0)
 				_ = n
 				return n
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return "_"
 			}
 			if true {
@@ -6093,15 +6106,15 @@ func Compiler_LowerTyped_PatternCondition(varName any, pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PWildcard" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return "true"
 			}
-			if __sky_tag == "PVariable" {
+			if __sky_tag == 1 {
 				return "true"
 			}
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return func() any {
 					ctorName := Compiler_LowerTyped_LastPart(parts)
@@ -6129,8 +6142,8 @@ func Compiler_LowerTyped_PatternCondition(varName any, pat any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "PLiteral" {
-				lit := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				lit := sky_adtField(__subject, 0)
 				_ = lit
 				return Compiler_LowerTyped_LiteralCondition(varName, lit)
 			}
@@ -6146,19 +6159,19 @@ func Compiler_LowerTyped_LiteralCondition(varName any, lit any) any {
 	return func() any {
 		return func() any {
 			__subject := lit
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "LitInt" {
-				n := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				n := sky_adtField(__subject, 0)
 				_ = n
 				return sky_concat(varName, sky_concat(" == ", sky_stringFromInt(n)))
 			}
-			if __sky_tag == "LitString" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return sky_concat(varName, sky_concat(" == ", s))
 			}
-			if __sky_tag == "LitFloat" {
-				f := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				f := sky_adtField(__subject, 0)
 				_ = f
 				return sky_concat(varName, sky_concat(" == ", sky_stringFromFloat(f)))
 			}
@@ -6171,16 +6184,16 @@ func Compiler_LowerTyped_PatternBindings(varName any, pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_concat(name, sky_concat(" := ", sky_concat(varName, sky_concat("; _ = ", sky_concat(name, "; ")))))
 			}
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return func() any {
 					ctorName := Compiler_LowerTyped_LastPart(parts)
@@ -6217,9 +6230,9 @@ func Compiler_LowerTyped_BindCtorArgs(fieldName any, typeName any, varName any, 
 				return func() any {
 					return func() any {
 						__subject := arg
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "PVariable" {
-							name := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 1 {
+							name := sky_adtField(__subject, 0)
 							_ = name
 							return sky_concat(name, sky_concat(" := ", sky_concat(varName, sky_concat(".(", sky_concat(typeName, sky_concat(").", sky_concat(fieldName, sky_concat("; _ = ", sky_concat(name, "; ")))))))))
 						}
@@ -6366,16 +6379,16 @@ func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
 		return func() any {
 			__subject := results
 			if len(sky_asList(__subject)) == 0 {
-				return map[string]any{"Tag": 2, "SkyName": "Effectful"}
+				return SkyADT{Tag: 2, SkyName: "Effectful"}
 			}
 			if len(sky_asList(__subject)) == 1 {
 				single := sky_asList(__subject)[0]
 				_ = single
 				return func() any {
 					if sky_asBool(sky_equal(single, "error")) {
-						return map[string]any{"Tag": 1, "SkyName": "Fallible"}
+						return SkyADT{Tag: 1, SkyName: "Fallible"}
 					}
-					return map[string]any{"Tag": 2, "SkyName": "Effectful"}
+					return SkyADT{Tag: 2, SkyName: "Effectful"}
 				}()
 			}
 			if true {
@@ -6397,9 +6410,9 @@ func Ffi_WrapperGen_ClassifyFunc(results any, funcName any) any {
 					_ = lastResult
 					return func() any {
 						if sky_asBool(sky_equal(lastResult, "error")) {
-							return map[string]any{"Tag": 1, "SkyName": "Fallible"}
+							return SkyADT{Tag: 1, SkyName: "Fallible"}
 						}
-						return map[string]any{"Tag": 2, "SkyName": "Effectful"}
+						return SkyADT{Tag: 2, SkyName: "Effectful"}
 					}()
 				}()
 			}
@@ -7005,14 +7018,14 @@ func Ffi_WrapperGen_WrapReturn(kind any, results any, goCall any) any {
 	return func() any {
 		return func() any {
 			__subject := kind
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "Pure" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return Ffi_WrapperGen_WrapPureReturn(results, goCall)
 			}
-			if __sky_tag == "Fallible" {
+			if __sky_tag == 1 {
 				return Ffi_WrapperGen_WrapFallibleReturn(results, goCall)
 			}
-			if __sky_tag == "Effectful" {
+			if __sky_tag == 2 {
 				return Ffi_WrapperGen_WrapEffectfulReturn(results, goCall)
 			}
 			panic("non-exhaustive case expression")
@@ -7138,7 +7151,7 @@ func Ffi_WrapperGen_ExtractFunctions(json any) any {
 	}()
 }
 
-// sky:type parseFuncEntry : any -> Maybe { hasTypeParams : t1118 , results : t1114 , name : t1112 , params : t1113 , variadic : t1115 }
+// sky:type parseFuncEntry : any -> Maybe { params : t1113 , variadic : t1115 , name : t1112 , results : t1114 , hasTypeParams : t1118 }
 
 func Ffi_WrapperGen_ParseFuncEntry(json any) any {
 	return func() any {
@@ -7377,7 +7390,7 @@ func Ffi_WrapperGen_ExtractMethodsFromType(typeJson any) any {
 	}()
 }
 
-// sky:type parseMethodEntry : any -> any -> any -> Maybe { isInterface : t1395 , typeName : t1394 , name : t1437 , params : t1438 , hasTypeParams : t1443 , results : t1439 , variadic : t1440 }
+// sky:type parseMethodEntry : any -> any -> any -> Maybe { params : t1438 , isInterface : t1395 , results : t1439 , variadic : t1440 , name : t1437 , typeName : t1394 , hasTypeParams : t1443 }
 
 func Ffi_WrapperGen_ParseMethodEntry(typeName any, isIface any, json any) any {
 	return func() any {
@@ -9118,7 +9131,7 @@ func Lsp_JsonRpc_ExtractBraced(remaining any, depth any, idx any) any {
 	}()
 }
 
-// sky:type emptyState : { astCache : t191 , typeCache : t192 , depCache : t193 , documents : t190 }
+// sky:type emptyState : { depCache : t193 , astCache : t191 , documents : t190 , typeCache : t192 }
 
 func Lsp_Server_EmptyState() any {
 	return map[string]any{"documents": sky_dictEmpty(), "astCache": sky_dictEmpty(), "typeCache": sky_dictEmpty(), "depCache": sky_dictEmpty()}
@@ -9449,7 +9462,7 @@ func Lsp_Server_ResolveImportsLoop(srcRoot any, projectRoot any, imports any, st
 						return i
 					}
 					if sky_asSkyMaybe(__subject).SkyName == "Nothing" {
-						return map[string]any{"moduleName": []any{}, "alias_": "", "exposing_": ExposeAll, "span": emptySpan}
+						return map[string]any{"moduleName": []any{}, "alias_": "", "exposing_": SkyADT{Tag: 0, SkyName: "ExposeAll"}, "span": emptySpan}
 					}
 					panic("non-exhaustive case expression")
 				}()
@@ -9635,12 +9648,12 @@ func Lsp_Server_ExtractExports(mod any) any {
 		return func() any {
 			return func() any {
 				__subject := sky_asMap(mod)["exposing_"]
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "ExposeAll" {
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 0 {
 					return allDecls
 				}
-				if __sky_tag == "ExposeList" {
-					names := sky_asMap(__subject)["V0"]
+				if __sky_tag == 1 {
+					names := sky_adtField(__subject, 0)
 					_ = names
 					return sky_call(sky_listFilter(func(d any) any { return Lsp_Server_ListContainsStr(sky_asMap(d)["name"], names) }), allDecls)
 				}
@@ -9668,22 +9681,22 @@ func Lsp_Server_ExtractAllDecls(decls any, acc any) any {
 				return func() any {
 					return func() any {
 						__subject := decl
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "TypeAnnotDecl" {
-							name := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 1 {
+							name := sky_adtField(__subject, 0)
 							_ = name
-							typeExpr := sky_asMap(__subject)["V1"]
+							typeExpr := sky_adtField(__subject, 1)
 							_ = typeExpr
-							span := sky_asMap(__subject)["V2"]
+							span := sky_adtField(__subject, 2)
 							_ = span
 							return Lsp_Server_ExtractAllDecls(rest, append([]any{Lsp_Server_MakeExportedDecl(name, Lsp_Server_RenderTypeExpr(typeExpr), Lsp_Server_GetSpanLine(span))}, sky_asList(acc)...))
 						}
-						if __sky_tag == "FunDecl" {
-							name := sky_asMap(__subject)["V0"]
+						if __sky_tag == 0 {
+							name := sky_adtField(__subject, 0)
 							_ = name
-							params := sky_asMap(__subject)["V1"]
+							params := sky_adtField(__subject, 1)
 							_ = params
-							span := sky_asMap(__subject)["V3"]
+							span := sky_adtField(__subject, 3)
 							_ = span
 							return func() any {
 								if sky_asBool(Lsp_Server_HasAnnotation(name, acc)) {
@@ -9692,17 +9705,17 @@ func Lsp_Server_ExtractAllDecls(decls any, acc any) any {
 								return Lsp_Server_ExtractAllDecls(rest, append([]any{Lsp_Server_MakeExportedDecl(name, Lsp_Server_InferSigFromParams(params), Lsp_Server_GetSpanLine(span))}, sky_asList(acc)...))
 							}()
 						}
-						if __sky_tag == "TypeDecl" {
-							name := sky_asMap(__subject)["V0"]
+						if __sky_tag == 2 {
+							name := sky_adtField(__subject, 0)
 							_ = name
-							span := sky_asMap(__subject)["V3"]
+							span := sky_adtField(__subject, 3)
 							_ = span
 							return Lsp_Server_ExtractAllDecls(rest, append([]any{Lsp_Server_MakeExportedDecl(name, "type", Lsp_Server_GetSpanLine(span))}, sky_asList(acc)...))
 						}
-						if __sky_tag == "TypeAliasDecl" {
-							name := sky_asMap(__subject)["V0"]
+						if __sky_tag == 3 {
+							name := sky_adtField(__subject, 0)
 							_ = name
-							span := sky_asMap(__subject)["V3"]
+							span := sky_adtField(__subject, 3)
 							_ = span
 							return Lsp_Server_ExtractAllDecls(rest, append([]any{Lsp_Server_MakeExportedDecl(name, "type alias", Lsp_Server_GetSpanLine(span))}, sky_asList(acc)...))
 						}
@@ -9718,7 +9731,7 @@ func Lsp_Server_ExtractAllDecls(decls any, acc any) any {
 	}()
 }
 
-// sky:type makeExportedDecl : any -> any -> any -> { signature : t785 , defLine : t786 , name : t784 }
+// sky:type makeExportedDecl : any -> any -> any -> { defLine : t786 , name : t784 , signature : t785 }
 
 func Lsp_Server_MakeExportedDecl(n any, s any, l any) any {
 	return map[string]any{"name": n, "signature": s, "defLine": l}
@@ -9777,25 +9790,25 @@ func Lsp_Server_RenderTEDispatch(te any) any {
 	return func() any {
 		return func() any {
 			__subject := te
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeRef" {
-				parts := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Lsp_Server_RenderTypeRef(sky_call(sky_stringJoin("."), parts), args)
 			}
-			if __sky_tag == "TypeVar" {
-				n := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				n := sky_adtField(__subject, 0)
 				_ = n
 				return n
 			}
-			if __sky_tag == "TupleTypeExpr" {
-				types := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				types := sky_adtField(__subject, 0)
 				_ = types
 				return sky_concat("( ", sky_concat(sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Lsp_Server_RenderTEDispatch), types)), " )"))
 			}
-			if __sky_tag == "UnitTypeExpr" {
+			if __sky_tag == 5 {
 				return "()"
 			}
 			if true {
@@ -9810,29 +9823,29 @@ func Lsp_Server_RenderTEWildcard(te any) any {
 	return func() any {
 		return func() any {
 			__subject := te
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeRef" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return "?"
 			}
-			if __sky_tag == "TypeVar" {
+			if __sky_tag == 1 {
 				return "?"
 			}
-			if __sky_tag == "FunType" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return sky_concat(Lsp_Server_RenderTEDispatch(fromT), sky_concat(" -> ", Lsp_Server_RenderTEDispatch(toT)))
 			}
-			if __sky_tag == "RecordTypeExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Lsp_Server_RenderRecordFields(fields)
 			}
-			if __sky_tag == "TupleTypeExpr" {
+			if __sky_tag == 4 {
 				return "?"
 			}
-			if __sky_tag == "UnitTypeExpr" {
+			if __sky_tag == 5 {
 				return "?"
 			}
 			panic("non-exhaustive case expression")
@@ -10283,11 +10296,11 @@ func Lsp_Server_InferFromAst(name any, decls any) any {
 				return func() any {
 					return func() any {
 						__subject := decl
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "FunDecl" {
-							fname := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 0 {
+							fname := sky_adtField(__subject, 0)
 							_ = fname
-							params := sky_asMap(__subject)["V1"]
+							params := sky_adtField(__subject, 1)
 							_ = params
 							return func() any {
 								if sky_asBool(sky_equal(fname, name)) {
@@ -10931,21 +10944,21 @@ func Lsp_Server_CompletionFromDecl(decl any, prefix any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Lsp_Server_FunDeclCompletion(name, prefix)
 			}
-			if __sky_tag == "TypeDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				variants := sky_asMap(__subject)["V2"]
+				variants := sky_adtField(__subject, 2)
 				_ = variants
 				return Lsp_Server_TypeDeclCompletion(name, prefix, variants)
 			}
-			if __sky_tag == "TypeAliasDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(sky_asBool(sky_stringIsEmpty(prefix)) || sky_asBool(sky_call(sky_stringStartsWith(prefix), name))) {
@@ -11347,23 +11360,23 @@ func Lsp_Server_HandleFormatting(state any, id any, body any) any {
 }
 
 func Formatter_Doc_DocText(v0 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "DocText", "V0": v0}
+	return SkyADT{Tag: 0, SkyName: "DocText", V0: v0}
 }
 
 func Formatter_Doc_DocConcat(v0 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "DocConcat", "V0": v0}
+	return SkyADT{Tag: 4, SkyName: "DocConcat", V0: v0}
 }
 
 func Formatter_Doc_DocIndent(v0 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "DocIndent", "V0": v0}
+	return SkyADT{Tag: 5, SkyName: "DocIndent", V0: v0}
 }
 
 func Formatter_Doc_DocGroup(v0 any) any {
-	return map[string]any{"Tag": 6, "SkyName": "DocGroup", "V0": v0}
+	return SkyADT{Tag: 6, SkyName: "DocGroup", V0: v0}
 }
 
 func Formatter_Doc_DocAlign(v0 any) any {
-	return map[string]any{"Tag": 7, "SkyName": "DocAlign", "V0": v0}
+	return SkyADT{Tag: 7, SkyName: "DocAlign", V0: v0}
 }
 
 // sky:type text : String -> Doc
@@ -11375,19 +11388,19 @@ func Formatter_Doc_Text(s any) any {
 // sky:type line : Doc
 
 func Formatter_Doc_Line() any {
-	return map[string]any{"Tag": 3, "SkyName": "DocLine"}
+	return SkyADT{Tag: 1, SkyName: "DocLine"}
 }
 
 // sky:type hardline : Doc
 
 func Formatter_Doc_Hardline() any {
-	return map[string]any{"Tag": 4, "SkyName": "DocHardline"}
+	return SkyADT{Tag: 3, SkyName: "DocHardline"}
 }
 
 // sky:type softline : Doc
 
 func Formatter_Doc_Softline() any {
-	return map[string]any{"Tag": 7, "SkyName": "DocSoftline"}
+	return SkyADT{Tag: 2, SkyName: "DocSoftline"}
 }
 
 // sky:type concat : List Doc -> Doc
@@ -11502,40 +11515,40 @@ func Formatter_Doc_FlatWidth(doc any) any {
 	return func() any {
 		return func() any {
 			__subject := doc
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "DocText" {
-				s := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return sky_stringLength(s)
 			}
-			if __sky_tag == "DocLine" {
+			if __sky_tag == 1 {
 				return 1
 			}
-			if __sky_tag == "DocSoftline" {
+			if __sky_tag == 2 {
 				return 0
 			}
-			if __sky_tag == "DocHardline" {
+			if __sky_tag == 3 {
 				return 9999
 			}
-			if __sky_tag == "DocConcat" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return sky_call(sky_call(sky_listFoldl(func(part any) any {
 					return func(acc any) any { return sky_numBinop("+", acc, Formatter_Doc_FlatWidth(part)) }
 				}), 0), parts)
 			}
-			if __sky_tag == "DocIndent" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Formatter_Doc_FlatWidth(inner)
 			}
-			if __sky_tag == "DocGroup" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Formatter_Doc_FlatWidth(inner)
 			}
-			if __sky_tag == "DocAlign" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Formatter_Doc_FlatWidth(inner)
 			}
@@ -11554,38 +11567,38 @@ func Formatter_Doc_Fits(doc any, remaining any) any {
 		return func() any {
 			return func() any {
 				__subject := doc
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "DocText" {
-					s := sky_asMap(__subject)["V0"]
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 0 {
+					s := sky_adtField(__subject, 0)
 					_ = s
 					return sky_numCompare("<=", sky_stringLength(s), remaining)
 				}
-				if __sky_tag == "DocLine" {
+				if __sky_tag == 1 {
 					return true
 				}
-				if __sky_tag == "DocSoftline" {
+				if __sky_tag == 2 {
 					return true
 				}
-				if __sky_tag == "DocHardline" {
+				if __sky_tag == 3 {
 					return false
 				}
-				if __sky_tag == "DocConcat" {
-					parts := sky_asMap(__subject)["V0"]
+				if __sky_tag == 4 {
+					parts := sky_adtField(__subject, 0)
 					_ = parts
 					return Formatter_Doc_FitsConcat(parts, remaining)
 				}
-				if __sky_tag == "DocIndent" {
-					inner := sky_asMap(__subject)["V0"]
+				if __sky_tag == 5 {
+					inner := sky_adtField(__subject, 0)
 					_ = inner
 					return Formatter_Doc_Fits(inner, remaining)
 				}
-				if __sky_tag == "DocGroup" {
-					inner := sky_asMap(__subject)["V0"]
+				if __sky_tag == 6 {
+					inner := sky_adtField(__subject, 0)
 					_ = inner
 					return Formatter_Doc_Fits(inner, remaining)
 				}
-				if __sky_tag == "DocAlign" {
-					inner := sky_asMap(__subject)["V0"]
+				if __sky_tag == 7 {
+					inner := sky_adtField(__subject, 0)
 					_ = inner
 					return Formatter_Doc_Fits(inner, remaining)
 				}
@@ -11631,28 +11644,28 @@ func Formatter_Doc_Walk(doc any, outputRef any, colRef any, indentRef any) any {
 	return func() any {
 		return func() any {
 			__subject := doc
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "DocText" {
-				s := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return Formatter_Doc_WriteStr(s, outputRef, colRef)
 			}
-			if __sky_tag == "DocLine" {
+			if __sky_tag == 1 {
 				return Formatter_Doc_Newline(outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocSoftline" {
+			if __sky_tag == 2 {
 				return Formatter_Doc_Newline(outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocHardline" {
+			if __sky_tag == 3 {
 				return Formatter_Doc_Newline(outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocConcat" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Formatter_Doc_WalkParts(parts, outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocIndent" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return func() any {
 					oldIndent := sky_refGet(indentRef)
@@ -11663,8 +11676,8 @@ func Formatter_Doc_Walk(doc any, outputRef any, colRef any, indentRef any) any {
 					return struct{}{}
 				}()
 			}
-			if __sky_tag == "DocGroup" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return func() any {
 					remaining := sky_numBinop("-", Formatter_Doc_MaxWidth(), sky_refGet(colRef))
@@ -11677,8 +11690,8 @@ func Formatter_Doc_Walk(doc any, outputRef any, colRef any, indentRef any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "DocAlign" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return func() any {
 					oldIndent := sky_refGet(indentRef)
@@ -11724,38 +11737,38 @@ func Formatter_Doc_Flatten(doc any, outputRef any, colRef any, indentRef any) an
 	return func() any {
 		return func() any {
 			__subject := doc
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "DocText" {
-				s := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return Formatter_Doc_WriteStr(s, outputRef, colRef)
 			}
-			if __sky_tag == "DocLine" {
+			if __sky_tag == 1 {
 				return Formatter_Doc_WriteStr(" ", outputRef, colRef)
 			}
-			if __sky_tag == "DocSoftline" {
+			if __sky_tag == 2 {
 				return struct{}{}
 			}
-			if __sky_tag == "DocHardline" {
+			if __sky_tag == 3 {
 				return Formatter_Doc_Newline(outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocConcat" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Formatter_Doc_FlattenParts(parts, outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocIndent" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Formatter_Doc_Flatten(inner, outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocGroup" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Formatter_Doc_Flatten(inner, outputRef, colRef, indentRef)
 			}
-			if __sky_tag == "DocAlign" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Formatter_Doc_Flatten(inner, outputRef, colRef, indentRef)
 			}
@@ -11825,16 +11838,16 @@ func Formatter_Format_FormatExposing(clause any) any {
 	return func() any {
 		return func() any {
 			__subject := clause
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "ExposeAll" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return text("(..)")
 			}
-			if __sky_tag == "ExposeList" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return group(concat([]any{text("("), text(sky_call(sky_stringJoin(", "), items)), text(")")}))
 			}
-			if __sky_tag == "ExposeNone" {
+			if __sky_tag == 2 {
 				return text("(..)")
 			}
 			panic("non-exhaustive case expression")
@@ -11856,16 +11869,16 @@ func Formatter_Format_FormatImport(imp any) any {
 		exposingDoc := func() any {
 			return func() any {
 				__subject := sky_asMap(imp)["exposing_"]
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "ExposeAll" {
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 0 {
 					return text(" exposing (..)")
 				}
-				if __sky_tag == "ExposeList" {
-					items := sky_asMap(__subject)["V0"]
+				if __sky_tag == 1 {
+					items := sky_adtField(__subject, 0)
 					_ = items
 					return concat([]any{text(" exposing ("), text(sky_call(sky_stringJoin(", "), items)), text(")")})
 				}
-				if __sky_tag == "ExposeNone" {
+				if __sky_tag == 2 {
 					return text("")
 				}
 				panic("non-exhaustive case expression")
@@ -11954,9 +11967,9 @@ func Formatter_Format_GetDeclAnnotNameInner(d any) any {
 	return func() any {
 		return func() any {
 			__subject := d
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeAnnotDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
@@ -11991,9 +12004,9 @@ func Formatter_Format_GetDeclFunNameInner(d any) any {
 	return func() any {
 		return func() any {
 			__subject := d
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
@@ -12009,47 +12022,47 @@ func Formatter_Format_FormatDeclaration(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				params := sky_asMap(__subject)["V1"]
+				params := sky_adtField(__subject, 1)
 				_ = params
-				body := sky_asMap(__subject)["V2"]
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return Formatter_Format_FormatFunction(name, params, body)
 			}
-			if __sky_tag == "TypeAnnotDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				typeExpr := sky_asMap(__subject)["V1"]
+				typeExpr := sky_adtField(__subject, 1)
 				_ = typeExpr
 				return concat([]any{text(name), text(" : "), Formatter_Format_FormatTypeExpr(typeExpr)})
 			}
-			if __sky_tag == "TypeDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				typeParams := sky_asMap(__subject)["V1"]
+				typeParams := sky_adtField(__subject, 1)
 				_ = typeParams
-				variants := sky_asMap(__subject)["V2"]
+				variants := sky_adtField(__subject, 2)
 				_ = variants
 				return Formatter_Format_FormatTypeDecl(name, typeParams, variants)
 			}
-			if __sky_tag == "TypeAliasDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				typeParams := sky_asMap(__subject)["V1"]
+				typeParams := sky_adtField(__subject, 1)
 				_ = typeParams
-				aliasType := sky_asMap(__subject)["V2"]
+				aliasType := sky_adtField(__subject, 2)
 				_ = aliasType
 				return Formatter_Format_FormatTypeAlias(name, typeParams, aliasType)
 			}
-			if __sky_tag == "ForeignImportDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				pkg := sky_asMap(__subject)["V1"]
+				pkg := sky_adtField(__subject, 1)
 				_ = pkg
-				importName := sky_asMap(__subject)["V2"]
+				importName := sky_adtField(__subject, 2)
 				_ = importName
 				return concat([]any{text("foreign import \""), text(pkg), text("\" exposing ("), text(name), text(")")})
 			}
@@ -12143,39 +12156,39 @@ func Formatter_Format_FormatExpr(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return text(name)
 			}
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return text(sky_call(sky_stringJoin("."), parts))
 			}
-			if __sky_tag == "IntLitExpr" {
-				raw := sky_asMap(__subject)["V1"]
+			if __sky_tag == 2 {
+				raw := sky_adtField(__subject, 1)
 				_ = raw
 				return text(raw)
 			}
-			if __sky_tag == "FloatLitExpr" {
-				raw := sky_asMap(__subject)["V1"]
+			if __sky_tag == 3 {
+				raw := sky_adtField(__subject, 1)
 				_ = raw
 				return text(raw)
 			}
-			if __sky_tag == "StringLitExpr" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return text(sky_concat("\"", sky_concat(Formatter_Format_QuoteString(s), "\"")))
 			}
-			if __sky_tag == "CharLitExpr" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return text(s)
 			}
-			if __sky_tag == "BoolLitExpr" {
-				b := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				b := sky_adtField(__subject, 0)
 				_ = b
 				return func() any {
 					if sky_asBool(b) {
@@ -12184,91 +12197,91 @@ func Formatter_Format_FormatExpr(expr any) any {
 					return text("False")
 				}()
 			}
-			if __sky_tag == "UnitExpr" {
+			if __sky_tag == 7 {
 				return text("()")
 			}
-			if __sky_tag == "TupleExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Formatter_Format_FormatTuple(items)
 			}
-			if __sky_tag == "ListExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Formatter_Format_FormatList(items)
 			}
-			if __sky_tag == "RecordExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 10 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Formatter_Format_FormatRecord(fields)
 			}
-			if __sky_tag == "RecordUpdateExpr" {
-				base := sky_asMap(__subject)["V0"]
+			if __sky_tag == 11 {
+				base := sky_adtField(__subject, 0)
 				_ = base
-				fields := sky_asMap(__subject)["V1"]
+				fields := sky_adtField(__subject, 1)
 				_ = fields
 				return Formatter_Format_FormatRecordUpdate(base, fields)
 			}
-			if __sky_tag == "FieldAccessExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 12 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				fieldName := sky_asMap(__subject)["V1"]
+				fieldName := sky_adtField(__subject, 1)
 				_ = fieldName
 				return concat([]any{Formatter_Format_FormatExpr(target), text("."), text(fieldName)})
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Formatter_Format_FormatCall(callee, args)
 			}
-			if __sky_tag == "LambdaExpr" {
-				params := sky_asMap(__subject)["V0"]
+			if __sky_tag == 14 {
+				params := sky_adtField(__subject, 0)
 				_ = params
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Formatter_Format_FormatLambda(params, body)
 			}
-			if __sky_tag == "IfExpr" {
-				condition := sky_asMap(__subject)["V0"]
+			if __sky_tag == 15 {
+				condition := sky_adtField(__subject, 0)
 				_ = condition
-				thenBranch := sky_asMap(__subject)["V1"]
+				thenBranch := sky_adtField(__subject, 1)
 				_ = thenBranch
-				elseBranch := sky_asMap(__subject)["V2"]
+				elseBranch := sky_adtField(__subject, 2)
 				_ = elseBranch
 				return Formatter_Format_FormatIf(condition, thenBranch, elseBranch)
 			}
-			if __sky_tag == "LetExpr" {
-				bindings := sky_asMap(__subject)["V0"]
+			if __sky_tag == 16 {
+				bindings := sky_adtField(__subject, 0)
 				_ = bindings
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Formatter_Format_FormatLet(bindings, body)
 			}
-			if __sky_tag == "CaseExpr" {
-				subject := sky_asMap(__subject)["V0"]
+			if __sky_tag == 17 {
+				subject := sky_adtField(__subject, 0)
 				_ = subject
-				branches := sky_asMap(__subject)["V1"]
+				branches := sky_adtField(__subject, 1)
 				_ = branches
 				return Formatter_Format_FormatCase(subject, branches)
 			}
-			if __sky_tag == "BinaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 18 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				leftExpr := sky_asMap(__subject)["V1"]
+				leftExpr := sky_adtField(__subject, 1)
 				_ = leftExpr
-				rightExpr := sky_asMap(__subject)["V2"]
+				rightExpr := sky_adtField(__subject, 2)
 				_ = rightExpr
 				return Formatter_Format_FormatBinary(op, leftExpr, rightExpr)
 			}
-			if __sky_tag == "NegateExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 19 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return concat([]any{text("-"), Formatter_Format_FormatExpr(inner)})
 			}
-			if __sky_tag == "ParenExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 20 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return group(concat([]any{text("("), softline, Formatter_Format_FormatExpr(inner), softline, text(")")}))
 			}
@@ -12394,8 +12407,8 @@ func Formatter_Format_IsExprIf(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IfExpr" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 15 {
 				return true
 			}
 			if true {
@@ -12434,19 +12447,19 @@ func Formatter_Format_FormatPattern(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PWildcard" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return text("_")
 			}
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return text(name)
 			}
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				argPats := sky_asMap(__subject)["V1"]
+				argPats := sky_adtField(__subject, 1)
 				_ = argPats
 				return func() any {
 					ctorName := sky_call(sky_stringJoin("."), parts)
@@ -12459,37 +12472,37 @@ func Formatter_Format_FormatPattern(pat any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "PLiteral" {
-				lit := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				lit := sky_adtField(__subject, 0)
 				_ = lit
 				return Formatter_Format_FormatLiteral(lit)
 			}
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return group(concat([]any{text("( "), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatPattern), items), text(" , ")), text(" )")}))
 			}
-			if __sky_tag == "PList" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return group(concat([]any{text("[ "), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatPattern), items), text(" , ")), text(" ]")}))
 			}
-			if __sky_tag == "PCons" {
-				headPat := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				headPat := sky_adtField(__subject, 0)
 				_ = headPat
-				tailPat := sky_asMap(__subject)["V1"]
+				tailPat := sky_adtField(__subject, 1)
 				_ = tailPat
 				return concat([]any{Formatter_Format_FormatPattern(headPat), text(" :: "), Formatter_Format_FormatPattern(tailPat)})
 			}
-			if __sky_tag == "PAs" {
-				innerPat := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				innerPat := sky_adtField(__subject, 0)
 				_ = innerPat
-				name := sky_asMap(__subject)["V1"]
+				name := sky_adtField(__subject, 1)
 				_ = name
 				return concat([]any{Formatter_Format_FormatPattern(innerPat), text(" as "), text(name)})
 			}
-			if __sky_tag == "PRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return text(sky_concat("{ ", sky_concat(sky_call(sky_stringJoin(" , "), fields), " }")))
 			}
@@ -12502,9 +12515,9 @@ func Formatter_Format_FormatPatternParens(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PConstructor" {
-				args := sky_asMap(__subject)["V1"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return func() any {
 					if sky_asBool(sky_listIsEmpty(args)) {
@@ -12513,7 +12526,7 @@ func Formatter_Format_FormatPatternParens(pat any) any {
 					return concat([]any{text("("), Formatter_Format_FormatPattern(pat), text(")")})
 				}()
 			}
-			if __sky_tag == "PTuple" {
+			if __sky_tag == 4 {
 				return Formatter_Format_FormatPattern(pat)
 			}
 			if true {
@@ -12528,29 +12541,29 @@ func Formatter_Format_FormatLiteral(lit any) any {
 	return func() any {
 		return func() any {
 			__subject := lit
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "LitInt" {
-				n := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				n := sky_adtField(__subject, 0)
 				_ = n
 				return text(sky_stringFromInt(n))
 			}
-			if __sky_tag == "LitFloat" {
-				f := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				f := sky_adtField(__subject, 0)
 				_ = f
 				return text(sky_stringFromFloat(f))
 			}
-			if __sky_tag == "LitString" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return text(s)
 			}
-			if __sky_tag == "LitChar" {
-				c := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				c := sky_adtField(__subject, 0)
 				_ = c
 				return text(sky_concat("'", sky_concat(c, "'")))
 			}
-			if __sky_tag == "LitBool" {
-				b := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				b := sky_adtField(__subject, 0)
 				_ = b
 				return func() any {
 					if sky_asBool(b) {
@@ -12568,11 +12581,11 @@ func Formatter_Format_FormatTypeExpr(texpr any) any {
 	return func() any {
 		return func() any {
 			__subject := texpr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeRef" {
-				parts := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return func() any {
 					name := sky_call(sky_stringJoin("."), parts)
@@ -12585,29 +12598,29 @@ func Formatter_Format_FormatTypeExpr(texpr any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "TypeVar" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return text(name)
 			}
-			if __sky_tag == "FunType" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return concat([]any{Formatter_Format_FormatTypeExprParens(fromT), text(" -> "), Formatter_Format_FormatTypeExpr(toT)})
 			}
-			if __sky_tag == "RecordTypeExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Formatter_Format_FormatRecordType(fields)
 			}
-			if __sky_tag == "TupleTypeExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return group(concat([]any{text("("), joinDocs(sky_call(sky_listMap(Formatter_Format_FormatTypeExpr), items), text(", ")), text(")")}))
 			}
-			if __sky_tag == "UnitTypeExpr" {
+			if __sky_tag == 5 {
 				return text("()")
 			}
 			panic("non-exhaustive case expression")
@@ -12619,12 +12632,12 @@ func Formatter_Format_FormatTypeExprParens(texpr any) any {
 	return func() any {
 		return func() any {
 			__subject := texpr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunType" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
 				return concat([]any{text("("), Formatter_Format_FormatTypeExpr(texpr), text(")")})
 			}
-			if __sky_tag == "TypeRef" {
-				args := sky_asMap(__subject)["V1"]
+			if __sky_tag == 0 {
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return func() any {
 					if sky_asBool(sky_listIsEmpty(args)) {
@@ -12719,15 +12732,15 @@ func Compiler_Exhaustive_IsCatchAll(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PWildcard" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return true
 			}
-			if __sky_tag == "PVariable" {
+			if __sky_tag == 1 {
 				return true
 			}
-			if __sky_tag == "PAs" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Exhaustive_IsCatchAll(inner)
 			}
@@ -12743,14 +12756,14 @@ func Compiler_Exhaustive_CheckTypeExhaustiveness(registry any, subjectType any, 
 	return func() any {
 		return func() any {
 			__subject := subjectType
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TConst" {
-				typeName := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				typeName := sky_adtField(__subject, 0)
 				_ = typeName
 				return Compiler_Exhaustive_CheckConstTypeExhaustiveness(registry, typeName, patterns)
 			}
-			if __sky_tag == "TApp" && sky_asMap(sky_asMap(__subject)["V0"])["SkyName"] == "TConst" {
-				typeName := sky_asMap(sky_asMap(__subject)["V0"])["V0"]
+			if __sky_tag == 3 && sky_adtTag(sky_adtField(__subject, 0)) == 1 {
+				typeName := sky_adtField(sky_adtField(__subject, 0), 0)
 				_ = typeName
 				return Compiler_Exhaustive_CheckConstTypeExhaustiveness(registry, typeName, patterns)
 			}
@@ -12826,9 +12839,9 @@ func Compiler_Exhaustive_CollectBoolPatterns(patterns any, acc any) any {
 				return func() any {
 					return func() any {
 						__subject := pat
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "PConstructor" {
-							parts := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 2 {
+							parts := sky_adtField(__subject, 0)
 							_ = parts
 							return func() any {
 								name := Compiler_Exhaustive_LastPart(parts)
@@ -12836,8 +12849,8 @@ func Compiler_Exhaustive_CollectBoolPatterns(patterns any, acc any) any {
 								return Compiler_Exhaustive_CollectBoolPatterns(rest, sky_call(sky_setInsert(name), acc))
 							}()
 						}
-						if __sky_tag == "PLiteral" && sky_asMap(sky_asMap(__subject)["V0"])["SkyName"] == "LitBool" {
-							b := sky_asMap(sky_asMap(__subject)["V0"])["V0"]
+						if __sky_tag == 3 && sky_adtTag(sky_adtField(__subject, 0)) == 4 {
+							b := sky_adtField(sky_adtField(__subject, 0), 0)
 							_ = b
 							return func() any {
 								if sky_asBool(b) {
@@ -12896,9 +12909,9 @@ func Compiler_Exhaustive_CollectConstructorPatterns(patterns any, acc any) any {
 				return func() any {
 					return func() any {
 						__subject := pat
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "PConstructor" {
-							parts := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 2 {
+							parts := sky_adtField(__subject, 0)
 							_ = parts
 							return func() any {
 								name := Compiler_Exhaustive_LastPart(parts)
@@ -12906,8 +12919,8 @@ func Compiler_Exhaustive_CollectConstructorPatterns(patterns any, acc any) any {
 								return Compiler_Exhaustive_CollectConstructorPatterns(rest, sky_call(sky_setInsert(name), acc))
 							}()
 						}
-						if __sky_tag == "PAs" {
-							inner := sky_asMap(__subject)["V0"]
+						if __sky_tag == 7 {
+							inner := sky_adtField(__subject, 0)
 							_ = inner
 							return Compiler_Exhaustive_CollectConstructorPatterns(append([]any{inner}, sky_asList(rest)...), acc)
 						}
@@ -12968,9 +12981,9 @@ func Compiler_Unify_ExpandAliasWithMap(aliases any, ty any) any {
 	return func() any {
 		return func() any {
 			__subject := ty
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Unify_ExpandAliasConst(aliases, name, ty)
 			}
@@ -13017,38 +13030,38 @@ func Compiler_Unify_UnifyInner(t1 any, t2 any) any {
 	return func() any {
 		return func() any {
 			__subject := t1
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id1 := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id1 := sky_adtField(__subject, 0)
 				_ = id1
 				return Compiler_Unify_BindVar(id1, t2)
 			}
-			if __sky_tag == "TConst" {
-				nameA := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				nameA := sky_adtField(__subject, 0)
 				_ = nameA
 				return Compiler_Unify_UnifyConst(nameA, t1, t2)
 			}
-			if __sky_tag == "TFun" {
-				fromA := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromA := sky_adtField(__subject, 0)
 				_ = fromA
-				toA := sky_asMap(__subject)["V1"]
+				toA := sky_adtField(__subject, 1)
 				_ = toA
 				return Compiler_Unify_UnifyFun(fromA, toA, t2)
 			}
-			if __sky_tag == "TApp" {
-				ctorA := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctorA := sky_adtField(__subject, 0)
 				_ = ctorA
-				argsA := sky_asMap(__subject)["V1"]
+				argsA := sky_adtField(__subject, 1)
 				_ = argsA
 				return Compiler_Unify_UnifyApp(ctorA, argsA, t2)
 			}
-			if __sky_tag == "TTuple" {
-				itemsA := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				itemsA := sky_adtField(__subject, 0)
 				_ = itemsA
 				return Compiler_Unify_UnifyTuple(itemsA, t2)
 			}
-			if __sky_tag == "TRecord" {
-				fieldsA := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fieldsA := sky_adtField(__subject, 0)
 				_ = fieldsA
 				return Compiler_Unify_UnifyRecord(fieldsA, t2)
 			}
@@ -13061,14 +13074,14 @@ func Compiler_Unify_UnifyConst(nameA any, t1 any, t2 any) any {
 	return func() any {
 		return func() any {
 			__subject := t2
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id2 := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id2 := sky_adtField(__subject, 0)
 				_ = id2
 				return Compiler_Unify_BindVar(id2, t1)
 			}
-			if __sky_tag == "TConst" {
-				nameB := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				nameB := sky_adtField(__subject, 0)
 				_ = nameB
 				return func() any {
 					if sky_asBool(sky_equal(nameA, nameB)) {
@@ -13100,21 +13113,21 @@ func Compiler_Unify_UnifyFun(fromA any, toA any, t2 any) any {
 	return func() any {
 		return func() any {
 			__subject := t2
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id2 := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id2 := sky_adtField(__subject, 0)
 				_ = id2
 				return Compiler_Unify_BindVar(id2, TFun(fromA, toA))
 			}
-			if __sky_tag == "TFun" {
-				fromB := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromB := sky_adtField(__subject, 0)
 				_ = fromB
-				toB := sky_asMap(__subject)["V1"]
+				toB := sky_adtField(__subject, 1)
 				_ = toB
 				return Compiler_Unify_UnifyFunParts(fromA, toA, fromB, toB)
 			}
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) {
@@ -13177,21 +13190,21 @@ func Compiler_Unify_UnifyApp(ctorA any, argsA any, t2 any) any {
 	return func() any {
 		return func() any {
 			__subject := t2
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id2 := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id2 := sky_adtField(__subject, 0)
 				_ = id2
 				return Compiler_Unify_BindVar(id2, TApp(ctorA, argsA))
 			}
-			if __sky_tag == "TApp" {
-				ctorB := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctorB := sky_adtField(__subject, 0)
 				_ = ctorB
-				argsB := sky_asMap(__subject)["V1"]
+				argsB := sky_adtField(__subject, 1)
 				_ = argsB
 				return Compiler_Unify_UnifyAppParts(ctorA, argsA, ctorB, argsB)
 			}
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) {
@@ -13233,14 +13246,14 @@ func Compiler_Unify_UnifyTuple(itemsA any, t2 any) any {
 	return func() any {
 		return func() any {
 			__subject := t2
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id2 := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id2 := sky_adtField(__subject, 0)
 				_ = id2
 				return Compiler_Unify_BindVar(id2, TTuple(itemsA))
 			}
-			if __sky_tag == "TTuple" {
-				itemsB := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				itemsB := sky_adtField(__subject, 0)
 				_ = itemsB
 				return func() any {
 					if sky_asBool(!sky_equal(sky_listLength(itemsA), sky_listLength(itemsB))) {
@@ -13249,8 +13262,8 @@ func Compiler_Unify_UnifyTuple(itemsA any, t2 any) any {
 					return Compiler_Unify_UnifyList(itemsA, itemsB, emptySub)
 				}()
 			}
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) {
@@ -13271,19 +13284,19 @@ func Compiler_Unify_UnifyRecord(fieldsA any, t2 any) any {
 	return func() any {
 		return func() any {
 			__subject := t2
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id2 := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id2 := sky_adtField(__subject, 0)
 				_ = id2
 				return Compiler_Unify_BindVar(id2, TRecord(fieldsA))
 			}
-			if __sky_tag == "TRecord" {
-				fieldsB := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fieldsB := sky_adtField(__subject, 0)
 				_ = fieldsB
 				return Compiler_Unify_UnifyRecords(fieldsA, fieldsB)
 			}
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(Compiler_Unify_IsUniversalUnifier(name)) {
@@ -13304,9 +13317,9 @@ func Compiler_Unify_BindVar(id any, t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				otherId := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				otherId := sky_adtField(__subject, 0)
 				_ = otherId
 				return func() any {
 					if sky_asBool(sky_equal(id, otherId)) {
@@ -13534,117 +13547,117 @@ func Compiler_Infer_InferExpr(counter any, registry any, env any, expr any) any 
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IntLitExpr" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
 				return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Int")})
 			}
-			if __sky_tag == "FloatLitExpr" {
+			if __sky_tag == 3 {
 				return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Float")})
 			}
-			if __sky_tag == "StringLitExpr" {
+			if __sky_tag == 4 {
 				return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("String")})
 			}
-			if __sky_tag == "CharLitExpr" {
+			if __sky_tag == 5 {
 				return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Char")})
 			}
-			if __sky_tag == "BoolLitExpr" {
+			if __sky_tag == 6 {
 				return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Bool")})
 			}
-			if __sky_tag == "UnitExpr" {
+			if __sky_tag == 7 {
 				return SkyOk(map[string]any{"substitution": emptySub, "type_": TConst("Unit")})
 			}
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Infer_InferIdentifier(counter, env, name)
 			}
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Compiler_Infer_InferQualifiedExpr(counter, registry, env, parts)
 			}
-			if __sky_tag == "TupleExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_Infer_InferTupleItems(counter, registry, env, items, emptySub, []any{})
 			}
-			if __sky_tag == "ListExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_Infer_InferListItems(counter, registry, env, items)
 			}
-			if __sky_tag == "RecordExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 10 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Compiler_Infer_InferRecordFields(counter, registry, env, fields, emptySub, sky_dictEmpty())
 			}
-			if __sky_tag == "RecordUpdateExpr" {
-				base := sky_asMap(__subject)["V0"]
+			if __sky_tag == 11 {
+				base := sky_adtField(__subject, 0)
 				_ = base
-				fields := sky_asMap(__subject)["V1"]
+				fields := sky_adtField(__subject, 1)
 				_ = fields
 				return Compiler_Infer_InferRecordUpdate(counter, registry, env, base, fields)
 			}
-			if __sky_tag == "FieldAccessExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 12 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				fieldName := sky_asMap(__subject)["V1"]
+				fieldName := sky_adtField(__subject, 1)
 				_ = fieldName
 				return Compiler_Infer_InferFieldAccess(counter, registry, env, target, fieldName)
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Compiler_Infer_InferCall(counter, registry, env, callee, args)
 			}
-			if __sky_tag == "LambdaExpr" {
-				params := sky_asMap(__subject)["V0"]
+			if __sky_tag == 14 {
+				params := sky_adtField(__subject, 0)
 				_ = params
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_Infer_InferLambda(counter, registry, env, params, body)
 			}
-			if __sky_tag == "IfExpr" {
-				condition := sky_asMap(__subject)["V0"]
+			if __sky_tag == 15 {
+				condition := sky_adtField(__subject, 0)
 				_ = condition
-				thenBranch := sky_asMap(__subject)["V1"]
+				thenBranch := sky_adtField(__subject, 1)
 				_ = thenBranch
-				elseBranch := sky_asMap(__subject)["V2"]
+				elseBranch := sky_adtField(__subject, 2)
 				_ = elseBranch
 				return Compiler_Infer_InferIf(counter, registry, env, condition, thenBranch, elseBranch)
 			}
-			if __sky_tag == "LetExpr" {
-				bindings := sky_asMap(__subject)["V0"]
+			if __sky_tag == 16 {
+				bindings := sky_adtField(__subject, 0)
 				_ = bindings
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_Infer_InferLet(counter, registry, env, bindings, body)
 			}
-			if __sky_tag == "CaseExpr" {
-				subject := sky_asMap(__subject)["V0"]
+			if __sky_tag == 17 {
+				subject := sky_adtField(__subject, 0)
 				_ = subject
-				branches := sky_asMap(__subject)["V1"]
+				branches := sky_adtField(__subject, 1)
 				_ = branches
 				return Compiler_Infer_InferCase(counter, registry, env, subject, branches)
 			}
-			if __sky_tag == "BinaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 18 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				left := sky_asMap(__subject)["V1"]
+				left := sky_adtField(__subject, 1)
 				_ = left
-				right := sky_asMap(__subject)["V2"]
+				right := sky_adtField(__subject, 2)
 				_ = right
 				return Compiler_Infer_InferBinary(counter, registry, env, op, left, right)
 			}
-			if __sky_tag == "NegateExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 19 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Infer_InferNegate(counter, registry, env, inner)
 			}
-			if __sky_tag == "ParenExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 20 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Infer_InferExpr(counter, registry, env, inner)
 			}
@@ -13653,7 +13666,7 @@ func Compiler_Infer_InferExpr(counter any, registry any, env any, expr any) any 
 	}()
 }
 
-// sky:type inferIdentifier : any -> any -> any -> Result any { type_ : t214 , substitution : t211 }
+// sky:type inferIdentifier : any -> any -> any -> Result any { substitution : t211 , type_ : t214 }
 
 func Compiler_Infer_InferIdentifier(counter any, env any, name any) any {
 	return func() any {
@@ -13812,7 +13825,7 @@ func Compiler_Infer_InferQualifiedFallback(counter any, env any, parts any, qual
 	}()
 }
 
-// sky:type inferQualifiedFallbackLookup : any -> any -> any -> Result any { type_ : t298 , substitution : t295 }
+// sky:type inferQualifiedFallbackLookup : any -> any -> any -> Result any { substitution : t295 , type_ : t298 }
 
 func Compiler_Infer_InferQualifiedFallbackLookup(counter any, env any, name any) any {
 	return func() any {
@@ -13912,9 +13925,9 @@ func Compiler_Infer_InferFieldAccessFromType(targetResult any, resultVar any, ta
 	return func() any {
 		return func() any {
 			__subject := targetType
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 5 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Compiler_Infer_InferFieldAccessFromRecord(targetResult, resultVar, fields, fieldName)
 			}
@@ -13966,7 +13979,7 @@ func Compiler_Infer_InferNegate(counter any, registry any, env any, inner any) a
 	}()
 }
 
-// sky:type inferNegateType : any -> Result any { substitution : t450 , type_ : t454 }
+// sky:type inferNegateType : any -> Result any { type_ : t454 , substitution : t450 }
 
 func Compiler_Infer_InferNegateType(result any) any {
 	return func() any {
@@ -13985,7 +13998,7 @@ func Compiler_Infer_InferNegateType(result any) any {
 	}()
 }
 
-// sky:type inferNegateFloat : any -> Result String { type_ : t479 , substitution : t475 }
+// sky:type inferNegateFloat : any -> Result String { substitution : t475 , type_ : t479 }
 
 func Compiler_Infer_InferNegateFloat(result any) any {
 	return func() any {
@@ -14081,7 +14094,7 @@ func Compiler_Infer_InferCallArg(counter any, registry any, env any, fnType any,
 	}()
 }
 
-// sky:type inferCallArgUnify : any -> any -> any -> any -> any -> any -> any -> List any -> Result String { substitution : t624 , type_ : t622 }
+// sky:type inferCallArgUnify : any -> any -> any -> any -> any -> any -> any -> List any -> Result String { type_ : t622 , substitution : t624 }
 
 func Compiler_Infer_InferCallArgUnify(counter any, registry any, env any, combinedSub any, actualFnType any, expectedFnType any, resultVar any, rest any) any {
 	return func() any {
@@ -14378,9 +14391,9 @@ func Compiler_Infer_InferLetBindingPattern(counter any, registry any, env any, b
 	return func() any {
 		return func() any {
 			__subject := sky_asMap(binding)["pattern"]
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					newEnv := Compiler_Env_Extend(name, generalizedScheme, envWithSub)
@@ -14396,7 +14409,7 @@ func Compiler_Infer_InferLetBindingPattern(counter any, registry any, env any, b
 	}()
 }
 
-// sky:type inferLetBindingContinue : any -> any -> any -> List any -> any -> any -> Result any { substitution : t1045 , type_ : t1046 }
+// sky:type inferLetBindingContinue : any -> any -> any -> List any -> any -> any -> Result any { type_ : t1046 , substitution : t1045 }
 
 func Compiler_Infer_InferLetBindingContinue(counter any, registry any, newEnv any, rest any, body any, sub any) any {
 	return func() any {
@@ -14446,7 +14459,7 @@ func Compiler_Infer_InferLetBindingDestructure(counter any, registry any, env an
 	}()
 }
 
-// sky:type inferLetBindingDestructureContinue : any -> any -> any -> List any -> any -> any -> Result any { type_ : t1142 , substitution : t1141 }
+// sky:type inferLetBindingDestructureContinue : any -> any -> any -> List any -> any -> any -> Result any { substitution : t1141 , type_ : t1142 }
 
 func Compiler_Infer_InferLetBindingDestructureContinue(counter any, registry any, newEnv any, rest any, body any, combinedSub any) any {
 	return func() any {
@@ -14494,7 +14507,7 @@ func Compiler_Infer_InferCase(counter any, registry any, env any, subject any, b
 	}()
 }
 
-// sky:type inferCaseBranches : any -> any -> any -> any -> any -> List any -> any -> Result any { substitution : t1184 , type_ : t1195 }
+// sky:type inferCaseBranches : any -> any -> any -> any -> any -> List any -> any -> Result any { type_ : t1195 , substitution : t1184 }
 
 func Compiler_Infer_InferCaseBranches(counter any, registry any, env any, subjectType any, sub any, branches any, resultType any) any {
 	return func() any {
@@ -14660,9 +14673,9 @@ func Compiler_Infer_CheckNumericType(op any, resultType any, finalSub any) any {
 	return func() any {
 		return func() any {
 			__subject := resultType
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(sky_asBool(sky_equal(name, "Int")) || sky_asBool(sky_equal(name, "Float"))) {
@@ -14671,7 +14684,7 @@ func Compiler_Infer_CheckNumericType(op any, resultType any, finalSub any) any {
 					return SkyErr(sky_concat("Arithmetic operator '", sky_concat(op, sky_concat("' requires a number type, got ", name))))
 				}()
 			}
-			if __sky_tag == "TVar" {
+			if __sky_tag == 0 {
 				return SkyOk(map[string]any{"substitution": finalSub, "type_": resultType})
 			}
 			if true {
@@ -14817,7 +14830,7 @@ func Compiler_Infer_InferBinaryIntDiv(lt any, rt any, sub any) any {
 	}()
 }
 
-// sky:type inferBinaryIntDivRight : any -> any -> any -> Result String { substitution : t1604 , type_ : t1609 }
+// sky:type inferBinaryIntDivRight : any -> any -> any -> Result String { type_ : t1609 , substitution : t1604 }
 
 func Compiler_Infer_InferBinaryIntDivRight(rt any, sub any, s1 any) any {
 	return func() any {
@@ -14880,7 +14893,7 @@ func Compiler_Infer_InferBinaryLogical(lt any, rt any, sub any) any {
 	}()
 }
 
-// sky:type inferBinaryLogicalRight : any -> any -> any -> Result String { substitution : t1679 , type_ : t1684 }
+// sky:type inferBinaryLogicalRight : any -> any -> any -> Result String { type_ : t1684 , substitution : t1679 }
 
 func Compiler_Infer_InferBinaryLogicalRight(rt any, sub any, s1 any) any {
 	return func() any {
@@ -14901,7 +14914,7 @@ func Compiler_Infer_InferBinaryLogicalRight(rt any, sub any, s1 any) any {
 	}()
 }
 
-// sky:type inferBinaryAppend : any -> any -> any -> Result String { substitution : t1705 , type_ : t1711 }
+// sky:type inferBinaryAppend : any -> any -> any -> Result String { type_ : t1711 , substitution : t1705 }
 
 func Compiler_Infer_InferBinaryAppend(lt any, rt any, sub any) any {
 	return func() any {
@@ -14978,7 +14991,7 @@ func Compiler_Infer_InferBinaryPipeRight(counter any, lt any, rt any, sub any) a
 	}()
 }
 
-// sky:type inferBinaryPipeLeft : any -> any -> any -> any -> Result String { type_ : t1818 , substitution : t1814 }
+// sky:type inferBinaryPipeLeft : any -> any -> any -> any -> Result String { substitution : t1814 , type_ : t1818 }
 
 func Compiler_Infer_InferBinaryPipeLeft(counter any, lt any, rt any, sub any) any {
 	return func() any {
@@ -15092,7 +15105,7 @@ func Compiler_Infer_InferBinaryComposeLeft(counter any, lt any, rt any, sub any)
 	}()
 }
 
-// sky:type inferBinaryComposeLeftSecond : any -> any -> any -> any -> any -> any -> any -> Result String { substitution : t1998 , type_ : t2005 }
+// sky:type inferBinaryComposeLeftSecond : any -> any -> any -> any -> any -> any -> any -> Result String { type_ : t2005 , substitution : t1998 }
 
 func Compiler_Infer_InferBinaryComposeLeftSecond(counter any, sub any, s1 any, lt any, aVar any, bVar any, cVar any) any {
 	return func() any {
@@ -15121,13 +15134,13 @@ func Compiler_Infer_InferDeclaration(counter any, registry any, env any, decl an
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				params := sky_asMap(__subject)["V1"]
+				params := sky_adtField(__subject, 1)
 				_ = params
-				body := sky_asMap(__subject)["V2"]
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return Compiler_Infer_InferFunction(counter, registry, env, name, params, body, annotation, typeAliases)
 			}
@@ -15207,7 +15220,7 @@ func Compiler_Infer_InferFunctionBody(counter any, registry any, env any, name a
 	}()
 }
 
-// sky:type inferFunctionSelfUnify : any -> any -> String -> any -> any -> any -> any -> any -> any -> Result String { diagnostics : t2177 , name : String , scheme : t2185 }
+// sky:type inferFunctionSelfUnify : any -> any -> String -> any -> any -> any -> any -> any -> any -> Result String { name : String , scheme : t2185 , diagnostics : t2177 }
 
 func Compiler_Infer_InferFunctionSelfUnify(counter any, env any, name any, bodySub any, funType any, selfType any, body any, annotation any, typeAliases any) any {
 	return func() any {
@@ -15321,14 +15334,14 @@ func Compiler_Infer_DebugType(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
 				return sky_concat("t", sky_stringFromInt(id))
 			}
@@ -15390,33 +15403,33 @@ func Compiler_Infer_ExpandTypeAliases(aliases any, ty any) any {
 	return func() any {
 		return func() any {
 			__subject := ty
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Infer_ExpandTConstAlias(aliases, name, ty)
 			}
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return TFun(Compiler_Infer_ExpandTypeAliases(aliases, fromT), Compiler_Infer_ExpandTypeAliases(aliases, toT))
 			}
-			if __sky_tag == "TApp" {
-				ctor := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctor := sky_adtField(__subject, 0)
 				_ = ctor
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return TApp(Compiler_Infer_ExpandTypeAliases(aliases, ctor), sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Infer_ExpandTypeAliases(aliases, __pa0) }), args))
 			}
-			if __sky_tag == "TTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Infer_ExpandTypeAliases(aliases, __pa0) }), items))
 			}
-			if __sky_tag == "TRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return TRecord(sky_call(sky_dictMap(func(kk any) any { return func(v any) any { return Compiler_Infer_ExpandTypeAliases(aliases, v) } }), fields))
 			}
@@ -15453,7 +15466,7 @@ func Compiler_Infer_ApplySubToEnv(sub any, env any) any {
 	return sky_call(sky_dictMap(func(kk any) any { return func(scheme any) any { return applySubToScheme(sub, scheme) } }), env)
 }
 
-// sky:type inferTupleItems : any -> any -> any -> List any -> any -> any -> Result any { substitution : t2374 , type_ : t2383 }
+// sky:type inferTupleItems : any -> any -> any -> List any -> any -> any -> Result any { type_ : t2383 , substitution : t2374 }
 
 func Compiler_Infer_InferTupleItems(counter any, registry any, env any, items any, sub any, types any) any {
 	return func() any {
@@ -15474,7 +15487,7 @@ func Compiler_Infer_InferTupleItems(counter any, registry any, env any, items an
 	}()
 }
 
-// sky:type inferTupleItem : any -> any -> any -> any -> List any -> any -> List any -> Result any { substitution : t2435 , type_ : t2425 }
+// sky:type inferTupleItem : any -> any -> any -> any -> List any -> any -> List any -> Result any { type_ : t2420 , substitution : t2435 }
 
 func Compiler_Infer_InferTupleItem(counter any, registry any, env any, item any, rest any, sub any, types any) any {
 	return func() any {
@@ -15551,7 +15564,7 @@ func Compiler_Infer_InferListItem(counter any, registry any, env any, item any, 
 	}()
 }
 
-// sky:type inferListItemUnify : any -> any -> any -> List any -> any -> any -> any -> Result String { substitution : t2560 , type_ : t2550 }
+// sky:type inferListItemUnify : any -> any -> any -> List any -> any -> any -> any -> Result String { substitution : t2560 , type_ : t2549 }
 
 func Compiler_Infer_InferListItemUnify(counter any, registry any, env any, rest any, itemSub any, elemType any, result any) any {
 	return func() any {
@@ -15572,7 +15585,7 @@ func Compiler_Infer_InferListItemUnify(counter any, registry any, env any, rest 
 	}()
 }
 
-// sky:type inferRecordFields : any -> any -> any -> List any -> any -> any -> Result any { type_ : t2575 , substitution : t2566 }
+// sky:type inferRecordFields : any -> any -> any -> List any -> any -> any -> Result any { substitution : t2566 , type_ : t2575 }
 
 func Compiler_Infer_InferRecordFields(counter any, registry any, env any, fields any, sub any, fieldTypes any) any {
 	return func() any {
@@ -15593,7 +15606,7 @@ func Compiler_Infer_InferRecordFields(counter any, registry any, env any, fields
 	}()
 }
 
-// sky:type inferRecordField : any -> any -> any -> any -> List any -> any -> any -> Result any { type_ : t2621 , substitution : t2627 }
+// sky:type inferRecordField : any -> any -> any -> any -> List any -> any -> any -> Result any { type_ : t2618 , substitution : t2627 }
 
 func Compiler_Infer_InferRecordField(counter any, registry any, env any, field any, rest any, sub any, fieldTypes any) any {
 	return func() any {
@@ -15666,7 +15679,7 @@ func Compiler_Infer_InferRecordUpdateField(counter any, registry any, env any, f
 	}()
 }
 
-// sky:type makeTypedDecl : any -> any -> any -> { scheme : t125 , prettyType : t129 , name : t124 }
+// sky:type makeTypedDecl : any -> any -> any -> { name : t124 , scheme : t125 , prettyType : t129 }
 
 func Compiler_Checker_MakeTypedDecl(n any, s any, t any) any {
 	return map[string]any{"name": n, "scheme": s, "prettyType": formatType(t)}
@@ -15804,13 +15817,13 @@ func Compiler_Checker_RegisterOneTypeAlias(counter any, decl any, rest any, env 
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeAliasDecl" {
-				aliasName := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 3 {
+				aliasName := sky_adtField(__subject, 0)
 				_ = aliasName
-				aliasParams := sky_asMap(__subject)["V1"]
+				aliasParams := sky_adtField(__subject, 1)
 				_ = aliasParams
-				aliasBody := sky_asMap(__subject)["V2"]
+				aliasBody := sky_adtField(__subject, 2)
 				_ = aliasBody
 				return func() any {
 					paramVars := sky_call(sky_listMap(func(p any) any { return freshVar(counter, SkyJust(p)) }), aliasParams)
@@ -15906,11 +15919,11 @@ func Compiler_Checker_CollectAnnotationsLoop(decls any, acc any) any {
 				return func() any {
 					return func() any {
 						__subject := decl
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "TypeAnnotDecl" {
-							name := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 1 {
+							name := sky_adtField(__subject, 0)
 							_ = name
-							typeExpr := sky_asMap(__subject)["V1"]
+							typeExpr := sky_adtField(__subject, 1)
 							_ = typeExpr
 							return Compiler_Checker_CollectAnnotationsLoop(rest, sky_call(sky_call(sky_dictInsert(name), typeExpr), acc))
 						}
@@ -15951,9 +15964,9 @@ func Compiler_Checker_PreRegisterOneFunction(counter any, decl any, rest any, en
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					tv := freshVar(counter, SkyNothing())
@@ -16002,9 +16015,9 @@ func Compiler_Checker_InferOneDecl(counter any, registry any, env any, decl any,
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Checker_InferOneFunDecl(counter, registry, env, name, decl, rest, annotations, typeAliases, typedDecls, diagnostics)
 			}
@@ -16041,7 +16054,7 @@ func Compiler_Checker_InferOneFunDecl(counter any, registry any, env any, fnName
 	}()
 }
 
-// sky:type addTypedDeclAndContinue : any -> any -> any -> List any -> any -> any -> List { name : t468 , scheme : t469 , prettyType : t470 } -> any -> any -> ( any , any , any )
+// sky:type addTypedDeclAndContinue : any -> any -> any -> List any -> any -> any -> List { scheme : t468 , prettyType : t469 , name : t470 } -> any -> any -> ( any , any , any )
 
 func Compiler_Checker_AddTypedDeclAndContinue(counter any, registry any, env any, rest any, annotations any, typeAliases any, typedDecls any, diagnostics any, inferResult any) any {
 	return func() any {
@@ -16073,9 +16086,9 @@ func Compiler_Checker_CheckDeclExhaustiveness(registry any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				body := sky_asMap(__subject)["V2"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return Compiler_Checker_CheckExprExhaustiveness(registry, body)
 			}
@@ -16091,59 +16104,59 @@ func Compiler_Checker_CheckExprExhaustiveness(registry any, expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "CaseExpr" {
-				branches := sky_asMap(__subject)["V1"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 17 {
+				branches := sky_adtField(__subject, 1)
 				_ = branches
 				return sky_call(sky_listConcatMap(func(b any) any { return Compiler_Checker_CheckExprExhaustiveness(registry, sky_asMap(b)["body"]) }), branches)
 			}
-			if __sky_tag == "IfExpr" {
-				cond := sky_asMap(__subject)["V0"]
+			if __sky_tag == 15 {
+				cond := sky_adtField(__subject, 0)
 				_ = cond
-				thenB := sky_asMap(__subject)["V1"]
+				thenB := sky_adtField(__subject, 1)
 				_ = thenB
-				elseB := sky_asMap(__subject)["V2"]
+				elseB := sky_adtField(__subject, 2)
 				_ = elseB
 				return sky_listConcat([]any{Compiler_Checker_CheckExprExhaustiveness(registry, cond), Compiler_Checker_CheckExprExhaustiveness(registry, thenB), Compiler_Checker_CheckExprExhaustiveness(registry, elseB)})
 			}
-			if __sky_tag == "LetExpr" {
-				bindings := sky_asMap(__subject)["V0"]
+			if __sky_tag == 16 {
+				bindings := sky_adtField(__subject, 0)
 				_ = bindings
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return sky_call(sky_listAppend(sky_call(sky_listConcatMap(func(b any) any { return Compiler_Checker_CheckExprExhaustiveness(registry, sky_asMap(b)["value"]) }), bindings)), Compiler_Checker_CheckExprExhaustiveness(registry, body))
 			}
-			if __sky_tag == "LambdaExpr" {
-				body := sky_asMap(__subject)["V1"]
+			if __sky_tag == 14 {
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_Checker_CheckExprExhaustiveness(registry, body)
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return sky_call(sky_listAppend(Compiler_Checker_CheckExprExhaustiveness(registry, callee)), sky_call(sky_listConcatMap(func(__pa0 any) any { return Compiler_Checker_CheckExprExhaustiveness(registry, __pa0) }), args))
 			}
-			if __sky_tag == "BinaryExpr" {
-				left := sky_asMap(__subject)["V1"]
+			if __sky_tag == 18 {
+				left := sky_adtField(__subject, 1)
 				_ = left
-				right := sky_asMap(__subject)["V2"]
+				right := sky_adtField(__subject, 2)
 				_ = right
 				return sky_call(sky_listAppend(Compiler_Checker_CheckExprExhaustiveness(registry, left)), Compiler_Checker_CheckExprExhaustiveness(registry, right))
 			}
-			if __sky_tag == "TupleExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_listConcatMap(func(__pa0 any) any { return Compiler_Checker_CheckExprExhaustiveness(registry, __pa0) }), items)
 			}
-			if __sky_tag == "ListExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_listConcatMap(func(__pa0 any) any { return Compiler_Checker_CheckExprExhaustiveness(registry, __pa0) }), items)
 			}
-			if __sky_tag == "ParenExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 20 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Checker_CheckExprExhaustiveness(registry, inner)
 			}
@@ -16323,28 +16336,28 @@ func Compiler_Emit_EmitDecl(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoDeclFunc" {
-				fd := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				fd := sky_adtField(__subject, 0)
 				_ = fd
 				return Compiler_Emit_EmitFuncDecl(fd)
 			}
-			if __sky_tag == "GoDeclVar" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				expr := sky_asMap(__subject)["V1"]
+				expr := sky_adtField(__subject, 1)
 				_ = expr
 				return sky_concat("var ", sky_concat(name, sky_concat(" = ", Compiler_Emit_EmitExpr(expr))))
 			}
-			if __sky_tag == "GoDeclRaw" {
-				code := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				code := sky_adtField(__subject, 0)
 				_ = code
 				return code
 			}
-			if __sky_tag == "GoDeclType" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return sky_concat("type ", sky_concat(name, sky_concat(" ", body)))
 			}
@@ -16382,40 +16395,40 @@ func Compiler_Emit_EmitStmt(stmt any) any {
 	return func() any {
 		return func() any {
 			__subject := stmt
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoExprStmt" {
-				expr := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				expr := sky_adtField(__subject, 0)
 				_ = expr
 				return Compiler_Emit_EmitExpr(expr)
 			}
-			if __sky_tag == "GoAssign" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				expr := sky_asMap(__subject)["V1"]
+				expr := sky_adtField(__subject, 1)
 				_ = expr
 				return sky_concat(name, sky_concat(" = ", Compiler_Emit_EmitExpr(expr)))
 			}
-			if __sky_tag == "GoShortDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				expr := sky_asMap(__subject)["V1"]
+				expr := sky_adtField(__subject, 1)
 				_ = expr
 				return sky_concat(name, sky_concat(" := ", Compiler_Emit_EmitExpr(expr)))
 			}
-			if __sky_tag == "GoReturn" {
-				expr := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				expr := sky_adtField(__subject, 0)
 				_ = expr
 				return sky_concat("return ", Compiler_Emit_EmitExpr(expr))
 			}
-			if __sky_tag == "GoReturnVoid" {
+			if __sky_tag == 4 {
 				return "return"
 			}
-			if __sky_tag == "GoIf" {
-				cond := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				cond := sky_adtField(__subject, 0)
 				_ = cond
-				thenStmts := sky_asMap(__subject)["V1"]
+				thenStmts := sky_adtField(__subject, 1)
 				_ = thenStmts
-				elseStmts := sky_asMap(__subject)["V2"]
+				elseStmts := sky_adtField(__subject, 2)
 				_ = elseStmts
 				return func() any {
 					thenBody := sky_call(sky_stringJoin("\n\t"), sky_call(sky_listMap(Compiler_Emit_EmitStmt), thenStmts))
@@ -16430,8 +16443,8 @@ func Compiler_Emit_EmitStmt(stmt any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "GoBlock" {
-				stmts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				stmts := sky_adtField(__subject, 0)
 				_ = stmts
 				return sky_call(sky_stringJoin("\n\t"), sky_call(sky_listMap(Compiler_Emit_EmitStmt), stmts))
 			}
@@ -16444,43 +16457,43 @@ func Compiler_Emit_EmitExpr(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoIdent" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
-			if __sky_tag == "GoBasicLit" {
-				value := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				value := sky_adtField(__subject, 0)
 				_ = value
 				return value
 			}
-			if __sky_tag == "GoStringLit" {
-				value := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				value := sky_adtField(__subject, 0)
 				_ = value
 				return Compiler_Emit_GoQuote(value)
 			}
-			if __sky_tag == "GoCallExpr" {
-				fn := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				fn := sky_adtField(__subject, 0)
 				_ = fn
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return sky_concat(Compiler_Emit_EmitExpr(fn), sky_concat("(", sky_concat(sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Emit_EmitExpr), args)), ")")))
 			}
-			if __sky_tag == "GoSelectorExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				sel := sky_asMap(__subject)["V1"]
+				sel := sky_adtField(__subject, 1)
 				_ = sel
 				return sky_concat(Compiler_Emit_EmitExpr(target), sky_concat(".", sel))
 			}
-			if __sky_tag == "GoSliceLit" {
-				elems := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				elems := sky_adtField(__subject, 0)
 				_ = elems
 				return sky_concat("[]any{", sky_concat(sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Emit_EmitExpr), elems)), "}"))
 			}
-			if __sky_tag == "GoMapLit" {
-				entries := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				entries := sky_adtField(__subject, 0)
 				_ = entries
 				return func() any {
 					pairs := sky_call(sky_listMap(func(pair any) any {
@@ -16490,10 +16503,10 @@ func Compiler_Emit_EmitExpr(expr any) any {
 					return sky_concat("map[string]any{", sky_concat(sky_call(sky_stringJoin(", "), pairs), "}"))
 				}()
 			}
-			if __sky_tag == "GoFuncLit" {
-				params := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				params := sky_adtField(__subject, 0)
 				_ = params
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return func() any {
 					ps := sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Emit_EmitParam), params))
@@ -16501,15 +16514,15 @@ func Compiler_Emit_EmitExpr(expr any) any {
 					return sky_concat("func(", sky_concat(ps, sky_concat(") any { return ", sky_concat(Compiler_Emit_EmitExpr(body), " }"))))
 				}()
 			}
-			if __sky_tag == "GoRawExpr" {
-				code := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				code := sky_adtField(__subject, 0)
 				_ = code
 				return code
 			}
-			if __sky_tag == "GoCompositeLit" {
-				typeName := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				typeName := sky_adtField(__subject, 0)
 				_ = typeName
-				fields := sky_asMap(__subject)["V1"]
+				fields := sky_adtField(__subject, 1)
 				_ = fields
 				return func() any {
 					fs := sky_call(sky_listMap(func(pair any) any {
@@ -16519,30 +16532,30 @@ func Compiler_Emit_EmitExpr(expr any) any {
 					return sky_concat(typeName, sky_concat("{", sky_concat(sky_call(sky_stringJoin(", "), fs), "}")))
 				}()
 			}
-			if __sky_tag == "GoBinaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 10 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				left := sky_asMap(__subject)["V1"]
+				left := sky_adtField(__subject, 1)
 				_ = left
-				right := sky_asMap(__subject)["V2"]
+				right := sky_adtField(__subject, 2)
 				_ = right
 				return sky_concat(Compiler_Emit_EmitExpr(left), sky_concat(" ", sky_concat(op, sky_concat(" ", Compiler_Emit_EmitExpr(right)))))
 			}
-			if __sky_tag == "GoUnaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 11 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				operand := sky_asMap(__subject)["V1"]
+				operand := sky_adtField(__subject, 1)
 				_ = operand
 				return sky_concat(op, Compiler_Emit_EmitExpr(operand))
 			}
-			if __sky_tag == "GoIndexExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 12 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				index := sky_asMap(__subject)["V1"]
+				index := sky_adtField(__subject, 1)
 				_ = index
 				return sky_concat(Compiler_Emit_EmitExpr(target), sky_concat("[", sky_concat(Compiler_Emit_EmitExpr(index), "]")))
 			}
-			if __sky_tag == "GoNilExpr" {
+			if __sky_tag == 13 {
 				return "nil"
 			}
 			panic("non-exhaustive case expression")
@@ -16576,7 +16589,7 @@ func Compiler_ParserPattern_ParsePatternExpr(state any) any {
 					s1 := sky_snd(pair)
 					_ = s1
 					return func() any {
-						if sky_asBool(sky_asBool(matchKind(TkOperator, s1)) && sky_asBool(sky_equal(peekLexeme(s1), "::"))) {
+						if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 7, SkyName: "TkOperator"}, s1)) && sky_asBool(sky_equal(peekLexeme(s1), "::"))) {
 							return func() any {
 								advResult := advance(s1)
 								_ = advResult
@@ -16606,7 +16619,7 @@ func Compiler_ParserPattern_ParsePatternExpr(state any) any {
 								}()
 							}()
 						}
-						if sky_asBool(matchKindLex(TkKeyword, "as", s1)) {
+						if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "as", s1)) {
 							return func() any {
 								advResult := advance(s1)
 								_ = advResult
@@ -16634,22 +16647,22 @@ func Compiler_ParserPattern_ParsePatternExpr(state any) any {
 
 func Compiler_ParserPattern_ParsePrimaryPattern(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkUpperIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) {
 			return Compiler_ParserPattern_ParsePrimaryPatternUpper(state)
 		}
-		if sky_asBool(matchKind(TkIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) {
 			return Compiler_ParserPattern_ParsePrimaryPatternIdent(state)
 		}
-		if sky_asBool(matchKind(TkInteger, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 2, SkyName: "TkInteger"}, state)) {
 			return Compiler_ParserPattern_ParsePrimaryPatternInt(state)
 		}
-		if sky_asBool(matchKind(TkString, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 4, SkyName: "TkString"}, state)) {
 			return Compiler_ParserPattern_ParsePrimaryPatternString(state)
 		}
-		if sky_asBool(matchKind(TkLParen, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) {
 			return Compiler_ParserPattern_ParsePrimaryPatternParen(state)
 		}
-		if sky_asBool(matchKind(TkLBracket, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 17, SkyName: "TkLBracket"}, state)) {
 			return Compiler_ParserPattern_ParsePrimaryPatternBracket(state)
 		}
 		return SkyErr(sky_concat("Unexpected token in pattern: ", peekLexeme(state)))
@@ -16751,7 +16764,7 @@ func Compiler_ParserPattern_ParsePrimaryPatternParen(state any) any {
 		s1 := sky_snd(advResult)
 		_ = s1
 		return func() any {
-			if sky_asBool(matchKind(TkRParen, s1)) {
+			if sky_asBool(matchKind(SkyADT{Tag: 16, SkyName: "TkRParen"}, s1)) {
 				return func() any {
 					advResult2 := advance(s1)
 					_ = advResult2
@@ -16784,12 +16797,12 @@ func Compiler_ParserPattern_ParsePrimaryPatternParen(state any) any {
 
 func Compiler_ParserPattern_ParsePrimaryPatternParenCont(first any, s2 any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkComma, s2)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s2)) {
 			return Compiler_ParserPattern_ParseTuplePatternRest([]any{first}, s2)
 		}
 		return func() any {
 			return func() any {
-				__subject := consume(TkRParen, s2)
+				__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -16815,7 +16828,7 @@ func Compiler_ParserPattern_ParsePrimaryPatternBracket(state any) any {
 		s1 := sky_snd(advResult)
 		_ = s1
 		return func() any {
-			if sky_asBool(matchKind(TkRBracket, s1)) {
+			if sky_asBool(matchKind(SkyADT{Tag: 18, SkyName: "TkRBracket"}, s1)) {
 				return func() any {
 					advResult2 := advance(s1)
 					_ = advResult2
@@ -16833,7 +16846,7 @@ func Compiler_ParserPattern_ParsePrimaryPatternBracket(state any) any {
 				_ = s2
 				return func() any {
 					return func() any {
-						__subject := consume(TkRBracket, s2)
+						__subject := consume(SkyADT{Tag: 18, SkyName: "TkRBracket"}, s2)
 						if sky_asSkyResult(__subject).SkyName == "Err" {
 							e := sky_asSkyResult(__subject).ErrValue
 							_ = e
@@ -16856,9 +16869,9 @@ func Compiler_ParserPattern_ParsePrimaryPatternBracket(state any) any {
 
 func Compiler_ParserPattern_ParsePatternArgs(state any) any {
 	return func() any {
-		if sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkUpperIdentifier, state)) || sky_asBool(matchKind(TkLParen, state)))) {
+		if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) || sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)))) {
 			return func() any {
-				if sky_asBool(sky_asBool(matchKind(TkArrow, state)) || sky_asBool(sky_numCompare("<=", peekColumn(state), 1))) {
+				if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 13, SkyName: "TkArrow"}, state)) || sky_asBool(sky_numCompare("<=", peekColumn(state), 1))) {
 					return SkyTuple2{V0: []any{}, V1: state}
 				}
 				return func() any {
@@ -16897,7 +16910,7 @@ func Compiler_ParserPattern_ParsePatternArgs(state any) any {
 
 func Compiler_ParserPattern_ParseTuplePatternRest(items any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkComma, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, state)) {
 			return func() any {
 				advResult := advance(state)
 				_ = advResult
@@ -16923,7 +16936,7 @@ func Compiler_ParserPattern_ParseTuplePatternRest(items any, state any) any {
 		}
 		return func() any {
 			return func() any {
-				__subject := consume(TkRParen, state)
+				__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, state)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -16958,7 +16971,7 @@ func Compiler_ParserPattern_ParsePatternList(state any) any {
 					s1 := sky_snd(pair)
 					_ = s1
 					return func() any {
-						if sky_asBool(matchKind(TkComma, s1)) {
+						if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s1)) {
 							return func() any {
 								advResult := advance(s1)
 								_ = advResult
@@ -17007,19 +17020,19 @@ func Compiler_ParserExpr_ParseExpr(minPrec any, state any) any {
 
 func Compiler_ParserExpr_ParseExprLoop(minPrec any, left any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkEquals, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 8, SkyName: "TkEquals"}, state)) {
 			return SkyOk(SkyTuple2{V0: left, V1: state})
 		}
 		if sky_asBool(sky_numCompare("<=", peekColumn(state), 1)) {
 			return SkyOk(SkyTuple2{V0: left, V1: state})
 		}
-		if sky_asBool(matchKind(TkPipe, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 12, SkyName: "TkPipe"}, state)) {
 			return SkyOk(SkyTuple2{V0: left, V1: state})
 		}
-		if sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), TkColon))) {
+		if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), SkyADT{Tag: 9, SkyName: "TkColon"}))) {
 			return SkyOk(SkyTuple2{V0: left, V1: state})
 		}
-		if sky_asBool(matchKind(TkOperator, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 7, SkyName: "TkOperator"}, state)) {
 			return func() any {
 				opToken := peek(state)
 				_ = opToken
@@ -17144,11 +17157,43 @@ func Compiler_ParserExpr_ParseApplication(state any) any {
 					_ = fn
 					s1 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 					_ = s1
-					return Compiler_ParserExpr_ParseApplicationArgs(fnCol, fn, s1)
+					return func() any {
+						withField := Compiler_ParserExpr_ApplyFieldAccess(fn, s1)
+						_ = withField
+						return Compiler_ParserExpr_ParseApplicationArgs(fnCol, sky_fst(withField), sky_snd(withField))
+					}()
 				}
 				panic("non-exhaustive case expression")
 			}()
 		}()
+	}()
+}
+
+// sky:type applyFieldAccess : any -> any -> ( any , any )
+
+func Compiler_ParserExpr_ApplyFieldAccess(expr any, state any) any {
+	return func() any {
+		if sky_asBool(matchKind(SkyADT{Tag: 11, SkyName: "TkDot"}, state)) {
+			return func() any {
+				__tup_w_s1 := advance(state)
+				s1 := sky_asTuple2(__tup_w_s1).V1
+				_ = s1
+				return func() any {
+					if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, s1)) {
+						return func() any {
+							__tup_fieldTok_s2 := advance(s1)
+							fieldTok := sky_asTuple2(__tup_fieldTok_s2).V0
+							_ = fieldTok
+							s2 := sky_asTuple2(__tup_fieldTok_s2).V1
+							_ = s2
+							return Compiler_ParserExpr_ApplyFieldAccess(FieldAccessExpr(expr, sky_asMap(fieldTok)["lexeme"], emptySpan), s2)
+						}()
+					}
+					return SkyTuple2{V0: expr, V1: state}
+				}()
+			}()
+		}
+		return SkyTuple2{V0: expr, V1: state}
 	}()
 }
 
@@ -17164,19 +17209,19 @@ func Compiler_ParserExpr_ParseApplicationArgs(fnCol any, fn any, state any) any 
 				if sky_asBool(sky_numCompare("<", peekColumn(state), fnCol)) {
 					return SkyOk(SkyTuple2{V0: fn, V1: state})
 				}
-				if sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), TkEquals))) {
+				if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), SkyADT{Tag: 8, SkyName: "TkEquals"}))) {
 					return SkyOk(SkyTuple2{V0: fn, V1: state})
 				}
-				if sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) && sky_asBool(sky_numCompare("<=", peekColumn(state), 1))) {
+				if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) && sky_asBool(sky_numCompare("<=", peekColumn(state), 1))) {
 					return SkyOk(SkyTuple2{V0: fn, V1: state})
 				}
-				if sky_asBool(tokenKindEq(peekAt1Kind(state), TkArrow)) {
+				if sky_asBool(tokenKindEq(peekAt1Kind(state), SkyADT{Tag: 13, SkyName: "TkArrow"})) {
 					return SkyOk(SkyTuple2{V0: fn, V1: state})
 				}
-				if sky_asBool(matchKind(TkPipe, state)) {
+				if sky_asBool(matchKind(SkyADT{Tag: 12, SkyName: "TkPipe"}, state)) {
 					return SkyOk(SkyTuple2{V0: fn, V1: state})
 				}
-				if sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), TkColon))) {
+				if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), SkyADT{Tag: 9, SkyName: "TkColon"}))) {
 					return SkyOk(SkyTuple2{V0: fn, V1: state})
 				}
 				return func() any {
@@ -17190,7 +17235,11 @@ func Compiler_ParserExpr_ParseApplicationArgs(fnCol any, fn any, state any) any 
 							_ = arg
 							s1 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 							_ = s1
-							return Compiler_ParserExpr_ParseApplicationArgs(fnCol, CallExpr(fn, []any{arg}, emptySpan), s1)
+							return func() any {
+								withField := Compiler_ParserExpr_ApplyFieldAccess(arg, s1)
+								_ = withField
+								return Compiler_ParserExpr_ParseApplicationArgs(fnCol, CallExpr(fn, []any{sky_fst(withField)}, emptySpan), sky_snd(withField))
+							}()
 						}
 						panic("non-exhaustive case expression")
 					}()
@@ -17204,26 +17253,26 @@ func Compiler_ParserExpr_ParseApplicationArgs(fnCol any, fn any, state any) any 
 // sky:type isStartOfPrimary : any -> Bool
 
 func Compiler_ParserExpr_IsStartOfPrimary(state any) any {
-	return sky_asBool(matchKind(TkIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkUpperIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkInteger, state)) || sky_asBool(sky_asBool(matchKind(TkFloat, state)) || sky_asBool(sky_asBool(matchKind(TkString, state)) || sky_asBool(sky_asBool(matchKind(TkChar, state)) || sky_asBool(sky_asBool(matchKind(TkLParen, state)) || sky_asBool(sky_asBool(matchKind(TkLBrace, state)) || sky_asBool(sky_asBool(matchKind(TkLBracket, state)) || sky_asBool(sky_asBool(matchKind(TkBackslash, state)) || sky_asBool(sky_asBool(matchKindLex(TkKeyword, "case", state)) || sky_asBool(sky_asBool(matchKindLex(TkKeyword, "if", state)) || sky_asBool(matchKindLex(TkKeyword, "let", state)))))))))))))
+	return sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 2, SkyName: "TkInteger"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 3, SkyName: "TkFloat"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 4, SkyName: "TkString"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 5, SkyName: "TkChar"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 19, SkyName: "TkLBrace"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 17, SkyName: "TkLBracket"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 14, SkyName: "TkBackslash"}, state)) || sky_asBool(sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "case", state)) || sky_asBool(sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "if", state)) || sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "let", state)))))))))))))
 }
 
 // sky:type parsePrimary : any -> Result String ( any , any )
 
 func Compiler_ParserExpr_ParsePrimary(state any) any {
 	return func() any {
-		if sky_asBool(matchKindLex(TkKeyword, "case", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "case", state)) {
 			return Compiler_ParserExpr_ParseCaseExpr(state)
 		}
-		if sky_asBool(matchKindLex(TkKeyword, "if", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "if", state)) {
 			return Compiler_ParserExpr_ParseIfExpr(state)
 		}
-		if sky_asBool(matchKindLex(TkKeyword, "let", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "let", state)) {
 			return Compiler_ParserExpr_ParseLetExpr(state)
 		}
-		if sky_asBool(matchKind(TkBackslash, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 14, SkyName: "TkBackslash"}, state)) {
 			return Compiler_ParserExpr_ParseLambdaExpr(state)
 		}
-		if sky_asBool(sky_asBool(matchKind(TkOperator, state)) && sky_asBool(sky_equal(peekLexeme(state), "-"))) {
+		if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 7, SkyName: "TkOperator"}, state)) && sky_asBool(sky_equal(peekLexeme(state), "-"))) {
 			return func() any {
 				__tup_w_s1 := advance(state)
 				s1 := sky_asTuple2(__tup_w_s1).V1
@@ -17248,19 +17297,19 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				}()
 			}()
 		}
-		if sky_asBool(matchKind(TkLBrace, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 19, SkyName: "TkLBrace"}, state)) {
 			return Compiler_ParserExpr_ParseRecordOrUpdate(state)
 		}
-		if sky_asBool(matchKind(TkLParen, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) {
 			return Compiler_ParserExpr_ParseParenOrTuple(state)
 		}
-		if sky_asBool(matchKind(TkLBracket, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 17, SkyName: "TkLBracket"}, state)) {
 			return Compiler_ParserExpr_ParseListExpr(state)
 		}
-		if sky_asBool(matchKind(TkUpperIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) {
 			return Compiler_ParserExpr_ParseQualifiedOrConstructor(state)
 		}
-		if sky_asBool(matchKind(TkIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17268,14 +17317,14 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				s1 := sky_asTuple2(__tup_tok_s1).V1
 				_ = s1
 				return func() any {
-					if sky_asBool(sky_asBool(matchKind(TkDot, s1)) && sky_asBool(matchKind(TkIdentifier, func() any { __tup_w_s := advance(s1); s := sky_asTuple2(__tup_w_s).V1; _ = s; return s }()))) {
+					if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 11, SkyName: "TkDot"}, s1)) && sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, func() any { __tup_w_s := advance(s1); s := sky_asTuple2(__tup_w_s).V1; _ = s; return s }()))) {
 						return Compiler_ParserExpr_ParseFieldAccess(tok, s1)
 					}
 					return SkyOk(SkyTuple2{V0: IdentifierExpr(sky_asMap(tok)["lexeme"], sky_asMap(tok)["span"]), V1: s1})
 				}()
 			}()
 		}
-		if sky_asBool(matchKind(TkInteger, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 2, SkyName: "TkInteger"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17285,7 +17334,7 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: IntLitExpr(0, sky_asMap(tok)["lexeme"], sky_asMap(tok)["span"]), V1: s1})
 			}()
 		}
-		if sky_asBool(matchKind(TkFloat, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 3, SkyName: "TkFloat"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17295,7 +17344,7 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: FloatLitExpr(0.0, sky_asMap(tok)["lexeme"], sky_asMap(tok)["span"]), V1: s1})
 			}()
 		}
-		if sky_asBool(matchKind(TkString, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 4, SkyName: "TkString"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17307,7 +17356,7 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: StringLitExpr(value, sky_asMap(tok)["span"]), V1: s1})
 			}()
 		}
-		if sky_asBool(matchKind(TkChar, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 5, SkyName: "TkChar"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17317,7 +17366,7 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: CharLitExpr(sky_asMap(tok)["lexeme"], sky_asMap(tok)["span"]), V1: s1})
 			}()
 		}
-		if sky_asBool(matchKindLex(TkKeyword, "True", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "True", state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17327,7 +17376,7 @@ func Compiler_ParserExpr_ParsePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: BoolLitExpr(true, sky_asMap(tok)["span"]), V1: s1})
 			}()
 		}
-		if sky_asBool(matchKindLex(TkKeyword, "False", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "False", state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -17363,7 +17412,7 @@ func Compiler_ParserExpr_ParseCaseExpr(state any) any {
 					_ = s2
 					return func() any {
 						return func() any {
-							__subject := consumeLex(TkKeyword, "of", s2)
+							__subject := consumeLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "of", s2)
 							if sky_asSkyResult(__subject).SkyName == "Err" {
 								e := sky_asSkyResult(__subject).ErrValue
 								_ = e
@@ -17393,11 +17442,11 @@ func Compiler_ParserExpr_ParseCaseExpr(state any) any {
 	}()
 }
 
-// sky:type parseCaseBranches : any -> any -> ( List { body : t744 , pattern : t718 } , any )
+// sky:type parseCaseBranches : any -> any -> ( List { body : t790 , pattern : t764 } , any )
 
 func Compiler_ParserExpr_ParseCaseBranches(branchCol any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkEOF, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 24, SkyName: "TkEOF"}, state)) {
 			return SkyTuple2{V0: []any{}, V1: state}
 		}
 		if sky_asBool(sky_numCompare("<", peekColumn(state), branchCol)) {
@@ -17405,7 +17454,7 @@ func Compiler_ParserExpr_ParseCaseBranches(branchCol any, state any) any {
 		}
 		return func() any {
 			s0 := func() any {
-				if sky_asBool(matchKind(TkPipe, state)) {
+				if sky_asBool(matchKind(SkyADT{Tag: 12, SkyName: "TkPipe"}, state)) {
 					return func() any { __tup_w_s := advance(state); s := sky_asTuple2(__tup_w_s).V1; _ = s; return s }()
 				}
 				return state
@@ -17424,7 +17473,7 @@ func Compiler_ParserExpr_ParseCaseBranches(branchCol any, state any) any {
 						_ = s1
 						return func() any {
 							return func() any {
-								__subject := consume(TkArrow, s1)
+								__subject := consume(SkyADT{Tag: 13, SkyName: "TkArrow"}, s1)
 								if sky_asSkyResult(__subject).SkyName == "Err" {
 									return SkyTuple2{V0: []any{}, V1: state}
 								}
@@ -17488,7 +17537,7 @@ func Compiler_ParserExpr_ParseIfExpr(state any) any {
 					_ = s2
 					return func() any {
 						return func() any {
-							__subject := consumeLex(TkKeyword, "then", s2)
+							__subject := consumeLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "then", s2)
 							if sky_asSkyResult(__subject).SkyName == "Err" {
 								e := sky_asSkyResult(__subject).ErrValue
 								_ = e
@@ -17512,7 +17561,7 @@ func Compiler_ParserExpr_ParseIfExpr(state any) any {
 											_ = s4
 											return func() any {
 												return func() any {
-													__subject := consumeLex(TkKeyword, "else", s4)
+													__subject := consumeLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "else", s4)
 													if sky_asSkyResult(__subject).SkyName == "Err" {
 														e := sky_asSkyResult(__subject).ErrValue
 														_ = e
@@ -17572,7 +17621,7 @@ func Compiler_ParserExpr_ParseLetExpr(state any) any {
 		_ = s2
 		return func() any {
 			return func() any {
-				__subject := consumeLex(TkKeyword, "in", s2)
+				__subject := consumeLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "in", s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -17606,11 +17655,11 @@ func Compiler_ParserExpr_ParseLetExpr(state any) any {
 	}()
 }
 
-// sky:type parseLetBindings : any -> ( List { pattern : t911 , value : t937 } , any )
+// sky:type parseLetBindings : any -> ( List { pattern : t957 , value : t983 } , any )
 
 func Compiler_ParserExpr_ParseLetBindings(state any) any {
 	return func() any {
-		if sky_asBool(sky_asBool(matchKindLex(TkKeyword, "in", state)) || sky_asBool(matchKind(TkEOF, state))) {
+		if sky_asBool(sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "in", state)) || sky_asBool(matchKind(SkyADT{Tag: 24, SkyName: "TkEOF"}, state))) {
 			return SkyTuple2{V0: []any{}, V1: state}
 		}
 		return func() any {
@@ -17626,7 +17675,7 @@ func Compiler_ParserExpr_ParseLetBindings(state any) any {
 					_ = s1
 					return func() any {
 						return func() any {
-							__subject := consume(TkEquals, s1)
+							__subject := consume(SkyADT{Tag: 8, SkyName: "TkEquals"}, s1)
 							if sky_asSkyResult(__subject).SkyName == "Err" {
 								return SkyTuple2{V0: []any{}, V1: state}
 							}
@@ -17681,7 +17730,7 @@ func Compiler_ParserExpr_ParseLambdaExpr(state any) any {
 		_ = s2
 		return func() any {
 			return func() any {
-				__subject := consume(TkArrow, s2)
+				__subject := consume(SkyADT{Tag: 13, SkyName: "TkArrow"}, s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -17719,7 +17768,7 @@ func Compiler_ParserExpr_ParseLambdaExpr(state any) any {
 
 func Compiler_ParserExpr_ParseLambdaParams(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkArrow, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 13, SkyName: "TkArrow"}, state)) {
 			return SkyTuple2{V0: []any{}, V1: state}
 		}
 		return func() any {
@@ -17758,7 +17807,7 @@ func Compiler_ParserExpr_ParseRecordOrUpdate(state any) any {
 		t1 := peekAt(1, s1)
 		_ = t1
 		return func() any {
-			if sky_asBool(sky_asBool(matchKind(TkIdentifier, s1)) && sky_asBool(tokenKindEq(sky_asMap(t1)["kind"], TkPipe))) {
+			if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, s1)) && sky_asBool(tokenKindEq(sky_asMap(t1)["kind"], SkyADT{Tag: 12, SkyName: "TkPipe"}))) {
 				return func() any {
 					__tup_base_s2 := advance(s1)
 					base := sky_asTuple2(__tup_base_s2).V0
@@ -17775,7 +17824,7 @@ func Compiler_ParserExpr_ParseRecordOrUpdate(state any) any {
 					_ = s4
 					return func() any {
 						return func() any {
-							__subject := consume(TkRBrace, s4)
+							__subject := consume(SkyADT{Tag: 20, SkyName: "TkRBrace"}, s4)
 							if sky_asSkyResult(__subject).SkyName == "Err" {
 								e := sky_asSkyResult(__subject).ErrValue
 								_ = e
@@ -17799,7 +17848,7 @@ func Compiler_ParserExpr_ParseRecordOrUpdate(state any) any {
 				_ = s2
 				return func() any {
 					return func() any {
-						__subject := consume(TkRBrace, s2)
+						__subject := consume(SkyADT{Tag: 20, SkyName: "TkRBrace"}, s2)
 						if sky_asSkyResult(__subject).SkyName == "Err" {
 							e := sky_asSkyResult(__subject).ErrValue
 							_ = e
@@ -17818,16 +17867,16 @@ func Compiler_ParserExpr_ParseRecordOrUpdate(state any) any {
 	}()
 }
 
-// sky:type parseRecordFields : any -> ( List { name : t1146 , value : t1133 } , any )
+// sky:type parseRecordFields : any -> ( List { value : t1179 , name : t1192 } , any )
 
 func Compiler_ParserExpr_ParseRecordFields(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkRBrace, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 20, SkyName: "TkRBrace"}, state)) {
 			return SkyTuple2{V0: []any{}, V1: state}
 		}
 		return func() any {
 			return func() any {
-				__subject := consume(TkIdentifier, state)
+				__subject := consume(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					return SkyTuple2{V0: []any{}, V1: state}
 				}
@@ -17838,7 +17887,7 @@ func Compiler_ParserExpr_ParseRecordFields(state any) any {
 					_ = s1
 					return func() any {
 						return func() any {
-							__subject := consume(TkEquals, s1)
+							__subject := consume(SkyADT{Tag: 8, SkyName: "TkEquals"}, s1)
 							if sky_asSkyResult(__subject).SkyName == "Err" {
 								return SkyTuple2{V0: []any{}, V1: state}
 							}
@@ -17858,7 +17907,7 @@ func Compiler_ParserExpr_ParseRecordFields(state any) any {
 											_ = s3
 											return func() any {
 												s4 := func() any {
-													if sky_asBool(matchKind(TkComma, s3)) {
+													if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s3)) {
 														return func() any { __tup_w_s := advance(s3); s := sky_asTuple2(__tup_w_s).V1; _ = s; return s }()
 													}
 													return s3
@@ -17894,7 +17943,7 @@ func Compiler_ParserExpr_ParseParenOrTuple(state any) any {
 		s1 := sky_asTuple2(__tup_w_s1).V1
 		_ = s1
 		return func() any {
-			if sky_asBool(matchKind(TkRParen, s1)) {
+			if sky_asBool(matchKind(SkyADT{Tag: 16, SkyName: "TkRParen"}, s1)) {
 				return func() any {
 					__tup_w_s2 := advance(s1)
 					s2 := sky_asTuple2(__tup_w_s2).V1
@@ -17916,12 +17965,12 @@ func Compiler_ParserExpr_ParseParenOrTuple(state any) any {
 						s2 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 						_ = s2
 						return func() any {
-							if sky_asBool(matchKind(TkComma, s2)) {
+							if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s2)) {
 								return Compiler_ParserExpr_ParseTupleRest([]any{first}, s2)
 							}
 							return func() any {
 								return func() any {
-									__subject := consume(TkRParen, s2)
+									__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, s2)
 									if sky_asSkyResult(__subject).SkyName == "Err" {
 										e := sky_asSkyResult(__subject).ErrValue
 										_ = e
@@ -17948,7 +17997,7 @@ func Compiler_ParserExpr_ParseParenOrTuple(state any) any {
 
 func Compiler_ParserExpr_ParseTupleRest(items any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkComma, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, state)) {
 			return func() any {
 				__tup_w_s1 := advance(state)
 				s1 := sky_asTuple2(__tup_w_s1).V1
@@ -17975,7 +18024,7 @@ func Compiler_ParserExpr_ParseTupleRest(items any, state any) any {
 		}
 		return func() any {
 			return func() any {
-				__subject := consume(TkRParen, state)
+				__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, state)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -18000,7 +18049,7 @@ func Compiler_ParserExpr_ParseListExpr(state any) any {
 		s1 := sky_asTuple2(__tup_w_s1).V1
 		_ = s1
 		return func() any {
-			if sky_asBool(matchKind(TkRBracket, s1)) {
+			if sky_asBool(matchKind(SkyADT{Tag: 18, SkyName: "TkRBracket"}, s1)) {
 				return func() any {
 					__tup_w_s2 := advance(s1)
 					s2 := sky_asTuple2(__tup_w_s2).V1
@@ -18016,7 +18065,7 @@ func Compiler_ParserExpr_ParseListExpr(state any) any {
 				_ = s2
 				return func() any {
 					return func() any {
-						__subject := consume(TkRBracket, s2)
+						__subject := consume(SkyADT{Tag: 18, SkyName: "TkRBracket"}, s2)
 						if sky_asSkyResult(__subject).SkyName == "Err" {
 							e := sky_asSkyResult(__subject).ErrValue
 							_ = e
@@ -18050,7 +18099,7 @@ func Compiler_ParserExpr_ParseListItems(state any) any {
 				s1 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 				_ = s1
 				return func() any {
-					if sky_asBool(matchKind(TkComma, s1)) {
+					if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s1)) {
 						return func() any {
 							__tup_w_s2 := advance(s1)
 							s2 := sky_asTuple2(__tup_w_s2).V1
@@ -18118,7 +18167,7 @@ func Compiler_Lexer_Lex(source any) any {
 		_ = initial
 		final := Compiler_Lexer_LexLoop(initial)
 		_ = final
-		eofToken := map[string]any{"kind": TkEOF, "lexeme": "", "span": Compiler_Lexer_MakeSpan(final)}
+		eofToken := map[string]any{"kind": SkyADT{Tag: 24, SkyName: "TkEOF"}, "lexeme": "", "span": Compiler_Lexer_MakeSpan(final)}
 		_ = eofToken
 		return map[string]any{"tokens": sky_listReverse(append([]any{eofToken}, sky_asList(sky_asMap(final)["tokens"])...)), "diagnostics": []any{}}
 	}()
@@ -18172,7 +18221,7 @@ func Compiler_Lexer_HandleNewline(state any) any {
 		_ = indent
 		newOffset := sky_numBinop("+", sky_asMap(newState)["offset"], indent)
 		_ = newOffset
-		nlToken := map[string]any{"kind": TkNewline, "lexeme": "\\n", "span": Compiler_Lexer_MakeSpan(state)}
+		nlToken := map[string]any{"kind": SkyADT{Tag: 21, SkyName: "TkNewline"}, "lexeme": "\\n", "span": Compiler_Lexer_MakeSpan(state)}
 		_ = nlToken
 		return sky_recordUpdate(newState, map[string]any{"offset": newOffset, "column": sky_numBinop("+", indent, 1), "tokens": append([]any{nlToken}, sky_asList(sky_asMap(state)["tokens"])...)})
 	}()
@@ -18257,7 +18306,7 @@ func Compiler_Lexer_LexString(state any) any {
 		_ = s3
 		lexeme := sky_call(sky_call(sky_stringSlice(startOffset), sky_asMap(s3)["offset"]), sky_asMap(state)["source"])
 		_ = lexeme
-		token := map[string]any{"kind": TkString, "lexeme": lexeme, "span": map[string]any{"start": map[string]any{"offset": startOffset, "line": sky_asMap(state)["line"], "column": startCol}, "end": map[string]any{"offset": sky_asMap(s3)["offset"], "line": sky_asMap(s3)["line"], "column": sky_asMap(s3)["column"]}}}
+		token := map[string]any{"kind": SkyADT{Tag: 4, SkyName: "TkString"}, "lexeme": lexeme, "span": map[string]any{"start": map[string]any{"offset": startOffset, "line": sky_asMap(state)["line"], "column": startCol}, "end": map[string]any{"offset": sky_asMap(s3)["offset"], "line": sky_asMap(s3)["line"], "column": sky_asMap(s3)["column"]}}}
 		_ = token
 		return sky_recordUpdate(s3, map[string]any{"tokens": append([]any{token}, sky_asList(sky_asMap(s3)["tokens"])...)})
 	}()
@@ -18307,7 +18356,7 @@ func Compiler_Lexer_LexChar(state any) any {
 		_ = s3
 		lexeme := sky_call(sky_call(sky_stringSlice(startOffset), sky_asMap(s3)["offset"]), sky_asMap(state)["source"])
 		_ = lexeme
-		token := map[string]any{"kind": TkChar, "lexeme": lexeme, "span": map[string]any{"start": map[string]any{"offset": startOffset, "line": sky_asMap(state)["line"], "column": startCol}, "end": map[string]any{"offset": sky_asMap(s3)["offset"], "line": sky_asMap(s3)["line"], "column": sky_asMap(s3)["column"]}}}
+		token := map[string]any{"kind": SkyADT{Tag: 5, SkyName: "TkChar"}, "lexeme": lexeme, "span": map[string]any{"start": map[string]any{"offset": startOffset, "line": sky_asMap(state)["line"], "column": startCol}, "end": map[string]any{"offset": sky_asMap(s3)["offset"], "line": sky_asMap(s3)["line"], "column": sky_asMap(s3)["column"]}}}
 		_ = token
 		return sky_recordUpdate(s3, map[string]any{"tokens": append([]any{token}, sky_asList(sky_asMap(s3)["tokens"])...)})
 	}()
@@ -18328,10 +18377,10 @@ func Compiler_Lexer_LexNumber(state any) any {
 				return func() any {
 					s2 := Compiler_Lexer_ConsumeDigits(sky_recordUpdate(s1, map[string]any{"offset": sky_numBinop("+", sky_asMap(s1)["offset"], 1), "column": sky_numBinop("+", sky_asMap(s1)["column"], 1)}))
 					_ = s2
-					return SkyTuple2{V0: s2, V1: TkFloat}
+					return SkyTuple2{V0: s2, V1: SkyADT{Tag: 3, SkyName: "TkFloat"}}
 				}()
 			}
-			return SkyTuple2{V0: s1, V1: TkInteger}
+			return SkyTuple2{V0: s1, V1: SkyADT{Tag: 2, SkyName: "TkInteger"}}
 		}()
 		_ = result
 		finalState := sky_fst(result)
@@ -18374,12 +18423,12 @@ func Compiler_Lexer_LexIdentifier(state any) any {
 		_ = lexeme
 		kind := func() any {
 			if sky_asBool(isKeyword(lexeme)) {
-				return TkKeyword
+				return SkyADT{Tag: 6, SkyName: "TkKeyword"}
 			}
 			if sky_asBool(sky_charIsUpper(Compiler_Lexer_CharAt(sky_asMap(state)["source"], startOffset))) {
-				return TkUpperIdentifier
+				return SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}
 			}
-			return TkIdentifier
+			return SkyADT{Tag: 0, SkyName: "TkIdentifier"}
 		}()
 		_ = kind
 		token := map[string]any{"kind": kind, "lexeme": lexeme, "span": map[string]any{"start": map[string]any{"offset": startOffset, "line": sky_asMap(state)["line"], "column": startCol}, "end": map[string]any{"offset": sky_asMap(s1)["offset"], "line": sky_asMap(s1)["line"], "column": sky_asMap(s1)["column"]}}}
@@ -18422,48 +18471,48 @@ func Compiler_Lexer_LexOperatorOrPunctuation(state any) any {
 		_ = startCol
 		__tup_kind_len := func() any {
 			if sky_asBool(sky_equal(ch, string('('))) {
-				return SkyTuple2{V0: TkLParen, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 15, SkyName: "TkLParen"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string(')'))) {
-				return SkyTuple2{V0: TkRParen, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 16, SkyName: "TkRParen"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string('['))) {
-				return SkyTuple2{V0: TkLBracket, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 17, SkyName: "TkLBracket"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string(']'))) {
-				return SkyTuple2{V0: TkRBracket, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 18, SkyName: "TkRBracket"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string('{'))) {
-				return SkyTuple2{V0: TkLBrace, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 19, SkyName: "TkLBrace"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string('}'))) {
-				return SkyTuple2{V0: TkRBrace, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 20, SkyName: "TkRBrace"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string(','))) {
-				return SkyTuple2{V0: TkComma, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 10, SkyName: "TkComma"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string('\\'))) {
-				return SkyTuple2{V0: TkBackslash, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 14, SkyName: "TkBackslash"}, V1: 1}
 			}
 			if sky_asBool(sky_equal(ch, string('.'))) {
-				return SkyTuple2{V0: TkDot, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 11, SkyName: "TkDot"}, V1: 1}
 			}
 			if sky_asBool(sky_asBool(sky_equal(ch, string(':'))) && sky_asBool(!sky_equal(next, string(':')))) {
-				return SkyTuple2{V0: TkColon, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 9, SkyName: "TkColon"}, V1: 1}
 			}
 			if sky_asBool(sky_asBool(sky_equal(ch, string('='))) && sky_asBool(!sky_equal(next, string('=')))) {
-				return SkyTuple2{V0: TkEquals, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 8, SkyName: "TkEquals"}, V1: 1}
 			}
 			if sky_asBool(sky_asBool(sky_equal(ch, string('|'))) && sky_asBool(sky_asBool(!sky_equal(next, string('>'))) && sky_asBool(!sky_equal(next, string('|'))))) {
-				return SkyTuple2{V0: TkPipe, V1: 1}
+				return SkyTuple2{V0: SkyADT{Tag: 12, SkyName: "TkPipe"}, V1: 1}
 			}
 			if sky_asBool(sky_asBool(sky_equal(ch, string('-'))) && sky_asBool(sky_equal(next, string('>')))) {
-				return SkyTuple2{V0: TkArrow, V1: 2}
+				return SkyTuple2{V0: SkyADT{Tag: 13, SkyName: "TkArrow"}, V1: 2}
 			}
 			return func() any {
 				opLen := Compiler_Lexer_ConsumeOperator(sky_asMap(state)["source"], sky_asMap(state)["offset"])
 				_ = opLen
-				return SkyTuple2{V0: TkOperator, V1: opLen}
+				return SkyTuple2{V0: SkyADT{Tag: 7, SkyName: "TkOperator"}, V1: opLen}
 			}()
 		}()
 		kind := sky_asTuple2(__tup_kind_len).V0
@@ -18527,7 +18576,7 @@ func Compiler_Lexer_PeekChar(s any, i any) any {
 	return Compiler_Lexer_CharAt(s, i)
 }
 
-// sky:type makeSpan : any -> { start : { offset : t513 , line : t514 , column : t515 } , end : { line : t517 , column : t518 , offset : t516 } }
+// sky:type makeSpan : any -> { start : { line : t514 , column : t515 , offset : t513 } , end : { column : t518 , offset : t516 , line : t517 } }
 
 func Compiler_Lexer_MakeSpan(state any) any {
 	return map[string]any{"start": map[string]any{"offset": sky_asMap(state)["offset"], "line": sky_asMap(state)["line"], "column": sky_asMap(state)["column"]}, "end": map[string]any{"offset": sky_asMap(state)["offset"], "line": sky_asMap(state)["line"], "column": sky_asMap(state)["column"]}}
@@ -18779,7 +18828,7 @@ func Compiler_Pipeline_EmitMultiModuleGo(outDir any, projectRoot any, entryMod a
 		_ = entryExposed
 		typedDeclDict := Compiler_Pipeline_BuildTypedDeclDict(entryTypedDecls)
 		_ = typedDeclDict
-		entryCtx := sky_recordUpdate(baseCtx, map[string]any{"registry": entryRegistry, "localFunctions": Compiler_Lower_CollectLocalFunctions(sky_asMap(entryMod)["declarations"]), "importedConstructors": Compiler_Lower_BuildConstructorMap(entryRegistry), "importAliases": aliasMap, "exposedStdlib": entryExposed, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(entryMod)["declarations"]), "typedDecls": typedDeclDict})
+		entryCtx := sky_recordUpdate(baseCtx, map[string]any{"registry": entryRegistry, "localFunctions": Compiler_Lower_CollectLocalFunctions(sky_asMap(entryMod)["declarations"]), "importedConstructors": sky_call(sky_dictUnion(Compiler_Pipeline_BuildAllCtorMaps(entryMod, loadedModules)), Compiler_Lower_BuildConstructorMap(entryRegistry)), "importAliases": aliasMap, "exposedStdlib": entryExposed, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(entryMod)["declarations"]), "typedDecls": typedDeclDict})
 		_ = entryCtx
 		entryGoDecls := Compiler_Lower_LowerDeclarations(entryCtx, sky_asMap(entryMod)["declarations"])
 		_ = entryGoDecls
@@ -19184,7 +19233,7 @@ func Compiler_Pipeline_SplitWrapperSections(code any) any {
 	}()
 }
 
-// sky:type splitWrapperLoop : List String -> String -> any -> String -> Bool -> { header : t1047 , functions : t1058 }
+// sky:type splitWrapperLoop : List String -> String -> any -> String -> Bool -> { header : t1053 , functions : t1064 }
 
 func Compiler_Pipeline_SplitWrapperLoop(lines any, header any, funcs any, currentFunc any, inFunc any) any {
 	return func() any {
@@ -19479,7 +19528,7 @@ func Compiler_Pipeline_ShortFuncName(fullName any) any {
 	}()
 }
 
-// sky:type makeGoPackage : any -> { name : String , imports : List { alias_ : String , path : String } , declarations : t1369 }
+// sky:type makeGoPackage : any -> { name : String , imports : List { alias_ : String , path : String } , declarations : t1375 }
 
 func Compiler_Pipeline_MakeGoPackage(decls any) any {
 	return map[string]any{"name": "main", "imports": []any{map[string]any{"path": "fmt", "alias_": ""}, map[string]any{"path": "bufio", "alias_": ""}, map[string]any{"path": "io", "alias_": ""}, map[string]any{"path": "os", "alias_": ""}, map[string]any{"path": "os/exec", "alias_": "exec"}, map[string]any{"path": "net/http", "alias_": "net_http"}, map[string]any{"path": "strconv", "alias_": ""}, map[string]any{"path": "strings", "alias_": ""}, map[string]any{"path": "sort", "alias_": ""}, map[string]any{"path": "math", "alias_": ""}, map[string]any{"path": "crypto/sha256", "alias_": "crypto_sha256"}, map[string]any{"path": "crypto/md5", "alias_": "crypto_md5"}, map[string]any{"path": "encoding/hex", "alias_": "hex"}, map[string]any{"path": "encoding/base64", "alias_": "base64"}, map[string]any{"path": "encoding/json", "alias_": "encoding_json"}, map[string]any{"path": "time", "alias_": ""}, map[string]any{"path": "context", "alias_": ""}}, "declarations": decls}
@@ -20038,9 +20087,9 @@ func Compiler_Pipeline_DeclHasWrapper(wrapperContent any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				body := sky_asMap(__subject)["V2"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return func() any {
 					wrapperName := Compiler_Pipeline_ExtractWrapperName(body)
@@ -20065,9 +20114,9 @@ func Compiler_Pipeline_ExtractWrapperName(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(sky_call(sky_stringStartsWith("Sky_"), name)) {
@@ -20076,8 +20125,8 @@ func Compiler_Pipeline_ExtractWrapperName(expr any) any {
 					return ""
 				}()
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
 				return Compiler_Pipeline_ExtractWrapperName(callee)
 			}
@@ -20854,6 +20903,22 @@ func Compiler_Pipeline_MakePrefixAlias(prefix any, decl any) any {
 	}()
 }
 
+// sky:type buildAllCtorMaps : any -> any -> any
+
+func Compiler_Pipeline_BuildAllCtorMaps(currentMod any, allModules any) any {
+	return func() any {
+		fromCurrent := Compiler_Lower_BuildConstructorMapFromDecls(sky_asMap(currentMod)["declarations"])
+		_ = fromCurrent
+		fromAll := sky_call(sky_call(sky_listFoldl(func(pair any) any {
+			return func(acc any) any {
+				return sky_call(sky_dictUnion(Compiler_Lower_BuildConstructorMapFromDecls(sky_asMap(sky_snd(pair))["declarations"])), acc)
+			}
+		}), sky_dictEmpty()), allModules)
+		_ = fromAll
+		return sky_call(sky_dictUnion(fromCurrent), fromAll)
+	}()
+}
+
 // sky:type isCommonName : String -> Bool
 
 func Compiler_Pipeline_IsCommonName(name any) any {
@@ -20933,19 +20998,19 @@ func Compiler_Pipeline_GetDeclName(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoDeclFunc" {
-				funcDecl := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				funcDecl := sky_adtField(__subject, 0)
 				_ = funcDecl
 				return sky_asMap(funcDecl)["name"]
 			}
-			if __sky_tag == "GoDeclVar" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
-			if __sky_tag == "GoDeclRaw" {
-				code := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				code := sky_adtField(__subject, 0)
 				_ = code
 				return func() any {
 					if sky_asBool(sky_call(sky_stringStartsWith("var "), code)) {
@@ -20960,8 +21025,8 @@ func Compiler_Pipeline_GetDeclName(decl any) any {
 					return ""
 				}()
 			}
-			if __sky_tag == "GoDeclType" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
@@ -21071,9 +21136,9 @@ func Compiler_Pipeline_IsFfiModule(modName any, mod any) any {
 				return func() any {
 					return func() any {
 						__subject := decl
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "FunDecl" {
-							body := sky_asMap(__subject)["V2"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 0 {
+							body := sky_adtField(__subject, 2)
 							_ = body
 							return Compiler_Pipeline_ExprHasWrapperCall(body)
 						}
@@ -21092,19 +21157,19 @@ func Compiler_Pipeline_ExprHasWrapperCall(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_call(sky_stringStartsWith("Sky_"), name)
 			}
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return func() any {
 					return func() any {
 						__subject := sky_listHead(parts)
-						__sky_tag := sky_getSkyName(__subject)
+						__sky_tag := sky_adtTag(__subject)
 						if sky_asSkyMaybe(__subject).SkyName == "Just" {
 							first := sky_asSkyMaybe(__subject).JustValue
 							_ = first
@@ -21113,10 +21178,10 @@ func Compiler_Pipeline_ExprHasWrapperCall(expr any) any {
 						if sky_asSkyMaybe(__subject).SkyName == "Nothing" {
 							return false
 						}
-						if __sky_tag == "CallExpr" {
-							callee := sky_asMap(__subject)["V0"]
+						if __sky_tag == 13 {
+							callee := sky_adtField(__subject, 0)
 							_ = callee
-							args := sky_asMap(__subject)["V1"]
+							args := sky_adtField(__subject, 1)
 							_ = args
 							return Compiler_Pipeline_ExprHasWrapperCall(callee)
 						}
@@ -21193,8 +21258,8 @@ func Compiler_Pipeline_IsExposingNone(clause any) any {
 	return func() any {
 		return func() any {
 			__subject := clause
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "ExposeNone" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
 				return true
 			}
 			if true {
@@ -21209,9 +21274,9 @@ func Compiler_Pipeline_GetExposeNames(clause any) any {
 	return func() any {
 		return func() any {
 			__subject := clause
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "ExposeList" {
-				names := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				names := sky_adtField(__subject, 0)
 				_ = names
 				return names
 			}
@@ -21229,11 +21294,11 @@ func Compiler_Pipeline_IsZeroArityInModule(name any, mod any) any {
 			return func() any {
 				return func() any {
 					__subject := decl
-					__sky_tag := sky_getSkyName(__subject)
-					if __sky_tag == "FunDecl" {
-						dName := sky_asMap(__subject)["V0"]
+					__sky_tag := sky_adtTag(__subject)
+					if __sky_tag == 0 {
+						dName := sky_adtField(__subject, 0)
 						_ = dName
-						params := sky_asMap(__subject)["V1"]
+						params := sky_adtField(__subject, 1)
 						_ = params
 						return func() any {
 							if sky_asBool(sky_equal(dName, name)) {
@@ -21294,9 +21359,9 @@ func Compiler_Pipeline_ExtractTypeDeclName(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return SkyJust(name)
 			}
@@ -21312,29 +21377,29 @@ func Compiler_Pipeline_ExtractDeclNames(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return []any{name}
 			}
-			if __sky_tag == "TypeDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				variants := sky_asMap(__subject)["V2"]
+				variants := sky_adtField(__subject, 2)
 				_ = variants
 				return sky_call(sky_listMap(func(v any) any { return sky_asMap(v)["name"] }), variants)
 			}
-			if __sky_tag == "TypeAliasDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return []any{}
 			}
-			if __sky_tag == "TypeAnnotDecl" {
+			if __sky_tag == 1 {
 				return []any{}
 			}
-			if __sky_tag == "ForeignImportDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return []any{name}
 			}
@@ -21353,9 +21418,9 @@ func Compiler_Pipeline_ExtractDeclNameForFn(d any) any {
 	return func() any {
 		return func() any {
 			__subject := d
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return SkyJust(name)
 			}
@@ -21777,7 +21842,7 @@ func Compiler_Pipeline_CompileDependencyModuleAndCache(stdlibEnv any, allModules
 		_ = localFns
 		depExposed := Compiler_Lower_BuildExposedStdlib(sky_asMap(mod)["imports"])
 		_ = depExposed
-		ctx := sky_recordUpdate(depBaseCtx, map[string]any{"registry": registry, "localFunctions": localFns, "importedConstructors": Compiler_Lower_BuildConstructorMap(registry), "modulePrefix": prefix, "importAliases": depAliasMap, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(mod)["declarations"]), "exposedStdlib": depExposed, "typedDecls": depTypedDecls})
+		ctx := sky_recordUpdate(depBaseCtx, map[string]any{"registry": registry, "localFunctions": localFns, "importedConstructors": sky_call(sky_dictUnion(Compiler_Pipeline_BuildAllCtorMaps(mod, allModules)), Compiler_Lower_BuildConstructorMap(registry)), "modulePrefix": prefix, "importAliases": depAliasMap, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(mod)["declarations"]), "exposedStdlib": depExposed, "typedDecls": depTypedDecls})
 		_ = ctx
 		goDecls := Compiler_Lower_LowerDeclarations(ctx, sky_asMap(mod)["declarations"])
 		_ = goDecls
@@ -21831,13 +21896,13 @@ func Compiler_Pipeline_MakeFfiWrapperVar(prefix any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				params := sky_asMap(__subject)["V1"]
+				params := sky_adtField(__subject, 1)
 				_ = params
-				body := sky_asMap(__subject)["V2"]
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return Compiler_Pipeline_BuildFfiVarDecl(prefix, name, params, body)
 			}
@@ -21908,11 +21973,11 @@ func Compiler_Pipeline_CountWrapperArgsAcc(expr any, acc any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Compiler_Pipeline_CountWrapperArgsAcc(callee, sky_numBinop("+", acc, sky_listLength(args)))
 			}
@@ -21944,9 +22009,9 @@ func Compiler_Pipeline_ExtractWrapperNameFromBody(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(sky_call(sky_stringStartsWith("Sky_"), name)) {
@@ -21955,8 +22020,8 @@ func Compiler_Pipeline_ExtractWrapperNameFromBody(expr any) any {
 					return ""
 				}()
 			}
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return func() any {
 					name := sky_call(sky_stringJoin("."), parts)
@@ -21969,13 +22034,13 @@ func Compiler_Pipeline_ExtractWrapperNameFromBody(expr any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
 				return Compiler_Pipeline_ExtractWrapperNameFromBody(callee)
 			}
-			if __sky_tag == "ParenExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 20 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Pipeline_ExtractWrapperNameFromBody(inner)
 			}
@@ -21991,24 +22056,24 @@ func Compiler_Pipeline_ExtractLiteralFromBody(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "StringLitExpr" {
-				s := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 4 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return sky_concat("\"", sky_concat(s, "\""))
 			}
-			if __sky_tag == "IntLitExpr" {
-				raw := sky_asMap(__subject)["V1"]
+			if __sky_tag == 2 {
+				raw := sky_adtField(__subject, 1)
 				_ = raw
 				return raw
 			}
-			if __sky_tag == "FloatLitExpr" {
-				raw := sky_asMap(__subject)["V1"]
+			if __sky_tag == 3 {
+				raw := sky_adtField(__subject, 1)
 				_ = raw
 				return raw
 			}
-			if __sky_tag == "BoolLitExpr" {
-				b := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				b := sky_adtField(__subject, 0)
 				_ = b
 				return func() any {
 					if sky_asBool(b) {
@@ -22058,7 +22123,7 @@ func Compiler_Pipeline_CompileDependencyModuleFull(stdlibEnv any, allModules any
 		_ = localFns
 		depExposed := Compiler_Lower_BuildExposedStdlib(sky_asMap(mod)["imports"])
 		_ = depExposed
-		ctx := sky_recordUpdate(depBaseCtx, map[string]any{"registry": registry, "localFunctions": localFns, "importedConstructors": Compiler_Lower_BuildConstructorMap(registry), "modulePrefix": prefix, "importAliases": depAliasMap, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(mod)["declarations"]), "exposedStdlib": depExposed})
+		ctx := sky_recordUpdate(depBaseCtx, map[string]any{"registry": registry, "localFunctions": localFns, "importedConstructors": sky_call(sky_dictUnion(Compiler_Pipeline_BuildAllCtorMaps(mod, allModules)), Compiler_Lower_BuildConstructorMap(registry)), "modulePrefix": prefix, "importAliases": depAliasMap, "localFunctionArity": Compiler_Lower_CollectLocalFunctionArities(sky_asMap(mod)["declarations"]), "exposedStdlib": depExposed})
 		_ = ctx
 		goDecls := Compiler_Lower_LowerDeclarations(ctx, sky_asMap(mod)["declarations"])
 		_ = goDecls
@@ -22086,8 +22151,8 @@ func Compiler_Pipeline_MakeConstructorAlias(prefix any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoDeclType" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 3 {
 				return SkyNothing()
 			}
 			if true {
@@ -22148,8 +22213,8 @@ func Compiler_Pipeline_MakeOriginalAlias(prefix any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoDeclType" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 3 {
 				return SkyNothing()
 			}
 			if true {
@@ -22183,21 +22248,21 @@ func Compiler_Pipeline_IsExportableDecl(decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoDeclFunc" {
-				funcDecl := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				funcDecl := sky_adtField(__subject, 0)
 				_ = funcDecl
 				return sky_asBool(!sky_equal(sky_asMap(funcDecl)["name"], "_")) && sky_asBool(!sky_equal(sky_asMap(funcDecl)["name"], "main"))
 			}
-			if __sky_tag == "GoDeclVar" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return !sky_equal(name, "_")
 			}
-			if __sky_tag == "GoDeclRaw" {
+			if __sky_tag == 2 {
 				return true
 			}
-			if __sky_tag == "GoDeclType" {
+			if __sky_tag == 3 {
 				return true
 			}
 			panic("non-exhaustive case expression")
@@ -22226,7 +22291,7 @@ func Compiler_Pipeline_NeedsStdlibWrapper(modName any) any {
 	return sky_asBool(sky_call(sky_stringStartsWith("Sky.Core.Json"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Html"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Css"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Live"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Cmd"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Sub"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Task"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Time"), modName)) || sky_asBool(sky_asBool(sky_call(sky_stringStartsWith("Std.Program"), modName)) || sky_asBool(sky_asBool(sky_equal(modName, "Sky.Core.Result")) || sky_asBool(sky_equal(modName, "Sky.Core.Maybe")))))))))))
 }
 
-// sky:type buildStdlibGoImports : any -> List { alias_ : String , path : String }
+// sky:type buildStdlibGoImports : any -> List { path : String , alias_ : String }
 
 func Compiler_Pipeline_BuildStdlibGoImports(imports any) any {
 	return func() any {
@@ -22368,9 +22433,9 @@ func Compiler_Pipeline_PrefixDecl(prefix any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoDeclFunc" {
-				funcDecl := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				funcDecl := sky_adtField(__subject, 0)
 				_ = funcDecl
 				return func() any {
 					if sky_asBool(sky_equal(sky_asMap(funcDecl)["name"], "main")) {
@@ -22379,10 +22444,10 @@ func Compiler_Pipeline_PrefixDecl(prefix any, decl any) any {
 					return GoDeclFunc(sky_recordUpdate(funcDecl, map[string]any{"name": sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(sky_asMap(funcDecl)["name"])))}))
 				}()
 			}
-			if __sky_tag == "GoDeclVar" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				expr := sky_asMap(__subject)["V1"]
+				expr := sky_adtField(__subject, 1)
 				_ = expr
 				return func() any {
 					if sky_asBool(sky_asBool(sky_equal(name, "_")) || sky_asBool(sky_call(sky_stringStartsWith("var _ ="), name))) {
@@ -22391,15 +22456,15 @@ func Compiler_Pipeline_PrefixDecl(prefix any, decl any) any {
 					return GoDeclVar(sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(name))), expr)
 				}()
 			}
-			if __sky_tag == "GoDeclRaw" {
-				code := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				code := sky_adtField(__subject, 0)
 				_ = code
 				return decl
 			}
-			if __sky_tag == "GoDeclType" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return GoDeclType(sky_concat(prefix, sky_concat("_", Compiler_Pipeline_CapitalizeFirst(name))), body)
 			}
@@ -22685,7 +22750,7 @@ func Compiler_Pipeline_PrintTypedDecls(decls any) any {
 	}()
 }
 
-// sky:type emptySpan : { end : { line : Int , offset : Int , column : Int } , start : { column : Int , offset : Int , line : Int } }
+// sky:type emptySpan : { start : { offset : Int , line : Int , column : Int } , end : { line : Int , column : Int , offset : Int } }
 
 func Compiler_Token_EmptySpan() any {
 	return map[string]any{"start": map[string]any{"offset": 0, "line": 0, "column": 0}, "end": map[string]any{"offset": 0, "line": 0, "column": 0}}
@@ -22698,191 +22763,191 @@ func Compiler_Token_IsKeyword(word any) any {
 }
 
 func Compiler_Ast_IdentifierExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "IdentifierExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 0, SkyName: "IdentifierExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_QualifiedExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "QualifiedExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 1, SkyName: "QualifiedExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_IntLitExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "IntLitExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 2, SkyName: "IntLitExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_FloatLitExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "FloatLitExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 3, SkyName: "FloatLitExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_StringLitExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "StringLitExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 4, SkyName: "StringLitExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_CharLitExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "CharLitExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 5, SkyName: "CharLitExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_BoolLitExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 6, "SkyName": "BoolLitExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 6, SkyName: "BoolLitExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_UnitExpr(v0 any) any {
-	return map[string]any{"Tag": 7, "SkyName": "UnitExpr", "V0": v0}
+	return SkyADT{Tag: 7, SkyName: "UnitExpr", V0: v0}
 }
 
 func Compiler_Ast_TupleExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 8, "SkyName": "TupleExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 8, SkyName: "TupleExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_ListExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 9, "SkyName": "ListExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 9, SkyName: "ListExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_RecordExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 10, "SkyName": "RecordExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 10, SkyName: "RecordExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_RecordUpdateExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 11, "SkyName": "RecordUpdateExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 11, SkyName: "RecordUpdateExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_FieldAccessExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 12, "SkyName": "FieldAccessExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 12, SkyName: "FieldAccessExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_CallExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 13, "SkyName": "CallExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 13, SkyName: "CallExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_LambdaExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 14, "SkyName": "LambdaExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 14, SkyName: "LambdaExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_IfExpr(v0 any, v1 any, v2 any, v3 any) any {
-	return map[string]any{"Tag": 15, "SkyName": "IfExpr", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
+	return SkyADT{Tag: 15, SkyName: "IfExpr", V0: v0, V1: v1, V2: v2, V3: v3}
 }
 
 func Compiler_Ast_LetExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 16, "SkyName": "LetExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 16, SkyName: "LetExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_CaseExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 17, "SkyName": "CaseExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 17, SkyName: "CaseExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_BinaryExpr(v0 any, v1 any, v2 any, v3 any) any {
-	return map[string]any{"Tag": 18, "SkyName": "BinaryExpr", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
+	return SkyADT{Tag: 18, SkyName: "BinaryExpr", V0: v0, V1: v1, V2: v2, V3: v3}
 }
 
 func Compiler_Ast_NegateExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 19, "SkyName": "NegateExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 19, SkyName: "NegateExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_ParenExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 20, "SkyName": "ParenExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 20, SkyName: "ParenExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_PWildcard(v0 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "PWildcard", "V0": v0}
+	return SkyADT{Tag: 0, SkyName: "PWildcard", V0: v0}
 }
 
 func Compiler_Ast_PVariable(v0 any, v1 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "PVariable", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 1, SkyName: "PVariable", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_PConstructor(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "PConstructor", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 2, SkyName: "PConstructor", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_PLiteral(v0 any, v1 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "PLiteral", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 3, SkyName: "PLiteral", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_PTuple(v0 any, v1 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "PTuple", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 4, SkyName: "PTuple", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_PList(v0 any, v1 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "PList", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 5, SkyName: "PList", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_PCons(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 6, "SkyName": "PCons", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 6, SkyName: "PCons", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_PAs(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 7, "SkyName": "PAs", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 7, SkyName: "PAs", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_PRecord(v0 any, v1 any) any {
-	return map[string]any{"Tag": 8, "SkyName": "PRecord", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 8, SkyName: "PRecord", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_LitInt(v0 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "LitInt", "V0": v0}
+	return SkyADT{Tag: 0, SkyName: "LitInt", V0: v0}
 }
 
 func Compiler_Ast_LitFloat(v0 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "LitFloat", "V0": v0}
+	return SkyADT{Tag: 1, SkyName: "LitFloat", V0: v0}
 }
 
 func Compiler_Ast_LitString(v0 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "LitString", "V0": v0}
+	return SkyADT{Tag: 2, SkyName: "LitString", V0: v0}
 }
 
 func Compiler_Ast_LitChar(v0 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "LitChar", "V0": v0}
+	return SkyADT{Tag: 3, SkyName: "LitChar", V0: v0}
 }
 
 func Compiler_Ast_LitBool(v0 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "LitBool", "V0": v0}
+	return SkyADT{Tag: 4, SkyName: "LitBool", V0: v0}
 }
 
 func Compiler_Ast_TypeRef(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "TypeRef", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 0, SkyName: "TypeRef", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_TypeVar(v0 any, v1 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "TypeVar", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 1, SkyName: "TypeVar", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_FunType(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "FunType", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 2, SkyName: "FunType", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_RecordTypeExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "RecordTypeExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 3, SkyName: "RecordTypeExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_TupleTypeExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "TupleTypeExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 4, SkyName: "TupleTypeExpr", V0: v0, V1: v1}
 }
 
 func Compiler_Ast_UnitTypeExpr(v0 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "UnitTypeExpr", "V0": v0}
+	return SkyADT{Tag: 5, SkyName: "UnitTypeExpr", V0: v0}
 }
 
 func Compiler_Ast_FunDecl(v0 any, v1 any, v2 any, v3 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "FunDecl", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
+	return SkyADT{Tag: 0, SkyName: "FunDecl", V0: v0, V1: v1, V2: v2, V3: v3}
 }
 
 func Compiler_Ast_TypeAnnotDecl(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "TypeAnnotDecl", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 1, SkyName: "TypeAnnotDecl", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_Ast_TypeDecl(v0 any, v1 any, v2 any, v3 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "TypeDecl", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
+	return SkyADT{Tag: 2, SkyName: "TypeDecl", V0: v0, V1: v1, V2: v2, V3: v3}
 }
 
 func Compiler_Ast_TypeAliasDecl(v0 any, v1 any, v2 any, v3 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "TypeAliasDecl", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
+	return SkyADT{Tag: 3, SkyName: "TypeAliasDecl", V0: v0, V1: v1, V2: v2, V3: v3}
 }
 
 func Compiler_Ast_ForeignImportDecl(v0 any, v1 any, v2 any, v3 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "ForeignImportDecl", "V0": v0, "V1": v1, "V2": v2, "V3": v3}
+	return SkyADT{Tag: 4, SkyName: "ForeignImportDecl", V0: v0, V1: v1, V2: v2, V3: v3}
 }
 
 func Compiler_Ast_ExposeList(v0 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "ExposeList", "V0": v0}
+	return SkyADT{Tag: 1, SkyName: "ExposeList", V0: v0}
 }
 
 // sky:type dispatchDeclaration : String -> String -> any -> Result String any
@@ -22898,10 +22963,10 @@ func Compiler_Parser_DispatchDeclaration(first any, second any, state any) any {
 		if sky_asBool(sky_equal(first, "type")) {
 			return Compiler_Parser_ParseTypeDecl(state)
 		}
-		if sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), TkColon))) {
+		if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) && sky_asBool(tokenKindEq(peekAt1Kind(state), SkyADT{Tag: 9, SkyName: "TkColon"}))) {
 			return Compiler_Parser_ParseTypeAnnot(state)
 		}
-		if sky_asBool(matchKind(TkIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) {
 			return Compiler_Parser_ParseFunDecl(state)
 		}
 		return SkyErr(sky_concat("Unexpected token: ", first))
@@ -22912,9 +22977,9 @@ func Compiler_Parser_DispatchDeclaration(first any, second any, state any) any {
 
 func Compiler_Parser_ParseVariantFields(state any) any {
 	return func() any {
-		if sky_asBool(sky_asBool(matchKind(TkUpperIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkLParen, state)) || sky_asBool(matchKind(TkLBrace, state))))) {
+		if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) || sky_asBool(matchKind(SkyADT{Tag: 19, SkyName: "TkLBrace"}, state))))) {
 			return func() any {
-				if sky_asBool(sky_asBool(sky_equal(peekColumn(state), 1)) || sky_asBool(matchKind(TkPipe, state))) {
+				if sky_asBool(sky_asBool(sky_equal(peekColumn(state), 1)) || sky_asBool(matchKind(SkyADT{Tag: 12, SkyName: "TkPipe"}, state))) {
 					return SkyTuple2{V0: []any{}, V1: state}
 				}
 				return func() any {
@@ -22950,9 +23015,9 @@ func Compiler_Parser_ParseVariantFields(state any) any {
 
 func Compiler_Parser_ParseTypeArgs(state any) any {
 	return func() any {
-		if sky_asBool(sky_asBool(matchKind(TkUpperIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkIdentifier, state)) || sky_asBool(sky_asBool(matchKind(TkLParen, state)) || sky_asBool(matchKind(TkLBrace, state))))) {
+		if sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) || sky_asBool(matchKind(SkyADT{Tag: 19, SkyName: "TkLBrace"}, state))))) {
 			return func() any {
-				if sky_asBool(sky_asBool(sky_equal(peekColumn(state), 1)) || sky_asBool(sky_asBool(matchKind(TkEquals, state)) || sky_asBool(matchKind(TkPipe, state)))) {
+				if sky_asBool(sky_asBool(sky_equal(peekColumn(state), 1)) || sky_asBool(sky_asBool(matchKind(SkyADT{Tag: 8, SkyName: "TkEquals"}, state)) || sky_asBool(matchKind(SkyADT{Tag: 12, SkyName: "TkPipe"}, state)))) {
 					return SkyTuple2{V0: []any{}, V1: state}
 				}
 				return func() any {
@@ -23009,12 +23074,12 @@ func Compiler_Parser_Parse(tokens any) any {
 	}()
 }
 
-// sky:type parseModule : any -> Result any ( { exposing_ : t294 , imports : t297 , declarations : t300 , name : t291 , span : t305 } , any )
+// sky:type parseModule : any -> Result any ( { imports : t297 , declarations : t300 , span : t305 , name : t291 , exposing_ : t294 } , any )
 
 func Compiler_Parser_ParseModule(state any) any {
 	return func() any {
 		return func() any {
-			__subject := consumeLex(TkKeyword, "module", state)
+			__subject := consumeLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "module", state)
 			if sky_asSkyResult(__subject).SkyName == "Err" {
 				e := sky_asSkyResult(__subject).ErrValue
 				_ = e
@@ -23069,7 +23134,7 @@ func Compiler_Parser_ParseModule(state any) any {
 func Compiler_Parser_ParseModuleName(state any) any {
 	return func() any {
 		return func() any {
-			__subject := consume(TkUpperIdentifier, state)
+			__subject := consume(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)
 			if sky_asSkyResult(__subject).SkyName == "Err" {
 				e := sky_asSkyResult(__subject).ErrValue
 				_ = e
@@ -23091,14 +23156,14 @@ func Compiler_Parser_ParseModuleName(state any) any {
 
 func Compiler_Parser_ParseModuleNameParts(parts any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkDot, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 11, SkyName: "TkDot"}, state)) {
 			return func() any {
 				__tup_w_s1 := advance(state)
 				s1 := sky_asTuple2(__tup_w_s1).V1
 				_ = s1
 				return func() any {
 					return func() any {
-						__subject := consume(TkUpperIdentifier, s1)
+						__subject := consume(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, s1)
 						if sky_asSkyResult(__subject).SkyName == "Err" {
 							e := sky_asSkyResult(__subject).ErrValue
 							_ = e
@@ -23124,7 +23189,7 @@ func Compiler_Parser_ParseModuleNameParts(parts any, state any) any {
 
 func Compiler_Parser_ParseOptionalExposing(state any) any {
 	return func() any {
-		if sky_asBool(matchKindLex(TkKeyword, "exposing", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "exposing", state)) {
 			return func() any {
 				__tup_w_s1 := advance(state)
 				s1 := sky_asTuple2(__tup_w_s1).V1
@@ -23140,14 +23205,14 @@ func Compiler_Parser_ParseOptionalExposing(state any) any {
 							return SkyTuple2{V0: ec, V1: s2}
 						}
 						if sky_asSkyResult(__subject).SkyName == "Err" {
-							return SkyTuple2{V0: ExposeNone, V1: state}
+							return SkyTuple2{V0: SkyADT{Tag: 2, SkyName: "ExposeNone"}, V1: state}
 						}
 						panic("non-exhaustive case expression")
 					}()
 				}()
 			}()
 		}
-		return SkyTuple2{V0: ExposeNone, V1: state}
+		return SkyTuple2{V0: SkyADT{Tag: 2, SkyName: "ExposeNone"}, V1: state}
 	}()
 }
 
@@ -23156,7 +23221,7 @@ func Compiler_Parser_ParseOptionalExposing(state any) any {
 func Compiler_Parser_ParseExposingClause(state any) any {
 	return func() any {
 		return func() any {
-			__subject := consume(TkLParen, state)
+			__subject := consume(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)
 			if sky_asSkyResult(__subject).SkyName == "Err" {
 				e := sky_asSkyResult(__subject).ErrValue
 				_ = e
@@ -23166,7 +23231,7 @@ func Compiler_Parser_ParseExposingClause(state any) any {
 				s1 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 				_ = s1
 				return func() any {
-					if sky_asBool(matchKind(TkDot, s1)) {
+					if sky_asBool(matchKind(SkyADT{Tag: 11, SkyName: "TkDot"}, s1)) {
 						return func() any {
 							__tup_w_s2 := advance(s1)
 							s2 := sky_asTuple2(__tup_w_s2).V1
@@ -23176,7 +23241,7 @@ func Compiler_Parser_ParseExposingClause(state any) any {
 							_ = s3
 							return func() any {
 								return func() any {
-									__subject := consume(TkRParen, s3)
+									__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, s3)
 									if sky_asSkyResult(__subject).SkyName == "Err" {
 										e := sky_asSkyResult(__subject).ErrValue
 										_ = e
@@ -23185,7 +23250,7 @@ func Compiler_Parser_ParseExposingClause(state any) any {
 									if sky_asSkyResult(__subject).SkyName == "Ok" {
 										s4 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 										_ = s4
-										return SkyOk(SkyTuple2{V0: ExposeAll, V1: s4})
+										return SkyOk(SkyTuple2{V0: SkyADT{Tag: 0, SkyName: "ExposeAll"}, V1: s4})
 									}
 									panic("non-exhaustive case expression")
 								}()
@@ -23200,7 +23265,7 @@ func Compiler_Parser_ParseExposingClause(state any) any {
 						_ = s2
 						return func() any {
 							return func() any {
-								__subject := consume(TkRParen, s2)
+								__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, s2)
 								if sky_asSkyResult(__subject).SkyName == "Err" {
 									e := sky_asSkyResult(__subject).ErrValue
 									_ = e
@@ -23226,7 +23291,7 @@ func Compiler_Parser_ParseExposingClause(state any) any {
 
 func Compiler_Parser_ParseExposedItems(items any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkRParen, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 16, SkyName: "TkRParen"}, state)) {
 			return SkyTuple2{V0: items, V1: state}
 		}
 		return func() any {
@@ -23238,7 +23303,7 @@ func Compiler_Parser_ParseExposedItems(items any, state any) any {
 			newItems := sky_concat(items, []any{sky_asMap(tok)["lexeme"]})
 			_ = newItems
 			s2 := func() any {
-				if sky_asBool(matchKind(TkComma, s1)) {
+				if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s1)) {
 					return func() any { __tup_w_s := advance(s1); s := sky_asTuple2(__tup_w_s).V1; _ = s; return s }()
 				}
 				return s1
@@ -23253,7 +23318,7 @@ func Compiler_Parser_ParseExposedItems(items any, state any) any {
 
 func Compiler_Parser_ParseImports(state any) any {
 	return func() any {
-		if sky_asBool(matchKindLex(TkKeyword, "import", state)) {
+		if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "import", state)) {
 			return func() any {
 				return func() any {
 					__subject := Compiler_Parser_ParseImport(state)
@@ -23282,12 +23347,12 @@ func Compiler_Parser_ParseImports(state any) any {
 	}()
 }
 
-// sky:type parseImport : any -> Result any ( { exposing_ : t542 , span : t547 , moduleName : t521 , alias_ : String } , any )
+// sky:type parseImport : any -> Result any ( { alias_ : String , exposing_ : t542 , moduleName : t521 , span : t547 } , any )
 
 func Compiler_Parser_ParseImport(state any) any {
 	return func() any {
 		return func() any {
-			__subject := consumeLex(TkKeyword, "import", state)
+			__subject := consumeLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "import", state)
 			if sky_asSkyResult(__subject).SkyName == "Err" {
 				e := sky_asSkyResult(__subject).ErrValue
 				_ = e
@@ -23311,7 +23376,7 @@ func Compiler_Parser_ParseImport(state any) any {
 							_ = s2
 							return func() any {
 								__tup_alias__s3 := func() any {
-									if sky_asBool(matchKindLex(TkKeyword, "as", s2)) {
+									if sky_asBool(matchKindLex(SkyADT{Tag: 6, SkyName: "TkKeyword"}, "as", s2)) {
 										return func() any {
 											__tup_w_sa := advance(s2)
 											sa := sky_asTuple2(__tup_w_sa).V1
@@ -23363,7 +23428,7 @@ func Compiler_Parser_ParseDeclaration(state any) any {
 
 func Compiler_Parser_ParseDeclarations(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkEOF, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 24, SkyName: "TkEOF"}, state)) {
 			return SkyTuple2{V0: []any{}, V1: state}
 		}
 		return Compiler_Parser_ParseDeclsHelper(Compiler_Parser_ParseDeclaration(state), state)
@@ -23397,10 +23462,10 @@ func Compiler_Parser_SkipToNextDecl(state any) any {
 		s1 := sky_asTuple2(__tup_w_s1).V1
 		_ = s1
 		return func() any {
-			if sky_asBool(matchKind(TkEOF, s1)) {
+			if sky_asBool(matchKind(SkyADT{Tag: 24, SkyName: "TkEOF"}, s1)) {
 				return s1
 			}
-			if sky_asBool(sky_asBool(sky_equal(peekColumn(s1), 1)) && sky_asBool(matchKind(TkIdentifier, s1))) {
+			if sky_asBool(sky_asBool(sky_equal(peekColumn(s1), 1)) && sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, s1))) {
 				return s1
 			}
 			if sky_asBool(sky_asBool(sky_equal(peekColumn(s1), 1)) && sky_asBool(sky_equal(peekLexeme(s1), "type"))) {
@@ -23436,7 +23501,7 @@ func Compiler_Parser_ParseForeignImport(state any) any {
 		_ = s2
 		return func() any {
 			return func() any {
-				__subject := consume(TkString, s2)
+				__subject := consume(SkyADT{Tag: 4, SkyName: "TkString"}, s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -23458,9 +23523,9 @@ func Compiler_Parser_ParseForeignImport(state any) any {
 						names := func() any {
 							return func() any {
 								__subject := exposing_
-								__sky_tag := sky_getSkyName(__subject)
-								if __sky_tag == "ExposeList" {
-									items := sky_asMap(__subject)["V0"]
+								__sky_tag := sky_adtTag(__subject)
+								if __sky_tag == 1 {
+									items := sky_adtField(__subject, 0)
 									_ = items
 									return items
 								}
@@ -23507,7 +23572,7 @@ func Compiler_Parser_ParseTypeAlias(state any) any {
 		_ = s2
 		return func() any {
 			return func() any {
-				__subject := consume(TkUpperIdentifier, s2)
+				__subject := consume(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -23526,7 +23591,7 @@ func Compiler_Parser_ParseTypeAlias(state any) any {
 						_ = s4
 						return func() any {
 							return func() any {
-								__subject := consume(TkEquals, s4)
+								__subject := consume(SkyADT{Tag: 8, SkyName: "TkEquals"}, s4)
 								if sky_asSkyResult(__subject).SkyName == "Err" {
 									e := sky_asSkyResult(__subject).ErrValue
 									_ = e
@@ -23574,7 +23639,7 @@ func Compiler_Parser_ParseTypeDecl(state any) any {
 		_ = s1
 		return func() any {
 			return func() any {
-				__subject := consume(TkUpperIdentifier, s1)
+				__subject := consume(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, s1)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -23593,7 +23658,7 @@ func Compiler_Parser_ParseTypeDecl(state any) any {
 						_ = s3
 						return func() any {
 							return func() any {
-								__subject := consume(TkEquals, s3)
+								__subject := consume(SkyADT{Tag: 8, SkyName: "TkEquals"}, s3)
 								if sky_asSkyResult(__subject).SkyName == "Err" {
 									e := sky_asSkyResult(__subject).ErrValue
 									_ = e
@@ -23626,7 +23691,7 @@ func Compiler_Parser_ParseTypeDecl(state any) any {
 
 func Compiler_Parser_ParseTypeParams(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -23650,7 +23715,7 @@ func Compiler_Parser_ParseTypeParams(state any) any {
 func Compiler_Parser_ParseTypeVariants(state any) any {
 	return func() any {
 		return func() any {
-			__subject := consume(TkUpperIdentifier, state)
+			__subject := consume(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)
 			if sky_asSkyResult(__subject).SkyName == "Err" {
 				return SkyTuple2{V0: []any{}, V1: state}
 			}
@@ -23674,7 +23739,7 @@ func Compiler_Parser_BuildVariant(name any, s1 any) any {
 
 func Compiler_Parser_FinishVariant(variantName any, fieldResult any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkPipe, sky_snd(fieldResult))) {
+		if sky_asBool(matchKind(SkyADT{Tag: 12, SkyName: "TkPipe"}, sky_snd(fieldResult))) {
 			return Compiler_Parser_PrependVariant(map[string]any{"name": variantName, "fields": sky_fst(fieldResult), "span": emptySpan}, Compiler_Parser_ParseTypeVariants(sky_snd(advance(sky_snd(fieldResult)))))
 		}
 		return SkyTuple2{V0: []any{map[string]any{"name": variantName, "fields": sky_fst(fieldResult), "span": emptySpan}}, V1: sky_snd(fieldResult)}
@@ -23704,7 +23769,7 @@ func Compiler_Parser_ParseTypeExpr(state any) any {
 				s1 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 				_ = s1
 				return func() any {
-					if sky_asBool(matchKind(TkArrow, s1)) {
+					if sky_asBool(matchKind(SkyADT{Tag: 13, SkyName: "TkArrow"}, s1)) {
 						return func() any {
 							__tup_w_s2 := advance(s1)
 							s2 := sky_asTuple2(__tup_w_s2).V1
@@ -23772,11 +23837,11 @@ func Compiler_Parser_ResolveTypeApp(target any, argsResult any) any {
 		return func() any {
 			return func() any {
 				__subject := target
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "TypeRef" {
-					name := sky_asMap(__subject)["V0"]
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 0 {
+					name := sky_adtField(__subject, 0)
 					_ = name
-					span := sky_asMap(__subject)["V2"]
+					span := sky_adtField(__subject, 2)
 					_ = span
 					return SkyOk(SkyTuple2{V0: TypeRef(name, sky_fst(argsResult), span), V1: sky_snd(argsResult)})
 				}
@@ -23793,7 +23858,7 @@ func Compiler_Parser_ResolveTypeApp(target any, argsResult any) any {
 
 func Compiler_Parser_ParseTypePrimary(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkUpperIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, state)) {
 			return func() any {
 				__tup_id_s1 := advance(state)
 				id := sky_asTuple2(__tup_id_s1).V0
@@ -23808,7 +23873,7 @@ func Compiler_Parser_ParseTypePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: TypeRef(parts, []any{}, emptySpan), V1: s2})
 			}()
 		}
-		if sky_asBool(matchKind(TkIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) {
 			return func() any {
 				__tup_id_s1 := advance(state)
 				id := sky_asTuple2(__tup_id_s1).V0
@@ -23818,13 +23883,13 @@ func Compiler_Parser_ParseTypePrimary(state any) any {
 				return SkyOk(SkyTuple2{V0: TypeVar(sky_asMap(id)["lexeme"], emptySpan), V1: s1})
 			}()
 		}
-		if sky_asBool(matchKind(TkLParen, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) {
 			return func() any {
 				__tup_w_s1 := advance(state)
 				s1 := sky_asTuple2(__tup_w_s1).V1
 				_ = s1
 				return func() any {
-					if sky_asBool(matchKind(TkRParen, s1)) {
+					if sky_asBool(matchKind(SkyADT{Tag: 16, SkyName: "TkRParen"}, s1)) {
 						return func() any {
 							__tup_w_s2 := advance(s1)
 							s2 := sky_asTuple2(__tup_w_s2).V1
@@ -23846,12 +23911,12 @@ func Compiler_Parser_ParseTypePrimary(state any) any {
 								s2 := sky_asTuple2(sky_asSkyResult(__subject).OkValue).V1
 								_ = s2
 								return func() any {
-									if sky_asBool(matchKind(TkComma, s2)) {
+									if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s2)) {
 										return Compiler_Parser_ParseTupleTypeRest([]any{inner}, s2)
 									}
 									return func() any {
 										return func() any {
-											__subject := consume(TkRParen, s2)
+											__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, s2)
 											if sky_asSkyResult(__subject).SkyName == "Err" {
 												e := sky_asSkyResult(__subject).ErrValue
 												_ = e
@@ -23873,7 +23938,7 @@ func Compiler_Parser_ParseTypePrimary(state any) any {
 				}()
 			}()
 		}
-		if sky_asBool(matchKind(TkLBrace, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 19, SkyName: "TkLBrace"}, state)) {
 			return Compiler_Parser_ParseRecordType(state)
 		}
 		return SkyErr(sky_concat("Unexpected token in type: ", peekLexeme(state)))
@@ -23884,7 +23949,7 @@ func Compiler_Parser_ParseTypePrimary(state any) any {
 
 func Compiler_Parser_ParseTupleTypeRest(items any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkComma, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, state)) {
 			return func() any {
 				__tup_w_s1 := advance(state)
 				s1 := sky_asTuple2(__tup_w_s1).V1
@@ -23911,7 +23976,7 @@ func Compiler_Parser_ParseTupleTypeRest(items any, state any) any {
 		}
 		return func() any {
 			return func() any {
-				__subject := consume(TkRParen, state)
+				__subject := consume(SkyADT{Tag: 16, SkyName: "TkRParen"}, state)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -23942,7 +24007,7 @@ func Compiler_Parser_ParseRecordType(state any) any {
 		_ = s2
 		return func() any {
 			return func() any {
-				__subject := consume(TkRBrace, s2)
+				__subject := consume(SkyADT{Tag: 20, SkyName: "TkRBrace"}, s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -23959,16 +24024,16 @@ func Compiler_Parser_ParseRecordType(state any) any {
 	}()
 }
 
-// sky:type parseRecordTypeFields : List { name : t1201 , type_ : t1198 } -> any -> ( List { name : t1201 , type_ : t1198 } , any )
+// sky:type parseRecordTypeFields : List { name : t1201 , type_ : t1198 } -> any -> ( List { type_ : t1198 , name : t1201 } , any )
 
 func Compiler_Parser_ParseRecordTypeFields(fields any, state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkRBrace, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 20, SkyName: "TkRBrace"}, state)) {
 			return SkyTuple2{V0: fields, V1: state}
 		}
 		return func() any {
 			return func() any {
-				__subject := consume(TkIdentifier, state)
+				__subject := consume(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					return SkyTuple2{V0: fields, V1: state}
 				}
@@ -23979,7 +24044,7 @@ func Compiler_Parser_ParseRecordTypeFields(fields any, state any) any {
 					_ = s1
 					return func() any {
 						return func() any {
-							__subject := consume(TkColon, s1)
+							__subject := consume(SkyADT{Tag: 9, SkyName: "TkColon"}, s1)
 							if sky_asSkyResult(__subject).SkyName == "Err" {
 								return SkyTuple2{V0: fields, V1: state}
 							}
@@ -24001,7 +24066,7 @@ func Compiler_Parser_ParseRecordTypeFields(fields any, state any) any {
 												newFields := sky_concat(fields, []any{map[string]any{"name": sky_asMap(name)["lexeme"], "type_": te}})
 												_ = newFields
 												s4 := func() any {
-													if sky_asBool(matchKind(TkComma, s3)) {
+													if sky_asBool(matchKind(SkyADT{Tag: 10, SkyName: "TkComma"}, s3)) {
 														return func() any { __tup_w_s := advance(s3); s := sky_asTuple2(__tup_w_s).V1; _ = s; return s }()
 													}
 													return s3
@@ -24035,7 +24100,7 @@ func Compiler_Parser_ParseTypeAnnot(state any) any {
 		_ = s1
 		return func() any {
 			return func() any {
-				__subject := consume(TkColon, s1)
+				__subject := consume(SkyADT{Tag: 9, SkyName: "TkColon"}, s1)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -24085,7 +24150,7 @@ func Compiler_Parser_ParseFunDecl(state any) any {
 		_ = s2
 		return func() any {
 			return func() any {
-				__subject := consume(TkEquals, s2)
+				__subject := consume(SkyADT{Tag: 8, SkyName: "TkEquals"}, s2)
 				if sky_asSkyResult(__subject).SkyName == "Err" {
 					e := sky_asSkyResult(__subject).ErrValue
 					_ = e
@@ -24123,10 +24188,10 @@ func Compiler_Parser_ParseFunDecl(state any) any {
 
 func Compiler_Parser_ParseFunParams(state any) any {
 	return func() any {
-		if sky_asBool(matchKind(TkEquals, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 8, SkyName: "TkEquals"}, state)) {
 			return SkyTuple2{V0: []any{}, V1: state}
 		}
-		if sky_asBool(matchKind(TkIdentifier, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, state)) {
 			return func() any {
 				__tup_tok_s1 := advance(state)
 				tok := sky_asTuple2(__tup_tok_s1).V0
@@ -24148,7 +24213,7 @@ func Compiler_Parser_ParseFunParams(state any) any {
 				return SkyTuple2{V0: append([]any{pat}, sky_asList(rest)...), V1: s2}
 			}()
 		}
-		if sky_asBool(matchKind(TkLParen, state)) {
+		if sky_asBool(matchKind(SkyADT{Tag: 15, SkyName: "TkLParen"}, state)) {
 			return func() any {
 				return func() any {
 					__subject := Compiler_ParserPattern_ParsePatternExpr(state)
@@ -24177,7 +24242,7 @@ func Compiler_Parser_ParseFunParams(state any) any {
 	}()
 }
 
-// sky:type initState : any -> { errors : List elem , tokens : t119 , pos : Int }
+// sky:type initState : any -> { tokens : t119 , pos : Int , errors : List elem }
 
 func Compiler_ParserCore_InitState(tokens any) any {
 	return map[string]any{"tokens": tokens, "pos": 0, "errors": []any{}}
@@ -24195,14 +24260,14 @@ func Compiler_ParserCore_Peek(state any) any {
 				return t
 			}
 			if sky_asSkyMaybe(__subject).SkyName == "Nothing" {
-				return map[string]any{"kind": TkEOF, "lexeme": "", "span": emptySpan}
+				return map[string]any{"kind": SkyADT{Tag: 24, SkyName: "TkEOF"}, "lexeme": "", "span": emptySpan}
 			}
 			panic("non-exhaustive case expression")
 		}()
 	}()
 }
 
-// sky:type peekAt : any -> any -> { kind : t149 , lexeme : String , span : t150 }
+// sky:type peekAt : any -> any -> { kind : t149 , span : t150 , lexeme : String }
 
 func Compiler_ParserCore_PeekAt(offset any, state any) any {
 	return func() any {
@@ -24214,7 +24279,7 @@ func Compiler_ParserCore_PeekAt(offset any, state any) any {
 				return t
 			}
 			if sky_asSkyMaybe(__subject).SkyName == "Nothing" {
-				return map[string]any{"kind": TkEOF, "lexeme": "", "span": emptySpan}
+				return map[string]any{"kind": SkyADT{Tag: 24, SkyName: "TkEOF"}, "lexeme": "", "span": emptySpan}
 			}
 			panic("non-exhaustive case expression")
 		}()
@@ -24235,24 +24300,24 @@ func Compiler_ParserCore_Previous(state any) any {
 						return t
 					}
 					if sky_asSkyMaybe(__subject).SkyName == "Nothing" {
-						return map[string]any{"kind": TkEOF, "lexeme": "", "span": emptySpan}
+						return map[string]any{"kind": SkyADT{Tag: 24, SkyName: "TkEOF"}, "lexeme": "", "span": emptySpan}
 					}
 					panic("non-exhaustive case expression")
 				}()
 			}()
 		}
-		return map[string]any{"kind": TkEOF, "lexeme": "", "span": emptySpan}
+		return map[string]any{"kind": SkyADT{Tag: 24, SkyName: "TkEOF"}, "lexeme": "", "span": emptySpan}
 	}()
 }
 
-// sky:type advance : any -> ( { span : t182 , lexeme : String , kind : t183 } , any )
+// sky:type advance : any -> ( { kind : t182 , span : t183 , lexeme : String } , any )
 
 func Compiler_ParserCore_Advance(state any) any {
 	return func() any {
 		token := Compiler_ParserCore_Peek(state)
 		_ = token
 		return func() any {
-			if sky_asBool(Compiler_ParserCore_TokenKindEq(sky_asMap(token)["kind"], TkEOF)) {
+			if sky_asBool(Compiler_ParserCore_TokenKindEq(sky_asMap(token)["kind"], SkyADT{Tag: 24, SkyName: "TkEOF"})) {
 				return SkyTuple2{V0: token, V1: state}
 			}
 			return SkyTuple2{V0: token, V1: sky_recordUpdate(state, map[string]any{"pos": sky_numBinop("+", sky_asMap(state)["pos"], 1)})}
@@ -24282,7 +24347,7 @@ func Compiler_ParserCore_MatchKindLex(kind any, lex any, state any) any {
 	}()
 }
 
-// sky:type consume : any -> any -> Result String ( { kind : t226 , span : t227 , lexeme : String } , any )
+// sky:type consume : any -> any -> Result String ( { span : t227 , lexeme : String , kind : t226 } , any )
 
 func Compiler_ParserCore_Consume(kind any, state any) any {
 	return func() any {
@@ -24303,7 +24368,7 @@ func Compiler_ParserCore_Consume(kind any, state any) any {
 	}()
 }
 
-// sky:type consumeLex : any -> String -> any -> Result String ( { kind : t273 , span : t272 , lexeme : String } , any )
+// sky:type consumeLex : any -> String -> any -> Result String ( { span : t272 , lexeme : String , kind : t273 } , any )
 
 func Compiler_ParserCore_ConsumeLex(kind any, lex any, state any) any {
 	return func() any {
@@ -24334,80 +24399,80 @@ func Compiler_ParserCore_TokenKindStr(k any) any {
 	return func() any {
 		return func() any {
 			__subject := k
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TkIdentifier" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return "Identifier"
 			}
-			if __sky_tag == "TkUpperIdentifier" {
+			if __sky_tag == 1 {
 				return "UpperIdentifier"
 			}
-			if __sky_tag == "TkInteger" {
+			if __sky_tag == 2 {
 				return "Integer"
 			}
-			if __sky_tag == "TkFloat" {
+			if __sky_tag == 3 {
 				return "Float"
 			}
-			if __sky_tag == "TkString" {
+			if __sky_tag == 4 {
 				return "String"
 			}
-			if __sky_tag == "TkChar" {
+			if __sky_tag == 5 {
 				return "Char"
 			}
-			if __sky_tag == "TkKeyword" {
+			if __sky_tag == 6 {
 				return "Keyword"
 			}
-			if __sky_tag == "TkOperator" {
+			if __sky_tag == 7 {
 				return "Operator"
 			}
-			if __sky_tag == "TkEquals" {
+			if __sky_tag == 8 {
 				return "="
 			}
-			if __sky_tag == "TkColon" {
+			if __sky_tag == 9 {
 				return ":"
 			}
-			if __sky_tag == "TkComma" {
+			if __sky_tag == 10 {
 				return ","
 			}
-			if __sky_tag == "TkDot" {
+			if __sky_tag == 11 {
 				return "."
 			}
-			if __sky_tag == "TkPipe" {
+			if __sky_tag == 12 {
 				return "|"
 			}
-			if __sky_tag == "TkArrow" {
+			if __sky_tag == 13 {
 				return "->"
 			}
-			if __sky_tag == "TkBackslash" {
+			if __sky_tag == 14 {
 				return "\\"
 			}
-			if __sky_tag == "TkLParen" {
+			if __sky_tag == 15 {
 				return "("
 			}
-			if __sky_tag == "TkRParen" {
+			if __sky_tag == 16 {
 				return ")"
 			}
-			if __sky_tag == "TkLBracket" {
+			if __sky_tag == 17 {
 				return "["
 			}
-			if __sky_tag == "TkRBracket" {
+			if __sky_tag == 18 {
 				return "]"
 			}
-			if __sky_tag == "TkLBrace" {
+			if __sky_tag == 19 {
 				return "{"
 			}
-			if __sky_tag == "TkRBrace" {
+			if __sky_tag == 20 {
 				return "}"
 			}
-			if __sky_tag == "TkNewline" {
+			if __sky_tag == 21 {
 				return "newline"
 			}
-			if __sky_tag == "TkIndent" {
+			if __sky_tag == 22 {
 				return "indent"
 			}
-			if __sky_tag == "TkDedent" {
+			if __sky_tag == 23 {
 				return "dedent"
 			}
-			if __sky_tag == "TkEOF" {
+			if __sky_tag == 24 {
 				return "EOF"
 			}
 			panic("non-exhaustive case expression")
@@ -24419,7 +24484,7 @@ func Compiler_ParserCore_TokenKindStr(k any) any {
 
 func Compiler_ParserCore_ParseQualifiedParts(parts any, state any) any {
 	return func() any {
-		if sky_asBool(Compiler_ParserCore_MatchKind(TkDot, state)) {
+		if sky_asBool(Compiler_ParserCore_MatchKind(SkyADT{Tag: 11, SkyName: "TkDot"}, state)) {
 			return func() any {
 				__tup_dotTok_s1 := Compiler_ParserCore_Advance(state)
 				dotTok := sky_asTuple2(__tup_dotTok_s1).V0
@@ -24427,7 +24492,7 @@ func Compiler_ParserCore_ParseQualifiedParts(parts any, state any) any {
 				s1 := sky_asTuple2(__tup_dotTok_s1).V1
 				_ = s1
 				return func() any {
-					if sky_asBool(sky_asBool(Compiler_ParserCore_MatchKind(TkUpperIdentifier, s1)) || sky_asBool(Compiler_ParserCore_MatchKind(TkIdentifier, s1))) {
+					if sky_asBool(sky_asBool(Compiler_ParserCore_MatchKind(SkyADT{Tag: 1, SkyName: "TkUpperIdentifier"}, s1)) || sky_asBool(Compiler_ParserCore_MatchKind(SkyADT{Tag: 0, SkyName: "TkIdentifier"}, s1))) {
 						return func() any {
 							__tup_tok_s2 := Compiler_ParserCore_Advance(s1)
 							tok := sky_asTuple2(__tup_tok_s2).V0
@@ -24496,14 +24561,14 @@ func Compiler_ParserCore_FilterLayout(tokens any) any {
 		return func() any {
 			return func() any {
 				__subject := sky_asMap(t)["kind"]
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "TkNewline" {
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 21 {
 					return false
 				}
-				if __sky_tag == "TkIndent" {
+				if __sky_tag == 22 {
 					return false
 				}
-				if __sky_tag == "TkDedent" {
+				if __sky_tag == 23 {
 					return false
 				}
 				if true {
@@ -24516,119 +24581,119 @@ func Compiler_ParserCore_FilterLayout(tokens any) any {
 }
 
 func Compiler_GoIr_GoIdent(v0 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "GoIdent", "V0": v0}
+	return SkyADT{Tag: 0, SkyName: "GoIdent", V0: v0}
 }
 
 func Compiler_GoIr_GoBasicLit(v0 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "GoBasicLit", "V0": v0}
+	return SkyADT{Tag: 1, SkyName: "GoBasicLit", V0: v0}
 }
 
 func Compiler_GoIr_GoStringLit(v0 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "GoStringLit", "V0": v0}
+	return SkyADT{Tag: 2, SkyName: "GoStringLit", V0: v0}
 }
 
 func Compiler_GoIr_GoCallExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "GoCallExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 3, SkyName: "GoCallExpr", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoSelectorExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "GoSelectorExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 4, SkyName: "GoSelectorExpr", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoSliceLit(v0 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "GoSliceLit", "V0": v0}
+	return SkyADT{Tag: 5, SkyName: "GoSliceLit", V0: v0}
 }
 
 func Compiler_GoIr_GoMapLit(v0 any) any {
-	return map[string]any{"Tag": 6, "SkyName": "GoMapLit", "V0": v0}
+	return SkyADT{Tag: 6, SkyName: "GoMapLit", V0: v0}
 }
 
 func Compiler_GoIr_GoFuncLit(v0 any, v1 any) any {
-	return map[string]any{"Tag": 7, "SkyName": "GoFuncLit", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 7, SkyName: "GoFuncLit", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoRawExpr(v0 any) any {
-	return map[string]any{"Tag": 8, "SkyName": "GoRawExpr", "V0": v0}
+	return SkyADT{Tag: 8, SkyName: "GoRawExpr", V0: v0}
 }
 
 func Compiler_GoIr_GoCompositeLit(v0 any, v1 any) any {
-	return map[string]any{"Tag": 9, "SkyName": "GoCompositeLit", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 9, SkyName: "GoCompositeLit", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoBinaryExpr(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 10, "SkyName": "GoBinaryExpr", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 10, SkyName: "GoBinaryExpr", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_GoIr_GoUnaryExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 11, "SkyName": "GoUnaryExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 11, SkyName: "GoUnaryExpr", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoIndexExpr(v0 any, v1 any) any {
-	return map[string]any{"Tag": 12, "SkyName": "GoIndexExpr", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 12, SkyName: "GoIndexExpr", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoExprStmt(v0 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "GoExprStmt", "V0": v0}
+	return SkyADT{Tag: 0, SkyName: "GoExprStmt", V0: v0}
 }
 
 func Compiler_GoIr_GoAssign(v0 any, v1 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "GoAssign", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 1, SkyName: "GoAssign", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoShortDecl(v0 any, v1 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "GoShortDecl", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 2, SkyName: "GoShortDecl", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoReturn(v0 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "GoReturn", "V0": v0}
+	return SkyADT{Tag: 3, SkyName: "GoReturn", V0: v0}
 }
 
 func Compiler_GoIr_GoIf(v0 any, v1 any, v2 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "GoIf", "V0": v0, "V1": v1, "V2": v2}
+	return SkyADT{Tag: 5, SkyName: "GoIf", V0: v0, V1: v1, V2: v2}
 }
 
 func Compiler_GoIr_GoBlock(v0 any) any {
-	return map[string]any{"Tag": 6, "SkyName": "GoBlock", "V0": v0}
+	return SkyADT{Tag: 6, SkyName: "GoBlock", V0: v0}
 }
 
 func Compiler_GoIr_GoDeclFunc(v0 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "GoDeclFunc", "V0": v0}
+	return SkyADT{Tag: 0, SkyName: "GoDeclFunc", V0: v0}
 }
 
 func Compiler_GoIr_GoDeclVar(v0 any, v1 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "GoDeclVar", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 1, SkyName: "GoDeclVar", V0: v0, V1: v1}
 }
 
 func Compiler_GoIr_GoDeclRaw(v0 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "GoDeclRaw", "V0": v0}
+	return SkyADT{Tag: 2, SkyName: "GoDeclRaw", V0: v0}
 }
 
 func Compiler_GoIr_GoDeclType(v0 any, v1 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "GoDeclType", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 3, SkyName: "GoDeclType", V0: v0, V1: v1}
 }
 
 func Compiler_Types_TVar(v0 any, v1 any) any {
-	return map[string]any{"Tag": 0, "SkyName": "TVar", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 0, SkyName: "TVar", V0: v0, V1: v1}
 }
 
 func Compiler_Types_TConst(v0 any) any {
-	return map[string]any{"Tag": 1, "SkyName": "TConst", "V0": v0}
+	return SkyADT{Tag: 1, SkyName: "TConst", V0: v0}
 }
 
 func Compiler_Types_TFun(v0 any, v1 any) any {
-	return map[string]any{"Tag": 2, "SkyName": "TFun", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 2, SkyName: "TFun", V0: v0, V1: v1}
 }
 
 func Compiler_Types_TApp(v0 any, v1 any) any {
-	return map[string]any{"Tag": 3, "SkyName": "TApp", "V0": v0, "V1": v1}
+	return SkyADT{Tag: 3, SkyName: "TApp", V0: v0, V1: v1}
 }
 
 func Compiler_Types_TTuple(v0 any) any {
-	return map[string]any{"Tag": 4, "SkyName": "TTuple", "V0": v0}
+	return SkyADT{Tag: 4, SkyName: "TTuple", V0: v0}
 }
 
 func Compiler_Types_TRecord(v0 any) any {
-	return map[string]any{"Tag": 5, "SkyName": "TRecord", "V0": v0}
+	return SkyADT{Tag: 5, SkyName: "TRecord", V0: v0}
 }
 
 // sky:type freshVar : any -> Maybe String -> Type
@@ -24654,36 +24719,36 @@ func Compiler_Types_ApplySub(sub any, t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
 				return Compiler_Types_ApplySubVar(sub, t, id)
 			}
-			if __sky_tag == "TConst" {
+			if __sky_tag == 1 {
 				return t
 			}
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return TFun(Compiler_Types_ApplySub(sub, fromT), Compiler_Types_ApplySub(sub, toT))
 			}
-			if __sky_tag == "TApp" {
-				ctor := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctor := sky_adtField(__subject, 0)
 				_ = ctor
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return TApp(Compiler_Types_ApplySub(sub, ctor), sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ApplySub(sub, __pa0) }), args))
 			}
-			if __sky_tag == "TTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ApplySub(sub, __pa0) }), items))
 			}
-			if __sky_tag == "TRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return TRecord(sky_call(sky_dictMap(func(kk any) any { return func(v any) any { return Compiler_Types_ApplySub(sub, v) } }), fields))
 			}
@@ -24740,40 +24805,40 @@ func Compiler_Types_FreeVars(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
 				return sky_setSingleton(id)
 			}
-			if __sky_tag == "TConst" {
+			if __sky_tag == 1 {
 				return sky_setEmpty()
 			}
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return sky_call(sky_setUnion(Compiler_Types_FreeVars(fromT)), Compiler_Types_FreeVars(toT))
 			}
-			if __sky_tag == "TApp" {
-				ctor := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctor := sky_adtField(__subject, 0)
 				_ = ctor
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return sky_call(sky_call(sky_listFoldl(func(arg any) any {
 					return func(acc any) any { return sky_call(sky_setUnion(Compiler_Types_FreeVars(arg)), acc) }
 				}), Compiler_Types_FreeVars(ctor)), args)
 			}
-			if __sky_tag == "TTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_call(sky_listFoldl(func(item any) any {
 					return func(acc any) any { return sky_call(sky_setUnion(Compiler_Types_FreeVars(item)), acc) }
 				}), sky_setEmpty()), items)
 			}
-			if __sky_tag == "TRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return sky_call(sky_call(sky_dictFoldl(func(kk any) any {
 					return func(v any) any {
@@ -24849,40 +24914,40 @@ func Compiler_Types_FormatType(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
-				name := sky_asMap(__subject)["V1"]
+				name := sky_adtField(__subject, 1)
 				_ = name
 				return Compiler_Types_FormatVarName(id, name)
 			}
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return sky_concat(Compiler_Types_FormatFunFrom(fromT), sky_concat(" -> ", Compiler_Types_FormatType(toT)))
 			}
-			if __sky_tag == "TApp" {
-				ctor := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctor := sky_adtField(__subject, 0)
 				_ = ctor
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return sky_concat(Compiler_Types_FormatType(ctor), sky_concat(" ", sky_call(sky_stringJoin(" "), sky_call(sky_listMap(Compiler_Types_FormatType), args))))
 			}
-			if __sky_tag == "TTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_concat("( ", sky_concat(sky_call(sky_stringJoin(" , "), sky_call(sky_listMap(Compiler_Types_FormatType), items)), " )"))
 			}
-			if __sky_tag == "TRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return func() any {
 					fieldStrs := sky_call(sky_listMap(func(pair any) any {
@@ -24906,40 +24971,40 @@ func Compiler_Types_TypeToGo(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
-				name := sky_asMap(__subject)["V1"]
+				name := sky_adtField(__subject, 1)
 				_ = name
 				return Compiler_Types_GoVarName(id, name)
 			}
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Types_GoConstType(name)
 			}
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return sky_concat("func(", sky_concat(Compiler_Types_TypeToGo(fromT), sky_concat(") ", Compiler_Types_TypeToGo(toT))))
 			}
-			if __sky_tag == "TApp" {
-				ctor := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctor := sky_adtField(__subject, 0)
 				_ = ctor
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Compiler_Types_GoAppType(ctor, args)
 			}
-			if __sky_tag == "TTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_Types_GoTupleType(items)
 			}
-			if __sky_tag == "TRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Compiler_Types_GoRecordType(fields)
 			}
@@ -25043,9 +25108,9 @@ func Compiler_Types_ExtractConstName(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TConst" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
@@ -25237,11 +25302,11 @@ func Compiler_Types_ExtractFunParamsAcc(t any, acc any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return Compiler_Types_ExtractFunParamsAcc(toT, sky_call(sky_listAppend(acc), []any{fromT}))
 			}
@@ -25269,9 +25334,9 @@ func Compiler_Types_ReplaceQuantifiedVars(quantVars any, t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
 				return func() any {
 					if sky_asBool(sky_call(sky_listAny(func(q any) any { return sky_equal(q, id) }), quantVars)) {
@@ -25280,22 +25345,22 @@ func Compiler_Types_ReplaceQuantifiedVars(quantVars any, t any) any {
 					return t
 				}()
 			}
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return TFun(Compiler_Types_ReplaceQuantifiedVars(quantVars, fromT), Compiler_Types_ReplaceQuantifiedVars(quantVars, toT))
 			}
-			if __sky_tag == "TApp" {
-				ctor := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				ctor := sky_adtField(__subject, 0)
 				_ = ctor
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return TApp(Compiler_Types_ReplaceQuantifiedVars(quantVars, ctor), sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ReplaceQuantifiedVars(quantVars, __pa0) }), args))
 			}
-			if __sky_tag == "TTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Types_ReplaceQuantifiedVars(quantVars, __pa0) }), items))
 			}
@@ -25332,8 +25397,8 @@ func Compiler_Types_FormatFunFrom(fromT any) any {
 	return func() any {
 		return func() any {
 			__subject := fromT
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TFun" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
 				return sky_concat("(", sky_concat(Compiler_Types_FormatType(fromT), ")"))
 			}
 			if true {
@@ -25455,13 +25520,13 @@ func Compiler_Adt_RegisterAdtsLoop(counter any, decls any, registry any, env any
 				return func() any {
 					return func() any {
 						__subject := decl
-						__sky_tag := sky_getSkyName(__subject)
-						if __sky_tag == "TypeDecl" {
-							name := sky_asMap(__subject)["V0"]
+						__sky_tag := sky_adtTag(__subject)
+						if __sky_tag == 2 {
+							name := sky_adtField(__subject, 0)
 							_ = name
-							params := sky_asMap(__subject)["V1"]
+							params := sky_adtField(__subject, 1)
 							_ = params
-							variants := sky_asMap(__subject)["V2"]
+							variants := sky_adtField(__subject, 2)
 							_ = variants
 							return func() any {
 								__tup_newRegistry_newEnv_newDiags := Compiler_Adt_RegisterOneAdt(counter, name, params, variants, registry, env)
@@ -25502,7 +25567,9 @@ func Compiler_Adt_RegisterOneAdt(counter any, typeName any, typeParams any, vari
 			}
 		}), sky_dictEmpty()), variants)
 		_ = ctorSchemes
-		adt := map[string]any{"name": typeName, "arity": arity, "constructors": ctorSchemes}
+		variantOrder := sky_call(sky_listMap(func(v any) any { return sky_asMap(v)["name"] }), variants)
+		_ = variantOrder
+		adt := map[string]any{"name": typeName, "arity": arity, "constructors": ctorSchemes, "variantNames": variantOrder}
 		_ = adt
 		newRegistry := sky_call(sky_call(sky_dictInsert(typeName), adt), registry)
 		_ = newRegistry
@@ -25514,7 +25581,7 @@ func Compiler_Adt_RegisterOneAdt(counter any, typeName any, typeParams any, vari
 	}()
 }
 
-// sky:type buildConstructorScheme : any -> any -> any -> any -> { type_ : t280 , quantified : t286 }
+// sky:type buildConstructorScheme : any -> any -> any -> any -> { type_ : t287 , quantified : t293 }
 
 func Compiler_Adt_BuildConstructorScheme(counter any, typeName any, typeParams any, variant any) any {
 	return func() any {
@@ -25600,9 +25667,9 @@ func Compiler_Adt_GetVarId(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TVar" {
-				id := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				id := sky_adtField(__subject, 0)
 				_ = id
 				return SkyJust(id)
 			}
@@ -25618,28 +25685,28 @@ func Compiler_Adt_ResolveTypeExpr(paramMap any, texpr any) any {
 	return func() any {
 		return func() any {
 			__subject := texpr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeRef" {
-				parts := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Compiler_Adt_ResolveTypeRef(paramMap, parts, args)
 			}
-			if __sky_tag == "TypeVar" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Adt_ResolveTypeVarExpr(paramMap, name)
 			}
-			if __sky_tag == "FunType" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return TFun(Compiler_Adt_ResolveTypeExpr(paramMap, fromT), Compiler_Adt_ResolveTypeExpr(paramMap, toT))
 			}
-			if __sky_tag == "RecordTypeExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return func() any {
 					fieldDict := sky_call(sky_call(sky_listFoldl(func(f any) any {
@@ -25651,12 +25718,12 @@ func Compiler_Adt_ResolveTypeExpr(paramMap any, texpr any) any {
 					return TRecord(fieldDict)
 				}()
 			}
-			if __sky_tag == "TupleTypeExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return TTuple(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Adt_ResolveTypeExpr(paramMap, __pa0) }), items))
 			}
-			if __sky_tag == "UnitTypeExpr" {
+			if __sky_tag == 5 {
 				return TConst("Unit")
 			}
 			if true {
@@ -25716,7 +25783,7 @@ func Compiler_Adt_ResolveTypeVarExpr(paramMap any, name any) any {
 	}()
 }
 
-// sky:type emptyResult : { bindings : List elem , substitution : t122 }
+// sky:type emptyResult : { substitution : t122 , bindings : List elem }
 
 func Compiler_PatternCheck_EmptyResult() any {
 	return map[string]any{"substitution": emptySub, "bindings": []any{}}
@@ -25726,53 +25793,53 @@ func Compiler_PatternCheck_CheckPattern(counter any, registry any, env any, pat 
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PWildcard" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return SkyOk(Compiler_PatternCheck_EmptyResult())
 			}
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_PatternCheck_CheckPatternVar(counter, env, name, expectedType)
 			}
-			if __sky_tag == "PLiteral" {
-				lit := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				lit := sky_adtField(__subject, 0)
 				_ = lit
 				return Compiler_PatternCheck_CheckPatternLiteral(counter, env, lit, expectedType)
 			}
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_PatternCheck_CheckPatternTuple(counter, registry, env, items, expectedType)
 			}
-			if __sky_tag == "PList" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_PatternCheck_CheckPatternListPat(counter, registry, env, items, expectedType)
 			}
-			if __sky_tag == "PCons" {
-				headPat := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				headPat := sky_adtField(__subject, 0)
 				_ = headPat
-				tailPat := sky_asMap(__subject)["V1"]
+				tailPat := sky_adtField(__subject, 1)
 				_ = tailPat
 				return Compiler_PatternCheck_CheckPatternCons(counter, registry, env, headPat, tailPat, expectedType)
 			}
-			if __sky_tag == "PAs" {
-				innerPat := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				innerPat := sky_adtField(__subject, 0)
 				_ = innerPat
-				name := sky_asMap(__subject)["V1"]
+				name := sky_adtField(__subject, 1)
 				_ = name
 				return Compiler_PatternCheck_CheckPatternAs(counter, registry, env, innerPat, name, expectedType)
 			}
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				argPats := sky_asMap(__subject)["V1"]
+				argPats := sky_adtField(__subject, 1)
 				_ = argPats
 				return Compiler_PatternCheck_CheckPatternCtorPat(counter, registry, env, parts, argPats, expectedType)
 			}
-			if __sky_tag == "PRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return Compiler_PatternCheck_CheckPatternRecord(fields, expectedType)
 			}
@@ -25784,13 +25851,13 @@ func Compiler_PatternCheck_CheckPattern(counter any, registry any, env any, pat 
 	}()
 }
 
-// sky:type checkPatternVar : any -> any -> any -> any -> Result any { substitution : t139 , bindings : List ( t133 , t134 ) }
+// sky:type checkPatternVar : any -> any -> any -> any -> Result any { bindings : List ( t133 , t134 ) , substitution : t139 }
 
 func Compiler_PatternCheck_CheckPatternVar(counter any, env any, name any, expectedType any) any {
 	return SkyOk(map[string]any{"substitution": emptySub, "bindings": []any{SkyTuple2{V0: name, V1: expectedType}}})
 }
 
-// sky:type checkPatternLiteral : any -> any -> any -> any -> Result String { bindings : List elem , substitution : t156 }
+// sky:type checkPatternLiteral : any -> any -> any -> any -> Result String { substitution : t156 , bindings : List elem }
 
 func Compiler_PatternCheck_CheckPatternLiteral(counter any, env any, lit any, expectedType any) any {
 	return func() any {
@@ -25931,7 +25998,7 @@ func Compiler_PatternCheck_CheckConsHead(counter any, registry any, env any, hea
 	}()
 }
 
-// sky:type checkConsTail : any -> any -> any -> any -> any -> any -> any -> Result any { substitution : t363 , bindings : t366 }
+// sky:type checkConsTail : any -> any -> any -> any -> any -> any -> any -> Result any { bindings : t366 , substitution : t363 }
 
 func Compiler_PatternCheck_CheckConsTail(counter any, registry any, env any, tailPat any, tailExpected any, sub2 any, headBindings any) any {
 	return func() any {
@@ -26032,7 +26099,7 @@ func Compiler_PatternCheck_CheckPatternCtorFromEnv(counter any, registry any, en
 	}()
 }
 
-// sky:type checkPatternRecord : any -> any -> Result any { substitution : t460 , bindings : t461 }
+// sky:type checkPatternRecord : any -> any -> Result any { bindings : t461 , substitution : t460 }
 
 func Compiler_PatternCheck_CheckPatternRecord(fields any, expectedType any) any {
 	return func() any {
@@ -26082,11 +26149,11 @@ func Compiler_PatternCheck_SplitFunType(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TFun" {
-				fromT := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return func() any {
 					inner := Compiler_PatternCheck_SplitFunType(toT)
@@ -26127,7 +26194,7 @@ func Compiler_PatternCheck_CheckPatternList(counter any, registry any, env any, 
 	}()
 }
 
-// sky:type checkPatternListEmpty : List any -> any -> any -> Result String { bindings : t549 , substitution : t548 }
+// sky:type checkPatternListEmpty : List any -> any -> any -> Result String { substitution : t548 , bindings : t549 }
 
 func Compiler_PatternCheck_CheckPatternListEmpty(types any, sub any, bindings any) any {
 	return func() any {
@@ -26226,20 +26293,20 @@ func Compiler_PatternCheck_LiteralType(lit any) any {
 	return func() any {
 		return func() any {
 			__subject := lit
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "LitInt" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return TConst("Int")
 			}
-			if __sky_tag == "LitFloat" {
+			if __sky_tag == 1 {
 				return TConst("Float")
 			}
-			if __sky_tag == "LitString" {
+			if __sky_tag == 2 {
 				return TConst("String")
 			}
-			if __sky_tag == "LitBool" {
+			if __sky_tag == 4 {
 				return TConst("Bool")
 			}
-			if __sky_tag == "LitChar" {
+			if __sky_tag == 3 {
 				return TConst("Char")
 			}
 			panic("non-exhaustive case expression")
@@ -26247,7 +26314,7 @@ func Compiler_PatternCheck_LiteralType(lit any) any {
 	}()
 }
 
-// sky:type emptyCtx : { localFunctions : List elem , localFunctionArity : t206 , collectedImports : t204 , importedConstructors : t202 , exposedStdlib : t207 , modulePrefix : String , moduleExports : t201 , registry : t200 , typedDecls : t209 , paramNames : t208 , importAliases : t205 }
+// sky:type emptyCtx : { typedDecls : t210 , collectedImports : t205 , localFunctions : List elem , paramNames : t209 , exposedStdlib : t208 , importedConstructors : t203 , localFunctionArity : t207 , modulePrefix : String , moduleExports : t202 , registry : t201 , importAliases : t206 }
 
 func Compiler_Lower_EmptyCtx() any {
 	return map[string]any{"registry": Compiler_Adt_EmptyRegistry(), "moduleExports": sky_dictEmpty(), "importedConstructors": sky_dictEmpty(), "localFunctions": []any{}, "collectedImports": sky_setEmpty(), "importAliases": sky_dictEmpty(), "modulePrefix": "", "localFunctionArity": sky_dictEmpty(), "exposedStdlib": sky_dictEmpty(), "paramNames": sky_setEmpty(), "typedDecls": sky_dictEmpty()}
@@ -26280,16 +26347,16 @@ func Compiler_Lower_GetExposedNames(imp any) any {
 		return func() any {
 			return func() any {
 				__subject := sky_asMap(imp)["exposing_"]
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "ExposeAll" {
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 0 {
 					return Compiler_Resolver_GetStdlibExports(modName)
 				}
-				if __sky_tag == "ExposeList" {
-					names := sky_asMap(__subject)["V0"]
+				if __sky_tag == 1 {
+					names := sky_adtField(__subject, 0)
 					_ = names
 					return sky_call(sky_listFilter(func(n any) any { return Compiler_Lower_ListContains(n, Compiler_Resolver_GetStdlibExports(modName)) }), names)
 				}
-				if __sky_tag == "ExposeNone" {
+				if __sky_tag == 2 {
 					return []any{}
 				}
 				panic("non-exhaustive case expression")
@@ -26298,7 +26365,7 @@ func Compiler_Lower_GetExposedNames(imp any) any {
 	}()
 }
 
-// sky:type lowerModule : any -> any -> { declarations : t289 , name : String , imports : List { path : String , alias_ : String } }
+// sky:type lowerModule : any -> any -> { imports : List { alias_ : String , path : String } , declarations : t290 , name : String }
 
 func Compiler_Lower_LowerModule(registry any, mod any) any {
 	return func() any {
@@ -26328,13 +26395,13 @@ func Compiler_Lower_LowerDeclWithType(ctx any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "FunDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				params := sky_asMap(__subject)["V1"]
+				params := sky_adtField(__subject, 1)
 				_ = params
-				body := sky_asMap(__subject)["V2"]
+				body := sky_adtField(__subject, 2)
 				_ = body
 				return func() any {
 					funcDecl := Compiler_Lower_LowerFunction(ctx, name, params, body)
@@ -26431,15 +26498,15 @@ func Compiler_Lower_GenerateOneParamBinding(ctx any, pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
 				return []any{}
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return []any{}
 			}
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return func() any {
 					paramName := "_p"
@@ -26466,13 +26533,13 @@ func Compiler_Lower_LowerParam(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return map[string]any{"name": Compiler_Lower_SanitizeGoIdent(name), "type_": "any"}
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return map[string]any{"name": "_", "type_": "any"}
 			}
 			if true {
@@ -26487,29 +26554,29 @@ func Compiler_Lower_LowerExpr(ctx any, expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IntLitExpr" {
-				raw := sky_asMap(__subject)["V1"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				raw := sky_adtField(__subject, 1)
 				_ = raw
 				return GoBasicLit(raw)
 			}
-			if __sky_tag == "FloatLitExpr" {
-				raw := sky_asMap(__subject)["V1"]
+			if __sky_tag == 3 {
+				raw := sky_adtField(__subject, 1)
 				_ = raw
 				return GoBasicLit(raw)
 			}
-			if __sky_tag == "StringLitExpr" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return GoStringLit(s)
 			}
-			if __sky_tag == "CharLitExpr" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return GoCallExpr(GoIdent("string"), []any{GoBasicLit(sky_concat("'", sky_concat(sky_call(sky_call(sky_stringSlice(1), sky_numBinop("-", sky_stringLength(s), 1)), s), "'")))})
 			}
-			if __sky_tag == "BoolLitExpr" {
-				b := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				b := sky_adtField(__subject, 0)
 				_ = b
 				return func() any {
 					if sky_asBool(b) {
@@ -26518,21 +26585,21 @@ func Compiler_Lower_LowerExpr(ctx any, expr any) any {
 					return GoIdent("false")
 				}()
 			}
-			if __sky_tag == "UnitExpr" {
+			if __sky_tag == 7 {
 				return GoRawExpr("struct{}{}")
 			}
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Lower_LowerIdentifier(ctx, name)
 			}
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Compiler_Lower_LowerQualified(ctx, parts)
 			}
-			if __sky_tag == "TupleExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return func() any {
 					goItems := sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Lower_LowerExpr(ctx, __pa0) }), items)
@@ -26550,85 +26617,85 @@ func Compiler_Lower_LowerExpr(ctx any, expr any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "ListExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return GoSliceLit(sky_call(sky_listMap(func(__pa0 any) any { return Compiler_Lower_LowerExpr(ctx, __pa0) }), items))
 			}
-			if __sky_tag == "RecordExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 10 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return GoMapLit(sky_call(sky_listMap(func(f any) any {
 					return SkyTuple2{V0: GoStringLit(sky_asMap(f)["name"]), V1: Compiler_Lower_LowerExpr(ctx, sky_asMap(f)["value"])}
 				}), fields))
 			}
-			if __sky_tag == "RecordUpdateExpr" {
-				base := sky_asMap(__subject)["V0"]
+			if __sky_tag == 11 {
+				base := sky_adtField(__subject, 0)
 				_ = base
-				fields := sky_asMap(__subject)["V1"]
+				fields := sky_adtField(__subject, 1)
 				_ = fields
 				return Compiler_Lower_LowerRecordUpdate(ctx, base, fields)
 			}
-			if __sky_tag == "FieldAccessExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 12 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				fieldName := sky_asMap(__subject)["V1"]
+				fieldName := sky_adtField(__subject, 1)
 				_ = fieldName
 				return GoIndexExpr(GoCallExpr(GoIdent("sky_asMap"), []any{Compiler_Lower_LowerExpr(ctx, target)}), GoStringLit(fieldName))
 			}
-			if __sky_tag == "CallExpr" {
-				callee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				callee := sky_adtField(__subject, 0)
 				_ = callee
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return Compiler_Lower_LowerCall(ctx, callee, args)
 			}
-			if __sky_tag == "LambdaExpr" {
-				params := sky_asMap(__subject)["V0"]
+			if __sky_tag == 14 {
+				params := sky_adtField(__subject, 0)
 				_ = params
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_Lower_LowerLambda(ctx, params, body)
 			}
-			if __sky_tag == "IfExpr" {
-				condition := sky_asMap(__subject)["V0"]
+			if __sky_tag == 15 {
+				condition := sky_adtField(__subject, 0)
 				_ = condition
-				thenBranch := sky_asMap(__subject)["V1"]
+				thenBranch := sky_adtField(__subject, 1)
 				_ = thenBranch
-				elseBranch := sky_asMap(__subject)["V2"]
+				elseBranch := sky_adtField(__subject, 2)
 				_ = elseBranch
 				return Compiler_Lower_LowerIf(ctx, condition, thenBranch, elseBranch)
 			}
-			if __sky_tag == "LetExpr" {
-				bindings := sky_asMap(__subject)["V0"]
+			if __sky_tag == 16 {
+				bindings := sky_adtField(__subject, 0)
 				_ = bindings
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return Compiler_Lower_LowerLet(ctx, bindings, body)
 			}
-			if __sky_tag == "CaseExpr" {
-				subject := sky_asMap(__subject)["V0"]
+			if __sky_tag == 17 {
+				subject := sky_adtField(__subject, 0)
 				_ = subject
-				branches := sky_asMap(__subject)["V1"]
+				branches := sky_adtField(__subject, 1)
 				_ = branches
 				return Compiler_Lower_LowerCase(ctx, subject, branches)
 			}
-			if __sky_tag == "BinaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 18 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				left := sky_asMap(__subject)["V1"]
+				left := sky_adtField(__subject, 1)
 				_ = left
-				right := sky_asMap(__subject)["V2"]
+				right := sky_adtField(__subject, 2)
 				_ = right
 				return Compiler_Lower_LowerBinary(ctx, op, left, right)
 			}
-			if __sky_tag == "NegateExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 19 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return GoUnaryExpr("-", Compiler_Lower_LowerExpr(ctx, inner))
 			}
-			if __sky_tag == "ParenExpr" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 20 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Lower_LowerExpr(ctx, inner)
 			}
@@ -26980,10 +27047,10 @@ func Compiler_Lower_CssNameToPropertyLoop(name any, idx any, acc any) any {
 	}()
 }
 
-// sky:type lowerConstructorValue : any -> any -> any
+// sky:type lowerConstructorValue : String -> any -> any
 
 func Compiler_Lower_LowerConstructorValue(name any, info any) any {
-	return GoMapLit([]any{SkyTuple2{V0: GoStringLit("Tag"), V1: GoBasicLit(sky_stringFromInt(sky_asMap(info)["tagIndex"]))}, SkyTuple2{V0: GoStringLit("SkyName"), V1: GoStringLit(name)}})
+	return GoRawExpr(sky_concat("SkyADT{Tag: ", sky_concat(sky_stringFromInt(sky_asMap(info)["tagIndex"]), sky_concat(", SkyName: \"", sky_concat(name, "\"}")))))
 }
 
 // sky:type lowerQualified : any -> any -> any
@@ -27840,11 +27907,11 @@ func Compiler_Lower_LowerCallDirect(ctx any, flatCallee any, goCallee any, goArg
 	return func() any {
 		return func() any {
 			__subject := goCallee
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoCallExpr" {
-				innerFn := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 3 {
+				innerFn := sky_adtField(__subject, 0)
 				_ = innerFn
-				innerArgs := sky_asMap(__subject)["V1"]
+				innerArgs := sky_adtField(__subject, 1)
 				_ = innerArgs
 				return func() any {
 					if sky_asBool(sky_listIsEmpty(innerArgs)) {
@@ -27862,8 +27929,8 @@ func Compiler_Lower_LowerCallDirect(ctx any, flatCallee any, goCallee any, goArg
 					return GoCallExpr(GoIdent("sky_call"), sky_call(sky_listAppend([]any{goCallee}), goArgs))
 				}()
 			}
-			if __sky_tag == "GoRawExpr" {
-				code := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				code := sky_adtField(__subject, 0)
 				_ = code
 				return Compiler_Lower_LowerCallRawExpr(goCallee, goArgs, code)
 			}
@@ -27925,9 +27992,9 @@ func Compiler_Lower_IsDynamicCallee(ctx any, expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_call(sky_setMember(name), sky_asMap(ctx)["paramNames"])
 			}
@@ -27943,33 +28010,33 @@ func Compiler_Lower_ExtractPatternVarNames(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return []any{name}
 			}
-			if __sky_tag == "PConstructor" {
-				args := sky_asMap(__subject)["V1"]
+			if __sky_tag == 2 {
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return sky_call(sky_listConcatMap(Compiler_Lower_ExtractPatternVarNames), args)
 			}
-			if __sky_tag == "PCons" {
-				head := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				head := sky_adtField(__subject, 0)
 				_ = head
-				tail := sky_asMap(__subject)["V1"]
+				tail := sky_adtField(__subject, 1)
 				_ = tail
 				return sky_call(sky_listAppend(Compiler_Lower_ExtractPatternVarNames(head)), Compiler_Lower_ExtractPatternVarNames(tail))
 			}
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_listConcatMap(Compiler_Lower_ExtractPatternVarNames), items)
 			}
-			if __sky_tag == "PAs" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
-				name := sky_asMap(__subject)["V1"]
+				name := sky_adtField(__subject, 1)
 				_ = name
 				return append([]any{name}, sky_asList(Compiler_Lower_ExtractPatternVarNames(inner))...)
 			}
@@ -27985,13 +28052,13 @@ func Compiler_Lower_ExtractPatternName(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return SkyJust(name)
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return SkyNothing()
 			}
 			if true {
@@ -28027,9 +28094,9 @@ func Compiler_Lower_CheckPartialApplication(ctx any, callee any, argCount any) a
 	return func() any {
 		return func() any {
 			__subject := callee
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return Compiler_Lower_CheckPartialIdent(ctx, name, argCount)
 			}
@@ -28041,7 +28108,7 @@ func Compiler_Lower_CheckPartialApplication(ctx any, callee any, argCount any) a
 	}()
 }
 
-// sky:type checkPartialIdent : any -> any -> any -> Maybe { goFuncName : String , totalArity : t1971 }
+// sky:type checkPartialIdent : any -> any -> any -> Maybe { goFuncName : String , totalArity : t1963 }
 
 func Compiler_Lower_CheckPartialIdent(ctx any, name any, argCount any) any {
 	return func() any {
@@ -28132,11 +28199,11 @@ func Compiler_Lower_FlattenCall(ctx any, callee any, args any) any {
 	return func() any {
 		return func() any {
 			__subject := callee
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "CallExpr" {
-				innerCallee := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 13 {
+				innerCallee := sky_adtField(__subject, 0)
 				_ = innerCallee
-				innerArgs := sky_asMap(__subject)["V1"]
+				innerArgs := sky_adtField(__subject, 1)
 				_ = innerArgs
 				return func() any {
 					isLocal := Compiler_Lower_IsCalleeLocalImport(ctx, innerCallee)
@@ -28169,9 +28236,9 @@ func Compiler_Lower_IsCalleeLocalImport(ctx any, expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Compiler_Lower_IsQualifiedLocalImport(ctx, parts)
 			}
@@ -28209,9 +28276,9 @@ func Compiler_Lower_IsCalleeExposedStdlib(ctx any, expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				idName := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				idName := sky_adtField(__subject, 0)
 				_ = idName
 				return sky_call(sky_dictMember(idName), sky_asMap(ctx)["exposedStdlib"])
 			}
@@ -28309,13 +28376,13 @@ func Compiler_Lower_FlattenIfElse(ctx any, condition any, thenBranch any, elseBr
 		return func() any {
 			return func() any {
 				__subject := elseBranch
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "IfExpr" {
-					nextCond := sky_asMap(__subject)["V0"]
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 15 {
+					nextCond := sky_adtField(__subject, 0)
 					_ = nextCond
-					nextThen := sky_asMap(__subject)["V1"]
+					nextThen := sky_adtField(__subject, 1)
 					_ = nextThen
-					nextElse := sky_asMap(__subject)["V2"]
+					nextElse := sky_adtField(__subject, 2)
 					_ = nextElse
 					return sky_concat(ifPart, Compiler_Lower_FlattenIfElse(ctx, nextCond, nextThen, nextElse))
 				}
@@ -28350,9 +28417,9 @@ func Compiler_Lower_ExtractBindingName(binding any) any {
 	return func() any {
 		return func() any {
 			__subject := sky_asMap(binding)["pattern"]
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return SkyJust(name)
 			}
@@ -28368,9 +28435,9 @@ func Compiler_Lower_LowerLetBinding(ctx any, binding any) any {
 	return func() any {
 		return func() any {
 			__subject := sky_asMap(binding)["pattern"]
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					goName := Compiler_Lower_SanitizeGoIdent(name)
@@ -28378,11 +28445,11 @@ func Compiler_Lower_LowerLetBinding(ctx any, binding any) any {
 					return []any{GoShortDecl(goName, Compiler_Lower_LowerExpr(ctx, sky_asMap(binding)["value"])), GoExprStmt(GoRawExpr(sky_concat("_ = ", goName)))}
 				}()
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return []any{GoExprStmt(Compiler_Lower_LowerExpr(ctx, sky_asMap(binding)["value"]))}
 			}
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return func() any {
 					tmpName := sky_concat("__tup_", Compiler_Lower_MakeTupleKey(items))
@@ -28408,9 +28475,9 @@ func Compiler_Lower_LambdaTupleBindings(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return func() any {
 					size := sky_listLength(items)
@@ -28439,9 +28506,9 @@ func Compiler_Lower_EmitTupleBinding(assertFn any, idx any, p any) any {
 	return func() any {
 		return func() any {
 			__subject := p
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					goName := Compiler_Lower_SanitizeGoIdent(name)
@@ -28482,9 +28549,9 @@ func Compiler_Lower_ExtractTupleBindings(tmpName any, items any, idx any, tupleS
 					extract := func() any {
 						return func() any {
 							__subject := pat
-							__sky_tag := sky_getSkyName(__subject)
-							if __sky_tag == "PVariable" {
-								name := sky_asMap(__subject)["V0"]
+							__sky_tag := sky_adtTag(__subject)
+							if __sky_tag == 1 {
+								name := sky_adtField(__subject, 0)
 								_ = name
 								return func() any {
 									goName := Compiler_Lower_SanitizeGoIdent(name)
@@ -28529,7 +28596,7 @@ func Compiler_Lower_LowerCaseToSwitch(ctx any, subjectExpr any, branches any) an
 		_ = hasCustomAdtBranch
 		tagExtract := func() any {
 			if sky_asBool(hasCustomAdtBranch) {
-				return "__sky_tag := sky_getSkyName(__subject); "
+				return "__sky_tag := sky_adtTag(__subject); "
 			}
 			return ""
 		}()
@@ -28542,9 +28609,9 @@ func Compiler_Lower_BranchIsCustomAdt(branch any) any {
 	return func() any {
 		return func() any {
 			__subject := sky_asMap(branch)["pattern"]
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return func() any {
 					name := Compiler_Lower_LastPartOf(parts)
@@ -28584,22 +28651,22 @@ func Compiler_Lower_PatternToCondition(ctx any, varName any, pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PWildcard" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return "true"
 			}
-			if __sky_tag == "PVariable" {
+			if __sky_tag == 1 {
 				return "true"
 			}
-			if __sky_tag == "PLiteral" {
-				lit := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				lit := sky_adtField(__subject, 0)
 				_ = lit
 				return Compiler_Lower_LiteralCondition(varName, lit)
 			}
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return func() any {
 					ctorName := Compiler_Lower_LastPartOf(parts)
@@ -28617,10 +28684,16 @@ func Compiler_Lower_PatternToCondition(ctx any, varName any, pat any) any {
 						if sky_asBool(sky_equal(ctorName, "False")) {
 							return sky_call(sky_stringJoin(""), []any{"sky_asBool(", varName, ") == false"})
 						}
-						if sky_asBool(sky_equal(varName, "__subject")) {
-							return sky_call(sky_stringJoin(""), []any{"__sky_tag == \"", ctorName, "\""})
-						}
-						return sky_call(sky_stringJoin(""), []any{"sky_asMap(", varName, ")[\"SkyName\"] == \"", ctorName, "\""})
+						return func() any {
+							tagIdx := Compiler_Lower_LookupCtorTagIndex(ctx, ctorName)
+							_ = tagIdx
+							return func() any {
+								if sky_asBool(sky_equal(varName, "__subject")) {
+									return sky_concat("__sky_tag == ", sky_stringFromInt(tagIdx))
+								}
+								return sky_concat("sky_adtTag(", sky_concat(varName, sky_concat(") == ", sky_stringFromInt(tagIdx))))
+							}()
+						}()
 					}()
 					_ = baseCond
 					subConds := Compiler_Lower_SubPatternConditions(ctx, varName, ctorName, args, 0)
@@ -28633,18 +28706,18 @@ func Compiler_Lower_PatternToCondition(ctx any, varName any, pat any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "PTuple" {
+			if __sky_tag == 4 {
 				return "true"
 			}
-			if __sky_tag == "PList" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_stringJoin(""), []any{"len(sky_asList(", varName, ")) == ", sky_stringFromInt(sky_listLength(items))})
 			}
-			if __sky_tag == "PCons" {
-				head := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				head := sky_adtField(__subject, 0)
 				_ = head
-				tail := sky_asMap(__subject)["V1"]
+				tail := sky_adtField(__subject, 1)
 				_ = tail
 				return func() any {
 					tailCond := Compiler_Lower_PatternToCondition(ctx, "__cons_tail", tail)
@@ -28665,12 +28738,12 @@ func Compiler_Lower_PatternToCondition(ctx any, varName any, pat any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "PAs" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
 				return Compiler_Lower_PatternToCondition(ctx, varName, inner)
 			}
-			if __sky_tag == "PRecord" {
+			if __sky_tag == 8 {
 				return "true"
 			}
 			if true {
@@ -28706,7 +28779,7 @@ func Compiler_Lower_SubPatternConditions(ctx any, varName any, ctorName any, arg
 						if sky_asBool(sky_equal(ctorName, "Just")) {
 							return sky_concat("sky_asSkyMaybe(", sky_concat(varName, ").JustValue"))
 						}
-						return sky_concat("sky_asMap(", sky_concat(varName, sky_concat(")[\"V", sky_concat(sky_stringFromInt(idx), "\"]"))))
+						return sky_concat("sky_adtField(", sky_concat(varName, sky_concat(", ", sky_concat(sky_stringFromInt(idx), ")"))))
 					}()
 					_ = fieldAccess
 					subCond := Compiler_Lower_PatternToCondition(ctx, fieldAccess, pat)
@@ -28752,24 +28825,24 @@ func Compiler_Lower_LiteralCondition(varName any, lit any) any {
 	return func() any {
 		return func() any {
 			__subject := lit
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "LitInt" {
-				n := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				n := sky_adtField(__subject, 0)
 				_ = n
 				return sky_concat("sky_asInt(", sky_concat(varName, sky_concat(") == ", sky_stringFromInt(n))))
 			}
-			if __sky_tag == "LitFloat" {
-				f := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				f := sky_adtField(__subject, 0)
 				_ = f
 				return sky_concat("sky_asFloat(", sky_concat(varName, sky_concat(") == ", sky_stringFromFloat(f))))
 			}
-			if __sky_tag == "LitString" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return sky_concat("sky_asString(", sky_concat(varName, sky_concat(") == ", s)))
 			}
-			if __sky_tag == "LitBool" {
-				b := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				b := sky_adtField(__subject, 0)
 				_ = b
 				return func() any {
 					if sky_asBool(b) {
@@ -28778,8 +28851,8 @@ func Compiler_Lower_LiteralCondition(varName any, lit any) any {
 					return sky_concat("sky_asBool(", sky_concat(varName, ") == false"))
 				}()
 			}
-			if __sky_tag == "LitChar" {
-				c := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				c := sky_adtField(__subject, 0)
 				_ = c
 				return sky_concat("sky_asString(", sky_concat(varName, sky_concat(") == \"", sky_concat(c, "\""))))
 			}
@@ -28795,12 +28868,12 @@ func Compiler_Lower_PatternToBindings(ctx any, varName any, pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PWildcard" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return ""
 			}
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					goName := Compiler_Lower_SanitizeGoIdent(name)
@@ -28808,13 +28881,13 @@ func Compiler_Lower_PatternToBindings(ctx any, varName any, pat any) any {
 					return sky_concat(goName, sky_concat(" := ", sky_concat(varName, sky_concat("; _ = ", sky_concat(goName, "; ")))))
 				}()
 			}
-			if __sky_tag == "PLiteral" {
+			if __sky_tag == 3 {
 				return ""
 			}
-			if __sky_tag == "PConstructor" {
-				parts := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
-				argPats := sky_asMap(__subject)["V1"]
+				argPats := sky_adtField(__subject, 1)
 				_ = argPats
 				return func() any {
 					ctorName := Compiler_Lower_LastPartOf(parts)
@@ -28833,20 +28906,20 @@ func Compiler_Lower_PatternToBindings(ctx any, varName any, pat any) any {
 					}()
 				}()
 			}
-			if __sky_tag == "PTuple" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_Lower_BindTupleArgs(ctx, varName, items, 0)
 			}
-			if __sky_tag == "PList" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return Compiler_Lower_BindListArgs(ctx, varName, items, 0)
 			}
-			if __sky_tag == "PCons" {
-				headPat := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				headPat := sky_adtField(__subject, 0)
 				_ = headPat
-				tailPat := sky_asMap(__subject)["V1"]
+				tailPat := sky_adtField(__subject, 1)
 				_ = tailPat
 				return func() any {
 					headBinding := Compiler_Lower_PatternToBindings(ctx, sky_concat("sky_asList(", sky_concat(varName, ")[0]")), headPat)
@@ -28856,15 +28929,15 @@ func Compiler_Lower_PatternToBindings(ctx any, varName any, pat any) any {
 					return sky_concat(headBinding, tailBinding)
 				}()
 			}
-			if __sky_tag == "PAs" {
-				inner := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				inner := sky_adtField(__subject, 0)
 				_ = inner
-				name := sky_asMap(__subject)["V1"]
+				name := sky_adtField(__subject, 1)
 				_ = name
 				return sky_concat(Compiler_Lower_SanitizeGoIdent(name), sky_concat(" := ", sky_concat(varName, sky_concat("; ", Compiler_Lower_PatternToBindings(ctx, varName, inner)))))
 			}
-			if __sky_tag == "PRecord" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return sky_call(sky_call(sky_listFoldl(func(f any) any {
 					return func(acc any) any {
@@ -28914,7 +28987,7 @@ func Compiler_Lower_BindAdtConstructorArgs(ctx any, varName any, argPats any, id
 				rest := sky_asList(__subject)[1:]
 				_ = rest
 				return func() any {
-					fieldAccess := sky_concat("sky_asMap(", sky_concat(varName, sky_concat(")[\"V", sky_concat(sky_stringFromInt(idx), "\"]"))))
+					fieldAccess := sky_concat("sky_adtField(", sky_concat(varName, sky_concat(", ", sky_concat(sky_stringFromInt(idx), ")"))))
 					_ = fieldAccess
 					binding := Compiler_Lower_PatternToBindings(ctx, fieldAccess, pat)
 					_ = binding
@@ -29069,11 +29142,11 @@ func Compiler_Lower_GenerateCtorsForDecl(registry any, decl any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeDecl" {
-				typeName := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				typeName := sky_adtField(__subject, 0)
 				_ = typeName
-				variants := sky_asMap(__subject)["V2"]
+				variants := sky_adtField(__subject, 2)
 				_ = variants
 				return func() any {
 					ctorFuncs := sky_call(sky_listIndexedMap(func(__pa0 any) any {
@@ -29120,20 +29193,18 @@ func Compiler_Lower_GenerateCtorFunc(typeName any, prefix any, tagIndex any, var
 		_ = tagStr
 		return func() any {
 			if sky_asBool(sky_equal(arity, 0)) {
-				return GoDeclVar(Compiler_Lower_SanitizeGoIdent(sky_asMap(variant)["name"]), GoMapLit([]any{SkyTuple2{V0: GoStringLit("Tag"), V1: GoBasicLit(tagStr)}, SkyTuple2{V0: GoStringLit("SkyName"), V1: GoStringLit(sky_asMap(variant)["name"])}}))
+				return GoDeclVar(Compiler_Lower_SanitizeGoIdent(sky_asMap(variant)["name"]), GoRawExpr(sky_concat("SkyADT{Tag: ", sky_concat(tagStr, sky_concat(", SkyName: \"", sky_concat(sky_asMap(variant)["name"], "\"}"))))))
 			}
 			return func() any {
-				params := sky_call(sky_listIndexedMap(func(i any) any {
-					return func(_ any) any { return map[string]any{"name": sky_concat("v", sky_stringFromInt(i)), "type_": "any"} }
-				}), sky_asMap(variant)["fields"])
+				params := sky_call(sky_listMap(func(i any) any { return map[string]any{"name": sky_concat("v", sky_stringFromInt(i)), "type_": "any"} }), sky_call(sky_listRange(0), sky_numBinop("-", arity, 1)))
 				_ = params
-				fields := sky_concat([]any{SkyTuple2{V0: "Tag", V1: GoBasicLit(tagStr)}, SkyTuple2{V0: "SkyName", V1: GoStringLit(sky_asMap(variant)["name"])}}, sky_call(sky_listIndexedMap(func(i any) any {
-					return func(_ any) any {
-						return SkyTuple2{V0: sky_concat("V", sky_stringFromInt(i)), V1: GoIdent(sky_concat("v", sky_stringFromInt(i)))}
-					}
-				}), sky_asMap(variant)["fields"]))
-				_ = fields
-				return GoDeclFunc(map[string]any{"name": Compiler_Lower_SanitizeGoIdent(sky_asMap(variant)["name"]), "params": params, "returnType": "any", "body": []any{GoReturn(GoMapLit(sky_call(sky_listMap(func(pair any) any { return SkyTuple2{V0: GoStringLit(sky_fst(pair)), V1: sky_snd(pair)} }), fields)))}})
+				fieldAssigns := sky_call(sky_stringJoin(", "), sky_call(sky_listMap(func(i any) any {
+					return sky_concat("V", sky_concat(sky_stringFromInt(i), sky_concat(": v", sky_stringFromInt(i))))
+				}), sky_call(sky_listRange(0), sky_numBinop("-", arity, 1))))
+				_ = fieldAssigns
+				structLit := sky_concat("SkyADT{Tag: ", sky_concat(tagStr, sky_concat(", SkyName: \"", sky_concat(sky_asMap(variant)["name"], sky_concat("\", ", sky_concat(fieldAssigns, "}"))))))
+				_ = structLit
+				return GoDeclFunc(map[string]any{"name": Compiler_Lower_SanitizeGoIdent(sky_asMap(variant)["name"]), "params": params, "returnType": "any", "body": []any{GoReturn(GoRawExpr(structLit))}})
 			}()
 		}()
 	}()
@@ -29142,7 +29213,7 @@ func Compiler_Lower_GenerateCtorFunc(typeName any, prefix any, tagIndex any, var
 // sky:type generateHelperDecls : List any
 
 func Compiler_Lower_GenerateHelperDecls() any {
-	return []any{GoDeclRaw("var skyVersion = \"dev\""), GoDeclRaw("type SkyADT struct { Tag int; V0, V1, V2, V3, V4 any }"), GoDeclRaw("type SkyTuple2 struct { V0, V1 any }"), GoDeclRaw("type SkyTuple3 struct { V0, V1, V2 any }"), GoDeclRaw("type SkyResult struct { Tag int; SkyName string; OkValue, ErrValue any }"), GoDeclRaw("type SkyMaybe struct { Tag int; SkyName string; JustValue any }"), GoDeclRaw("func SkyOk(v any) SkyResult { return SkyResult{Tag: 0, SkyName: \"Ok\", OkValue: v} }"), GoDeclRaw("func SkyErr(v any) SkyResult { return SkyResult{Tag: 1, SkyName: \"Err\", ErrValue: v} }"), GoDeclRaw("func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, SkyName: \"Just\", JustValue: v} }"), GoDeclRaw("func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"), GoDeclRaw("func sky_adtTag(v any) int { if a, ok := v.(SkyADT); ok { return a.Tag }; if m, ok := v.(map[string]any); ok { return sky_asInt(m[\"Tag\"]) }; return -1 }"), GoDeclRaw("func sky_adtField(v any, idx int) any { if a, ok := v.(SkyADT); ok { switch idx { case 0: return a.V0; case 1: return a.V1; case 2: return a.V2; case 3: return a.V3; case 4: return a.V4 }; return nil }; if m, ok := v.(map[string]any); ok { return m[fmt.Sprintf(\"V%d\", idx)] }; return nil }"), GoDeclRaw("func sky_getSkyName(v any) string { if m, ok := v.(map[string]any); ok { if s, ok := m[\"SkyName\"].(string); ok { return s }; return \"\" }; return \"\" }"), GoDeclRaw("func sky_asInt(v any) int { switch x := v.(type) { case int: return x; case float64: return int(x); default: return 0 } }"), GoDeclRaw("func sky_asFloat(v any) float64 { switch x := v.(type) { case float64: return x; case int: return float64(x); default: return 0 } }"), GoDeclRaw("func sky_asString(v any) string { switch x := v.(type) { case string: return x; case int: return strconv.Itoa(x); case bool: if x { return \"true\" }; return \"false\"; case float64: return strconv.FormatFloat(x, 'f', -1, 64); default: return fmt.Sprintf(\"%v\", v) } }"), GoDeclRaw("func sky_asBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"), GoDeclRaw("func sky_asList(v any) []any { if l, ok := v.([]any); ok { return l }; return []any{} }"), GoDeclRaw("func sky_asBytes(v any) []byte { if b, ok := v.([]byte); ok { return b }; if s, ok := v.(string); ok { return []byte(s) }; return nil }"), GoDeclRaw("func sky_asError(v any) error { if e, ok := v.(error); ok { return e }; return fmt.Errorf(\"%v\", v) }"), GoDeclRaw("func sky_asStringSlice(v any) []string { items := sky_asList(v); result := make([]string, len(items)); for i, item := range items { result[i] = sky_asString(item) }; return result }"), GoDeclRaw("func sky_asFixedBytes(v any) []byte { if b, ok := v.([]byte); ok { return b }; return nil }"), GoDeclRaw("func sky_stringToBytes(s any) any { return []byte(sky_asString(s)) }"), GoDeclRaw("func sky_stringFromBytes(b any) any { return string(sky_asBytes(b)) }"), GoDeclRaw("func sky_asMapStringAny(v any) map[string]interface{} { if m, ok := v.(map[string]interface{}); ok { return m }; return sky_asMap(v) }"), GoDeclRaw("func sky_asMapStringString(v any) map[string]string { if m, ok := v.(map[string]string); ok { return m }; result := make(map[string]string); for k, val := range sky_asMap(v) { result[sky_asString(k)] = sky_asString(val) }; return result }"), GoDeclRaw("func sky_asContext(v any) context.Context { if c, ok := v.(context.Context); ok { return c }; return context.Background() }"), GoDeclRaw("func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"), GoDeclRaw("func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"), GoDeclRaw("func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; return ai + bi }"), GoDeclRaw("func sky_numCompare(op string, a, b any) bool { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"<\": return af < bf; case \"<=\": return af <= bf; case \">\": return af > bf; case \">=\": return af >= bf }; return false }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"<\": return ai < bi; case \"<=\": return ai <= bi; case \">\": return ai > bi; case \">=\": return ai >= bi }; return false }"), GoDeclRaw("func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; if fn, ok := v.(func(any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { sky_call(fn(w), r) } }; panic(fmt.Sprintf(\"sky_asHttpHandler: cannot convert %T\", v)) }"), GoDeclRaw("func sky_callZeroOrNil(f any) any { if fn, ok := f.(func() any); ok { return fn() }; if fn, ok := f.(func(any) any); ok { return fn(nil) }; return f }"), GoDeclRaw("func sky_asUint(v any) uint { return uint(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint8(v any) uint8 { return uint8(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint16(v any) uint16 { return uint16(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint32(v any) uint32 { return uint32(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint64(v any) uint64 { return uint64(sky_asInt(v)) }"), GoDeclRaw("func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; return map[string]any{} }"), GoDeclRaw("func sky_equal(a, b any) bool { switch av := a.(type) { case string: if bv, ok := b.(string); ok { return av == bv }; case int: if bv, ok := b.(int); ok { return av == bv }; case bool: if bv, ok := b.(bool); ok { return av == bv }; case float64: if bv, ok := b.(float64); ok { return av == bv } }; return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"), GoDeclRaw("func sky_isAscii(s string) bool { for i := 0; i < len(s); i++ { if s[i] > 127 { return false } }; return true }"), GoDeclRaw("func sky_concat(a, b any) any { if la, ok := a.([]any); ok { if lb, ok := b.([]any); ok { return append(la, lb...) } }; return sky_asString(a) + sky_asString(b) }"), GoDeclRaw("func sky_stringFromInt(v any) any { return strconv.Itoa(sky_asInt(v)) }"), GoDeclRaw("func sky_stringFromFloat(v any) any { return strconv.FormatFloat(sky_asFloat(v), 'f', -1, 64) }"), GoDeclRaw("func sky_stringToUpper(v any) any { return strings.ToUpper(sky_asString(v)) }"), GoDeclRaw("func sky_stringToLower(v any) any { return strings.ToLower(sky_asString(v)) }"), GoDeclRaw("func sky_stringLength(v any) any { s := sky_asString(v); if sky_isAscii(s) { return len(s) }; return len([]rune(s)) }"), GoDeclRaw("func sky_stringTrim(v any) any { return strings.TrimSpace(sky_asString(v)) }"), GoDeclRaw("func sky_stringContains(sub any) any { return func(s any) any { return strings.Contains(sky_asString(s), sky_asString(sub)) } }"), GoDeclRaw("func sky_stringIndexOf(needle any) any { return func(haystack any) any { return strings.Index(sky_asString(haystack), sky_asString(needle)) } }"), GoDeclRaw("func sky_jsonExtractBracketed(s any) any { str := sky_asString(s); depth := 0; inStr := false; esc := false; for i := 0; i < len(str); i++ { c := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }; if c == '\"' { inStr = !inStr; continue }; if inStr { continue }; if c == '[' || c == '{' { depth++ } else if c == ']' || c == '}' { depth--; if depth == 0 { return str[:i+1] } } }; return str }"), GoDeclRaw("func sky_jsonSplitArray(s any) any { str := strings.TrimSpace(sky_asString(s)); if len(str) < 2 { return []any{} }; inner := strings.TrimSpace(str[1:len(str)-1]); if len(inner) == 0 { return []any{} }; var result []any; depth := 0; start := 0; inStr := false; esc := false; for i := 0; i < len(inner); i++ { c := inner[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }; if c == '\"' { inStr = !inStr; continue }; if inStr { continue }; if c == '{' || c == '[' { depth++ } else if c == '}' || c == ']' { depth-- } else if c == ',' && depth == 0 { elem := strings.TrimSpace(inner[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1 } }; last := strings.TrimSpace(inner[start:]); if len(last) > 0 { result = append(result, last) }; if result == nil { return []any{} }; return result }"), GoDeclRaw("func sky_filterSkyiByUsage(skyiSource any) any { return func(alias any) any { return func(sourceText any) any { src := sky_asString(skyiSource); al := sky_asString(alias); srcTxt := sky_asString(sourceText); lines := strings.Split(src, \"\\n\"); var header, types, usedFuncs []string; inHeader := true; var curBlock []string; for _, line := range lines { if inHeader { if strings.HasPrefix(line, \"module \") || strings.HasPrefix(line, \"import \") || strings.HasPrefix(line, \"foreign \") || strings.TrimSpace(line) == \"\" { header = append(header, line); continue } else { inHeader = false } }; if strings.HasPrefix(line, \"type \") { if len(curBlock) > 0 { name := strings.SplitN(curBlock[0], \" \", 2)[0]; if strings.Contains(srcTxt, al+\".\"+name) { usedFuncs = append(usedFuncs, curBlock...) }; curBlock = nil }; types = append(types, line); continue }; if strings.Contains(line, \" : \") && !strings.HasPrefix(line, \" \") && strings.TrimSpace(line) != \"\" && !strings.HasPrefix(line, \"type \") { if len(curBlock) > 0 { name := strings.SplitN(curBlock[0], \" \", 2)[0]; if strings.Contains(srcTxt, al+\".\"+name) { usedFuncs = append(usedFuncs, curBlock...) }; curBlock = nil }; curBlock = append(curBlock, line) } else if len(curBlock) > 0 { curBlock = append(curBlock, line) } }; if len(curBlock) > 0 { name := strings.SplitN(curBlock[0], \" \", 2)[0]; if strings.Contains(srcTxt, al+\".\"+name) { usedFuncs = append(usedFuncs, curBlock...) } }; result := append(header, \"\"); result = append(result, types...); result = append(result, \"\"); result = append(result, usedFuncs...); return strings.Join(result, \"\\n\") } } }"), GoDeclRaw("func sky_stringStartsWith(prefix any) any { return func(s any) any { return strings.HasPrefix(sky_asString(s), sky_asString(prefix)) } }"), GoDeclRaw("func sky_stringEndsWith(suffix any) any { return func(s any) any { return strings.HasSuffix(sky_asString(s), sky_asString(suffix)) } }"), GoDeclRaw("func sky_stringSplit(sep any) any { return func(s any) any { parts := strings.Split(sky_asString(s), sky_asString(sep)); result := make([]any, len(parts)); for i, p := range parts { result[i] = p }; return result } }"), GoDeclRaw("func sky_stringReplace(old any) any { return func(new_ any) any { return func(s any) any { return strings.ReplaceAll(sky_asString(s), sky_asString(old), sky_asString(new_)) } } }"), GoDeclRaw("func sky_stringToInt(s any) any { n, err := strconv.Atoi(strings.TrimSpace(sky_asString(s))); if err != nil { return SkyNothing() }; return SkyJust(n) }"), GoDeclRaw("func sky_stringToFloat(s any) any { f, err := strconv.ParseFloat(strings.TrimSpace(sky_asString(s)), 64); if err != nil { return SkyNothing() }; return SkyJust(f) }"), GoDeclRaw("func sky_stringAppend(a any) any { return func(b any) any { return sky_asString(a) + sky_asString(b) } }"), GoDeclRaw("func sky_stringIsEmpty(v any) any { return sky_asString(v) == \"\" }"), GoDeclRaw("func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); a := sky_asInt(start); b := sky_asInt(end); if a < 0 { a = 0 }; if sky_isAscii(str) { if b > len(str) { b = len(str) }; if a > b { return \"\" }; return str[a:b] }; runes := []rune(str); if b > len(runes) { b = len(runes) }; if a > b { return \"\" }; return string(runes[a:b]) } } }"), GoDeclRaw("func sky_stringJoin(sep any) any { return func(list any) any { parts := sky_asList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = sky_asString(p) }; return strings.Join(ss, sky_asString(sep)) } }"), GoDeclRaw("func sky_listMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(item) }; return result } }"), GoDeclRaw("func sky_listFilter(fn any) any { return func(list any) any { items := sky_asList(list); var result []any; for _, item := range items { if sky_asBool(fn.(func(any) any)(item)) { result = append(result, item) } }; return result } }"), GoDeclRaw("func sky_listFoldl(fn any) any { return func(init any) any { return func(list any) any { acc := init; for _, item := range sky_asList(list) { acc = fn.(func(any) any)(item).(func(any) any)(acc) }; return acc } } }"), GoDeclRaw("func sky_listFoldr(fn any) any { return func(init any) any { return func(list any) any { items := sky_asList(list); acc := init; for i := len(items) - 1; i >= 0; i-- { acc = fn.(func(any) any)(items[i]).(func(any) any)(acc) }; return acc } } }"), GoDeclRaw("func sky_listLength(list any) any { return len(sky_asList(list)) }"), GoDeclRaw("func sky_listHead(list any) any { items := sky_asList(list); if len(items) > 0 { return SkyJust(items[0]) }; return SkyNothing() }"), GoDeclRaw("func sky_listReverse(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[len(items)-1-i] = item }; return result }"), GoDeclRaw("func sky_listIsEmpty(list any) any { return len(sky_asList(list)) == 0 }"), GoDeclRaw("func sky_listAppend(a any) any { return func(b any) any { return append(sky_asList(a), sky_asList(b)...) } }"), GoDeclRaw("func sky_listConcatMap(fn any) any { return func(list any) any { var result []any; for _, item := range sky_asList(list) { result = append(result, sky_asList(fn.(func(any) any)(item))...) }; if result == nil { return []any{} }; return result } }"), GoDeclRaw("func sky_listConcat(lists any) any { var result []any; for _, l := range sky_asList(lists) { result = append(result, sky_asList(l)...) }; if result == nil { return []any{} }; return result }"), GoDeclRaw("func sky_listFilterMap(fn any) any { return func(list any) any { var result []any; for _, item := range sky_asList(list) { r := fn.(func(any) any)(item); if m, ok := r.(SkyMaybe); ok && m.Tag == 0 { result = append(result, m.JustValue) } }; if result == nil { return []any{} }; return result } }"), GoDeclRaw("func sky_listIndexedMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(i).(func(any) any)(item) }; return result } }"), GoDeclRaw("func sky_listDrop(n any) any { return func(list any) any { items := sky_asList(list); c := sky_asInt(n); if c >= len(items) { return []any{} }; return items[c:] } }"), GoDeclRaw("func sky_listMember(item any) any { return func(list any) any { for _, x := range sky_asList(list) { if sky_equal(x, item) { return true } }; return false } }"), GoDeclRaw("func sky_recordUpdate(base any, updates any) any { m := sky_asMap(base); result := make(map[string]any); for k, v := range m { result[k] = v }; for k, v := range sky_asMap(updates) { result[k] = v }; return result }"), GoDeclRaw("func sky_println(args ...any) any { ss := make([]any, len(args)); for i, a := range args { ss[i] = sky_asString(a) }; fmt.Println(ss...); return struct{}{} }"), GoDeclRaw("func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"), GoDeclRaw("func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }"), GoDeclRaw("func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"), GoDeclRaw("func sky_asTuple2(v any) SkyTuple2 { if t, ok := v.(SkyTuple2); ok { return t }; return SkyTuple2{} }"), GoDeclRaw("func sky_asTuple3(v any) SkyTuple3 { if t, ok := v.(SkyTuple3); ok { return t }; return SkyTuple3{} }"), GoDeclRaw("func sky_not(v any) any { return !sky_asBool(v) }"), GoDeclRaw("func sky_fileRead(path any) any { data, err := os.ReadFile(sky_asString(path)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(data)) }"), GoDeclRaw("func sky_fileWrite(path any) any { return func(content any) any { err := os.WriteFile(sky_asString(path), []byte(sky_asString(content)), 0644); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"), GoDeclRaw("func sky_fileMkdirAll(path any) any { err := os.MkdirAll(sky_asString(path), 0755); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) }"), GoDeclRaw("func sky_processRun(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; out, err := exec.Command(sky_asString(cmd), cmdArgs...).CombinedOutput(); if err != nil { return SkyErr(err.Error() + \": \" + string(out)) }; return SkyOk(string(out)) } }"), GoDeclRaw("func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"), GoDeclRaw("func sky_processGetArgs(u any) any { args := make([]any, len(os.Args)); for i, a := range os.Args { args[i] = a }; return args }"), GoDeclRaw("func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"), GoDeclRaw("func sky_refNew(v any) any { return &SkyRef{Value: v} }"), GoDeclRaw("type SkyRef struct { Value any }"), GoDeclRaw("func sky_refGet(r any) any { if ref, ok := r.(*SkyRef); ok { return ref.Value }; panic(\"sky_refGet: not a Ref\") }"), GoDeclRaw("func sky_refSet(v any) any { return func(r any) any { if ref, ok := r.(*SkyRef); ok { ref.Value = v; return struct{}{} }; panic(\"sky_refSet: not a Ref\") } }"), GoDeclRaw("func sky_dictEmpty() any { return map[string]any{} }"), GoDeclRaw("func sky_dictInsert(k any) any { return func(v any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)+1); for key, val := range m { result[key] = val }; result[sky_asString(k)] = v; return result } } }"), GoDeclRaw("func sky_dictGet(k any) any { return func(d any) any { m := sky_asMap(d); if v, ok := m[sky_asString(k)]; ok { return SkyJust(v) }; return SkyNothing() } }"), GoDeclRaw("func sky_dictKeys(d any) any { m := sky_asMap(d); keys := make([]any, 0, len(m)); for k := range m { keys = append(keys, k) }; return keys }"), GoDeclRaw("func sky_dictValues(d any) any { m := sky_asMap(d); vals := make([]any, 0, len(m)); for _, v := range m { vals = append(vals, v) }; return vals }"), GoDeclRaw("func sky_dictToList(d any) any { m := sky_asMap(d); pairs := make([]any, 0, len(m)); for k, v := range m { pairs = append(pairs, SkyTuple2{k, v}) }; return pairs }"), GoDeclRaw("func sky_dictFromList(list any) any { result := make(map[string]any); for _, item := range sky_asList(list) { t := sky_asTuple2(item); result[sky_asString(t.V0)] = t.V1 }; return result }"), GoDeclRaw("func sky_dictMap(fn any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)); for k, v := range m { result[k] = fn.(func(any) any)(k).(func(any) any)(v) }; return result } }"), GoDeclRaw("func sky_dictFoldl(fn any) any { return func(init any) any { return func(d any) any { acc := init; for k, v := range sky_asMap(d) { acc = fn.(func(any) any)(k).(func(any) any)(v).(func(any) any)(acc) }; return acc } } }"), GoDeclRaw("func sky_dictUnion(a any) any { return func(b any) any { ma, mb := sky_asMap(a), sky_asMap(b); result := make(map[string]any, len(ma)+len(mb)); for k, v := range mb { result[k] = v }; for k, v := range ma { result[k] = v }; return result } }"), GoDeclRaw("func sky_dictRemove(k any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)); key := sky_asString(k); for k2, v := range m { if k2 != key { result[k2] = v } }; return result } }"), GoDeclRaw("func sky_dictMember(k any) any { return func(d any) any { _, ok := sky_asMap(d)[sky_asString(k)]; return ok } }"), GoDeclRaw("func sky_setEmpty() any { return map[string]bool{} }"), GoDeclRaw("func sky_setSingleton(v any) any { return map[string]bool{sky_asString(v): true} }"), GoDeclRaw("func sky_setInsert(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)+1); for k := range m { result[k] = true }; result[sky_asString(v)] = true; return result } }"), GoDeclRaw("func sky_setMember(v any) any { return func(s any) any { return s.(map[string]bool)[sky_asString(v)] } }"), GoDeclRaw("func sky_setUnion(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool, len(ma)+len(mb)); for k := range mb { result[k] = true }; for k := range ma { result[k] = true }; return result } }"), GoDeclRaw("func sky_setDiff(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool); for k := range ma { if !mb[k] { result[k] = true } }; return result } }"), GoDeclRaw("func sky_setToList(s any) any { m := s.(map[string]bool); result := make([]any, 0, len(m)); for k := range m { result = append(result, k) }; return result }"), GoDeclRaw("func sky_setFromList(list any) any { result := make(map[string]bool); for _, item := range sky_asList(list) { result[sky_asString(item)] = true }; return result }"), GoDeclRaw("func sky_setIsEmpty(s any) any { return len(s.(map[string]bool)) == 0 }"), GoDeclRaw("func sky_setRemove(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)); key := sky_asString(v); for k := range m { if k != key { result[k] = true } }; return result } }"), GoDeclRaw("func sky_readLine(u any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; line, err := stdinReader.ReadString('\\n'); if err != nil && len(line) == 0 { return SkyNothing() }; return SkyJust(strings.TrimRight(line, \"\\r\\n\")) }"), GoDeclRaw("func sky_readBytes(n any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; count := sky_asInt(n); buf := make([]byte, count); total := 0; for total < count { nr, err := stdinReader.Read(buf[total:]); total += nr; if err != nil { break } }; if total == 0 { return SkyNothing() }; return SkyJust(string(buf[:total])) }"), GoDeclRaw("func sky_writeStdout(s any) any { fmt.Print(sky_asString(s)); return struct{}{} }"), GoDeclRaw("func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }"), GoDeclRaw("func sky_writeStderr(s any) any { fmt.Fprint(os.Stderr, sky_asString(s)); return struct{}{} }"), GoDeclRaw("var stdinReader *bufio.Reader"), GoDeclRaw("func sky_charIsUpper(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'A' && r <= 'Z' }; return false }"), GoDeclRaw("func sky_charIsLower(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'a' && r <= 'z' }; return false }"), GoDeclRaw("func sky_charIsDigit(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= '0' && r <= '9' }; return false }"), GoDeclRaw("func sky_charIsAlpha(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') }; return false }"), GoDeclRaw("func sky_charIsAlphaNum(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') }; return false }"), GoDeclRaw("func sky_charToUpper(c any) any { return strings.ToUpper(sky_asString(c)) }"), GoDeclRaw("func sky_charToLower(c any) any { return strings.ToLower(sky_asString(c)) }"), GoDeclRaw("func sky_stringFromChar(c any) any { return sky_asString(c) }"), GoDeclRaw("func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }"), GoDeclRaw("func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }"), GoDeclRaw("func sky_goQuote(s any) any { return strconv.Quote(sky_asString(s)) }"), GoDeclRaw("func sky_fst(t any) any { return sky_asTuple2(t).V0 }"), GoDeclRaw("func sky_snd(t any) any { return sky_asTuple2(t).V1 }"), GoDeclRaw("func sky_errorToString(e any) any { return sky_asString(e) }"), GoDeclRaw("func sky_identity(v any) any { return v }"), GoDeclRaw("func sky_always(a any) any { return func(b any) any { return a } }"), GoDeclRaw("func sky_js(v any) any { if s, ok := v.(string); ok && s == \"nil\" { return nil }; return v }"), GoDeclRaw("func sky_call(f any, arg any) any { if fn, ok := f.(func(any) any); ok { return fn(arg) }; if s, ok := f.(string); ok { if args, ok := arg.([]any); ok { parts := make([]string, len(args)); for i, a := range args { parts[i] = sky_asString(a) }; return s + \"(\" + strings.Join(parts, \", \") + \")\" }; return s + \" \" + sky_asString(arg) }; panic(fmt.Sprintf(\"sky_call: cannot call %T\", f)) }"), GoDeclRaw("func sky_call2(f any, a any, b any) any { return sky_call(sky_call(f, a), b) }"), GoDeclRaw("func sky_call3(f any, a any, b any, c any) any { return sky_call(sky_call(sky_call(f, a), b), c) }"), GoDeclRaw("func sky_taskSucceed(value any) any { return func() any { return SkyOk(value) } }"), GoDeclRaw("func sky_taskFail(err any) any { return func() any { return SkyErr(err) } }"), GoDeclRaw("func sky_taskMap(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { return SkyOk(fn.(func(any) any)(sky_asSkyResult(r).OkValue)) }; return r } } }"), GoDeclRaw("func sky_taskAndThen(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { next := fn.(func(any) any)(sky_asSkyResult(r).OkValue); return sky_runTask(next) }; return r } } }"), GoDeclRaw("func sky_taskPerform(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok { if sr.Tag == 0 { return sr.OkValue }; return r }; return r }"), GoDeclRaw("func sky_taskRun(task any) any { r := sky_runTask(task); return r }"), GoDeclRaw("func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"), GoDeclRaw("func sky_taskLazy(f any) any { return func() any { return SkyOk(sky_call(f, struct{}{})) } }"), GoDeclRaw("func sky_runTask(task any) any { if t, ok := task.(func() any); ok { var result any; func() { defer func() { if r := recover(); r != nil { result = SkyErr(fmt.Sprintf(\"panic: %v\", r)) } }(); result = t() }(); return result }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"), GoDeclRaw("func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"), GoDeclRaw("func sky_serverListen(port any) any { return func(routes any) any { return func() any { mux := sky_buildMux(sky_asList(routes), \"\"); p := sky_asInt(port); if ep := os.Getenv(\"SKY_PORT\"); ep != \"\" { if pv, err := strconv.Atoi(ep); err == nil { p = pv } }; if ep := os.Getenv(\"PORT\"); ep != \"\" { if pv, err := strconv.Atoi(ep); err == nil { p = pv } }; addr := fmt.Sprintf(\":%d\", p); fmt.Fprintf(os.Stderr, \"Sky server listening on %s\\n\", addr); err := net_http.ListenAndServe(addr, mux); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } } }"), GoDeclRaw("func sky_serverGet(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"GET\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverPost(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"POST\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverPut(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"PUT\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverDelete(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"DELETE\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverAny(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"*\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverGroup(prefix any) any { return func(routes any) any { return map[string]any{\"SkyName\": \"RouteGroup\", \"V0\": prefix, \"V1\": routes} } }"), GoDeclRaw("func sky_serverStatic(urlPrefix any) any { return func(dir any) any { return map[string]any{\"SkyName\": \"RouteStatic\", \"V0\": urlPrefix, \"V1\": dir} } }"), GoDeclRaw("func sky_serverText(body any) any { return map[string]any{\"status\": 200, \"body\": body, \"headers\": []any{SkyTuple2{\"Content-Type\", \"text/plain; charset=utf-8\"}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverHtml(body any) any { return map[string]any{\"status\": 200, \"body\": body, \"headers\": []any{SkyTuple2{\"Content-Type\", \"text/html; charset=utf-8\"}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverJson(body any) any { return map[string]any{\"status\": 200, \"body\": body, \"headers\": []any{SkyTuple2{\"Content-Type\", \"application/json\"}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverRedirect(url any) any { return map[string]any{\"status\": 302, \"body\": \"\", \"headers\": []any{SkyTuple2{\"Location\", url}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverWithStatus(status any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; result[\"status\"] = status; return result } }"), GoDeclRaw("func sky_serverWithHeader(key any) any { return func(val any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; hdrs := sky_asList(m[\"headers\"]); result[\"headers\"] = append(hdrs, SkyTuple2{key, val}); return result } } }"), GoDeclRaw("func sky_serverWithCookie(name any) any { return func(value any) any { return func(options any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; cookies := sky_asList(m[\"cookies\"]); cookie := map[string]any{\"name\": name, \"value\": value, \"path\": \"/\", \"maxAge\": 86400, \"httpOnly\": true, \"secure\": false}; result[\"cookies\"] = append(cookies, cookie); return result } } } }"), GoDeclRaw("func sky_serverParam(name any) any { return func(req any) any { m := sky_asMap(req); path := sky_asString(m[\"path\"]); params := sky_asList(m[\"params\"]); for _, p := range params { t := sky_asTuple2(p); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return sky_extractPathParam(sky_asString(name), path) } }"), GoDeclRaw("func sky_extractPathParam(name string, path string) any { return SkyNothing() }"), GoDeclRaw("func sky_serverQueryParam(name any) any { return func(req any) any { m := sky_asMap(req); query := sky_asList(m[\"query\"]); for _, p := range query { t := sky_asTuple2(p); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return SkyNothing() } }"), GoDeclRaw("func sky_serverHeader(name any) any { return func(req any) any { m := sky_asMap(req); headers := sky_asList(m[\"headers\"]); for _, h := range headers { t := sky_asTuple2(h); if strings.EqualFold(sky_asString(t.V0), sky_asString(name)) { return SkyJust(t.V1) } }; return SkyNothing() } }"), GoDeclRaw("func sky_serverGetCookie(name any) any { return func(req any) any { m := sky_asMap(req); cookies := sky_asList(m[\"cookies\"]); for _, c := range cookies { t := sky_asTuple2(c); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return SkyNothing() } }"), GoDeclRaw("func sky_serverCookie(name any) any { return func(val any) any { return map[string]any{\"name\": name, \"value\": val, \"path\": \"/\", \"maxAge\": 86400, \"httpOnly\": true, \"secure\": false, \"sameSite\": \"lax\"} } }"), GoDeclRaw("func sky_serverBody(req any) any { m := sky_asMap(req); return m[\"body\"] }"), GoDeclRaw("func sky_serverMethod(req any) any { m := sky_asMap(req); return m[\"method\"] }"), GoDeclRaw("func sky_serverFormValue(name any) any { return func(req any) any { m := sky_asMap(req); n := sky_asString(name); fv := sky_asList(m[\"formValues\"]); for _, f := range fv { t := sky_asTuple2(f); if sky_asString(t.V0) == n { return sky_asString(t.V1) } }; query := sky_asList(m[\"query\"]); for _, q := range query { t := sky_asTuple2(q); if sky_asString(t.V0) == n { return sky_asString(t.V1) } }; return \"\" } }"), GoDeclRaw("func sky_buildMux(routes []any, prefix string) *net_http.ServeMux { mux := net_http.NewServeMux(); for _, r := range routes { rm := sky_asMap(r); if rm == nil { continue }; skyName, _ := rm[\"SkyName\"].(string); switch skyName { case \"RouteEntry\": method := sky_asString(rm[\"V0\"]); pattern := prefix + sky_asString(rm[\"V1\"]); handler := rm[\"V2\"]; muxPattern := pattern; if method != \"*\" { muxPattern = method + \" \" + pattern }; mux.HandleFunc(muxPattern, sky_makeHandler(handler)); case \"RouteGroup\": groupPrefix := prefix + sky_asString(rm[\"V0\"]); groupRoutes := sky_asList(rm[\"V1\"]); subMux := sky_buildMux(groupRoutes, groupPrefix); mux.Handle(groupPrefix+\"/\", subMux); case \"RouteStatic\": urlPrefix := prefix + sky_asString(rm[\"V0\"]); dirPath := sky_asString(rm[\"V1\"]); fs := net_http.FileServer(net_http.Dir(dirPath)); mux.Handle(urlPrefix+\"/\", net_http.StripPrefix(urlPrefix, fs)) } }; return mux }"), GoDeclRaw("func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); var taskResult any; if fn, ok := handler.(func(any) any); ok { taskResult = fn(skyReq) } else if fn2, ok := handler.(func(any, any) any); ok { taskResult = fn2(nil, skyReq) } else { net_http.Error(w, \"Invalid handler: \" + fmt.Sprintf(\"%T\", handler), 500); return }; var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"), GoDeclRaw("func sky_buildRequest(r *net_http.Request) map[string]any { body, _ := io.ReadAll(r.Body); r.Body = io.NopCloser(strings.NewReader(string(body))); _ = r.ParseForm(); formValues := make([]any, 0); for k, vs := range r.Form { for _, v := range vs { formValues = append(formValues, SkyTuple2{k, v}) } }; headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; params := make([]any, 0); protocol := \"http\"; if r.TLS != nil { protocol = \"https\" }; return map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": params, \"query\": query, \"cookies\": cookies, \"formValues\": formValues, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": protocol} }"), GoDeclRaw("func sky_writeResponse(w net_http.ResponseWriter, resp map[string]any) { if resp == nil { w.WriteHeader(200); return }; if cookies, ok := resp[\"cookies\"].([]any); ok { for _, c := range cookies { cm := sky_asMap(c); if cm == nil { continue }; net_http.SetCookie(w, &net_http.Cookie{Name: sky_asString(cm[\"name\"]), Value: sky_asString(cm[\"value\"]), Path: sky_asString(cm[\"path\"]), MaxAge: sky_asInt(cm[\"maxAge\"]), HttpOnly: sky_asBool(cm[\"httpOnly\"]), Secure: sky_asBool(cm[\"secure\"])}) } }; if headers, ok := resp[\"headers\"].([]any); ok { for _, h := range headers { if t, ok := h.(SkyTuple2); ok { w.Header().Set(sky_asString(t.V0), sky_asString(t.V1)) } } }; status := sky_asInt(resp[\"status\"]); if status == 0 { status = 200 }; w.WriteHeader(status); fmt.Fprint(w, sky_asString(resp[\"body\"])) }"), GoDeclRaw("func sky_resultMap(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return SkyOk(fn.(func(any) any)(res.OkValue)) }; return r } }"), GoDeclRaw("func sky_resultWithDefault(def any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return res.OkValue }; return def } }"), GoDeclRaw("func sky_resultAndThen(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return fn.(func(any) any)(res.OkValue) }; return r } }"), GoDeclRaw("func sky_resultMapError(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 1 { return SkyErr(fn.(func(any) any)(res.ErrValue)) }; return r } }"), GoDeclRaw("func sky_maybeWithDefault(def any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return mb.JustValue }; return def } }"), GoDeclRaw("func sky_maybeMap(fn any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return SkyJust(fn.(func(any) any)(mb.JustValue)) }; return m } }"), GoDeclRaw("func sky_maybeAndThen(fn any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return fn.(func(any) any)(mb.JustValue) }; return m } }"), GoDeclRaw("func sky_listTake(n any) any { return func(list any) any { items := sky_asList(list); c := sky_asInt(n); if c >= len(items) { return list }; return items[:c] } }"), GoDeclRaw("func sky_listSort(list any) any { items := sky_asList(list); result := make([]any, len(items)); copy(result, items); sort.Slice(result, func(i, j int) bool { return fmt.Sprintf(\"%v\", result[i]) < fmt.Sprintf(\"%v\", result[j]) }); return result }"), GoDeclRaw("func sky_listSortBy(fn any) any { return func(list any) any { f := fn.(func(any) any); items := sky_asList(list); result := make([]any, len(items)); copy(result, items); sort.Slice(result, func(i, j int) bool { return fmt.Sprintf(\"%v\", f(result[i])) < fmt.Sprintf(\"%v\", f(result[j])) }); return result } }"), GoDeclRaw("func sky_clamp(low any) any { return func(high any) any { return func(val any) any { v := sky_asInt(val); lo := sky_asInt(low); hi := sky_asInt(high); if v < lo { return lo }; if v > hi { return hi }; return v } } }"), GoDeclRaw("func sky_listZip(a any) any { return func(b any) any { la, lb := sky_asList(a), sky_asList(b); minLen := len(la); if len(lb) < minLen { minLen = len(lb) }; result := make([]any, minLen); for i := 0; i < minLen; i++ { result[i] = SkyTuple2{la[i], lb[i]} }; return result } }"), GoDeclRaw("func sky_listRange(from any) any { return func(to any) any { f, t := sky_asInt(from), sky_asInt(to); result := make([]any, 0); for i := f; i <= t; i++ { result = append(result, i) }; return result } }"), GoDeclRaw("func sky_listFind(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return SkyJust(item) } }; return SkyNothing() } }"), GoDeclRaw("func sky_listMinimum(list any) any { items := sky_asList(list); if len(items) == 0 { return SkyNothing() }; min := sky_asInt(items[0]); for _, v := range items[1:] { if sky_asInt(v) < min { min = sky_asInt(v) } }; return SkyJust(min) }"), GoDeclRaw("func sky_listAny(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return true } }; return false } }"), GoDeclRaw("func sky_listAll(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if !sky_asBool(fn.(func(any) any)(item)) { return false } }; return true } }"), GoDeclRaw("func sky_listSingleton(v any) any { return []any{v} }"), GoDeclRaw("func sky_listIntersperse(sep any) any { return func(list any) any { items := sky_asList(list); if len(items) <= 1 { return list }; result := make([]any, 0, len(items)*2-1); for i, item := range items { if i > 0 { result = append(result, sep) }; result = append(result, item) }; return result } }"), GoDeclRaw("func sky_stringLeft(n any) any { return func(s any) any { str := sky_asString(s); c := sky_asInt(n); if c >= len(str) { return str }; return str[:c] } }"), GoDeclRaw("func sky_stringRight(n any) any { return func(s any) any { str := sky_asString(s); c := sky_asInt(n); if c >= len(str) { return str }; return str[len(str)-c:] } }"), GoDeclRaw("func sky_stringPadLeft(n any) any { return func(ch any) any { return func(s any) any { str := sky_asString(s); pad := sky_asString(ch); for len(str) < sky_asInt(n) { str = pad + str }; return str } } }"), GoDeclRaw("func sky_stringLines(s any) any { parts := strings.Split(sky_asString(s), \"\\n\"); result := make([]any, len(parts)); for i, p := range parts { result[i] = p }; return result }"), GoDeclRaw("func sky_stringWords(s any) any { words := strings.Fields(sky_asString(s)); result := make([]any, len(words)); for i, w := range words { result[i] = w }; return result }"), GoDeclRaw("func sky_stringRepeat(n any) any { return func(s any) any { return strings.Repeat(sky_asString(s), sky_asInt(n)) } }"), GoDeclRaw("func sky_mathSqrt(v any) any { return math.Sqrt(sky_asFloat(v)) }"), GoDeclRaw("func sky_mathPow(base any) any { return func(exp any) any { return math.Pow(sky_asFloat(base), sky_asFloat(exp)) } }"), GoDeclRaw("func sky_mathAbs(v any) any { return math.Abs(sky_asFloat(v)) }"), GoDeclRaw("func sky_mathFloor(v any) any { return int(math.Floor(sky_asFloat(v))) }"), GoDeclRaw("func sky_mathCeil(v any) any { return int(math.Ceil(sky_asFloat(v))) }"), GoDeclRaw("func sky_mathRound(v any) any { return int(math.Round(sky_asFloat(v))) }"), GoDeclRaw("func sky_mathMin(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af < bf { return af }; return bf } }"), GoDeclRaw("func sky_mathMax(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af > bf { return af }; return bf } }"), GoDeclRaw("func sky_modBy(args ...any) any { if len(args) == 2 { mod := sky_asInt(args[0]); if mod == 0 { return 0 }; return sky_asInt(args[1]) % mod }; m := args[0]; return func(n any) any { mod := sky_asInt(m); if mod == 0 { return 0 }; return sky_asInt(n) % mod } }"), GoDeclRaw("func sky_cryptoSha256(s any) any { h := crypto_sha256.Sum256([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"), GoDeclRaw("func sky_cryptoMd5(s any) any { h := crypto_md5.Sum([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"), GoDeclRaw("func sky_encodingHexEncode(s any) any { return hex.EncodeToString([]byte(sky_asString(s))) }"), GoDeclRaw("func sky_encodingBase64Encode(s any) any { return base64.StdEncoding.EncodeToString([]byte(sky_asString(s))) }"), GoDeclRaw("func sky_encodingBase64Decode(s any) any { b, err := base64.StdEncoding.DecodeString(sky_asString(s)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }"), GoDeclRaw("func sky_timeNow(u any) any { return time.Now().UnixMilli() }"), GoDeclRaw("func sky_timePosixToMillis(t any) any { return sky_asInt(t) }"), GoDeclRaw("func sky_httpGetString(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(body)) } }"), GoDeclRaw("func sky_httpGet(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"), GoDeclRaw("func sky_httpPost(url any) any { return func(body any) any { return func() any { resp, err := net_http.Post(sky_asString(url), \"application/json\", strings.NewReader(sky_asString(body))); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); b, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(b), \"headers\": hdrs}) } } }"), GoDeclRaw("func sky_httpRequest(opts any) any { return func() any { m := sky_asMap(opts); method := sky_asString(m[\"method\"]); url := sky_asString(m[\"url\"]); reqBody := sky_asString(m[\"body\"]); req, err := net_http.NewRequest(method, url, strings.NewReader(reqBody)); if err != nil { return SkyErr(err.Error()) }; for _, h := range sky_asList(m[\"headers\"]) { t := h.(SkyTuple2); req.Header.Set(sky_asString(t.V0), sky_asString(t.V1)) }; client := &net_http.Client{}; resp, err := client.Do(req); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"), GoDeclRaw("func sky_jsonEncString(v any) any { return sky_asString(v) }"), GoDeclRaw("func sky_jsonEncInt(v any) any { return sky_asInt(v) }"), GoDeclRaw("func sky_jsonEncFloat(v any) any { return sky_asFloat(v) }"), GoDeclRaw("func sky_jsonEncBool(v any) any { return sky_asBool(v) }"), GoDeclRaw("func sky_jsonEncNull() any { return nil }"), GoDeclRaw("func sky_jsonEncList(encoder any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = encoder.(func(any) any)(item) }; return result } }"), GoDeclRaw("func sky_jsonEncObject(pairs any) any { m := make(map[string]any); for _, p := range sky_asList(pairs) { t := sky_asTuple2(p); m[sky_asString(t.V0)] = t.V1 }; return m }"), GoDeclRaw("func sky_jsonEncode(indent any) any { return func(value any) any { var b []byte; var err error; n := sky_asInt(indent); if n > 0 { b, err = encoding_json.MarshalIndent(value, \"\", strings.Repeat(\" \", n)) } else { b, err = encoding_json.Marshal(value) }; if err != nil { return \"null\" }; return string(b) } }"), GoDeclRaw("func sky_jsonDecString(decoder any) any { return func(jsonStr any) any { var v any; if err := encoding_json.Unmarshal([]byte(sky_asString(jsonStr)), &v); err != nil { return SkyErr(err.Error()) }; return decoder.(func(any) any)(v) } }"), GoDeclRaw("var sky_jsonDecoder_string = func(v any) any { if s, ok := v.(string); ok { return SkyOk(s) }; return SkyErr(\"expected string\") }"), GoDeclRaw("var sky_jsonDecoder_int = func(v any) any { switch n := v.(type) { case float64: return SkyOk(int(n)); case int: return SkyOk(n) }; return SkyErr(\"expected int\") }"), GoDeclRaw("var sky_jsonDecoder_float = func(v any) any { if f, ok := v.(float64); ok { return SkyOk(f) }; return SkyErr(\"expected float\") }"), GoDeclRaw("var sky_jsonDecoder_bool = func(v any) any { if b, ok := v.(bool); ok { return SkyOk(b) }; return SkyErr(\"expected bool\") }"), GoDeclRaw("func sky_jsonDecField(key any) any { return func(decoder any) any { return func(v any) any { m, ok := v.(map[string]any); if !ok { return SkyErr(\"expected object\") }; val, exists := m[sky_asString(key)]; if !exists { return SkyErr(\"field '\" + sky_asString(key) + \"' not found\") }; return decoder.(func(any) any)(val) } } }"), GoDeclRaw("func sky_jsonDecList(decoder any) any { return func(v any) any { arr, ok := v.([]any); if !ok { return SkyErr(\"expected array\") }; result := make([]any, 0, len(arr)); for _, item := range arr { r := decoder.(func(any) any)(item); res := sky_asSkyResult(r); if res.Tag == 1 { return r }; result = append(result, res.OkValue) }; return SkyOk(result) } }"), GoDeclRaw("func sky_jsonDecMap(fn any) any { return func(decoder any) any { return func(v any) any { r := decoder.(func(any) any)(v); res := sky_asSkyResult(r); if res.Tag == 1 { return r }; return SkyOk(fn.(func(any) any)(res.OkValue)) } } }"), GoDeclRaw("func sky_jsonDecMap2(fn any) any { return func(d1 any) any { return func(d2 any) any { return func(v any) any { r1 := d1.(func(any) any)(v); res1 := sky_asSkyResult(r1); if res1.Tag == 1 { return r1 }; r2 := d2.(func(any) any)(v); res2 := sky_asSkyResult(r2); if res2.Tag == 1 { return r2 }; return SkyOk(fn.(func(any) any)(res1.OkValue).(func(any) any)(res2.OkValue)) } } } }"), GoDeclRaw("func sky_jsonDecMap3(fn any) any { return func(d1 any) any { return func(d2 any) any { return func(d3 any) any { return func(v any) any { r1 := d1.(func(any) any)(v); res1 := sky_asSkyResult(r1); if res1.Tag == 1 { return r1 }; r2 := d2.(func(any) any)(v); res2 := sky_asSkyResult(r2); if res2.Tag == 1 { return r2 }; r3 := d3.(func(any) any)(v); res3 := sky_asSkyResult(r3); if res3.Tag == 1 { return r3 }; return SkyOk(fn.(func(any) any)(res1.OkValue).(func(any) any)(res2.OkValue).(func(any) any)(res3.OkValue)) } } } } }"), GoDeclRaw("func sky_jsonDecMap4(fn any) any { return func(d1 any) any { return func(d2 any) any { return func(d3 any) any { return func(d4 any) any { return func(v any) any { r1 := d1.(func(any) any)(v); res1 := sky_asSkyResult(r1); if res1.Tag == 1 { return r1 }; r2 := d2.(func(any) any)(v); res2 := sky_asSkyResult(r2); if res2.Tag == 1 { return r2 }; r3 := d3.(func(any) any)(v); res3 := sky_asSkyResult(r3); if res3.Tag == 1 { return r3 }; r4 := d4.(func(any) any)(v); res4 := sky_asSkyResult(r4); if res4.Tag == 1 { return r4 }; return SkyOk(fn.(func(any) any)(res1.OkValue).(func(any) any)(res2.OkValue).(func(any) any)(res3.OkValue).(func(any) any)(res4.OkValue)) } } } } } }"), GoDeclRaw("func sky_jsonDecSucceed(v any) any { return func(_ any) any { return SkyOk(v) } }"), GoDeclRaw("func sky_jsonDecFail(msg any) any { return func(_ any) any { return SkyErr(msg) } }"), GoDeclRaw("func sky_jsonDecAndThen(fn any) any { return func(decoder any) any { return func(v any) any { r := decoder.(func(any) any)(v); res := sky_asSkyResult(r); if res.Tag == 1 { return r }; nextDecoder := fn.(func(any) any)(res.OkValue); return nextDecoder.(func(any) any)(v) } } }"), GoDeclRaw("func sky_jsonDecOneOf(decoders any) any { return func(v any) any { for _, d := range sky_asList(decoders) { r := d.(func(any) any)(v); if sky_asSkyResult(r).Tag == 0 { return r } }; return SkyErr(\"none of the decoders matched\") } }"), GoDeclRaw("func sky_jsonDecNullable(decoder any) any { return func(v any) any { if v == nil { return SkyOk(SkyNothing()) }; r := decoder.(func(any) any)(v); res := sky_asSkyResult(r); if res.Tag == 0 { return SkyOk(SkyJust(res.OkValue)) }; return r } }"), GoDeclRaw("func sky_jsonDecAt(path any) any { return func(decoder any) any { return func(v any) any { current := v; for _, key := range sky_asList(path) { m, ok := current.(map[string]any); if !ok { return SkyErr(\"expected object at path\") }; val, exists := m[sky_asString(key)]; if !exists { return SkyErr(\"key not found: \" + sky_asString(key)) }; current = val }; return decoder.(func(any) any)(current) } } }"), GoDeclRaw("func sky_jsonPipeDecode(constructor any) any { return func(v any) any { return SkyOk(constructor) } }"), GoDeclRaw("func sky_jsonPipeRequired(key any) any { return func(decoder any) any { return func(pipeline any) any { return func(v any) any { pr := pipeline.(func(any) any)(v); pres := sky_asSkyResult(pr); if pres.Tag == 1 { return pr }; m, ok := v.(map[string]any); if !ok { return SkyErr(\"expected object\") }; val, exists := m[sky_asString(key)]; if !exists { return SkyErr(\"field '\" + sky_asString(key) + \"' required\") }; fr := decoder.(func(any) any)(val); fres := sky_asSkyResult(fr); if fres.Tag == 1 { return fr }; return SkyOk(pres.OkValue.(func(any) any)(fres.OkValue)) } } } }"), GoDeclRaw("func sky_jsonPipeOptional(key any) any { return func(decoder any) any { return func(def any) any { return func(pipeline any) any { return func(v any) any { pr := pipeline.(func(any) any)(v); pres := sky_asSkyResult(pr); if pres.Tag == 1 { return pr }; m, ok := v.(map[string]any); if !ok { return SkyOk(pres.OkValue.(func(any) any)(def)) }; val, exists := m[sky_asString(key)]; if !exists { return SkyOk(pres.OkValue.(func(any) any)(def)) }; fr := decoder.(func(any) any)(val); fres := sky_asSkyResult(fr); if fres.Tag == 1 { return SkyOk(pres.OkValue.(func(any) any)(def)) }; return SkyOk(pres.OkValue.(func(any) any)(fres.OkValue)) } } } } }"), GoDeclRaw("func sky_cmdNone() any { return []any{} }"), GoDeclRaw("func sky_cmdBatch(cmds any) any { return sky_asList(cmds) }"), GoDeclRaw("func sky_subNone() any { return map[string]any{\"SkyName\": \"SubNone\"} }"), GoDeclRaw("func sky_subBatch(subs any) any { return map[string]any{\"SkyName\": \"SubBatch\", \"V0\": subs} }"), GoDeclRaw("func sky_timeEvery(interval any) any { return func(msg any) any { return map[string]any{\"SkyName\": \"SubTimer\", \"V0\": interval, \"V1\": msg} } }"), GoDeclRaw("func sky_htmlEl(tag any) any { return func(attrs any) any { return func(children any) any { return map[string]any{\"tag\": tag, \"attrs\": sky_flattenAttrs(attrs), \"children\": children, \"text\": \"\"} } } }"), GoDeclRaw("func sky_flattenAttrs(attrs any) []any { var out []any; for _, a := range sky_asList(attrs) { if list, ok := a.([]any); ok { out = append(out, list...) } else { out = append(out, a) } }; return out }"), GoDeclRaw("func sky_htmlVoid(tag any) any { return func(attrs any) any { return map[string]any{\"tag\": tag, \"attrs\": attrs, \"children\": []any{}, \"text\": \"\"} } }"), GoDeclRaw("func sky_htmlDoctype(_ any) any { return \"<!DOCTYPE html>\" }"), GoDeclRaw("func sky_htmlTitleNode(content any) any { return map[string]any{\"tag\": \"title\", \"attrs\": []any{}, \"children\": []any{map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(content)}}, \"text\": \"\"} }"), GoDeclRaw("func sky_htmlText(s any) any { return map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(s)} }"), GoDeclRaw("func sky_htmlRaw(s any) any { return map[string]any{\"tag\": \"__raw__\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(s)} }"), GoDeclRaw("func sky_htmlStyleNode(attrs any) any { return func(css any) any { return map[string]any{\"tag\": \"style\", \"attrs\": attrs, \"children\": []any{map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(css)}}, \"text\": \"\"} } }"), GoDeclRaw("func sky_htmlRender(vnode any) any { return sky_vnodeToHtml(vnode) }"), GoDeclRaw("func sky_vnodeToHtml(v any) string { m := sky_asMap(v); if m == nil { return \"\" }; tag := sky_asString(m[\"tag\"]); if tag == \"\" { return sky_htmlEscapeStr(sky_asString(m[\"text\"])) }; if tag == \"__raw__\" { return sky_asString(m[\"text\"]) }; attrs := sky_renderAttrs(sky_asList(m[\"attrs\"])); children := sky_asList(m[\"children\"]); if tag == \"input\" || tag == \"br\" || tag == \"hr\" || tag == \"img\" || tag == \"meta\" { return \"<\" + tag + attrs + \" />\" }; var sb strings.Builder; sb.WriteString(\"<\" + tag + attrs + \">\"); for _, c := range children { sb.WriteString(sky_vnodeToHtml(c)) }; sb.WriteString(\"</\" + tag + \">\"); return sb.String() }"), GoDeclRaw("func sky_renderAttrs(attrs []any) string { var sb strings.Builder; for _, a := range attrs { t := sky_asTuple2(a); k := sky_asString(t.V0); v := sky_asString(t.V1); if v != \"\" { sb.WriteString(\" \" + k + \"=\\\"\" + sky_htmlEscapeStr(v) + \"\\\"\") } }; return sb.String() }"), GoDeclRaw("func sky_htmlEscapeStr(s string) string { s = strings.ReplaceAll(s, \"&\", \"&amp;\"); s = strings.ReplaceAll(s, \"<\", \"&lt;\"); s = strings.ReplaceAll(s, \">\", \"&gt;\"); s = strings.ReplaceAll(s, \"\\\"\", \"&quot;\"); return s }"), GoDeclRaw("func sky_htmlEscapeHtml(s any) any { return sky_htmlEscapeStr(sky_asString(s)) }"), GoDeclRaw("func sky_htmlEscapeAttr(s any) any { return sky_htmlEscapeStr(sky_asString(s)) }"), GoDeclRaw("func sky_htmlAttrToString(attr any) any { t := sky_asTuple2(attr); return sky_asString(t.V0) + \"=\\\"\" + sky_htmlEscapeStr(sky_asString(t.V1)) + \"\\\"\" }"), GoDeclRaw("func sky_attrSimple(key any) any { return func(v any) any { return SkyTuple2{sky_asString(key), sky_asString(v)} } }"), GoDeclRaw("func sky_attrCustom(key any) any { return func(v any) any { return SkyTuple2{sky_asString(key), sky_asString(v)} } }"), GoDeclRaw("func sky_attrBool(key any) any { return func(v any) any { if sky_asBool(v) { return SkyTuple2{sky_asString(key), sky_asString(key)} }; return SkyTuple2{sky_asString(key), \"\"} } }"), GoDeclRaw("func sky_attrData(key any) any { return func(val any) any { return SkyTuple2{\"data-\" + sky_asString(key), sky_asString(val)} } }"), GoDeclRaw("func sky_evtHandler(evtType any) any { return func(msg any) any { return sky_msgAttrs(sky_asString(evtType), msg) } }"), GoDeclRaw("func sky_msgAttrs(evtType string, msg any) any { name := sky_msgName(msg); args := sky_msgArgs(msg); if len(args) == 0 { return SkyTuple2{\"sky-\" + evtType, name} }; b, _ := encoding_json.Marshal(args); return []any{SkyTuple2{\"sky-\" + evtType, name}, SkyTuple2{\"sky-args\", string(b)}} }"), GoDeclRaw("func sky_msgName(msg any) string { if m, ok := msg.(map[string]any); ok { if name, exists := m[\"SkyName\"]; exists { return sky_asString(name) } }; if fn, ok := msg.(func(any) any); ok { result := fn(nil); if m2, ok2 := result.(map[string]any); ok2 { if name, exists := m2[\"SkyName\"]; exists { return sky_asString(name) } } }; return fmt.Sprintf(\"%v\", msg) }"), GoDeclRaw("func sky_msgArgs(msg any) []any { m, ok := msg.(map[string]any); if !ok { return nil }; var args []any; for i := 0; ; i++ { v, exists := m[fmt.Sprintf(\"V%d\", i)]; if !exists { break }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }"), GoDeclRaw("func sky_cssStylesheet(rules any) any { var sb strings.Builder; for _, r := range sky_asList(rules) { sb.WriteString(sky_asString(r)); sb.WriteString(\"\\n\") }; return sb.String() }"), GoDeclRaw("func sky_cssRule(selector any) any { return func(props any) any { var sb strings.Builder; sb.WriteString(sky_asString(selector)); sb.WriteString(\" { \"); for _, p := range sky_asList(props) { sb.WriteString(sky_asString(p)); sb.WriteString(\"; \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssProp(key any) any { return func(val any) any { return sky_asString(key) + \": \" + sky_asString(val) } }"), GoDeclRaw("func sky_cssPx(n any) any { return fmt.Sprintf(\"%dpx\", sky_asInt(n)) }"), GoDeclRaw("func sky_cssRem(n any) any { return fmt.Sprintf(\"%.2frem\", sky_asFloat(n)) }"), GoDeclRaw("func sky_cssEm(n any) any { return fmt.Sprintf(\"%.2fem\", sky_asFloat(n)) }"), GoDeclRaw("func sky_cssPct(n any) any { return fmt.Sprintf(\"%.0f%%\", sky_asFloat(n)) }"), GoDeclRaw("func sky_cssHex(s any) any { return \"#\" + sky_asString(s) }"), GoDeclRaw("func sky_cssRgb(r any) any { return func(g any) any { return func(b any) any { return fmt.Sprintf(\"rgb(%d, %d, %d)\", sky_asInt(r), sky_asInt(g), sky_asInt(b)) } } }"), GoDeclRaw("func sky_cssStyles(props any) any { var parts []string; for _, p := range sky_asList(props) { parts = append(parts, sky_asString(p)) }; return strings.Join(parts, \"; \") }"), GoDeclRaw("func sky_cssMargin2(v any) any { return func(h any) any { return \"margin: \" + sky_asString(v) + \" \" + sky_asString(h) } }"), GoDeclRaw("func sky_cssPadding2(v any) any { return func(h any) any { return \"padding: \" + sky_asString(v) + \" \" + sky_asString(h) } }"), GoDeclRaw("func sky_cssRgba(r any) any { return func(g any) any { return func(b any) any { return func(a any) any { return fmt.Sprintf(\"rgba(%d, %d, %d, %v)\", sky_asInt(r), sky_asInt(g), sky_asInt(b), sky_asFloat(a)) } } } }"), GoDeclRaw("func sky_cssMedia(query any) any { return func(rules any) any { var sb strings.Builder; sb.WriteString(\"@media \"); sb.WriteString(sky_asString(query)); sb.WriteString(\" { \"); for _, r := range sky_asList(rules) { sb.WriteString(sky_asString(r)); sb.WriteString(\" \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssKeyframes(name any) any { return func(frames any) any { var sb strings.Builder; sb.WriteString(\"@keyframes \"); sb.WriteString(sky_asString(name)); sb.WriteString(\" { \"); for _, f := range sky_asList(frames) { sb.WriteString(sky_asString(f)); sb.WriteString(\" \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssFrame(pctVal any) any { return func(props any) any { var sb strings.Builder; sb.WriteString(fmt.Sprintf(\"%v%%\", sky_asFloat(pctVal))); sb.WriteString(\" { \"); for _, p := range sky_asList(props) { sb.WriteString(sky_asString(p)); sb.WriteString(\"; \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssPropFn(prop any) any { return func(val any) any { return sky_asString(prop) + \": \" + sky_asString(val) } }"), GoDeclRaw("func sky_cssTransitionProp(prop any) any { return func(duration any) any { return func(easing any) any { return fmt.Sprintf(\"transition: %s %vs %s\", sky_asString(prop), sky_asFloat(duration), sky_asString(easing)) } } }"), GoDeclRaw("func sky_cssShadow(x any) any { return func(y any) any { return func(blur any) any { return func(color any) any { return fmt.Sprintf(\"%dpx %dpx %dpx %s\", sky_asInt(x), sky_asInt(y), sky_asInt(blur), sky_asString(color)) } } } }"), GoDeclRaw("func sky_cssMargin4(top any) any { return func(right any) any { return func(bottom any) any { return func(left any) any { return \"margin: \" + sky_asString(top) + \" \" + sky_asString(right) + \" \" + sky_asString(bottom) + \" \" + sky_asString(left) } } } }"), GoDeclRaw("func sky_evt_fileMaxSize(v any) any { return SkyTuple2{\"sky-file-maxsize\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"), GoDeclRaw("func sky_evt_fileMaxWidth(v any) any { return SkyTuple2{\"sky-file-maxwidth\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"), GoDeclRaw("func sky_evt_fileMaxHeight(v any) any { return SkyTuple2{\"sky-file-maxheight\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"), GoDeclRaw("func sky_liveRoute(path any) any { return func(page any) any { return map[string]any{\"path\": path, \"page\": page} } }"), GoDeclRaw("var sky_liveAppImpl = func(config any) any { return config }"), GoDeclRaw("func sky_liveApp(config any) any { return sky_liveAppImpl(config) }")}
+	return []any{GoDeclRaw("var skyVersion = \"dev\""), GoDeclRaw("type SkyADT struct { Tag int; SkyName string; V0, V1, V2, V3, V4 any }"), GoDeclRaw("type SkyTuple2 struct { V0, V1 any }"), GoDeclRaw("type SkyTuple3 struct { V0, V1, V2 any }"), GoDeclRaw("type SkyResult struct { Tag int; SkyName string; OkValue, ErrValue any }"), GoDeclRaw("type SkyMaybe struct { Tag int; SkyName string; JustValue any }"), GoDeclRaw("func SkyOk(v any) SkyResult { return SkyResult{Tag: 0, SkyName: \"Ok\", OkValue: v} }"), GoDeclRaw("func SkyErr(v any) SkyResult { return SkyResult{Tag: 1, SkyName: \"Err\", ErrValue: v} }"), GoDeclRaw("func SkyJust(v any) SkyMaybe { return SkyMaybe{Tag: 0, SkyName: \"Just\", JustValue: v} }"), GoDeclRaw("func SkyNothing() SkyMaybe { return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"), GoDeclRaw("func sky_adtTag(v any) int { if a, ok := v.(SkyADT); ok { return a.Tag }; if m, ok := v.(map[string]any); ok { return sky_asInt(m[\"Tag\"]) }; return -1 }"), GoDeclRaw("func sky_adtField(v any, idx int) any { if a, ok := v.(SkyADT); ok { switch idx { case 0: return a.V0; case 1: return a.V1; case 2: return a.V2; case 3: return a.V3; case 4: return a.V4 }; return nil }; if m, ok := v.(map[string]any); ok { return m[fmt.Sprintf(\"V%d\", idx)] }; return nil }"), GoDeclRaw("func sky_getSkyName(v any) string { if a, ok := v.(SkyADT); ok { return a.SkyName }; if m, ok := v.(map[string]any); ok { if s, ok := m[\"SkyName\"].(string); ok { return s }; return \"\" }; return \"\" }"), GoDeclRaw("func sky_asInt(v any) int { switch x := v.(type) { case int: return x; case float64: return int(x); default: return 0 } }"), GoDeclRaw("func sky_asFloat(v any) float64 { switch x := v.(type) { case float64: return x; case int: return float64(x); default: return 0 } }"), GoDeclRaw("func sky_asString(v any) string { switch x := v.(type) { case string: return x; case int: return strconv.Itoa(x); case bool: if x { return \"true\" }; return \"false\"; case float64: return strconv.FormatFloat(x, 'f', -1, 64); default: return fmt.Sprintf(\"%v\", v) } }"), GoDeclRaw("func sky_asBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"), GoDeclRaw("func sky_asList(v any) []any { if l, ok := v.([]any); ok { return l }; return []any{} }"), GoDeclRaw("func sky_asBytes(v any) []byte { if b, ok := v.([]byte); ok { return b }; if s, ok := v.(string); ok { return []byte(s) }; return nil }"), GoDeclRaw("func sky_asError(v any) error { if e, ok := v.(error); ok { return e }; return fmt.Errorf(\"%v\", v) }"), GoDeclRaw("func sky_asStringSlice(v any) []string { items := sky_asList(v); result := make([]string, len(items)); for i, item := range items { result[i] = sky_asString(item) }; return result }"), GoDeclRaw("func sky_asFixedBytes(v any) []byte { if b, ok := v.([]byte); ok { return b }; return nil }"), GoDeclRaw("func sky_stringToBytes(s any) any { return []byte(sky_asString(s)) }"), GoDeclRaw("func sky_stringFromBytes(b any) any { return string(sky_asBytes(b)) }"), GoDeclRaw("func sky_asMapStringAny(v any) map[string]interface{} { if m, ok := v.(map[string]interface{}); ok { return m }; return sky_asMap(v) }"), GoDeclRaw("func sky_asMapStringString(v any) map[string]string { if m, ok := v.(map[string]string); ok { return m }; result := make(map[string]string); for k, val := range sky_asMap(v) { result[sky_asString(k)] = sky_asString(val) }; return result }"), GoDeclRaw("func sky_asContext(v any) context.Context { if c, ok := v.(context.Context); ok { return c }; return context.Background() }"), GoDeclRaw("func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"), GoDeclRaw("func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"), GoDeclRaw("func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; return ai + bi }"), GoDeclRaw("func sky_numCompare(op string, a, b any) bool { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"<\": return af < bf; case \"<=\": return af <= bf; case \">\": return af > bf; case \">=\": return af >= bf }; return false }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"<\": return ai < bi; case \"<=\": return ai <= bi; case \">\": return ai > bi; case \">=\": return ai >= bi }; return false }"), GoDeclRaw("func sky_asHttpHandler(v any) func(net_http.ResponseWriter, *net_http.Request) { if fn2, ok := v.(func(any, any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { fn2(w, r) } }; if fn, ok := v.(func(any) any); ok { return func(w net_http.ResponseWriter, r *net_http.Request) { sky_call(fn(w), r) } }; panic(fmt.Sprintf(\"sky_asHttpHandler: cannot convert %T\", v)) }"), GoDeclRaw("func sky_callZeroOrNil(f any) any { if fn, ok := f.(func() any); ok { return fn() }; if fn, ok := f.(func(any) any); ok { return fn(nil) }; return f }"), GoDeclRaw("func sky_asUint(v any) uint { return uint(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint8(v any) uint8 { return uint8(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint16(v any) uint16 { return uint16(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint32(v any) uint32 { return uint32(sky_asInt(v)) }"), GoDeclRaw("func sky_asUint64(v any) uint64 { return uint64(sky_asInt(v)) }"), GoDeclRaw("func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; if a, ok := v.(SkyADT); ok { return map[string]any{\"Tag\": a.Tag, \"SkyName\": a.SkyName, \"V0\": a.V0, \"V1\": a.V1, \"V2\": a.V2, \"V3\": a.V3, \"V4\": a.V4} }; return map[string]any{} }"), GoDeclRaw("func sky_equal(a, b any) bool { switch av := a.(type) { case string: if bv, ok := b.(string); ok { return av == bv }; case int: if bv, ok := b.(int); ok { return av == bv }; case bool: if bv, ok := b.(bool); ok { return av == bv }; case float64: if bv, ok := b.(float64); ok { return av == bv } }; return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"), GoDeclRaw("func sky_isAscii(s string) bool { for i := 0; i < len(s); i++ { if s[i] > 127 { return false } }; return true }"), GoDeclRaw("func sky_concat(a, b any) any { if la, ok := a.([]any); ok { if lb, ok := b.([]any); ok { return append(la, lb...) } }; return sky_asString(a) + sky_asString(b) }"), GoDeclRaw("func sky_stringFromInt(v any) any { return strconv.Itoa(sky_asInt(v)) }"), GoDeclRaw("func sky_stringFromFloat(v any) any { return strconv.FormatFloat(sky_asFloat(v), 'f', -1, 64) }"), GoDeclRaw("func sky_stringToUpper(v any) any { return strings.ToUpper(sky_asString(v)) }"), GoDeclRaw("func sky_stringToLower(v any) any { return strings.ToLower(sky_asString(v)) }"), GoDeclRaw("func sky_stringLength(v any) any { s := sky_asString(v); if sky_isAscii(s) { return len(s) }; return len([]rune(s)) }"), GoDeclRaw("func sky_stringTrim(v any) any { return strings.TrimSpace(sky_asString(v)) }"), GoDeclRaw("func sky_stringContains(sub any) any { return func(s any) any { return strings.Contains(sky_asString(s), sky_asString(sub)) } }"), GoDeclRaw("func sky_stringIndexOf(needle any) any { return func(haystack any) any { return strings.Index(sky_asString(haystack), sky_asString(needle)) } }"), GoDeclRaw("func sky_jsonExtractBracketed(s any) any { str := sky_asString(s); depth := 0; inStr := false; esc := false; for i := 0; i < len(str); i++ { c := str[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }; if c == '\"' { inStr = !inStr; continue }; if inStr { continue }; if c == '[' || c == '{' { depth++ } else if c == ']' || c == '}' { depth--; if depth == 0 { return str[:i+1] } } }; return str }"), GoDeclRaw("func sky_jsonSplitArray(s any) any { str := strings.TrimSpace(sky_asString(s)); if len(str) < 2 { return []any{} }; inner := strings.TrimSpace(str[1:len(str)-1]); if len(inner) == 0 { return []any{} }; var result []any; depth := 0; start := 0; inStr := false; esc := false; for i := 0; i < len(inner); i++ { c := inner[i]; if esc { esc = false; continue }; if c == '\\\\' && inStr { esc = true; continue }; if c == '\"' { inStr = !inStr; continue }; if inStr { continue }; if c == '{' || c == '[' { depth++ } else if c == '}' || c == ']' { depth-- } else if c == ',' && depth == 0 { elem := strings.TrimSpace(inner[start:i]); if len(elem) > 0 { result = append(result, elem) }; start = i + 1 } }; last := strings.TrimSpace(inner[start:]); if len(last) > 0 { result = append(result, last) }; if result == nil { return []any{} }; return result }"), GoDeclRaw("func sky_filterSkyiByUsage(skyiSource any) any { return func(alias any) any { return func(sourceText any) any { src := sky_asString(skyiSource); al := sky_asString(alias); srcTxt := sky_asString(sourceText); lines := strings.Split(src, \"\\n\"); var header, types, usedFuncs []string; inHeader := true; var curBlock []string; for _, line := range lines { if inHeader { if strings.HasPrefix(line, \"module \") || strings.HasPrefix(line, \"import \") || strings.HasPrefix(line, \"foreign \") || strings.TrimSpace(line) == \"\" { header = append(header, line); continue } else { inHeader = false } }; if strings.HasPrefix(line, \"type \") { if len(curBlock) > 0 { name := strings.SplitN(curBlock[0], \" \", 2)[0]; if strings.Contains(srcTxt, al+\".\"+name) { usedFuncs = append(usedFuncs, curBlock...) }; curBlock = nil }; types = append(types, line); continue }; if strings.Contains(line, \" : \") && !strings.HasPrefix(line, \" \") && strings.TrimSpace(line) != \"\" && !strings.HasPrefix(line, \"type \") { if len(curBlock) > 0 { name := strings.SplitN(curBlock[0], \" \", 2)[0]; if strings.Contains(srcTxt, al+\".\"+name) { usedFuncs = append(usedFuncs, curBlock...) }; curBlock = nil }; curBlock = append(curBlock, line) } else if len(curBlock) > 0 { curBlock = append(curBlock, line) } }; if len(curBlock) > 0 { name := strings.SplitN(curBlock[0], \" \", 2)[0]; if strings.Contains(srcTxt, al+\".\"+name) { usedFuncs = append(usedFuncs, curBlock...) } }; result := append(header, \"\"); result = append(result, types...); result = append(result, \"\"); result = append(result, usedFuncs...); return strings.Join(result, \"\\n\") } } }"), GoDeclRaw("func sky_stringStartsWith(prefix any) any { return func(s any) any { return strings.HasPrefix(sky_asString(s), sky_asString(prefix)) } }"), GoDeclRaw("func sky_stringEndsWith(suffix any) any { return func(s any) any { return strings.HasSuffix(sky_asString(s), sky_asString(suffix)) } }"), GoDeclRaw("func sky_stringSplit(sep any) any { return func(s any) any { parts := strings.Split(sky_asString(s), sky_asString(sep)); result := make([]any, len(parts)); for i, p := range parts { result[i] = p }; return result } }"), GoDeclRaw("func sky_stringReplace(old any) any { return func(new_ any) any { return func(s any) any { return strings.ReplaceAll(sky_asString(s), sky_asString(old), sky_asString(new_)) } } }"), GoDeclRaw("func sky_stringToInt(s any) any { n, err := strconv.Atoi(strings.TrimSpace(sky_asString(s))); if err != nil { return SkyNothing() }; return SkyJust(n) }"), GoDeclRaw("func sky_stringToFloat(s any) any { f, err := strconv.ParseFloat(strings.TrimSpace(sky_asString(s)), 64); if err != nil { return SkyNothing() }; return SkyJust(f) }"), GoDeclRaw("func sky_stringAppend(a any) any { return func(b any) any { return sky_asString(a) + sky_asString(b) } }"), GoDeclRaw("func sky_stringIsEmpty(v any) any { return sky_asString(v) == \"\" }"), GoDeclRaw("func sky_stringSlice(start any) any { return func(end any) any { return func(s any) any { str := sky_asString(s); a := sky_asInt(start); b := sky_asInt(end); if a < 0 { a = 0 }; if sky_isAscii(str) { if b > len(str) { b = len(str) }; if a > b { return \"\" }; return str[a:b] }; runes := []rune(str); if b > len(runes) { b = len(runes) }; if a > b { return \"\" }; return string(runes[a:b]) } } }"), GoDeclRaw("func sky_stringJoin(sep any) any { return func(list any) any { parts := sky_asList(list); ss := make([]string, len(parts)); for i, p := range parts { ss[i] = sky_asString(p) }; return strings.Join(ss, sky_asString(sep)) } }"), GoDeclRaw("func sky_listMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(item) }; return result } }"), GoDeclRaw("func sky_listFilter(fn any) any { return func(list any) any { items := sky_asList(list); var result []any; for _, item := range items { if sky_asBool(fn.(func(any) any)(item)) { result = append(result, item) } }; return result } }"), GoDeclRaw("func sky_listFoldl(fn any) any { return func(init any) any { return func(list any) any { acc := init; for _, item := range sky_asList(list) { acc = fn.(func(any) any)(item).(func(any) any)(acc) }; return acc } } }"), GoDeclRaw("func sky_listFoldr(fn any) any { return func(init any) any { return func(list any) any { items := sky_asList(list); acc := init; for i := len(items) - 1; i >= 0; i-- { acc = fn.(func(any) any)(items[i]).(func(any) any)(acc) }; return acc } } }"), GoDeclRaw("func sky_listLength(list any) any { return len(sky_asList(list)) }"), GoDeclRaw("func sky_listHead(list any) any { items := sky_asList(list); if len(items) > 0 { return SkyJust(items[0]) }; return SkyNothing() }"), GoDeclRaw("func sky_listReverse(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[len(items)-1-i] = item }; return result }"), GoDeclRaw("func sky_listIsEmpty(list any) any { return len(sky_asList(list)) == 0 }"), GoDeclRaw("func sky_listAppend(a any) any { return func(b any) any { return append(sky_asList(a), sky_asList(b)...) } }"), GoDeclRaw("func sky_listConcatMap(fn any) any { return func(list any) any { var result []any; for _, item := range sky_asList(list) { result = append(result, sky_asList(fn.(func(any) any)(item))...) }; if result == nil { return []any{} }; return result } }"), GoDeclRaw("func sky_listConcat(lists any) any { var result []any; for _, l := range sky_asList(lists) { result = append(result, sky_asList(l)...) }; if result == nil { return []any{} }; return result }"), GoDeclRaw("func sky_listFilterMap(fn any) any { return func(list any) any { var result []any; for _, item := range sky_asList(list) { r := fn.(func(any) any)(item); if m, ok := r.(SkyMaybe); ok && m.Tag == 0 { result = append(result, m.JustValue) } }; if result == nil { return []any{} }; return result } }"), GoDeclRaw("func sky_listIndexedMap(fn any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = fn.(func(any) any)(i).(func(any) any)(item) }; return result } }"), GoDeclRaw("func sky_listDrop(n any) any { return func(list any) any { items := sky_asList(list); c := sky_asInt(n); if c >= len(items) { return []any{} }; return items[c:] } }"), GoDeclRaw("func sky_listMember(item any) any { return func(list any) any { for _, x := range sky_asList(list) { if sky_equal(x, item) { return true } }; return false } }"), GoDeclRaw("func sky_recordUpdate(base any, updates any) any { m := sky_asMap(base); result := make(map[string]any); for k, v := range m { result[k] = v }; for k, v := range sky_asMap(updates) { result[k] = v }; return result }"), GoDeclRaw("func sky_println(args ...any) any { ss := make([]any, len(args)); for i, a := range args { ss[i] = sky_asString(a) }; fmt.Println(ss...); return struct{}{} }"), GoDeclRaw("func sky_exit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"), GoDeclRaw("func sky_asSkyResult(v any) SkyResult { if r, ok := v.(SkyResult); ok { return r }; return SkyResult{} }"), GoDeclRaw("func sky_asSkyMaybe(v any) SkyMaybe { if m, ok := v.(SkyMaybe); ok { return m }; return SkyMaybe{Tag: 1, SkyName: \"Nothing\"} }"), GoDeclRaw("func sky_asTuple2(v any) SkyTuple2 { if t, ok := v.(SkyTuple2); ok { return t }; return SkyTuple2{} }"), GoDeclRaw("func sky_asTuple3(v any) SkyTuple3 { if t, ok := v.(SkyTuple3); ok { return t }; return SkyTuple3{} }"), GoDeclRaw("func sky_not(v any) any { return !sky_asBool(v) }"), GoDeclRaw("func sky_fileRead(path any) any { data, err := os.ReadFile(sky_asString(path)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(data)) }"), GoDeclRaw("func sky_fileWrite(path any) any { return func(content any) any { err := os.WriteFile(sky_asString(path), []byte(sky_asString(content)), 0644); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"), GoDeclRaw("func sky_fileMkdirAll(path any) any { err := os.MkdirAll(sky_asString(path), 0755); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) }"), GoDeclRaw("func sky_processRun(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; out, err := exec.Command(sky_asString(cmd), cmdArgs...).CombinedOutput(); if err != nil { return SkyErr(err.Error() + \": \" + string(out)) }; return SkyOk(string(out)) } }"), GoDeclRaw("func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"), GoDeclRaw("func sky_processGetArgs(u any) any { args := make([]any, len(os.Args)); for i, a := range os.Args { args[i] = a }; return args }"), GoDeclRaw("func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"), GoDeclRaw("func sky_refNew(v any) any { return &SkyRef{Value: v} }"), GoDeclRaw("type SkyRef struct { Value any }"), GoDeclRaw("func sky_refGet(r any) any { if ref, ok := r.(*SkyRef); ok { return ref.Value }; panic(\"sky_refGet: not a Ref\") }"), GoDeclRaw("func sky_refSet(v any) any { return func(r any) any { if ref, ok := r.(*SkyRef); ok { ref.Value = v; return struct{}{} }; panic(\"sky_refSet: not a Ref\") } }"), GoDeclRaw("func sky_dictEmpty() any { return map[string]any{} }"), GoDeclRaw("func sky_dictInsert(k any) any { return func(v any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)+1); for key, val := range m { result[key] = val }; result[sky_asString(k)] = v; return result } } }"), GoDeclRaw("func sky_dictGet(k any) any { return func(d any) any { m := sky_asMap(d); if v, ok := m[sky_asString(k)]; ok { return SkyJust(v) }; return SkyNothing() } }"), GoDeclRaw("func sky_dictKeys(d any) any { m := sky_asMap(d); keys := make([]any, 0, len(m)); for k := range m { keys = append(keys, k) }; return keys }"), GoDeclRaw("func sky_dictValues(d any) any { m := sky_asMap(d); vals := make([]any, 0, len(m)); for _, v := range m { vals = append(vals, v) }; return vals }"), GoDeclRaw("func sky_dictToList(d any) any { m := sky_asMap(d); pairs := make([]any, 0, len(m)); for k, v := range m { pairs = append(pairs, SkyTuple2{k, v}) }; return pairs }"), GoDeclRaw("func sky_dictFromList(list any) any { result := make(map[string]any); for _, item := range sky_asList(list) { t := sky_asTuple2(item); result[sky_asString(t.V0)] = t.V1 }; return result }"), GoDeclRaw("func sky_dictMap(fn any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)); for k, v := range m { result[k] = fn.(func(any) any)(k).(func(any) any)(v) }; return result } }"), GoDeclRaw("func sky_dictFoldl(fn any) any { return func(init any) any { return func(d any) any { acc := init; for k, v := range sky_asMap(d) { acc = fn.(func(any) any)(k).(func(any) any)(v).(func(any) any)(acc) }; return acc } } }"), GoDeclRaw("func sky_dictUnion(a any) any { return func(b any) any { ma, mb := sky_asMap(a), sky_asMap(b); result := make(map[string]any, len(ma)+len(mb)); for k, v := range mb { result[k] = v }; for k, v := range ma { result[k] = v }; return result } }"), GoDeclRaw("func sky_dictRemove(k any) any { return func(d any) any { m := sky_asMap(d); result := make(map[string]any, len(m)); key := sky_asString(k); for k2, v := range m { if k2 != key { result[k2] = v } }; return result } }"), GoDeclRaw("func sky_dictMember(k any) any { return func(d any) any { _, ok := sky_asMap(d)[sky_asString(k)]; return ok } }"), GoDeclRaw("func sky_setEmpty() any { return map[string]bool{} }"), GoDeclRaw("func sky_setSingleton(v any) any { return map[string]bool{sky_asString(v): true} }"), GoDeclRaw("func sky_setInsert(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)+1); for k := range m { result[k] = true }; result[sky_asString(v)] = true; return result } }"), GoDeclRaw("func sky_setMember(v any) any { return func(s any) any { return s.(map[string]bool)[sky_asString(v)] } }"), GoDeclRaw("func sky_setUnion(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool, len(ma)+len(mb)); for k := range mb { result[k] = true }; for k := range ma { result[k] = true }; return result } }"), GoDeclRaw("func sky_setDiff(a any) any { return func(b any) any { ma, mb := a.(map[string]bool), b.(map[string]bool); result := make(map[string]bool); for k := range ma { if !mb[k] { result[k] = true } }; return result } }"), GoDeclRaw("func sky_setToList(s any) any { m := s.(map[string]bool); result := make([]any, 0, len(m)); for k := range m { result = append(result, k) }; return result }"), GoDeclRaw("func sky_setFromList(list any) any { result := make(map[string]bool); for _, item := range sky_asList(list) { result[sky_asString(item)] = true }; return result }"), GoDeclRaw("func sky_setIsEmpty(s any) any { return len(s.(map[string]bool)) == 0 }"), GoDeclRaw("func sky_setRemove(v any) any { return func(s any) any { m := s.(map[string]bool); result := make(map[string]bool, len(m)); key := sky_asString(v); for k := range m { if k != key { result[k] = true } }; return result } }"), GoDeclRaw("func sky_readLine(u any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; line, err := stdinReader.ReadString('\\n'); if err != nil && len(line) == 0 { return SkyNothing() }; return SkyJust(strings.TrimRight(line, \"\\r\\n\")) }"), GoDeclRaw("func sky_readBytes(n any) any { if stdinReader == nil { stdinReader = bufio.NewReader(os.Stdin) }; count := sky_asInt(n); buf := make([]byte, count); total := 0; for total < count { nr, err := stdinReader.Read(buf[total:]); total += nr; if err != nil { break } }; if total == 0 { return SkyNothing() }; return SkyJust(string(buf[:total])) }"), GoDeclRaw("func sky_writeStdout(s any) any { fmt.Print(sky_asString(s)); return struct{}{} }"), GoDeclRaw("func sky_readAllStdin(u any) any { b, err := io.ReadAll(os.Stdin); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }"), GoDeclRaw("func sky_writeStderr(s any) any { fmt.Fprint(os.Stderr, sky_asString(s)); return struct{}{} }"), GoDeclRaw("var stdinReader *bufio.Reader"), GoDeclRaw("func sky_charIsUpper(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'A' && r <= 'Z' }; return false }"), GoDeclRaw("func sky_charIsLower(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= 'a' && r <= 'z' }; return false }"), GoDeclRaw("func sky_charIsDigit(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return r >= '0' && r <= '9' }; return false }"), GoDeclRaw("func sky_charIsAlpha(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') }; return false }"), GoDeclRaw("func sky_charIsAlphaNum(c any) any { s := sky_asString(c); if len(s) > 0 { r := rune(s[0]); return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') }; return false }"), GoDeclRaw("func sky_charToUpper(c any) any { return strings.ToUpper(sky_asString(c)) }"), GoDeclRaw("func sky_charToLower(c any) any { return strings.ToLower(sky_asString(c)) }"), GoDeclRaw("func sky_stringFromChar(c any) any { return sky_asString(c) }"), GoDeclRaw("func sky_stringToList(s any) any { str := sky_asString(s); result := make([]any, len(str)); for i, r := range str { result[i] = string(r) }; return result }"), GoDeclRaw("func sky_escapeGoString(s any) any { q := strconv.Quote(sky_asString(s)); return q[1:len(q)-1] }"), GoDeclRaw("func sky_goQuote(s any) any { return strconv.Quote(sky_asString(s)) }"), GoDeclRaw("func sky_fst(t any) any { return sky_asTuple2(t).V0 }"), GoDeclRaw("func sky_snd(t any) any { return sky_asTuple2(t).V1 }"), GoDeclRaw("func sky_errorToString(e any) any { return sky_asString(e) }"), GoDeclRaw("func sky_identity(v any) any { return v }"), GoDeclRaw("func sky_always(a any) any { return func(b any) any { return a } }"), GoDeclRaw("func sky_js(v any) any { if s, ok := v.(string); ok && s == \"nil\" { return nil }; return v }"), GoDeclRaw("func sky_call(f any, arg any) any { if fn, ok := f.(func(any) any); ok { return fn(arg) }; if s, ok := f.(string); ok { if args, ok := arg.([]any); ok { parts := make([]string, len(args)); for i, a := range args { parts[i] = sky_asString(a) }; return s + \"(\" + strings.Join(parts, \", \") + \")\" }; return s + \" \" + sky_asString(arg) }; panic(fmt.Sprintf(\"sky_call: cannot call %T\", f)) }"), GoDeclRaw("func sky_call2(f any, a any, b any) any { return sky_call(sky_call(f, a), b) }"), GoDeclRaw("func sky_call3(f any, a any, b any, c any) any { return sky_call(sky_call(sky_call(f, a), b), c) }"), GoDeclRaw("func sky_taskSucceed(value any) any { return func() any { return SkyOk(value) } }"), GoDeclRaw("func sky_taskFail(err any) any { return func() any { return SkyErr(err) } }"), GoDeclRaw("func sky_taskMap(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { return SkyOk(fn.(func(any) any)(sky_asSkyResult(r).OkValue)) }; return r } } }"), GoDeclRaw("func sky_taskAndThen(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { next := fn.(func(any) any)(sky_asSkyResult(r).OkValue); return sky_runTask(next) }; return r } } }"), GoDeclRaw("func sky_taskPerform(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok { if sr.Tag == 0 { return sr.OkValue }; return r }; return r }"), GoDeclRaw("func sky_taskRun(task any) any { r := sky_runTask(task); return r }"), GoDeclRaw("func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"), GoDeclRaw("func sky_taskLazy(f any) any { return func() any { return SkyOk(sky_call(f, struct{}{})) } }"), GoDeclRaw("func sky_runTask(task any) any { if t, ok := task.(func() any); ok { var result any; func() { defer func() { if r := recover(); r != nil { result = SkyErr(fmt.Sprintf(\"panic: %v\", r)) } }(); result = t() }(); return result }; if r, ok := task.(SkyResult); ok { return r }; return SkyOk(task) }"), GoDeclRaw("func sky_runMainTask(result any) { if _, ok := result.(func() any); ok { r := sky_runTask(result); if sky_asSkyResult(r).Tag == 1 { fmt.Fprintln(os.Stderr, sky_asSkyResult(r).ErrValue); os.Exit(1) } } }"), GoDeclRaw("func sky_serverListen(port any) any { return func(routes any) any { return func() any { mux := sky_buildMux(sky_asList(routes), \"\"); p := sky_asInt(port); if ep := os.Getenv(\"SKY_PORT\"); ep != \"\" { if pv, err := strconv.Atoi(ep); err == nil { p = pv } }; if ep := os.Getenv(\"PORT\"); ep != \"\" { if pv, err := strconv.Atoi(ep); err == nil { p = pv } }; addr := fmt.Sprintf(\":%d\", p); fmt.Fprintf(os.Stderr, \"Sky server listening on %s\\n\", addr); err := net_http.ListenAndServe(addr, mux); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } } }"), GoDeclRaw("func sky_serverGet(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"GET\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverPost(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"POST\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverPut(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"PUT\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverDelete(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"DELETE\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverAny(pattern any) any { return func(handler any) any { return map[string]any{\"SkyName\": \"RouteEntry\", \"V0\": \"*\", \"V1\": pattern, \"V2\": handler} } }"), GoDeclRaw("func sky_serverGroup(prefix any) any { return func(routes any) any { return map[string]any{\"SkyName\": \"RouteGroup\", \"V0\": prefix, \"V1\": routes} } }"), GoDeclRaw("func sky_serverStatic(urlPrefix any) any { return func(dir any) any { return map[string]any{\"SkyName\": \"RouteStatic\", \"V0\": urlPrefix, \"V1\": dir} } }"), GoDeclRaw("func sky_serverText(body any) any { return map[string]any{\"status\": 200, \"body\": body, \"headers\": []any{SkyTuple2{\"Content-Type\", \"text/plain; charset=utf-8\"}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverHtml(body any) any { return map[string]any{\"status\": 200, \"body\": body, \"headers\": []any{SkyTuple2{\"Content-Type\", \"text/html; charset=utf-8\"}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverJson(body any) any { return map[string]any{\"status\": 200, \"body\": body, \"headers\": []any{SkyTuple2{\"Content-Type\", \"application/json\"}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverRedirect(url any) any { return map[string]any{\"status\": 302, \"body\": \"\", \"headers\": []any{SkyTuple2{\"Location\", url}}, \"cookies\": []any{}} }"), GoDeclRaw("func sky_serverWithStatus(status any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; result[\"status\"] = status; return result } }"), GoDeclRaw("func sky_serverWithHeader(key any) any { return func(val any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; hdrs := sky_asList(m[\"headers\"]); result[\"headers\"] = append(hdrs, SkyTuple2{key, val}); return result } } }"), GoDeclRaw("func sky_serverWithCookie(name any) any { return func(value any) any { return func(options any) any { return func(resp any) any { m := sky_asMap(resp); result := make(map[string]any); for k, v := range m { result[k] = v }; cookies := sky_asList(m[\"cookies\"]); cookie := map[string]any{\"name\": name, \"value\": value, \"path\": \"/\", \"maxAge\": 86400, \"httpOnly\": true, \"secure\": false}; result[\"cookies\"] = append(cookies, cookie); return result } } } }"), GoDeclRaw("func sky_serverParam(name any) any { return func(req any) any { m := sky_asMap(req); path := sky_asString(m[\"path\"]); params := sky_asList(m[\"params\"]); for _, p := range params { t := sky_asTuple2(p); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return sky_extractPathParam(sky_asString(name), path) } }"), GoDeclRaw("func sky_extractPathParam(name string, path string) any { return SkyNothing() }"), GoDeclRaw("func sky_serverQueryParam(name any) any { return func(req any) any { m := sky_asMap(req); query := sky_asList(m[\"query\"]); for _, p := range query { t := sky_asTuple2(p); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return SkyNothing() } }"), GoDeclRaw("func sky_serverHeader(name any) any { return func(req any) any { m := sky_asMap(req); headers := sky_asList(m[\"headers\"]); for _, h := range headers { t := sky_asTuple2(h); if strings.EqualFold(sky_asString(t.V0), sky_asString(name)) { return SkyJust(t.V1) } }; return SkyNothing() } }"), GoDeclRaw("func sky_serverGetCookie(name any) any { return func(req any) any { m := sky_asMap(req); cookies := sky_asList(m[\"cookies\"]); for _, c := range cookies { t := sky_asTuple2(c); if sky_asString(t.V0) == sky_asString(name) { return SkyJust(t.V1) } }; return SkyNothing() } }"), GoDeclRaw("func sky_serverCookie(name any) any { return func(val any) any { return map[string]any{\"name\": name, \"value\": val, \"path\": \"/\", \"maxAge\": 86400, \"httpOnly\": true, \"secure\": false, \"sameSite\": \"lax\"} } }"), GoDeclRaw("func sky_serverBody(req any) any { m := sky_asMap(req); return m[\"body\"] }"), GoDeclRaw("func sky_serverMethod(req any) any { m := sky_asMap(req); return m[\"method\"] }"), GoDeclRaw("func sky_serverFormValue(name any) any { return func(req any) any { m := sky_asMap(req); n := sky_asString(name); fv := sky_asList(m[\"formValues\"]); for _, f := range fv { t := sky_asTuple2(f); if sky_asString(t.V0) == n { return sky_asString(t.V1) } }; query := sky_asList(m[\"query\"]); for _, q := range query { t := sky_asTuple2(q); if sky_asString(t.V0) == n { return sky_asString(t.V1) } }; return \"\" } }"), GoDeclRaw("func sky_buildMux(routes []any, prefix string) *net_http.ServeMux { mux := net_http.NewServeMux(); for _, r := range routes { rm := sky_asMap(r); if rm == nil { continue }; skyName, _ := rm[\"SkyName\"].(string); switch skyName { case \"RouteEntry\": method := sky_asString(rm[\"V0\"]); pattern := prefix + sky_asString(rm[\"V1\"]); handler := rm[\"V2\"]; muxPattern := pattern; if method != \"*\" { muxPattern = method + \" \" + pattern }; mux.HandleFunc(muxPattern, sky_makeHandler(handler)); case \"RouteGroup\": groupPrefix := prefix + sky_asString(rm[\"V0\"]); groupRoutes := sky_asList(rm[\"V1\"]); subMux := sky_buildMux(groupRoutes, groupPrefix); mux.Handle(groupPrefix+\"/\", subMux); case \"RouteStatic\": urlPrefix := prefix + sky_asString(rm[\"V0\"]); dirPath := sky_asString(rm[\"V1\"]); fs := net_http.FileServer(net_http.Dir(dirPath)); mux.Handle(urlPrefix+\"/\", net_http.StripPrefix(urlPrefix, fs)) } }; return mux }"), GoDeclRaw("func sky_makeHandler(handler any) func(net_http.ResponseWriter, *net_http.Request) { return func(w net_http.ResponseWriter, r *net_http.Request) { defer func() { if rec := recover(); rec != nil { net_http.Error(w, fmt.Sprintf(\"Internal Server Error: %v\", rec), 500); fmt.Fprintf(os.Stderr, \"%s %s 500 (panic: %v)\\n\", r.Method, r.URL.Path, rec) } }(); skyReq := sky_buildRequest(r); var taskResult any; if fn, ok := handler.(func(any) any); ok { taskResult = fn(skyReq) } else if fn2, ok := handler.(func(any, any) any); ok { taskResult = fn2(nil, skyReq) } else { net_http.Error(w, \"Invalid handler: \" + fmt.Sprintf(\"%T\", handler), 500); return }; var skyResp any; if thunk, ok := taskResult.(func() any); ok { skyResp = thunk() } else if result, ok := taskResult.(SkyResult); ok { skyResp = result } else { skyResp = SkyOk(taskResult) }; result, ok2 := skyResp.(SkyResult); if !ok2 { sky_writeResponse(w, sky_asMap(skyResp)); return }; if result.Tag == 1 { net_http.Error(w, sky_asString(result.ErrValue), 500); return }; sky_writeResponse(w, sky_asMap(result.OkValue)) } }"), GoDeclRaw("func sky_buildRequest(r *net_http.Request) map[string]any { body, _ := io.ReadAll(r.Body); r.Body = io.NopCloser(strings.NewReader(string(body))); _ = r.ParseForm(); formValues := make([]any, 0); for k, vs := range r.Form { for _, v := range vs { formValues = append(formValues, SkyTuple2{k, v}) } }; headers := make([]any, 0); for k, vs := range r.Header { for _, v := range vs { headers = append(headers, SkyTuple2{k, v}) } }; cookies := make([]any, 0); for _, c := range r.Cookies() { cookies = append(cookies, SkyTuple2{c.Name, c.Value}) }; query := make([]any, 0); for k, vs := range r.URL.Query() { for _, v := range vs { query = append(query, SkyTuple2{k, v}) } }; params := make([]any, 0); protocol := \"http\"; if r.TLS != nil { protocol = \"https\" }; return map[string]any{\"method\": r.Method, \"path\": r.URL.Path, \"body\": string(body), \"headers\": headers, \"params\": params, \"query\": query, \"cookies\": cookies, \"formValues\": formValues, \"remoteAddr\": r.RemoteAddr, \"host\": r.Host, \"protocol\": protocol} }"), GoDeclRaw("func sky_writeResponse(w net_http.ResponseWriter, resp map[string]any) { if resp == nil { w.WriteHeader(200); return }; if cookies, ok := resp[\"cookies\"].([]any); ok { for _, c := range cookies { cm := sky_asMap(c); if cm == nil { continue }; net_http.SetCookie(w, &net_http.Cookie{Name: sky_asString(cm[\"name\"]), Value: sky_asString(cm[\"value\"]), Path: sky_asString(cm[\"path\"]), MaxAge: sky_asInt(cm[\"maxAge\"]), HttpOnly: sky_asBool(cm[\"httpOnly\"]), Secure: sky_asBool(cm[\"secure\"])}) } }; if headers, ok := resp[\"headers\"].([]any); ok { for _, h := range headers { if t, ok := h.(SkyTuple2); ok { w.Header().Set(sky_asString(t.V0), sky_asString(t.V1)) } } }; status := sky_asInt(resp[\"status\"]); if status == 0 { status = 200 }; w.WriteHeader(status); fmt.Fprint(w, sky_asString(resp[\"body\"])) }"), GoDeclRaw("func sky_resultMap(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return SkyOk(fn.(func(any) any)(res.OkValue)) }; return r } }"), GoDeclRaw("func sky_resultWithDefault(def any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return res.OkValue }; return def } }"), GoDeclRaw("func sky_resultAndThen(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return fn.(func(any) any)(res.OkValue) }; return r } }"), GoDeclRaw("func sky_resultMapError(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 1 { return SkyErr(fn.(func(any) any)(res.ErrValue)) }; return r } }"), GoDeclRaw("func sky_maybeWithDefault(def any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return mb.JustValue }; return def } }"), GoDeclRaw("func sky_maybeMap(fn any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return SkyJust(fn.(func(any) any)(mb.JustValue)) }; return m } }"), GoDeclRaw("func sky_maybeAndThen(fn any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return fn.(func(any) any)(mb.JustValue) }; return m } }"), GoDeclRaw("func sky_listTake(n any) any { return func(list any) any { items := sky_asList(list); c := sky_asInt(n); if c >= len(items) { return list }; return items[:c] } }"), GoDeclRaw("func sky_listSort(list any) any { items := sky_asList(list); result := make([]any, len(items)); copy(result, items); sort.Slice(result, func(i, j int) bool { return fmt.Sprintf(\"%v\", result[i]) < fmt.Sprintf(\"%v\", result[j]) }); return result }"), GoDeclRaw("func sky_listSortBy(fn any) any { return func(list any) any { f := fn.(func(any) any); items := sky_asList(list); result := make([]any, len(items)); copy(result, items); sort.Slice(result, func(i, j int) bool { return fmt.Sprintf(\"%v\", f(result[i])) < fmt.Sprintf(\"%v\", f(result[j])) }); return result } }"), GoDeclRaw("func sky_clamp(low any) any { return func(high any) any { return func(val any) any { v := sky_asInt(val); lo := sky_asInt(low); hi := sky_asInt(high); if v < lo { return lo }; if v > hi { return hi }; return v } } }"), GoDeclRaw("func sky_listZip(a any) any { return func(b any) any { la, lb := sky_asList(a), sky_asList(b); minLen := len(la); if len(lb) < minLen { minLen = len(lb) }; result := make([]any, minLen); for i := 0; i < minLen; i++ { result[i] = SkyTuple2{la[i], lb[i]} }; return result } }"), GoDeclRaw("func sky_listRange(from any) any { return func(to any) any { f, t := sky_asInt(from), sky_asInt(to); result := make([]any, 0); for i := f; i <= t; i++ { result = append(result, i) }; return result } }"), GoDeclRaw("func sky_listFind(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return SkyJust(item) } }; return SkyNothing() } }"), GoDeclRaw("func sky_listMinimum(list any) any { items := sky_asList(list); if len(items) == 0 { return SkyNothing() }; min := sky_asInt(items[0]); for _, v := range items[1:] { if sky_asInt(v) < min { min = sky_asInt(v) } }; return SkyJust(min) }"), GoDeclRaw("func sky_listAny(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if sky_asBool(fn.(func(any) any)(item)) { return true } }; return false } }"), GoDeclRaw("func sky_listAll(fn any) any { return func(list any) any { for _, item := range sky_asList(list) { if !sky_asBool(fn.(func(any) any)(item)) { return false } }; return true } }"), GoDeclRaw("func sky_listSingleton(v any) any { return []any{v} }"), GoDeclRaw("func sky_listIntersperse(sep any) any { return func(list any) any { items := sky_asList(list); if len(items) <= 1 { return list }; result := make([]any, 0, len(items)*2-1); for i, item := range items { if i > 0 { result = append(result, sep) }; result = append(result, item) }; return result } }"), GoDeclRaw("func sky_stringLeft(n any) any { return func(s any) any { str := sky_asString(s); c := sky_asInt(n); if c >= len(str) { return str }; return str[:c] } }"), GoDeclRaw("func sky_stringRight(n any) any { return func(s any) any { str := sky_asString(s); c := sky_asInt(n); if c >= len(str) { return str }; return str[len(str)-c:] } }"), GoDeclRaw("func sky_stringPadLeft(n any) any { return func(ch any) any { return func(s any) any { str := sky_asString(s); pad := sky_asString(ch); for len(str) < sky_asInt(n) { str = pad + str }; return str } } }"), GoDeclRaw("func sky_stringLines(s any) any { parts := strings.Split(sky_asString(s), \"\\n\"); result := make([]any, len(parts)); for i, p := range parts { result[i] = p }; return result }"), GoDeclRaw("func sky_stringWords(s any) any { words := strings.Fields(sky_asString(s)); result := make([]any, len(words)); for i, w := range words { result[i] = w }; return result }"), GoDeclRaw("func sky_stringRepeat(n any) any { return func(s any) any { return strings.Repeat(sky_asString(s), sky_asInt(n)) } }"), GoDeclRaw("func sky_mathSqrt(v any) any { return math.Sqrt(sky_asFloat(v)) }"), GoDeclRaw("func sky_mathPow(base any) any { return func(exp any) any { return math.Pow(sky_asFloat(base), sky_asFloat(exp)) } }"), GoDeclRaw("func sky_mathAbs(v any) any { return math.Abs(sky_asFloat(v)) }"), GoDeclRaw("func sky_mathFloor(v any) any { return int(math.Floor(sky_asFloat(v))) }"), GoDeclRaw("func sky_mathCeil(v any) any { return int(math.Ceil(sky_asFloat(v))) }"), GoDeclRaw("func sky_mathRound(v any) any { return int(math.Round(sky_asFloat(v))) }"), GoDeclRaw("func sky_mathMin(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af < bf { return af }; return bf } }"), GoDeclRaw("func sky_mathMax(a any) any { return func(b any) any { af, bf := sky_asFloat(a), sky_asFloat(b); if af > bf { return af }; return bf } }"), GoDeclRaw("func sky_modBy(args ...any) any { if len(args) == 2 { mod := sky_asInt(args[0]); if mod == 0 { return 0 }; return sky_asInt(args[1]) % mod }; m := args[0]; return func(n any) any { mod := sky_asInt(m); if mod == 0 { return 0 }; return sky_asInt(n) % mod } }"), GoDeclRaw("func sky_cryptoSha256(s any) any { h := crypto_sha256.Sum256([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"), GoDeclRaw("func sky_cryptoMd5(s any) any { h := crypto_md5.Sum([]byte(sky_asString(s))); return hex.EncodeToString(h[:]) }"), GoDeclRaw("func sky_encodingHexEncode(s any) any { return hex.EncodeToString([]byte(sky_asString(s))) }"), GoDeclRaw("func sky_encodingBase64Encode(s any) any { return base64.StdEncoding.EncodeToString([]byte(sky_asString(s))) }"), GoDeclRaw("func sky_encodingBase64Decode(s any) any { b, err := base64.StdEncoding.DecodeString(sky_asString(s)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }"), GoDeclRaw("func sky_timeNow(u any) any { return time.Now().UnixMilli() }"), GoDeclRaw("func sky_timePosixToMillis(t any) any { return sky_asInt(t) }"), GoDeclRaw("func sky_httpGetString(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(body)) } }"), GoDeclRaw("func sky_httpGet(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"), GoDeclRaw("func sky_httpPost(url any) any { return func(body any) any { return func() any { resp, err := net_http.Post(sky_asString(url), \"application/json\", strings.NewReader(sky_asString(body))); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); b, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(b), \"headers\": hdrs}) } } }"), GoDeclRaw("func sky_httpRequest(opts any) any { return func() any { m := sky_asMap(opts); method := sky_asString(m[\"method\"]); url := sky_asString(m[\"url\"]); reqBody := sky_asString(m[\"body\"]); req, err := net_http.NewRequest(method, url, strings.NewReader(reqBody)); if err != nil { return SkyErr(err.Error()) }; for _, h := range sky_asList(m[\"headers\"]) { t := h.(SkyTuple2); req.Header.Set(sky_asString(t.V0), sky_asString(t.V1)) }; client := &net_http.Client{}; resp, err := client.Do(req); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; hdrs := make([]any, 0); for k, vs := range resp.Header { for _, v := range vs { hdrs = append(hdrs, SkyTuple2{V0: k, V1: v}) } }; return SkyOk(map[string]any{\"status\": resp.StatusCode, \"body\": string(body), \"headers\": hdrs}) } }"), GoDeclRaw("func sky_jsonEncString(v any) any { return sky_asString(v) }"), GoDeclRaw("func sky_jsonEncInt(v any) any { return sky_asInt(v) }"), GoDeclRaw("func sky_jsonEncFloat(v any) any { return sky_asFloat(v) }"), GoDeclRaw("func sky_jsonEncBool(v any) any { return sky_asBool(v) }"), GoDeclRaw("func sky_jsonEncNull() any { return nil }"), GoDeclRaw("func sky_jsonEncList(encoder any) any { return func(list any) any { items := sky_asList(list); result := make([]any, len(items)); for i, item := range items { result[i] = encoder.(func(any) any)(item) }; return result } }"), GoDeclRaw("func sky_jsonEncObject(pairs any) any { m := make(map[string]any); for _, p := range sky_asList(pairs) { t := sky_asTuple2(p); m[sky_asString(t.V0)] = t.V1 }; return m }"), GoDeclRaw("func sky_jsonEncode(indent any) any { return func(value any) any { var b []byte; var err error; n := sky_asInt(indent); if n > 0 { b, err = encoding_json.MarshalIndent(value, \"\", strings.Repeat(\" \", n)) } else { b, err = encoding_json.Marshal(value) }; if err != nil { return \"null\" }; return string(b) } }"), GoDeclRaw("func sky_jsonDecString(decoder any) any { return func(jsonStr any) any { var v any; if err := encoding_json.Unmarshal([]byte(sky_asString(jsonStr)), &v); err != nil { return SkyErr(err.Error()) }; return decoder.(func(any) any)(v) } }"), GoDeclRaw("var sky_jsonDecoder_string = func(v any) any { if s, ok := v.(string); ok { return SkyOk(s) }; return SkyErr(\"expected string\") }"), GoDeclRaw("var sky_jsonDecoder_int = func(v any) any { switch n := v.(type) { case float64: return SkyOk(int(n)); case int: return SkyOk(n) }; return SkyErr(\"expected int\") }"), GoDeclRaw("var sky_jsonDecoder_float = func(v any) any { if f, ok := v.(float64); ok { return SkyOk(f) }; return SkyErr(\"expected float\") }"), GoDeclRaw("var sky_jsonDecoder_bool = func(v any) any { if b, ok := v.(bool); ok { return SkyOk(b) }; return SkyErr(\"expected bool\") }"), GoDeclRaw("func sky_jsonDecField(key any) any { return func(decoder any) any { return func(v any) any { m, ok := v.(map[string]any); if !ok { return SkyErr(\"expected object\") }; val, exists := m[sky_asString(key)]; if !exists { return SkyErr(\"field '\" + sky_asString(key) + \"' not found\") }; return decoder.(func(any) any)(val) } } }"), GoDeclRaw("func sky_jsonDecList(decoder any) any { return func(v any) any { arr, ok := v.([]any); if !ok { return SkyErr(\"expected array\") }; result := make([]any, 0, len(arr)); for _, item := range arr { r := decoder.(func(any) any)(item); res := sky_asSkyResult(r); if res.Tag == 1 { return r }; result = append(result, res.OkValue) }; return SkyOk(result) } }"), GoDeclRaw("func sky_jsonDecMap(fn any) any { return func(decoder any) any { return func(v any) any { r := decoder.(func(any) any)(v); res := sky_asSkyResult(r); if res.Tag == 1 { return r }; return SkyOk(fn.(func(any) any)(res.OkValue)) } } }"), GoDeclRaw("func sky_jsonDecMap2(fn any) any { return func(d1 any) any { return func(d2 any) any { return func(v any) any { r1 := d1.(func(any) any)(v); res1 := sky_asSkyResult(r1); if res1.Tag == 1 { return r1 }; r2 := d2.(func(any) any)(v); res2 := sky_asSkyResult(r2); if res2.Tag == 1 { return r2 }; return SkyOk(fn.(func(any) any)(res1.OkValue).(func(any) any)(res2.OkValue)) } } } }"), GoDeclRaw("func sky_jsonDecMap3(fn any) any { return func(d1 any) any { return func(d2 any) any { return func(d3 any) any { return func(v any) any { r1 := d1.(func(any) any)(v); res1 := sky_asSkyResult(r1); if res1.Tag == 1 { return r1 }; r2 := d2.(func(any) any)(v); res2 := sky_asSkyResult(r2); if res2.Tag == 1 { return r2 }; r3 := d3.(func(any) any)(v); res3 := sky_asSkyResult(r3); if res3.Tag == 1 { return r3 }; return SkyOk(fn.(func(any) any)(res1.OkValue).(func(any) any)(res2.OkValue).(func(any) any)(res3.OkValue)) } } } } }"), GoDeclRaw("func sky_jsonDecMap4(fn any) any { return func(d1 any) any { return func(d2 any) any { return func(d3 any) any { return func(d4 any) any { return func(v any) any { r1 := d1.(func(any) any)(v); res1 := sky_asSkyResult(r1); if res1.Tag == 1 { return r1 }; r2 := d2.(func(any) any)(v); res2 := sky_asSkyResult(r2); if res2.Tag == 1 { return r2 }; r3 := d3.(func(any) any)(v); res3 := sky_asSkyResult(r3); if res3.Tag == 1 { return r3 }; r4 := d4.(func(any) any)(v); res4 := sky_asSkyResult(r4); if res4.Tag == 1 { return r4 }; return SkyOk(fn.(func(any) any)(res1.OkValue).(func(any) any)(res2.OkValue).(func(any) any)(res3.OkValue).(func(any) any)(res4.OkValue)) } } } } } }"), GoDeclRaw("func sky_jsonDecSucceed(v any) any { return func(_ any) any { return SkyOk(v) } }"), GoDeclRaw("func sky_jsonDecFail(msg any) any { return func(_ any) any { return SkyErr(msg) } }"), GoDeclRaw("func sky_jsonDecAndThen(fn any) any { return func(decoder any) any { return func(v any) any { r := decoder.(func(any) any)(v); res := sky_asSkyResult(r); if res.Tag == 1 { return r }; nextDecoder := fn.(func(any) any)(res.OkValue); return nextDecoder.(func(any) any)(v) } } }"), GoDeclRaw("func sky_jsonDecOneOf(decoders any) any { return func(v any) any { for _, d := range sky_asList(decoders) { r := d.(func(any) any)(v); if sky_asSkyResult(r).Tag == 0 { return r } }; return SkyErr(\"none of the decoders matched\") } }"), GoDeclRaw("func sky_jsonDecNullable(decoder any) any { return func(v any) any { if v == nil { return SkyOk(SkyNothing()) }; r := decoder.(func(any) any)(v); res := sky_asSkyResult(r); if res.Tag == 0 { return SkyOk(SkyJust(res.OkValue)) }; return r } }"), GoDeclRaw("func sky_jsonDecAt(path any) any { return func(decoder any) any { return func(v any) any { current := v; for _, key := range sky_asList(path) { m, ok := current.(map[string]any); if !ok { return SkyErr(\"expected object at path\") }; val, exists := m[sky_asString(key)]; if !exists { return SkyErr(\"key not found: \" + sky_asString(key)) }; current = val }; return decoder.(func(any) any)(current) } } }"), GoDeclRaw("func sky_jsonPipeDecode(constructor any) any { return func(v any) any { return SkyOk(constructor) } }"), GoDeclRaw("func sky_jsonPipeRequired(key any) any { return func(decoder any) any { return func(pipeline any) any { return func(v any) any { pr := pipeline.(func(any) any)(v); pres := sky_asSkyResult(pr); if pres.Tag == 1 { return pr }; m, ok := v.(map[string]any); if !ok { return SkyErr(\"expected object\") }; val, exists := m[sky_asString(key)]; if !exists { return SkyErr(\"field '\" + sky_asString(key) + \"' required\") }; fr := decoder.(func(any) any)(val); fres := sky_asSkyResult(fr); if fres.Tag == 1 { return fr }; return SkyOk(pres.OkValue.(func(any) any)(fres.OkValue)) } } } }"), GoDeclRaw("func sky_jsonPipeOptional(key any) any { return func(decoder any) any { return func(def any) any { return func(pipeline any) any { return func(v any) any { pr := pipeline.(func(any) any)(v); pres := sky_asSkyResult(pr); if pres.Tag == 1 { return pr }; m, ok := v.(map[string]any); if !ok { return SkyOk(pres.OkValue.(func(any) any)(def)) }; val, exists := m[sky_asString(key)]; if !exists { return SkyOk(pres.OkValue.(func(any) any)(def)) }; fr := decoder.(func(any) any)(val); fres := sky_asSkyResult(fr); if fres.Tag == 1 { return SkyOk(pres.OkValue.(func(any) any)(def)) }; return SkyOk(pres.OkValue.(func(any) any)(fres.OkValue)) } } } } }"), GoDeclRaw("func sky_cmdNone() any { return []any{} }"), GoDeclRaw("func sky_cmdBatch(cmds any) any { return sky_asList(cmds) }"), GoDeclRaw("func sky_subNone() any { return map[string]any{\"SkyName\": \"SubNone\"} }"), GoDeclRaw("func sky_subBatch(subs any) any { return map[string]any{\"SkyName\": \"SubBatch\", \"V0\": subs} }"), GoDeclRaw("func sky_timeEvery(interval any) any { return func(msg any) any { return map[string]any{\"SkyName\": \"SubTimer\", \"V0\": interval, \"V1\": msg} } }"), GoDeclRaw("func sky_htmlEl(tag any) any { return func(attrs any) any { return func(children any) any { return map[string]any{\"tag\": tag, \"attrs\": sky_flattenAttrs(attrs), \"children\": children, \"text\": \"\"} } } }"), GoDeclRaw("func sky_flattenAttrs(attrs any) []any { var out []any; for _, a := range sky_asList(attrs) { if list, ok := a.([]any); ok { out = append(out, list...) } else { out = append(out, a) } }; return out }"), GoDeclRaw("func sky_htmlVoid(tag any) any { return func(attrs any) any { return map[string]any{\"tag\": tag, \"attrs\": attrs, \"children\": []any{}, \"text\": \"\"} } }"), GoDeclRaw("func sky_htmlDoctype(_ any) any { return \"<!DOCTYPE html>\" }"), GoDeclRaw("func sky_htmlTitleNode(content any) any { return map[string]any{\"tag\": \"title\", \"attrs\": []any{}, \"children\": []any{map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(content)}}, \"text\": \"\"} }"), GoDeclRaw("func sky_htmlText(s any) any { return map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(s)} }"), GoDeclRaw("func sky_htmlRaw(s any) any { return map[string]any{\"tag\": \"__raw__\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(s)} }"), GoDeclRaw("func sky_htmlStyleNode(attrs any) any { return func(css any) any { return map[string]any{\"tag\": \"style\", \"attrs\": attrs, \"children\": []any{map[string]any{\"tag\": \"\", \"attrs\": []any{}, \"children\": []any{}, \"text\": sky_asString(css)}}, \"text\": \"\"} } }"), GoDeclRaw("func sky_htmlRender(vnode any) any { return sky_vnodeToHtml(vnode) }"), GoDeclRaw("func sky_vnodeToHtml(v any) string { m := sky_asMap(v); if m == nil { return \"\" }; tag := sky_asString(m[\"tag\"]); if tag == \"\" { return sky_htmlEscapeStr(sky_asString(m[\"text\"])) }; if tag == \"__raw__\" { return sky_asString(m[\"text\"]) }; attrs := sky_renderAttrs(sky_asList(m[\"attrs\"])); children := sky_asList(m[\"children\"]); if tag == \"input\" || tag == \"br\" || tag == \"hr\" || tag == \"img\" || tag == \"meta\" { return \"<\" + tag + attrs + \" />\" }; var sb strings.Builder; sb.WriteString(\"<\" + tag + attrs + \">\"); for _, c := range children { sb.WriteString(sky_vnodeToHtml(c)) }; sb.WriteString(\"</\" + tag + \">\"); return sb.String() }"), GoDeclRaw("func sky_renderAttrs(attrs []any) string { var sb strings.Builder; for _, a := range attrs { t := sky_asTuple2(a); k := sky_asString(t.V0); v := sky_asString(t.V1); if v != \"\" { sb.WriteString(\" \" + k + \"=\\\"\" + sky_htmlEscapeStr(v) + \"\\\"\") } }; return sb.String() }"), GoDeclRaw("func sky_htmlEscapeStr(s string) string { s = strings.ReplaceAll(s, \"&\", \"&amp;\"); s = strings.ReplaceAll(s, \"<\", \"&lt;\"); s = strings.ReplaceAll(s, \">\", \"&gt;\"); s = strings.ReplaceAll(s, \"\\\"\", \"&quot;\"); return s }"), GoDeclRaw("func sky_htmlEscapeHtml(s any) any { return sky_htmlEscapeStr(sky_asString(s)) }"), GoDeclRaw("func sky_htmlEscapeAttr(s any) any { return sky_htmlEscapeStr(sky_asString(s)) }"), GoDeclRaw("func sky_htmlAttrToString(attr any) any { t := sky_asTuple2(attr); return sky_asString(t.V0) + \"=\\\"\" + sky_htmlEscapeStr(sky_asString(t.V1)) + \"\\\"\" }"), GoDeclRaw("func sky_attrSimple(key any) any { return func(v any) any { return SkyTuple2{sky_asString(key), sky_asString(v)} } }"), GoDeclRaw("func sky_attrCustom(key any) any { return func(v any) any { return SkyTuple2{sky_asString(key), sky_asString(v)} } }"), GoDeclRaw("func sky_attrBool(key any) any { return func(v any) any { if sky_asBool(v) { return SkyTuple2{sky_asString(key), sky_asString(key)} }; return SkyTuple2{sky_asString(key), \"\"} } }"), GoDeclRaw("func sky_attrData(key any) any { return func(val any) any { return SkyTuple2{\"data-\" + sky_asString(key), sky_asString(val)} } }"), GoDeclRaw("func sky_evtHandler(evtType any) any { return func(msg any) any { return sky_msgAttrs(sky_asString(evtType), msg) } }"), GoDeclRaw("func sky_msgAttrs(evtType string, msg any) any { name := sky_msgName(msg); args := sky_msgArgs(msg); if len(args) == 0 { return SkyTuple2{\"sky-\" + evtType, name} }; b, _ := encoding_json.Marshal(args); return []any{SkyTuple2{\"sky-\" + evtType, name}, SkyTuple2{\"sky-args\", string(b)}} }"), GoDeclRaw("func sky_msgName(msg any) string { if m, ok := msg.(map[string]any); ok { if name, exists := m[\"SkyName\"]; exists { return sky_asString(name) } }; if fn, ok := msg.(func(any) any); ok { result := fn(nil); if m2, ok2 := result.(map[string]any); ok2 { if name, exists := m2[\"SkyName\"]; exists { return sky_asString(name) } } }; return fmt.Sprintf(\"%v\", msg) }"), GoDeclRaw("func sky_msgArgs(msg any) []any { m, ok := msg.(map[string]any); if !ok { return nil }; var args []any; for i := 0; ; i++ { v, exists := m[fmt.Sprintf(\"V%d\", i)]; if !exists { break }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }"), GoDeclRaw("func sky_cssStylesheet(rules any) any { var sb strings.Builder; for _, r := range sky_asList(rules) { sb.WriteString(sky_asString(r)); sb.WriteString(\"\\n\") }; return sb.String() }"), GoDeclRaw("func sky_cssRule(selector any) any { return func(props any) any { var sb strings.Builder; sb.WriteString(sky_asString(selector)); sb.WriteString(\" { \"); for _, p := range sky_asList(props) { sb.WriteString(sky_asString(p)); sb.WriteString(\"; \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssProp(key any) any { return func(val any) any { return sky_asString(key) + \": \" + sky_asString(val) } }"), GoDeclRaw("func sky_cssPx(n any) any { return fmt.Sprintf(\"%dpx\", sky_asInt(n)) }"), GoDeclRaw("func sky_cssRem(n any) any { return fmt.Sprintf(\"%.2frem\", sky_asFloat(n)) }"), GoDeclRaw("func sky_cssEm(n any) any { return fmt.Sprintf(\"%.2fem\", sky_asFloat(n)) }"), GoDeclRaw("func sky_cssPct(n any) any { return fmt.Sprintf(\"%.0f%%\", sky_asFloat(n)) }"), GoDeclRaw("func sky_cssHex(s any) any { return \"#\" + sky_asString(s) }"), GoDeclRaw("func sky_cssRgb(r any) any { return func(g any) any { return func(b any) any { return fmt.Sprintf(\"rgb(%d, %d, %d)\", sky_asInt(r), sky_asInt(g), sky_asInt(b)) } } }"), GoDeclRaw("func sky_cssStyles(props any) any { var parts []string; for _, p := range sky_asList(props) { parts = append(parts, sky_asString(p)) }; return strings.Join(parts, \"; \") }"), GoDeclRaw("func sky_cssMargin2(v any) any { return func(h any) any { return \"margin: \" + sky_asString(v) + \" \" + sky_asString(h) } }"), GoDeclRaw("func sky_cssPadding2(v any) any { return func(h any) any { return \"padding: \" + sky_asString(v) + \" \" + sky_asString(h) } }"), GoDeclRaw("func sky_cssRgba(r any) any { return func(g any) any { return func(b any) any { return func(a any) any { return fmt.Sprintf(\"rgba(%d, %d, %d, %v)\", sky_asInt(r), sky_asInt(g), sky_asInt(b), sky_asFloat(a)) } } } }"), GoDeclRaw("func sky_cssMedia(query any) any { return func(rules any) any { var sb strings.Builder; sb.WriteString(\"@media \"); sb.WriteString(sky_asString(query)); sb.WriteString(\" { \"); for _, r := range sky_asList(rules) { sb.WriteString(sky_asString(r)); sb.WriteString(\" \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssKeyframes(name any) any { return func(frames any) any { var sb strings.Builder; sb.WriteString(\"@keyframes \"); sb.WriteString(sky_asString(name)); sb.WriteString(\" { \"); for _, f := range sky_asList(frames) { sb.WriteString(sky_asString(f)); sb.WriteString(\" \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssFrame(pctVal any) any { return func(props any) any { var sb strings.Builder; sb.WriteString(fmt.Sprintf(\"%v%%\", sky_asFloat(pctVal))); sb.WriteString(\" { \"); for _, p := range sky_asList(props) { sb.WriteString(sky_asString(p)); sb.WriteString(\"; \") }; sb.WriteString(\"}\"); return sb.String() } }"), GoDeclRaw("func sky_cssPropFn(prop any) any { return func(val any) any { return sky_asString(prop) + \": \" + sky_asString(val) } }"), GoDeclRaw("func sky_cssTransitionProp(prop any) any { return func(duration any) any { return func(easing any) any { return fmt.Sprintf(\"transition: %s %vs %s\", sky_asString(prop), sky_asFloat(duration), sky_asString(easing)) } } }"), GoDeclRaw("func sky_cssShadow(x any) any { return func(y any) any { return func(blur any) any { return func(color any) any { return fmt.Sprintf(\"%dpx %dpx %dpx %s\", sky_asInt(x), sky_asInt(y), sky_asInt(blur), sky_asString(color)) } } } }"), GoDeclRaw("func sky_cssMargin4(top any) any { return func(right any) any { return func(bottom any) any { return func(left any) any { return \"margin: \" + sky_asString(top) + \" \" + sky_asString(right) + \" \" + sky_asString(bottom) + \" \" + sky_asString(left) } } } }"), GoDeclRaw("func sky_evt_fileMaxSize(v any) any { return SkyTuple2{\"sky-file-maxsize\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"), GoDeclRaw("func sky_evt_fileMaxWidth(v any) any { return SkyTuple2{\"sky-file-maxwidth\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"), GoDeclRaw("func sky_evt_fileMaxHeight(v any) any { return SkyTuple2{\"sky-file-maxheight\", fmt.Sprintf(\"%d\", sky_asInt(v))} }"), GoDeclRaw("func sky_liveRoute(path any) any { return func(page any) any { return map[string]any{\"path\": path, \"page\": page} } }"), GoDeclRaw("var sky_liveAppImpl = func(config any) any { return config }"), GoDeclRaw("func sky_liveApp(config any) any { return sky_liveAppImpl(config) }")}
 }
 
 func Compiler_Lower_CollectLocalFunctions(decls any) any {
@@ -29150,9 +29221,9 @@ func Compiler_Lower_CollectLocalFunctions(decls any) any {
 		return func() any {
 			return func() any {
 				__subject := d
-				__sky_tag := sky_getSkyName(__subject)
-				if __sky_tag == "FunDecl" {
-					name := sky_asMap(__subject)["V0"]
+				__sky_tag := sky_adtTag(__subject)
+				if __sky_tag == 0 {
+					name := sky_adtField(__subject, 0)
 					_ = name
 					return SkyJust(name)
 				}
@@ -29171,11 +29242,11 @@ func Compiler_Lower_CollectLocalFunctionArities(decls any) any {
 			return func() any {
 				return func() any {
 					__subject := d
-					__sky_tag := sky_getSkyName(__subject)
-					if __sky_tag == "FunDecl" {
-						name := sky_asMap(__subject)["V0"]
+					__sky_tag := sky_adtTag(__subject)
+					if __sky_tag == 0 {
+						name := sky_adtField(__subject, 0)
 						_ = name
-						params := sky_asMap(__subject)["V1"]
+						params := sky_adtField(__subject, 1)
 						_ = params
 						return sky_call(sky_call(sky_dictInsert(name), sky_listLength(params)), acc)
 					}
@@ -29195,14 +29266,53 @@ func Compiler_Lower_BuildConstructorMap(registry any) any {
 	return sky_call(sky_call(sky_dictFoldl(func(typeName any) any {
 		return func(adt any) any {
 			return func(acc any) any {
-				return func() any {
-					entries := sky_dictToList(sky_asMap(adt)["constructors"])
-					_ = entries
-					return Compiler_Lower_AddCtorsFromList(typeName, entries, 0, acc)
-				}()
+				return sky_call(sky_call(sky_listFoldl(func(pair any) any {
+					return func(innerAcc any) any {
+						return func() any {
+							idx := sky_fst(pair)
+							_ = idx
+							ctorName := sky_snd(pair)
+							_ = ctorName
+							ctorArity := func() any {
+								return func() any {
+									__subject := sky_call(sky_dictGet(ctorName), sky_asMap(adt)["constructors"])
+									if sky_asSkyMaybe(__subject).SkyName == "Just" {
+										scheme := sky_asSkyMaybe(__subject).JustValue
+										_ = scheme
+										return Compiler_Lower_CountCtorArity(sky_asMap(scheme)["type_"], 0)
+									}
+									if sky_asSkyMaybe(__subject).SkyName == "Nothing" {
+										return 0
+									}
+									panic("non-exhaustive case expression")
+								}()
+							}()
+							_ = ctorArity
+							return sky_call(sky_call(sky_dictInsert(ctorName), map[string]any{"adtName": typeName, "tagIndex": idx, "arity": ctorArity}), innerAcc)
+						}()
+					}
+				}), acc), Compiler_Lower_ZipIndex(sky_asMap(adt)["variantNames"]))
 			}
 		}
 	}), sky_dictEmpty()), registry)
+}
+
+func Compiler_Lower_CountCtorArity(t any, acc any) any {
+	return func() any {
+		return func() any {
+			__subject := t
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				toT := sky_adtField(__subject, 1)
+				_ = toT
+				return Compiler_Lower_CountCtorArity(toT, sky_numBinop("+", acc, 1))
+			}
+			if true {
+				return acc
+			}
+			panic("non-exhaustive case expression")
+		}()
+	}()
 }
 
 func Compiler_Lower_BuildConstructorMapFromDecls(decls any) any {
@@ -29211,11 +29321,11 @@ func Compiler_Lower_BuildConstructorMapFromDecls(decls any) any {
 			return func() any {
 				return func() any {
 					__subject := decl
-					__sky_tag := sky_getSkyName(__subject)
-					if __sky_tag == "TypeDecl" {
-						typeName := sky_asMap(__subject)["V0"]
+					__sky_tag := sky_adtTag(__subject)
+					if __sky_tag == 2 {
+						typeName := sky_adtField(__subject, 0)
 						_ = typeName
-						variants := sky_asMap(__subject)["V2"]
+						variants := sky_adtField(__subject, 2)
 						_ = variants
 						return sky_call(sky_call(sky_listFoldl(func(pair any) any {
 							return func(innerAcc any) any {
@@ -29272,11 +29382,11 @@ func Compiler_Lower_CountFunArgs(t any) any {
 	return func() any {
 		return func() any {
 			__subject := t
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TFun" {
-				argT := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 2 {
+				argT := sky_adtField(__subject, 0)
 				_ = argT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return sky_numBinop("+", 1, Compiler_Lower_CountFunArgs(toT))
 			}
@@ -29309,19 +29419,19 @@ func Compiler_Lower_IsStdlibCallee(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "QualifiedExpr" {
-				parts := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				parts := sky_adtField(__subject, 0)
 				_ = parts
 				return Compiler_Lower_IsStdlibQualified(parts)
 			}
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_call(sky_stringStartsWith("sky_"), name)
 			}
-			if __sky_tag == "CallExpr" {
-				innerCallee := sky_asMap(__subject)["V0"]
+			if __sky_tag == 13 {
+				innerCallee := sky_adtField(__subject, 0)
 				_ = innerCallee
 				return Compiler_Lower_IsStdlibCallee(innerCallee)
 			}
@@ -29362,13 +29472,13 @@ func Compiler_Lower_GetPatVarName(pat any) any {
 	return func() any {
 		return func() any {
 			__subject := pat
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "PVariable" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return SkyJust(name)
 			}
-			if __sky_tag == "PWildcard" {
+			if __sky_tag == 0 {
 				return SkyJust("w")
 			}
 			if true {
@@ -29389,9 +29499,9 @@ func Compiler_Lower_LowerArgExpr(ctx any, expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "IdentifierExpr" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return func() any {
 					if sky_asBool(sky_asBool(sky_not(sky_stringIsEmpty(sky_asMap(ctx)["modulePrefix"]))) && sky_asBool(Compiler_Lower_ListContains(name, sky_asMap(ctx)["localFunctions"]))) {
@@ -29603,26 +29713,26 @@ func Compiler_Lower_EmitGoExprInline(expr any) any {
 	return func() any {
 		return func() any {
 			__subject := expr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoIdent" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return name
 			}
-			if __sky_tag == "GoBasicLit" {
-				val := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				val := sky_adtField(__subject, 0)
 				_ = val
 				return val
 			}
-			if __sky_tag == "GoStringLit" {
-				s := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				s := sky_adtField(__subject, 0)
 				_ = s
 				return sky_call(sky_stringJoin(""), []any{"\"", s, "\""})
 			}
-			if __sky_tag == "GoCallExpr" {
-				fn := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				fn := sky_adtField(__subject, 0)
 				_ = fn
-				args := sky_asMap(__subject)["V1"]
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return func() any {
 					fnStr := Compiler_Lower_EmitGoExprInline(fn)
@@ -29637,68 +29747,68 @@ func Compiler_Lower_EmitGoExprInline(expr any) any {
 					return sky_call(sky_stringJoin(""), []any{calleeStr, "(", sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Lower_EmitGoExprInline), args)), ")"})
 				}()
 			}
-			if __sky_tag == "GoSelectorExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				sel := sky_asMap(__subject)["V1"]
+				sel := sky_adtField(__subject, 1)
 				_ = sel
 				return sky_call(sky_stringJoin(""), []any{Compiler_Lower_EmitGoExprInline(target), ".", sel})
 			}
-			if __sky_tag == "GoSliceLit" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_stringJoin(""), []any{"[]any{", sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Lower_EmitGoExprInline), items)), "}"})
 			}
-			if __sky_tag == "GoMapLit" {
-				entries := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				entries := sky_adtField(__subject, 0)
 				_ = entries
 				return sky_call(sky_stringJoin(""), []any{"map[string]any{", sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Lower_EmitMapEntry), entries)), "}"})
 			}
-			if __sky_tag == "GoFuncLit" {
-				params := sky_asMap(__subject)["V0"]
+			if __sky_tag == 7 {
+				params := sky_adtField(__subject, 0)
 				_ = params
-				body := sky_asMap(__subject)["V1"]
+				body := sky_adtField(__subject, 1)
 				_ = body
 				return sky_call(sky_stringJoin(""), []any{"func(", sky_call(sky_stringJoin(", "), sky_call(sky_listMap(Compiler_Lower_EmitInlineParam), params)), ") any { return ", Compiler_Lower_EmitGoExprInline(body), " }"})
 			}
-			if __sky_tag == "GoRawExpr" {
-				code := sky_asMap(__subject)["V0"]
+			if __sky_tag == 8 {
+				code := sky_adtField(__subject, 0)
 				_ = code
 				return code
 			}
-			if __sky_tag == "GoCompositeLit" {
-				typeName := sky_asMap(__subject)["V0"]
+			if __sky_tag == 9 {
+				typeName := sky_adtField(__subject, 0)
 				_ = typeName
-				fields := sky_asMap(__subject)["V1"]
+				fields := sky_adtField(__subject, 1)
 				_ = fields
 				return sky_call(sky_stringJoin(""), []any{typeName, "{", sky_call(sky_stringJoin(", "), sky_call(sky_listMap(func(pair any) any {
 					return sky_call(sky_stringJoin(""), []any{sky_fst(pair), ": ", Compiler_Lower_EmitGoExprInline(sky_snd(pair))})
 				}), fields)), "}"})
 			}
-			if __sky_tag == "GoBinaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 10 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				left := sky_asMap(__subject)["V1"]
+				left := sky_adtField(__subject, 1)
 				_ = left
-				right := sky_asMap(__subject)["V2"]
+				right := sky_adtField(__subject, 2)
 				_ = right
 				return sky_call(sky_stringJoin(""), []any{Compiler_Lower_EmitGoExprInline(left), " ", op, " ", Compiler_Lower_EmitGoExprInline(right)})
 			}
-			if __sky_tag == "GoUnaryExpr" {
-				op := sky_asMap(__subject)["V0"]
+			if __sky_tag == 11 {
+				op := sky_adtField(__subject, 0)
 				_ = op
-				operand := sky_asMap(__subject)["V1"]
+				operand := sky_adtField(__subject, 1)
 				_ = operand
 				return sky_call(sky_stringJoin(""), []any{op, Compiler_Lower_EmitGoExprInline(operand)})
 			}
-			if __sky_tag == "GoIndexExpr" {
-				target := sky_asMap(__subject)["V0"]
+			if __sky_tag == 12 {
+				target := sky_adtField(__subject, 0)
 				_ = target
-				index := sky_asMap(__subject)["V1"]
+				index := sky_adtField(__subject, 1)
 				_ = index
 				return sky_call(sky_stringJoin(""), []any{Compiler_Lower_EmitGoExprInline(target), "[", Compiler_Lower_EmitGoExprInline(index), "]"})
 			}
-			if __sky_tag == "GoNilExpr" {
+			if __sky_tag == 13 {
 				return "nil"
 			}
 			panic("non-exhaustive case expression")
@@ -29756,45 +29866,45 @@ func Compiler_Lower_StmtToGoString(stmt any) any {
 	return func() any {
 		return func() any {
 			__subject := stmt
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "GoExprStmt" {
-				expr := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
+				expr := sky_adtField(__subject, 0)
 				_ = expr
 				return Compiler_Lower_EmitGoExprInline(expr)
 			}
-			if __sky_tag == "GoAssign" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				expr := sky_asMap(__subject)["V1"]
+				expr := sky_adtField(__subject, 1)
 				_ = expr
 				return sky_concat(name, sky_concat(" = ", Compiler_Lower_EmitGoExprInline(expr)))
 			}
-			if __sky_tag == "GoShortDecl" {
-				name := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				expr := sky_asMap(__subject)["V1"]
+				expr := sky_adtField(__subject, 1)
 				_ = expr
 				return sky_concat(name, sky_concat(" := ", Compiler_Lower_EmitGoExprInline(expr)))
 			}
-			if __sky_tag == "GoReturn" {
-				expr := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				expr := sky_adtField(__subject, 0)
 				_ = expr
 				return sky_concat("return ", Compiler_Lower_EmitGoExprInline(expr))
 			}
-			if __sky_tag == "GoReturnVoid" {
+			if __sky_tag == 4 {
 				return "return"
 			}
-			if __sky_tag == "GoIf" {
-				cond := sky_asMap(__subject)["V0"]
+			if __sky_tag == 5 {
+				cond := sky_adtField(__subject, 0)
 				_ = cond
-				thenBody := sky_asMap(__subject)["V1"]
+				thenBody := sky_adtField(__subject, 1)
 				_ = thenBody
-				elseBody := sky_asMap(__subject)["V2"]
+				elseBody := sky_adtField(__subject, 2)
 				_ = elseBody
 				return sky_concat("if ", sky_concat(Compiler_Lower_EmitGoExprInline(cond), sky_concat(" { ", sky_concat(Compiler_Lower_StmtsToGoString(thenBody), sky_concat(" } else { ", sky_concat(Compiler_Lower_StmtsToGoString(elseBody), " }"))))))
 			}
-			if __sky_tag == "GoBlock" {
-				body := sky_asMap(__subject)["V0"]
+			if __sky_tag == 6 {
+				body := sky_adtField(__subject, 0)
 				_ = body
 				return Compiler_Lower_StmtsToGoString(body)
 			}
@@ -29803,7 +29913,7 @@ func Compiler_Lower_StmtToGoString(stmt any) any {
 	}()
 }
 
-// sky:type resolveProject : String -> any -> Result String { order : t206 , diagnostics : t193 , modules : t205 }
+// sky:type resolveProject : String -> any -> Result String { modules : t205 , order : t206 , diagnostics : t193 }
 
 func Compiler_Resolver_ResolveProject(entryPath any, srcRoot any) any {
 	return func() any {
@@ -29857,7 +29967,7 @@ func Compiler_Resolver_ResolveProject(entryPath any, srcRoot any) any {
 	}()
 }
 
-// sky:type resolveImports : any -> List any -> List { checkResult : Maybe t344 , name : t343 , qualifiedName : t342 , filePath : String , ast : t329 } -> any -> List String -> ( List { filePath : String , ast : t329 , checkResult : Maybe t344 , name : t343 , qualifiedName : t342 } , List String )
+// sky:type resolveImports : any -> List any -> List { name : t343 , qualifiedName : t342 , filePath : String , ast : t329 , checkResult : Maybe t344 } -> any -> List String -> ( List { name : t343 , qualifiedName : t342 , filePath : String , ast : t329 , checkResult : Maybe t344 } , List String )
 
 func Compiler_Resolver_ResolveImports(srcRoot any, imports any, loaded any, visited any, diagnostics any) any {
 	return func() any {
@@ -30339,16 +30449,16 @@ func Compiler_Resolver_GetExposedList(clause any) any {
 	return func() any {
 		return func() any {
 			__subject := clause
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "ExposeAll" {
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 0 {
 				return []any{"*"}
 			}
-			if __sky_tag == "ExposeList" {
-				names := sky_asMap(__subject)["V0"]
+			if __sky_tag == 1 {
+				names := sky_adtField(__subject, 0)
 				_ = names
 				return names
 			}
-			if __sky_tag == "ExposeNone" {
+			if __sky_tag == 2 {
 				return []any{}
 			}
 			panic("non-exhaustive case expression")
@@ -30387,11 +30497,11 @@ func Compiler_Resolver_CollectOneAnnotation(decl any, acc any) any {
 	return func() any {
 		return func() any {
 			__subject := decl
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeAnnotDecl" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
-				typeExpr := sky_asMap(__subject)["V1"]
+				typeExpr := sky_adtField(__subject, 1)
 				_ = typeExpr
 				return append([]any{SkyTuple2{V0: name, V1: typeExpr}}, sky_asList(acc)...)
 			}
@@ -30541,35 +30651,35 @@ func Compiler_Resolver_CollectTypeVarNames(texpr any) any {
 	return func() any {
 		return func() any {
 			__subject := texpr
-			__sky_tag := sky_getSkyName(__subject)
-			if __sky_tag == "TypeVar" {
-				name := sky_asMap(__subject)["V0"]
+			__sky_tag := sky_adtTag(__subject)
+			if __sky_tag == 1 {
+				name := sky_adtField(__subject, 0)
 				_ = name
 				return sky_setSingleton(name)
 			}
-			if __sky_tag == "FunType" {
-				fromT := sky_asMap(__subject)["V0"]
+			if __sky_tag == 2 {
+				fromT := sky_adtField(__subject, 0)
 				_ = fromT
-				toT := sky_asMap(__subject)["V1"]
+				toT := sky_adtField(__subject, 1)
 				_ = toT
 				return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(fromT)), Compiler_Resolver_CollectTypeVarNames(toT))
 			}
-			if __sky_tag == "TypeRef" {
-				args := sky_asMap(__subject)["V1"]
+			if __sky_tag == 0 {
+				args := sky_adtField(__subject, 1)
 				_ = args
 				return sky_call(sky_call(sky_listFoldl(func(arg any) any {
 					return func(acc any) any { return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(arg)), acc) }
 				}), sky_setEmpty()), args)
 			}
-			if __sky_tag == "TupleTypeExpr" {
-				items := sky_asMap(__subject)["V0"]
+			if __sky_tag == 4 {
+				items := sky_adtField(__subject, 0)
 				_ = items
 				return sky_call(sky_call(sky_listFoldl(func(item any) any {
 					return func(acc any) any { return sky_call(sky_setUnion(Compiler_Resolver_CollectTypeVarNames(item)), acc) }
 				}), sky_setEmpty()), items)
 			}
-			if __sky_tag == "RecordTypeExpr" {
-				fields := sky_asMap(__subject)["V0"]
+			if __sky_tag == 3 {
+				fields := sky_adtField(__subject, 0)
 				_ = fields
 				return sky_call(sky_call(sky_listFoldl(func(f any) any {
 					return func(acc any) any {
@@ -30577,7 +30687,7 @@ func Compiler_Resolver_CollectTypeVarNames(texpr any) any {
 					}
 				}), sky_setEmpty()), fields)
 			}
-			if __sky_tag == "UnitTypeExpr" {
+			if __sky_tag == 5 {
 				return sky_setEmpty()
 			}
 			if true {
