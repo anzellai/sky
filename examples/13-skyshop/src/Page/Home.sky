@@ -168,13 +168,14 @@ viewToolbar model =
                   (
                   [ filterBtn "all" (Tr.t lang "product.all")
                         model.categoryFilter
-                  ] ++ List.map
-                           (
-                           \cat ->
-                               filterBtn cat (Tr.tCategory lang cat)
-                                   model.categoryFilter
-                           )
-                           allCategories
+                  ]
+                      ++ List.map
+                             (
+                             \cat ->
+                                 filterBtn cat (Tr.tCategory lang cat)
+                                     model.categoryFilter
+                             )
+                             allCategories
                   )
             , div [ tw [ flex , gap2 , itemsCenter ] ]
                   [ span [ tw [ textSm , textGray500 , mr2 ] ]
@@ -190,6 +191,7 @@ viewToolbar model =
                               (
                               if model.sortDir == "asc" then
                                   "↑"
+                              
                               else
                                   "↓"
                               )
@@ -213,6 +215,7 @@ filterBtn filterValue label activeFilter =
                 , border
                 , borderBlue600
                 ]
+        
         else
             tw
                 [ textSm
@@ -245,6 +248,7 @@ sortBtn sortValue label activeSort =
                 , border
                 , borderGray900
                 ]
+        
         else
             tw
                 [ textSm
@@ -272,6 +276,7 @@ viewProductGrid model products =
             , p [ tw [ textGray500 ] ]
                   [ text (Tr.t model.lang "product.noResults") ]
             ]
+    
     else
         div
             [ tw [ grid , gap6 ]
@@ -314,6 +319,7 @@ viewProductCard model product =
             [ div [ style "aspect-ratio:4/3;overflow:hidden" ]
                   [ if firstImage != "" then
                       img [ src firstImage , alt title , Layout.objectCover_ ]
+                  
                   else
                       div [ Layout.imgPlaceholder , style "aspect-ratio:4/3" ]
                           [ text "No image" ]
@@ -347,6 +353,7 @@ viewPrice pricing =
             , span [ tw [ textSm , textGray400 ] , class "line-through" ]
                   [ text pricing.original ]
             ]
+    
     else
         div []
             [ span [ tw [ fontBold , textLg , textGray900 ] ]
@@ -359,6 +366,7 @@ viewStockDot stock =
     if stock == 0 then
         span [ tw [ w2 , Layout.h2_ , roundedFull , bgRed500 , inlineBlock ] ]
             []
+    
     else
         span [ tw [ w2 , Layout.h2_ , roundedFull , bgGreen500 , inlineBlock ] ]
             []

@@ -34,18 +34,31 @@ getIdeas sortBy filterCategory searchQuery =
         whereClause =
             if filterCategory == "all" then
                 if searchQuery == "" then
-                ""
-            else
-                    " WHERE (i.title LIKE '%" ++ searchQuery ++ "%' OR i.description LIKE '%" ++ searchQuery ++ "%')"
+                    ""
+                
+                else
+                    " WHERE (i.title LIKE '%"
+                        ++ searchQuery
+                            ++ "%' OR i.description LIKE '%"
+                                ++ searchQuery ++ "%')"
+            
             else if searchQuery == "" then
                 " WHERE i.category = '" ++ filterCategory ++ "'"
+            
             else
-                " WHERE i.category = '" ++ filterCategory ++ "' AND (i.title LIKE '%" ++ searchQuery ++ "%' OR i.description LIKE '%" ++ searchQuery ++ "%')"
+                " WHERE i.category = '"
+                    ++ filterCategory
+                        ++ "' AND (i.title LIKE '%"
+                            ++ searchQuery
+                                ++ "%' OR i.description LIKE '%"
+                                    ++ searchQuery ++ "%')"
         orderClause =
             if sortBy == "votes" then
                 " ORDER BY vote_count DESC, i.created_at DESC"
+            
             else if sortBy == "comments" then
                 " ORDER BY comment_count DESC, i.created_at DESC"
+            
             else
                 " ORDER BY i.created_at DESC"
         fullQuery = baseQuery ++ whereClause ++ orderClause
@@ -158,7 +171,3 @@ updateStatus ideaId newStatus =
         _ = println ("[IDEA] Status changed: " ++ ideaId ++ " -> " ++ newStatus)
     in
         ()
-
-
-
-

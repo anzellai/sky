@@ -85,7 +85,9 @@ handleCookieDemo req =
             (
             Server.html
                 (
-                "<h1>Visit #" ++ String.fromInt visitCount ++ "</h1><p>Refresh to increment!</p>"
+                "<h1>Visit #"
+                    ++ String.fromInt visitCount
+                        ++ "</h1><p>Refresh to increment!</p>"
                 )
                 |> Server.withCookie visitCookie
             )

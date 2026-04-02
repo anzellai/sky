@@ -100,6 +100,7 @@ viewProductDetail model product =
                                 , p [ tw [ textGray500 , leadingRelaxed ] ]
                                       [ text summary ]
                                 ]
+                        
                         else
                             text ""
                         , viewAddToCart model product stock
@@ -131,6 +132,7 @@ viewFeature featureLabel =
 viewImageGallery images =
     if List.isEmpty images then
         div [ Layout.galleryPlaceholder ] [ text "No images" ]
+    
     else
         div [ tw [ flex , flexCol , gap3 ] ]
             [ case List.head images of
@@ -162,6 +164,7 @@ viewImageGallery images =
                         )
                         images
                     )
+            
             else
                 text ""
             ]
@@ -187,6 +190,7 @@ viewDetailPrice pricing =
                   ]
                   [ text "SALE" ]
             ]
+    
     else
         div [ tw [ mb3 ] ]
             [ span [ tw [ text3xl , fontBold , textGray900 ] ]
@@ -213,6 +217,7 @@ viewDetailStock model stock =
                           ]
                     ]
                     [ text (Tr.t lang "product.outOfStock") ]
+            
             else if stock > 0 then
                 span
                     [ tw
@@ -228,12 +233,13 @@ viewDetailStock model stock =
                     ]
                     [ text
                           (
-                          Tr.t lang "product.inStock" ++ " - " ++ String.fromInt
-                                                                      stock ++ " " ++ Tr.t
-                                                                                          lang
-                                                                                          "product.left"
+                          Tr.t lang "product.inStock"
+                              ++ " - "
+                                  ++ String.fromInt stock
+                                      ++ " " ++ Tr.t lang "product.left"
                           )
                     ]
+            
             else
                 span
                     [ tw
@@ -282,6 +288,7 @@ viewAddToCart model product stock =
                                             (
                                             if stock > 0 then
                                                 String.fromInt stock
+                                            
                                             else
                                                 "99"
                                             )
@@ -303,6 +310,7 @@ viewAddToCart model product stock =
                           ]
                           [ text (Tr.t lang "product.addToCart") ]
                     ]
+            
             else
                 button
                     [ tw

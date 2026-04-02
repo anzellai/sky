@@ -17,14 +17,19 @@ badge label badgeClass = span [ class ("badge " ++ badgeClass) ] [ text label ]
 statusBadge status =
     if status == "open" then
         badge "Open" "badge-open"
+    
     else if status == "planned" then
         badge "Planned" "badge-planned"
+    
     else if status == "in-progress" then
         badge "In Progress" "badge-in-progress"
+    
     else if status == "done" then
         badge "Done" "badge-done"
+    
     else if status == "declined" then
         badge "Declined" "badge-declined"
+    
     else
         badge status "badge-open"
 
@@ -32,8 +37,10 @@ statusBadge status =
 categoryBadge category =
     if category == "bug" then
         badge "Bug" "badge-bug"
+    
     else if category == "improvement" then
         badge "Improvement" "badge-improvement"
+    
     else
         badge "Feature" "badge-feature"
 
@@ -68,6 +75,7 @@ ideaCard idea userId =
         isVoted =
             if userId == "" then
                 False
+            
             else
                 Ideas.hasVoted ideaId userId
     in
@@ -96,4 +104,3 @@ ideaCard idea userId =
                         ]
                   ]
             ]
-

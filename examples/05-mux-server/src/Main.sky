@@ -41,13 +41,13 @@ startServer router =
 
 main =
     case Mux.newRouter () of
-
+        
         Ok router ->
             let
                 _ = startServer (setupRoutes router)
             in
                 ()
-
+        
         Err e ->
             let
                 _ = println ("Failed to create router: " ++ e)

@@ -45,13 +45,13 @@ update msg counter =
     case msg of
         
         Increment ->
-            ({ counter | count = counter.count + 1 }, Cmd.none)
+            ( { counter | count = counter.count + 1 }, Cmd.none )
         
         Decrement ->
-            ({ counter | count = counter.count - 1 }, Cmd.none)
+            ( { counter | count = counter.count - 1 }, Cmd.none )
         
         Reset ->
-            ({ counter | count = 0 }, Cmd.none)
+            ( { counter | count = 0 }, Cmd.none )
 
 
 -- View with toMsg wrapper

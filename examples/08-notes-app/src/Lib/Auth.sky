@@ -59,9 +59,11 @@ checkUserCredentials email password user =
         if verifyPassword password storedHash then
             if verified == "1" then
                 Ok user
+            
             else
                 Err
                     "Email not verified yet. Please check the server console for your verification link."
+        
         else
             Err "Invalid email or password."
 
@@ -123,11 +125,9 @@ verifyEmail token =
             Ok rowsAffected ->
                 if rowsAffected == 0 then
                     Err "Invalid or already used verification link."
+                
                 else
                     Ok "Your email has been verified! You can now sign in."
             
             Err _ ->
                 Err "A database error occurred during verification."
-
-
-

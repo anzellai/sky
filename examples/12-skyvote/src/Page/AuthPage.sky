@@ -13,6 +13,7 @@ import Ui.Layout as Layout
 viewAuthError authErr =
     if authErr == "" then
         text ""
+    
     else
         div [ class "notification notification-error" ] [ text authErr ]
 
@@ -72,8 +73,7 @@ signUpContent model =
         ]
 
 
-viewSignUp model =
-    Layout.page model (signUpContent model)
+viewSignUp model = Layout.page model (signUpContent model)
 
 
 -- ======================================================
@@ -121,5 +121,4 @@ signInContent model =
         ]
 
 
-viewSignIn model =
-    Layout.page model (signInContent model)
+viewSignIn model = Layout.page model (signInContent model)

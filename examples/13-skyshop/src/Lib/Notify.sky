@@ -24,20 +24,24 @@ notifyOrderPlaced cart items userName userEmail =
         prefix =
             if env == "production" then
                 "[REAL]"
+            
             else
                 "[Test]"
         subject =
             prefix ++ " New order from " ++ userName ++ " (" ++ userEmail ++ ")"
         body =
-            subject ++ " - " ++ itemCount ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
+            subject
+                ++ " - "
+                    ++ itemCount
+                        ++ " items, " ++ totalCurrency ++ " " ++ totalAmount
         notificationId = Result.withDefault "" (Uuid.newString ())
         notificationData =
             Dict.fromList
-                [ ("id", notificationId)
-                , ("notification_type", "order")
-                , ("subject", subject)
-                , ("body", body)
-                , ("sent", Db.boolVal False)
+                [ ( "id", notificationId )
+                , ( "notification_type", "order" )
+                , ( "subject", subject )
+                , ( "body", body )
+                , ( "sent", Db.boolVal False )
                 ]
         _ =
             Db.setDoc "notifications" notificationId notificationData
@@ -70,12 +74,14 @@ sendEmailNotification notificationId subject body =
                         "[NOTIFY] Email not configured (SMTP_HOST or NOTIFY_TO missing), skipping."
             in
                 ()
+        
         else
             let
                 _ =
                     println
                         (
-                        "[NOTIFY] Would send email to " ++ notifyTo ++ ": " ++ subject
+                        "[NOTIFY] Would send email to "
+                            ++ notifyTo ++ ": " ++ subject
                         )
                 _ =
                     case Db.getDoc "notifications" notificationId of

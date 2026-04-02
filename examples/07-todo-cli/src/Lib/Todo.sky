@@ -8,6 +8,7 @@ import Lib.Db as Db
 showStatus done =
     if done == "1" then
         "[x]"
+    
     else
         "[ ]"
 
@@ -18,4 +19,5 @@ formatTodo row =
         todoName = Db.getField "title" row
         todoDone = Db.getField "done" row
     in
-        identity ("  " ++ todoId ++ ". " ++ showStatus todoDone ++ " " ++ todoName)
+        identity
+            ("  " ++ todoId ++ ". " ++ showStatus todoDone ++ " " ++ todoName)

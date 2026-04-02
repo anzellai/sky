@@ -25,6 +25,7 @@ adminEmails =
     in
         if envAdmins == "" then
             [ "admin@example.com" ]
+        
         else
             String.split "," envAdmins
 
@@ -43,6 +44,7 @@ getAuthClient _ =
         opts =
             if credFile == "" then
                 []
+            
             else
                 [ Option.withCredentialsFile credFile ]
         appResult = Firebase.newApp ctx (js "nil") opts
@@ -84,7 +86,8 @@ verifyToken idToken =
                         _ =
                             println
                                 (
-                                "[AUTH] Firebase token verified for: " ++ email ++ " (uid: " ++ uid ++ ")"
+                                "[AUTH] Firebase token verified for: "
+                                    ++ email ++ " (uid: " ++ uid ++ ")"
                                 )
                     in
 -- Idempotent upsert using firebase_uid as document ID.
@@ -98,8 +101,8 @@ verifyToken idToken =
                         _ =
                             println
                                 (
-                                "[AUTH] Firebase token verification failed: " ++ errorToString
-                                                                                     e
+                                "[AUTH] Firebase token verification failed: "
+                                    ++ errorToString e
                                 )
                     in
                         Err "Authentication failed. Please try again."
@@ -109,8 +112,8 @@ verifyToken idToken =
                         _ =
                             println
                                 (
-                                "[AUTH] Firebase auth client error: " ++ errorToString
-                                                                             e
+                                "[AUTH] Firebase auth client error: "
+                                    ++ errorToString e
                                 )
                     in
                         Err "Authentication service unavailable."
@@ -122,17 +125,18 @@ findOrCreateUser uid email name =
         adminStr =
             if isAdminUser then
                 "true"
+            
             else
                 "false"
         -- Set with merge: updates email/name/admin but preserves
         -- existing fields (phone, address) from previous writes.
         upsertData =
             Dict.fromList
-                [ ("id", uid)
-                , ("firebase_uid", uid)
-                , ("email", email)
-                , ("name", name)
-                , ("is_admin", Db.boolVal isAdminUser)
+                [ ( "id", uid )
+                , ( "firebase_uid", uid )
+                , ( "email", email )
+                , ( "name", name )
+                , ( "is_admin", Db.boolVal isAdminUser )
                 ]
         _ = Db.setDoc "users" uid upsertData
         -- Read back full document (includes address fields etc.)
@@ -146,12 +150,16 @@ findOrCreateUser uid email name =
                     Just user ->
                         if Db.getBool "suspended" user then
                             Err "Account suspended. Please contact support."
+                        
                         else
                             let
                                 _ =
                                     println
                                         (
-                                        "[AUTH] Signed in: " ++ email ++ " (admin: " ++ adminStr ++ ")"
+                                        "[AUTH] Signed in: "
+                                            ++ email
+                                                ++ " (admin: "
+                                                    ++ adminStr ++ ")"
                                         )
                             in
                                 Ok user

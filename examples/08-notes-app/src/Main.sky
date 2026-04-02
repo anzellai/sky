@@ -50,6 +50,7 @@ requireAuth req onUser =
     in
         if token == "" then
             Server.redirect "/auth/sign-in"
+        
         else
             case Auth.getSessionUser token of
                 
@@ -75,6 +76,7 @@ handleLanding _ req =
     in
         if token == "" then
             Task.succeed (Server.html (View.landingPage ()))
+        
         else
             Task.succeed (Server.redirect "/notes")
 
@@ -105,6 +107,7 @@ handleSignIn _ req =
                             
                             Err msg ->
                                 Task.succeed (Server.html (View.signInPage msg))
+    
     else
         Task.succeed (Server.html (View.signInPage ""))
 
@@ -120,6 +123,7 @@ handleSignUp _ req =
             if password /= confirm then
                 Task.succeed
                     (Server.html (View.signUpPage "Passwords do not match."))
+            
             else if String.length password < 8 then
                 Task.succeed
                     (
@@ -129,6 +133,7 @@ handleSignUp _ req =
                             "Password must be at least 8 characters."
                         )
                     )
+            
             else
                 case Auth.createUser email password of
                     
@@ -144,6 +149,7 @@ handleSignUp _ req =
                                     "That email is already registered, or a server error occurred."
                                 )
                             )
+    
     else
         Task.succeed (Server.html (View.signUpPage ""))
 
@@ -154,9 +160,15 @@ handleForgotPassword _ req =
         let
             email = Server.formValue "email" req
             resetToken = Auth.generateToken ()
-            _ = println ("[Email Service] Password reset for: " ++ email ++ " " ++ resetToken)
+            _ =
+                println
+                    (
+                    "[Email Service] Password reset for: "
+                        ++ email ++ " " ++ resetToken
+                    )
         in
             Task.succeed (Server.html (View.forgotPasswordSentPage ()))
+    
     else
         Task.succeed (Server.html (View.forgotPasswordPage ""))
 
@@ -224,6 +236,7 @@ handleNewNote _ req =
                             _ = Notes.createNote userId title content
                         in
                             Server.redirect "/notes"
+                    
                     else
                         Server.html (View.noteFormPage email "" "" "" False)
             )
@@ -270,6 +283,7 @@ handleEditNote _ req =
                             _ = Notes.updateNote noteId userId title content
                         in
                             Server.redirect ("/notes/view?id=" ++ noteId)
+                    
                     else
                         case Notes.getNote noteId userId of
                             

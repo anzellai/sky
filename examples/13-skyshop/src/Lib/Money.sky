@@ -28,6 +28,7 @@ formatAmount amountInPence =
         penceStr =
             if pence < 10 then
                 "0" ++ String.fromInt pence
+            
             else
                 String.fromInt pence
     in
@@ -45,15 +46,17 @@ formatPriceFromRow row =
         effectivePrice =
             if discount > 0 then
                 amount - discount
+            
             else
                 amount
     in
         if discount > 0 then
             { original = currencySymbol currency ++ formatAmount amount
-            , discounted = currencySymbol currency ++ formatAmount
-                                                          effectivePrice
+            , discounted =
+                currencySymbol currency ++ formatAmount effectivePrice
             , hasDiscount = True
             }
+        
         else
             { original = currencySymbol currency ++ formatAmount amount
             , discounted = ""

@@ -38,7 +38,8 @@ createUser username email password =
                     _ =
                         println
                             (
-                            "[AUTH] User created: " ++ username ++ " (" ++ email ++ ")"
+                            "[AUTH] User created: "
+                                ++ username ++ " (" ++ email ++ ")"
                             )
                 in
                     Ok id
@@ -67,12 +68,14 @@ authenticateUser email password =
                             _ = println ("[AUTH] Sign-in success: " ++ email)
                         in
                             Ok user
+                    
                     else
                         let
                             _ =
                                 println
                                     (
-                                    "[AUTH] Sign-in failed (bad password): " ++ email
+                                    "[AUTH] Sign-in failed (bad password): "
+                                        ++ email
                                     )
                         in
                             Err "Invalid email or password."
@@ -93,7 +96,3 @@ getUserById userId =
         userRows = Result.withDefault [] rows
     in
         List.head userRows
-
-
-
-

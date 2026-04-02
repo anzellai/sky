@@ -35,10 +35,10 @@ type Msg
 -- ======================================================
 init : a -> (Model, Cmd Msg)
 init _req =
-    ({ page = MainPage
-     , title = "My App"
-     , myCounter = Counter.initWith "Clicks"
-     }, Cmd.none)
+    ( { page = MainPage
+    , title = "My App"
+    , myCounter = Counter.initWith "Clicks"
+    }, Cmd.none )
 
 
 -- ======================================================
@@ -47,15 +47,15 @@ init _req =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-
+        
         Navigate page ->
-            ({ model | page = page }, Cmd.none)
-
+            ( { model | page = page }, Cmd.none )
+        
         UpdateTitle t ->
-            ({ model | title = t }, Cmd.none)
-
+            ( { model | title = t }, Cmd.none )
+        
         _ ->
-            (model, Cmd.none)
+            ( model, Cmd.none )
 
 
 -- ======================================================
@@ -89,8 +89,9 @@ view model =
               , p [ class "total" ]
                     [ text
                           (
-                          "Total: " ++ String.fromInt
-                                           (Counter.getCount model.myCounter)
+                          "Total: "
+                              ++ String.fromInt
+                                     (Counter.getCount model.myCounter)
                           )
                     ]
               ]

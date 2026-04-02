@@ -14,7 +14,6 @@ import Github.Com.Stripe.StripeGo.V84 as Stripe
 import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
 import Github.Com.Stripe.StripeGo.V84.Customer as Customer
 
-
 initStripe =
     let
         key = Result.withDefault "" (Os.getenv "STRIPE_API_KEY")
@@ -33,11 +32,13 @@ domainUrl =
     in
         if domain != "" then
             domain
+        
         else
             let
                 effectivePort =
                     if port_ == "" then
                         "4000"
+                    
                     else
                         port_
             in
@@ -58,6 +59,7 @@ getOrCreateCustomer userId userName userEmail =
                 _ = println ("[STRIPE] Found existing customer: " ++ customerId)
             in
                 Ok customerId
+        
         else
             createCustomer userId userName userEmail
 
@@ -70,14 +72,14 @@ createCustomer userId userName userEmail =
                 |> Stripe.customerParamsSetName userName
     in
         case Customer.new params of
-
+            
             Ok c ->
                 let
                     customerId = Stripe.customerID c
                     _ = println ("[STRIPE] Created customer: " ++ customerId)
                 in
                     Ok customerId
-
+            
             Err e ->
                 Err ("Failed to create Stripe customer: " ++ errorToString e)
 
@@ -90,18 +92,23 @@ buildLineItem item =
         effectivePrice =
             if price - discount > 0 then
                 price - discount
+            
             else
                 price
         qty = Db.getInt "quantity" item
         currency = String.toLower (Db.getField "price_currency" item)
         productData =
             Stripe.newCheckoutSessionLineItemPriceDataProductDataParams ()
-                |> Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName title
+                |> Stripe.checkoutSessionLineItemPriceDataProductDataParamsSetName
+                       title
         priceData =
             Stripe.newCheckoutSessionLineItemPriceDataParams ()
-                |> Stripe.checkoutSessionLineItemPriceDataParamsSetProductData productData
-                |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount effectivePrice
-                |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency currency
+                |> Stripe.checkoutSessionLineItemPriceDataParamsSetProductData
+                       productData
+                |> Stripe.checkoutSessionLineItemPriceDataParamsSetUnitAmount
+                       effectivePrice
+                |> Stripe.checkoutSessionLineItemPriceDataParamsSetCurrency
+                       currency
     in
         Stripe.newCheckoutSessionLineItemParams ()
             |> Stripe.checkoutSessionLineItemParamsSetPriceData priceData
@@ -112,52 +119,63 @@ createCheckoutSession cartId items userId userName userEmail remarks =
     if apiKey == "" then
         Err
             "Stripe API key not configured. Set STRIPE_API_KEY environment variable."
+    
     else
         case getOrCreateCustomer userId userName userEmail of
-
+            
             Err e ->
                 Err e
-
+            
             Ok customerId ->
                 let
                     successUrl = domainUrl ++ "/order/" ++ cartId ++ "/success"
                     cancelUrl = domainUrl ++ "/cart"
                     lineItems = List.map buildLineItem items
                     shippingCollection =
-                        Stripe.newCheckoutSessionShippingAddressCollectionParams ()
+                        Stripe.newCheckoutSessionShippingAddressCollectionParams
+                            ()
                     phoneCollection =
                         Stripe.newCheckoutSessionPhoneNumberCollectionParams ()
-                            |> Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled True
+                            |> Stripe.checkoutSessionPhoneNumberCollectionParamsSetEnabled
+                                   True
                     params =
                         Stripe.newCheckoutSessionParams ()
                             |> Stripe.checkoutSessionParamsSetMode "payment"
-                            |> Stripe.checkoutSessionParamsSetSuccessURL successUrl
-                            |> Stripe.checkoutSessionParamsSetCancelURL cancelUrl
-                            |> Stripe.checkoutSessionParamsSetCustomer customerId
-                            |> Stripe.checkoutSessionParamsSetLineItems lineItems
-                            |> Stripe.checkoutSessionParamsSetShippingAddressCollection shippingCollection
-                            |> Stripe.checkoutSessionParamsSetPhoneNumberCollection phoneCollection
+                            |> Stripe.checkoutSessionParamsSetSuccessURL
+                                   successUrl
+                            |> Stripe.checkoutSessionParamsSetCancelURL
+                                   cancelUrl
+                            |> Stripe.checkoutSessionParamsSetCustomer
+                                   customerId
+                            |> Stripe.checkoutSessionParamsSetLineItems
+                                   lineItems
+                            |> Stripe.checkoutSessionParamsSetShippingAddressCollection
+                                   shippingCollection
+                            |> Stripe.checkoutSessionParamsSetPhoneNumberCollection
+                                   phoneCollection
                     _ =
                         println
                             (
-                            "[STRIPE] Creating checkout session for cart: " ++ cartId
+                            "[STRIPE] Creating checkout session for cart: "
+                                ++ cartId
                             )
                 in
                     case Session.new params of
-
+                        
                         Ok sess ->
                             let
                                 sessionId = Stripe.checkoutSessionID sess
                                 sessionUrl = Stripe.checkoutSessionURL sess
                             in
                                 Ok { id = sessionId , url = sessionUrl }
-
+                        
                         Err e ->
                             let
                                 _ =
                                     println
                                         (
-                                        "[STRIPE] API error: " ++ errorToString e
+                                        "[STRIPE] API error: "
+                                            ++ errorToString e
                                         )
                             in
                                 Err ("Stripe API error: " ++ errorToString e)
@@ -181,43 +199,45 @@ verifyPayment orderId =
     let
         doc =
             case Db.getDoc "orders" orderId of
-
+                
                 Ok (Just order) ->
                     Just order
-
+                
                 _ ->
                     case Db.getDoc "carts" orderId of
-
+                        
                         Ok (Just cart) ->
                             Just cart
-
+                        
                         _ ->
                             Nothing
     in
         case doc of
-
+            
             Just order ->
                 let
                     reference = Db.getField "checkout_reference" order
                 in
                     if reference == "" then
                         Err "No checkout reference found."
+                    
                     else
                         verifyStripeSession orderId reference
-
+            
             Nothing ->
                 Err "Order not found."
 
 
 verifyStripeSession cartId sessionId =
     case Session.get sessionId Nothing of
-
+        
         Ok sess ->
             let
                 status = Stripe.checkoutSessionStatus sess
                 paymentStatus = Stripe.checkoutSessionPaymentStatus sess
             in
-                if status == Stripe.checkoutSessionStatusComplete && paymentStatus == Stripe.checkoutSessionPaymentStatusPaid then
+                if status == Stripe.checkoutSessionStatusComplete
+                    && paymentStatus == Stripe.checkoutSessionPaymentStatusPaid then
                     let
                         _ =
                             println
@@ -253,6 +273,7 @@ verifyStripeSession cartId sessionId =
                             , customerName =
                                 if custName != "" then
                                     custName
+                                
                                 else
                                     shippingName
                             , customerEmail = custEmail
@@ -260,12 +281,15 @@ verifyStripeSession cartId sessionId =
                             , shippingLine1 = Stripe.addressLine1 shippingAddr
                             , shippingLine2 = Stripe.addressLine2 shippingAddr
                             , shippingCity = Stripe.addressCity shippingAddr
-                            , shippingCountry = Stripe.addressCountry shippingAddr
-                            , shippingPostalCode = Stripe.addressPostalCode shippingAddr
+                            , shippingCountry =
+                                Stripe.addressCountry shippingAddr
+                            , shippingPostalCode =
+                                Stripe.addressPostalCode shippingAddr
                             }
+                
                 else
                     Err "Payment not complete."
-
+        
         Err e ->
             Err ("Failed to retrieve checkout session: " ++ errorToString e)
 
@@ -279,6 +303,7 @@ deductStock orderId =
             if List.isEmpty orderItems then
                 Result.withDefault []
                     (Db.queryWhere "cart_items" "cart_id" "==" orderId)
+            
             else
                 orderItems
         _ = List.map deductItemStock items
@@ -293,7 +318,7 @@ deductItemStock item =
         qty = Db.getInt "quantity" item
     in
         case Db.getDoc "products" productId of
-
+            
             Ok (Just product) ->
                 let
                     currentStock = Db.getInt "stock" product
@@ -303,6 +328,7 @@ deductItemStock item =
                             newStock =
                                 if (currentStock - qty) >= 0 then
                                     currentStock - qty
+                                
                                 else
                                     0
                             updatedProduct =
@@ -310,8 +336,9 @@ deductItemStock item =
                             _ = Db.setDoc "products" productId updatedProduct
                         in
                             ()
+                    
                     else
                         ()
-
+            
             _ ->
                 ()

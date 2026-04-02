@@ -17,9 +17,9 @@ encodeSimple =
     let
         val =
             Encode.object
-                [ ("name", Encode.string "Alice")
-                , ("age", Encode.int 30)
-                , ("active", Encode.bool True)
+                [ ( "name", Encode.string "Alice" )
+                , ( "age", Encode.int 30 )
+                , ( "active", Encode.bool True )
                 ]
     in
         Encode.encode 2 val
@@ -30,13 +30,13 @@ encodeComplex =
     let
         val =
             Encode.object
-                [ ("user", Encode.object
-                               [ ("name", Encode.string "Bob")
-                               , ("email", Encode.string "bob@example.com")
-                               , ("age", Encode.int 25)
-                               ])
-                , ("tags", Encode.list Encode.string [ "admin" , "premium" ])
-                , ("scores", Encode.list Encode.int [ 95 , 87 , 92 ])
+                [ ( "user", Encode.object
+                                [ ( "name", Encode.string "Bob" )
+                                , ( "email", Encode.string "bob@example.com" )
+                                , ( "age", Encode.int 25 )
+                                ] )
+                , ( "tags", Encode.list Encode.string [ "admin" , "premium" ] )
+                , ( "scores", Encode.list Encode.int [ 95 , 87 , 92 ] )
                 ]
     in
         Encode.encode 2 val
@@ -103,8 +103,12 @@ optionalExample =
             Result.map
                 (
                 \p ->
-                    "@" ++ p.username ++ ", bio: " ++ p.bio ++ ", followers: " ++ String.fromInt
-                                                                                      p.followers
+                    "@"
+                        ++ p.username
+                            ++ ", bio: "
+                                ++ p.bio
+                                    ++ ", followers: "
+                                        ++ String.fromInt p.followers
                 )
                 result
             )
@@ -155,22 +159,23 @@ roundtrip =
     let
         original =
             Encode.object
-                [ ("items", Encode.list
-                                (
-                                \n ->
-                                    Encode.object [ ("name", Encode.string n) ]
-                                )
-                                [ "Alice" , "Bob" , "Charlie" ])
-                , ("count", Encode.int 3)
+                [ ( "items", Encode.list
+                                 (
+                                 \n ->
+                                     Encode.object
+                                         [ ( "name", Encode.string n ) ]
+                                 )
+                                 [ "Alice" , "Bob" , "Charlie" ] )
+                , ( "count", Encode.int 3 )
                 ]
         jsonStr = Encode.encode 0 original
         decoder =
             Decode.map2
                 (
                 \c ns ->
-                    "Count: " ++ String.fromInt c ++ ", Names: " ++ String.join
-                                                                        ", "
-                                                                        ns
+                    "Count: "
+                        ++ String.fromInt c
+                            ++ ", Names: " ++ String.join ", " ns
                 )
                 (Decode.field "count" Decode.int)
                 (

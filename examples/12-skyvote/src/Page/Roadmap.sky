@@ -19,7 +19,8 @@ viewRoadmap model =
         done = Ideas.getIdeasByStatus "done"
         open_ = Ideas.getIdeasByStatus "open"
     in
-        Layout.page model (
+        Layout.page model
+            (
             div [ class "mt-32" ]
                 [ h1 [ class "page-title" ] [ text "Roadmap" ]
                 , p [ class "page-subtitle" ]
@@ -49,6 +50,7 @@ roadmapColumn title subtitle items =
               (
               if List.isEmpty items then
                   [ p [ class "roadmap-empty" ] [ text "Nothing here yet" ] ]
+              
               else
                   List.map roadmapItem items
               )
@@ -66,7 +68,3 @@ roadmapItem idea =
             , div [ class "roadmap-item-votes" ]
                   [ text (voteCount ++ " votes") ]
             ]
-
-
-
-

@@ -47,6 +47,7 @@ viewOrders model =
                     , if List.isEmpty model.orders then
                         div [ tw [ textCenter , py16 , textGray500 ] ]
                             [ text (Tr.t model.lang "order.empty") ]
+                    
                     else
                         div [ tw [ flexCol , gap4 ] ]
                             (List.map (viewOrderCard model) model.orders)
@@ -103,7 +104,8 @@ viewOrderCard model order =
                   , span [ tw [ textSm , textGray500 ] ]
                         [ text
                               (
-                              Tr.t model.lang "order.placed" ++ ": " ++ createdAt
+                              Tr.t model.lang "order.placed"
+                                  ++ ": " ++ createdAt
                               )
                         ]
                   ]
@@ -221,10 +223,17 @@ viewOrderDetail model order =
                           , p [ tw [ textSm , textGray600 ] ]
                                 [ text
                                       (
-                                      shippingLine1 ++ ", " ++ shippingCity ++ " " ++ shippingPostcode ++ ", " ++ shippingCountry
+                                      shippingLine1
+                                          ++ ", "
+                                              ++ shippingCity
+                                                  ++ " "
+                                                      ++ shippingPostcode
+                                                          ++ ", "
+                                                              ++ shippingCountry
                                       )
                                 ]
                           ]
+                  
                   else
                       text ""
                   , if remarks != "" then
@@ -232,6 +241,7 @@ viewOrderDetail model order =
                           [ h3 [ tw [ fontSemibold , mb2 ] ] [ text "Remarks" ]
                           , p [ tw [ textSm , textGray600 ] ] [ text remarks ]
                           ]
+                  
                   else
                       text ""
                   ]
@@ -254,6 +264,7 @@ viewOrderItem item =
         effectivePrice =
             if discount > 0 then
                 price - discount
+            
             else
                 price
         lineTotal_ = Money.formatPrice (effectivePrice * qty) currency
@@ -290,7 +301,9 @@ viewOrderSuccess model =
                     let
                         state = Db.getField "state" order
                     in
-                        if state == "ordered" || state == "shipped" || state == "delivered" then
+                        if state == "ordered"
+                            || state == "shipped"
+                            || state == "delivered" then
                             div []
                                 [ div
                                       [ tw
@@ -328,6 +341,7 @@ viewOrderSuccess model =
                                       ]
                                       [ text (Tr.t model.lang "order.detail") ]
                                 ]
+                        
                         else
                             div []
                                 [ h1
@@ -342,9 +356,10 @@ viewOrderSuccess model =
                                 , p [ tw [ textGray500 , mb4 ] ]
                                       [ text
                                             (
-                                            Tr.t model.lang "order.status" ++ ": " ++ Tr.tCartState
-                                                                                          model.lang
-                                                                                          state
+                                            Tr.t model.lang "order.status"
+                                                ++ ": "
+                                                    ++ Tr.tCartState model.lang
+                                                           state
                                             )
                                       ]
                                 , a

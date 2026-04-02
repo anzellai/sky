@@ -23,8 +23,9 @@ listAllProducts =
                 Ok products ->
                     println
                         (
-                        "[PRODUCTS] Loaded " ++ String.fromInt
-                                                    (List.length products) ++ " products"
+                        "[PRODUCTS] Loaded "
+                            ++ String.fromInt (List.length products)
+                                ++ " products"
                         )
                 
                 Err e ->
@@ -58,6 +59,7 @@ searchProducts query category sortBy sortDir =
 filterByCategory category products =
     if category == "all" || category == "" then
         products
+    
     else
         List.filter (\p -> Db.getField "category" p == category) products
 
@@ -65,6 +67,7 @@ filterByCategory category products =
 filterBySearch query products =
     if query == "" then
         products
+    
     else
         let
             lowerQuery = String.toLower query
@@ -73,16 +76,9 @@ filterBySearch query products =
                 (
                 \p ->
                     String.contains lowerQuery
-                        (String.toLower (Db.getField "title" p)) || String.contains
-                                                                        lowerQuery
-                                                                        (
-                                                                        String.toLower
-                                                                            (
-                                                                            Db.getField
-                                                                                "summary"
-                                                                                p
-                                                                            )
-                                                                        )
+                        (String.toLower (Db.getField "title" p))
+                        || String.contains lowerQuery
+                               (String.toLower (Db.getField "summary" p))
                 )
                 products
 
@@ -98,13 +94,16 @@ sortProducts sortBy sortDir products =
                                                          p
                     )
                     products
+            
             else if sortBy == "title" then
                 List.sortBy (\_ -> 0) products
+            
             else
                 products
     in
         if sortDir == "desc" then
             List.reverse sorted
+        
         else
             sorted
 
@@ -114,16 +113,16 @@ createProduct title summary category priceAmount priceCurrency priceDiscount sto
         productId = Result.withDefault "" (Uuid.newString ())
         productData =
             Dict.fromList
-                [ ("id", productId)
-                , ("title", title)
-                , ("summary", summary)
-                , ("category", category)
-                , ("price_amount", Db.intVal priceAmount)
-                , ("price_currency", priceCurrency)
-                , ("price_discount", Db.intVal priceDiscount)
-                , ("price_tax", Db.intVal 0)
-                , ("stock", Db.intVal stock)
-                , ("published", Db.boolVal published)
+                [ ( "id", productId )
+                , ( "title", title )
+                , ( "summary", summary )
+                , ( "category", category )
+                , ( "price_amount", Db.intVal priceAmount )
+                , ( "price_currency", priceCurrency )
+                , ( "price_discount", Db.intVal priceDiscount )
+                , ( "price_tax", Db.intVal 0 )
+                , ( "stock", Db.intVal stock )
+                , ( "published", Db.boolVal published )
                 ]
         result = Db.setDoc "products" productId productData
     in
@@ -143,15 +142,15 @@ updateProduct productId title summary category priceAmount priceCurrency priceDi
     let
         productData =
             Dict.fromList
-                [ ("id", productId)
-                , ("title", title)
-                , ("summary", summary)
-                , ("category", category)
-                , ("price_amount", Db.intVal priceAmount)
-                , ("price_currency", priceCurrency)
-                , ("price_discount", Db.intVal priceDiscount)
-                , ("stock", Db.intVal stock)
-                , ("published", Db.boolVal published)
+                [ ( "id", productId )
+                , ( "title", title )
+                , ( "summary", summary )
+                , ( "category", category )
+                , ( "price_amount", Db.intVal priceAmount )
+                , ( "price_currency", priceCurrency )
+                , ( "price_discount", Db.intVal priceDiscount )
+                , ( "stock", Db.intVal stock )
+                , ( "published", Db.boolVal published )
                 ]
         result = Db.setDoc "products" productId productData
     in
@@ -205,10 +204,10 @@ addProductImage productId imageData =
         nextPosition = String.fromInt (List.length existingImages)
         imageDoc =
             Dict.fromList
-                [ ("id", imageId)
-                , ("product_id", productId)
-                , ("data", imageData)
-                , ("position", nextPosition)
+                [ ( "id", imageId )
+                , ( "product_id", productId )
+                , ( "data", imageData )
+                , ( "position", nextPosition )
                 ]
         result = Db.setDoc "product_images" imageId imageDoc
     in

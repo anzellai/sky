@@ -56,8 +56,8 @@ viewIdeaDetail model idea =
                               [ span []
                                     [ text
                                           (
-                                          "by " ++ Db.getField "author_name"
-                                                       idea
+                                          "by "
+                                              ++ Db.getField "author_name" idea
                                           )
                                     ]
                               , span [] [ text (Db.getField "created_at" idea) ]
@@ -82,8 +82,10 @@ viewIdeaDetail model idea =
 viewCategoryBadge category =
     if category == "bug" then
         span [ class "badge badge-bug" ] [ text "Bug" ]
+    
     else if category == "improvement" then
         span [ class "badge badge-improvement" ] [ text "Improvement" ]
+    
     else
         span [ class "badge badge-feature" ] [ text "Feature" ]
 
@@ -93,8 +95,9 @@ viewComments model =
         [ h2 [ class "comments-title" ]
               [ text
                     (
-                    "Comments (" ++ String.fromInt
-                                        (List.length model.ideaComments) ++ ")"
+                    "Comments ("
+                        ++ String.fromInt (List.length model.ideaComments)
+                            ++ ")"
                     )
               ]
         , viewCommentForm model
@@ -110,6 +113,7 @@ viewCommentList model =
                   [ text "No comments yet. Be the first to share your thoughts!"
                   ]
             ]
+        
         else
             List.map viewComment model.ideaComments
         )
@@ -153,7 +157,3 @@ viewCommentFormAuth model =
         , button [ type_ "submit" , class "btn btn-primary btn-sm" ]
               [ text "Post Comment" ]
         ]
-
-
-
-

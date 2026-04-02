@@ -36,25 +36,25 @@ init _req =
         _ = println "[APP] SkyVote initialised"
         ideas = Ideas.getIdeas "newest" "all" ""
     in
-        ({ page = BoardPage
-         , currentUser = Nothing
-         , ideas = ideas
-         , sortBy = "newest"
-         , filterCategory = "all"
-         , searchQuery = ""
-         , selectedIdeaId = ""
-         , selectedIdea = Nothing
-         , ideaComments = []
-         , newComment = ""
-         , submitTitle = ""
-         , submitDescription = ""
-         , submitCategory = "feature"
-         , authEmail = ""
-         , authUsername = ""
-         , authPassword = ""
-         , authError = ""
-         , notification = ""
-         }, Cmd.none)
+        ( { page = BoardPage
+        , currentUser = Nothing
+        , ideas = ideas
+        , sortBy = "newest"
+        , filterCategory = "all"
+        , searchQuery = ""
+        , selectedIdeaId = ""
+        , selectedIdea = Nothing
+        , ideaComments = []
+        , newComment = ""
+        , submitTitle = ""
+        , submitDescription = ""
+        , submitCategory = "feature"
+        , authEmail = ""
+        , authUsername = ""
+        , authPassword = ""
+        , authError = ""
+        , notification = ""
+        }, Cmd.none )
 
 
 -- ======================================================
@@ -84,28 +84,28 @@ main =
 view : Model -> VNode
 view model =
     case model.page of
-
+        
         BoardPage ->
             Board.viewBoard model
-
+        
         DetailPage ->
             Detail.viewDetail model
-
+        
         SubmitPage ->
             Submit.viewSubmit model
-
+        
         SignInPage ->
             PageAuth.viewSignIn model
-
+        
         SignUpPage ->
             PageAuth.viewSignUp model
-
+        
         AboutPage ->
             About.viewAbout model
-
+        
         RoadmapPage ->
             Roadmap.viewRoadmap model
-
+        
         NotFoundPage ->
             Board.viewBoard model
 
@@ -115,13 +115,13 @@ view model =
 -- ======================================================
 subscriptions model =
     case model.page of
-
+        
         BoardPage ->
             Time.every 10000 Tick
-
+        
         DetailPage ->
             Time.every 10000 Tick
-
+        
         _ ->
             Sub.none
 
@@ -132,64 +132,64 @@ subscriptions model =
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-
+        
         Navigate page ->
-            ({ model | page = page , notification = "" , authError = "" }, Cmd.none)
-
+            ( { model | page = page , notification = "" , authError = "" }, Cmd.none )
+        
         SetSort sortBy ->
             handleSetSort sortBy model
-
+        
         SetFilter category ->
             handleSetFilter category model
-
+        
         SetSearch query ->
             handleSetSearch query model
-
+        
         ToggleVote ideaId ->
             handleToggleVote ideaId model
-
+        
         ViewIdea ideaId ->
             handleViewIdea ideaId model
-
+        
         UpdateComment content ->
-            ({ model | newComment = content }, Cmd.none)
-
+            ( { model | newComment = content }, Cmd.none )
+        
         SubmitComment ->
             handleSubmitComment model
-
+        
         BackToBoard ->
             handleBackToBoard model
-
+        
         UpdateTitle t ->
-            ({ model | submitTitle = t }, Cmd.none)
-
+            ( { model | submitTitle = t }, Cmd.none )
+        
         UpdateDescription d ->
-            ({ model | submitDescription = d }, Cmd.none)
-
+            ( { model | submitDescription = d }, Cmd.none )
+        
         UpdateCategory c ->
-            ({ model | submitCategory = c }, Cmd.none)
-
+            ( { model | submitCategory = c }, Cmd.none )
+        
         SubmitIdea ->
             handleSubmitIdea model
-
+        
         UpdateEmail e ->
-            ({ model | authEmail = e }, Cmd.none)
-
+            ( { model | authEmail = e }, Cmd.none )
+        
         UpdateUsername u ->
-            ({ model | authUsername = u }, Cmd.none)
-
+            ( { model | authUsername = u }, Cmd.none )
+        
         UpdatePassword p ->
-            ({ model | authPassword = p }, Cmd.none)
-
+            ( { model | authPassword = p }, Cmd.none )
+        
         DoSignIn ->
             AuthHandlers.handleSignIn model
-
+        
         DoSignUp ->
             AuthHandlers.handleSignUp model
-
+        
         DoSignOut ->
             AuthHandlers.handleSignOut model
-
+        
         Tick ->
             refreshCurrentView model
 
@@ -213,17 +213,17 @@ refreshCurrentView model =
                     Ideas.getIdeas model.sortBy model.filterCategory
                         model.searchQuery
             in
-                ({ model | ideas = ideas }, Cmd.none)
+                ( { model | ideas = ideas }, Cmd.none )
         
         DetailPage ->
             let
                 idea = Ideas.getIdea model.selectedIdeaId
                 comments = Comments.getComments model.selectedIdeaId
             in
-                ({ model | selectedIdea = idea , ideaComments = comments }, Cmd.none)
+                ( { model | selectedIdea = idea , ideaComments = comments }, Cmd.none )
         
         _ ->
-            (model, Cmd.none)
+            ( model, Cmd.none )
 
 
 -- ======================================================
@@ -234,7 +234,7 @@ handleSetSort sortBy model =
     let
         ideas = Ideas.getIdeas sortBy model.filterCategory model.searchQuery
     in
-        ({ model | sortBy = sortBy , ideas = ideas }, Cmd.none)
+        ( { model | sortBy = sortBy , ideas = ideas }, Cmd.none )
 
 
 handleSetFilter : String -> Model -> (Model, Cmd Msg)
@@ -242,7 +242,7 @@ handleSetFilter category model =
     let
         ideas = Ideas.getIdeas model.sortBy category model.searchQuery
     in
-        ({ model | filterCategory = category , ideas = ideas }, Cmd.none)
+        ( { model | filterCategory = category , ideas = ideas }, Cmd.none )
 
 
 handleSetSearch : String -> Model -> (Model, Cmd Msg)
@@ -250,7 +250,7 @@ handleSetSearch query model =
     let
         ideas = Ideas.getIdeas model.sortBy model.filterCategory query
     in
-        ({ model | searchQuery = query , ideas = ideas }, Cmd.none)
+        ( { model | searchQuery = query , ideas = ideas }, Cmd.none )
 
 
 handleToggleVoteAuth : String -> (Dict String String) -> Model -> (Model, Cmd Msg)
@@ -271,10 +271,10 @@ handleToggleVote ideaId model =
             handleToggleVoteAuth ideaId user model
         
         Nothing ->
-            ({ model
-             | page = SignInPage
-             , authError = "Please sign in to vote."
-             }, Cmd.none)
+            ( { model
+                | page = SignInPage
+                , authError = "Please sign in to vote."
+            }, Cmd.none )
 
 
 handleViewIdea : String -> Model -> (Model, Cmd Msg)
@@ -283,14 +283,14 @@ handleViewIdea ideaId model =
         idea = Ideas.getIdea ideaId
         comments = Comments.getComments ideaId
     in
-        ({ model
-         | page = DetailPage
-         , selectedIdeaId = ideaId
-         , selectedIdea = idea
-         , ideaComments = comments
-         , newComment = ""
-         , notification = ""
-         }, Cmd.none)
+        ( { model
+            | page = DetailPage
+            , selectedIdeaId = ideaId
+            , selectedIdea = idea
+            , ideaComments = comments
+            , newComment = ""
+            , notification = ""
+        }, Cmd.none )
 
 
 -- ======================================================
@@ -305,11 +305,11 @@ doSubmitComment user model =
         comments = Comments.getComments model.selectedIdeaId
         idea = Ideas.getIdea model.selectedIdeaId
     in
-        ({ model
-         | ideaComments = comments
-         , selectedIdea = idea
-         , newComment = ""
-         }, Cmd.none)
+        ( { model
+            | ideaComments = comments
+            , selectedIdea = idea
+            , newComment = ""
+        }, Cmd.none )
 
 
 handleSubmitComment : Model -> (Model, Cmd Msg)
@@ -318,12 +318,13 @@ handleSubmitComment model =
         
         Just user ->
             if model.newComment == "" then
-                (model, Cmd.none)
+                ( model, Cmd.none )
+            
             else
                 doSubmitComment user model
         
         Nothing ->
-            ({ model | page = SignInPage }, Cmd.none)
+            ( { model | page = SignInPage }, Cmd.none )
 
 
 handleBackToBoard : Model -> (Model, Cmd Msg)
@@ -332,13 +333,13 @@ handleBackToBoard model =
         ideas =
             Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
-        ({ model
-         | page = BoardPage
-         , ideas = ideas
-         , selectedIdea = Nothing
-         , selectedIdeaId = ""
-         , notification = ""
-         }, Cmd.none)
+        ( { model
+            | page = BoardPage
+            , ideas = ideas
+            , selectedIdea = Nothing
+            , selectedIdeaId = ""
+            , notification = ""
+        }, Cmd.none )
 
 
 -- ======================================================
@@ -356,14 +357,14 @@ doCreateIdea user model =
         ideas =
             Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
-        ({ model
-         | page = BoardPage
-         , ideas = ideas
-         , submitTitle = ""
-         , submitDescription = ""
-         , submitCategory = "feature"
-         , notification = "Your idea has been submitted!"
-         }, Cmd.none)
+        ( { model
+            | page = BoardPage
+            , ideas = ideas
+            , submitTitle = ""
+            , submitDescription = ""
+            , submitCategory = "feature"
+            , notification = "Your idea has been submitted!"
+        }, Cmd.none )
 
 
 handleSubmitIdea : Model -> (Model, Cmd Msg)
@@ -372,11 +373,10 @@ handleSubmitIdea model =
         
         Just user ->
             if model.submitTitle == "" then
-                (model, Cmd.none)
+                ( model, Cmd.none )
+            
             else
                 doCreateIdea user model
         
         Nothing ->
-            ({ model | page = SignInPage }, Cmd.none)
-
-
+            ( { model | page = SignInPage }, Cmd.none )

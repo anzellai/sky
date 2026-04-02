@@ -23,20 +23,24 @@ main =
                 |> Result.andThen (\hash -> Hex.encodeToString hash)
         _ =
             case hashResult of
-
+                
                 Ok hashStr ->
                     println ("SHA256 of 'Hello, Sky!': " ++ hashStr)
-
+                
                 Err e ->
                     println ("Hash error: " ++ e)
         _ = println "Sending HTTP request..."
         httpResult = Task.run (Http.get "https://httpbin.org/get")
         _ =
             case httpResult of
-
+                
                 Ok resp ->
-                    println ("HTTP response received, body length: " ++ String.fromInt (String.length resp.body))
-
+                    println
+                        (
+                        "HTTP response received, body length: "
+                            ++ String.fromInt (String.length resp.body)
+                        )
+                
                 Err e ->
                     println ("HTTP error: " ++ e)
     in

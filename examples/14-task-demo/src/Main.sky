@@ -16,8 +16,7 @@ main =
                            Task.succeed
                                (greeting ++ " Task is the effect boundary.")
                        )
-        successResult =
-            Task.run pipeline
+        successResult = Task.run pipeline
         _ = printResult "Success" successResult
         failResult =
             Task.run
@@ -31,8 +30,9 @@ main =
 
 printResult label result =
     case result of
+        
         Ok val ->
             println (label ++ ": " ++ val)
-
+        
         Err e ->
             println (label ++ " error: " ++ e)

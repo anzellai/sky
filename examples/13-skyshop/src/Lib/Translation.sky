@@ -8,6 +8,7 @@ import Sky.Core.Prelude exposing (..)
 t lang key =
     if lang == "zh" then
         tZh key
+    
     else
         tEn key
 
@@ -686,6 +687,7 @@ tCategory lang category =
             
             _ ->
                 category
+    
     else
         category
 
@@ -717,6 +719,7 @@ tCartState lang state =
             
             _ ->
                 state
+    
     else
         case state of
             

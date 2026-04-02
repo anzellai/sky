@@ -80,7 +80,8 @@ viewNotFound model =
             div [ tw [ textCenter , py16 ] ]
                 [ h1 [ tw [ text6xl , fontBold , textGray300 , mb4 ] ]
                       [ text "404" ]
-                , p [ tw [ textLg , textGray500 , mb6 ] ] [ text "Page not found" ]
+                , p [ tw [ textLg , textGray500 , mb6 ] ]
+                      [ text "Page not found" ]
                 , a
                       [ href "/"
                       , attribute "sky-nav" ""

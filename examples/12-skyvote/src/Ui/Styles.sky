@@ -593,7 +593,3 @@ globalStyles =
               , rule ".header-inner" [ flexDirection "column" , gap (px 12) ]
               ]
         ]
-
-
-
-

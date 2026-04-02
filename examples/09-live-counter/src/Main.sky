@@ -37,8 +37,8 @@ type Msg
 -- ======================================================
 -- INIT
 -- ======================================================
-init : a -> ( Model, Cmd Msg )
-init _req = ({ page = CounterPage , count = 0 }, Cmd.none)
+init : a -> (Model, Cmd Msg)
+init _req = ( { page = CounterPage , count = 0 }, Cmd.none )
 
 
 -- ======================================================
@@ -46,21 +46,21 @@ init _req = ({ page = CounterPage , count = 0 }, Cmd.none)
 -- ======================================================
 update msg model =
     case msg of
-
+        
         Navigate page ->
-            ({ model | page = page }, Cmd.none)
-
+            ( { model | page = page }, Cmd.none )
+        
         Increment ->
-            ({ model | count = model.count + 1 }, Cmd.none)
-
+            ( { model | count = model.count + 1 }, Cmd.none )
+        
         Decrement ->
-            ({ model | count = model.count - 1 }, Cmd.none)
-
+            ( { model | count = model.count - 1 }, Cmd.none )
+        
         Reset ->
-            ({ model | count = 0 }, Cmd.none)
-
+            ( { model | count = 0 }, Cmd.none )
+        
         Tick ->
-            ({ model | count = model.count + 1 }, Cmd.none)
+            ( { model | count = model.count + 1 }, Cmd.none )
 
 
 -- ======================================================
@@ -68,10 +68,10 @@ update msg model =
 -- ======================================================
 subscriptions model =
     case model.page of
-
+        
         CounterPage ->
             Time.every 1000 Tick
-
+        
         _ ->
             Sub.none
 
@@ -111,10 +111,10 @@ view model =
 
 viewPage model =
     case model.page of
-
+        
         CounterPage ->
             viewCounter model
-
+        
         AboutPage ->
             viewAbout
 

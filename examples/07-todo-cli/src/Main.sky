@@ -51,6 +51,7 @@ listTodos _ =
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""
+        
         else
             let
                 _ = println "Your TODOs:"
@@ -113,40 +114,44 @@ getArg argList = Maybe.withDefault "" (List.head argList)
 
 runCommand cmd cmdArg =
     case cmd of
-
+        
         "add" ->
             if cmdArg == "" then
                 println "Usage: ./app add <title>"
+            
             else
                 addTodo cmdArg
-
+        
         "list" ->
             listTodos ()
-
+        
         "done" ->
             if cmdArg == "" then
                 println "Usage: ./app done <id>"
+            
             else
                 markDone cmdArg
-
+        
         "undone" ->
             if cmdArg == "" then
                 println "Usage: ./app undone <id>"
+            
             else
                 markUndone cmdArg
-
+        
         "remove" ->
             if cmdArg == "" then
                 println "Usage: ./app remove <id>"
+            
             else
                 removeTodo cmdArg
-
+        
         "clear" ->
             clearDone ()
-
+        
         "help" ->
             showUsage ()
-
+        
         _ ->
             showUsage ()
 

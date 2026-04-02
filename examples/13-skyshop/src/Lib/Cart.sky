@@ -19,6 +19,7 @@ getOrCreateCart userId =
             Ok (Just cart) ->
                 if Db.getField "state" cart == "ongoing" then
                     Ok cart
+                
                 else
                     createCart userId
             
@@ -34,22 +35,22 @@ createCart userId =
         cartId = userId ++ "-cart"
         cartData =
             Dict.fromList
-                [ ("id", cartId)
-                , ("owner_id", userId)
-                , ("state", "ongoing")
-                , ("checkout_link", "")
-                , ("checkout_reference", "")
-                , ("checkout_remarks", "")
-                , ("shipping_name", "")
-                , ("shipping_email", "")
-                , ("shipping_phone", "")
-                , ("shipping_line1", "")
-                , ("shipping_line2", "")
-                , ("shipping_city", "")
-                , ("shipping_country", "")
-                , ("shipping_postcode", "")
-                , ("total_amount", Db.intVal 0)
-                , ("total_currency", "GBP")
+                [ ( "id", cartId )
+                , ( "owner_id", userId )
+                , ( "state", "ongoing" )
+                , ( "checkout_link", "" )
+                , ( "checkout_reference", "" )
+                , ( "checkout_remarks", "" )
+                , ( "shipping_name", "" )
+                , ( "shipping_email", "" )
+                , ( "shipping_phone", "" )
+                , ( "shipping_line1", "" )
+                , ( "shipping_line2", "" )
+                , ( "shipping_city", "" )
+                , ( "shipping_country", "" )
+                , ( "shipping_postcode", "" )
+                , ( "total_amount", Db.intVal 0 )
+                , ( "total_currency", "GBP" )
                 ]
     in
         case Db.setDoc "carts" cartId cartData of
@@ -128,7 +129,7 @@ getCartWithItems cartId =
                 Nothing ->
                     []
     in
-        (cart, items)
+        ( cart, items )
 
 
 addItem cartId productId quantity =
@@ -159,10 +160,10 @@ addItem cartId productId quantity =
                     itemId = Result.withDefault "" (Uuid.newString ())
                     itemData =
                         Dict.fromList
-                            [ ("id", itemId)
-                            , ("cart_id", cartId)
-                            , ("product_id", productId)
-                            , ("quantity", Db.intVal quantity)
+                            [ ( "id", itemId )
+                            , ( "cart_id", cartId )
+                            , ( "product_id", productId )
+                            , ( "quantity", Db.intVal quantity )
                             ]
                     _ = Db.setDoc "cart_items" itemId itemData
                     _ = recalculateTotal cartId
@@ -173,6 +174,7 @@ addItem cartId productId quantity =
 updateItemQty itemId quantity =
     if quantity <= 0 then
         removeItem itemId
+    
     else
         case Db.getDoc "cart_items" itemId of
             
@@ -202,6 +204,7 @@ removeItem itemId =
                         _ = recalculateTotal cartId
                     in
                         Ok ()
+                
                 else
                     Ok ()
         
@@ -224,6 +227,7 @@ recalculateTotal cartId =
                         itemTotal =
                             if effectivePrice > 0 then
                                 effectivePrice * qty
+                            
                             else
                                 0
                     in
@@ -259,13 +263,13 @@ findDocAndCollection docId =
     case Db.getDoc "orders" docId of
         
         Ok (Just doc) ->
-            Ok ("orders", doc)
+            Ok ( "orders", doc )
         
         _ ->
             case Db.getDoc "carts" docId of
                 
                 Ok (Just doc) ->
-                    Ok ("carts", doc)
+                    Ok ( "carts", doc )
                 
                 Ok Nothing ->
                     Err "Document not found."
@@ -277,7 +281,7 @@ findDocAndCollection docId =
 setCartState docId newState =
     case findDocAndCollection docId of
         
-        Ok ( collection , doc ) ->
+        Ok ( collection, doc ) ->
             let
                 updatedDoc = Dict.insert "state" newState doc
                 result = Db.setDoc collection docId updatedDoc
@@ -288,10 +292,10 @@ setCartState docId newState =
                         )
             in
                 case result of
-
+                    
                     Ok v ->
                         Ok v
-
+                    
                     Err e ->
                         Err e
 
@@ -299,7 +303,7 @@ setCartState docId newState =
 setCheckout docId link reference remarks =
     case findDocAndCollection docId of
         
-        Ok ( collection , doc ) ->
+        Ok ( collection, doc ) ->
             let
                 updatedDoc =
                     Dict.insert "checkout_link" link
@@ -317,7 +321,7 @@ setCheckout docId link reference remarks =
 setShipping docId name email phone line1 line2 city country postcode =
     case findDocAndCollection docId of
         
-        Ok ( collection , doc ) ->
+        Ok ( collection, doc ) ->
             let
                 updatedDoc =
                     Dict.insert "shipping_name" name
@@ -392,7 +396,8 @@ checkoutToOrder cartId =
                     _ =
                         println
                             (
-                            "[CHECKOUT] Created order " ++ orderId ++ " from cart " ++ cartId
+                            "[CHECKOUT] Created order "
+                                ++ orderId ++ " from cart " ++ cartId
                             )
                 in
                     Ok orderId
@@ -427,7 +432,7 @@ getOrderWithItems orderId =
                 Nothing ->
                     []
     in
-        (order, items)
+        ( order, items )
 
 
 getUserCarts userId =
@@ -437,6 +442,7 @@ getUserCarts userId =
 getOrdersByState state =
     if state == "all" then
         getAllOrders
+    
     else
         let
             orders =

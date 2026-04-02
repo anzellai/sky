@@ -11,73 +11,79 @@ import Lib.Auth as Auth
 import Lib.Db as Db
 import Lib.Ideas as Ideas
 
-
 handleSignInSuccess user model =
     let
         ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
         _ = println ("[AUTH] Sign-in: " ++ Db.getField "email" user)
     in
-        ({ model
-         | currentUser = Just user
-         , ideas = ideas
-         , page = BoardPage
-         , authEmail = ""
-         , authPassword = ""
-         , authError = ""
-         , notification = "Welcome back!"
-         }, Cmd.none)
+        ( { model
+            | currentUser = Just user
+            , ideas = ideas
+            , page = BoardPage
+            , authEmail = ""
+            , authPassword = ""
+            , authError = ""
+            , notification = "Welcome back!"
+        }, Cmd.none )
 
 
 handleSignIn model =
     case Auth.authenticateUser model.authEmail model.authPassword of
-
+        
         Ok user ->
             handleSignInSuccess user model
-
+        
         Err errMsg ->
-            ({ model | authError = errMsg }, Cmd.none)
+            ( { model | authError = errMsg }, Cmd.none )
 
 
 handleSignUpSuccess userId model =
     case Auth.getUserById userId of
-
+        
         Just user ->
             let
                 ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
                 _ = println ("[AUTH] Sign-up success: " ++ userId)
             in
-                ({ model
-                 | currentUser = Just user
-                 , ideas = ideas
-                 , page = BoardPage
-                 , authEmail = ""
-                 , authUsername = ""
-                 , authPassword = ""
-                 , authError = ""
-                 , notification = "Account created! Welcome to SkyVote!"
-                 }, Cmd.none)
-
+                ( { model
+                    | currentUser = Just user
+                    , ideas = ideas
+                    , page = BoardPage
+                    , authEmail = ""
+                    , authUsername = ""
+                    , authPassword = ""
+                    , authError = ""
+                    , notification = "Account created! Welcome to SkyVote!"
+                }, Cmd.none )
+        
         Nothing ->
-            ({ model | authError = "Account created but login failed. Please sign in." , page = SignInPage }, Cmd.none)
+            ( { model
+                | authError =
+                    "Account created but login failed. Please sign in."
+                , page = SignInPage
+            }, Cmd.none )
 
 
 handleSignUpValidated model =
     case Auth.createUser model.authUsername model.authEmail model.authPassword of
-
+        
         Ok userId ->
             handleSignUpSuccess userId model
-
+        
         Err errMsg ->
-            ({ model | authError = errMsg }, Cmd.none)
+            ( { model | authError = errMsg }, Cmd.none )
 
 
 handleSignUp model =
     if model.authEmail == "" then
-        ({ model | authError = "Email is required." }, Cmd.none)
+        ( { model | authError = "Email is required." }, Cmd.none )
+    
     else if model.authUsername == "" then
-        ({ model | authError = "Username is required." }, Cmd.none)
+        ( { model | authError = "Username is required." }, Cmd.none )
+    
     else if String.length model.authPassword < 8 then
-        ({ model | authError = "Password must be at least 8 characters." }, Cmd.none)
+        ( { model | authError = "Password must be at least 8 characters." }, Cmd.none )
+    
     else
         handleSignUpValidated model
 
@@ -86,9 +92,9 @@ handleSignOut model =
     let
         _ = println "[AUTH] User signed out"
     in
-        ({ model
-         | currentUser = Nothing
-         , page = BoardPage
-         , notification = ""
-         , authError = ""
-         }, Cmd.none)
+        ( { model
+            | currentUser = Nothing
+            , page = BoardPage
+            , notification = ""
+            , authError = ""
+        }, Cmd.none )

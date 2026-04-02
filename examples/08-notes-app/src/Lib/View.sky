@@ -19,6 +19,7 @@ getField field row = Maybe.withDefault "" (Dict.get field row)
 errorBanner msg =
     if msg == "" then
         raw ""
+    
     else
         div [ Attr.class "error" ] [ text msg ]
 
@@ -428,25 +429,24 @@ fullWidthBlock _ =
 -- Layout
 -- ============================================================
 layout title navEl content =
-    doctype () ++ render
-                      (
-                      htmlNode [ Attr.lang "en" ]
-                          [ headNode []
-                                [ meta [ Attr.charset "UTF-8" ]
-                                , meta
-                                      [ Attr.name "viewport"
-                                      , Attr.content
-                                            "width=device-width,initial-scale=1.0"
-                                      ]
-                                , titleNode (title ++ " - SkyNotes")
-                                , styleNode [] (appStyles ())
-                                ]
-                          , body []
-                                [ navEl
-                                , div [ Attr.class "container" ] [ content ]
-                                ]
-                          ]
-                      )
+    doctype ()
+        ++ render
+               (
+               htmlNode [ Attr.lang "en" ]
+                   [ headNode []
+                         [ meta [ Attr.charset "UTF-8" ]
+                         , meta
+                               [ Attr.name "viewport"
+                               , Attr.content
+                                     "width=device-width,initial-scale=1.0"
+                               ]
+                         , titleNode (title ++ " - SkyNotes")
+                         , styleNode [] (appStyles ())
+                         ]
+                   , body []
+                         [ navEl , div [ Attr.class "container" ] [ content ] ]
+                   ]
+               )
 
 
 -- ============================================================
@@ -750,6 +750,7 @@ verifyResultPage isSuccess message =
         msgClass =
             if isSuccess then
                 "success"
+            
             else
                 "error"
     in
@@ -780,6 +781,7 @@ noteCard note =
         preview =
             if String.length content > 120 then
                 String.left 120 content ++ "..."
+            
             else
                 content
     in
@@ -814,36 +816,35 @@ notesListPage email notes =
                 )
         content =
             if List.isEmpty notes then
-                headerRow ++ render
-                                 (
-                                 div [ Attr.class "card empty-state" ]
-                                     [ p
-                                           [ Attr.style
-                                                 (
-                                                 Css.styles
-                                                     [ Css.fontSize (Css.em 1.2)
-                                                     , Css.marginBottom (sp 2)
-                                                     ]
-                                                 )
-                                           ]
-                                           [ text "No notes yet" ]
-                                     , p
-                                           [ Attr.style
-                                                 (
-                                                 Css.styles
-                                                     [ Css.marginBottom (sp 5) ]
-                                                 )
-                                           ]
-                                           [ text
-                                                 "Create your first markdown note to get started."
-                                           ]
-                                     , a
-                                           [ Attr.href "/notes/new"
-                                           , Attr.class "btn"
-                                           ]
-                                           [ text "Create Your First Note" ]
+                headerRow
+                    ++ render
+                           (
+                           div [ Attr.class "card empty-state" ]
+                               [ p
+                                     [ Attr.style
+                                           (
+                                           Css.styles
+                                               [ Css.fontSize (Css.em 1.2)
+                                               , Css.marginBottom (sp 2)
+                                               ]
+                                           )
                                      ]
-                                 )
+                                     [ text "No notes yet" ]
+                               , p
+                                     [ Attr.style
+                                           (
+                                           Css.styles
+                                               [ Css.marginBottom (sp 5) ]
+                                           )
+                                     ]
+                                     [ text
+                                           "Create your first markdown note to get started."
+                                     ]
+                               , a [ Attr.href "/notes/new" , Attr.class "btn" ]
+                                     [ text "Create Your First Note" ]
+                               ]
+                           )
+            
             else
                 headerRow ++ noteCards
     in
@@ -860,6 +861,7 @@ noteViewPage email note =
         dateDisplay =
             if updated == "" then
                 "Created " ++ date
+            
             else
                 "Updated " ++ updated
     in
@@ -927,11 +929,13 @@ noteFormPage email noteTitle content noteId isEdit =
         pageTitle =
             if isEdit then
                 "Edit Note"
+            
             else
                 "New Note"
         formAction =
             if isEdit then
                 "/notes/edit?id=" ++ noteId
+            
             else
                 "/notes/new"
         placeholderText =

@@ -46,7 +46,8 @@ viewBoard model =
     let
         userId = getUserId model
     in
-        Layout.page model (
+        Layout.page model
+            (
             div []
                 [ div [ class "board-header" ]
                       [ div []
@@ -69,6 +70,7 @@ viewIdeaList model userId =
         (
         if List.isEmpty model.ideas then
             [ emptyState "No ideas yet. Be the first to submit one!" ]
+        
         else
             List.map (\idea -> ideaCard idea userId) model.ideas
         )
@@ -104,6 +106,7 @@ filterBtn filterValue label activeFilter =
               (
               if activeFilter == filterValue then
                   "filter-btn active"
+              
               else
                   "filter-btn"
               )
@@ -118,12 +121,9 @@ sortBtn sortValue label activeSort =
               (
               if activeSort == sortValue then
                   "filter-btn active"
+              
               else
                   "filter-btn"
               )
         ]
         [ text label ]
-
-
-
-

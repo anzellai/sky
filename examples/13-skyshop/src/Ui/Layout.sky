@@ -17,13 +17,13 @@ import Tailwind exposing (..)
 import Tailwind.Responsive exposing (sm, md, lg)
 
 -- Aliases to avoid collision with Std.Html heading elements
-h2_ = ("class", "h-2")
+h2_ = ( "class", "h-2" )
 
 
-h5_ = ("class", "h-5")
+h5_ = ( "class", "h-5" )
 
 
-h6_ = ("class", "h-6")
+h6_ = ( "class", "h-6" )
 
 
 -- ══════════════════════════════════════════════════════
@@ -562,6 +562,7 @@ page model content =
 viewSignOutTrigger model =
     if model.signOutPending == True then
         div [ attribute "data-sky-eval" "skySignOut()" ] []
+    
     else
         text ""
 
@@ -593,6 +594,7 @@ adminPage model content =
                           ]
                     , viewFooter model
                     ]
+            
             else
                 page model
                     (
@@ -683,6 +685,7 @@ navLink url label model =
                     , py1
                     , roundedMd
                     ]
+            
             else
                 tw
                     [ textSm
@@ -703,11 +706,13 @@ langToggle model =
         nextLang =
             if model.lang == "en" then
                 "zh"
+            
             else
                 "en"
         label =
             if model.lang == "en" then
                 "中文"
+            
             else
                 "EN"
     in
@@ -831,6 +836,7 @@ viewAdminLink model user =
                   ]
             ]
             [ text (Tr.t model.lang "nav.admin") ]
+    
     else
         text ""
 
@@ -857,6 +863,7 @@ viewCartBadge model =
                 , style "top:-4px;right:-4px;font-size:.625rem"
                 ]
                 [ text (String.fromInt itemCount) ]
+        
         else
             text ""
 
@@ -867,11 +874,13 @@ viewCartBadge model =
 viewNotification model =
     if model.notification == "" then
         text ""
+    
     else
         let
             notifStyle =
                 if model.notificationType == "error" then
                     notificationError
+                
                 else
                     notificationSuccess
         in
@@ -944,6 +953,7 @@ adminSidebarLink url key model =
             , attribute "sky-nav" ""
             , if isActive then
                 sidebarLinkActive
+            
             else
                 sidebarLink_
             ]
@@ -958,7 +968,12 @@ viewFooter model =
         lang = model.lang
     in
         footerNode
-            [ tw [ bgWhite , borderT , borderGray200 , ("margin-top", "auto") ]
+            [ tw
+                  [ bgWhite
+                  , borderT
+                  , borderGray200
+                  , ( "margin-top", "auto" )
+                  ]
             ]
             [ div [ tw [ maxW7xl , mxAuto , px4 ] ]
                   [ div [ tw [ grid , gridCols1 , md gridCols3 , gap8 , py12 ] ]

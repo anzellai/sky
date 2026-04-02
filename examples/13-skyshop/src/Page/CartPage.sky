@@ -50,14 +50,17 @@ viewCartContent model =
                   [ text (Tr.t lang "cart.title") ]
             , if model.checkoutUrl != "" then
                 viewCheckoutRedirect model
+            
             else if List.isEmpty model.cartItems then
                 viewEmptyCart model
+            
             else
                 div []
                     [ p [ tw [ textGray500 , mt1 , mb6 ] ]
                           [ text
                                 (
-                                String.fromInt (List.length model.cartItems) ++ " items"
+                                String.fromInt (List.length model.cartItems)
+                                    ++ " items"
                                 )
                           ]
                     , div
@@ -119,6 +122,7 @@ viewCartItem model item =
         effectivePrice =
             if discount > 0 then
                 price - discount
+            
             else
                 price
         lineTotal_ = Money.formatPrice (effectivePrice * qty) currency
@@ -135,6 +139,7 @@ viewCartItem model item =
         div [ Layout.cartItem ]
             [ if thumb != "" then
                 img [ src thumb , alt title , Layout.cartThumb ]
+            
             else
                 div [ Layout.cartThumbPlaceholder ] [ text "~" ]
             , div [ tw [ flex1 ] ]

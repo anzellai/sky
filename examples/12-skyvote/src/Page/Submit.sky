@@ -8,7 +8,8 @@ import State exposing (..)
 import Ui.Layout as Layout
 
 viewSubmit model =
-    Layout.pageWithAuth model (
+    Layout.pageWithAuth model
+        (
         div [ class "submit-container" ]
             [ h1 [ class "page-title" ] [ text "Submit an Idea" ]
             , p [ class "page-subtitle" ]
@@ -70,7 +71,3 @@ viewSubmit model =
                   ]
             ]
         )
-
-
-
-

@@ -37,9 +37,13 @@ viewAdminProducts model =
                             , p [ tw [ textGray500 , mt1 ] ]
                                   [ text
                                         (
-                                        String.fromInt (List.length products) ++ " total / " ++ String.fromInt
-                                                                                                    publishedCount ++ " published / " ++ String.fromInt
-                                                                                                                                             draftCount ++ " draft"
+                                        String.fromInt (List.length products)
+                                            ++ " total / "
+                                                ++ String.fromInt publishedCount
+                                                    ++ " published / "
+                                                        ++ String.fromInt
+                                                               draftCount
+                                                            ++ " draft"
                                         )
                                   ]
                             ]
@@ -68,6 +72,7 @@ viewAdminProducts model =
                                       [ text "Create your first product" ]
                                 ]
                           ]
+                      
                       else
                           [ div
                                 [ Layout.tableHeader_
@@ -83,7 +88,8 @@ viewAdminProducts model =
                                       [ text "Stock" ]
                                 , text "Status"
                                 ]
-                          ] ++ List.map (viewAdminProductRow model) products
+                          ]
+                              ++ List.map (viewAdminProductRow model) products
                       )
                 ]
             )
@@ -117,6 +123,7 @@ viewAdminProductRow model product =
             [ div [ tw [ flex , itemsCenter , gap3 ] ]
                   [ if thumb != "" then
                       img [ src thumb , alt title , Layout.adminThumb ]
+                  
                   else
                       div [ Layout.adminThumbPlaceholder ] [ text "~" ]
                   , span [ tw [ fontMedium , textGray900 , textSm ] ]
@@ -139,12 +146,14 @@ viewAdminProductRow model product =
                         (
                         if stock < 0 then
                             "Unlimited"
+                        
                         else
                             String.fromInt stock
                         )
                   ]
             , if published then
                 span [ Layout.badgeLive ] [ text "Live" ]
+            
             else
                 span [ Layout.badgeDraft ] [ text "Draft" ]
             ]
@@ -197,6 +206,7 @@ viewAdminEditProduct model =
             , viewProductForm model
             , if model.editProductId != "" then
                 viewImageManager model
+            
             else
                 text ""
             ]
@@ -254,6 +264,7 @@ viewProductForm model =
                                                 [ value cat
                                                 , if cat == model.editCategory then
                                                     selected ()
+                                                
                                                 else
                                                     class ""
                                                 ]
@@ -278,6 +289,7 @@ viewProductForm model =
                                                 [ value cur
                                                 , if cur == model.editCurrency then
                                                     selected ()
+                                                
                                                 else
                                                     class ""
                                                 ]
@@ -340,6 +352,7 @@ viewProductForm model =
                                     (
                                     if model.editPublished then
                                         "toggle toggle-on"
+                                    
                                     else
                                         "toggle toggle-off"
                                     )
@@ -349,6 +362,7 @@ viewProductForm model =
                                           (
                                           if model.editPublished then
                                               "toggle-knob toggle-knob-on"
+                                          
                                           else
                                               "toggle-knob toggle-knob-off"
                                           )
@@ -385,17 +399,17 @@ viewImageManager model =
                   [ h3 [ tw [ fontSemibold , textGray900 , textSm ] ]
                         [ text
                               (
-                              Tr.t lang "admin.product.images" ++ " (" ++ String.fromInt
-                                                                              (
-                                                                              List.length
-                                                                                  images
-                                                                              ) ++ ")"
+                              Tr.t lang "admin.product.images"
+                                  ++ " ("
+                                      ++ String.fromInt (List.length images)
+                                          ++ ")"
                               )
                         ]
                   ]
             , div [ Layout.cardBody ]
                   [ if List.isEmpty images then
                       text ""
+                  
                   else
                       div
                           [ tw [ grid , gap4 , mb6 ]
@@ -461,7 +475,8 @@ viewAdminOrders model =
                       , p [ tw [ textGray500 , mt1 ] ]
                             [ text
                                   (
-                                  String.fromInt (List.length model.adminOrders) ++ " orders"
+                                  String.fromInt (List.length model.adminOrders)
+                                      ++ " orders"
                                   )
                             ]
                       ]
@@ -474,6 +489,7 @@ viewAdminOrders model =
                                       [ text "No orders found" ]
                                 ]
                           ]
+                      
                       else
                           [ div
                                 [ Layout.tableHeader_
@@ -487,8 +503,9 @@ viewAdminOrders model =
                                       [ text "Date" ]
                                 , text "Status"
                                 ]
-                          ] ++ List.map (viewAdminOrderRow model)
-                                   model.adminOrders
+                          ]
+                              ++ List.map (viewAdminOrderRow model)
+                                     model.adminOrders
                       )
                 ]
             )
@@ -497,25 +514,20 @@ viewAdminOrders model =
 viewOrderFilter model =
     div [ tw [ flex , flexWrap , gap2 , mb4 ] ]
         (
-        [ orderFilterBtn "all" "All" model.adminOrderFilter ] ++ List.map
-                                                                     (
-                                                                     \st ->
-                                                                         orderFilterBtn
-                                                                             st
-                                                                             (
-                                                                             Tr.tCartState
-                                                                                 model.lang
-                                                                                 st
-                                                                             )
-                                                                             model.adminOrderFilter
-                                                                     )
-                                                                     [ "pending"
-                                                                     , "ordered"
-                                                                     , "shipped"
-                                                                     , "delivered"
-                                                                     , "cancelled"
-                                                                     , "refunded"
-                                                                     ]
+        [ orderFilterBtn "all" "All" model.adminOrderFilter ]
+            ++ List.map
+                   (
+                   \st ->
+                       orderFilterBtn st (Tr.tCartState model.lang st)
+                           model.adminOrderFilter
+                   )
+                   [ "pending"
+                   , "ordered"
+                   , "shipped"
+                   , "delivered"
+                   , "cancelled"
+                   , "refunded"
+                   ]
         )
 
 
@@ -534,6 +546,7 @@ orderFilterBtn filterValue label activeFilter =
                 , border
                 , borderBlue600
                 ]
+        
         else
             tw
                 [ textSm
@@ -678,10 +691,12 @@ viewAdminOrderDetail model order =
                           , shippingLine1 ++ ", " ++ shippingCity
                           , shippingPostcode ++ " " ++ shippingCountry
                           ]
+                  
                   else
                       text ""
                   , if remarks != "" then
                       infoCard "Remarks" [ remarks ]
+                  
                   else
                       text ""
                   ]
@@ -710,6 +725,7 @@ viewAdminOrderDetail model order =
                                                     Tr.tCartState lang newState
                                                     )
                                               ]
+                                      
                                       else
                                           text ""
                                   )
@@ -749,6 +765,7 @@ viewAdminOrderItem item =
         effectivePrice =
             if discount > 0 then
                 price - discount
+            
             else
                 price
         lineTotal_ = Money.formatPrice (effectivePrice * qty) currency
