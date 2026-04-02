@@ -105,12 +105,32 @@ parseApplication state =
         fnCol = peekColumn state
     in
         case parsePrimary state of
-            
+
             Err e ->
                 Err e
-            
+
             Ok ( fn , s1 ) ->
-                parseApplicationArgs fnCol fn s1
+                let
+                    withField = applyFieldAccess fn s1
+                in
+                    parseApplicationArgs fnCol (fst withField) (snd withField)
+
+
+applyFieldAccess : Expression -> ParserState -> (Expression, ParserState)
+applyFieldAccess expr state =
+    if matchKind TkDot state then
+        let
+            ( _ , s1 ) = advance state
+        in
+            if matchKind TkIdentifier s1 then
+                let
+                    ( fieldTok , s2 ) = advance s1
+                in
+                    applyFieldAccess (FieldAccessExpr expr fieldTok.lexeme emptySpan) s2
+            else
+                (expr, state)
+    else
+        (expr, state)
 
 
 parseApplicationArgs : Int -> Expression -> ParserState -> Result String (Expression, ParserState)
@@ -134,13 +154,16 @@ parseApplicationArgs fnCol fn state =
             Ok (fn, state)
         else
             case parsePrimary state of
-                
+
                 Err _ ->
                     Ok (fn, state)
-                
+
                 Ok ( arg , s1 ) ->
-                    parseApplicationArgs fnCol (CallExpr fn [ arg ] emptySpan)
-                        s1
+                    let
+                        withField = applyFieldAccess arg s1
+                    in
+                        parseApplicationArgs fnCol (CallExpr fn [ fst withField ] emptySpan)
+                            (snd withField)
     else
         Ok (fn, state)
 
