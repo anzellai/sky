@@ -2,6 +2,7 @@ package skylive_rt
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -201,8 +202,7 @@ func MapToVNode(v any) *VNode {
 	attrs := make(map[string]string)
 	if attrList, ok := rec["attrs"].([]any); ok {
 		for _, a := range attrList {
-			// Sky tuples compile to structs with V0, V1 fields
-			// Try map[string]any first (from JSON), then reflect for structs
+			// Sky tuples: map (legacy), struct with V0/V1, or struct with Fields
 			if m, ok := a.(map[string]any); ok {
 				key, _ := m["V0"].(string)
 				val, _ := m["V1"].(string)
@@ -210,17 +210,10 @@ func MapToVNode(v any) *VNode {
 					attrs[key] = val
 				}
 			} else {
-				// Compiled Go struct: use fmt to extract
-				s := fmt.Sprintf("%v", a)
-				// Tuple2{V0: key, V1: val} prints as {key val}
-				if len(s) > 2 && s[0] == '{' {
-					s = s[1 : len(s)-1]
-					parts := strings.SplitN(s, " ", 2)
-					if len(parts) == 2 {
-						attrs[parts[0]] = parts[1]
-					} else if len(parts) == 1 && parts[0] != "" {
-						attrs[parts[0]] = ""
-					}
+				// Try struct via reflect (SkyTuple2 or SkyADT with Fields)
+				key, val := extractTupleKV(a)
+				if key != "" {
+					attrs[key] = val
 				}
 			}
 		}
@@ -243,6 +236,27 @@ func escapeHTML(s string) string {
 	s = strings.ReplaceAll(s, "<", "&lt;")
 	s = strings.ReplaceAll(s, ">", "&gt;")
 	return s
+}
+
+// extractTupleKV extracts key/value from a struct with V0/V1 or Fields fields.
+// Handles SkyTuple2{V0, V1} and SkyADT{Fields: []any{k, v}} from compiled Sky code.
+func extractTupleKV(v any) (string, string) {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return "", ""
+	}
+	// Try V0/V1 fields (SkyTuple2)
+	v0 := rv.FieldByName("V0")
+	v1 := rv.FieldByName("V1")
+	if v0.IsValid() && v1.IsValid() {
+		return fmt.Sprintf("%v", v0.Interface()), fmt.Sprintf("%v", v1.Interface())
+	}
+	// Try Fields slice (SkyADT with Fields []any)
+	fields := rv.FieldByName("Fields")
+	if fields.IsValid() && fields.Kind() == reflect.Slice && fields.Len() >= 2 {
+		return fmt.Sprintf("%v", fields.Index(0).Interface()), fmt.Sprintf("%v", fields.Index(1).Interface())
+	}
+	return "", ""
 }
 
 func escapeAttr(s string) string {

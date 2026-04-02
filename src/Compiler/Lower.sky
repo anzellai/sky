@@ -2070,9 +2070,9 @@ generateCtorFunc typeName prefix tagIndex variant =
             let
                 params =
                     List.map (\i -> { name = "v" ++ String.fromInt i , type_ = "any" }) (List.range 0 (arity - 1))
-                fieldAssigns =
-                    String.join ", " (List.map (\i -> "V" ++ String.fromInt i ++ ": v" ++ String.fromInt i) (List.range 0 (arity - 1)))
-                structLit = "SkyADT{Tag: " ++ tagStr ++ ", SkyName: \"" ++ variant.name ++ "\", " ++ fieldAssigns ++ "}"
+                fieldsList =
+                    String.join ", " (List.map (\i -> "v" ++ String.fromInt i) (List.range 0 (arity - 1)))
+                structLit = "SkyADT{Tag: " ++ tagStr ++ ", SkyName: \"" ++ variant.name ++ "\", Fields: []any{" ++ fieldsList ++ "}}"
             in
                 GoDeclFunc
                     { name = sanitizeGoIdent variant.name
@@ -2085,7 +2085,7 @@ generateCtorFunc typeName prefix tagIndex variant =
 generateHelperDecls : List GoDecl
 generateHelperDecls =
     [ GoDeclRaw "var skyVersion = \"dev\""
-    , GoDeclRaw "type SkyADT struct { Tag int; SkyName string; V0, V1, V2, V3, V4 any }"
+    , GoDeclRaw "type SkyADT struct { Tag int; SkyName string; Fields []any }"
     , GoDeclRaw "type SkyTuple2 struct { V0, V1 any }"
     , GoDeclRaw "type SkyTuple3 struct { V0, V1, V2 any }"
     , GoDeclRaw
@@ -2103,7 +2103,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_adtTag(v any) int { if a, ok := v.(SkyADT); ok { return a.Tag }; if m, ok := v.(map[string]any); ok { return sky_asInt(m[\"Tag\"]) }; return -1 }"
     , GoDeclRaw
-          "func sky_adtField(v any, idx int) any { if a, ok := v.(SkyADT); ok { switch idx { case 0: return a.V0; case 1: return a.V1; case 2: return a.V2; case 3: return a.V3; case 4: return a.V4 }; return nil }; if m, ok := v.(map[string]any); ok { return m[fmt.Sprintf(\"V%d\", idx)] }; return nil }"
+          "func sky_adtField(v any, idx int) any { if a, ok := v.(SkyADT); ok { if idx < len(a.Fields) { return a.Fields[idx] }; return nil }; if m, ok := v.(map[string]any); ok { return m[fmt.Sprintf(\"V%d\", idx)] }; return nil }"
     , GoDeclRaw
           "func sky_getSkyName(v any) string { if a, ok := v.(SkyADT); ok { return a.SkyName }; if m, ok := v.(map[string]any); ok { if s, ok := m[\"SkyName\"].(string); ok { return s }; return \"\" }; return \"\" }"
     , GoDeclRaw
@@ -2151,7 +2151,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_asUint64(v any) uint64 { return uint64(sky_asInt(v)) }"
     , GoDeclRaw
-          "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; if a, ok := v.(SkyADT); ok { return map[string]any{\"Tag\": a.Tag, \"SkyName\": a.SkyName, \"V0\": a.V0, \"V1\": a.V1, \"V2\": a.V2, \"V3\": a.V3, \"V4\": a.V4} }; return map[string]any{} }"
+          "func sky_asMap(v any) map[string]any { if m, ok := v.(map[string]any); ok { return m }; if m2, ok := v.(map[any]any); ok { r := make(map[string]any, len(m2)); for k, val := range m2 { r[fmt.Sprintf(\"%v\", k)] = val }; return r }; if a, ok := v.(SkyADT); ok { m := map[string]any{\"Tag\": a.Tag, \"SkyName\": a.SkyName}; for i, f := range a.Fields { m[fmt.Sprintf(\"V%d\", i)] = f }; return m }; if t, ok := v.(SkyTuple2); ok { return map[string]any{\"V0\": t.V0, \"V1\": t.V1} }; return map[string]any{} }"
     , GoDeclRaw
           "func sky_equal(a, b any) bool { switch av := a.(type) { case string: if bv, ok := b.(string); ok { return av == bv }; case int: if bv, ok := b.(int); ok { return av == bv }; case bool: if bv, ok := b.(bool); ok { return av == bv }; case float64: if bv, ok := b.(float64); ok { return av == bv } }; return fmt.Sprintf(\"%v\", a) == fmt.Sprintf(\"%v\", b) }"
     , GoDeclRaw
@@ -2614,7 +2614,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_msgName(msg any) string { if a, ok := msg.(SkyADT); ok { return a.SkyName }; if m, ok := msg.(map[string]any); ok { if name, exists := m[\"SkyName\"]; exists { return sky_asString(name) } }; if fn, ok := msg.(func(any) any); ok { result := fn(nil); if a2, ok2 := result.(SkyADT); ok2 { return a2.SkyName }; if m2, ok2 := result.(map[string]any); ok2 { if name, exists := m2[\"SkyName\"]; exists { return sky_asString(name) } } }; return fmt.Sprintf(\"%v\", msg) }"
     , GoDeclRaw
-          "func sky_msgArgs(msg any) []any { if a, ok := msg.(SkyADT); ok { var args []any; for _, v := range []any{a.V0, a.V1, a.V2, a.V3, a.V4} { if v == nil { break }; if va, ok := v.(SkyADT); ok { args = append(args, va.SkyName); continue }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }; m, ok := msg.(map[string]any); if !ok { return nil }; var args []any; for i := 0; ; i++ { v, exists := m[fmt.Sprintf(\"V%d\", i)]; if !exists { break }; if va, ok := v.(SkyADT); ok { args = append(args, va.SkyName); continue }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }"
+          "func sky_msgArgs(msg any) []any { if a, ok := msg.(SkyADT); ok { var args []any; for _, v := range a.Fields { if v == nil { break }; if va, ok := v.(SkyADT); ok { args = append(args, va.SkyName); continue }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }; m, ok := msg.(map[string]any); if !ok { return nil }; var args []any; for i := 0; ; i++ { v, exists := m[fmt.Sprintf(\"V%d\", i)]; if !exists { break }; if va, ok := v.(SkyADT); ok { args = append(args, va.SkyName); continue }; if vm, ok := v.(map[string]any); ok { if sn, ok := vm[\"SkyName\"]; ok { args = append(args, sn); continue } }; args = append(args, v) }; return args }"
     , GoDeclRaw
           "func sky_cssStylesheet(rules any) any { var sb strings.Builder; for _, r := range sky_asList(rules) { sb.WriteString(sky_asString(r)); sb.WriteString(\"\\n\") }; return sb.String() }"
     , GoDeclRaw

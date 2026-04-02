@@ -1160,7 +1160,7 @@ func Sky_database_sql_DBQueryToMaps(db any, query any, args any) any {
 		if err := rows.Scan(ptrs...); err != nil {
 			return SkyErr(err.Error())
 		}
-		row := make(map[any]any)
+		row := make(map[string]any)
 		for i, col := range cols {
 			switch v := values[i].(type) {
 			case int64:
@@ -1203,7 +1203,7 @@ func Sky_database_sql_RowsToMaps(rows any) any {
 		if err := r.Scan(ptrs...); err != nil {
 			return SkyErr(err.Error())
 		}
-		row := make(map[any]any)
+		row := make(map[string]any)
 		for i, col := range cols {
 			switch v := values[i].(type) {
 			case int64:
@@ -1281,7 +1281,7 @@ func Sky_database_sql_TxQueryToMaps(db any, query any, args any) any {
 		if err := rows.Scan(ptrs...); err != nil {
 			return SkyErr(err.Error())
 		}
-		row := make(map[any]any)
+		row := make(map[string]any)
 		for i, col := range cols {
 			switch v := values[i].(type) {
 			case int64:
