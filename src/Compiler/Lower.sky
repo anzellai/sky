@@ -2733,10 +2733,7 @@ countCtorArity t acc =
             countCtorArity toT (acc + 1)
 
         _ ->
-            if acc > 0 then
-                acc - 1
-            else
-                0
+            acc
 
 
 buildConstructorMapFromDecls : List Declaration -> Dict.Dict String CtorInfo
