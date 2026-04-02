@@ -1873,10 +1873,40 @@ fmtFileSource filePath source =
                 let
                     formatted = Format.formatModule mod
                     withComments = reinsertComments source formatted
-                    _ = File.writeFile filePath withComments
-                    _ = println ("Formatted: " ++ filePath)
+                    sourceCodeLines = countCodeLines source
+                    outputCodeLines = countCodeLines withComments
                 in
-                    ()
+                    if String.isEmpty (String.trim withComments) then
+                        let
+                            _ = println ("Format error: empty output, file unchanged: " ++ filePath)
+                        in
+                            ()
+                    else if sourceCodeLines > 3 && outputCodeLines * 3 < sourceCodeLines * 2 then
+                        let
+                            _ = println ("Format error: output lost too many lines (" ++ String.fromInt outputCodeLines ++ " vs " ++ String.fromInt sourceCodeLines ++ "), file unchanged: " ++ filePath)
+                        in
+                            ()
+                    else
+                        let
+                            _ = File.writeFile filePath withComments
+                            _ = println ("Formatted: " ++ filePath)
+                        in
+                            ()
+
+
+countCodeLines : String -> Int
+countCodeLines text =
+    List.length
+        (
+        List.filter
+            (\l ->
+                let
+                    trimmed = String.trim l
+                in
+                    not (String.isEmpty trimmed) && not (String.startsWith "--" trimmed)
+            )
+            (String.split "\n" text)
+        )
 
 
 reinsertComments : String -> String -> String

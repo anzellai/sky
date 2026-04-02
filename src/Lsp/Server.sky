@@ -18,6 +18,7 @@ import Compiler.Env as Env
 import Compiler.Checker as Checker
 import Compiler.Resolver as Resolver
 import Compiler.Pipeline as Pipeline
+import Formatter.Format as Format
 
 type alias ExportedDecl =
     { name : String , signature : String , defLine : Int }
@@ -1770,4 +1771,41 @@ findDefLineInSource name source lineNum idx =
 
 handleFormatting : ServerState -> String -> String -> ServerState
 handleFormatting state id body =
-    sendAndReturn (makeResponse id (jsonArray [])) state
+    let
+        params = jsonGetObject "params" body
+        textDoc = jsonGetObject "textDocument" params
+        uri = jsonGetString "uri" textDoc
+        docText =
+            case Dict.get uri state.documents of
+
+                Just text ->
+                    text
+
+                Nothing ->
+                    ""
+    in
+        if String.isEmpty docText then
+            sendAndReturn (makeResponse id (jsonArray [])) state
+        else
+            let
+                lexResult = Lexer.lex docText
+            in
+                case Parser.parse lexResult.tokens of
+
+                    Err _ ->
+                        sendAndReturn (makeResponse id (jsonArray [])) state
+
+                    Ok mod ->
+                        let
+                            formatted = Format.formatModule mod
+                            lineCount = List.length (String.split "\n" docText)
+                            edit =
+                                jsonObject
+                                    [ ("range", makeRange 0 0 lineCount 0)
+                                    , ("newText", jsonString formatted)
+                                    ]
+                        in
+                            if String.isEmpty (String.trim formatted) then
+                                sendAndReturn (makeResponse id (jsonArray [])) state
+                            else
+                                sendAndReturn (makeResponse id (jsonArray [ edit ])) state
