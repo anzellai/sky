@@ -2707,14 +2707,36 @@ buildConstructorMap registry =
                     let
                         idx = fst pair
                         ctorName = snd pair
+                        ctorArity =
+                            case Dict.get ctorName adt.constructors of
+
+                                Just scheme ->
+                                    countCtorArity scheme.type_ 0
+
+                                Nothing ->
+                                    0
                     in
-                        Dict.insert ctorName { adtName = typeName , tagIndex = idx , arity = 0 } innerAcc
+                        Dict.insert ctorName { adtName = typeName , tagIndex = idx , arity = ctorArity } innerAcc
                 )
                 acc
                 (zipIndex adt.variantNames)
         )
         Dict.empty
         registry
+
+
+countCtorArity : Type -> Int -> Int
+countCtorArity t acc =
+    case t of
+
+        TFun _ toT ->
+            countCtorArity toT (acc + 1)
+
+        _ ->
+            if acc > 0 then
+                acc - 1
+            else
+                0
 
 
 buildConstructorMapFromDecls : List Declaration -> Dict.Dict String CtorInfo
