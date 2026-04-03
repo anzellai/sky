@@ -109,7 +109,7 @@ jobs:
         run: |
           cd sky-out
           VERSION="${GITHUB_REF_NAME}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w -X main.skyVersion=${VERSION}" -o ../${{ matrix.artifact }} .
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -gcflags="all=-l" -ldflags="-s -w -X main.skyVersion=${VERSION}" -o ../${{ matrix.artifact }} .
         shell: bash
 
       - uses: actions/upload-artifact@v4
