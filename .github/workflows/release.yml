@@ -65,10 +65,34 @@ jobs:
             sky-out/go.mod
             sky-out/sky_parallel.go
 
-  # Cross-compile all platforms from a single runner
+  # Cross-compile for each platform on its own runner
   build:
     needs: bootstrap
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            artifact: sky-linux-x64
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            artifact: sky-linux-arm64
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: amd64
+            artifact: sky-darwin-x64
+          - os: ubuntu-latest
+            goos: darwin
+            goarch: arm64
+            artifact: sky-darwin-arm64
+          - os: ubuntu-latest
+            goos: windows
+            goarch: amd64
+            artifact: sky-windows-x64.exe
+
+    runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/setup-go@v5
@@ -81,32 +105,17 @@ jobs:
           name: sky-go-source
           path: sky-out
 
-      - name: Build all platforms
+      - name: Build binary
         run: |
           cd sky-out
           VERSION="${GITHUB_REF_NAME}"
-          LDFLAGS="-s -w -X main.skyVersion=${VERSION}"
-
-          echo "Building linux/amd64..."
-          GOOS=linux   GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-x64 .
-          echo "Building linux/arm64..."
-          GOOS=linux   GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-arm64 .
-          echo "Building darwin/amd64..."
-          GOOS=darwin  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-x64 .
-          echo "Building darwin/arm64..."
-          GOOS=darwin  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-arm64 .
-          echo "Building windows/amd64..."
-          GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-windows-x64.exe .
+          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w -X main.skyVersion=${VERSION}" -o ../${{ matrix.artifact }} .
+        shell: bash
 
       - uses: actions/upload-artifact@v4
         with:
-          name: sky-binaries
-          path: |
-            sky-linux-x64
-            sky-linux-arm64
-            sky-darwin-x64
-            sky-darwin-arm64
-            sky-windows-x64.exe
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
 
   release:
     needs: build
@@ -114,8 +123,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: sky-binaries
-          path: release
+          path: artifacts
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release
+          for dir in artifacts/*/; do
+            [[ "$dir" == *"sky-go-source"* ]] && continue
+            cp "$dir"* release/ 2>/dev/null || true
+          done
+          ls -la release/
 
       - name: Generate checksums
         run: |
@@ -138,7 +155,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: sky-binaries
+          name: sky-linux-x64
           path: release-bin
 
       - uses: docker/setup-buildx-action@v3
