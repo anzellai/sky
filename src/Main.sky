@@ -833,21 +833,48 @@ handleGoPackageResult pkg getResult =
 
 
 generateGoBindings pkg cacheDir =
-    case BindingGen.generateBindings pkg cacheDir of
-        
-        Ok content ->
-            let
-                _ =
-                    println
-                        ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
-            in
-                ()
-        
-        Err e ->
-            let
-                _ = println ("Warning: binding generation failed: " ++ e)
-            in
-                ()
+    let
+        inspectPath = cacheDir ++ "/inspect.json"
+        nativeResult =
+            Process.run "sky-ffi-gen"
+                [ pkg , inspectPath , cacheDir , "src" ]
+    in
+        case nativeResult of
+
+            Ok _ ->
+                let
+                    _ =
+                        println
+                            ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+                in
+                    ()
+
+            Err _ ->
+                case BindingGen.generateBindings pkg cacheDir of
+
+                    Ok content ->
+                        let
+                            _ =
+                                println
+                                    (
+                                    "Generated bindings for "
+                                        ++ pkg
+                                        ++ " at "
+                                        ++ cacheDir
+                                    )
+                        in
+                            ()
+
+                    Err e ->
+                        let
+                            _ =
+                                println
+                                    (
+                                    "Warning: binding generation failed: "
+                                        ++ e
+                                    )
+                        in
+                            ()
 
 
 ensureGoModDir _ =
