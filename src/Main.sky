@@ -833,16 +833,24 @@ generateGoBindings pkg cacheDir =
                     False
     in
         if hasInspect then
-            case Process.run "sky-ffi-gen" [ pkg , inspectPath , cacheDir , "src" ] of
+            let
+                _ =
+                    case Process.run "sky-ffi-gen" [ pkg , inspectPath , cacheDir , "src" ] of
 
-                Ok _ ->
-                    println
-                        ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+                        Ok _ ->
+                            println
+                                ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
 
-                Err _ ->
-                    generateGoBindingsFallback pkg cacheDir
+                        Err _ ->
+                            generateGoBindingsFallback pkg cacheDir
+            in
+                ()
+
         else
-            generateGoBindingsFallback pkg cacheDir
+            let
+                _ = generateGoBindingsFallback pkg cacheDir
+            in
+                ()
 
 
 generateGoBindingsFallback pkg cacheDir =
@@ -862,19 +870,25 @@ generateGoBindingsFallback pkg cacheDir =
 
                         Err _ ->
                             False
-            in
-                if hasInspect then
-                    let
-                        _ =
-                            Process.run "sky-ffi-gen"
-                                [ pkg , inspectPath , cacheDir , "src" ]
-                    in
+                _ =
+                    if hasInspect then
+                        let
+                            _ =
+                                Process.run "sky-ffi-gen"
+                                    [ pkg , inspectPath , cacheDir , "src" ]
+                        in
+                            ()
+
+                    else
                         ()
-                else
-                    ()
+            in
+                ()
 
         Err e ->
-            println ("Warning: binding generation failed: " ++ e)
+            let
+                _ = println ("Warning: binding generation failed: " ++ e)
+            in
+                ()
 
 
 ensureGoModDir _ =
@@ -1232,12 +1246,16 @@ processImportLine line =
                                     cacheDir = ".skycache/go/" ++ safeName
                                     _ = File.mkdirAll cacheDir
                                     _ = ensureGoModDir ()
+                                    _ = generateGoBindings goPath cacheDir
                                 in
-                                    generateGoBindings goPath cacheDir
-                            
+                                    ()
+
                             else if String.contains "." firstPart then
-                                detectAndInstall goPath
-                            
+                                let
+                                    _ = detectAndInstall goPath
+                                in
+                                    ()
+
                             else
                                 ()
 
