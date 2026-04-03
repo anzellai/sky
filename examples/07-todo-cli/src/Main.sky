@@ -63,7 +63,7 @@ listTodos _ =
 markDone idStr =
     let
         id = Db.parseInt idStr
-        _ = Db.exec "UPDATE todos SET done = 1 WHERE id = ?" [ id ]
+        _ = Db.exec "UPDATE todos SET done = 1 WHERE id = ?" [ String.fromInt id ]
     in
         println ("Marked as done: " ++ idStr)
 
@@ -71,7 +71,7 @@ markDone idStr =
 markUndone idStr =
     let
         id = Db.parseInt idStr
-        _ = Db.exec "UPDATE todos SET done = 0 WHERE id = ?" [ id ]
+        _ = Db.exec "UPDATE todos SET done = 0 WHERE id = ?" [ String.fromInt id ]
     in
         println ("Marked as not done: " ++ idStr)
 
@@ -79,7 +79,7 @@ markUndone idStr =
 removeTodo idStr =
     let
         id = Db.parseInt idStr
-        _ = Db.exec "DELETE FROM todos WHERE id = ?" [ id ]
+        _ = Db.exec "DELETE FROM todos WHERE id = ?" [ String.fromInt id ]
     in
         println ("Removed todo: " ++ idStr)
 
