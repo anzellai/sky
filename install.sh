@@ -125,19 +125,26 @@ main() {
 
     install_binary "sky-${PLATFORM}-${ARCH}${EXT}" "sky${EXT}"
 
-    # Install companion tools (built from Go source if not in release)
-    info "Building companion tools..."
-    TOOLS_URL="https://raw.githubusercontent.com/anzellai/sky/v${VERSION}/tools"
-    for tool in sky_ffi_gen sky_dce skyi_filter; do
-        TOOL_SRC=$(mktemp)
-        target=$(echo "$tool" | sed 's/_/-/g')
-        if curl -fsSL "${TOOLS_URL}/${tool}.go" -o "$TOOL_SRC" 2>/dev/null; then
-            if go build -o "$INSTALL_DIR/$target" "$TOOL_SRC" 2>/dev/null; then
-                success "Built $target"
+    # Install companion tools (built from Go source)
+    if command -v go >/dev/null 2>&1; then
+        info "Building companion tools..."
+        TOOLS_URL="https://raw.githubusercontent.com/anzellai/sky/v${VERSION}/tools"
+        TOOLS_DIR=$(mktemp -d)
+        for tool in sky_ffi_gen sky_dce skyi_filter; do
+            target=$(echo "$tool" | sed 's/_/-/g')
+            if curl -fsSL "${TOOLS_URL}/${tool}.go" -o "${TOOLS_DIR}/${tool}.go" 2>/dev/null; then
+                if go build -o "${TOOLS_DIR}/$target" "${TOOLS_DIR}/${tool}.go" 2>/dev/null; then
+                    if [ -w "$INSTALL_DIR" ]; then
+                        mv "${TOOLS_DIR}/$target" "$INSTALL_DIR/$target"
+                    else
+                        sudo mv "${TOOLS_DIR}/$target" "$INSTALL_DIR/$target"
+                    fi
+                    success "Built $target"
+                fi
             fi
-        fi
-        rm -f "$TOOL_SRC"
-    done
+        done
+        rm -rf "$TOOLS_DIR"
+    fi
 
     echo ""
     check_go
