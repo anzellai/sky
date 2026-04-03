@@ -396,7 +396,7 @@ func addReferencedType(goType string, pkg string, refs map[string]bool) {
 // --- Type safety checks ---
 
 func isFuncSafe(f FuncDef, pkg string, ancestors []string) bool {
-	if len(f.Results) > 2 {
+	if len(f.Results) > 3 {
 		return false
 		}
 	for i, p := range f.Params {
@@ -417,7 +417,7 @@ func isFuncSafe(f FuncDef, pkg string, ancestors []string) bool {
 }
 
 func isMethodSafe(m FuncDef, pkg string, ancestors []string) bool {
-	if len(m.Results) > 2 {
+	if len(m.Results) > 3 {
 		return false
 		}
 	for i, p := range m.Params {
@@ -441,6 +441,7 @@ func isTypeSafe(goType string, pkg string, ancestors []string) bool {
 	switch goType {
 	case "string", "bool", "int", "int8", "int16", "int32", "int64",
 		"uint", "uint8", "uint16", "uint32", "uint64",
+		"byte", "rune",
 		"float32", "float64", "error", "interface{}", "any",
 		"[]byte", "[]string", "[]int", "[]float64", "[]bool", "[]any",
 		"context.Context",
@@ -854,6 +855,11 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		buf.WriteString(fmt.Sprintf("\t\t_val, _err := %s\n", callExpr))
 		buf.WriteString("\t\tif _err != nil { return SkyErr(_err.Error()) }\n")
 		buf.WriteString("\t\treturn SkyOk(_val)\n")
+	} else if hasError && len(f.Results) == 3 {
+		// Returns (T1, T2, error) → Result String (T1, T2)
+		buf.WriteString(fmt.Sprintf("\t\t_r0, _r1, _err := %s\n", callExpr))
+		buf.WriteString("\t\tif _err != nil { return SkyErr(_err.Error()) }\n")
+		buf.WriteString("\t\treturn SkyOk(SkyTuple2{V0: _r0, V1: _r1})\n")
 	} else if len(f.Results) == 0 {
 		// Void
 		buf.WriteString(fmt.Sprintf("\t\t%s\n", callExpr))
@@ -862,6 +868,10 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 		// Two non-error results → tuple
 		buf.WriteString(fmt.Sprintf("\t\t_r0, _r1 := %s\n", callExpr))
 		buf.WriteString("\t\treturn SkyOk(SkyTuple2{V0: _r0, V1: _r1})\n")
+	} else if len(f.Results) == 3 {
+		// Three non-error results → tuple
+		buf.WriteString(fmt.Sprintf("\t\t_r0, _r1, _r2 := %s\n", callExpr))
+		buf.WriteString("\t\treturn SkyOk(SkyTuple2{V0: _r0, V1: SkyTuple2{V0: _r1, V1: _r2}})\n")
 	} else {
 		// Single non-error result
 		buf.WriteString(fmt.Sprintf("\t\t_val := %s\n", callExpr))
@@ -887,6 +897,20 @@ func generateTypeCast(varName, goType, pkg string) string {
 		return fmt.Sprintf("sky_asFloat(%s)", varName)
 	case "float32":
 		return fmt.Sprintf("sky_asFloat32(%s)", varName)
+	case "byte", "uint8":
+		return fmt.Sprintf("byte(sky_asInt(%s))", varName)
+	case "rune", "int32":
+		return fmt.Sprintf("rune(sky_asInt(%s))", varName)
+	case "int8":
+		return fmt.Sprintf("int8(sky_asInt(%s))", varName)
+	case "int16":
+		return fmt.Sprintf("int16(sky_asInt(%s))", varName)
+	case "uint16":
+		return fmt.Sprintf("uint16(sky_asInt(%s))", varName)
+	case "uint32":
+		return fmt.Sprintf("uint32(sky_asInt(%s))", varName)
+	case "uint":
+		return fmt.Sprintf("uint(sky_asInt(%s))", varName)
 	case "bool":
 		return fmt.Sprintf("sky_asBool(%s)", varName)
 	case "[]byte":
@@ -1049,6 +1073,22 @@ func buildReturnType(results []ParamDef, pkg string, ancestors []string) string 
 		}
 	if len(results) == 2 && results[1].Type == "error" {
 		return "Result String " + mapGoTypeToSky(results[0].Type, pkg, ancestors)
+		}
+	if len(results) == 2 {
+		t0 := mapGoTypeToSky(results[0].Type, pkg, ancestors)
+		t1 := mapGoTypeToSky(results[1].Type, pkg, ancestors)
+		return "Result String (" + t0 + ", " + t1 + ")"
+		}
+	if len(results) == 3 && results[2].Type == "error" {
+		t0 := mapGoTypeToSky(results[0].Type, pkg, ancestors)
+		t1 := mapGoTypeToSky(results[1].Type, pkg, ancestors)
+		return "Result String (" + t0 + ", " + t1 + ")"
+		}
+	if len(results) == 3 {
+		t0 := mapGoTypeToSky(results[0].Type, pkg, ancestors)
+		t1 := mapGoTypeToSky(results[1].Type, pkg, ancestors)
+		t2 := mapGoTypeToSky(results[2].Type, pkg, ancestors)
+		return "Result String (" + t0 + ", " + t1 + ", " + t2 + ")"
 		}
 	return "Result String Any"
 }
