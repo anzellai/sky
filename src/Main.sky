@@ -823,46 +823,58 @@ handleGoPackageResult pkg getResult =
 generateGoBindings pkg cacheDir =
     let
         inspectPath = cacheDir ++ "/inspect.json"
-        nativeResult =
-            Process.run "sky-ffi-gen"
-                [ pkg , inspectPath , cacheDir , "src" ]
-    in
-        case nativeResult of
+        hasInspect =
+            case File.readFile inspectPath of
 
-            Ok _ ->
-                let
-                    _ =
-                        println
-                            ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
-                in
+                Ok _ ->
+                    True
+
+                Err _ ->
+                    False
+    in
+        if hasInspect then
+            case Process.run "sky-ffi-gen" [ pkg , inspectPath , cacheDir , "src" ] of
+
+                Ok _ ->
+                    println
+                        ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+
+                Err _ ->
+                    generateGoBindingsFallback pkg cacheDir
+        else
+            generateGoBindingsFallback pkg cacheDir
+
+
+generateGoBindingsFallback pkg cacheDir =
+    case BindingGen.generateBindings pkg cacheDir of
+
+        Ok _ ->
+            let
+                _ =
+                    println
+                        ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
+                inspectPath = cacheDir ++ "/inspect.json"
+                hasInspect =
+                    case File.readFile inspectPath of
+
+                        Ok _ ->
+                            True
+
+                        Err _ ->
+                            False
+            in
+                if hasInspect then
+                    let
+                        _ =
+                            Process.run "sky-ffi-gen"
+                                [ pkg , inspectPath , cacheDir , "src" ]
+                    in
+                        ()
+                else
                     ()
 
-            Err _ ->
-                case BindingGen.generateBindings pkg cacheDir of
-
-                    Ok content ->
-                        let
-                            _ =
-                                println
-                                    (
-                                    "Generated bindings for "
-                                        ++ pkg
-                                        ++ " at "
-                                        ++ cacheDir
-                                    )
-                        in
-                            ()
-
-                    Err e ->
-                        let
-                            _ =
-                                println
-                                    (
-                                    "Warning: binding generation failed: "
-                                        ++ e
-                                    )
-                        in
-                            ()
+        Err e ->
+            println ("Warning: binding generation failed: " ++ e)
 
 
 ensureGoModDir _ =
