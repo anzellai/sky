@@ -834,6 +834,13 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 			} else {
 				castArgs = append(castArgs, argName)
 			}
+			// Detect sub-package imports needed for type assertions
+			cleanType := strings.TrimPrefix(strings.TrimPrefix(p.Type, "*"), "[]")
+			if !strings.HasPrefix(cleanType, "func(") && strings.Contains(cleanType, "/") && strings.Contains(cleanType, ".") {
+				dotIdx := strings.LastIndex(cleanType, ".")
+				subPkg := cleanType[:dotIdx]
+				imports = append(imports, subPkg)
+			}
 		}
 		}
 
@@ -951,6 +958,11 @@ func generateTypeCast(varName, goType, pkg string) string {
 			castType = strings.ReplaceAll(castType, a+".", shortPkg+".")
 		}
 		castType = strings.ReplaceAll(castType, pkg+".", "_ffi_pkg.")
+		// Replace stdlib paths that contain slashes (e.g. net/http → net_http)
+		for _, stdPkg := range []string{"net/http", "net/url", "io/fs", "io/ioutil", "os/exec", "os/signal", "encoding/json", "encoding/xml", "encoding/base64", "encoding/hex", "crypto/tls", "crypto/sha256", "crypto/md5", "database/sql", "log/slog", "text/template", "html/template", "path/filepath"} {
+			alias := strings.ReplaceAll(stdPkg, "/", "_")
+			castType = strings.ReplaceAll(castType, stdPkg+".", alias+".")
+		}
 		return fmt.Sprintf("%s.(%s)", varName, castType)
 	}
 	// Pointer type: nil-safe cast using import alias
@@ -989,6 +1001,17 @@ func generateTypeCast(varName, goType, pkg string) string {
 			return fmt.Sprintf("func() %s { if v, ok := %s.(%s); ok { return v }; var zero %s; return zero }()", qualType, varName, qualType, qualType)
 		}
 		}
+	// Sub-package types (e.g. database/sql/driver.Connector for pkg database/sql)
+	// These are typically interfaces — use type assertion with import alias
+	cleanGoType := strings.TrimPrefix(strings.TrimPrefix(goType, "*"), "[]")
+	if strings.Contains(cleanGoType, "/") && strings.Contains(cleanGoType, ".") {
+		dotIdx := strings.LastIndex(cleanGoType, ".")
+		subPkg := cleanGoType[:dotIdx]
+		typeName := cleanGoType[dotIdx+1:]
+		alias := strings.ReplaceAll(subPkg, "/", "_")
+		qualType := alias + "." + typeName
+		return fmt.Sprintf("%s.(%s)", varName, qualType)
+	}
 	// Typed slices: convert []any to []ElementType
 	if strings.HasPrefix(goType, "[]") {
 		elemType := goType[2:]

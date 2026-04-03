@@ -165,10 +165,30 @@ buildGoProject outDir =
         _ =
             if goModExists then
                 ()
-            
+
             else
                 let
-                    _ = File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
+                    cachedGoMod = ".skycache/gomod/go.mod"
+                    cachedGoSum = ".skycache/gomod/go.sum"
+                    _ =
+                        case File.readFile cachedGoMod of
+
+                            Ok content ->
+                                let
+                                    fixed = String.replace "module skycache" "module sky-app" content
+                                in
+                                    File.writeFile goModPath fixed
+
+                            Err _ ->
+                                File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
+                    _ =
+                        case File.readFile cachedGoSum of
+
+                            Ok sumContent ->
+                                File.writeFile goSumPath sumContent
+
+                            Err _ ->
+                                Ok ()
                 in
                     ()
         hasFfiWrappers =

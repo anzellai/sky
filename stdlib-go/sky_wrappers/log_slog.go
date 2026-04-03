@@ -335,10 +335,6 @@ func Sky_log_slog_KindLogValuer() any {
 	return slog.KindLogValuer
 }
 
-func Sky_log_slog_KindString() any {
-	return slog.KindString
-}
-
 func Sky_log_slog_KindTime() any {
 	return slog.KindTime
 }
