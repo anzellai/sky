@@ -316,6 +316,25 @@ func main() {
 		}
 	}
 
+	// Detect transitive imports from wrapper body
+	wrapperBody := wrapper.String()
+	transitivePackages := []struct{ alias, pkg string }{
+		{"io", "io"},
+		{"net", "net"},
+		{"context", "context"},
+		{"time", "time"},
+		{"os", "os"},
+		{"sync", "sync"},
+		{"net_http", "net/http"},
+		{"net_url", "net/url"},
+		{"crypto_tls", "crypto/tls"},
+	}
+	for _, tp := range transitivePackages {
+		if tp.pkg != pkgName && strings.Contains(wrapperBody, tp.alias+".") {
+			extraImports[tp.pkg] = true
+		}
+	}
+
 	// Finalise wrapper imports
 	var importBlock strings.Builder
 	importBlock.WriteString("package sky_wrappers\n\nimport (\n")
@@ -323,8 +342,12 @@ func main() {
 	importBlock.WriteString(fmt.Sprintf("\t_ffi_reflect \"reflect\"\n"))
 	importBlock.WriteString(fmt.Sprintf("\t_ffi_pkg \"%s\"\n", pkgName))
 	for imp := range extraImports {
-		alias := lastPathSegment(imp)
-		importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
+		alias := strings.ReplaceAll(imp, "/", "_")
+		if alias == lastPathSegment(imp) {
+			importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
+		} else {
+			importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
+		}
 		}
 	importBlock.WriteString(")\n\nvar _ = _ffi_fmt.Sprintf\nvar _ = _ffi_reflect.TypeOf\n\n")
 

@@ -38,30 +38,6 @@ func Sky_bufio_NewWriterSize(arg0 any, arg1 any) *bufio.Writer {
 	return bufio.NewWriterSize(_arg0, _arg1)
 }
 
-func Sky_bufio_ScanBytes(arg0 any, arg1 any) (int, []byte, error) {
-	_arg0 := arg0.([]byte)
-	_arg1 := arg1.(bool)
-	return bufio.ScanBytes(_arg0, _arg1)
-}
-
-func Sky_bufio_ScanLines(arg0 any, arg1 any) (int, []byte, error) {
-	_arg0 := arg0.([]byte)
-	_arg1 := arg1.(bool)
-	return bufio.ScanLines(_arg0, _arg1)
-}
-
-func Sky_bufio_ScanRunes(arg0 any, arg1 any) (int, []byte, error) {
-	_arg0 := arg0.([]byte)
-	_arg1 := arg1.(bool)
-	return bufio.ScanRunes(_arg0, _arg1)
-}
-
-func Sky_bufio_ScanWords(arg0 any, arg1 any) (int, []byte, error) {
-	_arg0 := arg0.([]byte)
-	_arg1 := arg1.(bool)
-	return bufio.ScanWords(_arg0, _arg1)
-}
-
 func Sky_bufio_ErrAdvanceTooFar() any {
 	return bufio.ErrAdvanceTooFar
 }
@@ -182,18 +158,6 @@ func Sky_bufio_ReadWriterReadFrom(this any, arg0 any) SkyResult {
 		return SkyErr(err)
 	}
 	return SkyOk(res)
-}
-
-func Sky_bufio_ReadWriterReadLine(this any) ([]byte, bool, error) {
-	_this := this.(*bufio.ReadWriter)
-
-	return _this.ReadLine()
-}
-
-func Sky_bufio_ReadWriterReadRune(this any) (rune, int, error) {
-	_this := this.(*bufio.ReadWriter)
-
-	return _this.ReadRune()
 }
 
 func Sky_bufio_ReadWriterReadSlice(this any, arg0 any) SkyResult {
@@ -352,18 +316,6 @@ func Sky_bufio_ReaderReadBytes(this any, arg0 any) SkyResult {
 		return SkyErr(err)
 	}
 	return SkyOk(res)
-}
-
-func Sky_bufio_ReaderReadLine(this any) ([]byte, bool, error) {
-	_this := this.(*bufio.Reader)
-
-	return _this.ReadLine()
-}
-
-func Sky_bufio_ReaderReadRune(this any) (rune, int, error) {
-	_this := this.(*bufio.Reader)
-
-	return _this.ReadRune()
 }
 
 func Sky_bufio_ReaderReadSlice(this any, arg0 any) SkyResult {
