@@ -125,6 +125,20 @@ main() {
 
     install_binary "sky-${PLATFORM}-${ARCH}${EXT}" "sky${EXT}"
 
+    # Install companion tools (built from Go source if not in release)
+    info "Building companion tools..."
+    TOOLS_URL="https://raw.githubusercontent.com/anzellai/sky/v${VERSION}/tools"
+    for tool in sky_ffi_gen sky_dce skyi_filter; do
+        TOOL_SRC=$(mktemp)
+        target=$(echo "$tool" | sed 's/_/-/g')
+        if curl -fsSL "${TOOLS_URL}/${tool}.go" -o "$TOOL_SRC" 2>/dev/null; then
+            if go build -o "$INSTALL_DIR/$target" "$TOOL_SRC" 2>/dev/null; then
+                success "Built $target"
+            fi
+        fi
+        rm -f "$TOOL_SRC"
+    done
+
     echo ""
     check_go
 
