@@ -463,8 +463,18 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 		}
 	}
 
-	// Render view
-	viewTree := app.View(model)
+	// Render view (with panic recovery for non-exhaustive case expressions)
+	var viewTree *VNode
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[SKY] View panic: %v", rec)
+				viewTree = Element("div", map[string]string{"class": "sky-error"},
+					[]*VNode{TextNode(fmt.Sprintf("View error: %v", rec))})
+			}
+		}()
+		viewTree = app.View(model)
+	}()
 	AssignSkyIDs(viewTree)
 
 	// Save session
