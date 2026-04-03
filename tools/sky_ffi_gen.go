@@ -342,12 +342,12 @@ func main() {
 	importBlock.WriteString(fmt.Sprintf("\t_ffi_reflect \"reflect\"\n"))
 	importBlock.WriteString(fmt.Sprintf("\t_ffi_pkg \"%s\"\n", pkgName))
 	for imp := range extraImports {
-		alias := strings.ReplaceAll(imp, "/", "_")
-		if alias == lastPathSegment(imp) {
-			importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
-		} else {
-			importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
+		// Skip self-import and invalid paths
+		if imp == pkgName || strings.HasPrefix(imp, "*") || imp == "" {
+			continue
 		}
+		alias := strings.ReplaceAll(strings.ReplaceAll(imp, "/", "_"), ".", "_")
+		importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
 		}
 	importBlock.WriteString(")\n\nvar _ = _ffi_fmt.Sprintf\nvar _ = _ffi_reflect.TypeOf\n\n")
 
@@ -862,7 +862,9 @@ func generateGoWrapper(f FuncDef, pkg, safePkg, wrapperName string, isMethod boo
 			if !strings.HasPrefix(cleanType, "func(") && strings.Contains(cleanType, "/") && strings.Contains(cleanType, ".") {
 				dotIdx := strings.LastIndex(cleanType, ".")
 				subPkg := cleanType[:dotIdx]
-				imports = append(imports, subPkg)
+				if subPkg != pkg {
+					imports = append(imports, subPkg)
+				}
 			}
 		}
 		}
