@@ -429,34 +429,36 @@ lowerIdentifier ctx name =
             
             else if Set.member name ctx.paramNames then
                 GoIdent (sanitizeGoIdent name)
-            
+
+            else if listContains name ctx.localFunctions then
+                if not (String.isEmpty ctx.modulePrefix) then
+                    let
+                        goName =
+                            ctx.modulePrefix
+                                ++ "_"
+                                    ++ capitalizeFirst
+                                           (sanitizeGoIdent name)
+                    in
+                        if isZeroArityFn name ctx then
+                            GoCallExpr (GoIdent goName) []
+
+                        else
+                            GoIdent goName
+
+                else if isZeroArityFn name ctx then
+                    GoCallExpr (GoIdent (sanitizeGoIdent name)) []
+
+                else
+                    GoIdent (sanitizeGoIdent name)
+
             else
                 case Dict.get name ctx.exposedStdlib of
-                    
+
                     Just modPath ->
                         lowerStdlibExposed modPath name
-                    
+
                     Nothing ->
-                        if not (String.isEmpty ctx.modulePrefix)
-                            && listContains name ctx.localFunctions then
-                            let
-                                goName =
-                                    ctx.modulePrefix
-                                        ++ "_"
-                                            ++ capitalizeFirst
-                                                   (sanitizeGoIdent name)
-                            in
-                                if isZeroArityFn name ctx then
-                                    GoCallExpr (GoIdent goName) []
-                                
-                                else
-                                    GoIdent goName
-                        
-                        else if isZeroArityFn name ctx then
-                            GoCallExpr (GoIdent (sanitizeGoIdent name)) []
-                        
-                        else
-                            GoIdent (sanitizeGoIdent name)
+                        GoIdent (sanitizeGoIdent name)
 
 
 lowerStdlibExposed : String -> String -> GoExpr
@@ -700,80 +702,6 @@ getCssValue name =
         Just "system-ui, -apple-system, sans-serif"
     else if name == "monoFont" then
         Just "ui-monospace, SFMono-Regular, monospace"
-    else if name == "block" then
-        Just "block"
-    else if name == "inlineBlock" then
-        Just "inline-block"
-    else if name == "inline" then
-        Just "inline"
-    else if name == "flex" then
-        Just "flex"
-    else if name == "grid" then
-        Just "grid"
-    else if name == "hidden" then
-        Just "hidden"
-    else if name == "visible" then
-        Just "visible"
-    else if name == "absolute" then
-        Just "absolute"
-    else if name == "relative" then
-        Just "relative"
-    else if name == "fixed" then
-        Just "fixed"
-    else if name == "sticky" then
-        Just "sticky"
-    else if name == "pointer" then
-        Just "pointer"
-    else if name == "bold" then
-        Just "bold"
-    else if name == "normal" then
-        Just "normal"
-    else if name == "italic" then
-        Just "italic"
-    else if name == "center" then
-        Just "center"
-    else if name == "left" then
-        Just "left"
-    else if name == "right" then
-        Just "right"
-    else if name == "spaceBetween" then
-        Just "space-between"
-    else if name == "spaceAround" then
-        Just "space-around"
-    else if name == "flexStart" then
-        Just "flex-start"
-    else if name == "flexEnd" then
-        Just "flex-end"
-    else if name == "stretch" then
-        Just "stretch"
-    else if name == "wrap" then
-        Just "wrap"
-    else if name == "nowrap" then
-        Just "nowrap"
-    else if name == "row" then
-        Just "row"
-    else if name == "column" then
-        Just "column"
-    else if name == "rowReverse" then
-        Just "row-reverse"
-    else if name == "columnReverse" then
-        Just "column-reverse"
-    else if name == "uppercase" then
-        Just "uppercase"
-    else if name == "lowercase" then
-        Just "lowercase"
-    else if name == "capitalize" then
-        Just "capitalize"
-    else if name == "underline" then
-        Just "underline"
-    else if name == "solid" then
-        Just "solid"
-    else if name == "dashed" then
-        Just "dashed"
-    else if name == "dotted" then
-        Just "dotted"
-    else if name == "collapse" then
-        Just "collapse"
     else
         Nothing
 
