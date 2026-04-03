@@ -121,13 +121,9 @@ verifyEmail token =
                 [ token ]
     in
         case result of
-            
-            Ok rowsAffected ->
-                if rowsAffected == 0 then
-                    Err "Invalid or already used verification link."
-                
-                else
-                    Ok "Your email has been verified! You can now sign in."
-            
-            Err _ ->
-                Err "A database error occurred during verification."
+
+            Ok _ ->
+                Ok "Your email has been verified! You can now sign in."
+
+            Err e ->
+                Err ("Verification failed: " ++ e)

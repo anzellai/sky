@@ -3,32 +3,29 @@ module Lib.Db exposing (exec, queryRows, getField)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
-import Sky.Core.Ref as Ref
 import Database.Sql as Sql
 import Modernc.Org.Sqlite as _
 
-dbRef = Ref.new (Sql.open "sqlite" "skynotes.db")
 
-
-getConn _ = Ref.get dbRef
+openDb _ = Sql.open "sqlite" "skynotes.db"
 
 
 exec query args =
-    case getConn () of
-        
+    case openDb () of
+
         Ok conn ->
             Sql.dBExec conn query args
-        
+
         Err e ->
             Err e
 
 
 queryRows query args =
-    case getConn () of
-        
+    case openDb () of
+
         Ok conn ->
             Sql.queryToMaps conn query args
-        
+
         Err e ->
             Err e
 

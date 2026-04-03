@@ -179,15 +179,19 @@ handleForgotPassword _ req =
 handleVerify : a -> Request -> Task String Response
 handleVerify _ req =
     let
-        token = Server.queryParam "token" req
+        token = Maybe.withDefault "" (Server.queryParam "token" req)
     in
-        case Auth.verifyEmail token of
-            
-            Ok msg ->
-                Task.succeed (Server.html (View.verifyResultPage True msg))
-            
-            Err msg ->
-                Task.succeed (Server.html (View.verifyResultPage False msg))
+        if token == "" then
+            Task.succeed (Server.html (View.verifyResultPage False "Missing verification token."))
+
+        else
+            case Auth.verifyEmail token of
+
+                Ok msg ->
+                    Task.succeed (Server.html (View.verifyResultPage True msg))
+
+                Err msg ->
+                    Task.succeed (Server.html (View.verifyResultPage False msg))
 
 
 handleSignOut : a -> Request -> Task String Response
