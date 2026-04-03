@@ -83,12 +83,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME}"
           LDFLAGS="-s -w -X main.skyVersion=${VERSION}"
 
-          GOOS=linux   GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-x64 . &
-          GOOS=linux   GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-arm64 . &
-          GOOS=darwin  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-x64 . &
-          GOOS=darwin  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-arm64 . &
-          GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-windows-x64.exe . &
-          wait
+          echo "Building linux/amd64..."
+          GOOS=linux   GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-x64 .
+          echo "Building linux/arm64..."
+          GOOS=linux   GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-arm64 .
+          echo "Building darwin/amd64..."
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-x64 .
+          echo "Building darwin/arm64..."
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-arm64 .
+          echo "Building windows/amd64..."
+          GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-windows-x64.exe .
 
       - uses: actions/upload-artifact@v4
         with:
