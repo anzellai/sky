@@ -2291,5 +2291,7 @@ cmdClean _ =
     let
         _ = Process.run "rm" [ "-rf" , "dist" ]
         _ = Process.run "rm" [ "-rf" , "sky-out" ]
+        _ = Process.run "rm" [ "-rf" , ".skycache" ]
+        _ = Process.run "rm" [ "-rf" , ".skydeps" ]
     in
-        println "Cleaned."
+        println "Cleaned: dist/ sky-out/ .skycache/ .skydeps/"
