@@ -419,7 +419,7 @@ func Sky_log_slog_HandlerHandle(this any, arg0 any, arg1 any) SkyResult {
 
 func Sky_log_slog_HandlerWithAttrs(this any, arg0 any) slog.Handler {
 	_this := this.(slog.Handler)
-	_arg0 := arg0.([]slog.Attr)
+	_arg0 := func() []slog.Attr { lst := sky_asList(arg0); out := make([]slog.Attr, len(lst)); for i, v := range lst { if cv, ok := v.(slog.Attr); ok { out[i] = cv } }; return out }()
 	return _this.WithAttrs(_arg0)
 }
 
@@ -467,7 +467,7 @@ func Sky_log_slog_JSONHandlerHandle(this any, arg0 any, arg1 any) SkyResult {
 
 func Sky_log_slog_JSONHandlerWithAttrs(this any, arg0 any) slog.Handler {
 	_this := this.(*slog.JSONHandler)
-	_arg0 := arg0.([]slog.Attr)
+	_arg0 := func() []slog.Attr { lst := sky_asList(arg0); out := make([]slog.Attr, len(lst)); for i, v := range lst { if cv, ok := v.(slog.Attr); ok { out[i] = cv } }; return out }()
 	return _this.WithAttrs(_arg0)
 }
 
@@ -766,7 +766,7 @@ func Sky_log_slog_MultiHandlerHandle(this any, arg0 any, arg1 any) SkyResult {
 
 func Sky_log_slog_MultiHandlerWithAttrs(this any, arg0 any) slog.Handler {
 	_this := this.(*slog.MultiHandler)
-	_arg0 := arg0.([]slog.Attr)
+	_arg0 := func() []slog.Attr { lst := sky_asList(arg0); out := make([]slog.Attr, len(lst)); for i, v := range lst { if cv, ok := v.(slog.Attr); ok { out[i] = cv } }; return out }()
 	return _this.WithAttrs(_arg0)
 }
 
@@ -886,7 +886,7 @@ func Sky_log_slog_TextHandlerHandle(this any, arg0 any, arg1 any) SkyResult {
 
 func Sky_log_slog_TextHandlerWithAttrs(this any, arg0 any) slog.Handler {
 	_this := this.(*slog.TextHandler)
-	_arg0 := arg0.([]slog.Attr)
+	_arg0 := func() []slog.Attr { lst := sky_asList(arg0); out := make([]slog.Attr, len(lst)); for i, v := range lst { if cv, ok := v.(slog.Attr); ok { out[i] = cv } }; return out }()
 	return _this.WithAttrs(_arg0)
 }
 

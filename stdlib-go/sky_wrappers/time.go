@@ -669,9 +669,13 @@ func Sky_time_TimeSecond(this any) int {
 }
 
 func Sky_time_TimeString(this any) string {
-	_this := this.(*time.Time)
-
-	return _this.String()
+	if _p, ok := this.(*time.Time); ok {
+		return _p.String()
+	}
+	if _v, ok := this.(time.Time); ok {
+		return _v.String()
+	}
+	return ""
 }
 
 func Sky_time_TimeSub(this any, arg0 any) time.Duration {

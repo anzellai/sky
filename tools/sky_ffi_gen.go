@@ -1003,8 +1003,9 @@ func generateTypeCast(varName, goType, pkg string) string {
 		}
 	// Sub-package types (e.g. database/sql/driver.Connector for pkg database/sql)
 	// These are typically interfaces — use type assertion with import alias
+	// Skip slices (handled below by typed slice handler)
 	cleanGoType := strings.TrimPrefix(strings.TrimPrefix(goType, "*"), "[]")
-	if strings.Contains(cleanGoType, "/") && strings.Contains(cleanGoType, ".") {
+	if !strings.HasPrefix(goType, "[]") && strings.Contains(cleanGoType, "/") && strings.Contains(cleanGoType, ".") {
 		dotIdx := strings.LastIndex(cleanGoType, ".")
 		subPkg := cleanGoType[:dotIdx]
 		typeName := cleanGoType[dotIdx+1:]
