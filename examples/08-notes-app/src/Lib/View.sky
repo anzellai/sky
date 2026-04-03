@@ -919,7 +919,7 @@ noteViewPage email note =
                       ]
                       ""
                 , script []
-                      "document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);"
+                      "window.addEventListener('DOMContentLoaded',function(){document.getElementById('rendered').innerHTML=marked.parse(document.getElementById('raw-md').value);});"
                 ]
             )
 
@@ -1002,7 +1002,7 @@ noteFormPage email noteTitle content noteId isEdit =
                       ]
                       ""
                 , script []
-                      "var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();"
+                      "window.addEventListener('DOMContentLoaded',function(){var e=document.getElementById('editor'),p=document.getElementById('preview');function u(){p.innerHTML=marked.parse(e.value)}e.addEventListener('input',u);u();});"
                 ]
             )
 

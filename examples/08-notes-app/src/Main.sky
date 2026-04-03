@@ -259,13 +259,13 @@ handleViewNote _ req =
             \user email ->
                 let
                     userId = Db.getField "id" user
-                    noteId = Server.queryParam "id" req
+                    noteId = Maybe.withDefault "" (Server.queryParam "id" req)
                 in
                     case Notes.getNote noteId userId of
-                        
+
                         Just note ->
                             Server.html (View.noteViewPage email note)
-                        
+
                         Nothing ->
                             Server.html (View.errorPage "Note not found.")
             )
@@ -281,7 +281,7 @@ handleEditNote _ req =
             \user email ->
                 let
                     userId = Db.getField "id" user
-                    noteId = Server.queryParam "id" req
+                    noteId = Maybe.withDefault "" (Server.queryParam "id" req)
                 in
                     if Server.method req == "POST" then
                         let
@@ -321,7 +321,7 @@ handleDeleteNote _ req =
             \user email ->
                 let
                     userId = Db.getField "id" user
-                    noteId = Server.formValue "id" req
+                    noteId = Maybe.withDefault "" (Server.queryParam "id" req)
                     _ = Notes.deleteNote noteId userId
                 in
                     Server.redirect "/notes"
