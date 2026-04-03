@@ -18,47 +18,36 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          cache: true
 
-      # Install goimports (needed by DCE to clean unused imports)
-      - name: Install goimports
-        run: go install golang.org/x/tools/cmd/goimports@latest
-
-      # Build skyi-filter tool first (needed for large .skyi filtering)
+      # Build companion tools
       - name: Build tools
         run: |
-          go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go
-          go build -o /usr/local/bin/trim-imports tools/trim_imports.go
+          go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go &
+          go build -o /usr/local/bin/sky-ffi-gen tools/sky_ffi_gen.go &
+          go build -o /usr/local/bin/sky-dce tools/sky_dce.go &
+          wait
 
-      # Bootstrap from committed Go source (sky-out/main.go)
+      # Phase 1: bootstrap from committed Go source
       - name: Bootstrap compiler from Go source
         run: |
-          cd sky-out
-          go build -gcflags=all=-l -o app .
+          cd bootstrap
+          go build -gcflags=all=-l -o ../sky-out/app .
           cd ..
           cp -f sky-out/app /usr/local/bin/sky
-          sky build src/Main.sky
-          sky-out/app version
+          sky --version
 
-      # Phase 2: self-host (new compiler compiles itself)
-      - name: Phase 2 self-host
+      # Phase 2: self-host (compiler compiles itself)
+      - name: Self-host
         run: |
-          cp -f sky-out/app /usr/local/bin/sky
-          rm -rf sky-out
           sky build src/Main.sky
-          sky-out/app version
-
-      # Phase 3: propagate lowerer fixes
-      - name: Phase 3 bootstrap
-        run: |
           cp -f sky-out/app /usr/local/bin/sky
-          rm -rf sky-out
-          sky build src/Main.sky
-          sky-out/app version
+          sky --version
 
-      # Verify the built compiler works (not a hello-world binary)
+      # Verify the built compiler works
       - name: Verify compiler
         run: |
-          sky-out/app check src/Main.sky
+          sky check src/Main.sky
           echo "Compiler verification passed"
 
       # Upload the bootstrapped Go source for cross-compilation
@@ -71,34 +60,10 @@ jobs:
             sky-out/go.mod
             sky-out/sky_parallel.go
 
-  # Cross-compile for all platforms
+  # Cross-compile all platforms from a single runner
   build:
     needs: bootstrap
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            artifact: sky-linux-x64
-          - os: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            artifact: sky-linux-arm64
-          - os: macos-15
-            goos: darwin
-            goarch: amd64
-            artifact: sky-darwin-x64
-          - os: macos-latest
-            goos: darwin
-            goarch: arm64
-            artifact: sky-darwin-arm64
-          - os: windows-latest
-            goos: windows
-            goarch: amd64
-            artifact: sky-windows-x64.exe
-
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/setup-go@v5
@@ -111,17 +76,28 @@ jobs:
           name: sky-go-source
           path: sky-out
 
-      - name: Build binary
+      - name: Build all platforms
         run: |
           cd sky-out
           VERSION="${GITHUB_REF_NAME}"
-          GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -ldflags="-s -w -X main.skyVersion=${VERSION}" -o ../${{ matrix.artifact }} .
-        shell: bash
+          LDFLAGS="-s -w -X main.skyVersion=${VERSION}"
+
+          GOOS=linux   GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-x64 . &
+          GOOS=linux   GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-linux-arm64 . &
+          GOOS=darwin  GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-x64 . &
+          GOOS=darwin  GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o ../sky-darwin-arm64 . &
+          GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o ../sky-windows-x64.exe . &
+          wait
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ matrix.artifact }}
+          name: sky-binaries
+          path: |
+            sky-linux-x64
+            sky-linux-arm64
+            sky-darwin-x64
+            sky-darwin-arm64
+            sky-windows-x64.exe
 
   release:
     needs: build
@@ -129,16 +105,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          path: artifacts
-
-      - name: Prepare release assets
-        run: |
-          mkdir -p release
-          for dir in artifacts/*/; do
-            [[ "$dir" == *"sky-go-source"* ]] && continue
-            cp "$dir"* release/ 2>/dev/null || true
-          done
-          ls -la release/
+          name: sky-binaries
+          path: release
 
       - name: Generate checksums
         run: |
@@ -159,6 +127,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: sky-binaries
+          path: release-bin
+
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
@@ -170,11 +143,20 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
 
+      - name: Prepare binary for Docker
+        run: |
+          mkdir -p docker-bin
+          cp release-bin/sky-linux-x64 docker-bin/sky
+          chmod +x docker-bin/sky
+
       - uses: docker/build-push-action@v6
         with:
           context: .
+          file: Dockerfile
           push: true
           tags: |
             anzel/sky:latest
             anzel/sky:${{ steps.version.outputs.VERSION }}
-          platforms: linux/amd64,linux/arm64
+          build-args: |
+            SKY_BINARY=docker-bin/sky
+          platforms: linux/amd64
