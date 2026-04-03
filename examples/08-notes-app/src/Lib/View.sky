@@ -100,7 +100,7 @@ appStyles _ =
         -- Layout
               , Css.padding (Css.zero ())
         -- Navigation
-              , Css.boxSizingBorderBox ()
+              , Css.boxSizing (Css.borderBox ())
               ]
         -- Buttons
         , Css.rule "body"

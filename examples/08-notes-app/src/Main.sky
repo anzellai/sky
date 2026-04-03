@@ -89,13 +89,13 @@ handleSignIn _ req =
             password = Server.formValue "password" req
         in
             case Auth.authenticateUser email password of
-                
+
                 Ok user ->
                     let
                         userId = Db.getField "id" user
                     in
                         case Auth.createSession userId of
-                            
+
                             Ok sessionToken ->
                                 Task.succeed
                                     (
@@ -104,9 +104,12 @@ handleSignIn _ req =
                                                sessionToken
                                                "Path=/; HttpOnly; SameSite=Lax"
                                     )
-                            
+
                             Err msg ->
                                 Task.succeed (Server.html (View.signInPage msg))
+
+                Err msg ->
+                    Task.succeed (Server.html (View.signInPage msg))
     
     else
         Task.succeed (Server.html (View.signInPage ""))

@@ -615,7 +615,40 @@ lowerStdlibExposed modPath name =
         
         else if name == "margin4" then
             GoIdent "sky_cssMargin4"
-        
+
+        else if name == "zero" then
+            GoIdent "sky_cssZero"
+
+        else if name == "none" then
+            GoIdent "sky_cssNone"
+
+        else if name == "auto" then
+            GoIdent "sky_cssAuto"
+
+        else if name == "transparent" then
+            GoIdent "sky_cssTransparent"
+
+        else if name == "inherit" then
+            GoIdent "sky_cssInherit"
+
+        else if name == "initial" then
+            GoIdent "sky_cssInitial"
+
+        else if name == "systemFont" then
+            GoIdent "sky_cssSystemFont"
+
+        else if name == "monoFont" then
+            GoIdent "sky_cssMonoFont"
+
+        else if name == "fr" then
+            GoIdent "sky_cssFr"
+
+        else if name == "borderBox" then
+            GoIdent "sky_cssBorderBox"
+
+        else if name == "repeat" then
+            GoIdent "sky_cssRepeat"
+
         else
             GoCallExpr (GoIdent "sky_cssPropFn")
                 [ GoStringLit (cssNameToProperty name) ]
@@ -3314,6 +3347,17 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_cssPct(n any) any { return fmt.Sprintf(\"%.0f%%\", sky_asFloat(n)) }"
     , GoDeclRaw "func sky_cssHex(s any) any { return \"#\" + sky_asString(s) }"
+    , GoDeclRaw "func sky_cssZero(_ any) any { return \"0\" }"
+    , GoDeclRaw "func sky_cssNone(_ any) any { return \"none\" }"
+    , GoDeclRaw "func sky_cssAuto(_ any) any { return \"auto\" }"
+    , GoDeclRaw "func sky_cssTransparent(_ any) any { return \"transparent\" }"
+    , GoDeclRaw "func sky_cssInherit(_ any) any { return \"inherit\" }"
+    , GoDeclRaw "func sky_cssInitial(_ any) any { return \"initial\" }"
+    , GoDeclRaw "func sky_cssSystemFont(_ any) any { return \"system-ui, -apple-system, sans-serif\" }"
+    , GoDeclRaw "func sky_cssMonoFont(_ any) any { return \"ui-monospace, SFMono-Regular, monospace\" }"
+    , GoDeclRaw "func sky_cssFr(n any) any { return fmt.Sprintf(\"%dfr\", sky_asInt(n)) }"
+    , GoDeclRaw "func sky_cssBorderBox(_ any) any { return \"border-box\" }"
+    , GoDeclRaw "func sky_cssRepeat(n any) any { return func(v any) any { return fmt.Sprintf(\"repeat(%d, %s)\", sky_asInt(n), sky_asString(v)) } }"
     , GoDeclRaw
           "func sky_cssRgb(r any) any { return func(g any) any { return func(b any) any { return fmt.Sprintf(\"rgb(%d, %d, %d)\", sky_asInt(r), sky_asInt(g), sky_asInt(b)) } } }"
     , GoDeclRaw
