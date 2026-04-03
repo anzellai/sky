@@ -298,21 +298,9 @@ retryBuildWithTidy outDir originalErr =
 cmdRun _ =
     let
         _ = cmdBuild ()
-        runResult = Process.run "sh" [ "-c" , "./sky-out/app" ]
+        _ = Process.execInherit "./sky-out/app" []
     in
-        case runResult of
-            
-            Ok output ->
-                let
-                    _ = println output
-                in
-                    ()
-            
-            Err e ->
-                let
-                    _ = println (errorToString e)
-                in
-                    Process.exit 1
+        ()
 
 
 cmdCheck _ =
