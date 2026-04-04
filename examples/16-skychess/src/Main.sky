@@ -91,10 +91,7 @@ view model =
 
 
 subscriptions model =
-    if model.computerThinking then
-        Time.every 100 ComputerMove
-    else
-        Sub.none
+    Time.every 500 ComputerMove
 
 
 update : Msg -> Model -> (Model, Cmd Msg)

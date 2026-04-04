@@ -68,7 +68,7 @@ resolveAfterWhite updated blackCanMove blackInCheck =
     else if not blackCanMove then
         finishGame "stalemate" updated
     else
-        executeBlackMove { updated | turn = "Black" }
+        ( { updated | turn = "Black" , computerThinking = True }, Cmd.none )
 
 
 executeBlackMove : Model -> (Model, Cmd Msg)
