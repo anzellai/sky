@@ -1,0 +1,149 @@
+module Page.Home exposing (viewHome)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput, onSubmit)
+import State exposing (..)
+import Lib.Db as Db
+import Ui.Layout as Layout
+
+
+viewHome : Model -> VNode
+viewHome model =
+    Layout.page model
+        (
+        div [ class "home-container" ]
+            [ h1 [ class "home-title" ] [ text "\u265E SkyChess" ]
+            , p [ class "home-subtitle" ]
+                  [ text "Play chess against the computer. White moves first." ]
+            , viewNotification model
+            , viewNameForm model
+            , viewStats model
+            , viewGameList model
+            ]
+        )
+
+
+viewNotification model =
+    if model.notification == "" then
+        text ""
+
+    else
+        div [ class "notification" ] [ text model.notification ]
+
+
+viewNameForm model =
+    div [ class "card" , style "margin-bottom: 24px" ]
+        [ div [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Your name" ]
+              , input
+                    [ type_ "text"
+                    , class "form-input"
+                    , placeholder "Enter your name to play"
+                    , value model.nameInput
+                    , onInput UpdateNameInput
+                    ]
+              ]
+        , div [ class "form-actions" ]
+              [ button
+                    [ onClick StartNewGame
+                    , class "btn btn-primary"
+                    , disabled
+                          (
+                          if model.nameInput == "" then
+                              ()
+
+                          else
+                              ()
+                          )
+                    ]
+                    [ text "New Game" ]
+              ]
+        ]
+
+
+viewStats model =
+    if List.isEmpty model.savedGames then
+        text ""
+
+    else
+        let
+            totalGames = List.length model.savedGames
+            wins = countByResult "checkmate-white" model.savedGames
+            losses = countByResult "checkmate-black" model.savedGames
+            draws = countByResult "stalemate" model.savedGames
+        in
+            div [ style "margin-bottom: 24px" ]
+                [ h3 [ class "section-title" ] [ text "Your Stats" ]
+                , div [ class "stats-grid" ]
+                      [ statCard (String.fromInt totalGames) "Games"
+                      , statCard (String.fromInt wins) "Wins"
+                      , statCard (String.fromInt losses) "Losses"
+                      , statCard (String.fromInt draws) "Draws"
+                      ]
+                ]
+
+
+countByResult : String -> List (Dict String String) -> Int
+countByResult result games =
+    List.length (List.filter (\g -> Db.getField "result" g == result) games)
+
+
+statCard val label =
+    div [ class "stat-card" ]
+        [ div [ class "stat-value" ] [ text val ]
+        , div [ class "stat-label" ] [ text label ]
+        ]
+
+
+viewGameList model =
+    if List.isEmpty model.savedGames then
+        text ""
+
+    else
+        div []
+            [ h3 [ class "section-title" ] [ text "Previous Games" ]
+            , div [ class "game-list" ]
+                  (List.map viewGameRow model.savedGames)
+            ]
+
+
+viewGameRow game =
+    let
+        gameId = Db.getField "id" game
+        status = Db.getField "status" game
+        result = Db.getField "result" game
+        moves = Db.getField "move_count" game
+        date = Db.getField "created_at" game
+        displayStatus = formatResult result status
+    in
+        div [ class "game-row" ]
+            [ div [ class "game-info" ]
+                  [ span [ class "game-status" ] [ text displayStatus ]
+                  , span [ class "game-moves" ] [ text (moves ++ " moves") ]
+                  , span [ class "game-date" ] [ text date ]
+                  ]
+            , div [ class "game-actions" ]
+                  [ button [ onClick (LoadGame gameId) , class "btn btn-secondary btn-sm" ]
+                        [ text "View" ]
+                  , button [ onClick (DeleteGame gameId) , class "btn btn-ghost btn-sm" ]
+                        [ text "Delete" ]
+                  ]
+            ]
+
+
+formatResult result status =
+    if result == "checkmate-white" then
+        "Won"
+    else if result == "checkmate-black" then
+        "Lost"
+    else if result == "stalemate" then
+        "Draw"
+    else if result == "resigned" then
+        "Resigned"
+    else
+        "In Progress"

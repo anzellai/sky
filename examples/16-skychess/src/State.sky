@@ -1,0 +1,53 @@
+module State exposing (..)
+
+import Sky.Core.Maybe exposing (..)
+
+
+type Page
+    = HomePage
+    | GamePage
+    | NotFoundPage
+
+
+type alias Model =
+    { page : Page
+    , playerName : String
+    , nameInput : String
+    , gameId : String
+    , board : Dict Int (Dict String String)
+    , turn : String
+    , selectedSquare : Int
+    , legalMoves : List Int
+    , moveHistory : List String
+    , gameStatus : String
+    , computerThinking : Bool
+    , lastMoveFrom : Int
+    , lastMoveTo : Int
+    , capturedByWhite : List String
+    , capturedByBlack : List String
+    , whiteKingMoved : Bool
+    , blackKingMoved : Bool
+    , whiteRookAMoved : Bool
+    , whiteRookHMoved : Bool
+    , blackRookAMoved : Bool
+    , blackRookHMoved : Bool
+    , enPassantSquare : Int
+    , halfMoveClock : Int
+    , fullMoveNumber : Int
+    , savedGames : List (Dict String String)
+    , notification : String
+    , errorMessage : String
+    }
+
+
+type Msg
+    = Navigate Page
+    | UpdateNameInput String
+    | StartNewGame
+    | LoadGame String
+    | ClickSquare Int
+    | ComputerMove
+    | Resign
+    | BackToHome
+    | Tick
+    | DeleteGame String

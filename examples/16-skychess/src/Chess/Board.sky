@@ -1,0 +1,151 @@
+module Chess.Board exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Chess.Piece as Piece
+
+
+-- Square indexing: 0=a8, 1=b8, ..., 7=h8, 8=a7, ..., 63=h1
+-- Row 0 = rank 8 (black back rank), Row 7 = rank 1 (white back rank)
+
+getPiece : Int -> Dict Int (Dict String String) -> Maybe (Dict String String)
+getPiece sq board = Dict.get sq board
+
+
+setPiece : Int -> (Dict String String) -> Dict Int (Dict String String) -> Dict Int (Dict String String)
+setPiece sq piece board = Dict.insert sq piece board
+
+
+removePiece : Int -> Dict Int (Dict String String) -> Dict Int (Dict String String)
+removePiece sq board = Dict.remove sq board
+
+
+movePiece : Int -> Int -> Dict Int (Dict String String) -> Dict Int (Dict String String)
+movePiece from to board =
+    case Dict.get from board of
+
+        Just piece ->
+            Dict.insert to piece (Dict.remove from board)
+
+        Nothing ->
+            board
+
+
+squareToFile : Int -> Int
+squareToFile sq = modBy 8 sq
+
+
+squareToRank : Int -> Int
+squareToRank sq = 7 - (sq // 8)
+
+
+fileRankToSquare : Int -> Int -> Int
+fileRankToSquare file rank = (7 - rank) * 8 + file
+
+
+squareToAlgebraic : Int -> String
+squareToAlgebraic sq =
+    let
+        file = modBy 8 sq
+        rank = 7 - (sq // 8)
+        fileChar = fileToChar file
+        rankChar = String.fromInt (rank + 1)
+    in
+        fileChar ++ rankChar
+
+
+fileToChar : Int -> String
+fileToChar f =
+    if f == 0 then
+        "a"
+    else if f == 1 then
+        "b"
+    else if f == 2 then
+        "c"
+    else if f == 3 then
+        "d"
+    else if f == 4 then
+        "e"
+    else if f == 5 then
+        "f"
+    else if f == 6 then
+        "g"
+    else
+        "h"
+
+
+isOnBoard : Int -> Int -> Bool
+isOnBoard row col = row >= 0 && row <= 7 && col >= 0 && col <= 7
+
+
+findKing : String -> Dict Int (Dict String String) -> Int
+findKing colour board =
+    let
+        squares = Dict.toList board
+        kings =
+            List.filter
+                (\pair ->
+                    let
+                        piece = snd pair
+                    in
+                        Piece.pieceKind piece == "King"
+                            && Piece.pieceColour piece == colour
+                )
+                squares
+    in
+        case kings of
+
+            first :: _ ->
+                fst first
+
+            [] ->
+                -1
+
+
+allPiecesOfColour : String -> Dict Int (Dict String String) -> List ( Int, Dict String String )
+allPiecesOfColour colour board =
+    List.filter
+        (\pair -> Piece.pieceColour (snd pair) == colour)
+        (Dict.toList board)
+
+
+-- Initial board position
+initialBoard : Dict Int (Dict String String)
+initialBoard =
+    Dict.fromList
+        [ ( 0, Piece.makePiece "Rook" "Black" )
+        , ( 1, Piece.makePiece "Knight" "Black" )
+        , ( 2, Piece.makePiece "Bishop" "Black" )
+        , ( 3, Piece.makePiece "Queen" "Black" )
+        , ( 4, Piece.makePiece "King" "Black" )
+        , ( 5, Piece.makePiece "Bishop" "Black" )
+        , ( 6, Piece.makePiece "Knight" "Black" )
+        , ( 7, Piece.makePiece "Rook" "Black" )
+        , ( 8, Piece.makePiece "Pawn" "Black" )
+        , ( 9, Piece.makePiece "Pawn" "Black" )
+        , ( 10, Piece.makePiece "Pawn" "Black" )
+        , ( 11, Piece.makePiece "Pawn" "Black" )
+        , ( 12, Piece.makePiece "Pawn" "Black" )
+        , ( 13, Piece.makePiece "Pawn" "Black" )
+        , ( 14, Piece.makePiece "Pawn" "Black" )
+        , ( 15, Piece.makePiece "Pawn" "Black" )
+        , ( 48, Piece.makePiece "Pawn" "White" )
+        , ( 49, Piece.makePiece "Pawn" "White" )
+        , ( 50, Piece.makePiece "Pawn" "White" )
+        , ( 51, Piece.makePiece "Pawn" "White" )
+        , ( 52, Piece.makePiece "Pawn" "White" )
+        , ( 53, Piece.makePiece "Pawn" "White" )
+        , ( 54, Piece.makePiece "Pawn" "White" )
+        , ( 55, Piece.makePiece "Pawn" "White" )
+        , ( 56, Piece.makePiece "Rook" "White" )
+        , ( 57, Piece.makePiece "Knight" "White" )
+        , ( 58, Piece.makePiece "Bishop" "White" )
+        , ( 59, Piece.makePiece "Queen" "White" )
+        , ( 60, Piece.makePiece "King" "White" )
+        , ( 61, Piece.makePiece "Bishop" "White" )
+        , ( 62, Piece.makePiece "Knight" "White" )
+        , ( 63, Piece.makePiece "Rook" "White" )
+        ]

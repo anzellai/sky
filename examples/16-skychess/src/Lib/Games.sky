@@ -1,0 +1,75 @@
+module Lib.Games exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Crypto as Crypto
+import Lib.Db as Db
+
+
+createGame : String -> String
+createGame playerName =
+    let
+        existing = getGames playerName
+        count = String.fromInt (List.length existing)
+        gameId = String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
+        _ =
+            Db.exec
+                "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
+                [ gameId, playerName ]
+    in
+        gameId
+
+
+saveMove : String -> Int -> Int -> Int -> String -> String -> ()
+saveMove gameId moveNum from to algebraic colour =
+    let
+        _ =
+            Db.exec
+                "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)"
+                [ gameId
+                , String.fromInt moveNum
+                , String.fromInt from
+                , String.fromInt to
+                , algebraic
+                , colour
+                ]
+        _ =
+            Db.exec
+                "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?"
+                [ String.fromInt moveNum, gameId ]
+    in
+        ()
+
+
+updateGameStatus : String -> String -> String -> ()
+updateGameStatus gameId status result =
+    let
+        _ =
+            Db.exec
+                "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
+                [ status, result, gameId ]
+    in
+        ()
+
+
+getGames : String -> List (Dict String String)
+getGames playerName =
+    case Db.queryRows "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [ playerName ] of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+deleteGame : String -> ()
+deleteGame gameId =
+    let
+        _ = Db.exec "DELETE FROM moves WHERE game_id = ?" [ gameId ]
+        _ = Db.exec "DELETE FROM games WHERE id = ?" [ gameId ]
+    in
+        ()

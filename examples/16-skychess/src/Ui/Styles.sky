@@ -1,0 +1,372 @@
+module Ui.Styles exposing (globalStyles)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Css exposing (..)
+
+
+-- Design tokens
+primary = hex "6366f1"
+
+
+primaryHover = hex "4f46e5"
+
+
+primaryLight = hex "e0e7ff"
+
+
+success = hex "10b981"
+
+
+successLight = hex "d1fae5"
+
+
+danger = hex "ef4444"
+
+
+dangerLight = hex "fee2e2"
+
+
+textPrimary = hex "1e293b"
+
+
+textSecondary = hex "64748b"
+
+
+textMuted = hex "94a3b8"
+
+
+bgPage = hex "f8fafc"
+
+
+bgCard = hex "ffffff"
+
+
+bgInput = hex "f1f5f9"
+
+
+borderLight = hex "e2e8f0"
+
+
+borderMedium = hex "cbd5e1"
+
+
+sqLight = hex "f0d9b5"
+
+
+sqDark = hex "b58863"
+
+
+sqSelected = hex "f6f669"
+
+
+sqSelectedDark = hex "baca2b"
+
+
+sqLastLight = hex "ced26b"
+
+
+sqLastDark = hex "aba23a"
+
+
+globalStyles =
+    stylesheet
+        [ rule "*, *::before, *::after"
+              [ property "box-sizing" "border-box" , margin "0" , padding "0" ]
+        , rule "body"
+              [ fontFamily "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif"
+              , backgroundColor bgPage
+              , color textPrimary
+              , lineHeight "1.6"
+              , fontSize (px 16)
+              ]
+        , rule "a" [ color primary , textDecoration "none" ]
+        , rule "a:hover" [ textDecoration "underline" ]
+        , rule ".container"
+              [ maxWidth (px 1100)
+              , margin2 "0" "auto"
+              , padding2 "0" (px 20)
+              ]
+        , rule ".header"
+              [ backgroundColor bgCard
+              , borderBottom ("1px solid " ++ borderLight)
+              , padding2 (px 16) "0"
+              , property "position" "sticky"
+              , top "0"
+              , zIndex 100
+              ]
+        , rule ".header-inner"
+              [ maxWidth (px 1100)
+              , margin2 "0" "auto"
+              , padding2 "0" (px 20)
+              , display "flex"
+              , justifyContent "space-between"
+              , alignItems "center"
+              ]
+        , rule ".logo"
+              [ fontSize (px 22)
+              , fontWeight "700"
+              , color textPrimary
+              , textDecoration "none"
+              , display "flex"
+              , alignItems "center"
+              , gap (px 8)
+              ]
+        , rule ".logo:hover" [ textDecoration "none" ]
+        , rule ".nav" [ display "flex" , gap (px 8) , alignItems "center" ]
+        , rule ".nav-info" [ display "flex" , gap (px 12) , alignItems "center" ]
+        , rule ".nav-player" [ fontWeight "600" , color textSecondary ]
+        , rule ".btn"
+              [ padding2 (px 10) (px 20)
+              , borderRadius (px 8)
+              , border "none"
+              , fontSize (px 14)
+              , fontWeight "600"
+              , cursor "pointer"
+              , transition "all 0.15s"
+              , display "inline-flex"
+              , alignItems "center"
+              , gap (px 6)
+              , textDecoration "none"
+              ]
+        , rule ".btn-primary" [ backgroundColor primary , color (hex "ffffff") ]
+        , rule ".btn-primary:hover" [ backgroundColor primaryHover ]
+        , rule ".btn-secondary" [ backgroundColor bgInput , color textPrimary ]
+        , rule ".btn-secondary:hover" [ backgroundColor borderLight ]
+        , rule ".btn-danger" [ backgroundColor danger , color (hex "ffffff") ]
+        , rule ".btn-sm" [ padding2 (px 6) (px 12) , fontSize (px 13) ]
+        , rule ".btn-ghost"
+              [ property "background-color" "transparent" , color textSecondary ]
+        , rule ".btn-ghost:hover" [ backgroundColor bgInput , color textPrimary ]
+        , rule ".card"
+              [ backgroundColor bgCard
+              , borderRadius (px 12)
+              , border ("1px solid " ++ borderLight)
+              , padding (px 24)
+              ]
+        -- Home page
+        , rule ".home-container"
+              [ maxWidth (px 600) , margin2 (px 40) "auto" ]
+        , rule ".home-title"
+              [ fontSize (px 36)
+              , fontWeight "700"
+              , textAlign "center"
+              , property "margin-bottom" "8px"
+              ]
+        , rule ".home-subtitle"
+              [ fontSize (px 16)
+              , color textSecondary
+              , textAlign "center"
+              , property "margin-bottom" "32px"
+              ]
+        , rule ".form-group" [ property "margin-bottom" "16px" ]
+        , rule ".form-label"
+              [ display "block"
+              , fontSize (px 14)
+              , fontWeight "600"
+              , color textPrimary
+              , property "margin-bottom" "6px"
+              ]
+        , rule ".form-input"
+              [ width (pct 100)
+              , padding2 (px 10) (px 14)
+              , borderRadius (px 8)
+              , border ("1px solid " ++ borderLight)
+              , fontSize (px 14)
+              , lineHeight "1.5"
+              , backgroundColor bgCard
+              , color textPrimary
+              , transition "border-color 0.15s"
+              , property "box-sizing" "border-box"
+              ]
+        , rule ".form-input:focus"
+              [ borderColor primary
+              , property "outline" "none"
+              , property "box-shadow" ("0 0 0 3px " ++ primaryLight)
+              ]
+        , rule ".form-actions"
+              [ display "flex" , gap (px 12) , justifyContent "center" ]
+        -- Stats
+        , rule ".stats-grid"
+              [ display "grid"
+              , gridTemplateColumns "repeat(4, 1fr)"
+              , gap (px 12)
+              , property "margin-bottom" "24px"
+              ]
+        , rule ".stat-card"
+              [ backgroundColor bgCard
+              , borderRadius (px 10)
+              , border ("1px solid " ++ borderLight)
+              , padding (px 16)
+              , textAlign "center"
+              ]
+        , rule ".stat-value" [ fontSize (px 28) , fontWeight "700" , color primary ]
+        , rule ".stat-label"
+              [ fontSize (px 13) , color textMuted , property "margin-top" "4px" ]
+        -- Game list
+        , rule ".game-list"
+              [ display "flex" , flexDirection "column" , gap (px 8) ]
+        , rule ".game-row"
+              [ display "flex"
+              , justifyContent "space-between"
+              , alignItems "center"
+              , padding2 (px 12) (px 16)
+              , backgroundColor bgInput
+              , borderRadius (px 8)
+              ]
+        , rule ".game-info" [ display "flex" , gap (px 16) , alignItems "center" ]
+        , rule ".game-status"
+              [ fontSize (px 13) , fontWeight "600" , property "text-transform" "capitalize" ]
+        , rule ".game-date" [ fontSize (px 13) , color textMuted ]
+        , rule ".game-moves" [ fontSize (px 13) , color textSecondary ]
+        , rule ".game-actions" [ display "flex" , gap (px 8) ]
+        -- Chess board layout
+        , rule ".game-layout"
+              [ display "flex"
+              , gap (px 24)
+              , justifyContent "center"
+              , property "margin-top" "24px"
+              , flexWrap "wrap"
+              ]
+        , rule ".board-section" [ property "flex-shrink" "0" ]
+        , rule ".side-panel"
+              [ width (px 260)
+              , display "flex"
+              , flexDirection "column"
+              , gap (px 16)
+              ]
+        -- Chess board
+        , rule ".chess-board"
+              [ borderCollapse "collapse"
+              , property "user-select" "none"
+              , border ("2px solid " ++ textPrimary)
+              ]
+        , rule ".chess-board td"
+              [ width (px 64)
+              , height (px 64)
+              , textAlign "center"
+              , property "vertical-align" "middle"
+              , fontSize (px 44)
+              , cursor "pointer"
+              , position "relative"
+              , padding "0"
+              , lineHeight "1"
+              ]
+        , rule ".sq-light" [ backgroundColor sqLight ]
+        , rule ".sq-dark" [ backgroundColor sqDark ]
+        , rule ".sq-selected" [ backgroundColor sqSelected ]
+        , rule ".sq-selected-dark" [ backgroundColor sqSelectedDark ]
+        , rule ".sq-last.sq-light" [ backgroundColor sqLastLight ]
+        , rule ".sq-last.sq-dark" [ backgroundColor sqLastDark ]
+        , rule ".sq-legal"
+              [ position "relative" ]
+        , rule ".sq-legal::after"
+              [ property "content" "''"
+              , position "absolute"
+              , width (px 18)
+              , height (px 18)
+              , borderRadius (pct 50)
+              , property "background-color" "rgba(0, 0, 0, 0.2)"
+              , top (pct 50)
+              , left (pct 50)
+              , property "transform" "translate(-50%, -50%)"
+              , property "pointer-events" "none"
+              ]
+        , rule ".sq-capture"
+              [ property "box-shadow" "inset 0 0 0 4px rgba(0, 0, 0, 0.3)" ]
+        , rule ".piece" [ property "pointer-events" "none" , property "text-shadow" "1px 1px 2px rgba(0,0,0,0.2)" ]
+        , rule ".rank-label"
+              [ width (px 24)
+              , textAlign "center"
+              , fontSize (px 13)
+              , fontWeight "600"
+              , color textMuted
+              , property "vertical-align" "middle"
+              ]
+        , rule ".file-labels td"
+              [ textAlign "center"
+              , fontSize (px 13)
+              , fontWeight "600"
+              , color textMuted
+              , padding2 (px 4) "0"
+              ]
+        -- Status bar
+        , rule ".status-bar"
+              [ padding2 (px 12) (px 16)
+              , borderRadius (px 8)
+              , backgroundColor bgCard
+              , border ("1px solid " ++ borderLight)
+              , textAlign "center"
+              , fontWeight "600"
+              , property "margin-bottom" "16px"
+              ]
+        , rule ".status-thinking"
+              [ backgroundColor (hex "fff3cd") , color (hex "856404") ]
+        , rule ".status-check"
+              [ backgroundColor dangerLight , color danger ]
+        , rule ".status-gameover"
+              [ backgroundColor primaryLight , color primary ]
+        -- Move history
+        , rule ".move-list"
+              [ maxHeight (px 360)
+              , overflow "auto"
+              , padding (px 12)
+              , backgroundColor bgInput
+              , borderRadius (px 8)
+              , fontSize (px 13)
+              , fontFamily "ui-monospace, 'SF Mono', Monaco, monospace"
+              ]
+        , rule ".move-row"
+              [ display "flex" , gap (px 8) , property "margin-bottom" "2px" ]
+        , rule ".move-num" [ color textMuted , property "min-width" "32px" ]
+        , rule ".move-white" [ property "min-width" "64px" ]
+        , rule ".move-black" [ property "min-width" "64px" ]
+        -- Captured pieces
+        , rule ".captured"
+              [ padding (px 12)
+              , backgroundColor bgInput
+              , borderRadius (px 8)
+              , property "min-height" "48px"
+              ]
+        , rule ".captured-label"
+              [ fontSize (px 12)
+              , fontWeight "600"
+              , color textMuted
+              , property "text-transform" "uppercase"
+              , property "letter-spacing" "0.5px"
+              , property "margin-bottom" "4px"
+              ]
+        , rule ".captured-pieces" [ fontSize (px 22) , lineHeight "1.4" ]
+        -- Game actions
+        , rule ".game-actions-bar"
+              [ display "flex"
+              , gap (px 8)
+              , justifyContent "center"
+              , property "margin-top" "16px"
+              ]
+        , rule ".section-title"
+              [ fontSize (px 14)
+              , fontWeight "600"
+              , color textPrimary
+              , property "margin-bottom" "8px"
+              ]
+        -- Notification
+        , rule ".notification"
+              [ padding2 (px 12) (px 16)
+              , borderRadius (px 8)
+              , backgroundColor successLight
+              , color success
+              , fontWeight "500"
+              , fontSize (px 14)
+              , property "margin-bottom" "16px"
+              , textAlign "center"
+              ]
+        , rule ".notification-error"
+              [ backgroundColor dangerLight , color danger ]
+        -- Responsive
+        , media "(max-width: 768px)"
+              [ rule ".game-layout" [ flexDirection "column" , alignItems "center" ]
+              , rule ".side-panel" [ width (pct 100) , maxWidth (px 520) ]
+              , rule ".chess-board td" [ width (px 48) , height (px 48) , fontSize (px 32) ]
+              , rule ".stats-grid" [ gridTemplateColumns "repeat(2, 1fr)" ]
+              ]
+        ]

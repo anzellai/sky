@@ -1,0 +1,15 @@
+name = "skychess"
+version = "0.1.0"
+entry = "src/Main.sky"
+
+[source]
+root = "src"
+
+[live]
+port = 8000
+
+["go.dependencies"]
+"database/sql" = "latest"
+"modernc.org/sqlite" = "latest"
+"crypto/sha256" = "latest"
+"encoding/hex" = "latest"

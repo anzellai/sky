@@ -1,0 +1,82 @@
+module Chess.Piece exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+
+
+-- Unicode chess piece symbols
+-- White pieces: filled glyphs, Black pieces: outlined glyphs
+symbol kind colour =
+    if colour == "White" then
+        whiteSymbol kind
+    else
+        blackSymbol kind
+
+
+whiteSymbol kind =
+    if kind == "King" then
+        "\u2654"
+    else if kind == "Queen" then
+        "\u2655"
+    else if kind == "Rook" then
+        "\u2656"
+    else if kind == "Bishop" then
+        "\u2657"
+    else if kind == "Knight" then
+        "\u2658"
+    else if kind == "Pawn" then
+        "\u2659"
+    else
+        ""
+
+
+blackSymbol kind =
+    if kind == "King" then
+        "\u265A"
+    else if kind == "Queen" then
+        "\u265B"
+    else if kind == "Rook" then
+        "\u265C"
+    else if kind == "Bishop" then
+        "\u265D"
+    else if kind == "Knight" then
+        "\u265E"
+    else if kind == "Pawn" then
+        "\u265F"
+    else
+        ""
+
+
+materialValue kind =
+    if kind == "Queen" then
+        900
+    else if kind == "Rook" then
+        500
+    else if kind == "Bishop" then
+        330
+    else if kind == "Knight" then
+        320
+    else if kind == "Pawn" then
+        100
+    else
+        0
+
+
+isSliding kind =
+    kind == "Queen" || kind == "Rook" || kind == "Bishop"
+
+
+makePiece kind colour =
+    Dict.fromList [ ( "kind", kind ), ( "colour", colour ) ]
+
+
+pieceKind p = Maybe.withDefault "" (Dict.get "kind" p)
+
+
+pieceColour p = Maybe.withDefault "" (Dict.get "colour" p)
+
+
+oppositeColour colour =
+    if colour == "White" then
+        "Black"
+    else
+        "White"

@@ -1,0 +1,193 @@
+module Chess.Ai exposing (bestMove)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Chess.Piece as Piece
+import Chess.Board as Board
+import Chess.Move as Move
+import Chess.Eval as Eval
+
+
+-- Find the best move for the given colour
+bestMove : Dict Int (Dict String String) -> Model -> ( Int, Int )
+bestMove board model =
+    let
+        colour = model.turn
+        moves = Move.allLegalMoves colour board model
+        ordered = orderMoves moves board
+        initBest = ( -1, -1 )
+        initScore = (-200000)
+    in
+        searchBest ordered board model colour initBest initScore
+
+
+searchBest : List ( Int, Int ) -> Dict Int (Dict String String) -> Model -> String -> ( Int, Int ) -> Int -> ( Int, Int )
+searchBest moves board model colour best score =
+    if List.isEmpty moves then
+        best
+    else
+        let
+            move = Maybe.withDefault ( -1, -1 ) (List.head moves)
+            rest = List.drop 1 moves
+            from = fst move
+            to = snd move
+            result = Move.applyMove from to board model
+            newBoard = fst result
+            newModel = makeSearchModel from to board model
+            isMax = colour == "White"
+            moveScore = doMinimax newBoard newModel 2 (-100000) 100000 (not isMax)
+        in
+            pickBetter rest board model colour move moveScore best score isMax
+
+
+pickBetter rest board model colour move moveScore best score isMax =
+    if isMax && moveScore > score then
+        searchBest rest board model colour move moveScore
+    else if not isMax && moveScore < score then
+        searchBest rest board model colour move moveScore
+    else
+        searchBest rest board model colour best score
+
+
+-- Minimax with alpha-beta pruning
+doMinimax : Dict Int (Dict String String) -> Model -> Int -> Int -> Int -> Bool -> Int
+doMinimax board model depth alpha beta isMax =
+    if depth == 0 then
+        Eval.evaluate board
+    else if isMax then
+        doMaximise board model depth alpha beta
+    else
+        doMinimise board model depth alpha beta
+
+
+doMaximise : Dict Int (Dict String String) -> Model -> Int -> Int -> Int -> Int
+doMaximise board model depth alpha beta =
+    let
+        moves = Move.allLegalMoves "White" board model
+    in
+        if List.isEmpty moves then
+            checkTerminal "White" board
+        else
+            loopMax (orderMoves moves board) board model depth alpha beta
+
+
+checkTerminal : String -> Dict Int (Dict String String) -> Int
+checkTerminal colour board =
+    if Move.isInCheck colour board then
+        if colour == "White" then
+            (-90000)
+        else
+            90000
+    else
+        0
+
+
+loopMax : List ( Int, Int ) -> Dict Int (Dict String String) -> Model -> Int -> Int -> Int -> Int
+loopMax moves board model depth alpha beta =
+    if List.isEmpty moves then
+        alpha
+    else
+        let
+            move = Maybe.withDefault ( -1, -1 ) (List.head moves)
+            rest = List.drop 1 moves
+            from = fst move
+            to = snd move
+            result = Move.applyMove from to board model
+            newBoard = fst result
+            newModel = makeSearchModel from to board model
+            score = doMinimax newBoard newModel (depth - 1) alpha beta False
+            newAlpha =
+                if score > alpha then
+                    score
+                else
+                    alpha
+        in
+            if newAlpha >= beta then
+                newAlpha
+            else
+                loopMax rest board model depth newAlpha beta
+
+
+doMinimise : Dict Int (Dict String String) -> Model -> Int -> Int -> Int -> Int
+doMinimise board model depth alpha beta =
+    let
+        moves = Move.allLegalMoves "Black" board model
+    in
+        if List.isEmpty moves then
+            checkTerminal "Black" board
+        else
+            loopMin (orderMoves moves board) board model depth alpha beta
+
+
+loopMin : List ( Int, Int ) -> Dict Int (Dict String String) -> Model -> Int -> Int -> Int -> Int
+loopMin moves board model depth alpha beta =
+    if List.isEmpty moves then
+        beta
+    else
+        let
+            move = Maybe.withDefault ( -1, -1 ) (List.head moves)
+            rest = List.drop 1 moves
+            from = fst move
+            to = snd move
+            result = Move.applyMove from to board model
+            newBoard = fst result
+            newModel = makeSearchModel from to board model
+            score = doMinimax newBoard newModel (depth - 1) alpha beta True
+            newBeta =
+                if score < beta then
+                    score
+                else
+                    beta
+        in
+            if alpha >= newBeta then
+                newBeta
+            else
+                loopMin rest board model depth alpha newBeta
+
+
+-- Order moves: captures first for better pruning
+orderMoves : List ( Int, Int ) -> Dict Int (Dict String String) -> List ( Int, Int )
+orderMoves moves board =
+    partitionLoop moves board [] []
+
+
+partitionLoop : List ( Int, Int ) -> Dict Int (Dict String String) -> List ( Int, Int ) -> List ( Int, Int ) -> List ( Int, Int )
+partitionLoop moves board captures nonCaptures =
+    if List.isEmpty moves then
+        captures ++ nonCaptures
+    else
+        let
+            move = Maybe.withDefault ( -1, -1 ) (List.head moves)
+            rest = List.drop 1 moves
+        in
+            checkCapture move rest board captures nonCaptures
+
+
+checkCapture move rest board captures nonCaptures =
+    case Dict.get (snd move) board of
+
+        Just _ ->
+            partitionLoop rest board (captures ++ [ move ]) nonCaptures
+
+        Nothing ->
+            partitionLoop rest board captures (nonCaptures ++ [ move ])
+
+
+makeSearchModel : Int -> Int -> Dict Int (Dict String String) -> Model -> Model
+makeSearchModel from to board model =
+    let
+        newEp = Move.newEnPassantSquare from to board
+        newTurn = Piece.oppositeColour model.turn
+    in
+        { model
+            | turn = newTurn
+            , enPassantSquare = newEp
+            , whiteKingMoved = model.whiteKingMoved || from == 60
+            , blackKingMoved = model.blackKingMoved || from == 4
+            , whiteRookAMoved = model.whiteRookAMoved || from == 56
+            , whiteRookHMoved = model.whiteRookHMoved || from == 63
+            , blackRookAMoved = model.blackRookAMoved || from == 0
+            , blackRookHMoved = model.blackRookHMoved || from == 7
+        }

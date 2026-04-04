@@ -1,0 +1,254 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Log exposing (println)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Time as Time
+import State exposing (..)
+import Lib.Db as Db
+import Lib.Schema as Schema
+import Lib.Games as Games
+import Lib.GameLogic as Logic
+import Chess.Board as Board
+import Chess.Piece as Piece
+import Chess.Move as Move
+import Page.Home as Home
+import Page.Game as Game
+import Ui.Layout as Layout
+
+
+init : a -> (Model, Cmd Msg)
+init _req =
+    let
+        _ = Schema.initDb
+        _ = println "[APP] SkyChess initialised"
+    in
+        ( { page = HomePage
+        , playerName = ""
+        , nameInput = ""
+        , gameId = ""
+        , board = Dict.empty
+        , turn = "White"
+        , selectedSquare = -1
+        , legalMoves = []
+        , moveHistory = []
+        , gameStatus = "playing"
+        , computerThinking = False
+        , lastMoveFrom = -1
+        , lastMoveTo = -1
+        , capturedByWhite = []
+        , capturedByBlack = []
+        , whiteKingMoved = False
+        , blackKingMoved = False
+        , whiteRookAMoved = False
+        , whiteRookHMoved = False
+        , blackRookAMoved = False
+        , blackRookHMoved = False
+        , enPassantSquare = -1
+        , halfMoveClock = 0
+        , fullMoveNumber = 1
+        , savedGames = []
+        , notification = ""
+        , errorMessage = ""
+        }, Cmd.none )
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes =
+            [ route "/" HomePage
+            , route "/game" GamePage
+            ]
+        , notFound = NotFoundPage
+        }
+
+
+view : Model -> VNode
+view model =
+    case model.page of
+
+        HomePage ->
+            Home.viewHome model
+
+        GamePage ->
+            Game.viewGame model
+
+        NotFoundPage ->
+            Home.viewHome model
+
+
+subscriptions model =
+    if model.computerThinking then
+        Time.every 100 ComputerMove
+    else
+        Sub.none
+
+
+update : Msg -> Model -> (Model, Cmd Msg)
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ( { model | page = page , notification = "" }, Cmd.none )
+
+        UpdateNameInput s ->
+            ( { model | nameInput = s }, Cmd.none )
+
+        StartNewGame ->
+            handleStartNewGame model
+
+        LoadGame gameId ->
+            ( model, Cmd.none )
+
+        ClickSquare sq ->
+            handleClickSquare sq model
+
+        ComputerMove ->
+            handleComputerMove model
+
+        Resign ->
+            handleResign model
+
+        BackToHome ->
+            handleBackToHome model
+
+        Tick ->
+            ( model, Cmd.none )
+
+        DeleteGame gameId ->
+            handleDeleteGame gameId model
+
+
+handleStartNewGame : Model -> (Model, Cmd Msg)
+handleStartNewGame model =
+    let
+        name =
+            if model.nameInput == "" then
+                model.playerName
+            else
+                model.nameInput
+    in
+        startGameWithName name model
+
+
+startGameWithName : String -> Model -> (Model, Cmd Msg)
+startGameWithName name model =
+    if name == "" then
+        ( { model | errorMessage = "Please enter your name" }, Cmd.none )
+    else
+        let
+            gameId = Games.createGame name
+        in
+            ( { model
+                | page = GamePage
+                , playerName = name
+                , gameId = gameId
+                , board = Board.initialBoard
+                , turn = "White"
+                , selectedSquare = -1
+                , legalMoves = []
+                , moveHistory = []
+                , gameStatus = "playing"
+                , computerThinking = False
+                , lastMoveFrom = -1
+                , lastMoveTo = -1
+                , capturedByWhite = []
+                , capturedByBlack = []
+                , whiteKingMoved = False
+                , blackKingMoved = False
+                , whiteRookAMoved = False
+                , whiteRookHMoved = False
+                , blackRookAMoved = False
+                , blackRookHMoved = False
+                , enPassantSquare = -1
+                , halfMoveClock = 0
+                , fullMoveNumber = 1
+                , notification = ""
+                , errorMessage = ""
+            }, Cmd.none )
+
+
+handleClickSquare : Int -> Model -> (Model, Cmd Msg)
+handleClickSquare sq model =
+    if model.gameStatus /= "playing" then
+        ( model, Cmd.none )
+    else if model.turn /= "White" then
+        ( model, Cmd.none )
+    else if model.selectedSquare == -1 then
+        trySelectPiece sq model
+    else if sq == model.selectedSquare then
+        ( { model | selectedSquare = -1 , legalMoves = [] }, Cmd.none )
+    else if List.member sq model.legalMoves then
+        Logic.executeWhiteMove model.selectedSquare sq model
+    else
+        trySelectPiece sq model
+
+
+trySelectPiece : Int -> Model -> (Model, Cmd Msg)
+trySelectPiece sq model =
+    case Dict.get sq model.board of
+
+        Just piece ->
+            selectIfWhite sq piece model
+
+        Nothing ->
+            ( model, Cmd.none )
+
+
+selectIfWhite : Int -> (Dict String String) -> Model -> (Model, Cmd Msg)
+selectIfWhite sq piece model =
+    if Piece.pieceColour piece == "White" then
+        let
+            moves = Move.legalMovesForSquare sq "White" model.board model
+        in
+            ( { model | selectedSquare = sq , legalMoves = moves }, Cmd.none )
+    else
+        ( model, Cmd.none )
+
+
+handleComputerMove : Model -> (Model, Cmd Msg)
+handleComputerMove model =
+    if model.turn /= "Black" then
+        ( { model | computerThinking = False }, Cmd.none )
+    else if model.gameStatus /= "playing" then
+        ( { model | computerThinking = False }, Cmd.none )
+    else
+        Logic.executeBlackMove model
+
+
+handleResign : Model -> (Model, Cmd Msg)
+handleResign model =
+    let
+        _ = Games.updateGameStatus model.gameId "finished" "resigned"
+    in
+        ( { model | gameStatus = "resigned" }, Cmd.none )
+
+
+handleBackToHome : Model -> (Model, Cmd Msg)
+handleBackToHome model =
+    let
+        games = Games.getGames model.playerName
+    in
+        ( { model | page = HomePage , savedGames = games , selectedSquare = -1 , legalMoves = [] , notification = "" }, Cmd.none )
+
+
+handleDeleteGame : String -> Model -> (Model, Cmd Msg)
+handleDeleteGame gameId model =
+    let
+        _ = Games.deleteGame gameId
+        games = Games.getGames model.playerName
+    in
+        ( { model | savedGames = games }, Cmd.none )

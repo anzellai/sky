@@ -1,0 +1,159 @@
+module Chess.Eval exposing (evaluate)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.List as List
+import Sky.Core.Maybe as Maybe
+import Chess.Piece as Piece
+
+
+-- Evaluate position from white's perspective
+-- Positive = white advantage, negative = black advantage
+evaluate : Dict Int (Dict String String) -> Int
+evaluate board =
+    let
+        pieces = Dict.toList board
+    in
+        List.foldl (\pair acc -> acc + evaluatePiece pair) 0 pieces
+
+
+evaluatePiece : ( Int, Dict String String ) -> Int
+evaluatePiece pair =
+    let
+        sq = fst pair
+        piece = snd pair
+        kind = Piece.pieceKind piece
+        colour = Piece.pieceColour piece
+        material = Piece.materialValue kind
+        positional = pieceSquareValue kind colour sq
+        total = material + positional
+    in
+        if colour == "White" then
+            total
+        else
+            0 - total
+
+
+-- Piece-square tables (from white's perspective, index 0=a8)
+-- Values in centipawns
+pieceSquareValue : String -> String -> Int -> Int
+pieceSquareValue kind colour sq =
+    let
+        idx =
+            if colour == "White" then
+                sq
+            else
+                mirrorIndex sq
+        table = getTable kind
+    in
+        tableValue table idx
+
+
+mirrorIndex : Int -> Int
+mirrorIndex sq =
+    let
+        row = sq // 8
+        col = modBy 8 sq
+    in
+        (7 - row) * 8 + col
+
+
+tableValue : List Int -> Int -> Int
+tableValue table idx =
+    Maybe.withDefault 0 (List.head (List.drop idx table))
+
+
+getTable : String -> List Int
+getTable kind =
+    if kind == "Pawn" then
+        pawnTable
+    else if kind == "Knight" then
+        knightTable
+    else if kind == "Bishop" then
+        bishopTable
+    else if kind == "Rook" then
+        rookTable
+    else if kind == "Queen" then
+        queenTable
+    else if kind == "King" then
+        kingTable
+    else
+        []
+
+
+-- Pawn: encourage central and advanced pawns
+pawnTable =
+    [ 0, 0, 0, 0, 0, 0, 0, 0
+    , 50, 50, 50, 50, 50, 50, 50, 50
+    , 10, 10, 20, 30, 30, 20, 10, 10
+    , 5, 5, 10, 25, 25, 10, 5, 5
+    , 0, 0, 0, 20, 20, 0, 0, 0
+    , 5, -5, -10, 0, 0, -10, -5, 5
+    , 5, 10, 10, -20, -20, 10, 10, 5
+    , 0, 0, 0, 0, 0, 0, 0, 0
+    ]
+
+
+-- Knight: encourage centre
+knightTable =
+    [ -50, -40, -30, -30, -30, -30, -40, -50
+    , -40, -20, 0, 0, 0, 0, -20, -40
+    , -30, 0, 10, 15, 15, 10, 0, -30
+    , -30, 5, 15, 20, 20, 15, 5, -30
+    , -30, 0, 15, 20, 20, 15, 0, -30
+    , -30, 5, 10, 15, 15, 10, 5, -30
+    , -40, -20, 0, 5, 5, 0, -20, -40
+    , -50, -40, -30, -30, -30, -30, -40, -50
+    ]
+
+
+-- Bishop: encourage long diagonals
+bishopTable =
+    [ -20, -10, -10, -10, -10, -10, -10, -20
+    , -10, 0, 0, 0, 0, 0, 0, -10
+    , -10, 0, 10, 10, 10, 10, 0, -10
+    , -10, 5, 5, 10, 10, 5, 5, -10
+    , -10, 0, 5, 10, 10, 5, 0, -10
+    , -10, 10, 10, 10, 10, 10, 10, -10
+    , -10, 5, 0, 0, 0, 0, 5, -10
+    , -20, -10, -10, -10, -10, -10, -10, -20
+    ]
+
+
+-- Rook: encourage 7th rank and open files
+rookTable =
+    [ 0, 0, 0, 0, 0, 0, 0, 0
+    , 5, 10, 10, 10, 10, 10, 10, 5
+    , -5, 0, 0, 0, 0, 0, 0, -5
+    , -5, 0, 0, 0, 0, 0, 0, -5
+    , -5, 0, 0, 0, 0, 0, 0, -5
+    , -5, 0, 0, 0, 0, 0, 0, -5
+    , -5, 0, 0, 0, 0, 0, 0, -5
+    , 0, 0, 0, 5, 5, 0, 0, 0
+    ]
+
+
+-- Queen: slight central preference
+queenTable =
+    [ -20, -10, -10, -5, -5, -10, -10, -20
+    , -10, 0, 0, 0, 0, 0, 0, -10
+    , -10, 0, 5, 5, 5, 5, 0, -10
+    , -5, 0, 5, 5, 5, 5, 0, -5
+    , 0, 0, 5, 5, 5, 5, 0, -5
+    , -10, 5, 5, 5, 5, 5, 0, -10
+    , -10, 0, 5, 0, 0, 0, 0, -10
+    , -20, -10, -10, -5, -5, -10, -10, -20
+    ]
+
+
+-- King: encourage castled position (middlegame)
+kingTable =
+    [ -30, -40, -40, -50, -50, -40, -40, -30
+    , -30, -40, -40, -50, -50, -40, -40, -30
+    , -30, -40, -40, -50, -50, -40, -40, -30
+    , -30, -40, -40, -50, -50, -40, -40, -30
+    , -20, -30, -30, -40, -40, -30, -30, -20
+    , -10, -20, -20, -20, -20, -20, -20, -10
+    , 20, 20, 0, 0, 0, 0, 20, 20
+    , 20, 30, 10, 0, 0, 10, 30, 20
+    ]
