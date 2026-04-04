@@ -69,4 +69,4 @@ isKeyword word =
         || word == "of"
         || word == "foreign"
         || word == "port"
-        || word == "from"
+
