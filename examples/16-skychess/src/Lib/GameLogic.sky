@@ -77,6 +77,12 @@ executeBlackMove model =
         movePair = Ai.bestMove model.board model
         from = fst movePair
         to = snd movePair
+        pieces = Board.allPiecesOfColour "Black" model.board
+        _ = println ("[AI] Black pieces: " ++ String.fromInt (List.length pieces))
+        allMoves = Move.allLegalMoves "Black" model.board model
+        _ = println ("[AI] Legal moves: " ++ String.fromInt (List.length allMoves))
+        _ = println ("[AI] Best: " ++ String.fromInt from ++ "->" ++ String.fromInt to)
+        _ = println ("[AI] First 10: " ++ String.join " " (List.map (\m -> String.fromInt (fst m) ++ "->" ++ String.fromInt (snd m)) (List.take 10 allMoves)))
     in
         applyBlackOr from to model
 
