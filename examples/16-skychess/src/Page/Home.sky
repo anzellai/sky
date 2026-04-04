@@ -52,14 +52,6 @@ viewNameForm model =
               [ button
                     [ onClick StartNewGame
                     , class "btn btn-primary"
-                    , disabled
-                          (
-                          if model.nameInput == "" then
-                              ()
-
-                          else
-                              ()
-                          )
                     ]
                     [ text "New Game" ]
               ]
