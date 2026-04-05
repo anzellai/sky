@@ -382,14 +382,25 @@ copyLiveRuntime outDir =
             case Process.run "sh" [ "-c"
             , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
             ] of
-                
+
                 Ok dir ->
                     String.trim dir
-                
+
                 Err _ ->
                     "."
-        candidates = [ "stdlib-go" , skyBinDir ++ "/../stdlib-go" ]
+        candidates =
+            [ "stdlib-go"
+            , skyBinDir ++ "/../stdlib-go"
+            , skyBinDir ++ "/stdlib-go"
+            , "/usr/local/stdlib-go"
+            ]
         stdlibDir = findStdlibDir candidates
+        _ =
+            Process.run "sh"
+                [ "-c"
+                , "sky-extract-stdlib "
+                    ++ outDir ++ " 2>/dev/null || true"
+                ]
         _ =
             Process.run "cp"
                 [ "-rf" , stdlibDir ++ "/skylive_rt" , outDir ++ "/" ]
@@ -1889,6 +1900,9 @@ findStdlibWrapperPath safeName =
         candidates =
             [ "stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
             , skyBinDir ++ "/../stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
+            , skyBinDir ++ "/stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
+            , "/usr/local/stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
+            , ".sky-stdlib/sky_wrappers/" ++ safeName ++ ".go"
             ]
     in
         findFirstExisting candidates

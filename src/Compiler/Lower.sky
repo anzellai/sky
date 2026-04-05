@@ -423,6 +423,7 @@ lowerIdentifier ctx name =
             
             else if name == "modBy" then
                 GoIdent "sky_modBy"
+
             
             else if name == "clamp" then
                 GoIdent "sky_clamp"
@@ -910,6 +911,7 @@ lowerQualified ctx parts =
 
         else if qualName == "Process.execInherit" then
             GoIdent "sky_processExecInherit"
+
         
         else if qualName == "Args.getArgs" then
             GoIdent "sky_processGetArgs"
@@ -2993,6 +2995,7 @@ generateHelperDecls =
           "func sky_processRun(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; out, err := exec.Command(sky_asString(cmd), cmdArgs...).CombinedOutput(); if err != nil { return SkyErr(err.Error() + \": \" + string(out)) }; return SkyOk(string(out)) } }"
     , GoDeclRaw
           "func sky_processExecInherit(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; c := exec.Command(sky_asString(cmd), cmdArgs...); c.Stdin = os.Stdin; c.Stdout = os.Stdout; c.Stderr = os.Stderr; err := c.Run(); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
+    , GoDeclRaw
     , GoDeclRaw
           "func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
     , GoDeclRaw

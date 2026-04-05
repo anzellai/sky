@@ -130,7 +130,7 @@ main() {
         info "Building companion tools..."
         TOOLS_URL="https://raw.githubusercontent.com/anzellai/sky/v${VERSION}/tools"
         TOOLS_DIR=$(mktemp -d)
-        for tool in sky_ffi_gen sky_dce skyi_filter; do
+        for tool in sky_ffi_gen sky_dce skyi_filter sky_extract_stdlib; do
             target=$(echo "$tool" | sed 's/_/-/g')
             if curl -fsSL "${TOOLS_URL}/${tool}.go" -o "${TOOLS_DIR}/${tool}.go" 2>/dev/null; then
                 if go build -o "${TOOLS_DIR}/$target" "${TOOLS_DIR}/${tool}.go" 2>/dev/null; then
@@ -145,6 +145,25 @@ main() {
         done
         rm -rf "$TOOLS_DIR"
     fi
+
+    # Install stdlib-go runtime (needed for Sky.Live projects)
+    info "Installing stdlib runtime..."
+    STDLIB_URL="https://raw.githubusercontent.com/anzellai/sky/v${VERSION}/stdlib-go"
+    STDLIB_DIR="${INSTALL_DIR}/../stdlib-go"
+    mkdir -p "$STDLIB_DIR/sky_wrappers" "$STDLIB_DIR/skylive_rt" 2>/dev/null
+
+    # Download live_init.go and skylive_rt files
+    for f in live_init.go; do
+        curl -fsSL "${STDLIB_URL}/${f}" -o "${STDLIB_DIR}/${f}" 2>/dev/null
+    done
+    for f in server.go session.go vnode.go diff.go sse.go parse.go livejs.go eventsource.go store_sqlite.go store_redis.go store_postgres.go store_firestore.go; do
+        curl -fsSL "${STDLIB_URL}/skylive_rt/${f}" -o "${STDLIB_DIR}/skylive_rt/${f}" 2>/dev/null
+    done
+    # Download stdlib wrappers
+    for f in 00_sky_helpers.go bufio.go context.go crypto_sha256.go database_sql.go encoding_hex.go http_server.go io.go log_slog.go net_http.go net_url.go os.go os_exec.go path_filepath.go strings.go time.go; do
+        curl -fsSL "${STDLIB_URL}/sky_wrappers/${f}" -o "${STDLIB_DIR}/sky_wrappers/${f}" 2>/dev/null
+    done
+    success "Installed stdlib runtime"
 
     echo ""
     check_go

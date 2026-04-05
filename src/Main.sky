@@ -222,6 +222,11 @@ buildGoProject outDir =
             
             else
                 Ok ""
+        _ =
+            Process.run "sh"
+                [ "-c"
+                , "sky-extract-stdlib " ++ outDir ++ " 2>/dev/null || true"
+                ]
         _ = println "Running go build..."
         buildResult =
             Process.run "sh"
