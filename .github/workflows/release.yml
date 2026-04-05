@@ -33,29 +33,23 @@ jobs:
           go build -o /usr/local/bin/sky-dce tools/sky_dce.go &
           wait
 
-      # Phase 1: bootstrap from committed Go source
-      - name: Bootstrap compiler from Go source
+      # Build from committed Go source (bootstrap/main.go)
+      # No self-host — the bootstrap IS the release binary source.
+      # Self-hosting on CI produces different output due to platform-
+      # dependent Go inspector results. The bootstrap is regenerated
+      # locally and committed.
+      - name: Verify bootstrap compiles
         run: |
           cd bootstrap
-          go build -gcflags=all=-l -o ../sky-out/app .
-          cd ..
-          cp -f sky-out/app /usr/local/bin/sky
-          sky --version
+          go build -gcflags=all=-l -o app .
+          ./app --version
 
-      # Phase 2: self-host (compiler compiles itself)
-      - name: Self-host
+      # Copy bootstrap to sky-out for artifact consistency
+      - name: Prepare Go source
         run: |
-          sky build src/Main.sky
-          cp -f sky-out/app /usr/local/bin/sky
-          sky --version
+          mkdir -p sky-out
+          cp bootstrap/main.go bootstrap/go.mod bootstrap/sky_parallel.go sky-out/
 
-      # Verify the built compiler works
-      - name: Verify compiler
-        run: |
-          sky check src/Main.sky
-          echo "Compiler verification passed"
-
-      # Upload the bootstrapped Go source for cross-compilation
       - name: Upload Go source
         uses: actions/upload-artifact@v4
         with:
