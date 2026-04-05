@@ -974,6 +974,11 @@ func generateTypeCast(varName, goType, pkg string) string {
 	case "net.Conn":
 		return fmt.Sprintf("%s.(net.Conn)", varName)
 		}
+	// HTTP handler functions: wrap Sky handler as Go http.HandlerFunc
+	if strings.HasPrefix(goType, "func(") && strings.Contains(goType, "ResponseWriter") && strings.Contains(goType, "Request") {
+		// Sky handlers can be func(w, r any) any or func(w any) func(r any) any (curried)
+		return fmt.Sprintf("func() func(net_http.ResponseWriter, *net_http.Request) { switch fn := %s.(type) { case func(any, any) any: return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w, r) }; case func(any) any: return func(w net_http.ResponseWriter, r *net_http.Request) { fn(w).(func(any) any)(r) }; default: return func(w net_http.ResponseWriter, r *net_http.Request) {} } }()", varName)
+	}
 	// Function types: type assertion to the concrete function type
 	if strings.HasPrefix(goType, "func(") {
 		// Replace full package paths with safe aliases
