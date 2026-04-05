@@ -1124,6 +1124,15 @@ import Github.Com.Anzellai.SkyTailwind.Tailwind as Tw
 
 Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow dependencies; use full/prefixed path to disambiguate. Only modules listed in the package's `[lib].exposing` are importable.
 
+## Known Limitations (v0.7.x)
+
+- **No nested `case...of`** — extract inner `case` into a helper function (compiler bug — generates broken Go)
+- **No anonymous records in type annotations** — use `type alias` for record types in signatures
+- **No higher-kinded types** — no `Functor`, `Monad`, etc.
+- **No `where` clauses** — use `let...in` instead
+- **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.)
+- **Negative literal arguments need parentheses** — `f (-1)` not `f -1`
+
 ## Coding Conventions
 
 - **Module names** are PascalCase, match file paths: `Lib.Utils` → `src/Lib/Utils.sky`

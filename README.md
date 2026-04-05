@@ -1533,6 +1533,22 @@ Dependency modules are cached in `<project>/.skycache/lowered/` with source fing
 
 ---
 
+## Known Limitations (v0.7.x)
+
+Sky is under active development. These are current limitations to be aware of:
+
+| Limitation | Workaround |
+|-----------|-----------|
+| **No nested `case...of`** | Extract inner `case` into a helper function. This is the most impactful limitation — the lowerer generates broken Go for nested case expressions. |
+| **No anonymous records in type annotations** | Define a `type alias` for record types used in signatures. |
+| **No higher-kinded types** | No `Functor`, `Monad`, etc. Use concrete types. |
+| **No `where` clauses** | Use `let...in` instead. |
+| **No custom operators** | Only built-in operators (`\|>`, `<\|`, `++`, `::`, etc.). |
+| **Negative literal arguments need parentheses** | `f -1` parses as subtraction. Use `f (-1)`. |
+| **FFI callback wrapping** | Only `func(ResponseWriter, *Request)` HTTP handlers are auto-wrapped. Other Go callback types may need manual wrappers. |
+
+These will be addressed in future versions. The nested `case` limitation is tracked as the top priority for v0.8.
+
 ## Contributing
 
 Sky is experimental and under active development. Contributions are welcome! Here's how you can help:

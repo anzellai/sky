@@ -314,7 +314,18 @@ All issues below are FIXED — listed for context if debugging regressions:
 
 **Coding constraints**:
 - Never write nested `case` inside a `case` branch — extract to helper functions.
-- See **FIXME** section below for active lowerer bugs that affect user code.
+
+### Known Limitations (v0.7.x)
+
+These are current compiler limitations users must work around:
+
+1. **No nested `case...of`** — The lowerer generates broken Go (nested IIFEs with variable capture issues) when `case` expressions appear inside `case` branches. **Workaround**: extract the inner `case` into a separate helper function. This is the single most impactful limitation.
+2. **No anonymous records in function signatures** — Record types must be defined as type aliases; inline `{ field : Type }` in annotations is not supported.
+3. **No higher-kinded types** — No `Functor`, `Monad`, etc. Use concrete types.
+4. **No `where` clauses** — Use `let...in` instead.
+5. **No custom operators** — Only built-in operators (`|>`, `<|`, `++`, `::`, etc.).
+6. **Negative literal arguments need parentheses** — `f -1` parses as subtraction; use `f (-1)`.
+7. **FFI callback wrapping is limited** — Only `func(ResponseWriter, *Request)` HTTP handlers are auto-wrapped. Other Go callback signatures may require manual wrappers.
 
 30. **Lexer: `from` keyword blocks parameter names** — FIXED. Same class of bug as #22 (`alias`). `isKeyword` in Token.sky listed `from` as a keyword, causing the lexer to emit `TkKeyword` instead of `TkIdentifier`. Functions with `from` as a parameter name silently failed to parse because `parseFunParams` only accepts `TkIdentifier` tokens. `parseDeclsHelper` caught the error and called `skipToNextDecl`, dropping the function entirely. Fix: remove `from` from `isKeyword` — it's not used as a keyword in any parser dispatch. Impact: ALL functions using `from` as a parameter were silently dropped in dependency modules. This was the root cause of the chess example build failures; the reported cons pattern bug (#32 below) was also a symptom.
 
