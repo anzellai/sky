@@ -48,7 +48,8 @@ jobs:
       - name: Prepare Go source
         run: |
           mkdir -p sky-out
-          cp bootstrap/main.go bootstrap/go.mod bootstrap/sky_parallel.go sky-out/
+          cp bootstrap/main.go bootstrap/go.mod bootstrap/sky_parallel.go bootstrap/embedded_runtime.go sky-out/
+          cp -r bootstrap/runtime sky-out/
 
       - name: Upload Go source
         uses: actions/upload-artifact@v4
@@ -58,6 +59,8 @@ jobs:
             sky-out/main.go
             sky-out/go.mod
             sky-out/sky_parallel.go
+            sky-out/embedded_runtime.go
+            sky-out/runtime/
 
   # Cross-compile for each platform on its own runner
   build:

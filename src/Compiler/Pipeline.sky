@@ -21,7 +21,6 @@ import Compiler.Adt as Adt
 import Compiler.Checker as Checker
 import Compiler.Lower as Lower
 import Compiler.Resolver as Resolver
-import Compiler.LiveRuntime as LiveRuntime
 
 findCharIdx : Char -> String -> Int -> Int
 findCharIdx ch str idx =
@@ -62,6 +61,8 @@ compile filePath outDir =
                                 ++ "/sky_*.go "
                                     ++ outDir ++ "/live_init.go 2>/dev/null"
                 ]
+        _ = File.mkdirAll outDir
+        _ = extractEmbeddedWrappers outDir
     in
         case File.readFile filePath of
             
@@ -321,18 +322,17 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
                     ++ String.fromInt (List.length allDecls)
                         ++ " total Go declarations"
                 )
+        isLive =
+            List.foldl
+                (\imp acc -> acc || String.join "." imp.moduleName == "Std.Live")
+                False
+                imports
         _ =
-            if List.foldl
-                   (
-                   \imp acc ->
-                       acc || String.join "." imp.moduleName == "Std.Live"
-                   )
-                   False
-                   imports then
-                copyLiveRuntime outDir
-            
+            if isLive then
+                println "   Copied skylive_rt runtime"
+
             else
-                ()
+                cleanupLiveFiles outDir
         _ = writeParallelHelpers outDir goCode
         _ = copyFfiWrappers outDir projectRoot imports goCode
         _ = runNativeDce outDir goCode
@@ -376,12 +376,33 @@ runNativeDce outDir goCode =
         ()
 
 
-copyLiveRuntime : String -> ()
-copyLiveRuntime outDir =
+extractEmbeddedWrappers : String -> ()
+extractEmbeddedWrappers outDir =
     let
-        _ = LiveRuntime.writeLiveRuntime outDir
+        _ = writeEmbeddedRuntime outDir
+        _ =
+            Process.run "sh"
+                [ "-c"
+                , "test -f bootstrap/embedded_runtime.go && cp -f bootstrap/embedded_runtime.go "
+                    ++ outDir
+                        ++ "/ && cp -rf bootstrap/runtime "
+                            ++ outDir ++ "/ 2>/dev/null || true"
+                ]
     in
-        println "   Copied skylive_rt runtime"
+        ()
+
+
+cleanupLiveFiles : String -> ()
+cleanupLiveFiles outDir =
+    let
+        _ =
+            Process.run "sh"
+                [ "-c"
+                , "rm -rf " ++ outDir ++ "/live_init.go " ++ outDir
+                    ++ "/skylive_rt 2>/dev/null || true"
+                ]
+    in
+        ()
 
 
 findStdlibDir : (List String) -> String
@@ -760,17 +781,30 @@ dceMainGo outDir goCode =
                 Dict.empty
                 pureFuncBlocks
         wrapperContent =
-            case Process.run "sh" [ "-c"
-            , "cat "
-                ++ outDir
-                    ++ "/sky_ffi_*.go " ++ outDir ++ "/sky_*.go 2>/dev/null"
-            ] of
-                
-                Ok content ->
-                    content
-                
-                Err _ ->
-                    ""
+            let
+                wrapperCat =
+                    case Process.run "sh" [ "-c"
+                    , "cat "
+                        ++ outDir
+                            ++ "/sky_ffi_*.go "
+                                ++ outDir ++ "/sky_*.go 2>/dev/null"
+                    ] of
+
+                        Ok content ->
+                            content
+
+                        Err _ ->
+                            ""
+                liveInitContent =
+                    case File.readFile (outDir ++ "/live_init.go") of
+
+                        Ok content ->
+                            content
+
+                        Err _ ->
+                            ""
+            in
+                wrapperCat ++ "\n" ++ liveInitContent
         wrapperSeeds =
             List.filter (\name -> String.contains name wrapperContent)
                 (Dict.keys funcMap)
@@ -1871,7 +1905,8 @@ findStdlibWrapperPath safeName =
                 Err _ ->
                     "."
         candidates =
-            [ "stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
+            [ "sky-out/sky_wrappers/" ++ safeName ++ ".go"
+            , "stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
             , skyBinDir ++ "/../stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
             , skyBinDir ++ "/stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
             , "/usr/local/stdlib-go/sky_wrappers/" ++ safeName ++ ".go"
@@ -3419,18 +3454,17 @@ compileCheckedModule filePath outDir mod result =
         _ = File.mkdirAll outDir
         _ = File.writeFile outPath goCode
         _ = println ("   Wrote " ++ outPath)
+        isLive2 =
+            List.foldl
+                (\imp acc -> acc || String.join "." imp.moduleName == "Std.Live")
+                False
+                mod.imports
         _ =
-            if List.foldl
-                   (
-                   \imp acc ->
-                       acc || String.join "." imp.moduleName == "Std.Live"
-                   )
-                   False
-                   mod.imports then
-                copyLiveRuntime outDir
-            
+            if isLive2 then
+                println "   Copied skylive_rt runtime"
+
             else
-                ()
+                cleanupLiveFiles outDir
         _ = writeParallelHelpers outDir goCode
         _ = dceMainGo outDir goCode
         _ = println ""

@@ -424,6 +424,9 @@ lowerIdentifier ctx name =
             else if name == "modBy" then
                 GoIdent "sky_modBy"
 
+            else if name == "writeEmbeddedRuntime" then
+                GoIdent "sky_writeEmbeddedRuntime"
+
             
             else if name == "clamp" then
                 GoIdent "sky_clamp"
@@ -2996,6 +2999,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_processExecInherit(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; c := exec.Command(sky_asString(cmd), cmdArgs...); c.Stdin = os.Stdin; c.Stdout = os.Stdout; c.Stderr = os.Stderr; err := c.Run(); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
     , GoDeclRaw
+          "func sky_writeEmbeddedRuntime(outDir any) any { writeEmbeddedRuntimeFiles(sky_asString(outDir)); return struct{}{} }"
     , GoDeclRaw
           "func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
     , GoDeclRaw
