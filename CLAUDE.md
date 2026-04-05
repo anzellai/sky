@@ -60,7 +60,17 @@ cd examples/01-hello-world && sky build src/Main.sky
 1. `rm -rf .skycache && sky build src/Main.sky` — rebuild compiler
 2. `sky-out/app --version` — must print version, NOT start a server
 3. `sky build src/Main.sky` twice — verify self-hosting
-4. `cd examples/01-hello-world && sky build src/Main.sky`
+4. **Clean-slate validation of ALL examples (mandatory before every push/tag):**
+   ```bash
+   for d in examples/*/; do
+       cd "$d" && rm -rf sky-out .skycache .skydeps
+       # run `sky install` first if sky.toml has [go.dependencies]
+       sky build src/Main.sky   # must succeed
+       ./sky-out/app            # must run (kill servers after verifying HTTP 200)
+       cd ../..
+   done
+   ```
+   Every example must build **and** run from a completely clean slate. If any example fails, fix it before pushing. No exceptions.
 5. `cd examples/12-skyvote && sky check` — 0 errors
 6. Test in temp dir: `sky init mytest`, `sky build && sky run`, `sky add fmt`, `sky remove fmt`, `sky upgrade`
 7. Verify `.github/workflows/ci.yml` matches build steps

@@ -346,7 +346,10 @@ func main() {
 		if imp == pkgName || strings.HasPrefix(imp, "*") || imp == "" {
 			continue
 		}
-		alias := strings.ReplaceAll(strings.ReplaceAll(imp, "/", "_"), ".", "_")
+		alias := lastPathSegment(imp)
+		if alias == "" || alias == "main" || alias == "_" {
+			alias = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(imp, "/", "_"), ".", "_"), "-", "_")
+		}
 		importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
 		}
 	importBlock.WriteString(")\n\nvar _ = _ffi_fmt.Sprintf\nvar _ = _ffi_reflect.TypeOf\n\n")
@@ -1034,7 +1037,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 		dotIdx := strings.LastIndex(cleanGoType, ".")
 		subPkg := cleanGoType[:dotIdx]
 		typeName := cleanGoType[dotIdx+1:]
-		alias := strings.ReplaceAll(subPkg, "/", "_")
+		alias := lastPathSegment(subPkg)
 		qualType := alias + "." + typeName
 		return fmt.Sprintf("%s.(%s)", varName, qualType)
 	}
