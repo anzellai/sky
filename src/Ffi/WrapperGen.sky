@@ -379,17 +379,17 @@ checkAncestorPkgsW ancestors goType =
 buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
     if ancestorPkg == currentPkg then
         Nothing
-    
+
     else
         let
-            ancestorShort = shortPkgName ancestorPkg
+            ancestorSafe = safePkgAlias ancestorPkg
             hasRef =
-                List.any (\t -> String.contains (ancestorShort ++ ".") t)
+                List.any (\t -> String.contains (ancestorSafe ++ ".") t)
                     allTypeRefs
         in
             if hasRef then
-                Just ("\t" ++ ancestorShort ++ " \"" ++ ancestorPkg ++ "\"\n")
-            
+                Just ("\t" ++ ancestorSafe ++ " \"" ++ ancestorPkg ++ "\"\n")
+
             else
                 Nothing
 
@@ -815,12 +815,17 @@ wrapEffectfulReturn results goCall =
 shortPkgName : String -> String
 shortPkgName pkgPath =
     case List.reverse (String.split "/" pkgPath) of
-        
+
         last :: _ ->
             last
-        
+
         [  ] ->
             pkgPath
+
+
+safePkgAlias : String -> String
+safePkgAlias pkgPath =
+    String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgPath))
 
 
 extractFunctions : String -> List FuncEntry

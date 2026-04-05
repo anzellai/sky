@@ -295,7 +295,7 @@ func main() {
 	// Detect ancestor package references in wrapper code
 	wrapperCode := wrapper.String()
 	for _, a := range ancestors {
-		alias := lastPathSegment(a)
+		alias := safePkgName(a)
 		if strings.Contains(wrapperCode, alias+".") {
 			extraImports[a] = true
 		}
@@ -346,10 +346,7 @@ func main() {
 		if imp == pkgName || strings.HasPrefix(imp, "*") || imp == "" {
 			continue
 		}
-		alias := lastPathSegment(imp)
-		if alias == "" || alias == "main" || alias == "_" {
-			alias = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(imp, "/", "_"), ".", "_"), "-", "_")
-		}
+		alias := safePkgName(imp)
 		importBlock.WriteString(fmt.Sprintf("\t%s \"%s\"\n", alias, imp))
 		}
 	importBlock.WriteString(")\n\nvar _ = _ffi_fmt.Sprintf\nvar _ = _ffi_reflect.TypeOf\n\n")
@@ -979,11 +976,10 @@ func generateTypeCast(varName, goType, pkg string) string {
 		}
 	// Function types: type assertion to the concrete function type
 	if strings.HasPrefix(goType, "func(") {
-		// Replace full package paths with short aliases
+		// Replace full package paths with safe aliases
 		castType := goType
 		for _, a := range buildAncestorPkgs(pkg) {
-			shortPkg := lastPathSegment(a)
-			castType = strings.ReplaceAll(castType, a+".", shortPkg+".")
+			castType = strings.ReplaceAll(castType, a+".", safePkgName(a)+".")
 		}
 		castType = strings.ReplaceAll(castType, pkg+".", "_ffi_pkg.")
 		// Replace stdlib paths that contain slashes (e.g. net/http → net_http)
@@ -1006,8 +1002,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 			for _, a := range buildAncestorPkgs(pkg) {
 				if strings.HasPrefix(innerType, a+".") {
 					typeName := innerType[len(a)+1:]
-					shortPkg := lastPathSegment(a)
-					goTypeAlias = "*" + shortPkg + "." + typeName
+					goTypeAlias = "*" + safePkgName(a) + "." + typeName
 					break
 				}
 			}
@@ -1024,8 +1019,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 	for _, a := range buildAncestorPkgs(pkg) {
 		if strings.HasPrefix(goType, a+".") {
 			typeName := goType[len(a)+1:]
-			shortPkg := lastPathSegment(a)
-			qualType := shortPkg + "." + typeName
+			qualType := safePkgName(a) + "." + typeName
 			return fmt.Sprintf("func() %s { if v, ok := %s.(%s); ok { return v }; var zero %s; return zero }()", qualType, varName, qualType, qualType)
 		}
 		}
@@ -1037,7 +1031,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 		dotIdx := strings.LastIndex(cleanGoType, ".")
 		subPkg := cleanGoType[:dotIdx]
 		typeName := cleanGoType[dotIdx+1:]
-		alias := lastPathSegment(subPkg)
+		alias := safePkgName(subPkg)
 		qualType := alias + "." + typeName
 		return fmt.Sprintf("%s.(%s)", varName, qualType)
 	}
@@ -1050,7 +1044,7 @@ func generateTypeCast(varName, goType, pkg string) string {
 		} else {
 			for _, a := range buildAncestorPkgs(pkg) {
 				if strings.HasPrefix(elemType, a+".") {
-					castElem = lastPathSegment(a) + "." + elemType[len(a)+1:]
+					castElem = safePkgName(a) + "." + elemType[len(a)+1:]
 					break
 				}
 			}
