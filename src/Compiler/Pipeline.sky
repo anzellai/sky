@@ -21,6 +21,7 @@ import Compiler.Adt as Adt
 import Compiler.Checker as Checker
 import Compiler.Lower as Lower
 import Compiler.Resolver as Resolver
+import Compiler.LiveRuntime as LiveRuntime
 
 findCharIdx : Char -> String -> Int -> Int
 findCharIdx ch str idx =
@@ -378,35 +379,7 @@ runNativeDce outDir goCode =
 copyLiveRuntime : String -> ()
 copyLiveRuntime outDir =
     let
-        skyBinDir =
-            case Process.run "sh" [ "-c"
-            , "dirname $(which sky 2>/dev/null || echo sky) 2>/dev/null"
-            ] of
-
-                Ok dir ->
-                    String.trim dir
-
-                Err _ ->
-                    "."
-        candidates =
-            [ "stdlib-go"
-            , skyBinDir ++ "/../stdlib-go"
-            , skyBinDir ++ "/stdlib-go"
-            , "/usr/local/stdlib-go"
-            ]
-        stdlibDir = findStdlibDir candidates
-        _ =
-            Process.run "sh"
-                [ "-c"
-                , "sky-extract-stdlib "
-                    ++ outDir ++ " 2>/dev/null || true"
-                ]
-        _ =
-            Process.run "cp"
-                [ "-rf" , stdlibDir ++ "/skylive_rt" , outDir ++ "/" ]
-        _ =
-            Process.run "cp"
-                [ "-f" , stdlibDir ++ "/live_init.go" , outDir ++ "/" ]
+        _ = LiveRuntime.writeLiveRuntime outDir
     in
         println "   Copied skylive_rt runtime"
 
