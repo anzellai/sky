@@ -1132,6 +1132,9 @@ Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow
 - **No `where` clauses** — use `let...in` instead
 - **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.)
 - **Negative literal arguments need parentheses** — `f (-1)` not `f -1`
+- **`exposing (Constructor(..))` breaks cross-module calls** — avoid importing ADT constructors via `exposing` in dependency modules; use qualified accessors instead
+- **Cross-module zero-arg ADT constructors** — `Mod.Constructor` emits as function call; define lowercase accessors (`myVal = Constructor`) as workaround
+- **`Dict.toList` returns string keys** — use `Dict.get` with explicit key ranges instead of `Dict.toList` for `Dict Int v`
 
 ## Coding Conventions
 

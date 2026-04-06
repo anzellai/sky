@@ -277,6 +277,7 @@ Key syntax: `|>` `<|` pipelines | `::` cons | `\x -> x + 1` lambdas | `let...in`
 | 13 | skyshop | E-commerce: Stripe, Firebase, i18n |
 | 14 | task-demo | Task effect boundary demo |
 | 15 | http-server | Sky.Http.Server with routing + cookies |
+| 16 | skychess | Sky.Live chess game with AI, SQLite persistence |
 
 ## Compiler Optimisation Strategy (keep up to date)
 
@@ -326,6 +327,9 @@ These are current compiler limitations users must work around:
 5. **No custom operators** — Only built-in operators (`|>`, `<|`, `++`, `::`, etc.).
 6. **Negative literal arguments need parentheses** — `f -1` parses as subtraction; use `f (-1)`.
 7. **FFI callback wrapping is limited** — Only `func(ResponseWriter, *Request)` HTTP handlers are auto-wrapped. Other Go callback signatures may require manual wrappers.
+8. **`exposing (Constructor(..))` breaks cross-module qualified calls** — Importing ADT constructors via `exposing (Colour(..))` in a dependency module causes the lowerer to misresolve qualified calls like `Move.foo` as record field access (`move.foo`) instead of `Chess_Move_Foo`. **Workaround**: use `import Foo as Foo` without `exposing` constructors, and reference values via lowercase accessor functions defined in the source module.
+9. **Cross-module zero-arg ADT constructors emitted as function calls** — When a zero-arg constructor like `King` is referenced cross-module as `Piece.King`, the lowerer emits `Chess_Piece_King()` (function call) instead of `Chess_Piece_King` (value). **Workaround**: define lowercase accessor functions (`king = King`) in the defining module and use `Piece.king` instead.
+10. **`Dict.toList` returns string keys** — Sky's `Dict` uses `map[string]any` internally, so `Dict.toList` returns string keys even for `Dict Int v`. Arithmetic on these keys silently produces 0. **Workaround**: iterate over known key ranges with `Dict.get` instead of using `Dict.toList`.
 
 30. **Lexer: `from` keyword blocks parameter names** — FIXED. Same class of bug as #22 (`alias`). `isKeyword` in Token.sky listed `from` as a keyword, causing the lexer to emit `TkKeyword` instead of `TkIdentifier`. Functions with `from` as a parameter name silently failed to parse because `parseFunParams` only accepts `TkIdentifier` tokens. `parseDeclsHelper` caught the error and called `skipToNextDecl`, dropping the function entirely. Fix: remove `from` from `isKeyword` — it's not used as a keyword in any parser dispatch. Impact: ALL functions using `from` as a parameter were silently dropped in dependency modules. This was the root cause of the chess example build failures; the reported cons pattern bug (#32 below) was also a symptom.
 

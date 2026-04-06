@@ -1226,6 +1226,7 @@ Community-contributed Zed extension with syntax highlighting and LSP integration
 | `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n, image uploads |
 | `14-task-demo`      | Task effect boundary       | Task composition, error handling, sequencing                   |
 | `15-http-server`    | Sky.Http.Server            | Routing, cookies, middleware, request/response builders        |
+| `16-skychess`       | Sky.Live + SQLite           | Chess game with AI opponent, move history, game persistence    |
 
 Run any example:
 
@@ -1546,8 +1547,11 @@ Sky is under active development. These are current limitations to be aware of:
 | **No custom operators** | Only built-in operators (`\|>`, `<\|`, `++`, `::`, etc.). |
 | **Negative literal arguments need parentheses** | `f -1` parses as subtraction. Use `f (-1)`. |
 | **FFI callback wrapping** | Only `func(ResponseWriter, *Request)` HTTP handlers are auto-wrapped. Other Go callback types may need manual wrappers. |
+| **`exposing (Constructor(..))` breaks qualified calls** | Importing ADT constructors via `exposing` in dependency modules breaks the lowerer's module resolution. Use qualified accessor functions instead. |
+| **Cross-module zero-arg ADT constructors** | `Piece.King` emits as a function call instead of a value. Define lowercase accessors (`king = King`) as a workaround. |
+| **`Dict.toList` returns string keys** | Dict uses `map[string]any` internally. Iterate over known key ranges with `Dict.get` instead of `Dict.toList` for Int-keyed Dicts. |
 
-These will be addressed in future versions. The nested `case` limitation is tracked as the top priority for v0.8.
+These will be addressed in future versions. The nested `case` limitation and ADT cross-module bugs are tracked as top priorities for v0.8.
 
 ## Contributing
 
