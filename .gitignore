@@ -4,7 +4,7 @@
 # Build artifacts
 bin/
 dist/
-sky-out/app
+sky-out/
 
 # Dependencies
 node_modules/
@@ -16,6 +16,8 @@ node_modules/
 # Environment and secrets
 .env
 .env.*
+!.env.example
+firebaseadminsdk*.json
 
 # AI agent config
 .claude/
@@ -25,15 +27,22 @@ node_modules/
 *.db-shm
 *.db-wal
 
+# Logs
+*.log
+
 # Session data
 data/
 
 # Test files
 test-*.js
 test-*.ts
-firebaseadminsdk*.json
+
+# Uploads and assets (user-generated)
 uploads/
 examples/13-skyshop/assets/
-examples/**/sky-out/
+
+# Temporary files
 *.tmp
+
+# Bootstrap build artifact (source is kept, binary is not)
 bootstrap/app
