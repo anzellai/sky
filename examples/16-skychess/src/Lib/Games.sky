@@ -66,6 +66,28 @@ getGames playerName =
             []
 
 
+getGameMoves : String -> List (Dict String String)
+getGameMoves gameId =
+    case Db.queryRows "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [ gameId ] of
+
+        Ok rows ->
+            rows
+
+        Err _ ->
+            []
+
+
+getGame : String -> Maybe (Dict String String)
+getGame gameId =
+    case Db.queryRows "SELECT * FROM games WHERE id = ? LIMIT 1" [ gameId ] of
+
+        Ok rows ->
+            List.head rows
+
+        Err _ ->
+            Nothing
+
+
 deleteGame : String -> ()
 deleteGame gameId =
     let

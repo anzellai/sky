@@ -102,13 +102,16 @@ update msg model =
             ( { model | page = page , notification = "" }, Cmd.none )
 
         UpdateNameInput s ->
-            ( { model | nameInput = s }, Cmd.none )
+            let
+                games = Games.getGames s
+            in
+                ( { model | nameInput = s , savedGames = games , playerName = s }, Cmd.none )
 
         StartNewGame ->
             handleStartNewGame model
 
         LoadGame gameId ->
-            ( model, Cmd.none )
+            handleLoadGame gameId model
 
         ClickSquare sq ->
             handleClickSquare sq model
@@ -135,10 +138,98 @@ handleStartNewGame model =
         name =
             if model.nameInput == "" then
                 model.playerName
+
             else
                 model.nameInput
     in
         startGameWithName name model
+
+
+handleLoadGame : String -> Model -> (Model, Cmd Msg)
+handleLoadGame gameId model =
+    let
+        moves = Games.getGameMoves gameId
+        gameInfo = Games.getGame gameId
+        playerName =
+            case gameInfo of
+
+                Just g ->
+                    Db.getField "player_name" g
+
+                Nothing ->
+                    model.playerName
+        result = replayMoves moves Board.initialBoard
+        board = fst result
+        history = snd result
+        moveCount = List.length history
+        turn =
+            if modBy 2 moveCount == 0 then
+                "White"
+
+            else
+                "Black"
+        status =
+            case gameInfo of
+
+                Just g ->
+                    let
+                        s = Db.getField "status" g
+                        r = Db.getField "result" g
+                    in
+                        if s == "finished" then
+                            r
+
+                        else
+                            "playing"
+
+                Nothing ->
+                    "playing"
+    in
+        ( { model
+            | page = GamePage
+            , playerName = playerName
+            , gameId = gameId
+            , board = board
+            , turn = turn
+            , selectedSquare = -1
+            , legalMoves = []
+            , moveHistory = history
+            , gameStatus = status
+            , computerThinking = False
+            , lastMoveFrom = -1
+            , lastMoveTo = -1
+            , notification = ""
+            , errorMessage = ""
+        }, Cmd.none )
+
+
+replayMoves : List (Dict String String) -> Dict Int (Dict String String) -> ( Dict Int (Dict String String), List String )
+replayMoves moves board =
+    replayMovesLoop moves board []
+
+
+replayMovesLoop moves board history =
+    case moves of
+
+        [] ->
+            ( board, history )
+
+        move :: rest ->
+            let
+                fromStr = Db.getField "from_square" move
+                toStr = Db.getField "to_square" move
+                algebraic = Db.getField "algebraic" move
+                from = Maybe.withDefault (-1) (String.toInt fromStr)
+                to = Maybe.withDefault (-1) (String.toInt toStr)
+            in
+                if from >= 0 && to >= 0 then
+                    let
+                        newBoard = Board.movePiece from to board
+                    in
+                        replayMovesLoop rest newBoard (history ++ [ algebraic ])
+
+                else
+                    replayMovesLoop rest board history
 
 
 startGameWithName : String -> Model -> (Model, Cmd Msg)
