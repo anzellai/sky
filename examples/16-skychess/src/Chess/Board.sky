@@ -83,33 +83,63 @@ isOnBoard row col = row >= 0 && row <= 7 && col >= 0 && col <= 7
 
 findKing : String -> Dict Int (Dict String String) -> Int
 findKing colour board =
-    let
-        squares = Dict.toList board
-        kings =
-            List.filter
-                (\pair ->
-                    let
-                        piece = snd pair
-                    in
-                        Piece.pieceKind piece == "King"
-                            && Piece.pieceColour piece == colour
-                )
-                squares
-    in
-        case kings of
+    findKingLoop colour board allSquares
 
-            first :: _ ->
-                fst first
 
-            [] ->
-                -1
+findKingLoop : String -> Dict Int (Dict String String) -> List Int -> Int
+findKingLoop colour board squares =
+    case squares of
+
+        [] ->
+            -1
+
+        sq :: rest ->
+            case Dict.get sq board of
+
+                Just piece ->
+                    if Piece.pieceKind piece == "King" && Piece.pieceColour piece == colour then
+                        sq
+
+                    else
+                        findKingLoop colour board rest
+
+                Nothing ->
+                    findKingLoop colour board rest
 
 
 allPiecesOfColour : String -> Dict Int (Dict String String) -> List ( Int, Dict String String )
 allPiecesOfColour colour board =
-    List.filter
-        (\pair -> Piece.pieceColour (snd pair) == colour)
-        (Dict.toList board)
+    List.filterMap
+        (\sq -> checkSquareColour sq colour board)
+        allSquares
+
+
+checkSquareColour : Int -> String -> Dict Int (Dict String String) -> Maybe ( Int, Dict String String )
+checkSquareColour sq colour board =
+    case Dict.get sq board of
+
+        Just piece ->
+            if Piece.pieceColour piece == colour then
+                Just ( sq, piece )
+
+            else
+                Nothing
+
+        Nothing ->
+            Nothing
+
+
+allSquares : List Int
+allSquares =
+    [ 0, 1, 2, 3, 4, 5, 6, 7
+    , 8, 9, 10, 11, 12, 13, 14, 15
+    , 16, 17, 18, 19, 20, 21, 22, 23
+    , 24, 25, 26, 27, 28, 29, 30, 31
+    , 32, 33, 34, 35, 36, 37, 38, 39
+    , 40, 41, 42, 43, 44, 45, 46, 47
+    , 48, 49, 50, 51, 52, 53, 54, 55
+    , 56, 57, 58, 59, 60, 61, 62, 63
+    ]
 
 
 -- Initial board position

@@ -5,23 +5,30 @@ import Sky.Core.Dict as Dict
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
 import Chess.Piece as Piece
+import Chess.Board as Board
 
 
 -- Evaluate position from white's perspective
 -- Positive = white advantage, negative = black advantage
 evaluate : Dict Int (Dict String String) -> Int
 evaluate board =
-    let
-        pieces = Dict.toList board
-    in
-        List.foldl (\pair acc -> acc + evaluatePiece pair) 0 pieces
+    List.foldl
+        (\sq acc ->
+            case Dict.get sq board of
+
+                Just piece ->
+                    acc + evaluatePieceAt sq piece
+
+                Nothing ->
+                    acc
+        )
+        0
+        Board.allSquares
 
 
-evaluatePiece : ( Int, Dict String String ) -> Int
-evaluatePiece pair =
+evaluatePieceAt : Int -> Dict String String -> Int
+evaluatePieceAt sq piece =
     let
-        sq = fst pair
-        piece = snd pair
         kind = Piece.pieceKind piece
         colour = Piece.pieceColour piece
         material = Piece.materialValue kind
@@ -30,6 +37,7 @@ evaluatePiece pair =
     in
         if colour == "White" then
             total
+
         else
             0 - total
 
