@@ -349,6 +349,7 @@ isStdlib : String -> Bool
 isStdlib modName =
     String.startsWith "Sky.Core." modName
         || String.startsWith "Sky.Http." modName
+        || modName == "Std.Db"
         || String.startsWith "Std." modName
         || modName == "Sky.Core.Prelude"
         || modName == "Sky.Interop"
@@ -650,7 +651,18 @@ getStdlibExports modName =
     
     else if modName == "Std.Time" then
         [ "every" ]
-    
+
+    else if modName == "Std.Db" then
+        [ "open", "close", "exec", "query", "queryOne", "execRaw"
+        , "queryDecode", "queryOneDecode"
+        , "insertRow", "getById", "getByIdDecode"
+        , "updateById", "deleteById"
+        , "findWhere", "findWhereDecode"
+        , "getField", "getInt", "getBool"
+        , "rawConn"
+        , "withTransaction", "txExec", "txQuery", "txQueryDecode"
+        ]
+
     else
         []
 

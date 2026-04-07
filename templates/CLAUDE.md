@@ -1124,6 +1124,45 @@ import Github.Com.Anzellai.SkyTailwind.Tailwind as Tw
 
 Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow dependencies; use full/prefixed path to disambiguate. Only modules listed in the package's `[lib].exposing` are importable.
 
+## Std.Db — Database Abstraction
+
+```elm
+import Std.Db as Db
+import Modernc.Org.Sqlite as _   -- driver import needed for SQLite
+
+-- Open connection
+case Db.open "sqlite" "myapp.db" of
+    Ok conn -> ...
+    Err e -> ...
+
+-- Parameterised queries (injection-safe)
+Db.exec conn "INSERT INTO t (name) VALUES (?)" ["val"]
+Db.query conn "SELECT * FROM t WHERE x = ?" ["val"]
+Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
+
+-- Typed queries via Json.Decode
+Db.queryDecode conn "SELECT * FROM t" [] myDecoder
+Db.queryOneDecode conn "SELECT * FROM t WHERE id = ?" [id] myDecoder
+
+-- Convenience
+Db.insertRow conn "table" (Dict.fromList [("col", "val")])
+Db.getById conn "table" "123"
+Db.updateById conn "table" "123" (Dict.fromList [("col", "new")])
+Db.deleteById conn "table" "123"
+Db.findWhere conn "table" "column" "value"
+
+-- Row helpers (for untyped Dict queries)
+Db.getField "name" row   -- String
+Db.getInt "count" row     -- Int
+Db.getBool "done" row     -- Bool
+
+-- Transactions
+Db.withTransaction conn (\tx ->
+    let _ = Db.txExec tx "..." []
+    in Ok ()
+)
+```
+
 ## Known Limitations (v0.7.x)
 
 - **No nested `case...of`** — extract inner `case` into a helper function (compiler bug — generates broken Go)
@@ -1135,6 +1174,9 @@ Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow
 - **`exposing (Constructor(..))` breaks cross-module calls** — avoid importing ADT constructors via `exposing` in dependency modules; use qualified accessors instead
 - **Cross-module zero-arg ADT constructors** — `Mod.Constructor` emits as function call; define lowercase accessors (`myVal = Constructor`) as workaround
 - **`Dict.toList` returns string keys** — use `Dict.get` with explicit key ranges instead of `Dict.toList` for `Dict Int v`
+- **`sky check` doesn't understand Go interfaces** — concrete types can't unify with Go interfaces; code compiles and runs fine
+- **`sky check` doesn't understand Go callback types** — FFI callback params can't unify with Sky functions; runtime wrapping works
+- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` not `Uuid.newString ()`
 
 ## Coding Conventions
 

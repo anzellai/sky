@@ -1550,8 +1550,62 @@ Sky is under active development. These are current limitations to be aware of:
 | **`exposing (Constructor(..))` breaks qualified calls** | Importing ADT constructors via `exposing` in dependency modules breaks the lowerer's module resolution. Use qualified accessor functions instead. |
 | **Cross-module zero-arg ADT constructors** | `Piece.King` emits as a function call instead of a value. Define lowercase accessors (`king = King`) as a workaround. |
 | **`Dict.toList` returns string keys** | Dict uses `map[string]any` internally. Iterate over known key ranges with `Dict.get` instead of `Dict.toList` for Int-keyed Dicts. |
+| **`sky check` doesn't understand Go interfaces** | Concrete types (e.g. `Label`) can't unify with Go interfaces (e.g. `CanvasObject`). Code compiles and runs fine. |
+| **`sky check` doesn't understand Go callback types** | FFI callback params like `func(ResponseWriter, *Request)` can't unify with Sky functions. Runtime wrapping works correctly. |
+| **Zero-arg FFI functions need no `()`** | Call `Uuid.newString` not `Uuid.newString ()` — the binding declares the return type directly. |
 
-These will be addressed in future versions. The nested `case` limitation and ADT cross-module bugs are tracked as top priorities for v0.8.
+These will be addressed in future versions. Priorities for v0.8: nested `case`, ADT cross-module bugs, Go interface/callback type checking.
+
+## Std.Db — Built-in Database Abstraction
+
+`Std.Db` provides parameterised SQL queries, typed decoding via `Json.Decode`, and convenience functions — no boilerplate needed.
+
+```elm
+import Std.Db as Db
+import Sky.Core.Json.Decode as Decode
+import Modernc.Org.Sqlite as _
+
+type alias Todo = { id : Int, title : String, done : Bool }
+
+todoDecoder =
+    Decode.map3 (\id title done -> { id = id, title = title, done = done })
+        (Decode.field "id" Decode.int)
+        (Decode.field "title" Decode.string)
+        (Decode.field "done" Decode.bool)
+
+main =
+    case Db.open "sqlite" "todos.db" of
+        Ok conn ->
+            let
+                _ = Db.execRaw conn "CREATE TABLE IF NOT EXISTS todos (...)"
+                _ = Db.insertRow conn "todos" (Dict.fromList [("title", "Buy milk")])
+                todos = Db.queryDecode conn "SELECT * FROM todos" [] todoDecoder
+            in
+                -- todos : Result String (List Todo)
+                -- each todo has typed fields: todo.title, todo.done, todo.id
+```
+
+### API Summary
+
+| Function | Description |
+|----------|-------------|
+| `Db.open driver dsn` | Open connection pool (`"sqlite"` or `"postgres"`) |
+| `Db.exec conn query params` | Execute INSERT/UPDATE/DELETE (parameterised) |
+| `Db.query conn query params` | Query → `List (Dict String String)` |
+| `Db.queryDecode conn query params decoder` | Query → `List a` via `Json.Decode` decoder |
+| `Db.queryOneDecode conn query params decoder` | Query → `Maybe a` |
+| `Db.execRaw conn sql` | Execute DDL (CREATE TABLE, etc.) |
+| `Db.insertRow conn table dict` | Insert from Dict columns |
+| `Db.getById conn table id` | Get row by ID |
+| `Db.updateById conn table id dict` | Update row by ID |
+| `Db.deleteById conn table id` | Delete row by ID |
+| `Db.findWhere conn table column value` | Find rows by column value |
+| `Db.withTransaction conn fn` | Execute in transaction |
+| `Db.getField field row` | Get string field from Dict row |
+| `Db.getInt field row` | Get int field from Dict row |
+| `Db.getBool field row` | Get bool field from Dict row |
+
+All query functions use parameterised queries (`?` placeholders) — no SQL injection possible.
 
 ## Contributing
 

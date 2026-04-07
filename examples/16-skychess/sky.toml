@@ -9,7 +9,5 @@ root = "src"
 port = 8000
 
 ["go.dependencies"]
-"database/sql" = "latest"
-"modernc.org/sqlite" = "latest"
 "crypto/sha256" = "latest"
 "encoding/hex" = "latest"

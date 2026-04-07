@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- 07-todo-cli: A TODO app with SQLite persistence.
+-- 07-todo-cli: A TODO app with SQLite persistence using Sky.Db.
 --
 -- Usage:
 --   ./app add "Buy groceries"     Add a new todo
@@ -11,82 +11,83 @@ module Main exposing (main)
 --   ./app clear                   Remove all completed todos
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
+import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
-import Lib.Db as Db
-import Lib.Todo as Todo
+import Std.Db as Db
 import Os
 import Log.Slog as Slog
 import Std.Log exposing (println)
 
--- ============================================================
--- Database setup
--- ============================================================
-initDb _ =
-    Db.exec
+
+initDb conn =
+    Db.execRaw conn
         "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
-        []
 
 
--- ============================================================
--- Commands
--- ============================================================
-addTodo todoTitle =
+addTodo conn todoTitle =
     let
-        _ = Db.exec "INSERT INTO todos (title) VALUES (?)" [ todoTitle ]
-        logArgs = [ "Added:" , todoTitle ]
-        _ = Slog.info "Action" logArgs
+        _ = Db.insertRow conn "todos" (Dict.fromList [ ( "title", todoTitle ) ])
+        _ = Slog.info "Action" [ "Added:", todoTitle ]
     in
         println ("Added: " ++ todoTitle)
 
 
-listTodos _ =
+listTodos conn =
     let
-        rows =
-            Result.withDefault []
-                (
-                Db.queryRows "SELECT id, title, done FROM todos ORDER BY id" []
-                )
+        rows = Result.withDefault [] (Db.query conn "SELECT id, title, done FROM todos ORDER BY id" [])
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""
-        
+
         else
             let
                 _ = println "Your TODOs:"
-                _ = List.map (\row -> println (Todo.formatTodo row)) rows
+                _ = List.map (\row -> println (formatTodo row)) rows
             in
                 println ""
 
 
-markDone idStr =
+formatTodo row =
     let
-        id = Db.parseInt idStr
-        _ = Db.exec "UPDATE todos SET done = 1 WHERE id = ?" [ String.fromInt id ]
+        todoId = Db.getField "id" row
+        todoName = Db.getField "title" row
+        todoDone = Db.getField "done" row
+        status =
+            if todoDone == "1" then
+                "[x]"
+
+            else
+                "[ ]"
+    in
+        "  " ++ todoId ++ ". " ++ status ++ " " ++ todoName
+
+
+markDone conn idStr =
+    let
+        _ = Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [ idStr ]
     in
         println ("Marked as done: " ++ idStr)
 
 
-markUndone idStr =
+markUndone conn idStr =
     let
-        id = Db.parseInt idStr
-        _ = Db.exec "UPDATE todos SET done = 0 WHERE id = ?" [ String.fromInt id ]
+        _ = Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [ idStr ]
     in
         println ("Marked as not done: " ++ idStr)
 
 
-removeTodo idStr =
+removeTodo conn idStr =
     let
-        id = Db.parseInt idStr
-        _ = Db.exec "DELETE FROM todos WHERE id = ?" [ String.fromInt id ]
+        _ = Db.exec conn "DELETE FROM todos WHERE id = ?" [ idStr ]
     in
         println ("Removed todo: " ++ idStr)
 
 
-clearDone _ =
+clearDone conn =
     let
-        _ = Db.exec "DELETE FROM todos WHERE done = 1" []
+        _ = Db.exec conn "DELETE FROM todos WHERE done = 1" []
     in
         println "Cleared completed todos"
 
@@ -106,64 +107,65 @@ showUsage _ =
         println ""
 
 
--- ============================================================
--- CLI dispatch
--- ============================================================
-getArg argList = Maybe.withDefault "" (List.head argList)
+getArg argList =
+    Maybe.withDefault "" (List.head argList)
 
 
-runCommand cmd cmdArg =
+runCommand conn cmd cmdArg =
     case cmd of
-        
+
         "add" ->
             if cmdArg == "" then
                 println "Usage: ./app add <title>"
-            
+
             else
-                addTodo cmdArg
-        
+                addTodo conn cmdArg
+
         "list" ->
-            listTodos ()
-        
+            listTodos conn
+
         "done" ->
             if cmdArg == "" then
                 println "Usage: ./app done <id>"
-            
+
             else
-                markDone cmdArg
-        
+                markDone conn cmdArg
+
         "undone" ->
             if cmdArg == "" then
                 println "Usage: ./app undone <id>"
-            
+
             else
-                markUndone cmdArg
-        
+                markUndone conn cmdArg
+
         "remove" ->
             if cmdArg == "" then
                 println "Usage: ./app remove <id>"
-            
+
             else
-                removeTodo cmdArg
-        
+                removeTodo conn cmdArg
+
         "clear" ->
-            clearDone ()
-        
+            clearDone conn
+
         "help" ->
             showUsage ()
-        
+
         _ ->
             showUsage ()
 
 
--- ============================================================
--- Main -- dispatch command
--- ============================================================
 main =
-    let
-        _ = initDb ()
-        userArgs = List.drop 1 (Os.args ())
-        cmd = getArg userArgs
-        cmdArg = getArg (List.drop 1 userArgs)
-    in
-        identity (runCommand cmd cmdArg)
+    case Db.open "sqlite" "todos.db" of
+
+        Err e ->
+            println ("Database error: " ++ e)
+
+        Ok conn ->
+            let
+                _ = initDb conn
+                userArgs = List.drop 1 (Os.args ())
+                cmd = getArg userArgs
+                cmdArg = getArg (List.drop 1 userArgs)
+            in
+                identity (runCommand conn cmd cmdArg)

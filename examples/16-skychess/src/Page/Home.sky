@@ -8,7 +8,7 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick, onInput, onSubmit)
 import State exposing (..)
-import Lib.Db as Db
+import Lib.Games as Games
 import Ui.Layout as Layout
 
 
@@ -82,7 +82,7 @@ viewStats model =
 
 countByResult : String -> List (Dict String String) -> Int
 countByResult result games =
-    List.length (List.filter (\g -> Db.getField "result" g == result) games)
+    List.length (List.filter (\g -> Games.getField "result" g == result) games)
 
 
 statCard val label =
@@ -106,11 +106,11 @@ viewGameList model =
 
 viewGameRow game =
     let
-        gameId = Db.getField "id" game
-        status = Db.getField "status" game
-        result = Db.getField "result" game
-        moves = Db.getField "move_count" game
-        date = Db.getField "created_at" game
+        gameId = Games.getField "id" game
+        status = Games.getField "status" game
+        result = Games.getField "result" game
+        moves = Games.getField "move_count" game
+        date = Games.getField "created_at" game
         displayStatus = formatResult result status
     in
         div [ class "game-row" ]

@@ -33,7 +33,7 @@ showWindow window =
                             Fyne.windowResize window size
                         
                         Err _ ->
-                            Err "Failed to create size"
+                            ()
                 _ = Fyne.windowShowAndRun window
             in
                 ()
@@ -46,7 +46,7 @@ showWindow window =
 
 
 main =
-    case FyneApp.new () of
+    case FyneApp.new of
         
         Ok myApp ->
             setupWindow myApp

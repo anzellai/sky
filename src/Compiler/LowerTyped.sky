@@ -137,6 +137,7 @@ loadDependencyModules srcRoot imports =
 isStdlibImport : String -> Bool
 isStdlibImport name =
     String.startsWith "Sky.Core" name
+        || name == "Std.Db"
         || String.startsWith "Std." name
         || String.startsWith "Compiler." name
         || String.startsWith "Formatter." name

@@ -6,17 +6,44 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Dict as Dict
 import Sky.Core.Crypto as Crypto
-import Lib.Db as Db
+import Std.Db as Db
+
+
+dbConn =
+    case Db.open "sqlite" "skychess.db" of
+
+        Ok conn ->
+            conn
+
+        Err _ ->
+            identity ""
+
+
+getConn _ =
+    dbConn
+
+
+initSchema conn =
+    let
+        _ =
+            Db.execRaw conn
+                "CREATE TABLE IF NOT EXISTS games (id TEXT PRIMARY KEY, player_name TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'playing', result TEXT NOT NULL DEFAULT '', move_count INTEGER NOT NULL DEFAULT 0, created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))"
+        _ =
+            Db.execRaw conn
+                "CREATE TABLE IF NOT EXISTS moves (id INTEGER PRIMARY KEY AUTOINCREMENT, game_id TEXT NOT NULL, move_number INTEGER NOT NULL, from_square INTEGER NOT NULL, to_square INTEGER NOT NULL, algebraic TEXT NOT NULL, colour TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')))"
+    in
+        ()
 
 
 createGame : String -> String
 createGame playerName =
     let
+        conn = getConn ()
         existing = getGames playerName
         count = String.fromInt (List.length existing)
         gameId = String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
         _ =
-            Db.exec
+            Db.exec conn
                 "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
                 [ gameId, playerName ]
     in
@@ -26,8 +53,9 @@ createGame playerName =
 saveMove : String -> Int -> Int -> Int -> String -> String -> ()
 saveMove gameId moveNum from to algebraic colour =
     let
+        conn = getConn ()
         _ =
-            Db.exec
+            Db.exec conn
                 "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)"
                 [ gameId
                 , String.fromInt moveNum
@@ -37,7 +65,7 @@ saveMove gameId moveNum from to algebraic colour =
                 , colour
                 ]
         _ =
-            Db.exec
+            Db.exec conn
                 "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?"
                 [ String.fromInt moveNum, gameId ]
     in
@@ -47,8 +75,9 @@ saveMove gameId moveNum from to algebraic colour =
 updateGameStatus : String -> String -> String -> ()
 updateGameStatus gameId status result =
     let
+        conn = getConn ()
         _ =
-            Db.exec
+            Db.exec conn
                 "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
                 [ status, result, gameId ]
     in
@@ -57,41 +86,56 @@ updateGameStatus gameId status result =
 
 getGames : String -> List (Dict String String)
 getGames playerName =
-    case Db.queryRows "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [ playerName ] of
+    let
+        conn = getConn ()
+    in
+        case Db.query conn "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [ playerName ] of
 
-        Ok rows ->
-            rows
+            Ok rows ->
+                rows
 
-        Err _ ->
-            []
+            Err _ ->
+                []
 
 
 getGameMoves : String -> List (Dict String String)
 getGameMoves gameId =
-    case Db.queryRows "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [ gameId ] of
+    let
+        conn = getConn ()
+    in
+        case Db.query conn "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [ gameId ] of
 
-        Ok rows ->
-            rows
+            Ok rows ->
+                rows
 
-        Err _ ->
-            []
+            Err _ ->
+                []
 
 
 getGame : String -> Maybe (Dict String String)
 getGame gameId =
-    case Db.queryRows "SELECT * FROM games WHERE id = ? LIMIT 1" [ gameId ] of
+    let
+        conn = getConn ()
+    in
+        case Db.query conn "SELECT * FROM games WHERE id = ? LIMIT 1" [ gameId ] of
 
-        Ok rows ->
-            List.head rows
+            Ok rows ->
+                List.head rows
 
-        Err _ ->
-            Nothing
+            Err _ ->
+                Nothing
 
 
 deleteGame : String -> ()
 deleteGame gameId =
     let
-        _ = Db.exec "DELETE FROM moves WHERE game_id = ?" [ gameId ]
-        _ = Db.exec "DELETE FROM games WHERE id = ?" [ gameId ]
+        conn = getConn ()
+        _ = Db.exec conn "DELETE FROM moves WHERE game_id = ?" [ gameId ]
+        _ = Db.exec conn "DELETE FROM games WHERE id = ?" [ gameId ]
     in
         ()
+
+
+getField : String -> Dict String String -> String
+getField field row =
+    Db.getField field row
