@@ -6,7 +6,6 @@ entry = "src/Main.sky"
 root = "src"
 
 ["go.dependencies"]
-"database/sql" = "latest"
 "modernc.org/sqlite" = "latest"
 os = "latest"
 "log/slog" = "latest"

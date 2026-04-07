@@ -2337,11 +2337,56 @@ generateAliasesForImport allModules imp =
     let
         modName = String.join "." imp.moduleName
     in
-        if Resolver.isStdlib modName then
+        if modName == "Sky.Db" then
+            generateSkyDbAliases
+
+        else if Resolver.isStdlib modName then
             []
-        
+
         else
             generateAliasesFromModule modName allModules
+
+
+generateSkyDbAliases : List GoDecl
+generateSkyDbAliases =
+    let
+        fns =
+            [ ( "Open", "sky_dbOpen" )
+            , ( "Close", "sky_dbClose" )
+            , ( "Exec", "sky_dbExec" )
+            , ( "Exec_", "sky_dbExec" )
+            , ( "Query", "sky_dbQuery" )
+            , ( "QueryOne", "sky_dbQueryOne" )
+            , ( "ExecRaw", "sky_dbExecRaw" )
+            , ( "QueryDecode", "sky_dbQueryDecode" )
+            , ( "QueryOneDecode", "sky_dbQueryOneDecode" )
+            , ( "InsertRow", "sky_dbInsertRow" )
+            , ( "GetById", "sky_dbGetById" )
+            , ( "GetByIdDecode", "sky_dbGetByIdDecode" )
+            , ( "UpdateById", "sky_dbUpdateById" )
+            , ( "DeleteById", "sky_dbDeleteById" )
+            , ( "FindWhere", "sky_dbFindWhere" )
+            , ( "FindWhereDecode", "sky_dbFindWhereDecode" )
+            , ( "GetField", "sky_dbGetField" )
+            , ( "GetInt", "sky_dbGetInt" )
+            , ( "GetBool", "sky_dbGetBool" )
+            , ( "RawConn", "sky_dbRawConn" )
+            , ( "WithTransaction", "sky_dbWithTransaction" )
+            , ( "TxExec", "sky_dbTxExec" )
+            , ( "TxQuery", "sky_dbTxQuery" )
+            , ( "TxQueryDecode", "sky_dbTxQueryDecode" )
+            ]
+    in
+        List.concatMap
+            (\pair ->
+                let
+                    name = fst pair
+                    goFn = snd pair
+                in
+                    [ GoDeclRaw ("var Sky_Db_" ++ name ++ " = " ++ goFn)
+                    ]
+            )
+            fns
 
 
 generateAliasesFromModule : String -> (List (String, Ast.Module)) -> List GoDecl

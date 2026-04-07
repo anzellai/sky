@@ -1538,73 +1538,73 @@ lowerQualified ctx parts =
         else if qualName == "Live.route" then
             GoIdent "sky_liveRoute"
 
-        else if qualName == "Db.open" then
+        else if qualName == "SkyDb.open" then
             GoIdent "sky_dbOpen"
 
-        else if qualName == "Db.close" then
+        else if qualName == "SkyDb.close" then
             GoIdent "sky_dbClose"
 
-        else if qualName == "Db.exec" then
+        else if qualName == "SkyDb.exec" then
             GoIdent "sky_dbExec"
 
-        else if qualName == "Db.query" then
+        else if qualName == "SkyDb.query" then
             GoIdent "sky_dbQuery"
 
-        else if qualName == "Db.queryOne" then
+        else if qualName == "SkyDb.queryOne" then
             GoIdent "sky_dbQueryOne"
 
-        else if qualName == "Db.execRaw" then
+        else if qualName == "SkyDb.execRaw" then
             GoIdent "sky_dbExecRaw"
 
-        else if qualName == "Db.queryDecode" then
+        else if qualName == "SkyDb.queryDecode" then
             GoIdent "sky_dbQueryDecode"
 
-        else if qualName == "Db.queryOneDecode" then
+        else if qualName == "SkyDb.queryOneDecode" then
             GoIdent "sky_dbQueryOneDecode"
 
-        else if qualName == "Db.insertRow" then
+        else if qualName == "SkyDb.insertRow" then
             GoIdent "sky_dbInsertRow"
 
-        else if qualName == "Db.getById" then
+        else if qualName == "SkyDb.getById" then
             GoIdent "sky_dbGetById"
 
-        else if qualName == "Db.getByIdDecode" then
+        else if qualName == "SkyDb.getByIdDecode" then
             GoIdent "sky_dbGetByIdDecode"
 
-        else if qualName == "Db.updateById" then
+        else if qualName == "SkyDb.updateById" then
             GoIdent "sky_dbUpdateById"
 
-        else if qualName == "Db.deleteById" then
+        else if qualName == "SkyDb.deleteById" then
             GoIdent "sky_dbDeleteById"
 
-        else if qualName == "Db.findWhere" then
+        else if qualName == "SkyDb.findWhere" then
             GoIdent "sky_dbFindWhere"
 
-        else if qualName == "Db.findWhereDecode" then
+        else if qualName == "SkyDb.findWhereDecode" then
             GoIdent "sky_dbFindWhereDecode"
 
-        else if qualName == "Db.getField" then
+        else if qualName == "SkyDb.getField" then
             GoIdent "sky_dbGetField"
 
-        else if qualName == "Db.getInt" then
+        else if qualName == "SkyDb.getInt" then
             GoIdent "sky_dbGetInt"
 
-        else if qualName == "Db.getBool" then
+        else if qualName == "SkyDb.getBool" then
             GoIdent "sky_dbGetBool"
 
-        else if qualName == "Db.rawConn" then
+        else if qualName == "SkyDb.rawConn" then
             GoIdent "sky_dbRawConn"
 
-        else if qualName == "Db.withTransaction" then
+        else if qualName == "SkyDb.withTransaction" then
             GoIdent "sky_dbWithTransaction"
 
-        else if qualName == "Db.txExec" then
+        else if qualName == "SkyDb.txExec" then
             GoIdent "sky_dbTxExec"
 
-        else if qualName == "Db.txQuery" then
+        else if qualName == "SkyDb.txQuery" then
             GoIdent "sky_dbTxQuery"
 
-        else if qualName == "Db.txQueryDecode" then
+        else if qualName == "SkyDb.txQueryDecode" then
             GoIdent "sky_dbTxQueryDecode"
 
         else if List.length parts == 2 then
@@ -3755,7 +3755,7 @@ isStdlibQualified parts =
                 || first == "Events"
                 || first == "Css"
                 || first == "Live"
-                || first == "Db"
+                || first == "SkyDb"
         
         Nothing ->
             False
