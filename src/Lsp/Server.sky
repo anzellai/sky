@@ -295,7 +295,7 @@ resolveAndCacheImports state uri imports =
                     _ :: rest ->
                         String.join "/" (List.reverse rest)
                     
-                    [  ] ->
+                    [] ->
                         "."
         projectRoot =
             case List.reverse (String.split "/" srcRoot) of
@@ -303,7 +303,7 @@ resolveAndCacheImports state uri imports =
                 _ :: rest ->
                     String.join "/" (List.reverse rest)
                 
-                [  ] ->
+                [] ->
                     "."
     in
         resolveImportsLoop srcRoot projectRoot imports state
@@ -352,7 +352,7 @@ resolveOneImportInline sr pr mn mp ra st =
                         last :: _ ->
                             last
                         
-                        [  ] ->
+                        [] ->
                             ""
                 
                 else
@@ -473,7 +473,7 @@ extractAllDecls : (List Declaration) -> (List ExportedDecl) -> List ExportedDecl
 extractAllDecls decls acc =
     case decls of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         decl :: rest ->
@@ -649,7 +649,7 @@ deriveSrcRoot filePath =
                 _ :: rest ->
                     String.join "/" (List.reverse rest)
                 
-                [  ] ->
+                [] ->
                     "."
 
 
@@ -657,7 +657,7 @@ findLastSrcIdx : (List String) -> Int -> Int -> Int
 findLastSrcIdx parts idx lastFound =
     case parts of
         
-        [  ] ->
+        [] ->
             lastFound
         
         part :: rest ->
@@ -675,7 +675,7 @@ deriveProjectRoot srcRoot =
         _ :: rest ->
             String.join "/" (List.reverse rest)
         
-        [  ] ->
+        [] ->
             "."
 
 
@@ -698,7 +698,7 @@ findExport : String -> (List ExportedDecl) -> Maybe ExportedDecl
 findExport name exports =
     case exports of
         
-        [  ] ->
+        [] ->
             Nothing
         
         exp :: rest ->
@@ -728,25 +728,25 @@ makeDiagnosticFromError err =
         startLine =
             if sl < 0 then
                 0
-
+            
             else
                 sl
         startCol =
             if sc < 0 then
                 0
-
+            
             else
                 sc
         endLine =
             if el < 0 then
                 0
-
+            
             else
                 el
         endCol =
             if ec < 1 then
                 1
-
+            
             else
                 ec
     in
@@ -831,7 +831,7 @@ lookupTypeInfo state uri word source =
                 m :: _ ->
                     m
                 
-                [  ] ->
+                [] ->
                     ""
         funcName =
             case List.reverse qualParts of
@@ -839,7 +839,7 @@ lookupTypeInfo state uri word source =
                 f :: _ ->
                     f
                 
-                [  ] ->
+                [] ->
                     ""
         fromDep =
             if isQualified then
@@ -1041,7 +1041,7 @@ lookupInTypedDecls : String -> (List Checker.TypedDecl) -> String
 lookupInTypedDecls name decls =
     case decls of
         
-        [  ] ->
+        [] ->
             ""
         
         td :: rest ->
@@ -1056,7 +1056,7 @@ inferFromAst : String -> (List Declaration) -> String
 inferFromAst name decls =
     case decls of
         
-        [  ] ->
+        [] ->
             ""
         
         decl :: rest ->
@@ -1129,7 +1129,7 @@ findAssignmentLineLoop : (List String) -> String -> Int -> Int -> String
 findAssignmentLineLoop lines pattern idx cursorLine =
     case lines of
         
-        [  ] ->
+        [] ->
             ""
         
         line :: rest ->
@@ -1141,7 +1141,7 @@ findAssignmentLineLoop lines pattern idx cursorLine =
                             next :: _ ->
                                 String.trim next
                             
-                            [  ] ->
+                            [] ->
                                 ""
                 in
                     if String.isEmpty nextLine then
@@ -1196,7 +1196,7 @@ inferQualifiedCallType state uri qualName source =
                 f :: _ ->
                     f
                 
-                [  ] ->
+                [] ->
                     ""
         depResult = lookupDepExport state modAlias funcName
     in
@@ -1226,7 +1226,7 @@ extractReturnType sig =
                 l :: _ ->
                     l
                 
-                [  ] ->
+                [] ->
                     sig
     in
         lastPart
@@ -1516,7 +1516,7 @@ handleCompletion state id body =
                 mod :: _ ->
                     mod
                 
-                [  ] ->
+                [] ->
                     ""
         keywords =
             [ "module"
@@ -1694,7 +1694,7 @@ typeDeclCompletion name prefix variants =
             first :: _ ->
                 Just first
             
-            [  ] ->
+            [] ->
                 Nothing
 
 
@@ -1835,7 +1835,7 @@ findDefinitionInDep state word source uri =
                 m :: _ ->
                     m
                 
-                [  ] ->
+                [] ->
                     ""
         funcName =
             case List.reverse parts of
@@ -1843,7 +1843,7 @@ findDefinitionInDep state word source uri =
                 f :: _ ->
                     f
                 
-                [  ] ->
+                [] ->
                     ""
     in
         case lookupDepExport state modAlias funcName of

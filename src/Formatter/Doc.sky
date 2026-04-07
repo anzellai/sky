@@ -52,7 +52,7 @@ joinDocs : (List Doc) -> Doc -> Doc
 joinDocs docs sep =
     case docs of
         
-        [  ] ->
+        [] ->
             DocConcat []
         
         first :: rest ->
@@ -175,7 +175,7 @@ fitsConcat : (List Doc) -> Int -> Bool
 fitsConcat parts remaining =
     case parts of
         
-        [  ] ->
+        [] ->
             True
         
         part :: rest ->
@@ -241,7 +241,7 @@ walkParts : (List Doc) -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) -> 
 walkParts parts outputRef colRef indentRef =
     case parts of
         
-        [  ] ->
+        [] ->
             ()
         
         part :: rest ->
@@ -284,7 +284,7 @@ flattenParts : (List Doc) -> (Ref.Ref String) -> (Ref.Ref Int) -> (Ref.Ref Int) 
 flattenParts parts outputRef colRef indentRef =
     case parts of
         
-        [  ] ->
+        [] ->
             ()
         
         part :: rest ->

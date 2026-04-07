@@ -965,10 +965,10 @@ guard msg model =
         StartCheckout ->
             requireAuth model
         
+        -- Public messages (no auth needed)
         UpdateRemarks _ ->
             requireAuth model
         
-        -- Public messages (no auth needed)
         _ ->
             Ok ()
 

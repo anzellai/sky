@@ -215,7 +215,7 @@ inferQualifiedFallback counter env parts qualName =
         last :: _ ->
             inferQualifiedFallbackLookup counter env last
         
-        [  ] ->
+        [] ->
             Err ("Unknown qualified name: empty parts")
 
 
@@ -351,7 +351,7 @@ inferCallArgs : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Type -> Substitut
 inferCallArgs counter registry env fnType sub args =
     case args of
         
-        [  ] ->
+        [] ->
             Ok { substitution = sub , type_ = fnType }
         
         arg :: rest ->
@@ -404,7 +404,7 @@ inferLambdaParams : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern
 inferLambdaParams counter registry env params body paramTypes =
     case params of
         
-        [  ] ->
+        [] ->
             inferLambdaBody counter registry env body paramTypes
         
         pat :: rest ->
@@ -539,7 +539,7 @@ inferLetBindings : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List LetBindi
 inferLetBindings counter registry env bindings body =
     case bindings of
         
-        [  ] ->
+        [] ->
             inferExpr counter registry env body
         
         binding :: rest ->
@@ -646,19 +646,21 @@ inferCase counter registry env subject branches =
             let
                 resultVar = freshVar counter Nothing
             in
-                inferCaseThenCheckExhaustive counter registry env
-                    subjectResult branches resultVar
+                inferCaseThenCheckExhaustive counter registry env subjectResult
+                    branches
+                    resultVar
 
 
 inferCaseThenCheckExhaustive counter registry env subjectResult branches resultVar =
     case inferCaseBranches counter registry env subjectResult.type_ subjectResult.substitution branches resultVar of
-
+        
         Err e ->
             Err e
-
+        
         Ok result ->
             let
-                resolvedSubjectType = applySub result.substitution subjectResult.type_
+                resolvedSubjectType =
+                    applySub result.substitution subjectResult.type_
                 exhaustiveWarning =
                     Exhaustive.checkExhaustiveness registry resolvedSubjectType
                         branches
@@ -668,10 +670,10 @@ inferCaseThenCheckExhaustive counter registry env subjectResult branches resultV
 
 checkExhaustiveResult result exhaustiveWarning =
     case exhaustiveWarning of
-
+        
         Just warning ->
             Err ("Non-exhaustive case expression: " ++ warning)
-
+        
         Nothing ->
             Ok result
 
@@ -680,7 +682,7 @@ inferCaseBranches : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Type -> Subst
 inferCaseBranches counter registry env subjectType sub branches resultType =
     case branches of
         
-        [  ] ->
+        [] ->
             Ok { substitution = sub , type_ = applySub sub resultType }
         
         branch :: rest ->
@@ -1191,7 +1193,7 @@ bindParamsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -
 bindParamsLoop counter registry env params types sub =
     case params of
         
-        [  ] ->
+        [] ->
             Ok ( sub, env )
         
         pat :: restPats ->
@@ -1202,7 +1204,7 @@ bindParamsType : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern -> (List
 bindParamsType counter registry env pat restPats types sub =
     case types of
         
-        [  ] ->
+        [] ->
             Err "Parameter count mismatch"
         
         t :: restTypes ->
@@ -1318,7 +1320,7 @@ inferTupleItems : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Expressio
 inferTupleItems counter registry env items sub types =
     case items of
         
-        [  ] ->
+        [] ->
             Ok { substitution = sub , type_ = TTuple (List.reverse types) }
         
         item :: rest ->
@@ -1350,7 +1352,7 @@ inferListItemsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Expres
 inferListItemsLoop counter registry env items sub elemType =
     case items of
         
-        [  ] ->
+        [] ->
             Ok
                 { substitution = sub
                 , type_ = TApp (TConst "List") [ applySub sub elemType ]
@@ -1392,7 +1394,7 @@ inferRecordFields : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List NamedEx
 inferRecordFields counter registry env fields sub fieldTypes =
     case fields of
         
-        [  ] ->
+        [] ->
             Ok { substitution = sub , type_ = TRecord fieldTypes }
         
         field :: rest ->
@@ -1423,7 +1425,7 @@ inferRecordUpdateFieldsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (Li
 inferRecordUpdateFieldsLoop counter registry env fields sub fieldTypes =
     case fields of
         
-        [  ] ->
+        [] ->
             Ok ( sub, fieldTypes )
         
         field :: rest ->

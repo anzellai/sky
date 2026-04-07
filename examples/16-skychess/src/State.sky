@@ -2,7 +2,6 @@ module State exposing (..)
 
 import Sky.Core.Maybe exposing (..)
 
-
 type Page
     = HomePage
     | GamePage

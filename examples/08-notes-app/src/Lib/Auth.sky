@@ -121,9 +121,9 @@ verifyEmail token =
                 [ token ]
     in
         case result of
-
+            
             Ok _ ->
                 Ok "Your email has been verified! You can now sign in."
-
+            
             Err e ->
                 Err ("Verification failed: " ++ e)

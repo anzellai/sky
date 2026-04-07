@@ -65,13 +65,13 @@ handleEcho req =
         )
 
 
-parseVisitCount : Maybe String -> Int
+parseVisitCount : (Maybe String) -> Int
 parseVisitCount maybeCookie =
     case maybeCookie of
-
+        
         Just v ->
             parseVisitInt v
-
+        
         Nothing ->
             1
 
@@ -79,10 +79,10 @@ parseVisitCount maybeCookie =
 parseVisitInt : String -> Int
 parseVisitInt v =
     case String.toInt v of
-
+        
         Ok n ->
             n + 1
-
+        
         Err _ ->
             1
 

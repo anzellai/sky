@@ -79,7 +79,7 @@ resolveProject entryPath srcRoot =
 resolveImports srcRoot imports loaded visited diagnostics =
     case imports of
         
-        [  ] ->
+        [] ->
             ( loaded, diagnostics )
         
         imp :: rest ->
@@ -651,18 +651,34 @@ getStdlibExports modName =
     
     else if modName == "Std.Time" then
         [ "every" ]
-
+    
     else if modName == "Std.Db" then
-        [ "connect", "open", "close", "exec", "query", "queryOne", "execRaw"
-        , "queryDecode", "queryOneDecode"
-        , "insertRow", "getById", "getByIdDecode"
-        , "updateById", "deleteById"
-        , "findWhere", "findWhereDecode"
-        , "getField", "getInt", "getBool"
+        [ "connect"
+        , "open"
+        , "close"
+        , "exec"
+        , "query"
+        , "queryOne"
+        , "execRaw"
+        , "queryDecode"
+        , "queryOneDecode"
+        , "insertRow"
+        , "getById"
+        , "getByIdDecode"
+        , "updateById"
+        , "deleteById"
+        , "findWhere"
+        , "findWhereDecode"
+        , "getField"
+        , "getInt"
+        , "getBool"
         , "rawConn"
-        , "withTransaction", "txExec", "txQuery", "txQueryDecode"
+        , "withTransaction"
+        , "txExec"
+        , "txQuery"
+        , "txQueryDecode"
         ]
-
+    
     else
         []
 
@@ -684,7 +700,7 @@ checkAllModules graph =
 checkModulesLoop modules importedEnv diagnostics =
     case modules of
         
-        [  ] ->
+        [] ->
             ( [], diagnostics )
         
         mod :: rest ->
@@ -1096,7 +1112,7 @@ buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> En
 buildDepTypeEnvLoop entryImports modules env =
     case modules of
         
-        [  ] ->
+        [] ->
             env
         
         pair :: rest ->
@@ -1121,7 +1137,7 @@ findImportAlias : (List Ast.ImportDecl) -> String -> String
 findImportAlias imports modName =
     case imports of
         
-        [  ] ->
+        [] ->
             lastPart modName
         
         imp :: rest ->
@@ -1143,7 +1159,7 @@ computeAlias imp =
             last :: _ ->
                 last
             
-            [  ] ->
+            [] ->
                 ""
     
     else
@@ -1157,7 +1173,7 @@ lastPart modName =
         last :: _ ->
             last
         
-        [  ] ->
+        [] ->
             modName
 
 
@@ -1165,7 +1181,7 @@ findExposedNames : (List Ast.ImportDecl) -> String -> List String
 findExposedNames imports modName =
     case imports of
         
-        [  ] ->
+        [] ->
             []
         
         imp :: rest ->
@@ -1201,7 +1217,7 @@ collectModuleAnnotationsLoop : (List Declaration) -> (List (String, TypeExpr)) -
 collectModuleAnnotationsLoop decls acc =
     case decls of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         decl :: rest ->
@@ -1223,7 +1239,7 @@ addAnnotationsToEnv : String -> (List String) -> (List (String, TypeExpr)) -> En
 addAnnotationsToEnv qualPrefix exposed annotations env =
     case annotations of
         
-        [  ] ->
+        [] ->
             env
         
         ann :: rest ->
@@ -1254,7 +1270,7 @@ isExposed : String -> (List String) -> Bool
 isExposed funcName exposed =
     case exposed of
         
-        [  ] ->
+        [] ->
             False
         
         name :: rest ->
@@ -1282,7 +1298,7 @@ buildParamMap : (List (String, Int)) -> (Dict.Dict String Type) -> Dict.Dict Str
 buildParamMap pairs acc =
     case pairs of
         
-        [  ] ->
+        [] ->
             acc
         
         pair :: rest ->
@@ -1294,7 +1310,7 @@ assignVarIds : (List String) -> Int -> (List (String, Int)) -> List (String, Int
 assignVarIds names nextId acc =
     case names of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         name :: rest ->
@@ -1422,7 +1438,7 @@ deduplicateForeignLoop : (List (String, String, Bool)) -> (Set.Set String) -> (L
 deduplicateForeignLoop imports seen acc =
     case imports of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         item :: rest ->

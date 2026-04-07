@@ -38,7 +38,7 @@ lookupCtorInEntries : String -> (List RegisteredAdt) -> Maybe Scheme
 lookupCtorInEntries ctorName adts =
     case adts of
         
-        [  ] ->
+        [] ->
             Nothing
         
         adt :: rest ->
@@ -60,7 +60,7 @@ lookupCtorAdtInEntries : String -> (List RegisteredAdt) -> Maybe RegisteredAdt
 lookupCtorAdtInEntries ctorName adts =
     case adts of
         
-        [  ] ->
+        [] ->
             Nothing
         
         adt :: rest ->
@@ -82,7 +82,7 @@ registerAdtsLoop : (Ref.Ref Int) -> (List Declaration) -> AdtRegistry -> Env.Typ
 registerAdtsLoop counter decls registry env diagnostics =
     case decls of
         
-        [  ] ->
+        [] ->
             ( registry, env, diagnostics )
         
         decl :: rest ->
@@ -156,13 +156,13 @@ buildParamMap : (List String) -> (List Type) -> (Dict.Dict String Type) -> Dict.
 buildParamMap names vars acc =
     case names of
         
-        [  ] ->
+        [] ->
             acc
         
         nameH :: nameRest ->
             case vars of
                 
-                [  ] ->
+                [] ->
                     acc
                 
                 varH :: varRest ->
@@ -173,7 +173,7 @@ buildFunType : (List Type) -> Type -> Type
 buildFunType args result =
     case args of
         
-        [  ] ->
+        [] ->
             result
         
         arg :: rest ->

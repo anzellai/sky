@@ -1,3 +1,6 @@
+-- ======================================================
+-- BADGES
+-- ======================================================
 module Ui.Components exposing (badge, statusBadge, ideaCard, statCard, emptyState)
 
 import Sky.Core.Prelude exposing (..)
@@ -8,9 +11,6 @@ import State exposing (..)
 import Lib.Db as Db
 import Lib.Ideas as Ideas
 
--- ======================================================
--- BADGES
--- ======================================================
 badge label badgeClass = span [ class ("badge " ++ badgeClass) ] [ text label ]
 
 

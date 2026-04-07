@@ -324,7 +324,7 @@ unifyList : (List Type) -> (List Type) -> Substitution -> Result String Substitu
 unifyList ts1 ts2 sub =
     case ts1 of
         
-        [  ] ->
+        [] ->
             unifyListEmpty ts2 sub
         
         t1head :: rest1 ->
@@ -335,7 +335,7 @@ unifyListEmpty : (List Type) -> Substitution -> Result String Substitution
 unifyListEmpty ts2 sub =
     case ts2 of
         
-        [  ] ->
+        [] ->
             Ok sub
         
         _ ->
@@ -346,7 +346,7 @@ unifyListCons : Type -> (List Type) -> (List Type) -> Substitution -> Result Str
 unifyListCons t1head rest1 ts2 sub =
     case ts2 of
         
-        [  ] ->
+        [] ->
             Err "Type argument count mismatch"
         
         t2head :: rest2 ->
@@ -381,7 +381,7 @@ unifyRecordFields : (List String) -> (Dict.Dict String Type) -> (Dict.Dict Strin
 unifyRecordFields keys fieldsA fieldsB sub =
     case keys of
         
-        [  ] ->
+        [] ->
             Ok sub
         
         key :: rest ->

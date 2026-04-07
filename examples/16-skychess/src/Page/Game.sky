@@ -13,7 +13,6 @@ import Chess.Piece as Piece
 import Chess.Board as Board
 import Ui.Layout as Layout
 
-
 viewGame : Model -> VNode
 viewGame model =
     Layout.page model
@@ -22,9 +21,7 @@ viewGame model =
             [ viewStatusBar model
             , div [ class "game-layout" ]
                   [ div [ class "board-section" ]
-                        [ viewBoard model
-                        , viewGameActions model
-                        ]
+                        [ viewBoard model , viewGameActions model ]
                   , div [ class "side-panel" ]
                         [ viewCaptured "White captures" model.capturedByWhite
                         , viewMoveHistory model
@@ -46,8 +43,10 @@ viewStatusBar model =
 getStatusClass model =
     if model.gameStatus /= "playing" then
         "status-gameover"
+    
     else if model.computerThinking then
         "status-thinking"
+    
     else
         ""
 
@@ -55,27 +54,38 @@ getStatusClass model =
 getStatusText model =
     if model.gameStatus == "checkmate-white" then
         "Checkmate! You win!"
+    
     else if model.gameStatus == "checkmate-black" then
         "Checkmate! Computer wins."
+    
     else if model.gameStatus == "stalemate" then
         "Stalemate - Draw!"
+    
     else if model.gameStatus == "resigned" then
         "You resigned."
+    
     else if model.computerThinking then
         "Computer is thinking..."
+    
     else
         "Your turn (White)"
 
 
 viewBoard model =
     table [ class "chess-board" ]
-        (List.map (\rank -> viewRank rank model) [ 0, 1, 2, 3, 4, 5, 6, 7 ])
+        (
+        List.map (\rank -> viewRank rank model)
+            [ 0 , 1 , 2 , 3 , 4 , 5 , 6 , 7 ]
+        )
 
 
 viewRank : Int -> Model -> VNode
 viewRank rank model =
     tr []
-        (List.map (\file -> viewSquare (rank * 8 + file) model) [ 0, 1, 2, 3, 4, 5, 6, 7 ])
+        (
+        List.map (\file -> viewSquare (rank * 8 + file) model)
+            [ 0 , 1 , 2 , 3 , 4 , 5 , 6 , 7 ]
+        )
 
 
 viewSquare : Int -> Model -> VNode
@@ -97,10 +107,10 @@ viewSquare sq model =
 
 hasPieceAt maybePiece =
     case maybePiece of
-
+        
         Just _ ->
             True
-
+        
         Nothing ->
             False
 
@@ -110,6 +120,7 @@ buildSquareClass isLight isSelected isLegal isLast hasPiece =
         base =
             if isLight then
                 "sq-light"
+            
             else
                 "sq-dark"
         sel = addSelectedClass isSelected isLight
@@ -123,8 +134,10 @@ addSelectedClass isSelected isLight =
     if isSelected then
         if isLight then
             " sq-selected"
+        
         else
             " sq-selected-dark"
+    
     else
         ""
 
@@ -132,8 +145,10 @@ addSelectedClass isSelected isLight =
 addLegalClass isLegal hasPiece =
     if isLegal && hasPiece then
         " sq-capture"
+    
     else if isLegal then
         " sq-legal"
+    
     else
         ""
 
@@ -141,17 +156,23 @@ addLegalClass isLegal hasPiece =
 addLastClass isLast isSelected =
     if isLast && not isSelected then
         " sq-last"
+    
     else
         ""
 
 
 viewPieceContent maybePiece =
     case maybePiece of
-
+        
         Just piece ->
             span [ class "piece" ]
-                [ text (Piece.symbol (Piece.pieceKind piece) (Piece.pieceColour piece)) ]
-
+                [ text
+                      (
+                      Piece.symbol (Piece.pieceKind piece)
+                          (Piece.pieceColour piece)
+                      )
+                ]
+        
         Nothing ->
             text ""
 
@@ -164,7 +185,7 @@ viewGameActions model =
             , button [ onClick BackToHome , class "btn btn-secondary btn-sm" ]
                   [ text "Home" ]
             ]
-
+    
     else
         div [ class "game-actions-bar" ]
             [ button [ onClick StartNewGame , class "btn btn-primary btn-sm" ]
@@ -185,6 +206,7 @@ viewCaptured label pieces =
 capturedSymbol kind =
     if kind == "captured-white" then
         ""
+    
     else
         kind
 
@@ -192,15 +214,15 @@ capturedSymbol kind =
 viewMoveHistory model =
     div []
         [ div [ class "section-title" ] [ text "Moves" ]
-        , div [ class "move-list" ]
-              (viewMoveRows model.moveHistory 1)
+        , div [ class "move-list" ] (viewMoveRows model.moveHistory 1)
         ]
 
 
-viewMoveRows : List String -> Int -> List VNode
+viewMoveRows : (List String) -> Int -> List VNode
 viewMoveRows moves num =
     if List.isEmpty moves then
         []
+    
     else
         let
             white = Maybe.withDefault "" (List.head moves)
@@ -211,6 +233,7 @@ viewMoveRows moves num =
             row =
                 if hasBlack then
                     viewOneMoveRow num white black
+                
                 else
                     viewOneMoveRow num white ""
         in

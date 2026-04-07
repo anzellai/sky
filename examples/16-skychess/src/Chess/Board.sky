@@ -7,29 +7,27 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Chess.Piece as Piece
 
-
 -- Square indexing: 0=a8, 1=b8, ..., 7=h8, 8=a7, ..., 63=h1
 -- Row 0 = rank 8 (black back rank), Row 7 = rank 1 (white back rank)
-
-getPiece : Int -> Dict Int (Dict String String) -> Maybe (Dict String String)
+getPiece : Int -> (Dict Int (Dict String String)) -> Maybe (Dict String String)
 getPiece sq board = Dict.get sq board
 
 
-setPiece : Int -> (Dict String String) -> Dict Int (Dict String String) -> Dict Int (Dict String String)
+setPiece : Int -> (Dict String String) -> (Dict Int (Dict String String)) -> Dict Int (Dict String String)
 setPiece sq piece board = Dict.insert sq piece board
 
 
-removePiece : Int -> Dict Int (Dict String String) -> Dict Int (Dict String String)
+removePiece : Int -> (Dict Int (Dict String String)) -> Dict Int (Dict String String)
 removePiece sq board = Dict.remove sq board
 
 
-movePiece : Int -> Int -> Dict Int (Dict String String) -> Dict Int (Dict String String)
+movePiece : Int -> Int -> (Dict Int (Dict String String)) -> Dict Int (Dict String String)
 movePiece from to board =
     case Dict.get from board of
-
+        
         Just piece ->
             Dict.insert to piece (Dict.remove from board)
-
+        
         Nothing ->
             board
 
@@ -61,18 +59,25 @@ fileToChar : Int -> String
 fileToChar f =
     if f == 0 then
         "a"
+    
     else if f == 1 then
         "b"
+    
     else if f == 2 then
         "c"
+    
     else if f == 3 then
         "d"
+    
     else if f == 4 then
         "e"
+    
     else if f == 5 then
         "f"
+    
     else if f == 6 then
         "g"
+    
     else
         "h"
 
@@ -81,64 +86,118 @@ isOnBoard : Int -> Int -> Bool
 isOnBoard row col = row >= 0 && row <= 7 && col >= 0 && col <= 7
 
 
-findKing : String -> Dict Int (Dict String String) -> Int
-findKing colour board =
-    findKingLoop colour board allSquares
+findKing : String -> (Dict Int (Dict String String)) -> Int
+findKing colour board = findKingLoop colour board allSquares
 
 
-findKingLoop : String -> Dict Int (Dict String String) -> List Int -> Int
+findKingLoop : String -> (Dict Int (Dict String String)) -> (List Int) -> Int
 findKingLoop colour board squares =
     case squares of
-
+        
         [] ->
             -1
-
+        
         sq :: rest ->
             case Dict.get sq board of
-
+                
                 Just piece ->
-                    if Piece.pieceKind piece == "King" && Piece.pieceColour piece == colour then
+                    if Piece.pieceKind piece == "King"
+                        && Piece.pieceColour piece == colour then
                         sq
-
+                    
                     else
                         findKingLoop colour board rest
-
+                
                 Nothing ->
                     findKingLoop colour board rest
 
 
-allPiecesOfColour : String -> Dict Int (Dict String String) -> List ( Int, Dict String String )
+allPiecesOfColour : String -> (Dict Int (Dict String String)) -> List (Int, Dict String String)
 allPiecesOfColour colour board =
-    List.filterMap
-        (\sq -> checkSquareColour sq colour board)
-        allSquares
+    List.filterMap (\sq -> checkSquareColour sq colour board) allSquares
 
 
-checkSquareColour : Int -> String -> Dict Int (Dict String String) -> Maybe ( Int, Dict String String )
+checkSquareColour : Int -> String -> (Dict Int (Dict String String)) -> Maybe (Int, Dict String String)
 checkSquareColour sq colour board =
     case Dict.get sq board of
-
+        
         Just piece ->
             if Piece.pieceColour piece == colour then
                 Just ( sq, piece )
-
+            
             else
                 Nothing
-
+        
         Nothing ->
             Nothing
 
 
 allSquares : List Int
 allSquares =
-    [ 0, 1, 2, 3, 4, 5, 6, 7
-    , 8, 9, 10, 11, 12, 13, 14, 15
-    , 16, 17, 18, 19, 20, 21, 22, 23
-    , 24, 25, 26, 27, 28, 29, 30, 31
-    , 32, 33, 34, 35, 36, 37, 38, 39
-    , 40, 41, 42, 43, 44, 45, 46, 47
-    , 48, 49, 50, 51, 52, 53, 54, 55
-    , 56, 57, 58, 59, 60, 61, 62, 63
+    [ 0
+    , 1
+    , 2
+    , 3
+    , 4
+    , 5
+    , 6
+    , 7
+    , 8
+    , 9
+    , 10
+    , 11
+    , 12
+    , 13
+    , 14
+    , 15
+    , 16
+    , 17
+    , 18
+    , 19
+    , 20
+    , 21
+    , 22
+    , 23
+    , 24
+    , 25
+    , 26
+    , 27
+    , 28
+    , 29
+    , 30
+    , 31
+    , 32
+    , 33
+    , 34
+    , 35
+    , 36
+    , 37
+    , 38
+    , 39
+    , 40
+    , 41
+    , 42
+    , 43
+    , 44
+    , 45
+    , 46
+    , 47
+    , 48
+    , 49
+    , 50
+    , 51
+    , 52
+    , 53
+    , 54
+    , 55
+    , 56
+    , 57
+    , 58
+    , 59
+    , 60
+    , 61
+    , 62
+    , 63
     ]
 
 

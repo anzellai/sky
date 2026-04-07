@@ -8,19 +8,17 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Crypto as Crypto
 import Std.Db as Db
 
-
 dbConn =
     case Db.connect () of
-
+        
         Ok conn ->
             conn
-
+        
         Err _ ->
             identity ""
 
 
-getConn _ =
-    dbConn
+getConn _ = dbConn
 
 
 initSchema conn =
@@ -41,11 +39,12 @@ createGame playerName =
         conn = getConn ()
         existing = getGames playerName
         count = String.fromInt (List.length existing)
-        gameId = String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
+        gameId =
+            String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
         _ =
             Db.exec conn
                 "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
-                [ gameId, playerName ]
+                [ gameId , playerName ]
     in
         gameId
 
@@ -67,7 +66,7 @@ saveMove gameId moveNum from to algebraic colour =
         _ =
             Db.exec conn
                 "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?"
-                [ String.fromInt moveNum, gameId ]
+                [ String.fromInt moveNum , gameId ]
     in
         ()
 
@@ -79,7 +78,7 @@ updateGameStatus gameId status result =
         _ =
             Db.exec conn
                 "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
-                [ status, result, gameId ]
+                [ status , result , gameId ]
     in
         ()
 
@@ -89,11 +88,12 @@ getGames playerName =
     let
         conn = getConn ()
     in
-        case Db.query conn "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [ playerName ] of
-
+        case Db.query conn "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [ playerName
+        ] of
+            
             Ok rows ->
                 rows
-
+            
             Err _ ->
                 []
 
@@ -103,11 +103,12 @@ getGameMoves gameId =
     let
         conn = getConn ()
     in
-        case Db.query conn "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [ gameId ] of
-
+        case Db.query conn "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [ gameId
+        ] of
+            
             Ok rows ->
                 rows
-
+            
             Err _ ->
                 []
 
@@ -118,10 +119,10 @@ getGame gameId =
         conn = getConn ()
     in
         case Db.query conn "SELECT * FROM games WHERE id = ? LIMIT 1" [ gameId ] of
-
+            
             Ok rows ->
                 List.head rows
-
+            
             Err _ ->
                 Nothing
 
@@ -136,6 +137,5 @@ deleteGame gameId =
         ()
 
 
-getField : String -> Dict String String -> String
-getField field row =
-    Db.getField field row
+getField : String -> (Dict String String) -> String
+getField field row = Db.getField field row

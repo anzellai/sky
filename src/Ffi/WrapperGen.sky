@@ -38,10 +38,10 @@ classifyFunc : (List String) -> String -> FuncKind
 classifyFunc results funcName =
     case results of
         
-        [  ] ->
+        [] ->
             Effectful
         
-        single :: [  ] ->
+        single :: [] ->
             if single == "error" then
                 Fallible
             
@@ -56,7 +56,7 @@ classifyFunc results funcName =
                         last :: _ ->
                             last
                         
-                        [  ] ->
+                        [] ->
                             ""
             in
                 if lastResult == "error" then
@@ -86,7 +86,7 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
                 l :: _ ->
                     l
                 
-                [  ] ->
+                [] ->
                     ""
         firstPart =
             case parts of
@@ -94,7 +94,7 @@ generateWrapperFile safePkg pkgName funcs methods fieldAccessors =
                 f :: _ ->
                     f
                 
-                [  ] ->
+                [] ->
                     ""
         isExternal = String.contains "." firstPart
         candidateParent =
@@ -217,7 +217,7 @@ zipIndex : (List a) -> Int -> List (Int, a)
 zipIndex items idx =
     case items of
         
-        [  ] ->
+        [] ->
             []
         
         item :: rest ->
@@ -337,7 +337,7 @@ buildAncestorPkgsW pkgName =
                 f :: _ ->
                     f
                 
-                [  ] ->
+                [] ->
                     ""
         isExternal = String.contains "." firstPart
     in
@@ -365,7 +365,7 @@ buildAncestorsLoopW parts acc =
 checkAncestorPkgsW ancestors goType =
     case ancestors of
         
-        [  ] ->
+        [] ->
             False
         
         pkg :: rest ->
@@ -379,7 +379,7 @@ checkAncestorPkgsW ancestors goType =
 buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
     if ancestorPkg == currentPkg then
         Nothing
-
+    
     else
         let
             ancestorSafe = safePkgAlias ancestorPkg
@@ -389,7 +389,7 @@ buildAncestorImportLine currentPkg allTypeRefs ancestorPkg =
         in
             if hasRef then
                 Just ("\t" ++ ancestorSafe ++ " \"" ++ ancestorPkg ++ "\"\n")
-
+            
             else
                 Nothing
 
@@ -550,7 +550,7 @@ generateFuncWrapper safePkg pkgName func =
                 last :: _ ->
                     snd last
                 
-                [  ] ->
+                [] ->
                     ""
         canSpreadDirect =
             lastParamType == "[]any"
@@ -634,7 +634,7 @@ generateMethodWrapper safePkg pkgName method =
                 last :: _ ->
                     snd last
                 
-                [  ] ->
+                [] ->
                     ""
         mCanSpreadDirect =
             mLastParamType == "[]any"
@@ -707,10 +707,10 @@ wrapPureReturn : (List String) -> String -> String
 wrapPureReturn results goCall =
     case results of
         
-        [  ] ->
+        [] ->
             goCall ++ "\n\treturn struct{}{}"
         
-        single :: [  ] ->
+        single :: [] ->
             if String.startsWith "[" single && String.contains "]" single then
                 "result := " ++ goCall ++ "\n\treturn result[:]"
             
@@ -763,12 +763,12 @@ wrapEffectfulReturn : (List String) -> String -> String
 wrapEffectfulReturn results goCall =
     case results of
         
-        [  ] ->
+        [] ->
             "return func() (__ret any) {\n\t\t"
                 ++ "defer func() { if r := recover(); r != nil { __ret = SkyErr(_ffi_fmt.Sprintf(\"FFI panic: %v\", r)) } }()\n\t\t"
                     ++ goCall ++ "\n\t\t" ++ "return SkyOk(struct{}{})\n\t}()"
         
-        single :: [  ] ->
+        single :: [] ->
             let
                 isFixedArray =
                     String.startsWith "[" single && String.contains "]" single
@@ -815,17 +815,18 @@ wrapEffectfulReturn results goCall =
 shortPkgName : String -> String
 shortPkgName pkgPath =
     case List.reverse (String.split "/" pkgPath) of
-
+        
         last :: _ ->
             last
-
-        [  ] ->
+        
+        [] ->
             pkgPath
 
 
 safePkgAlias : String -> String
 safePkgAlias pkgPath =
-    String.replace "-" "_" (String.replace "/" "_" (String.replace "." "_" pkgPath))
+    String.replace "-" "_"
+        (String.replace "/" "_" (String.replace "." "_" pkgPath))
 
 
 extractFunctions : String -> List FuncEntry
