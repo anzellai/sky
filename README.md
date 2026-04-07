@@ -106,8 +106,8 @@ docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky run src/Main.sky
 
 | Version | Focus | Status |
 |---------|-------|--------|
-| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 16 examples, `Std.Db` | Current |
-| **v0.8.0** | Standard library expansion: `Std.Auth`, `Std.Log`, `Std.Db.Doc` (Redis/Firestore). Fix nested `case...of`, ADT cross-module bugs, LSP diagnostics | Planned |
+| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 16 examples, `Std.Db`, Elm-style error messages, exhaustiveness checking | Current |
+| **v0.8.0** | Standard library: `Std.Auth`, `Std.Log`, `Std.Db.Doc` (Redis/Firestore). Fix nested `case...of`, ADT cross-module bugs. Expression-level error spans. Go interface/callback type checking | Planned |
 | **v0.9.0** | Stable compiler with full LSP/check support. Most common app types buildable without workarounds. Comprehensive real-world examples across domains | Planned |
 | **v1.0.0** | Fully typed codegen (no `any`), production-ready. Everything type-safe end-to-end. Milestone: Sky is ready for production use | Goal |
 
@@ -1553,6 +1553,7 @@ Sky is under active development. These are current limitations to be aware of:
 | **`exposing (Constructor(..))` breaks qualified calls** | Importing ADT constructors via `exposing` in dependency modules breaks the lowerer's module resolution. Use qualified accessor functions instead. |
 | **Cross-module zero-arg ADT constructors** | `Piece.King` emits as a function call instead of a value. Define lowercase accessors (`king = King`) as a workaround. |
 | **`Dict.toList` returns string keys** | Dict uses `map[string]any` internally. Iterate over known key ranges with `Dict.get` instead of `Dict.toList` for Int-keyed Dicts. |
+| **Non-exhaustive case** | Now a compile error — was silently ignored. Shows missing pattern names. |
 | **`sky check` doesn't understand Go interfaces** | Concrete types (e.g. `Label`) can't unify with Go interfaces (e.g. `CanvasObject`). Code compiles and runs fine. |
 | **`sky check` doesn't understand Go callback types** | FFI callback params like `func(ResponseWriter, *Request)` can't unify with Sky functions. Runtime wrapping works correctly. |
 | **Zero-arg FFI functions need no `()`** | Call `Uuid.newString` not `Uuid.newString ()` — the binding declares the return type directly. |
