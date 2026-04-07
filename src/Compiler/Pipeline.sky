@@ -803,8 +803,16 @@ dceMainGo outDir goCode =
 
                         Err _ ->
                             ""
+                dbRuntimeContent =
+                    case File.readFile (outDir ++ "/skydb_runtime.go") of
+
+                        Ok content ->
+                            content
+
+                        Err _ ->
+                            ""
             in
-                wrapperCat ++ "\n" ++ liveInitContent
+                wrapperCat ++ "\n" ++ liveInitContent ++ "\n" ++ dbRuntimeContent
         wrapperSeeds =
             List.filter (\name -> String.contains name wrapperContent)
                 (Dict.keys funcMap)

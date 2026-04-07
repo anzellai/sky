@@ -1537,7 +1537,76 @@ lowerQualified ctx parts =
         
         else if qualName == "Live.route" then
             GoIdent "sky_liveRoute"
-        
+
+        else if qualName == "Db.open" then
+            GoIdent "sky_dbOpen"
+
+        else if qualName == "Db.close" then
+            GoIdent "sky_dbClose"
+
+        else if qualName == "Db.exec" then
+            GoIdent "sky_dbExec"
+
+        else if qualName == "Db.query" then
+            GoIdent "sky_dbQuery"
+
+        else if qualName == "Db.queryOne" then
+            GoIdent "sky_dbQueryOne"
+
+        else if qualName == "Db.execRaw" then
+            GoIdent "sky_dbExecRaw"
+
+        else if qualName == "Db.queryDecode" then
+            GoIdent "sky_dbQueryDecode"
+
+        else if qualName == "Db.queryOneDecode" then
+            GoIdent "sky_dbQueryOneDecode"
+
+        else if qualName == "Db.insertRow" then
+            GoIdent "sky_dbInsertRow"
+
+        else if qualName == "Db.getById" then
+            GoIdent "sky_dbGetById"
+
+        else if qualName == "Db.getByIdDecode" then
+            GoIdent "sky_dbGetByIdDecode"
+
+        else if qualName == "Db.updateById" then
+            GoIdent "sky_dbUpdateById"
+
+        else if qualName == "Db.deleteById" then
+            GoIdent "sky_dbDeleteById"
+
+        else if qualName == "Db.findWhere" then
+            GoIdent "sky_dbFindWhere"
+
+        else if qualName == "Db.findWhereDecode" then
+            GoIdent "sky_dbFindWhereDecode"
+
+        else if qualName == "Db.getField" then
+            GoIdent "sky_dbGetField"
+
+        else if qualName == "Db.getInt" then
+            GoIdent "sky_dbGetInt"
+
+        else if qualName == "Db.getBool" then
+            GoIdent "sky_dbGetBool"
+
+        else if qualName == "Db.rawConn" then
+            GoIdent "sky_dbRawConn"
+
+        else if qualName == "Db.withTransaction" then
+            GoIdent "sky_dbWithTransaction"
+
+        else if qualName == "Db.txExec" then
+            GoIdent "sky_dbTxExec"
+
+        else if qualName == "Db.txQuery" then
+            GoIdent "sky_dbTxQuery"
+
+        else if qualName == "Db.txQueryDecode" then
+            GoIdent "sky_dbTxQueryDecode"
+
         else if List.length parts == 2 then
             let
                 modPart =
@@ -3686,6 +3755,7 @@ isStdlibQualified parts =
                 || first == "Events"
                 || first == "Css"
                 || first == "Live"
+                || first == "Db"
         
         Nothing ->
             False

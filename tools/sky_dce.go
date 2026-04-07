@@ -256,6 +256,11 @@ func readWrapperContent(outDir string) string {
 	if data, err := os.ReadFile(liveInit); err == nil {
 		sb.Write(data)
 	}
+	// Also read skydb_runtime.go if present — Sky.Db helpers reference main.go functions
+	dbRuntime := filepath.Join(outDir, "skydb_runtime.go")
+	if data, err := os.ReadFile(dbRuntime); err == nil {
+		sb.Write(data)
+	}
 	return sb.String()
 }
 
