@@ -1,0 +1,109 @@
+module Compiler.ErrorFormat exposing (formatError, formatErrors)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Compiler.Token exposing (..)
+
+
+formatErrors : String -> (List CompilerError) -> String
+formatErrors source errors =
+    String.join "\n\n" (List.map (formatError source) errors)
+
+
+formatError : String -> CompilerError -> String
+formatError source err =
+    let
+        header = formatHeader err
+        body = formatBody source err
+        hint = formatHint err.hint
+    in
+        header ++ "\n\n" ++ body ++ hint
+
+
+formatHeader : CompilerError -> String
+formatHeader err =
+    let
+        location = formatLocation err
+        dashes = String.repeat (maxInt 1 (60 - String.length err.category - String.length location - 6)) "─"
+    in
+        "── " ++ err.category ++ " " ++ dashes ++ " " ++ location ++ " ──"
+
+
+formatLocation : CompilerError -> String
+formatLocation err =
+    if err.span.start.line == 0 then
+        if String.isEmpty err.filePath then
+            ""
+
+        else
+            err.filePath
+
+    else if String.isEmpty err.filePath then
+        "line " ++ String.fromInt err.span.start.line
+
+    else
+        err.filePath ++ ":" ++ String.fromInt err.span.start.line ++ ":" ++ String.fromInt err.span.start.column
+
+
+formatBody : String -> CompilerError -> String
+formatBody source err =
+    if err.span.start.line == 0 then
+        err.message
+
+    else
+        let
+            sourceLine = getSourceLine source err.span.start.line
+            lineNum = String.fromInt err.span.start.line
+            padding = String.repeat (String.length lineNum) " "
+            underline = buildUnderline err.span
+        in
+            err.message
+                ++ "\n\n"
+                    ++ padding ++ " │\n"
+                        ++ lineNum ++ " │ " ++ sourceLine ++ "\n"
+                            ++ padding ++ " │ " ++ underline
+
+
+getSourceLine : String -> Int -> String
+getSourceLine source lineNum =
+    let
+        lines = String.split "\n" source
+        targetLine = List.drop (lineNum - 1) lines
+    in
+        case targetLine of
+
+            line :: _ ->
+                line
+
+            [] ->
+                ""
+
+
+buildUnderline : SourceSpan -> String
+buildUnderline span =
+    let
+        startCol = maxInt 0 (span.start.column - 1)
+        len = maxInt 1 (span.end.column - span.start.column)
+        spaces = String.repeat startCol " "
+        carets = String.repeat len "^"
+    in
+        spaces ++ carets
+
+
+formatHint : String -> String
+formatHint hint =
+    if String.isEmpty hint then
+        ""
+
+    else
+        "\n\nHint: " ++ hint
+
+
+maxInt : Int -> Int -> Int
+maxInt a b =
+    if a > b then
+        a
+
+    else
+        b

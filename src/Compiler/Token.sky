@@ -53,6 +53,35 @@ emptySpan =
     }
 
 
+type alias CompilerError =
+    { category : String
+    , message : String
+    , span : SourceSpan
+    , filePath : String
+    , hint : String
+    }
+
+
+wrapError : String -> CompilerError
+wrapError msg =
+    { category = "ERROR"
+    , message = msg
+    , span = emptySpan
+    , filePath = ""
+    , hint = ""
+    }
+
+
+makeError : String -> String -> SourceSpan -> String -> CompilerError
+makeError category msg span hint =
+    { category = category
+    , message = msg
+    , span = span
+    , filePath = ""
+    , hint = hint
+    }
+
+
 isKeyword : String -> Bool
 isKeyword word =
     word == "module"

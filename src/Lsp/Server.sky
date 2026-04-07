@@ -236,7 +236,7 @@ analyzeAndPublishDiagnostics state uri text =
                         case checkResult of
                             
                             Ok result ->
-                                List.map (\msg -> makeDiagnostic 1 msg)
+                                List.map (\err -> makeDiagnosticFromError err)
                                     result.diagnostics
                             
                             Err err ->
@@ -716,6 +716,45 @@ makeDiagnostic severity msg =
         , ( "severity", jsonInt severity )
         , ( "message", jsonString msg )
         ]
+
+
+makeDiagnosticFromError : CompilerError -> String
+makeDiagnosticFromError err =
+    let
+        sl = err.span.start.line - 1
+        sc = err.span.start.column - 1
+        el = err.span.end.line - 1
+        ec = err.span.end.column - 1
+        startLine =
+            if sl < 0 then
+                0
+
+            else
+                sl
+        startCol =
+            if sc < 0 then
+                0
+
+            else
+                sc
+        endLine =
+            if el < 0 then
+                0
+
+            else
+                el
+        endCol =
+            if ec < 1 then
+                1
+
+            else
+                ec
+    in
+        jsonObject
+            [ ( "range", makeRange startLine startCol endLine endCol )
+            , ( "severity", jsonInt 1 )
+            , ( "message", jsonString err.message )
+            ]
 
 
 makeRange : Int -> Int -> Int -> Int -> String

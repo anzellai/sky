@@ -12,12 +12,13 @@ import Compiler.Env as Env
 import Compiler.Infer as Infer
 import Compiler.Unify as Unify
 import Compiler.Exhaustive as Exhaustive
+import Compiler.Token exposing (CompilerError, wrapError)
 
 type alias CheckResult =
     { env : Env.TypeEnv
     , registry : AdtRegistry
     , declarations : List TypedDecl
-    , diagnostics : List String
+    , diagnostics : List CompilerError
     , typeAliases : Dict.Dict String Type
     }
 
@@ -28,6 +29,47 @@ type alias TypedDecl =
 
 makeTypedDecl : String -> Scheme -> Type -> TypedDecl
 makeTypedDecl n s t = { name = n , scheme = s , prettyType = formatType t }
+
+
+makeFunError : String -> String -> Declaration -> CompilerError
+makeFunError fnName msg decl =
+    let
+        fullMsg =
+            if String.startsWith "In function" msg then
+                msg
+
+            else
+                "In function '" ++ fnName ++ "': " ++ msg
+    in
+        { category = "TYPE MISMATCH"
+        , message = fullMsg
+        , span = declSpan decl
+        , filePath = ""
+        , hint = ""
+        }
+
+
+declSpan : Declaration -> SourceSpan
+declSpan decl =
+    case decl of
+
+        FunDecl _ _ _ s ->
+            s
+
+        TypeDecl _ _ _ s ->
+            s
+
+        TypeAliasDecl _ _ _ s ->
+            s
+
+        PortDecl _ _ s ->
+            s
+
+        ForeignDecl _ _ s ->
+            s
+
+        InfixDecl _ _ _ s ->
+            s
 
 
 checkModule : Module -> (Maybe Env.TypeEnv) -> Result String CheckResult
@@ -81,7 +123,12 @@ checkModuleWithRegistryAndAliases mod imports importedRegistry importedAliases =
                 annotations
                 qualifiedAliases
         exhaustDiags = checkAllExhaustiveness registry mod.declarations
-        allDiags = List.concat [ adtDiags , inferDiags , exhaustDiags ]
+        allDiags =
+            List.concat
+                [ List.map wrapError adtDiags
+                , inferDiags
+                , List.map wrapError exhaustDiags
+                ]
     in
         Ok
             { env = finalEnv
@@ -247,19 +294,22 @@ inferOneFunDecl counter registry env fnName decl rest annotations typeAliases ty
         case Infer.inferDeclaration counter registry env decl annotation typeAliases of
             
             Ok inferResult ->
-                addTypedDeclAndContinue counter registry env rest annotations
+                addTypedDeclAndContinue counter registry env decl rest annotations
                     typeAliases
                     typedDecls
                     diagnostics
                     inferResult
             
             Err e ->
-                inferDeclsLoop counter registry env rest annotations typeAliases
-                    typedDecls
-                    (e :: diagnostics)
+                let
+                    err = makeFunError fnName e decl
+                in
+                    inferDeclsLoop counter registry env rest annotations typeAliases
+                        typedDecls
+                        (err :: diagnostics)
 
 
-addTypedDeclAndContinue counter registry env rest annotations typeAliases typedDecls diagnostics inferResult =
+addTypedDeclAndContinue counter registry env decl rest annotations typeAliases typedDecls diagnostics inferResult =
     let
         nm = inferResult.name
         sc = inferResult.scheme
@@ -267,7 +317,11 @@ addTypedDeclAndContinue counter registry env rest annotations typeAliases typedD
         td = makeTypedDecl nm sc tp
         newDecls = td :: typedDecls
         newEnv = Env.extend nm sc env
-        newDiags = List.append diagnostics inferResult.diagnostics
+        wrappedDiags =
+            List.map
+                (\msg -> makeFunError nm msg decl)
+                inferResult.diagnostics
+        newDiags = List.append diagnostics wrappedDiags
     in
         inferDeclsLoop counter registry newEnv rest annotations typeAliases
             newDecls

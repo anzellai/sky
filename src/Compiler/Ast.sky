@@ -104,3 +104,71 @@ type alias ImportDecl =
     , exposing_ : ExposingClause
     , span : SourceSpan
     }
+
+
+exprSpan : Expression -> SourceSpan
+exprSpan expr =
+    case expr of
+
+        IdentifierExpr _ s ->
+            s
+
+        QualifiedExpr _ s ->
+            s
+
+        IntLitExpr _ _ s ->
+            s
+
+        FloatLitExpr _ _ s ->
+            s
+
+        StringLitExpr _ s ->
+            s
+
+        CharLitExpr _ s ->
+            s
+
+        BoolLitExpr _ s ->
+            s
+
+        UnitExpr s ->
+            s
+
+        TupleExpr _ s ->
+            s
+
+        ListExpr _ s ->
+            s
+
+        RecordExpr _ s ->
+            s
+
+        RecordUpdateExpr _ _ s ->
+            s
+
+        FieldAccessExpr _ _ s ->
+            s
+
+        CallExpr _ _ s ->
+            s
+
+        LambdaExpr _ _ s ->
+            s
+
+        IfExpr _ _ _ s ->
+            s
+
+        LetExpr _ _ s ->
+            s
+
+        CaseExpr _ _ s ->
+            s
+
+        BinaryExpr _ _ _ s ->
+            s
+
+        NegateExpr _ s ->
+            s
+
+        ParenExpr _ s ->
+            s
