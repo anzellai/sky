@@ -31,6 +31,47 @@ makeTypedDecl : String -> Scheme -> Type -> TypedDecl
 makeTypedDecl n s t = { name = n , scheme = s , prettyType = formatType t }
 
 
+makeFunError : String -> String -> Declaration -> CompilerError
+makeFunError fnName msg decl =
+    let
+        fullMsg =
+            if String.startsWith "In function" msg then
+                msg
+
+            else
+                "In function '" ++ fnName ++ "': " ++ msg
+    in
+        { category = "TYPE MISMATCH"
+        , message = fullMsg
+        , span = declSpan decl
+        , filePath = ""
+        , hint = ""
+        }
+
+
+declSpan : Declaration -> SourceSpan
+declSpan decl =
+    case decl of
+
+        FunDecl _ _ _ s ->
+            s
+
+        TypeDecl _ _ _ s ->
+            s
+
+        TypeAliasDecl _ _ _ s ->
+            s
+
+        PortDecl _ _ s ->
+            s
+
+        ForeignDecl _ _ s ->
+            s
+
+        InfixDecl _ _ _ s ->
+            s
+
+
 checkModule : Module -> (Maybe Env.TypeEnv) -> Result String CheckResult
 checkModule mod imports = checkModuleWithRegistry mod imports Nothing
 
@@ -260,9 +301,12 @@ inferOneFunDecl counter registry env fnName decl rest annotations typeAliases ty
                     inferResult
             
             Err e ->
-                inferDeclsLoop counter registry env rest annotations typeAliases
-                    typedDecls
-                    (wrapError e :: diagnostics)
+                let
+                    err = makeFunError fnName e decl
+                in
+                    inferDeclsLoop counter registry env rest annotations typeAliases
+                        typedDecls
+                        (err :: diagnostics)
 
 
 addTypedDeclAndContinue counter registry env rest annotations typeAliases typedDecls diagnostics inferResult =

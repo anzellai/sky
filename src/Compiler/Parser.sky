@@ -29,7 +29,13 @@ dispatchDeclaration first second state =
         parseFunDecl state
     
     else
-        Err ("Unexpected token: " ++ first)
+        let
+            token = peek state
+            loc =
+                String.fromInt token.span.start.line
+                    ++ ":" ++ String.fromInt token.span.start.column
+        in
+            Err ("Unexpected token at " ++ loc ++ ": " ++ first)
 
 
 parseVariantFields : ParserState -> (List TypeExpr, ParserState)
@@ -413,7 +419,7 @@ parseTypeAlias state =
                                     Ok
                                         ( TypeAliasDecl name.lexeme params
                                               typeExpr
-                                              emptySpan, s6 )
+                                              name.span, s6 )
 
 
 parseTypeDecl : ParserState -> Result String (Declaration, ParserState)
@@ -441,7 +447,7 @@ parseTypeDecl state =
                             in
                                 Ok
                                     ( TypeDecl name.lexeme params variants
-                                          emptySpan, s5 )
+                                          name.span, s5 )
 
 
 parseTypeParams : ParserState -> (List String, ParserState)
@@ -590,7 +596,13 @@ parseTypePrimary state =
         parseRecordType state
     
     else
-        Err ("Unexpected token in type: " ++ peekLexeme state)
+        let
+            token = peek state
+            loc =
+                String.fromInt token.span.start.line
+                    ++ ":" ++ String.fromInt token.span.start.column
+        in
+            Err ("Unexpected token in type at " ++ loc ++ ": " ++ peekLexeme state)
 
 
 parseTupleTypeRest : (List TypeExpr) -> ParserState -> Result String (TypeExpr, ParserState)
@@ -714,7 +726,7 @@ parseFunDecl state =
                         Err e
                     
                     Ok ( body, s4 ) ->
-                        Ok ( FunDecl name.lexeme params body emptySpan, s4 )
+                        Ok ( FunDecl name.lexeme params body name.span, s4 )
 
 
 parseFunParams : ParserState -> (List Pattern, ParserState)

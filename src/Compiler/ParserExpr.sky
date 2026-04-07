@@ -314,7 +314,13 @@ parsePrimary state =
             Ok ( BoolLitExpr False tok.span, s1 )
     
     else
-        Err ("Unexpected token: " ++ peekLexeme state)
+        let
+            token = peek state
+            loc =
+                String.fromInt token.span.start.line
+                    ++ ":" ++ String.fromInt token.span.start.column
+        in
+            Err ("Unexpected token at " ++ loc ++ ": " ++ peekLexeme state)
 
 
 parseCaseExpr : ParserState -> Result String (Expression, ParserState)

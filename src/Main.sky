@@ -18,6 +18,7 @@ import Formatter.Format as Format
 import Lsp.Server as LspServer
 import Ffi.BindingGen as BindingGen
 import Compiler.LowerTyped as LowerTyped
+import Compiler.ErrorFormat as ErrorFormat
 
 main =
     let
@@ -348,38 +349,37 @@ checkSource entryFile source =
                             (Just registry)
                             (Just aliases)
                 in
-                    handleCheckResult entryFile checkResult
+                    handleCheckResult entryFile source checkResult
 
 
-handleCheckResult entryFile checkResult =
+handleCheckResult entryFile source checkResult =
     case checkResult of
-        
+
         Ok result ->
             if List.isEmpty result.diagnostics then
                 let
                     _ = println ("Type check passed: " ++ entryFile)
                 in
                     ()
-            
+
             else
                 let
                     _ =
-                        List.map (\d -> println ("  [!] " ++ d.message))
+                        List.map
+                            (\d -> println (ErrorFormat.formatError source d))
                             result.diagnostics
                     _ = println ""
+                    _ =
+                        println
+                            (
+                            "Type check failed with "
+                                ++ String.fromInt
+                                       (List.length result.diagnostics)
+                                    ++ " error(s): " ++ entryFile
+                            )
                 in
-                    let
-                        _ =
-                            println
-                                (
-                                "Type check failed with "
-                                    ++ String.fromInt
-                                           (List.length result.diagnostics)
-                                        ++ " error(s): " ++ entryFile
-                                )
-                    in
-                        Process.exit 1
-        
+                    Process.exit 1
+
         Err e ->
             let
                 _ = println ("Type error: " ++ e)
