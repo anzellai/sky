@@ -5,8 +5,7 @@ import Sky.Core.Result as Result
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Sky.Core.String as String
-import Std.Db as Db
-import Lib.Database as Database
+import Lib.Db as Db
 
 createComment ideaId authorId content =
     let
@@ -14,7 +13,7 @@ createComment ideaId authorId content =
             String.slice 0 12
                 (Crypto.sha256 (ideaId ++ ":" ++ authorId ++ ":" ++ content))
         result =
-            Db.exec (Database.conn ())
+            Db.exec
                 "INSERT INTO comments (id, idea_id, author_id, content) VALUES (?, ?, ?, ?)"
                 [ id , ideaId , authorId , content ]
         _ = println ("[COMMENT] Added on " ++ ideaId ++ " by " ++ authorId)
@@ -25,7 +24,7 @@ createComment ideaId authorId content =
 getComments ideaId =
     Result.withDefault []
         (
-        Db.query (Database.conn ())
+        Db.queryRows
             "SELECT c.id, c.content, c.created_at, u.username as author_name FROM comments c LEFT JOIN users u ON c.author_id = u.id WHERE c.idea_id = ? ORDER BY c.created_at ASC"
             [ ideaId ]
         )

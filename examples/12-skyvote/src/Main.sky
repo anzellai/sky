@@ -13,8 +13,7 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Time as Time
 import State exposing (..)
-import Std.Db as Db
-import Lib.Database as Database
+import Lib.Db as Db
 import Lib.Schema as Schema
 import Lib.Auth as Auth
 import Lib.Ideas as Ideas
@@ -199,7 +198,7 @@ update msg model =
 -- HELPERS
 -- ======================================================
 logActivity event targetId userId =
-    Db.exec (Database.conn ())
+    Db.exec
         "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
         [ event ++ "-" ++ targetId , event , targetId , userId ]
 

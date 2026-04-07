@@ -9,8 +9,7 @@ import Sky.Core.String as String
 import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
 import Std.Log exposing (println)
-import Std.Db as Db
-import Lib.Database as Database
+import Lib.Db as Db
 import Lib.Auth as Auth
 import Lib.Notes as Notes
 import Lib.View as View
@@ -21,15 +20,15 @@ import Lib.View as View
 initDb _ =
     let
         _ =
-            Db.exec (Database.conn ())
+            Db.exec
                 "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, verified INTEGER DEFAULT 0, verification_token TEXT, created_at TEXT DEFAULT (datetime('now')))"
                 []
         _ =
-            Db.exec (Database.conn ())
+            Db.exec
                 "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))"
                 []
         _ =
-            Db.exec (Database.conn ())
+            Db.exec
                 "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT '')"
                 []
     in
@@ -199,7 +198,7 @@ handleSignOut : a -> Request -> Task String Response
 handleSignOut _ req =
     let
         token = getSessionToken req
-        _ = Db.exec (Database.conn ()) "DELETE FROM sessions WHERE token = ?" [ token ]
+        _ = Db.exec "DELETE FROM sessions WHERE token = ?" [ token ]
     in
         Task.succeed
             (

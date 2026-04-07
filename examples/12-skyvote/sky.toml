@@ -8,8 +8,10 @@ root = "src"
 [live]
 port = 4000
 
+[database]
+driver = "sqlite"
+path = "skyvote.db"
+
 ["go.dependencies"]
-"database/sql" = "latest"
-"modernc.org/sqlite" = "latest"
 "crypto/sha256" = "latest"
 "encoding/hex" = "latest"

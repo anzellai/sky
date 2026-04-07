@@ -5,11 +5,13 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
+[database]
+driver = "sqlite"
+path = "skynotes.db"
+
 ["go.dependencies"]
 "net/http" = "latest"
 "github.com/gorilla/mux" = "latest"
-"database/sql" = "latest"
-"modernc.org/sqlite" = "latest"
 "crypto/sha256" = "latest"
 "encoding/hex" = "latest"
 "github.com/google/uuid" = "latest"

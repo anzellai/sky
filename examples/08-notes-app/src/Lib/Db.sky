@@ -1,4 +1,4 @@
-module Lib.Database exposing (conn, getField)
+module Lib.Db exposing (conn, exec, queryRows, getField)
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe as Maybe
@@ -6,7 +6,7 @@ import Sky.Core.Dict as Dict
 import Std.Db as Db
 
 
-conn _ =
+conn =
     case Db.open "sqlite" "skynotes.db" of
 
         Ok c ->
@@ -14,6 +14,14 @@ conn _ =
 
         Err _ ->
             identity ""
+
+
+exec queryStr args =
+    Db.exec conn queryStr args
+
+
+queryRows queryStr args =
+    Db.query conn queryStr args
 
 
 getField field row =

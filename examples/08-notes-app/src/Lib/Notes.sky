@@ -3,26 +3,25 @@ module Lib.Notes exposing (createNote, updateNote, deleteNote, getNotes, getNote
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
-import Std.Db as Db
-import Lib.Database as Database
+import Lib.Db as Db
 
 createNote userId title content =
-    Db.exec (Database.conn ()) "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
+    Db.exec "INSERT INTO notes (user_id, title, content) VALUES (?, ?, ?)"
         [ userId , title , content ]
 
 
 updateNote noteId userId title content =
-    Db.exec (Database.conn ())
+    Db.exec
         "UPDATE notes SET title = ?, content = ?, updated_at = datetime('now') WHERE id = ? AND user_id = ?"
         [ title , content , noteId , userId ]
 
 
 deleteNote noteId userId =
-    Db.exec (Database.conn ()) "DELETE FROM notes WHERE id = ? AND user_id = ?" [ noteId , userId ]
+    Db.exec "DELETE FROM notes WHERE id = ? AND user_id = ?" [ noteId , userId ]
 
 
 getNotes userId =
-    Db.query (Database.conn ())
+    Db.queryRows
         "SELECT id, title, content, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC"
         [ userId ]
 
@@ -30,7 +29,7 @@ getNotes userId =
 getNote noteId userId =
     let
         rows =
-            Db.query (Database.conn ())
+            Db.queryRows
                 "SELECT id, title, content, created_at, updated_at FROM notes WHERE id = ? AND user_id = ? LIMIT 1"
                 [ noteId , userId ]
     in

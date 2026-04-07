@@ -1981,7 +1981,7 @@ flattenCall ctx callee args =
                 else if isExposed then
                     ( callee, args )
                 
-                else if isStdlibCallee innerCallee then
+                else if isStdlibCallee ctx innerCallee then
                     ( callee, args )
                 
                 else
@@ -3708,20 +3708,37 @@ isGoKeyword name =
         || name == "uintptr"
 
 
-isStdlibCallee : Expression -> Bool
-isStdlibCallee expr =
+isStdlibCallee : LowerCtx -> Expression -> Bool
+isStdlibCallee ctx expr =
     case expr of
-        
+
         QualifiedExpr parts _ ->
-            isStdlibQualified parts
-        
+            isStdlibQualifiedWithCtx ctx parts
+
         IdentifierExpr name _ ->
             String.startsWith "sky_" name
-        
+
         CallExpr innerCallee _ _ ->
-            isStdlibCallee innerCallee
-        
+            isStdlibCallee ctx innerCallee
+
         _ ->
+            False
+
+
+isStdlibQualifiedWithCtx : LowerCtx -> (List String) -> Bool
+isStdlibQualifiedWithCtx ctx parts =
+    case List.head parts of
+
+        Just qualifier ->
+            case Dict.get qualifier ctx.importAliases of
+
+                Just _ ->
+                    False
+
+                Nothing ->
+                    isStdlibQualified parts
+
+        Nothing ->
             False
 
 
