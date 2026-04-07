@@ -1124,41 +1124,41 @@ import Github.Com.Anzellai.SkyTailwind.Tailwind as Tw
 
 Resolution precedence: local `src/` > `.skydeps/` > stdlib. Local modules shadow dependencies; use full/prefixed path to disambiguate. Only modules listed in the package's `[lib].exposing` are importable.
 
-## Sky.Db — Database Abstraction
+## Std.Db — Database Abstraction
 
 ```elm
-import Sky.Db as SkyDb
+import Std.Db as Db
 import Modernc.Org.Sqlite as _   -- driver import needed for SQLite
 
 -- Open connection
-case SkyDb.open "sqlite" "myapp.db" of
+case Db.open "sqlite" "myapp.db" of
     Ok conn -> ...
     Err e -> ...
 
 -- Parameterised queries (injection-safe)
-SkyDb.exec conn "INSERT INTO t (name) VALUES (?)" ["val"]
-SkyDb.query conn "SELECT * FROM t WHERE x = ?" ["val"]
-SkyDb.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
+Db.exec conn "INSERT INTO t (name) VALUES (?)" ["val"]
+Db.query conn "SELECT * FROM t WHERE x = ?" ["val"]
+Db.execRaw conn "CREATE TABLE IF NOT EXISTS t (...)"
 
 -- Typed queries via Json.Decode
-SkyDb.queryDecode conn "SELECT * FROM t" [] myDecoder
-SkyDb.queryOneDecode conn "SELECT * FROM t WHERE id = ?" [id] myDecoder
+Db.queryDecode conn "SELECT * FROM t" [] myDecoder
+Db.queryOneDecode conn "SELECT * FROM t WHERE id = ?" [id] myDecoder
 
 -- Convenience
-SkyDb.insertRow conn "table" (Dict.fromList [("col", "val")])
-SkyDb.getById conn "table" "123"
-SkyDb.updateById conn "table" "123" (Dict.fromList [("col", "new")])
-SkyDb.deleteById conn "table" "123"
-SkyDb.findWhere conn "table" "column" "value"
+Db.insertRow conn "table" (Dict.fromList [("col", "val")])
+Db.getById conn "table" "123"
+Db.updateById conn "table" "123" (Dict.fromList [("col", "new")])
+Db.deleteById conn "table" "123"
+Db.findWhere conn "table" "column" "value"
 
 -- Row helpers (for untyped Dict queries)
-SkyDb.getField "name" row   -- String
-SkyDb.getInt "count" row     -- Int
-SkyDb.getBool "done" row     -- Bool
+Db.getField "name" row   -- String
+Db.getInt "count" row     -- Int
+Db.getBool "done" row     -- Bool
 
 -- Transactions
-SkyDb.withTransaction conn (\tx ->
-    let _ = SkyDb.txExec tx "..." []
+Db.withTransaction conn (\tx ->
+    let _ = Db.txExec tx "..." []
     in Ok ()
 )
 ```

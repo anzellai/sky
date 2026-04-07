@@ -1,6 +1,6 @@
 module Main exposing (main)
 
--- 07-todo-cli: A TODO app with SQLite persistence using Sky.SkyDb.
+-- 07-todo-cli: A TODO app with SQLite persistence using Sky.Db.
 --
 -- Usage:
 --   ./app add "Buy groceries"     Add a new todo
@@ -15,21 +15,20 @@ import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Sky.Core.Result as Result
 import Sky.Core.Maybe as Maybe
-import Sky.Db as SkyDb
-import Modernc.Org.Sqlite as _
+import Std.Db as Db
 import Os
 import Log.Slog as Slog
 import Std.Log exposing (println)
 
 
 initDb conn =
-    SkyDb.execRaw conn
+    Db.execRaw conn
         "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
 
 
 addTodo conn todoTitle =
     let
-        _ = SkyDb.insertRow conn "todos" (Dict.fromList [ ( "title", todoTitle ) ])
+        _ = Db.insertRow conn "todos" (Dict.fromList [ ( "title", todoTitle ) ])
         _ = Slog.info "Action" [ "Added:", todoTitle ]
     in
         println ("Added: " ++ todoTitle)
@@ -37,7 +36,7 @@ addTodo conn todoTitle =
 
 listTodos conn =
     let
-        rows = Result.withDefault [] (SkyDb.query conn "SELECT id, title, done FROM todos ORDER BY id" [])
+        rows = Result.withDefault [] (Db.query conn "SELECT id, title, done FROM todos ORDER BY id" [])
     in
         if List.isEmpty rows then
             println "No todos yet. Add one with: ./app add \"My task\""
@@ -52,9 +51,9 @@ listTodos conn =
 
 formatTodo row =
     let
-        todoId = SkyDb.getField "id" row
-        todoName = SkyDb.getField "title" row
-        todoDone = SkyDb.getField "done" row
+        todoId = Db.getField "id" row
+        todoName = Db.getField "title" row
+        todoDone = Db.getField "done" row
         status =
             if todoDone == "1" then
                 "[x]"
@@ -67,28 +66,28 @@ formatTodo row =
 
 markDone conn idStr =
     let
-        _ = SkyDb.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [ idStr ]
+        _ = Db.exec conn "UPDATE todos SET done = 1 WHERE id = ?" [ idStr ]
     in
         println ("Marked as done: " ++ idStr)
 
 
 markUndone conn idStr =
     let
-        _ = SkyDb.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [ idStr ]
+        _ = Db.exec conn "UPDATE todos SET done = 0 WHERE id = ?" [ idStr ]
     in
         println ("Marked as not done: " ++ idStr)
 
 
 removeTodo conn idStr =
     let
-        _ = SkyDb.exec conn "DELETE FROM todos WHERE id = ?" [ idStr ]
+        _ = Db.exec conn "DELETE FROM todos WHERE id = ?" [ idStr ]
     in
         println ("Removed todo: " ++ idStr)
 
 
 clearDone conn =
     let
-        _ = SkyDb.exec conn "DELETE FROM todos WHERE done = 1" []
+        _ = Db.exec conn "DELETE FROM todos WHERE done = 1" []
     in
         println "Cleared completed todos"
 
@@ -157,7 +156,7 @@ runCommand conn cmd cmdArg =
 
 
 main =
-    case SkyDb.open "sqlite" "todos.db" of
+    case Db.open "sqlite" "todos.db" of
 
         Err e ->
             println ("Database error: " ++ e)

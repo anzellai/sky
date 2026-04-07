@@ -940,19 +940,30 @@ buildReachableSet pending visited funcMap =
 
 collectBlankImports : (List Ast.ImportDecl) -> List GoImport
 collectBlankImports imports =
-    List.filterMap
-        (
-        \imp ->
-            if imp.alias_ == "_" then
-                let
-                    modName = String.join "." imp.moduleName
-                in
-                    Just { path = skyModuleToGoImport modName , alias_ = "_" }
-            
+    let
+        userBlanks =
+            List.filterMap
+                (\imp ->
+                    if imp.alias_ == "_" then
+                        let
+                            modName = String.join "." imp.moduleName
+                        in
+                            Just { path = skyModuleToGoImport modName , alias_ = "_" }
+
+                    else
+                        Nothing
+                )
+                imports
+        hasStdDb =
+            List.any (\imp -> String.join "." imp.moduleName == "Std.Db") imports
+        dbDriverImports =
+            if hasStdDb then
+                [ { path = "modernc.org/sqlite" , alias_ = "_" } ]
+
             else
-                Nothing
-        )
-        imports
+                []
+    in
+        List.append userBlanks dbDriverImports
 
 
 makeGoPackageWithImports : (List GoDecl) -> (List GoImport) -> GoPackage
@@ -2337,7 +2348,7 @@ generateAliasesForImport allModules imp =
     let
         modName = String.join "." imp.moduleName
     in
-        if modName == "Sky.Db" then
+        if modName == "Std.Db" then
             generateSkyDbAliases
 
         else if Resolver.isStdlib modName then
@@ -2383,7 +2394,7 @@ generateSkyDbAliases =
                     name = fst pair
                     goFn = snd pair
                 in
-                    [ GoDeclRaw ("var Sky_Db_" ++ name ++ " = " ++ goFn)
+                    [ GoDeclRaw ("var Std_Db_" ++ name ++ " = " ++ goFn)
                     ]
             )
             fns

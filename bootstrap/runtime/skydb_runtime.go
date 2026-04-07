@@ -383,7 +383,16 @@ func skyListToSqlArgs(list any) []any {
 	items := sky_asList(list)
 	args := make([]any, len(items))
 	for i, item := range items {
-		args[i] = sky_asString(item)
+		switch v := item.(type) {
+		case int:
+			args[i] = v
+		case float64:
+			args[i] = v
+		case bool:
+			args[i] = v
+		default:
+			args[i] = sky_asString(item)
+		}
 	}
 	return args
 }
@@ -545,29 +554,29 @@ func unwrapOk(v any) any {
 	return v
 }
 
-// --- Curried Sky-callable wrappers ---
-// These match the calling convention: func(arg1 any) any { return func(arg2 any) any { ... } }
+// --- Non-curried Sky-callable wrappers ---
+// Direct arg passing — works with flattened call convention in multi-module mode.
 
-func sky_dbOpen(driver any) any { return func(dsn any) any { return Sky_sky_db_Open(driver, dsn) } }
+func sky_dbOpen(driver any, dsn any) any { return Sky_sky_db_Open(driver, dsn) }
 func sky_dbClose(conn any) any { return Sky_sky_db_Close(conn) }
-func sky_dbExec(conn any) any { return func(query any) any { return func(params any) any { return Sky_sky_db_Exec(conn, query, params) } } }
-func sky_dbQuery(conn any) any { return func(query any) any { return func(params any) any { return Sky_sky_db_Query(conn, query, params) } } }
-func sky_dbQueryOne(conn any) any { return func(query any) any { return func(params any) any { return Sky_sky_db_QueryOne(conn, query, params) } } }
-func sky_dbExecRaw(conn any) any { return func(query any) any { return Sky_sky_db_ExecRaw(conn, query) } }
-func sky_dbQueryDecode(conn any) any { return func(query any) any { return func(params any) any { return func(decoder any) any { return Sky_sky_db_QueryDecode(conn, query, params, decoder) } } } }
-func sky_dbQueryOneDecode(conn any) any { return func(query any) any { return func(params any) any { return func(decoder any) any { return Sky_sky_db_QueryOneDecode(conn, query, params, decoder) } } } }
-func sky_dbInsertRow(conn any) any { return func(table any) any { return func(row any) any { return Sky_sky_db_InsertRow(conn, table, row) } } }
-func sky_dbGetById(conn any) any { return func(table any) any { return func(id any) any { return Sky_sky_db_GetById(conn, table, id) } } }
-func sky_dbGetByIdDecode(conn any) any { return func(table any) any { return func(id any) any { return func(decoder any) any { return Sky_sky_db_GetByIdDecode(conn, table, id, decoder) } } } }
-func sky_dbUpdateById(conn any) any { return func(table any) any { return func(id any) any { return func(updates any) any { return Sky_sky_db_UpdateById(conn, table, id, updates) } } } }
-func sky_dbDeleteById(conn any) any { return func(table any) any { return func(id any) any { return Sky_sky_db_DeleteById(conn, table, id) } } }
-func sky_dbFindWhere(conn any) any { return func(table any) any { return func(column any) any { return func(value any) any { return Sky_sky_db_FindWhere(conn, table, column, value) } } } }
-func sky_dbFindWhereDecode(conn any) any { return func(table any) any { return func(column any) any { return func(value any) any { return func(decoder any) any { return Sky_sky_db_FindWhereDecode(conn, table, column, value, decoder) } } } } }
-func sky_dbGetField(field any) any { return func(row any) any { return Sky_sky_db_GetField(field, row) } }
-func sky_dbGetInt(field any) any { return func(row any) any { return Sky_sky_db_GetInt(field, row) } }
-func sky_dbGetBool(field any) any { return func(row any) any { return Sky_sky_db_GetBool(field, row) } }
+func sky_dbExec(conn any, query any, params any) any { return Sky_sky_db_Exec(conn, query, params) }
+func sky_dbQuery(conn any, query any, params any) any { return Sky_sky_db_Query(conn, query, params) }
+func sky_dbQueryOne(conn any, query any, params any) any { return Sky_sky_db_QueryOne(conn, query, params) }
+func sky_dbExecRaw(conn any, query any) any { return Sky_sky_db_ExecRaw(conn, query) }
+func sky_dbQueryDecode(conn any, query any, params any, decoder any) any { return Sky_sky_db_QueryDecode(conn, query, params, decoder) }
+func sky_dbQueryOneDecode(conn any, query any, params any, decoder any) any { return Sky_sky_db_QueryOneDecode(conn, query, params, decoder) }
+func sky_dbInsertRow(conn any, table any, row any) any { return Sky_sky_db_InsertRow(conn, table, row) }
+func sky_dbGetById(conn any, table any, id any) any { return Sky_sky_db_GetById(conn, table, id) }
+func sky_dbGetByIdDecode(conn any, table any, id any, decoder any) any { return Sky_sky_db_GetByIdDecode(conn, table, id, decoder) }
+func sky_dbUpdateById(conn any, table any, id any, updates any) any { return Sky_sky_db_UpdateById(conn, table, id, updates) }
+func sky_dbDeleteById(conn any, table any, id any) any { return Sky_sky_db_DeleteById(conn, table, id) }
+func sky_dbFindWhere(conn any, table any, column any, value any) any { return Sky_sky_db_FindWhere(conn, table, column, value) }
+func sky_dbFindWhereDecode(conn any, table any, column any, value any, decoder any) any { return Sky_sky_db_FindWhereDecode(conn, table, column, value, decoder) }
+func sky_dbGetField(field any, row any) any { return Sky_sky_db_GetField(field, row) }
+func sky_dbGetInt(field any, row any) any { return Sky_sky_db_GetInt(field, row) }
+func sky_dbGetBool(field any, row any) any { return Sky_sky_db_GetBool(field, row) }
 func sky_dbRawConn(conn any) any { return Sky_sky_db_RawConn(conn) }
-func sky_dbWithTransaction(conn any) any { return func(fn any) any { return Sky_sky_db_WithTransaction(conn, fn) } }
-func sky_dbTxExec(txConn any) any { return func(query any) any { return func(params any) any { return Sky_sky_db_TxExec(txConn, query, params) } } }
-func sky_dbTxQuery(txConn any) any { return func(query any) any { return func(params any) any { return Sky_sky_db_TxQuery(txConn, query, params) } } }
-func sky_dbTxQueryDecode(txConn any) any { return func(query any) any { return func(params any) any { return func(decoder any) any { return Sky_sky_db_TxQueryDecode(txConn, query, params, decoder) } } } }
+func sky_dbWithTransaction(conn any, fn any) any { return Sky_sky_db_WithTransaction(conn, fn) }
+func sky_dbTxExec(txConn any, query any, params any) any { return Sky_sky_db_TxExec(txConn, query, params) }
+func sky_dbTxQuery(txConn any, query any, params any) any { return Sky_sky_db_TxQuery(txConn, query, params) }
+func sky_dbTxQueryDecode(txConn any, query any, params any, decoder any) any { return Sky_sky_db_TxQueryDecode(txConn, query, params, decoder) }

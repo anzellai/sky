@@ -1553,12 +1553,12 @@ Sky is under active development. These are current limitations to be aware of:
 
 These will be addressed in future versions. The nested `case` limitation and ADT cross-module bugs are tracked as top priorities for v0.8.
 
-## Sky.Db — Built-in Database Abstraction
+## Std.Db — Built-in Database Abstraction
 
-`Sky.Db` provides parameterised SQL queries, typed decoding via `Json.Decode`, and convenience functions — no boilerplate needed.
+`Std.Db` provides parameterised SQL queries, typed decoding via `Json.Decode`, and convenience functions — no boilerplate needed.
 
 ```elm
-import Sky.Db as SkyDb
+import Std.Db as Db
 import Sky.Core.Json.Decode as Decode
 import Modernc.Org.Sqlite as _
 
@@ -1571,12 +1571,12 @@ todoDecoder =
         (Decode.field "done" Decode.bool)
 
 main =
-    case SkyDb.open "sqlite" "todos.db" of
+    case Db.open "sqlite" "todos.db" of
         Ok conn ->
             let
-                _ = SkyDb.execRaw conn "CREATE TABLE IF NOT EXISTS todos (...)"
-                _ = SkyDb.insertRow conn "todos" (Dict.fromList [("title", "Buy milk")])
-                todos = SkyDb.queryDecode conn "SELECT * FROM todos" [] todoDecoder
+                _ = Db.execRaw conn "CREATE TABLE IF NOT EXISTS todos (...)"
+                _ = Db.insertRow conn "todos" (Dict.fromList [("title", "Buy milk")])
+                todos = Db.queryDecode conn "SELECT * FROM todos" [] todoDecoder
             in
                 -- todos : Result String (List Todo)
                 -- each todo has typed fields: todo.title, todo.done, todo.id
@@ -1586,21 +1586,21 @@ main =
 
 | Function | Description |
 |----------|-------------|
-| `SkyDb.open driver dsn` | Open connection pool (`"sqlite"` or `"postgres"`) |
-| `SkyDb.exec conn query params` | Execute INSERT/UPDATE/DELETE (parameterised) |
-| `SkyDb.query conn query params` | Query → `List (Dict String String)` |
-| `SkyDb.queryDecode conn query params decoder` | Query → `List a` via `Json.Decode` decoder |
-| `SkyDb.queryOneDecode conn query params decoder` | Query → `Maybe a` |
-| `SkyDb.execRaw conn sql` | Execute DDL (CREATE TABLE, etc.) |
-| `SkyDb.insertRow conn table dict` | Insert from Dict columns |
-| `SkyDb.getById conn table id` | Get row by ID |
-| `SkyDb.updateById conn table id dict` | Update row by ID |
-| `SkyDb.deleteById conn table id` | Delete row by ID |
-| `SkyDb.findWhere conn table column value` | Find rows by column value |
-| `SkyDb.withTransaction conn fn` | Execute in transaction |
-| `SkyDb.getField field row` | Get string field from Dict row |
-| `SkyDb.getInt field row` | Get int field from Dict row |
-| `SkyDb.getBool field row` | Get bool field from Dict row |
+| `Db.open driver dsn` | Open connection pool (`"sqlite"` or `"postgres"`) |
+| `Db.exec conn query params` | Execute INSERT/UPDATE/DELETE (parameterised) |
+| `Db.query conn query params` | Query → `List (Dict String String)` |
+| `Db.queryDecode conn query params decoder` | Query → `List a` via `Json.Decode` decoder |
+| `Db.queryOneDecode conn query params decoder` | Query → `Maybe a` |
+| `Db.execRaw conn sql` | Execute DDL (CREATE TABLE, etc.) |
+| `Db.insertRow conn table dict` | Insert from Dict columns |
+| `Db.getById conn table id` | Get row by ID |
+| `Db.updateById conn table id dict` | Update row by ID |
+| `Db.deleteById conn table id` | Delete row by ID |
+| `Db.findWhere conn table column value` | Find rows by column value |
+| `Db.withTransaction conn fn` | Execute in transaction |
+| `Db.getField field row` | Get string field from Dict row |
+| `Db.getInt field row` | Get int field from Dict row |
+| `Db.getBool field row` | Get bool field from Dict row |
 
 All query functions use parameterised queries (`?` placeholders) — no SQL injection possible.
 
