@@ -12,12 +12,13 @@ import Compiler.Env as Env
 import Compiler.Infer as Infer
 import Compiler.Unify as Unify
 import Compiler.Exhaustive as Exhaustive
+import Compiler.Token exposing (CompilerError, wrapError)
 
 type alias CheckResult =
     { env : Env.TypeEnv
     , registry : AdtRegistry
     , declarations : List TypedDecl
-    , diagnostics : List String
+    , diagnostics : List CompilerError
     , typeAliases : Dict.Dict String Type
     }
 
@@ -81,7 +82,12 @@ checkModuleWithRegistryAndAliases mod imports importedRegistry importedAliases =
                 annotations
                 qualifiedAliases
         exhaustDiags = checkAllExhaustiveness registry mod.declarations
-        allDiags = List.concat [ adtDiags , inferDiags , exhaustDiags ]
+        allDiags =
+            List.concat
+                [ List.map wrapError adtDiags
+                , inferDiags
+                , List.map wrapError exhaustDiags
+                ]
     in
         Ok
             { env = finalEnv
@@ -256,7 +262,7 @@ inferOneFunDecl counter registry env fnName decl rest annotations typeAliases ty
             Err e ->
                 inferDeclsLoop counter registry env rest annotations typeAliases
                     typedDecls
-                    (e :: diagnostics)
+                    (wrapError e :: diagnostics)
 
 
 addTypedDeclAndContinue counter registry env rest annotations typeAliases typedDecls diagnostics inferResult =
@@ -267,7 +273,7 @@ addTypedDeclAndContinue counter registry env rest annotations typeAliases typedD
         td = makeTypedDecl nm sc tp
         newDecls = td :: typedDecls
         newEnv = Env.extend nm sc env
-        newDiags = List.append diagnostics inferResult.diagnostics
+        newDiags = List.append diagnostics (List.map wrapError inferResult.diagnostics)
     in
         inferDeclsLoop counter registry newEnv rest annotations typeAliases
             newDecls

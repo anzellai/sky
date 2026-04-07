@@ -239,7 +239,7 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
         let
             _ =
                 if not (List.isEmpty diagnostics) then
-                    List.map (\d -> println ("   [!] " ++ d)) diagnostics
+                    List.map (\d -> println ("   [!] " ++ d.message)) diagnostics
                 
                 else
                     []
@@ -3723,13 +3723,13 @@ findSubstringAt needle haystack idx =
         findSubstringAt needle haystack (idx + 1)
 
 
-printDiagnostics : (List String) -> Unit
+printDiagnostics : (List CompilerError) -> Unit
 printDiagnostics diags =
     case diags of
-        
-        [  ] ->
+
+        [] ->
             ()
-        
+
         _ ->
             let
                 _ =
@@ -3739,7 +3739,7 @@ printDiagnostics diags =
                             ++ String.fromInt (List.length diags)
                                 ++ " diagnostics:"
                         )
-                _ = List.map (\d -> println ("     " ++ d)) diags
+                _ = List.map (\d -> println ("     " ++ d.message)) diags
             in
                 ()
 

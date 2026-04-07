@@ -364,7 +364,7 @@ handleCheckResult entryFile checkResult =
             else
                 let
                     _ =
-                        List.map (\d -> println ("  [!] " ++ d))
+                        List.map (\d -> println ("  [!] " ++ d.message))
                             result.diagnostics
                     _ = println ""
                 in
