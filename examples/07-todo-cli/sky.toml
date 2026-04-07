@@ -5,6 +5,10 @@ entry = "src/Main.sky"
 [source]
 root = "src"
 
+[database]
+driver = "sqlite"
+path = "todos.db"
+
 ["go.dependencies"]
 os = "latest"
 "log/slog" = "latest"

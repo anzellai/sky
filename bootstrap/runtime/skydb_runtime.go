@@ -6,9 +6,57 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 )
+
+// skyDbDefaultConn holds the auto-configured connection from sky.toml [database].
+// Initialised by skyDbAutoConnect() which is called from generated init code.
+var skyDbDefaultConn *SkyDbConn
+
+func skyDbAutoConnect(driver, path string) {
+	if driver == "" {
+		return
+	}
+	// Environment variables override sky.toml
+	if v := os.Getenv("SKY_DB_DRIVER"); v != "" {
+		driver = v
+	}
+	if v := os.Getenv("SKY_DB_URL"); v != "" {
+		path = v
+	}
+	if v := os.Getenv("SKY_DB_PATH"); v != "" {
+		path = v
+	}
+	db, err := sql.Open(driver, path)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[Std.Db] Failed to open %s database: %v\n", driver, err)
+		return
+	}
+	if err := db.Ping(); err != nil {
+		fmt.Fprintf(os.Stderr, "[Std.Db] Failed to connect to %s database: %v\n", driver, err)
+		return
+	}
+	skyDbDefaultConn = &SkyDbConn{DB: db, Driver: driver}
+}
+
+func skyDbGetDefault() *SkyDbConn {
+	if skyDbDefaultConn != nil {
+		return skyDbDefaultConn
+	}
+	// Fallback: try env vars even without sky.toml config
+	driver := os.Getenv("SKY_DB_DRIVER")
+	path := os.Getenv("SKY_DB_URL")
+	if path == "" {
+		path = os.Getenv("SKY_DB_PATH")
+	}
+	if driver != "" && path != "" {
+		skyDbAutoConnect(driver, path)
+		return skyDbDefaultConn
+	}
+	return nil
+}
 
 // SkyDbConn wraps a sql.DB with its driver name for dialect-aware query rewriting.
 type SkyDbConn struct {
@@ -597,6 +645,16 @@ func unwrapOk(v any) any {
 	return v
 }
 
+// sky_dbConnect returns the auto-configured connection from sky.toml [database].
+// Returns the Conn directly (not Result) — panics if not configured.
+func sky_dbConnect(_ any) any {
+	c := skyDbGetDefault()
+	if c != nil {
+		return SkyOk(c)
+	}
+	return SkyErr("no database configured — add [database] to sky.toml or use Db.open")
+}
+
 // --- Non-curried Sky-callable wrappers ---
 // Direct arg passing — works with flattened call convention in multi-module mode.
 
@@ -623,3 +681,70 @@ func sky_dbWithTransaction(conn any, fn any) any { return Sky_sky_db_WithTransac
 func sky_dbTxExec(txConn any, query any, params any) any { return Sky_sky_db_TxExec(txConn, query, params) }
 func sky_dbTxQuery(txConn any, query any, params any) any { return Sky_sky_db_TxQuery(txConn, query, params) }
 func sky_dbTxQueryDecode(txConn any, query any, params any, decoder any) any { return Sky_sky_db_TxQueryDecode(txConn, query, params, decoder) }
+
+// --- Connless wrappers (use default connection from sky.toml [database]) ---
+
+func skyDbRequireDefault(name string) *SkyDbConn {
+	c := skyDbGetDefault()
+	if c == nil {
+		fmt.Fprintf(os.Stderr, "[Std.Db] %s: no database configured. Add [database] to sky.toml or call Db.open first.\n", name)
+	}
+	return c
+}
+
+func sky_dbExecAuto(query any, params any) any {
+	c := skyDbRequireDefault("exec"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_Exec(c, query, params)
+}
+func sky_dbQueryAuto(query any, params any) any {
+	c := skyDbRequireDefault("query"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_Query(c, query, params)
+}
+func sky_dbQueryOneAuto(query any, params any) any {
+	c := skyDbRequireDefault("queryOne"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_QueryOne(c, query, params)
+}
+func sky_dbExecRawAuto(query any) any {
+	c := skyDbRequireDefault("execRaw"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_ExecRaw(c, query)
+}
+func sky_dbQueryDecodeAuto(query any, params any, decoder any) any {
+	c := skyDbRequireDefault("queryDecode"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_QueryDecode(c, query, params, decoder)
+}
+func sky_dbQueryOneDecodeAuto(query any, params any, decoder any) any {
+	c := skyDbRequireDefault("queryOneDecode"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_QueryOneDecode(c, query, params, decoder)
+}
+func sky_dbInsertRowAuto(table any, row any) any {
+	c := skyDbRequireDefault("insertRow"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_InsertRow(c, table, row)
+}
+func sky_dbGetByIdAuto(table any, id any) any {
+	c := skyDbRequireDefault("getById"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_GetById(c, table, id)
+}
+func sky_dbGetByIdDecodeAuto(table any, id any, decoder any) any {
+	c := skyDbRequireDefault("getByIdDecode"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_GetByIdDecode(c, table, id, decoder)
+}
+func sky_dbUpdateByIdAuto(table any, id any, updates any) any {
+	c := skyDbRequireDefault("updateById"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_UpdateById(c, table, id, updates)
+}
+func sky_dbDeleteByIdAuto(table any, id any) any {
+	c := skyDbRequireDefault("deleteById"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_DeleteById(c, table, id)
+}
+func sky_dbFindWhereAuto(table any, column any, value any) any {
+	c := skyDbRequireDefault("findWhere"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_FindWhere(c, table, column, value)
+}
+func sky_dbFindWhereDecodeAuto(table any, column any, value any, decoder any) any {
+	c := skyDbRequireDefault("findWhereDecode"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_FindWhereDecode(c, table, column, value, decoder)
+}
+func sky_dbWithTransactionAuto(fn any) any {
+	c := skyDbRequireDefault("withTransaction"); if c == nil { return SkyErr("no database configured") }
+	return Sky_sky_db_WithTransaction(c, fn)
+}

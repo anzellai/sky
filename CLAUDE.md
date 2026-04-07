@@ -172,7 +172,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | `Sky.Core.Http` | get, post, request | Task String Response |
 | `Sky.Core.Random` | int, float, choice, shuffle | Task String a |
 | `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task String () |
-| `Std.Db` | open, exec, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | Result String a |
+| `Std.Db` | connect, open, exec, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | Result String a |
 
 ### Prelude (implicitly imported)
 `Result (Ok/Err)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`

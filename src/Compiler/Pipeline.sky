@@ -308,7 +308,9 @@ writeMultiModuleOutput : String -> String -> (List GoDecl) -> (List Ast.ImportDe
 writeMultiModuleOutput outDir projectRoot allDecls imports =
     let
         blankImports = collectBlankImports imports
-        goPackage = makeGoPackageWithImports allDecls blankImports
+        dbInitDecl = generateDbInitDecl imports
+        allDeclsWithInit = List.append allDecls dbInitDecl
+        goPackage = makeGoPackageWithImports allDeclsWithInit blankImports
         rawGoCode = Emit.emitPackage goPackage
         goCode = fixUnusedVars rawGoCode
         outPath = outDir ++ "/main.go"
@@ -938,6 +940,90 @@ buildReachableSet pending visited funcMap =
                     buildReachableSet newPending newVisited funcMap
 
 
+generateDbInitDecl : (List Ast.ImportDecl) -> List GoDecl
+generateDbInitDecl imports =
+    let
+        hasStdDb =
+            List.any (\imp -> String.join "." imp.moduleName == "Std.Db") imports
+    in
+        if not hasStdDb then
+            []
+
+        else
+            let
+                dbConfig = readDbConfig
+            in
+                if String.isEmpty dbConfig then
+                    []
+
+                else
+                    [ GoDeclRaw ("func init() { " ++ dbConfig ++ " }") ]
+
+
+readDbConfig : String
+readDbConfig =
+    case File.readFile "sky.toml" of
+
+        Err _ ->
+            ""
+
+        Ok content ->
+            let
+                driver = extractTomlValue "driver" content
+                path = extractTomlPath content
+            in
+                if String.isEmpty driver then
+                    ""
+
+                else
+                    "skyDbAutoConnect(\""
+                        ++ driver ++ "\", \"" ++ path ++ "\")"
+
+
+extractTomlValue : String -> String -> String
+extractTomlValue key content =
+    let
+        lines = String.split "\n" content
+        matching =
+            List.filter
+                (\l ->
+                    String.contains (key ++ " =") l
+                        || String.contains (key ++ "=") l
+                )
+                lines
+    in
+        case matching of
+
+            line :: _ ->
+                let
+                    parts = String.split "=" line
+                in
+                    case List.drop 1 parts of
+
+                        val :: _ ->
+                            String.trim
+                                (String.replace "\"" "" (String.trim val))
+
+                        [] ->
+                            ""
+
+            [] ->
+                ""
+
+
+extractTomlPath : String -> String
+extractTomlPath content =
+    let
+        url = extractTomlValue "url" content
+        path = extractTomlValue "path" content
+    in
+        if not (String.isEmpty url) then
+            url
+
+        else
+            path
+
+
 collectBlankImports : (List Ast.ImportDecl) -> List GoImport
 collectBlankImports imports =
     let
@@ -957,11 +1043,18 @@ collectBlankImports imports =
         hasStdDb =
             List.any (\imp -> String.join "." imp.moduleName == "Std.Db") imports
         dbDriverImports =
-            if hasStdDb then
-                [ { path = "modernc.org/sqlite" , alias_ = "_" } ]
+            if not hasStdDb then
+                []
 
             else
-                []
+                let
+                    driver = extractTomlValue "driver" (Result.withDefault "" (File.readFile "sky.toml"))
+                in
+                    if driver == "postgres" || driver == "postgresql" then
+                        [ { path = "github.com/lib/pq" , alias_ = "_" } ]
+
+                    else
+                        [ { path = "modernc.org/sqlite" , alias_ = "_" } ]
     in
         List.append userBlanks dbDriverImports
 
@@ -2362,7 +2455,8 @@ generateSkyDbAliases : List GoDecl
 generateSkyDbAliases =
     let
         fns =
-            [ ( "Open", "sky_dbOpen" )
+            [ ( "Connect", "sky_dbConnect" )
+            , ( "Open", "sky_dbOpen" )
             , ( "Close", "sky_dbClose" )
             , ( "Exec", "sky_dbExec" )
             , ( "Exec_", "sky_dbExec" )

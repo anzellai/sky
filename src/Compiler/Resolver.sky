@@ -653,7 +653,7 @@ getStdlibExports modName =
         [ "every" ]
 
     else if modName == "Std.Db" then
-        [ "open", "close", "exec", "query", "queryOne", "execRaw"
+        [ "connect", "open", "close", "exec", "query", "queryOne", "execRaw"
         , "queryDecode", "queryOneDecode"
         , "insertRow", "getById", "getByIdDecode"
         , "updateById", "deleteById"

@@ -40,27 +40,19 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Roadmap](#roadmap)
+- [Known Limitations](#known-limitations-v07x)
 - [Language Features](#language-features)
-  - [Modules](#modules)
-  - [Types](#types)
-  - [Functions](#functions)
-  - [Pattern Matching](#pattern-matching)
-  - [Data Structures](#data-structures)
-  - [Operators](#operators)
-  - [Control Flow](#control-flow)
-  - [Go Interop (FFI)](#go-interop-ffi)
-  - [TEA Architecture](#tea-architecture)
 - [Standard Library](#standard-library)
+- [Std.Db — Database Abstraction](#stddb--built-in-database-abstraction)
 - [Sky.Live](#skylive)
 - [Package Management](#package-management)
-  - [sky.toml Reference](#skytoml-reference)
-  - [Dependencies](#dependencies)
-  - [Publishing Libraries](#publishing-libraries)
 - [CLI Reference](#cli-reference)
 - [Editor Integration](#editor-integration)
 - [Examples](#examples)
 - [Architecture](#architecture)
 - [Compiler Optimisation Journey](#compiler-optimisation-journey)
+- [Contributing](#contributing)
 
 ---
 
@@ -107,6 +99,17 @@ Pre-built images are available on Docker Hub:
 docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky build src/Main.sky
 docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky run src/Main.sky
 ```
+
+---
+
+## Roadmap
+
+| Version | Focus | Status |
+|---------|-------|--------|
+| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 16 examples, `Std.Db` | Current |
+| **v0.8.0** | Standard library expansion: `Std.Auth`, `Std.Log`, `Std.Db.Doc` (Redis/Firestore). Fix nested `case...of`, ADT cross-module bugs, LSP diagnostics | Planned |
+| **v0.9.0** | Stable compiler with full LSP/check support. Most common app types buildable without workarounds. Comprehensive real-world examples across domains | Planned |
+| **v1.0.0** | Fully typed codegen (no `any`), production-ready. Everything type-safe end-to-end. Milestone: Sky is ready for production use | Goal |
 
 ---
 
@@ -1558,12 +1561,19 @@ These will be addressed in future versions. Priorities for v0.8: nested `case`, 
 
 ## Std.Db — Built-in Database Abstraction
 
-`Std.Db` provides parameterised SQL queries, typed decoding via `Json.Decode`, and convenience functions — no boilerplate needed.
+`Std.Db` provides parameterised SQL queries, typed decoding via `Json.Decode`, and convenience CRUD. Supports SQLite (auto-configured) and PostgreSQL.
 
+Configure in `sky.toml`:
+```toml
+[database]
+driver = "sqlite"
+path = "myapp.db"
+```
+
+Then use `Db.connect` — no driver imports, no connection strings in code:
 ```elm
 import Std.Db as Db
 import Sky.Core.Json.Decode as Decode
-import Modernc.Org.Sqlite as _
 
 type alias Todo = { id : Int, title : String, done : Bool }
 
@@ -1573,22 +1583,35 @@ todoDecoder =
         (Decode.field "title" Decode.string)
         (Decode.field "done" Decode.bool)
 
+db = Db.connect ()  -- reads [database] from sky.toml
+
 main =
-    case Db.open "sqlite" "todos.db" of
+    case db of
         Ok conn ->
             let
                 _ = Db.execRaw conn "CREATE TABLE IF NOT EXISTS todos (...)"
-                _ = Db.insertRow conn "todos" (Dict.fromList [("title", "Buy milk")])
+                _ = Db.insertRow conn "todos" (Dict.fromList [("title", "Buy milk"), ("done", 0)])
                 todos = Db.queryDecode conn "SELECT * FROM todos" [] todoDecoder
             in
                 -- todos : Result String (List Todo)
-                -- each todo has typed fields: todo.title, todo.done, todo.id
+                -- todo.title is String, todo.done is Bool, todo.id is Int
+        Err e ->
+            println ("DB error: " ++ e)
 ```
+
+For PostgreSQL, change the config:
+```toml
+[database]
+driver = "postgres"
+url = "postgres://user:pass@localhost:5432/myapp?sslmode=disable"
+```
+Query placeholders (`?`) are automatically converted to `$1, $2, $3` for PostgreSQL.
 
 ### API Summary
 
 | Function | Description |
 |----------|-------------|
+| `Db.connect` | Connect using sky.toml [database] config |
 | `Db.open driver dsn` | Open connection pool (`"sqlite"` or `"postgres"`) |
 | `Db.exec conn query params` | Execute INSERT/UPDATE/DELETE (parameterised) |
 | `Db.query conn query params` | Query → `List (Dict String String)` |
