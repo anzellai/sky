@@ -7,7 +7,8 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
-import Lib.Db as Db
+import Std.Db as Db
+import Lib.Database as Database
 import Lib.Ideas as Ideas
 import Ui.Layout as Layout
 import Ui.Components exposing (emptyState)

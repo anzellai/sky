@@ -9,7 +9,8 @@ import Std.Log exposing (println)
 import Crypto.Sha256 as Sha256
 import Encoding.Hex as Hex
 import Github.Com.Google.Uuid as Uuid
-import Lib.Db as Db
+import Std.Db as Db
+import Lib.Database as Database
 
 hashPassword password =
     let
@@ -38,7 +39,7 @@ createUser email password =
         _ = println "=========================================="
         _ = println ""
         result =
-            Db.exec
+            Db.exec (Database.conn ())
                 "INSERT INTO users (email, password_hash, verification_token) VALUES (?, ?, ?)"
                 [ email , passHash , token ]
     in
@@ -71,7 +72,7 @@ checkUserCredentials email password user =
 authenticateUser email password =
     let
         rows =
-            Db.queryRows
+            Db.query (Database.conn ())
                 "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
                 [ email ]
         userRows = Result.withDefault [] rows
@@ -90,7 +91,7 @@ createSession userId =
     let
         token = generateToken ()
         result =
-            Db.exec "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
+            Db.exec (Database.conn ()) "INSERT INTO sessions (user_id, token) VALUES (?, ?)"
                 [ userId , token ]
     in
         case result of
@@ -105,7 +106,7 @@ createSession userId =
 getSessionUser sessionToken =
     let
         rows =
-            Db.queryRows
+            Db.query (Database.conn ())
                 "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
                 [ sessionToken ]
         userRows = Result.withDefault [] rows
@@ -116,7 +117,7 @@ getSessionUser sessionToken =
 verifyEmail token =
     let
         result =
-            Db.exec
+            Db.exec (Database.conn ())
                 "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
                 [ token ]
     in

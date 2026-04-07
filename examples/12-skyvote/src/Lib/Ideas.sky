@@ -7,13 +7,14 @@ import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
-import Lib.Db as Db
+import Std.Db as Db
+import Lib.Database as Database
 
 createIdea title description category authorId =
     let
         id = String.slice 0 12 (Crypto.sha256 (title ++ ":" ++ authorId))
         result =
-            Db.exec
+            Db.exec (Database.conn ())
                 "INSERT INTO ideas (id, title, description, category, author_id) VALUES (?, ?, ?, ?, ?)"
                 [ id , title , description , category , authorId ]
         _ = println ("[IDEA] Created: " ++ title ++ " by " ++ authorId)
@@ -63,13 +64,13 @@ getIdeas sortBy filterCategory searchQuery =
                 " ORDER BY i.created_at DESC"
         fullQuery = baseQuery ++ whereClause ++ orderClause
     in
-        Result.withDefault [] (Db.queryRows fullQuery [])
+        Result.withDefault [] (Db.query (Database.conn ()) fullQuery [])
 
 
 getIdea ideaId =
     let
         rows =
-            Db.queryRows
+            Db.query (Database.conn ())
                 "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count, (SELECT COUNT(*) FROM comments c WHERE c.idea_id = i.id) as comment_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.id = ? LIMIT 1"
                 [ ideaId ]
         ideaRows = Result.withDefault [] rows
@@ -80,7 +81,7 @@ getIdea ideaId =
 getIdeasByStatus status =
     Result.withDefault []
         (
-        Db.queryRows
+        Db.query (Database.conn ())
             "SELECT i.id, i.title, i.description, i.category, i.status, i.author_id, i.created_at, u.username as author_name, (SELECT COUNT(*) FROM votes v WHERE v.idea_id = i.id) as vote_count FROM ideas i LEFT JOIN users u ON i.author_id = u.id WHERE i.status = ? ORDER BY vote_count DESC"
             [ status ]
         )
@@ -91,7 +92,7 @@ toggleVote ideaId userId =
         existingRows =
             Result.withDefault []
                 (
-                Db.queryRows
+                Db.query (Database.conn ())
                     "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
                     [ ideaId , userId ]
                 )
@@ -101,7 +102,7 @@ toggleVote ideaId userId =
             Just _ ->
                 let
                     _ =
-                        Db.exec
+                        Db.exec (Database.conn ())
                             "DELETE FROM votes WHERE idea_id = ? AND user_id = ?"
                             [ ideaId , userId ]
                     _ =
@@ -116,7 +117,7 @@ toggleVote ideaId userId =
                         String.slice 0 12
                             (Crypto.sha256 (ideaId ++ ":" ++ userId))
                     _ =
-                        Db.exec
+                        Db.exec (Database.conn ())
                             "INSERT INTO votes (id, idea_id, user_id) VALUES (?, ?, ?)"
                             [ voteId , ideaId , userId ]
                     _ = println ("[VOTE] Added: " ++ userId ++ " on " ++ ideaId)
@@ -129,7 +130,7 @@ hasVoted ideaId userId =
         rows =
             Result.withDefault []
                 (
-                Db.queryRows
+                Db.query (Database.conn ())
                     "SELECT id FROM votes WHERE idea_id = ? AND user_id = ?"
                     [ ideaId , userId ]
                 )
@@ -148,7 +149,7 @@ getVoteCount ideaId =
         rows =
             Result.withDefault []
                 (
-                Db.queryRows
+                Db.query (Database.conn ())
                     "SELECT COUNT(*) as cnt FROM votes WHERE idea_id = ?"
                     [ ideaId ]
                 )
@@ -165,7 +166,7 @@ getVoteCount ideaId =
 updateStatus ideaId newStatus =
     let
         _ =
-            Db.exec
+            Db.exec (Database.conn ())
                 "UPDATE ideas SET status = ?, updated_at = datetime('now') WHERE id = ?"
                 [ newStatus , ideaId ]
         _ = println ("[IDEA] Status changed: " ++ ideaId ++ " -> " ++ newStatus)

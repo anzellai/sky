@@ -9,7 +9,8 @@ import Std.Log exposing (println)
 import Crypto.Sha256 as Sha256
 import Encoding.Hex as Hex
 import Sky.Core.Crypto as Crypto
-import Lib.Db as Db
+import Std.Db as Db
+import Lib.Database as Database
 
 hashPassword password =
     let
@@ -27,7 +28,7 @@ createUser username email password =
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash = hashPassword password
         result =
-            Db.exec
+            Db.exec (Database.conn ())
                 "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
                 [ id , username , email , passHash ]
     in
@@ -51,7 +52,7 @@ createUser username email password =
 authenticateUser email password =
     let
         rows =
-            Db.queryRows
+            Db.query (Database.conn ())
                 "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
                 [ email ]
         userRows = Result.withDefault [] rows
@@ -90,7 +91,7 @@ authenticateUser email password =
 getUserById userId =
     let
         rows =
-            Db.queryRows
+            Db.query (Database.conn ())
                 "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
                 [ userId ]
         userRows = Result.withDefault [] rows

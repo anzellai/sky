@@ -1,0 +1,20 @@
+module Lib.Database exposing (conn, getField)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Std.Db as Db
+
+
+conn _ =
+    case Db.open "sqlite" "skynotes.db" of
+
+        Ok c ->
+            c
+
+        Err _ ->
+            identity ""
+
+
+getField field row =
+    Maybe.withDefault "" (Dict.get field row)

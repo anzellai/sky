@@ -8,7 +8,8 @@ import Std.Log exposing (println)
 import Std.Cmd as Cmd
 import State exposing (..)
 import Lib.Auth as Auth
-import Lib.Db as Db
+import Std.Db as Db
+import Lib.Database as Database
 import Lib.Ideas as Ideas
 
 handleSignInSuccess user model =
