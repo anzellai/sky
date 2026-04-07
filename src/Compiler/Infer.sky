@@ -645,15 +645,35 @@ inferCase counter registry env subject branches =
         Ok subjectResult ->
             let
                 resultVar = freshVar counter Nothing
-                -- Check exhaustiveness (warning only for now)
+            in
+                inferCaseThenCheckExhaustive counter registry env
+                    subjectResult branches resultVar
+
+
+inferCaseThenCheckExhaustive counter registry env subjectResult branches resultVar =
+    case inferCaseBranches counter registry env subjectResult.type_ subjectResult.substitution branches resultVar of
+
+        Err e ->
+            Err e
+
+        Ok result ->
+            let
+                resolvedSubjectType = applySub result.substitution subjectResult.type_
                 exhaustiveWarning =
-                    Exhaustive.checkExhaustiveness registry subjectResult.type_
+                    Exhaustive.checkExhaustiveness registry resolvedSubjectType
                         branches
             in
-                inferCaseBranches counter registry env subjectResult.type_
-                    subjectResult.substitution
-                    branches
-                    resultVar
+                checkExhaustiveResult result exhaustiveWarning
+
+
+checkExhaustiveResult result exhaustiveWarning =
+    case exhaustiveWarning of
+
+        Just warning ->
+            Err ("Non-exhaustive case expression: " ++ warning)
+
+        Nothing ->
+            Ok result
 
 
 inferCaseBranches : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Type -> Substitution -> (List CaseBranch) -> Type -> Result String InferResult
