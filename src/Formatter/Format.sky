@@ -795,14 +795,18 @@ formatPattern pat =
                 )
         
         PList items _ ->
-            group
-                (
-                concat
-                    [ text "[ "
-                    , joinDocs (List.map formatPattern items) (text ", ")
-                    , text " ]"
-                    ]
-                )
+            if List.isEmpty items then
+                text "[]"
+
+            else
+                group
+                    (
+                    concat
+                        [ text "[ "
+                        , joinDocs (List.map formatPattern items) (text ", ")
+                        , text " ]"
+                        ]
+                    )
         
         PCons headPat tailPat _ ->
             concat

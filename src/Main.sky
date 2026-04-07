@@ -2203,13 +2203,20 @@ collectCommentGroups lines currentComments acc =
 
 extractAnchorWord : String -> String
 extractAnchorWord line =
-    case String.split " " line of
-        
-        word :: _ ->
-            word
-        
-        [  ] ->
-            line
+    let
+        trimmed = String.trim line
+    in
+        if String.length trimmed > 40 then
+            case String.split " " trimmed of
+
+                word :: _ ->
+                    word
+
+                [] ->
+                    trimmed
+
+        else
+            trimmed
 
 
 insertCommentGroups : (List (List String, String)) -> (List String) -> (List String) -> List String
@@ -2241,13 +2248,28 @@ insertBeforeAnchorOnce comments anchor restGroups fmtLines acc =
             insertCommentGroups restGroups [] (List.append acc comments)
         
         fmtLine :: fmtRest ->
-            if String.startsWith anchor (String.trim fmtLine) then
+            if matchesAnchor anchor (String.trim fmtLine) then
                 insertCommentGroups restGroups fmtRest
                     (List.concat [ acc , comments , [ fmtLine ] ])
             
             else
                 insertBeforeAnchorOnce comments anchor restGroups fmtRest
                     (List.append acc [ fmtLine ])
+
+
+matchesAnchor : String -> String -> Bool
+matchesAnchor anchor trimmedLine =
+    if String.isEmpty trimmedLine then
+        False
+
+    else if trimmedLine == anchor then
+        True
+
+    else if String.startsWith anchor trimmedLine then
+        True
+
+    else
+        String.contains anchor trimmedLine
 
 
 fmtStdin _ =
