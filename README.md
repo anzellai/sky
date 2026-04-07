@@ -1553,6 +1553,57 @@ Sky is under active development. These are current limitations to be aware of:
 
 These will be addressed in future versions. The nested `case` limitation and ADT cross-module bugs are tracked as top priorities for v0.8.
 
+## Sky.Db — Built-in Database Abstraction
+
+`Sky.Db` provides parameterised SQL queries, typed decoding via `Json.Decode`, and convenience functions — no boilerplate needed.
+
+```elm
+import Sky.Db as SkyDb
+import Sky.Core.Json.Decode as Decode
+import Modernc.Org.Sqlite as _
+
+type alias Todo = { id : Int, title : String, done : Bool }
+
+todoDecoder =
+    Decode.map3 (\id title done -> { id = id, title = title, done = done })
+        (Decode.field "id" Decode.int)
+        (Decode.field "title" Decode.string)
+        (Decode.field "done" Decode.bool)
+
+main =
+    case SkyDb.open "sqlite" "todos.db" of
+        Ok conn ->
+            let
+                _ = SkyDb.execRaw conn "CREATE TABLE IF NOT EXISTS todos (...)"
+                _ = SkyDb.insertRow conn "todos" (Dict.fromList [("title", "Buy milk")])
+                todos = SkyDb.queryDecode conn "SELECT * FROM todos" [] todoDecoder
+            in
+                -- todos : Result String (List Todo)
+                -- each todo has typed fields: todo.title, todo.done, todo.id
+```
+
+### API Summary
+
+| Function | Description |
+|----------|-------------|
+| `SkyDb.open driver dsn` | Open connection pool (`"sqlite"` or `"postgres"`) |
+| `SkyDb.exec conn query params` | Execute INSERT/UPDATE/DELETE (parameterised) |
+| `SkyDb.query conn query params` | Query → `List (Dict String String)` |
+| `SkyDb.queryDecode conn query params decoder` | Query → `List a` via `Json.Decode` decoder |
+| `SkyDb.queryOneDecode conn query params decoder` | Query → `Maybe a` |
+| `SkyDb.execRaw conn sql` | Execute DDL (CREATE TABLE, etc.) |
+| `SkyDb.insertRow conn table dict` | Insert from Dict columns |
+| `SkyDb.getById conn table id` | Get row by ID |
+| `SkyDb.updateById conn table id dict` | Update row by ID |
+| `SkyDb.deleteById conn table id` | Delete row by ID |
+| `SkyDb.findWhere conn table column value` | Find rows by column value |
+| `SkyDb.withTransaction conn fn` | Execute in transaction |
+| `SkyDb.getField field row` | Get string field from Dict row |
+| `SkyDb.getInt field row` | Get int field from Dict row |
+| `SkyDb.getBool field row` | Get bool field from Dict row |
+
+All query functions use parameterised queries (`?` placeholders) — no SQL injection possible.
+
 ## Contributing
 
 Sky is experimental and under active development. Contributions are welcome! Here's how you can help:
