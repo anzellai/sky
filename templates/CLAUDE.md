@@ -1174,6 +1174,9 @@ Db.withTransaction conn (\tx ->
 - **`exposing (Constructor(..))` breaks cross-module calls** — avoid importing ADT constructors via `exposing` in dependency modules; use qualified accessors instead
 - **Cross-module zero-arg ADT constructors** — `Mod.Constructor` emits as function call; define lowercase accessors (`myVal = Constructor`) as workaround
 - **`Dict.toList` returns string keys** — use `Dict.get` with explicit key ranges instead of `Dict.toList` for `Dict Int v`
+- **`sky check` doesn't understand Go interfaces** — concrete types can't unify with Go interfaces; code compiles and runs fine
+- **`sky check` doesn't understand Go callback types** — FFI callback params can't unify with Sky functions; runtime wrapping works
+- **Zero-arg FFI functions need no `()`** — call `Uuid.newString` not `Uuid.newString ()`
 
 ## Coding Conventions
 

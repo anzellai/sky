@@ -1550,8 +1550,11 @@ Sky is under active development. These are current limitations to be aware of:
 | **`exposing (Constructor(..))` breaks qualified calls** | Importing ADT constructors via `exposing` in dependency modules breaks the lowerer's module resolution. Use qualified accessor functions instead. |
 | **Cross-module zero-arg ADT constructors** | `Piece.King` emits as a function call instead of a value. Define lowercase accessors (`king = King`) as a workaround. |
 | **`Dict.toList` returns string keys** | Dict uses `map[string]any` internally. Iterate over known key ranges with `Dict.get` instead of `Dict.toList` for Int-keyed Dicts. |
+| **`sky check` doesn't understand Go interfaces** | Concrete types (e.g. `Label`) can't unify with Go interfaces (e.g. `CanvasObject`). Code compiles and runs fine. |
+| **`sky check` doesn't understand Go callback types** | FFI callback params like `func(ResponseWriter, *Request)` can't unify with Sky functions. Runtime wrapping works correctly. |
+| **Zero-arg FFI functions need no `()`** | Call `Uuid.newString` not `Uuid.newString ()` — the binding declares the return type directly. |
 
-These will be addressed in future versions. The nested `case` limitation and ADT cross-module bugs are tracked as top priorities for v0.8.
+These will be addressed in future versions. Priorities for v0.8: nested `case`, ADT cross-module bugs, Go interface/callback type checking.
 
 ## Std.Db — Built-in Database Abstraction
 
