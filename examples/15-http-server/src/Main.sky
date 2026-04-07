@@ -65,20 +65,32 @@ handleEcho req =
         )
 
 
+parseVisitCount : Maybe String -> Int
+parseVisitCount maybeCookie =
+    case maybeCookie of
+
+        Just v ->
+            parseVisitInt v
+
+        Nothing ->
+            1
+
+
+parseVisitInt : String -> Int
+parseVisitInt v =
+    case String.toInt v of
+
+        Ok n ->
+            n + 1
+
+        Err _ ->
+            1
+
+
 handleCookieDemo : Request -> Task String Response
 handleCookieDemo req =
     let
-        visitCount =
-            case Server.getCookie "visits" req of
-                
-                Just v ->
-                    case String.toInt v of
-                        
-                        Just n ->
-                            n + 1
-                        
-                        Nothing ->
-                            1
+        visitCount = parseVisitCount (Server.getCookie "visits" req)
         visitCookie = Server.cookie "visits" (String.fromInt visitCount)
     in
         Task.succeed

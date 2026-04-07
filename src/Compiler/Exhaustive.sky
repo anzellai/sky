@@ -71,15 +71,150 @@ checkConstTypeExhaustiveness : AdtRegistry -> String -> (List Pattern) -> Maybe 
 checkConstTypeExhaustiveness registry typeName patterns =
     if typeName == "Bool" then
         checkBoolExhaustiveness patterns
-    
+
+    else if typeName == "List" then
+        checkListExhaustiveness patterns
+
+    else if typeName == "Maybe" then
+        checkMaybeExhaustiveness patterns
+
+    else if typeName == "Result" then
+        checkResultExhaustiveness patterns
+
     else
         case Dict.get typeName registry of
-            
+
             Just adt ->
                 checkAdtExhaustiveness adt patterns
-            
+
             Nothing ->
                 Nothing
+
+
+checkListExhaustiveness : (List Pattern) -> Maybe String
+checkListExhaustiveness patterns =
+    let
+        hasNil = List.any isNilPattern patterns
+        hasCons = List.any isConsPattern patterns
+    in
+        if hasNil && hasCons then
+            Nothing
+
+        else if hasNil then
+            Just "Missing pattern: _ :: _"
+
+        else if hasCons then
+            Just "Missing pattern: []"
+
+        else
+            Just "Missing patterns: [], _ :: _"
+
+
+checkMaybeExhaustiveness : (List Pattern) -> Maybe String
+checkMaybeExhaustiveness patterns =
+    let
+        covered = collectCtorNames patterns Set.empty
+        hasJust = Set.member "Just" covered
+        hasNothing = Set.member "Nothing" covered
+        hasCatchAll = List.any isCatchAll patterns
+    in
+        if hasCatchAll || (hasJust && hasNothing) then
+            Nothing
+
+        else if hasJust then
+            Just "Missing pattern: Nothing"
+
+        else if hasNothing then
+            Just "Missing pattern: Just _"
+
+        else
+            Just "Missing patterns: Just _, Nothing"
+
+
+checkResultExhaustiveness : (List Pattern) -> Maybe String
+checkResultExhaustiveness patterns =
+    let
+        covered = collectCtorNames patterns Set.empty
+        hasOk = Set.member "Ok" covered
+        hasErr = Set.member "Err" covered
+        hasCatchAll = List.any isCatchAll patterns
+    in
+        if hasCatchAll || (hasOk && hasErr) then
+            Nothing
+
+        else if hasOk then
+            Just "Missing pattern: Err _"
+
+        else if hasErr then
+            Just "Missing pattern: Ok _"
+
+        else
+            Just "Missing patterns: Ok _, Err _"
+
+
+collectCtorNames : (List Pattern) -> Set.Set String -> Set.Set String
+collectCtorNames patterns acc =
+    case patterns of
+
+        [] ->
+            acc
+
+        pat :: rest ->
+            collectCtorNames rest (addCtorName pat acc)
+
+
+addCtorName : Pattern -> Set.Set String -> Set.Set String
+addCtorName pat acc =
+    case pat of
+
+        PConstructor parts _ _ ->
+            case List.reverse parts of
+
+                name :: _ ->
+                    Set.insert name acc
+
+                [] ->
+                    acc
+
+        _ ->
+            acc
+
+
+isNilPattern : Pattern -> Bool
+isNilPattern pat =
+    case pat of
+
+        PList items _ ->
+            List.isEmpty items
+
+        PVariable _ _ ->
+            True
+
+        PWildcard _ ->
+            True
+
+        _ ->
+            False
+
+
+isConsPattern : Pattern -> Bool
+isConsPattern pat =
+    case pat of
+
+        PCons _ _ _ ->
+            True
+
+        PList items _ ->
+            not (List.isEmpty items)
+
+        PVariable _ _ ->
+            True
+
+        PWildcard _ ->
+            True
+
+        _ ->
+            False
 
 
 checkBoolExhaustiveness : (List Pattern) -> Maybe String
