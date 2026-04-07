@@ -25,7 +25,7 @@ hasCatchAll : (List Pattern) -> Bool
 hasCatchAll patterns =
     case patterns of
         
-        [  ] ->
+        [] ->
             False
         
         pat :: rest ->
@@ -71,22 +71,22 @@ checkConstTypeExhaustiveness : AdtRegistry -> String -> (List Pattern) -> Maybe 
 checkConstTypeExhaustiveness registry typeName patterns =
     if typeName == "Bool" then
         checkBoolExhaustiveness patterns
-
+    
     else if typeName == "List" then
         checkListExhaustiveness patterns
-
+    
     else if typeName == "Maybe" then
         checkMaybeExhaustiveness patterns
-
+    
     else if typeName == "Result" then
         checkResultExhaustiveness patterns
-
+    
     else
         case Dict.get typeName registry of
-
+            
             Just adt ->
                 checkAdtExhaustiveness adt patterns
-
+            
             Nothing ->
                 Nothing
 
@@ -99,13 +99,13 @@ checkListExhaustiveness patterns =
     in
         if hasNil && hasCons then
             Nothing
-
+        
         else if hasNil then
             Just "Missing pattern: _ :: _"
-
+        
         else if hasCons then
             Just "Missing pattern: []"
-
+        
         else
             Just "Missing patterns: [], _ :: _"
 
@@ -120,13 +120,13 @@ checkMaybeExhaustiveness patterns =
     in
         if hasCatchAll || (hasJust && hasNothing) then
             Nothing
-
+        
         else if hasJust then
             Just "Missing pattern: Nothing"
-
+        
         else if hasNothing then
             Just "Missing pattern: Just _"
-
+        
         else
             Just "Missing patterns: Just _, Nothing"
 
@@ -141,41 +141,41 @@ checkResultExhaustiveness patterns =
     in
         if hasCatchAll || (hasOk && hasErr) then
             Nothing
-
+        
         else if hasOk then
             Just "Missing pattern: Err _"
-
+        
         else if hasErr then
             Just "Missing pattern: Ok _"
-
+        
         else
             Just "Missing patterns: Ok _, Err _"
 
 
-collectCtorNames : (List Pattern) -> Set.Set String -> Set.Set String
+collectCtorNames : (List Pattern) -> (Set.Set String) -> Set.Set String
 collectCtorNames patterns acc =
     case patterns of
-
+        
         [] ->
             acc
-
+        
         pat :: rest ->
             collectCtorNames rest (addCtorName pat acc)
 
 
-addCtorName : Pattern -> Set.Set String -> Set.Set String
+addCtorName : Pattern -> (Set.Set String) -> Set.Set String
 addCtorName pat acc =
     case pat of
-
+        
         PConstructor parts _ _ ->
             case List.reverse parts of
-
+                
                 name :: _ ->
                     Set.insert name acc
-
+                
                 [] ->
                     acc
-
+        
         _ ->
             acc
 
@@ -183,16 +183,16 @@ addCtorName pat acc =
 isNilPattern : Pattern -> Bool
 isNilPattern pat =
     case pat of
-
+        
         PList items _ ->
             List.isEmpty items
-
+        
         PVariable _ _ ->
             True
-
+        
         PWildcard _ ->
             True
-
+        
         _ ->
             False
 
@@ -200,19 +200,19 @@ isNilPattern pat =
 isConsPattern : Pattern -> Bool
 isConsPattern pat =
     case pat of
-
+        
         PCons _ _ _ ->
             True
-
+        
         PList items _ ->
             not (List.isEmpty items)
-
+        
         PVariable _ _ ->
             True
-
+        
         PWildcard _ ->
             True
-
+        
         _ ->
             False
 
@@ -241,7 +241,7 @@ collectBoolPatterns : (List Pattern) -> (Set.Set String) -> Set.Set String
 collectBoolPatterns patterns acc =
     case patterns of
         
-        [  ] ->
+        [] ->
             acc
         
         pat :: rest ->
@@ -285,7 +285,7 @@ collectConstructorPatterns : (List Pattern) -> (Set.Set String) -> Set.Set Strin
 collectConstructorPatterns patterns acc =
     case patterns of
         
-        [  ] ->
+        [] ->
             acc
         
         pat :: rest ->
@@ -311,5 +311,5 @@ lastPart parts =
         last :: _ ->
             last
         
-        [  ] ->
+        [] ->
             ""

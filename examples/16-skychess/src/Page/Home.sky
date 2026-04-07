@@ -11,7 +11,6 @@ import State exposing (..)
 import Lib.Games as Games
 import Ui.Layout as Layout
 
-
 viewHome : Model -> VNode
 viewHome model =
     Layout.page model
@@ -31,7 +30,7 @@ viewHome model =
 viewNotification model =
     if model.notification == "" then
         text ""
-
+    
     else
         div [ class "notification" ] [ text model.notification ]
 
@@ -49,10 +48,7 @@ viewNameForm model =
                     ]
               ]
         , div [ class "form-actions" ]
-              [ button
-                    [ onClick StartNewGame
-                    , class "btn btn-primary"
-                    ]
+              [ button [ onClick StartNewGame , class "btn btn-primary" ]
                     [ text "New Game" ]
               ]
         ]
@@ -61,7 +57,7 @@ viewNameForm model =
 viewStats model =
     if List.isEmpty model.savedGames then
         text ""
-
+    
     else
         let
             totalGames = List.length model.savedGames
@@ -80,7 +76,7 @@ viewStats model =
                 ]
 
 
-countByResult : String -> List (Dict String String) -> Int
+countByResult : String -> (List (Dict String String)) -> Int
 countByResult result games =
     List.length (List.filter (\g -> Games.getField "result" g == result) games)
 
@@ -95,12 +91,11 @@ statCard val label =
 viewGameList model =
     if List.isEmpty model.savedGames then
         text ""
-
+    
     else
         div []
             [ h3 [ class "section-title" ] [ text "Previous Games" ]
-            , div [ class "game-list" ]
-                  (List.map viewGameRow model.savedGames)
+            , div [ class "game-list" ] (List.map viewGameRow model.savedGames)
             ]
 
 
@@ -120,9 +115,15 @@ viewGameRow game =
                   , span [ class "game-date" ] [ text date ]
                   ]
             , div [ class "game-actions" ]
-                  [ button [ onClick (LoadGame gameId) , class "btn btn-secondary btn-sm" ]
+                  [ button
+                        [ onClick (LoadGame gameId)
+                        , class "btn btn-secondary btn-sm"
+                        ]
                         [ text "View" ]
-                  , button [ onClick (DeleteGame gameId) , class "btn btn-ghost btn-sm" ]
+                  , button
+                        [ onClick (DeleteGame gameId)
+                        , class "btn btn-ghost btn-sm"
+                        ]
                         [ text "Delete" ]
                   ]
             ]
@@ -131,11 +132,15 @@ viewGameRow game =
 formatResult result status =
     if result == "checkmate-white" then
         "Won"
+    
     else if result == "checkmate-black" then
         "Lost"
+    
     else if result == "stalemate" then
         "Draw"
+    
     else if result == "resigned" then
         "Resigned"
+    
     else
         "In Progress"

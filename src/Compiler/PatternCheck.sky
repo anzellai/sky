@@ -191,7 +191,7 @@ checkPatternCtorPat counter registry env parts argPats expectedType =
                 last :: _ ->
                     last
                 
-                [  ] ->
+                [] ->
                     ""
     in
         case Adt.lookupConstructor ctorName registry of
@@ -278,7 +278,7 @@ checkPatternList : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern)
 checkPatternList counter registry env pats types sub bindings =
     case pats of
         
-        [  ] ->
+        [] ->
             checkPatternListEmpty types sub bindings
         
         p :: ps ->
@@ -289,7 +289,7 @@ checkPatternListEmpty : (List Type) -> Substitution -> (List (String, Type)) -> 
 checkPatternListEmpty types sub bindings =
     case types of
         
-        [  ] ->
+        [] ->
             Ok { substitution = sub , bindings = bindings }
         
         _ ->
@@ -300,7 +300,7 @@ checkPatternListCons : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Pattern ->
 checkPatternListCons counter registry env p ps types sub bindings =
     case types of
         
-        [  ] ->
+        [] ->
             Err "Pattern/type count mismatch"
         
         t :: ts ->
@@ -324,7 +324,7 @@ checkPatternListSame : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Patt
 checkPatternListSame counter registry env pats elemType sub bindings =
     case pats of
         
-        [  ] ->
+        [] ->
             Ok { substitution = sub , bindings = bindings }
         
         p :: rest ->

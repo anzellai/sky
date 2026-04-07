@@ -94,7 +94,7 @@ mapGoTypeToSky goType =
                 last :: _ ->
                     last
                 
-                [  ] ->
+                [] ->
                     goType
     
     else
@@ -258,7 +258,7 @@ shortTypeName goType =
                     last :: _ ->
                         last
                     
-                    [  ] ->
+                    [] ->
                         pkgPath
         in
             shortPkg ++ "." ++ typeName

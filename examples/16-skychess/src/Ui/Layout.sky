@@ -7,7 +7,6 @@ import Std.Live.Events exposing (onClick)
 import State exposing (..)
 import Ui.Styles exposing (globalStyles)
 
-
 page model content =
     div []
         [ styleNode [] globalStyles
@@ -21,25 +20,20 @@ viewHeader model =
         [ div [ class "header-inner" ]
               [ a [ href "/" , attribute "sky-nav" "" , class "logo" ]
                     [ text "\u265E SkyChess" ]
-              , nav [ class "nav" ]
-                    [ viewNavItems model ]
+              , nav [ class "nav" ] [ viewNavItems model ]
               ]
         ]
 
 
 viewNavItems model =
     case model.page of
-
+        
         GamePage ->
             span [ class "nav-info" ]
-                [ span [ class "nav-player" ]
-                      [ text model.playerName ]
-                , button
-                      [ onClick BackToHome
-                      , class "btn btn-ghost btn-sm"
-                      ]
+                [ span [ class "nav-player" ] [ text model.playerName ]
+                , button [ onClick BackToHome , class "btn btn-ghost btn-sm" ]
                       [ text "Home" ]
                 ]
-
+        
         _ ->
             text ""

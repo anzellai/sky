@@ -254,7 +254,7 @@ copyInspectorSource inspectorDir =
 copyFirstFound paths targetPath =
     case paths of
         
-        [  ] ->
+        [] ->
             File.writeFile targetPath inspectorGoCode
         
         path :: rest ->

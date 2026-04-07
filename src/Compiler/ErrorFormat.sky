@@ -5,7 +5,6 @@ import Sky.Core.String as String
 import Sky.Core.List as List
 import Compiler.Token exposing (..)
 
-
 formatErrors : String -> (List CompilerError) -> String
 formatErrors source errors =
     String.join "\n\n" (List.map (formatError source) errors)
@@ -18,14 +17,22 @@ formatError source err =
         body = formatBody source err
         hint = formatHint err.hint
     in
-        header ++ "\n\n" ++ body ++ hint
+        String.join "\n" [ header , "" , body , hint ]
 
 
 formatHeader : CompilerError -> String
 formatHeader err =
     let
         location = formatLocation err
-        dashes = String.repeat (maxInt 1 (60 - String.length err.category - String.length location - 6)) "─"
+        dashes =
+            String.repeat
+                (
+                maxInt 1
+                    (
+                    60 - String.length err.category - String.length location - 6
+                    )
+                )
+                "─"
     in
         "── " ++ err.category ++ " " ++ dashes ++ " " ++ location ++ " ──"
 
@@ -35,22 +42,25 @@ formatLocation err =
     if err.span.start.line == 0 then
         if String.isEmpty err.filePath then
             ""
-
+        
         else
             err.filePath
-
+    
     else if String.isEmpty err.filePath then
         "line " ++ String.fromInt err.span.start.line
-
+    
     else
-        err.filePath ++ ":" ++ String.fromInt err.span.start.line ++ ":" ++ String.fromInt err.span.start.column
+        err.filePath
+            ++ ":"
+                ++ String.fromInt err.span.start.line
+                    ++ ":" ++ String.fromInt err.span.start.column
 
 
 formatBody : String -> CompilerError -> String
 formatBody source err =
     if err.span.start.line == 0 then
         err.message
-
+    
     else
         let
             sourceLine = getSourceLine source err.span.start.line
@@ -58,11 +68,13 @@ formatBody source err =
             padding = String.repeat (String.length lineNum) " "
             underline = buildUnderline err.span
         in
-            err.message
-                ++ "\n\n"
-                    ++ padding ++ " │\n"
-                        ++ lineNum ++ " │ " ++ sourceLine ++ "\n"
-                            ++ padding ++ " │ " ++ underline
+            String.join "\n"
+                [ err.message
+                , ""
+                , padding ++ " │"
+                , lineNum ++ " │ " ++ sourceLine
+                , padding ++ " │ " ++ underline
+                ]
 
 
 getSourceLine : String -> Int -> String
@@ -72,10 +84,10 @@ getSourceLine source lineNum =
         targetLine = List.drop (lineNum - 1) lines
     in
         case targetLine of
-
+            
             line :: _ ->
                 line
-
+            
             [] ->
                 ""
 
@@ -95,7 +107,7 @@ formatHint : String -> String
 formatHint hint =
     if String.isEmpty hint then
         ""
-
+    
     else
         "\n\nHint: " ++ hint
 
@@ -104,6 +116,6 @@ maxInt : Int -> Int -> Int
 maxInt a b =
     if a > b then
         a
-
+    
     else
         b

@@ -311,7 +311,7 @@ extractConstName t =
 goListType args =
     case args of
         
-        elemT :: [  ] ->
+        elemT :: [] ->
             "[]" ++ typeToGo elemT
         
         _ ->
@@ -321,7 +321,7 @@ goListType args =
 goMaybeType args =
     case args of
         
-        innerT :: [  ] ->
+        innerT :: [] ->
             "SkyMaybe[" ++ typeToGo innerT ++ "]"
         
         _ ->
@@ -331,7 +331,7 @@ goMaybeType args =
 goResultType args =
     case args of
         
-        errT :: okT :: [  ] ->
+        errT :: okT :: [] ->
             "SkyResult[" ++ typeToGo errT ++ ", " ++ typeToGo okT ++ "]"
         
         _ ->
@@ -341,7 +341,7 @@ goResultType args =
 goDictType args =
     case args of
         
-        keyT :: valT :: [  ] ->
+        keyT :: valT :: [] ->
             "map[" ++ typeToGo keyT ++ "]" ++ typeToGo valT
         
         _ ->
@@ -351,7 +351,7 @@ goDictType args =
 goSetType args =
     case args of
         
-        elemT :: [  ] ->
+        elemT :: [] ->
             "map[" ++ typeToGo elemT ++ "]bool"
         
         _ ->
@@ -361,7 +361,7 @@ goSetType args =
 goTaskType args =
     case args of
         
-        errT :: okT :: [  ] ->
+        errT :: okT :: [] ->
             "func() SkyResult[" ++ typeToGo errT ++ ", " ++ typeToGo okT ++ "]"
         
         _ ->
@@ -372,10 +372,10 @@ goTupleType : (List Type) -> String
 goTupleType items =
     case items of
         
-        a :: b :: [  ] ->
+        a :: b :: [] ->
             "SkyTuple2[" ++ typeToGo a ++ ", " ++ typeToGo b ++ "]"
         
-        a :: b :: c :: [  ] ->
+        a :: b :: c :: [] ->
             "SkyTuple3["
                 ++ typeToGo a ++ ", " ++ typeToGo b ++ ", " ++ typeToGo c ++ "]"
         

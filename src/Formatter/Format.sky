@@ -93,10 +93,10 @@ formatDeclPairs : (List Doc) -> (List Declaration) -> Doc
 formatDeclPairs docs decls =
     case docs of
         
-        [  ] ->
+        [] ->
             text ""
         
-        d :: [  ] ->
+        d :: [] ->
             d
         
         d1 :: rest ->
@@ -228,7 +228,7 @@ formatTypeDecl name params variants =
     in
         case variants of
             
-            [  ] ->
+            [] ->
                 header
             
             first :: rest ->
@@ -375,7 +375,7 @@ formatTuple : (List Expression) -> Doc
 formatTuple items =
     case items of
         
-        [  ] ->
+        [] ->
             text "()"
         
         first :: rest ->
@@ -399,7 +399,7 @@ formatList : (List Expression) -> Doc
 formatList items =
     case items of
         
-        [  ] ->
+        [] ->
             text "[]"
         
         first :: rest ->
@@ -427,7 +427,7 @@ formatRecord : (List NamedExpr) -> Doc
 formatRecord fields =
     case fields of
         
-        [  ] ->
+        [] ->
             text "{}"
         
         first :: rest ->
@@ -795,14 +795,18 @@ formatPattern pat =
                 )
         
         PList items _ ->
-            group
-                (
-                concat
-                    [ text "[ "
-                    , joinDocs (List.map formatPattern items) (text ", ")
-                    , text " ]"
-                    ]
-                )
+            if List.isEmpty items then
+                text "[]"
+            
+            else
+                group
+                    (
+                    concat
+                        [ text "[ "
+                        , joinDocs (List.map formatPattern items) (text ", ")
+                        , text " ]"
+                        ]
+                    )
         
         PCons headPat tailPat _ ->
             concat
@@ -943,7 +947,7 @@ formatRecordType : (List NamedType) -> Doc
 formatRecordType fields =
     case fields of
         
-        [  ] ->
+        [] ->
             text "{}"
         
         first :: rest ->

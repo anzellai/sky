@@ -602,7 +602,11 @@ parseTypePrimary state =
                 String.fromInt token.span.start.line
                     ++ ":" ++ String.fromInt token.span.start.column
         in
-            Err ("Unexpected token in type at " ++ loc ++ ": " ++ peekLexeme state)
+            Err
+                (
+                "Unexpected token in type at "
+                    ++ loc ++ ": " ++ peekLexeme state
+                )
 
 
 parseTupleTypeRest : (List TypeExpr) -> ParserState -> Result String (TypeExpr, ParserState)

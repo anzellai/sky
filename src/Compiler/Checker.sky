@@ -37,7 +37,7 @@ makeFunError fnName msg decl =
         fullMsg =
             if String.startsWith "In function" msg then
                 msg
-
+            
             else
                 "In function '" ++ fnName ++ "': " ++ msg
     in
@@ -52,22 +52,22 @@ makeFunError fnName msg decl =
 declSpan : Declaration -> SourceSpan
 declSpan decl =
     case decl of
-
+        
         FunDecl _ _ _ s ->
             s
-
+        
         TypeDecl _ _ _ s ->
             s
-
+        
         TypeAliasDecl _ _ _ s ->
             s
-
+        
         PortDecl _ _ s ->
             s
-
+        
         ForeignDecl _ _ s ->
             s
-
+        
         InfixDecl _ _ _ s ->
             s
 
@@ -148,7 +148,7 @@ registerTypeAliasesLoop : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> 
 registerTypeAliasesLoop counter decls env aliases =
     case decls of
         
-        [  ] ->
+        [] ->
             ( env, aliases )
         
         decl :: rest ->
@@ -216,7 +216,7 @@ collectAnnotationsLoop : (List Declaration) -> (Dict.Dict String TypeExpr) -> Di
 collectAnnotationsLoop decls acc =
     case decls of
         
-        [  ] ->
+        [] ->
             acc
         
         decl :: rest ->
@@ -233,7 +233,7 @@ preRegisterFunctions : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> Env
 preRegisterFunctions counter decls env =
     case decls of
         
-        [  ] ->
+        [] ->
             env
         
         decl :: rest ->
@@ -263,7 +263,7 @@ inferDeclsLoop : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaratio
 inferDeclsLoop counter registry env decls annotations typeAliases typedDecls diagnostics =
     case decls of
         
-        [  ] ->
+        [] ->
             ( List.reverse typedDecls, env, diagnostics )
         
         decl :: rest ->
@@ -294,7 +294,8 @@ inferOneFunDecl counter registry env fnName decl rest annotations typeAliases ty
         case Infer.inferDeclaration counter registry env decl annotation typeAliases of
             
             Ok inferResult ->
-                addTypedDeclAndContinue counter registry env decl rest annotations
+                addTypedDeclAndContinue counter registry env decl rest
+                    annotations
                     typeAliases
                     typedDecls
                     diagnostics
@@ -304,7 +305,8 @@ inferOneFunDecl counter registry env fnName decl rest annotations typeAliases ty
                 let
                     err = makeFunError fnName e decl
                 in
-                    inferDeclsLoop counter registry env rest annotations typeAliases
+                    inferDeclsLoop counter registry env rest annotations
+                        typeAliases
                         typedDecls
                         (err :: diagnostics)
 
@@ -318,9 +320,7 @@ addTypedDeclAndContinue counter registry env decl rest annotations typeAliases t
         newDecls = td :: typedDecls
         newEnv = Env.extend nm sc env
         wrappedDiags =
-            List.map
-                (\msg -> makeFunError nm msg decl)
-                inferResult.diagnostics
+            List.map (\msg -> makeFunError nm msg decl) inferResult.diagnostics
         newDiags = List.append diagnostics wrappedDiags
     in
         inferDeclsLoop counter registry newEnv rest annotations typeAliases

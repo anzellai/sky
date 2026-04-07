@@ -89,13 +89,13 @@ handleSignIn _ req =
             password = Server.formValue "password" req
         in
             case Auth.authenticateUser email password of
-
+                
                 Ok user ->
                     let
                         userId = Db.getField "id" user
                     in
                         case Auth.createSession userId of
-
+                            
                             Ok sessionToken ->
                                 Task.succeed
                                     (
@@ -104,10 +104,10 @@ handleSignIn _ req =
                                                sessionToken
                                                "Path=/; HttpOnly; SameSite=Lax"
                                     )
-
+                            
                             Err msg ->
                                 Task.succeed (Server.html (View.signInPage msg))
-
+                
                 Err msg ->
                     Task.succeed (Server.html (View.signInPage msg))
     
@@ -182,14 +182,18 @@ handleVerify _ req =
         token = Maybe.withDefault "" (Server.queryParam "token" req)
     in
         if token == "" then
-            Task.succeed (Server.html (View.verifyResultPage False "Missing verification token."))
-
+            Task.succeed
+                (
+                Server.html
+                    (View.verifyResultPage False "Missing verification token.")
+                )
+        
         else
             case Auth.verifyEmail token of
-
+                
                 Ok msg ->
                     Task.succeed (Server.html (View.verifyResultPage True msg))
-
+                
                 Err msg ->
                     Task.succeed (Server.html (View.verifyResultPage False msg))
 
@@ -262,10 +266,10 @@ handleViewNote _ req =
                     noteId = Maybe.withDefault "" (Server.queryParam "id" req)
                 in
                     case Notes.getNote noteId userId of
-
+                        
                         Just note ->
                             Server.html (View.noteViewPage email note)
-
+                        
                         Nothing ->
                             Server.html (View.errorPage "Note not found.")
             )

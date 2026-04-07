@@ -5,24 +5,20 @@ import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Std.Db as Db
 
-
 conn =
     case Db.open "sqlite" "skynotes.db" of
-
+        
         Ok c ->
             c
-
+        
         Err _ ->
             identity ""
 
 
-exec queryStr args =
-    Db.exec conn queryStr args
+exec queryStr args = Db.exec conn queryStr args
 
 
-queryRows queryStr args =
-    Db.query conn queryStr args
+queryRows queryStr args = Db.query conn queryStr args
 
 
-getField field row =
-    Maybe.withDefault "" (Dict.get field row)
+getField field row = Maybe.withDefault "" (Dict.get field row)

@@ -166,28 +166,32 @@ buildGoProject outDir =
         _ =
             if goModExists then
                 ()
-
+            
             else
                 let
                     cachedGoMod = ".skycache/gomod/go.mod"
                     cachedGoSum = ".skycache/gomod/go.sum"
                     _ =
                         case File.readFile cachedGoMod of
-
+                            
                             Ok content ->
                                 let
-                                    fixed = String.replace "module skycache" "module sky-app" content
+                                    fixed =
+                                        String.replace "module skycache"
+                                            "module sky-app"
+                                            content
                                 in
                                     File.writeFile goModPath fixed
-
+                            
                             Err _ ->
-                                File.writeFile goModPath "module sky-app\n\ngo 1.26.0\n"
+                                File.writeFile goModPath
+                                    "module sky-app\n\ngo 1.26.0\n"
                     _ =
                         case File.readFile cachedGoSum of
-
+                            
                             Ok sumContent ->
                                 File.writeFile goSumPath sumContent
-
+                            
                             Err _ ->
                                 Ok ()
                 in
@@ -354,14 +358,14 @@ checkSource entryFile source =
 
 handleCheckResult entryFile source checkResult =
     case checkResult of
-
+        
         Ok result ->
             if List.isEmpty result.diagnostics then
                 let
                     _ = println ("Type check passed: " ++ entryFile)
                 in
                     ()
-
+            
             else
                 let
                     _ =
@@ -379,7 +383,7 @@ handleCheckResult entryFile source checkResult =
                             )
                 in
                     Process.exit 1
-
+        
         Err e ->
             let
                 _ = println ("Type error: " ++ e)
@@ -455,7 +459,7 @@ extractDirName cwd =
         last :: _ ->
             last
         
-        [  ] ->
+        [] ->
             "sky-project"
 
 
@@ -699,7 +703,7 @@ cmdAdd _ =
                         first :: _ ->
                             first
                         
-                        [  ] ->
+                        [] ->
                             pkg
             in
                 if isGoStdlib firstPart || isGoStdlib pkg then
@@ -825,27 +829,34 @@ generateGoBindings pkg cacheDir =
         inspectPath = cacheDir ++ "/inspect.json"
         hasInspect =
             case File.readFile inspectPath of
-
+                
                 Ok _ ->
                     True
-
+                
                 Err _ ->
                     False
     in
         if hasInspect then
             let
                 _ =
-                    case Process.run "sky-ffi-gen" [ pkg , inspectPath , cacheDir , "src" ] of
-
+                    case Process.run "sky-ffi-gen" [ pkg
+                    , inspectPath
+                    , cacheDir
+                    , "src"
+                    ] of
+                        
                         Ok _ ->
                             println
-                                ("Generated bindings for " ++ pkg ++ " at " ++ cacheDir)
-
+                                (
+                                "Generated bindings for "
+                                    ++ pkg ++ " at " ++ cacheDir
+                                )
+                        
                         Err _ ->
                             generateGoBindingsFallback pkg cacheDir
             in
                 ()
-
+        
         else
             let
                 _ = generateGoBindingsFallback pkg cacheDir
@@ -855,7 +866,7 @@ generateGoBindings pkg cacheDir =
 
 generateGoBindingsFallback pkg cacheDir =
     case BindingGen.generateBindings pkg cacheDir of
-
+        
         Ok _ ->
             let
                 _ =
@@ -864,10 +875,10 @@ generateGoBindingsFallback pkg cacheDir =
                 inspectPath = cacheDir ++ "/inspect.json"
                 hasInspect =
                     case File.readFile inspectPath of
-
+                        
                         Ok _ ->
                             True
-
+                        
                         Err _ ->
                             False
                 _ =
@@ -878,12 +889,12 @@ generateGoBindingsFallback pkg cacheDir =
                                     [ pkg , inspectPath , cacheDir , "src" ]
                         in
                             ()
-
+                    
                     else
                         ()
             in
                 ()
-
+        
         Err e ->
             let
                 _ = println ("Warning: binding generation failed: " ++ e)
@@ -952,7 +963,7 @@ installFromSkyToml _ =
 installTomlDeps lines section =
     case lines of
         
-        [  ] ->
+        [] ->
             ()
         
         line :: rest ->
@@ -986,7 +997,7 @@ installTomlDeps lines section =
                                             key :: _ ->
                                                 key
                                             
-                                            [  ] ->
+                                            [] ->
                                                 ""
                                         )
                                     )
@@ -1066,7 +1077,7 @@ installTomlDeps lines section =
                                             key :: _ ->
                                                 key
                                             
-                                            [  ] ->
+                                            [] ->
                                                 ""
                                         )
                                     )
@@ -1093,7 +1104,7 @@ installTomlDeps lines section =
                                             first :: _ ->
                                                 first
                                             
-                                            [  ] ->
+                                            [] ->
                                                 pkg
                                     _ =
                                         println
@@ -1238,7 +1249,7 @@ processImportLine line =
                                     first :: _ ->
                                         first
                                     
-                                    [  ] ->
+                                    [] ->
                                         ""
                         in
                             if isGoStdlib firstPart || isGoStdlib goPath then
@@ -1249,13 +1260,13 @@ processImportLine line =
                                     _ = generateGoBindings goPath cacheDir
                                 in
                                     ()
-
+                            
                             else if String.contains "." firstPart then
                                 let
                                     _ = detectAndInstall goPath
                                 in
                                     ()
-
+                            
                             else
                                 ()
 
@@ -1607,7 +1618,7 @@ parseVersion v =
                 first :: _ ->
                     first
                 
-                [  ] ->
+                [] ->
                     cleaned
     in
         List.map parseIntOrZero (String.split "." base)
@@ -1628,13 +1639,13 @@ compareVersionParts : (List Int) -> (List Int) -> Int
 compareVersionParts a b =
     case a of
         
-        [  ] ->
+        [] ->
             compareVersionParts2 [] b
         
         x :: restA ->
             case b of
                 
-                [  ] ->
+                [] ->
                     if x > 0 then
                         1
                     
@@ -1655,7 +1666,7 @@ compareVersionParts a b =
 compareVersionParts2 a b =
     case b of
         
-        [  ] ->
+        [] ->
             0
         
         y :: restB ->
@@ -1856,7 +1867,7 @@ extractTomlKey line =
             key :: _ ->
                 String.trim (String.replace "\"" "" (String.trim key))
             
-            [  ] ->
+            [] ->
                 ""
 
 
@@ -1950,7 +1961,7 @@ addSkyDepToToml pkg version =
 listContains needle lines =
     case lines of
         
-        [  ] ->
+        [] ->
             False
         
         line :: rest ->
@@ -1964,7 +1975,7 @@ listContains needle lines =
 tomlHasDep pkg lines =
     case lines of
         
-        [  ] ->
+        [] ->
             False
         
         line :: rest ->
@@ -1986,7 +1997,7 @@ insertAfterSection sectionName newLine lines =
 insertAfterSectionLoop sectionName newLine lines acc foundSection =
     case lines of
         
-        [  ] ->
+        [] ->
             if foundSection then
                 List.append acc [ newLine ]
             
@@ -2038,7 +2049,7 @@ removeDepFromToml pkg =
 removeDepLines pkg lines =
     case lines of
         
-        [  ] ->
+        [] ->
             []
         
         line :: rest ->
@@ -2171,7 +2182,7 @@ collectCommentGroups : (List String) -> (List String) -> (List (List String, Str
 collectCommentGroups lines currentComments acc =
     case lines of
         
-        [  ] ->
+        [] ->
             if List.isEmpty currentComments then
                 List.reverse acc
             
@@ -2203,20 +2214,27 @@ collectCommentGroups lines currentComments acc =
 
 extractAnchorWord : String -> String
 extractAnchorWord line =
-    case String.split " " line of
+    let
+        trimmed = String.trim line
+    in
+        if String.length trimmed > 40 then
+            case String.split " " trimmed of
+                
+                word :: _ ->
+                    word
+                
+                [] ->
+                    trimmed
         
-        word :: _ ->
-            word
-        
-        [  ] ->
-            line
+        else
+            trimmed
 
 
 insertCommentGroups : (List (List String, String)) -> (List String) -> (List String) -> List String
 insertCommentGroups groups fmtLines acc =
     case groups of
         
-        [  ] ->
+        [] ->
             List.append acc fmtLines
         
         group :: restGroups ->
@@ -2237,17 +2255,32 @@ insertBeforeAnchorOnce : (List String) -> String -> (List (List String, String))
 insertBeforeAnchorOnce comments anchor restGroups fmtLines acc =
     case fmtLines of
         
-        [  ] ->
+        [] ->
             insertCommentGroups restGroups [] (List.append acc comments)
         
         fmtLine :: fmtRest ->
-            if String.startsWith anchor (String.trim fmtLine) then
+            if matchesAnchor anchor (String.trim fmtLine) then
                 insertCommentGroups restGroups fmtRest
                     (List.concat [ acc , comments , [ fmtLine ] ])
             
             else
                 insertBeforeAnchorOnce comments anchor restGroups fmtRest
                     (List.append acc [ fmtLine ])
+
+
+matchesAnchor : String -> String -> Bool
+matchesAnchor anchor trimmedLine =
+    if String.isEmpty trimmedLine then
+        False
+    
+    else if trimmedLine == anchor then
+        True
+    
+    else if String.startsWith anchor trimmedLine then
+        True
+    
+    else
+        String.contains anchor trimmedLine
 
 
 fmtStdin _ =

@@ -3,7 +3,6 @@ module Ui.Styles exposing (globalStyles)
 import Sky.Core.Prelude exposing (..)
 import Std.Css exposing (..)
 
-
 -- Design tokens
 primary = hex "6366f1"
 
@@ -73,7 +72,8 @@ globalStyles =
         [ rule "*, *::before, *::after"
               [ property "box-sizing" "border-box" , margin "0" , padding "0" ]
         , rule "body"
-              [ fontFamily "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif"
+              [ fontFamily
+                    "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif"
               , backgroundColor bgPage
               , color textPrimary
               , lineHeight "1.6"
@@ -82,10 +82,7 @@ globalStyles =
         , rule "a" [ color primary , textDecoration "none" ]
         , rule "a:hover" [ textDecoration "underline" ]
         , rule ".container"
-              [ maxWidth (px 1100)
-              , margin2 "0" "auto"
-              , padding2 "0" (px 20)
-              ]
+              [ maxWidth (px 1100) , margin2 "0" "auto" , padding2 "0" (px 20) ]
         , rule ".header"
               [ backgroundColor bgCard
               , borderBottom ("1px solid " ++ borderLight)
@@ -113,7 +110,8 @@ globalStyles =
               ]
         , rule ".logo:hover" [ textDecoration "none" ]
         , rule ".nav" [ display "flex" , gap (px 8) , alignItems "center" ]
-        , rule ".nav-info" [ display "flex" , gap (px 12) , alignItems "center" ]
+        , rule ".nav-info"
+              [ display "flex" , gap (px 12) , alignItems "center" ]
         , rule ".nav-player" [ fontWeight "600" , color textSecondary ]
         , rule ".btn"
               [ padding2 (px 10) (px 20)
@@ -135,8 +133,11 @@ globalStyles =
         , rule ".btn-danger" [ backgroundColor danger , color (hex "ffffff") ]
         , rule ".btn-sm" [ padding2 (px 6) (px 12) , fontSize (px 13) ]
         , rule ".btn-ghost"
-              [ property "background-color" "transparent" , color textSecondary ]
-        , rule ".btn-ghost:hover" [ backgroundColor bgInput , color textPrimary ]
+              [ property "background-color" "transparent"
+              , color textSecondary
+              ]
+        , rule ".btn-ghost:hover"
+              [ backgroundColor bgInput , color textPrimary ]
         , rule ".card"
               [ backgroundColor bgCard
               , borderRadius (px 12)
@@ -144,8 +145,7 @@ globalStyles =
               , padding (px 24)
               ]
         -- Home page
-        , rule ".home-container"
-              [ maxWidth (px 600) , margin2 (px 40) "auto" ]
+        , rule ".home-container" [ maxWidth (px 600) , margin2 (px 40) "auto" ]
         , rule ".home-title"
               [ fontSize (px 36)
               , fontWeight "700"
@@ -199,9 +199,13 @@ globalStyles =
               , padding (px 16)
               , textAlign "center"
               ]
-        , rule ".stat-value" [ fontSize (px 28) , fontWeight "700" , color primary ]
+        , rule ".stat-value"
+              [ fontSize (px 28) , fontWeight "700" , color primary ]
         , rule ".stat-label"
-              [ fontSize (px 13) , color textMuted , property "margin-top" "4px" ]
+              [ fontSize (px 13)
+              , color textMuted
+              , property "margin-top" "4px"
+              ]
         -- Game list
         , rule ".game-list"
               [ display "flex" , flexDirection "column" , gap (px 8) ]
@@ -213,9 +217,13 @@ globalStyles =
               , backgroundColor bgInput
               , borderRadius (px 8)
               ]
-        , rule ".game-info" [ display "flex" , gap (px 16) , alignItems "center" ]
+        , rule ".game-info"
+              [ display "flex" , gap (px 16) , alignItems "center" ]
         , rule ".game-status"
-              [ fontSize (px 13) , fontWeight "600" , property "text-transform" "capitalize" ]
+              [ fontSize (px 13)
+              , fontWeight "600"
+              , property "text-transform" "capitalize"
+              ]
         , rule ".game-date" [ fontSize (px 13) , color textMuted ]
         , rule ".game-moves" [ fontSize (px 13) , color textSecondary ]
         , rule ".game-actions" [ display "flex" , gap (px 8) ]
@@ -257,8 +265,7 @@ globalStyles =
         , rule ".sq-selected-dark" [ backgroundColor sqSelectedDark ]
         , rule ".sq-last.sq-light" [ backgroundColor sqLastLight ]
         , rule ".sq-last.sq-dark" [ backgroundColor sqLastDark ]
-        , rule ".sq-legal"
-              [ position "relative" ]
+        , rule ".sq-legal" [ position "relative" ]
         , rule ".sq-legal::after"
               [ property "content" "''"
               , position "absolute"
@@ -273,7 +280,10 @@ globalStyles =
               ]
         , rule ".sq-capture"
               [ property "box-shadow" "inset 0 0 0 4px rgba(0, 0, 0, 0.3)" ]
-        , rule ".piece" [ property "pointer-events" "none" , property "text-shadow" "1px 1px 2px rgba(0,0,0,0.2)" ]
+        , rule ".piece"
+              [ property "pointer-events" "none"
+              , property "text-shadow" "1px 1px 2px rgba(0,0,0,0.2)"
+              ]
         , rule ".rank-label"
               [ width (px 24)
               , textAlign "center"
@@ -301,8 +311,7 @@ globalStyles =
               ]
         , rule ".status-thinking"
               [ backgroundColor (hex "fff3cd") , color (hex "856404") ]
-        , rule ".status-check"
-              [ backgroundColor dangerLight , color danger ]
+        , rule ".status-check" [ backgroundColor dangerLight , color danger ]
         , rule ".status-gameover"
               [ backgroundColor primaryLight , color primary ]
         -- Move history
@@ -364,9 +373,11 @@ globalStyles =
               [ backgroundColor dangerLight , color danger ]
         -- Responsive
         , media "(max-width: 768px)"
-              [ rule ".game-layout" [ flexDirection "column" , alignItems "center" ]
+              [ rule ".game-layout"
+                    [ flexDirection "column" , alignItems "center" ]
               , rule ".side-panel" [ width (pct 100) , maxWidth (px 520) ]
-              , rule ".chess-board td" [ width (px 48) , height (px 48) , fontSize (px 32) ]
+              , rule ".chess-board td"
+                    [ width (px 48) , height (px 48) , fontSize (px 32) ]
               , rule ".stats-grid" [ gridTemplateColumns "repeat(2, 1fr)" ]
               ]
         ]

@@ -4,12 +4,18 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Task as Task
 import Std.Log exposing (println)
 
-expensiveTask n =
-    Task.succeed (n * n)
+expensiveTask n = Task.succeed (n * n)
+
 
 main =
     let
-        tasks = [ expensiveTask 1, expensiveTask 2, expensiveTask 3, expensiveTask 4, expensiveTask 5 ]
+        tasks =
+            [ expensiveTask 1
+            , expensiveTask 2
+            , expensiveTask 3
+            , expensiveTask 4
+            , expensiveTask 5
+            ]
         seqResults = Task.perform (Task.sequence tasks)
         parResults = Task.perform (Task.parallel tasks)
         _ = println "Sequential:" seqResults

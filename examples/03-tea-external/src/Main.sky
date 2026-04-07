@@ -10,6 +10,6 @@ main =
         
         Ok uuid ->
             println ("Generated UUID: " ++ uuid)
-
+        
         Err e ->
             println ("Failed to generate UUID: " ++ e)

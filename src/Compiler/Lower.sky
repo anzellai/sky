@@ -423,44 +423,41 @@ lowerIdentifier ctx name =
             
             else if name == "modBy" then
                 GoIdent "sky_modBy"
-
+            
             else if name == "writeEmbeddedRuntime" then
                 GoIdent "sky_writeEmbeddedRuntime"
-
             
             else if name == "clamp" then
                 GoIdent "sky_clamp"
             
             else if Set.member name ctx.paramNames then
                 GoIdent (sanitizeGoIdent name)
-
+            
             else if listContains name ctx.localFunctions then
                 if not (String.isEmpty ctx.modulePrefix) then
                     let
                         goName =
                             ctx.modulePrefix
-                                ++ "_"
-                                    ++ capitalizeFirst
-                                           (sanitizeGoIdent name)
+                                ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
                     in
                         if isZeroArityFn name ctx then
                             GoCallExpr (GoIdent goName) []
-
+                        
                         else
                             GoIdent goName
-
+                
                 else if isZeroArityFn name ctx then
                     GoCallExpr (GoIdent (sanitizeGoIdent name)) []
-
+                
                 else
                     GoIdent (sanitizeGoIdent name)
-
+            
             else
                 case Dict.get name ctx.exposedStdlib of
-
+                    
                     Just modPath ->
                         lowerStdlibExposed modPath name
-
+                    
                     Nothing ->
                         GoIdent (sanitizeGoIdent name)
 
@@ -619,16 +616,16 @@ lowerCssFunction name =
         value = getCssValue name
     in
         case combinator of
-
+            
             Just goName ->
                 GoIdent goName
-
+            
             Nothing ->
                 case value of
-
+                    
                     Just cssVal ->
                         GoCallExpr (GoIdent "sky_cssVal") [ GoStringLit cssVal ]
-
+                    
                     Nothing ->
                         GoCallExpr (GoIdent "sky_cssPropFn")
                             [ GoStringLit (cssNameToProperty name) ]
@@ -638,46 +635,67 @@ getCssCombinator : String -> Maybe String
 getCssCombinator name =
     if name == "stylesheet" then
         Just "sky_cssStylesheet"
+    
     else if name == "rule" then
         Just "sky_cssRule"
+    
     else if name == "property" then
         Just "sky_cssProp"
+    
     else if name == "styles" then
         Just "sky_cssStyles"
+    
     else if name == "px" then
         Just "sky_cssPx"
+    
     else if name == "rem" then
         Just "sky_cssRem"
+    
     else if name == "em" then
         Just "sky_cssEm"
+    
     else if name == "pct" then
         Just "sky_cssPct"
+    
     else if name == "hex" then
         Just "sky_cssHex"
+    
     else if name == "fr" then
         Just "sky_cssFr"
+    
     else if name == "rgb" then
         Just "sky_cssRgb"
+    
     else if name == "rgba" then
         Just "sky_cssRgba"
+    
     else if name == "margin2" then
         Just "sky_cssMargin2"
+    
     else if name == "margin4" then
         Just "sky_cssMargin4"
+    
     else if name == "padding2" then
         Just "sky_cssPadding2"
+    
     else if name == "media" then
         Just "sky_cssMedia"
+    
     else if name == "keyframes" then
         Just "sky_cssKeyframes"
+    
     else if name == "frame" then
         Just "sky_cssFrame"
+    
     else if name == "transitionProp" then
         Just "sky_cssTransitionProp"
+    
     else if name == "shadow" then
         Just "sky_cssShadow"
+    
     else if name == "repeat" then
         Just "sky_cssRepeat"
+    
     else
         Nothing
 
@@ -686,26 +704,37 @@ getCssValue : String -> Maybe String
 getCssValue name =
     if name == "zero" then
         Just "0"
+    
     else if name == "none" then
         Just "none"
+    
     else if name == "auto" then
         Just "auto"
+    
     else if name == "transparent" then
         Just "transparent"
+    
     else if name == "inherit" then
         Just "inherit"
+    
     else if name == "initial" then
         Just "initial"
+    
     else if name == "unset" then
         Just "unset"
+    
     else if name == "borderBox" then
         Just "border-box"
+    
     else if name == "contentBox" then
         Just "content-box"
+    
     else if name == "systemFont" then
         Just "system-ui, -apple-system, sans-serif"
+    
     else if name == "monoFont" then
         Just "ui-monospace, SFMono-Regular, monospace"
+    
     else
         Nothing
 
@@ -782,10 +811,10 @@ lowerQualified ctx parts =
         isUserImport = Dict.member qualifier ctx.importAliases
         resolvedModule =
             case Dict.get qualifier ctx.importAliases of
-
+                
                 Just m ->
                     m
-
+                
                 Nothing ->
                     ""
         isStdlibAlias =
@@ -911,10 +940,9 @@ lowerQualified ctx parts =
         
         else if qualName == "Process.run" then
             GoIdent "sky_processRun"
-
+        
         else if qualName == "Process.execInherit" then
             GoIdent "sky_processExecInherit"
-
         
         else if qualName == "Args.getArgs" then
             GoIdent "sky_processGetArgs"
@@ -1537,79 +1565,79 @@ lowerQualified ctx parts =
         
         else if qualName == "Live.route" then
             GoIdent "sky_liveRoute"
-
+        
         else if qualName == "Db.connect" then
             GoIdent "sky_dbConnect"
-
+        
         else if qualName == "Db.open" then
             GoIdent "sky_dbOpen"
-
+        
         else if qualName == "Db.close" then
             GoIdent "sky_dbClose"
-
+        
         else if qualName == "Db.exec" then
             GoIdent "sky_dbExec"
-
+        
         else if qualName == "Db.query" then
             GoIdent "sky_dbQuery"
-
+        
         else if qualName == "Db.queryOne" then
             GoIdent "sky_dbQueryOne"
-
+        
         else if qualName == "Db.execRaw" then
             GoIdent "sky_dbExecRaw"
-
+        
         else if qualName == "Db.queryDecode" then
             GoIdent "sky_dbQueryDecode"
-
+        
         else if qualName == "Db.queryOneDecode" then
             GoIdent "sky_dbQueryOneDecode"
-
+        
         else if qualName == "Db.insertRow" then
             GoIdent "sky_dbInsertRow"
-
+        
         else if qualName == "Db.getById" then
             GoIdent "sky_dbGetById"
-
+        
         else if qualName == "Db.getByIdDecode" then
             GoIdent "sky_dbGetByIdDecode"
-
+        
         else if qualName == "Db.updateById" then
             GoIdent "sky_dbUpdateById"
-
+        
         else if qualName == "Db.deleteById" then
             GoIdent "sky_dbDeleteById"
-
+        
         else if qualName == "Db.findWhere" then
             GoIdent "sky_dbFindWhere"
-
+        
         else if qualName == "Db.findWhereDecode" then
             GoIdent "sky_dbFindWhereDecode"
-
+        
         else if qualName == "Db.getField" then
             GoIdent "sky_dbGetField"
-
+        
         else if qualName == "Db.getInt" then
             GoIdent "sky_dbGetInt"
-
+        
         else if qualName == "Db.getBool" then
             GoIdent "sky_dbGetBool"
-
+        
         else if qualName == "Db.rawConn" then
             GoIdent "sky_dbRawConn"
-
+        
         else if qualName == "Db.withTransaction" then
             GoIdent "sky_dbWithTransaction"
-
+        
         else if qualName == "Db.txExec" then
             GoIdent "sky_dbTxExec"
-
+        
         else if qualName == "Db.txQuery" then
             GoIdent "sky_dbTxQuery"
-
+        
         else if qualName == "Db.txQueryDecode" then
             GoIdent "sky_dbTxQueryDecode"
-
+        
         else if List.length parts == 2 then
             let
                 modPart =
@@ -1772,7 +1800,7 @@ lowerCallRawExprZeroArity : GoExpr -> (List GoExpr) -> GoExpr
 lowerCallRawExprZeroArity goCallee goArgs =
     case goArgs of
         
-        singleArg :: [  ] ->
+        singleArg :: [] ->
             GoCallExpr (GoIdent "sky_call") [ goCallee , singleArg ]
         
         _ ->
@@ -1947,7 +1975,7 @@ buildCurriedClosure : (List String) -> String -> String
 buildCurriedClosure params innerCall =
     case params of
         
-        [  ] ->
+        [] ->
             innerCall
         
         p :: rest ->
@@ -2215,7 +2243,7 @@ extractTupleBindings : String -> (List Pattern) -> Int -> Int -> List GoStmt
 extractTupleBindings tmpName items idx tupleSize =
     case items of
         
-        [  ] ->
+        [] ->
             []
         
         pat :: rest ->
@@ -2443,7 +2471,7 @@ subPatternConditions : LowerCtx -> String -> String -> (List Pattern) -> Int -> 
 subPatternConditions ctx varName ctorName args idx =
     case args of
         
-        [  ] ->
+        [] ->
             ""
         
         pat :: rest ->
@@ -2589,7 +2617,7 @@ bindConstructorArgs : LowerCtx -> String -> String -> String -> (List Pattern) -
 bindConstructorArgs ctx varName wrapperFn fieldName argPats =
     case argPats of
         
-        onePat :: [  ] ->
+        onePat :: [] ->
             patternToBindings ctx
                 (wrapperFn ++ "(" ++ varName ++ ")." ++ fieldName)
                 onePat
@@ -2602,7 +2630,7 @@ bindAdtConstructorArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
 bindAdtConstructorArgs ctx varName argPats idx =
     case argPats of
         
-        [  ] ->
+        [] ->
             ""
         
         pat :: rest ->
@@ -2622,7 +2650,7 @@ bindTupleArgs ctx varName items idx =
     in
         case items of
             
-            [  ] ->
+            [] ->
                 ""
             
             pat :: rest ->
@@ -2648,7 +2676,7 @@ bindListArgs : LowerCtx -> String -> (List Pattern) -> Int -> String
 bindListArgs ctx varName items idx =
     case items of
         
-        [  ] ->
+        [] ->
             ""
         
         pat :: rest ->
@@ -3454,9 +3482,12 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_cssPct(n any) any { return fmt.Sprintf(\"%.0f%%\", sky_asFloat(n)) }"
     , GoDeclRaw "func sky_cssHex(s any) any { return \"#\" + sky_asString(s) }"
-    , GoDeclRaw "func sky_cssVal(v any) any { return func(_ any) any { return sky_asString(v) } }"
-    , GoDeclRaw "func sky_cssFr(n any) any { return fmt.Sprintf(\"%dfr\", sky_asInt(n)) }"
-    , GoDeclRaw "func sky_cssRepeat(n any) any { return func(v any) any { return fmt.Sprintf(\"repeat(%d, %s)\", sky_asInt(n), sky_asString(v)) } }"
+    , GoDeclRaw
+          "func sky_cssVal(v any) any { return func(_ any) any { return sky_asString(v) } }"
+    , GoDeclRaw
+          "func sky_cssFr(n any) any { return fmt.Sprintf(\"%dfr\", sky_asInt(n)) }"
+    , GoDeclRaw
+          "func sky_cssRepeat(n any) any { return func(v any) any { return fmt.Sprintf(\"repeat(%d, %s)\", sky_asInt(n), sky_asString(v)) } }"
     , GoDeclRaw
           "func sky_cssRgb(r any) any { return func(g any) any { return func(b any) any { return fmt.Sprintf(\"rgb(%d, %d, %d)\", sky_asInt(r), sky_asInt(g), sky_asInt(b)) } } }"
     , GoDeclRaw
@@ -3609,7 +3640,7 @@ addCtorsFromList : String -> (List (String, Scheme)) -> Int -> (Dict.Dict String
 addCtorsFromList typeName entries idx acc =
     case entries of
         
-        [  ] ->
+        [] ->
             acc
         
         entry :: rest ->
@@ -3711,16 +3742,16 @@ isGoKeyword name =
 isStdlibCallee : LowerCtx -> Expression -> Bool
 isStdlibCallee ctx expr =
     case expr of
-
+        
         QualifiedExpr parts _ ->
             isStdlibQualifiedWithCtx ctx parts
-
+        
         IdentifierExpr name _ ->
             String.startsWith "sky_" name
-
+        
         CallExpr innerCallee _ _ ->
             isStdlibCallee ctx innerCallee
-
+        
         _ ->
             False
 
@@ -3728,16 +3759,16 @@ isStdlibCallee ctx expr =
 isStdlibQualifiedWithCtx : LowerCtx -> (List String) -> Bool
 isStdlibQualifiedWithCtx ctx parts =
     case List.head parts of
-
+        
         Just qualifier ->
             case Dict.get qualifier ctx.importAliases of
-
+                
                 Just _ ->
                     False
-
+                
                 Nothing ->
                     isStdlibQualified parts
-
+        
         Nothing ->
             False
 
@@ -4169,7 +4200,7 @@ lastPartOf parts =
         last :: _ ->
             last
         
-        [  ] ->
+        [] ->
             ""
 
 
@@ -4192,7 +4223,7 @@ zipIndexLoop : Int -> (List a) -> List (Int, a)
 zipIndexLoop idx items =
     case items of
         
-        [  ] ->
+        [] ->
             []
         
         x :: rest ->

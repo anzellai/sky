@@ -239,7 +239,8 @@ compileMultiModuleEntry outDir projectRoot entryMod aliasMap stdlibEnv depDecls 
         let
             _ =
                 if not (List.isEmpty diagnostics) then
-                    List.map (\d -> println ("   [!] " ++ d.message)) diagnostics
+                    List.map (\d -> println ("   [!] " ++ d.message))
+                        diagnostics
                 
                 else
                     []
@@ -326,13 +327,15 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
                 )
         isLive =
             List.foldl
-                (\imp acc -> acc || String.join "." imp.moduleName == "Std.Live")
+                (
+                \imp acc -> acc || String.join "." imp.moduleName == "Std.Live"
+                )
                 False
                 imports
         _ =
             if isLive then
                 println "   Copied skylive_rt runtime"
-
+            
             else
                 cleanupLiveFiles outDir
         _ = writeParallelHelpers outDir goCode
@@ -400,8 +403,10 @@ cleanupLiveFiles outDir =
         _ =
             Process.run "sh"
                 [ "-c"
-                , "rm -rf " ++ outDir ++ "/live_init.go " ++ outDir
-                    ++ "/skylive_rt 2>/dev/null || true"
+                , "rm -rf "
+                    ++ outDir
+                        ++ "/live_init.go "
+                            ++ outDir ++ "/skylive_rt 2>/dev/null || true"
                 ]
     in
         ()
@@ -411,7 +416,7 @@ findStdlibDir : (List String) -> String
 findStdlibDir candidates =
     case candidates of
         
-        [  ] ->
+        [] ->
             "stdlib-go"
         
         dir :: rest ->
@@ -703,7 +708,7 @@ splitWrapperLoop : (List String) -> String -> (List String) -> String -> Bool ->
 splitWrapperLoop lines header funcs currentFunc inFunc =
     case lines of
         
-        [  ] ->
+        [] ->
             let
                 finalFuncs =
                     if String.isEmpty (String.trim currentFunc) then
@@ -791,30 +796,31 @@ dceMainGo outDir goCode =
                             ++ "/sky_ffi_*.go "
                                 ++ outDir ++ "/sky_*.go 2>/dev/null"
                     ] of
-
+                        
                         Ok content ->
                             content
-
+                        
                         Err _ ->
                             ""
                 liveInitContent =
                     case File.readFile (outDir ++ "/live_init.go") of
-
+                        
                         Ok content ->
                             content
-
+                        
                         Err _ ->
                             ""
                 dbRuntimeContent =
                     case File.readFile (outDir ++ "/skydb_runtime.go") of
-
+                        
                         Ok content ->
                             content
-
+                        
                         Err _ ->
                             ""
             in
-                wrapperCat ++ "\n" ++ liveInitContent ++ "\n" ++ dbRuntimeContent
+                wrapperCat
+                    ++ "\n" ++ liveInitContent ++ "\n" ++ dbRuntimeContent
         wrapperSeeds =
             List.filter (\name -> String.contains name wrapperContent)
                 (Dict.keys funcMap)
@@ -905,7 +911,7 @@ buildReachableSet : (List String) -> (Dict.Dict String Bool) -> (Dict.Dict Strin
 buildReachableSet pending visited funcMap =
     case pending of
         
-        [  ] ->
+        [] ->
             visited
         
         name :: rest ->
@@ -944,18 +950,19 @@ generateDbInitDecl : (List Ast.ImportDecl) -> List GoDecl
 generateDbInitDecl imports =
     let
         hasStdDb =
-            List.any (\imp -> String.join "." imp.moduleName == "Std.Db") imports
+            List.any (\imp -> String.join "." imp.moduleName == "Std.Db")
+                imports
     in
         if not hasStdDb then
             []
-
+        
         else
             let
                 dbConfig = readDbConfig
             in
                 if String.isEmpty dbConfig then
                     []
-
+                
                 else
                     [ GoDeclRaw ("func init() { " ++ dbConfig ++ " }") ]
 
@@ -963,10 +970,10 @@ generateDbInitDecl imports =
 readDbConfig : String
 readDbConfig =
     case File.readFile "sky.toml" of
-
+        
         Err _ ->
             ""
-
+        
         Ok content ->
             let
                 driver = extractTomlValue "driver" content
@@ -974,10 +981,9 @@ readDbConfig =
             in
                 if String.isEmpty driver then
                     ""
-
+                
                 else
-                    "skyDbAutoConnect(\""
-                        ++ driver ++ "\", \"" ++ path ++ "\")"
+                    "skyDbAutoConnect(\"" ++ driver ++ "\", \"" ++ path ++ "\")"
 
 
 extractTomlValue : String -> String -> String
@@ -986,27 +992,28 @@ extractTomlValue key content =
         lines = String.split "\n" content
         matching =
             List.filter
-                (\l ->
+                (
+                \l ->
                     String.contains (key ++ " =") l
                         || String.contains (key ++ "=") l
                 )
                 lines
     in
         case matching of
-
+            
             line :: _ ->
                 let
                     parts = String.split "=" line
                 in
                     case List.drop 1 parts of
-
+                        
                         val :: _ ->
                             String.trim
                                 (String.replace "\"" "" (String.trim val))
-
+                        
                         [] ->
                             ""
-
+            
             [] ->
                 ""
 
@@ -1019,7 +1026,7 @@ extractTomlPath content =
     in
         if not (String.isEmpty url) then
             url
-
+        
         else
             path
 
@@ -1029,30 +1036,37 @@ collectBlankImports imports =
     let
         userBlanks =
             List.filterMap
-                (\imp ->
+                (
+                \imp ->
                     if imp.alias_ == "_" then
                         let
                             modName = String.join "." imp.moduleName
                         in
-                            Just { path = skyModuleToGoImport modName , alias_ = "_" }
-
+                            Just
+                                { path = skyModuleToGoImport modName
+                                , alias_ = "_"
+                                }
+                    
                     else
                         Nothing
                 )
                 imports
         hasStdDb =
-            List.any (\imp -> String.join "." imp.moduleName == "Std.Db") imports
+            List.any (\imp -> String.join "." imp.moduleName == "Std.Db")
+                imports
         dbDriverImports =
             if not hasStdDb then
                 []
-
+            
             else
                 let
-                    driver = extractTomlValue "driver" (Result.withDefault "" (File.readFile "sky.toml"))
+                    driver =
+                        extractTomlValue "driver"
+                            (Result.withDefault "" (File.readFile "sky.toml"))
                 in
                     if driver == "postgres" || driver == "postgresql" then
                         [ { path = "github.com/lib/pq" , alias_ = "_" } ]
-
+                    
                     else
                         [ { path = "modernc.org/sqlite" , alias_ = "_" } ]
     in
@@ -1083,7 +1097,7 @@ shortFuncName fullName =
             else
                 fullName
         
-        [  ] ->
+        [] ->
             fullName
 
 
@@ -1117,7 +1131,7 @@ loadLocalModules : String -> (List Ast.ImportDecl) -> (List (String, Ast.Module)
 loadLocalModules srcRoot imports acc =
     case imports of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         imp :: rest ->
@@ -1365,7 +1379,7 @@ deduplicateFfiImports : (List Ast.ImportDecl) -> (Dict.Dict String Bool) -> List
 deduplicateFfiImports imports seen =
     case imports of
         
-        [  ] ->
+        [] ->
             []
         
         imp :: rest ->
@@ -1707,7 +1721,7 @@ fileNameFromPath filePath =
         last :: _ ->
             last
         
-        [  ] ->
+        [] ->
             "wrapper.go"
 
 
@@ -1818,7 +1832,7 @@ extractGoFuncsLoop : String -> (List String) -> (List (String, String)) -> Strin
 extractGoFuncsLoop prefix lines acc currentName =
     case lines of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         line :: rest ->
@@ -1833,7 +1847,7 @@ extractGoFuncBody : String -> (List String) -> (List (String, String)) -> String
 extractGoFuncBody prefix lines acc headerLine depth bodyLines =
     case lines of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         line :: rest ->
@@ -2032,7 +2046,7 @@ findFirstExisting : (List String) -> String
 findFirstExisting paths =
     case paths of
         
-        [  ] ->
+        [] ->
             ""
         
         path :: rest ->
@@ -2343,7 +2357,7 @@ deduplicateDeclsLoop : (List GoDecl) -> (Dict.Dict String String) -> (List GoDec
 deduplicateDeclsLoop decls seen acc =
     case decls of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         decl :: rest ->
@@ -2443,10 +2457,10 @@ generateAliasesForImport allModules imp =
     in
         if modName == "Std.Db" then
             generateSkyDbAliases
-
+        
         else if Resolver.isStdlib modName then
             []
-
+        
         else
             generateAliasesFromModule modName allModules
 
@@ -2483,13 +2497,13 @@ generateSkyDbAliases =
             ]
     in
         List.concatMap
-            (\pair ->
+            (
+            \pair ->
                 let
                     name = fst pair
                     goFn = snd pair
                 in
-                    [ GoDeclRaw ("var Std_Db_" ++ name ++ " = " ++ goFn)
-                    ]
+                    [ GoDeclRaw ("var Std_Db_" ++ name ++ " = " ++ goFn) ]
             )
             fns
 
@@ -2664,7 +2678,7 @@ findModule : String -> (List (String, Ast.Module)) -> Maybe Ast.Module
 findModule modName modules =
     case modules of
         
-        [  ] ->
+        [] ->
             Nothing
         
         pair :: rest ->
@@ -2738,7 +2752,7 @@ deduplicateStringsLoop : (List String) -> (Dict.Dict String String) -> (List Str
 deduplicateStringsLoop items seen acc =
     case items of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         item :: rest ->
@@ -2761,7 +2775,7 @@ deduplicateFfiModules : (List (String, Ast.Module)) -> (List (String, Ast.Module
 deduplicateFfiModules modules acc =
     case modules of
         
-        [  ] ->
+        [] ->
             List.reverse acc
         
         pair :: rest ->
@@ -2792,7 +2806,7 @@ importAlias imp =
             last :: _ ->
                 last
             
-            [  ] ->
+            [] ->
                 ""
     
     else
@@ -3417,7 +3431,7 @@ skyModuleToGoImportLoop : (List String) -> (List String) -> Bool -> String
 skyModuleToGoImportLoop parts acc pastTld =
     case parts of
         
-        [  ] ->
+        [] ->
             String.join "/" acc
         
         part :: rest ->
@@ -3614,13 +3628,15 @@ compileCheckedModule filePath outDir mod result =
         _ = println ("   Wrote " ++ outPath)
         isLive2 =
             List.foldl
-                (\imp acc -> acc || String.join "." imp.moduleName == "Std.Live")
+                (
+                \imp acc -> acc || String.join "." imp.moduleName == "Std.Live"
+                )
                 False
                 mod.imports
         _ =
             if isLive2 then
                 println "   Copied skylive_rt runtime"
-
+            
             else
                 cleanupLiveFiles outDir
         _ = writeParallelHelpers outDir goCode
@@ -3650,7 +3666,7 @@ compileProject entryPath outDir =
                     Ok checkedGraph ->
                         case List.reverse checkedGraph.modules of
                             
-                            [  ] ->
+                            [] ->
                                 Err "No modules to compile"
                             
                             entryMod :: _ ->
@@ -3726,10 +3742,10 @@ findSubstringAt needle haystack idx =
 printDiagnostics : (List CompilerError) -> Unit
 printDiagnostics diags =
     case diags of
-
+        
         [] ->
             ()
-
+        
         _ ->
             let
                 _ =

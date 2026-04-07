@@ -11,7 +11,6 @@ import Chess.Move as Move
 import Chess.Ai as Ai
 import Lib.Games as Games
 
-
 executeWhiteMove : Int -> Int -> Model -> (Model, Cmd Msg)
 executeWhiteMove from to model =
     let
@@ -65,8 +64,10 @@ afterWhiteMove updated =
 resolveAfterWhite updated blackCanMove blackInCheck =
     if not blackCanMove && blackInCheck then
         finishGame "checkmate-white" updated
+    
     else if not blackCanMove then
         finishGame "stalemate" updated
+    
     else
         ( { updated | turn = "Black" , computerThinking = True }, Cmd.none )
 
@@ -78,11 +79,34 @@ executeBlackMove model =
         from = fst movePair
         to = snd movePair
         pieces = Board.allPiecesOfColour "Black" model.board
-        _ = println ("[AI] Black pieces: " ++ String.fromInt (List.length pieces))
+        _ =
+            println
+                ("[AI] Black pieces: " ++ String.fromInt (List.length pieces))
         allMoves = Move.allLegalMoves "Black" model.board model
-        _ = println ("[AI] Legal moves: " ++ String.fromInt (List.length allMoves))
-        _ = println ("[AI] Best: " ++ String.fromInt from ++ "->" ++ String.fromInt to)
-        _ = println ("[AI] First 10: " ++ String.join " " (List.map (\m -> String.fromInt (fst m) ++ "->" ++ String.fromInt (snd m)) (List.take 10 allMoves)))
+        _ =
+            println
+                ("[AI] Legal moves: " ++ String.fromInt (List.length allMoves))
+        _ =
+            println
+                (
+                "[AI] Best: "
+                    ++ String.fromInt from ++ "->" ++ String.fromInt to
+                )
+        _ =
+            println
+                (
+                "[AI] First 10: "
+                    ++ String.join " "
+                           (
+                           List.map
+                               (
+                               \m ->
+                                   String.fromInt (fst m)
+                                       ++ "->" ++ String.fromInt (snd m)
+                               )
+                               (List.take 10 allMoves)
+                           )
+                )
     in
         applyBlackOr from to model
 
@@ -90,6 +114,7 @@ executeBlackMove model =
 applyBlackOr from to model =
     if from < 0 then
         ( { model | computerThinking = False }, Cmd.none )
+    
     else
         doBlackMove from to model
 
@@ -145,8 +170,10 @@ afterBlackMove updated =
 resolveAfterBlack updated whiteCanMove whiteInCheck =
     if not whiteCanMove && whiteInCheck then
         finishGame "checkmate-black" updated
+    
     else if not whiteCanMove then
         finishGame "stalemate" updated
+    
     else
         ( { updated | turn = "White" }, Cmd.none )
 
@@ -159,12 +186,12 @@ finishGame result model =
         ( { model | gameStatus = result }, Cmd.none )
 
 
-appendCaptured : Maybe String -> List String -> List String
+appendCaptured : (Maybe String) -> (List String) -> List String
 appendCaptured captured existing =
     case captured of
-
+        
         Just sym ->
             existing ++ [ sym ]
-
+        
         Nothing ->
             existing

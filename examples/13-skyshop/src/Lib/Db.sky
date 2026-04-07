@@ -1,3 +1,6 @@
+-- ══════════════════════════════════════════════════════
+-- FIELD ACCESSORS
+-- ══════════════════════════════════════════════════════
 module Lib.Db exposing (getDoc, setDoc, queryDocs, queryWhere, queryWhereOrder, deleteDoc, getField, getInt, getBool, intVal, boolVal, floatVal, initDb)
 
 import Sky.Core.Prelude exposing (..)
@@ -12,9 +15,6 @@ import Context
 import Fmt
 import Os
 
--- ══════════════════════════════════════════════════════
--- FIELD ACCESSORS
--- ══════════════════════════════════════════════════════
 getField field row = Maybe.withDefault "" (Dict.get field row)
 
 
