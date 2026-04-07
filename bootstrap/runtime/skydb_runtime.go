@@ -10,6 +10,42 @@ import (
 	"strings"
 )
 
+// SkyDbConn wraps a sql.DB with its driver name for dialect-aware query rewriting.
+type SkyDbConn struct {
+	DB     *sql.DB
+	Driver string
+}
+
+func skyDbConn(conn any) *SkyDbConn {
+	if c, ok := conn.(*SkyDbConn); ok {
+		return c
+	}
+	// Fallback: bare *sql.DB (backwards compat)
+	if db, ok := conn.(*sql.DB); ok {
+		return &SkyDbConn{DB: db, Driver: "sqlite"}
+	}
+	return &SkyDbConn{}
+}
+
+// convertPlaceholders rewrites ? to $1, $2, $3 for postgres.
+func convertPlaceholders(query string, driver string) string {
+	if driver != "postgres" && driver != "postgresql" {
+		return query
+	}
+	result := make([]byte, 0, len(query)+16)
+	n := 1
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			result = append(result, '$')
+			result = append(result, []byte(strconv.Itoa(n))...)
+			n++
+		} else {
+			result = append(result, query[i])
+		}
+	}
+	return string(result)
+}
+
 // sky_dbOpen opens a database connection pool.
 // driver: "sqlite" or "postgres"
 // dsn: file path for sqlite, connection string for postgres
@@ -23,13 +59,13 @@ func Sky_sky_db_Open(driver any, dsn any) any {
 	if err := db.Ping(); err != nil {
 		return SkyErr(err.Error())
 	}
-	return SkyOk(db)
+	return SkyOk(&SkyDbConn{DB: db, Driver: d})
 }
 
 // sky_dbClose closes a database connection pool.
 func Sky_sky_db_Close(conn any) any {
-	db := conn.(*sql.DB)
-	if err := db.Close(); err != nil {
+	c := skyDbConn(conn)
+	if err := c.DB.Close(); err != nil {
 		return SkyErr(err.Error())
 	}
 	return SkyOk(struct{}{})
@@ -38,8 +74,8 @@ func Sky_sky_db_Close(conn any) any {
 // sky_dbExec executes a parameterised statement (INSERT, UPDATE, DELETE).
 // Returns number of rows affected.
 func Sky_sky_db_Exec(conn any, query any, params any) any {
-	db := conn.(*sql.DB)
-	q := sky_asString(query)
+	c := skyDbConn(conn); db := c.DB
+	q := convertPlaceholders(sky_asString(query), c.Driver)
 	args := skyListToSqlArgs(params)
 	result, err := db.Exec(q, args...)
 	if err != nil {
@@ -51,8 +87,8 @@ func Sky_sky_db_Exec(conn any, query any, params any) any {
 
 // sky_dbQuery executes a parameterised query, returns List (Dict String String).
 func Sky_sky_db_Query(conn any, query any, params any) any {
-	db := conn.(*sql.DB)
-	q := sky_asString(query)
+	c := skyDbConn(conn); db := c.DB
+	q := convertPlaceholders(sky_asString(query), c.Driver)
 	args := skyListToSqlArgs(params)
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -64,8 +100,8 @@ func Sky_sky_db_Query(conn any, query any, params any) any {
 
 // sky_dbQueryOne returns Maybe (Dict String String) — Just row or Nothing.
 func Sky_sky_db_QueryOne(conn any, query any, params any) any {
-	db := conn.(*sql.DB)
-	q := sky_asString(query)
+	c := skyDbConn(conn); db := c.DB
+	q := convertPlaceholders(sky_asString(query), c.Driver)
 	args := skyListToSqlArgs(params)
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -82,8 +118,8 @@ func Sky_sky_db_QueryOne(conn any, query any, params any) any {
 
 // sky_dbExecRaw executes a raw DDL statement (CREATE TABLE, etc.).
 func Sky_sky_db_ExecRaw(conn any, query any) any {
-	db := conn.(*sql.DB)
-	q := sky_asString(query)
+	c := skyDbConn(conn); db := c.DB
+	q := convertPlaceholders(sky_asString(query), c.Driver)
 	_, err := db.Exec(q)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -95,8 +131,8 @@ func Sky_sky_db_ExecRaw(conn any, query any) any {
 // Returns List a where a is the decoded type.
 // The decoder receives a map[string]any with auto-parsed typed values.
 func Sky_sky_db_QueryDecode(conn any, query any, params any, decoder any) any {
-	db := conn.(*sql.DB)
-	q := sky_asString(query)
+	c := skyDbConn(conn); db := c.DB
+	q := convertPlaceholders(sky_asString(query), c.Driver)
 	args := skyListToSqlArgs(params)
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -110,8 +146,8 @@ func Sky_sky_db_QueryDecode(conn any, query any, params any, decoder any) any {
 // sky_dbQueryOneDecode executes a query and decodes the first row.
 // Returns Maybe a.
 func Sky_sky_db_QueryOneDecode(conn any, query any, params any, decoder any) any {
-	db := conn.(*sql.DB)
-	q := sky_asString(query)
+	c := skyDbConn(conn); db := c.DB
+	q := convertPlaceholders(sky_asString(query), c.Driver)
 	args := skyListToSqlArgs(params)
 	rows, err := db.Query(q, args...)
 	if err != nil {
@@ -137,7 +173,7 @@ func Sky_sky_db_QueryOneDecode(conn any, query any, params any, decoder any) any
 
 // sky_dbInsertRow inserts a row from a Dict of column->value pairs.
 func Sky_sky_db_InsertRow(conn any, table any, row any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
 	m := sky_asMap(row)
 	if len(m) == 0 {
@@ -146,10 +182,17 @@ func Sky_sky_db_InsertRow(conn any, table any, row any) any {
 	cols := make([]string, 0, len(m))
 	vals := make([]any, 0, len(m))
 	placeholders := make([]string, 0, len(m))
+	idx := 1
+	isPostgres := c.Driver == "postgres" || c.Driver == "postgresql"
 	for k, v := range m {
 		cols = append(cols, k)
 		vals = append(vals, sky_asString(v))
-		placeholders = append(placeholders, "?")
+		if isPostgres {
+			placeholders = append(placeholders, "$"+strconv.Itoa(idx))
+			idx++
+		} else {
+			placeholders = append(placeholders, "?")
+		}
 	}
 	q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", t, strings.Join(cols, ", "), strings.Join(placeholders, ", "))
 	result, err := db.Exec(q, vals...)
@@ -162,10 +205,10 @@ func Sky_sky_db_InsertRow(conn any, table any, row any) any {
 
 // sky_dbGetById gets a row by ID (assumes column named "id").
 func Sky_sky_db_GetById(conn any, table any, id any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
 	i := sky_asString(id)
-	q := fmt.Sprintf("SELECT * FROM %s WHERE id = ? LIMIT 1", t)
+	q := convertPlaceholders(fmt.Sprintf("SELECT * FROM %s WHERE id = ? LIMIT 1", t), c.Driver)
 	rows, err := db.Query(q, i)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -181,10 +224,10 @@ func Sky_sky_db_GetById(conn any, table any, id any) any {
 
 // sky_dbGetByIdDecode gets a row by ID and decodes it.
 func Sky_sky_db_GetByIdDecode(conn any, table any, id any, decoder any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
 	i := sky_asString(id)
-	q := fmt.Sprintf("SELECT * FROM %s WHERE id = ? LIMIT 1", t)
+	q := convertPlaceholders(fmt.Sprintf("SELECT * FROM %s WHERE id = ? LIMIT 1", t), c.Driver)
 	rows, err := db.Query(q, i)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -208,7 +251,7 @@ func Sky_sky_db_GetByIdDecode(conn any, table any, id any, decoder any) any {
 
 // sky_dbUpdateById updates a row by ID. Only updates columns in the Dict.
 func Sky_sky_db_UpdateById(conn any, table any, id any, updates any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
 	i := sky_asString(id)
 	m := sky_asMap(updates)
@@ -222,7 +265,7 @@ func Sky_sky_db_UpdateById(conn any, table any, id any, updates any) any {
 		vals = append(vals, sky_asString(v))
 	}
 	vals = append(vals, i)
-	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", t, strings.Join(setClauses, ", "))
+	q := convertPlaceholders(fmt.Sprintf("UPDATE %s SET %s WHERE id = ?", t, strings.Join(setClauses, ", ")), c.Driver)
 	result, err := db.Exec(q, vals...)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -233,10 +276,10 @@ func Sky_sky_db_UpdateById(conn any, table any, id any, updates any) any {
 
 // sky_dbDeleteById deletes a row by ID.
 func Sky_sky_db_DeleteById(conn any, table any, id any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
 	i := sky_asString(id)
-	q := fmt.Sprintf("DELETE FROM %s WHERE id = ?", t)
+	q := convertPlaceholders(fmt.Sprintf("DELETE FROM %s WHERE id = ?", t), c.Driver)
 	result, err := db.Exec(q, i)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -247,11 +290,11 @@ func Sky_sky_db_DeleteById(conn any, table any, id any) any {
 
 // sky_dbFindWhere finds rows where column = value.
 func Sky_sky_db_FindWhere(conn any, table any, column any, value any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
-	c := sky_asString(column)
+	col := sky_asString(column)
 	v := sky_asString(value)
-	q := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", t, c)
+	q := convertPlaceholders(fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", t, col), c.Driver)
 	rows, err := db.Query(q, v)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -262,11 +305,11 @@ func Sky_sky_db_FindWhere(conn any, table any, column any, value any) any {
 
 // sky_dbFindWhereDecode finds rows where column = value, decoded via decoder.
 func Sky_sky_db_FindWhereDecode(conn any, table any, column any, value any, decoder any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	t := sky_asString(table)
-	c := sky_asString(column)
+	col := sky_asString(column)
 	v := sky_asString(value)
-	q := fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", t, c)
+	q := convertPlaceholders(fmt.Sprintf("SELECT * FROM %s WHERE %s = ?", t, col), c.Driver)
 	rows, err := db.Query(q, v)
 	if err != nil {
 		return SkyErr(err.Error())
@@ -316,7 +359,7 @@ func Sky_sky_db_RawConn(conn any) any {
 
 // sky_dbWithTransaction begins a tx, calls the function, commits or rolls back.
 func Sky_sky_db_WithTransaction(conn any, fn any) any {
-	db := conn.(*sql.DB)
+	c := skyDbConn(conn); db := c.DB
 	tx, err := db.Begin()
 	if err != nil {
 		return SkyErr(err.Error())
