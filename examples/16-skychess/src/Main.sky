@@ -14,8 +14,6 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 import Std.Time as Time
 import State exposing (..)
-import Lib.Db as Db
-import Lib.Schema as Schema
 import Lib.Games as Games
 import Lib.GameLogic as Logic
 import Chess.Board as Board
@@ -29,7 +27,7 @@ import Ui.Layout as Layout
 init : a -> (Model, Cmd Msg)
 init _req =
     let
-        _ = Schema.initDb
+        _ = Games.initSchema (Games.getConn ())
         _ = println "[APP] SkyChess initialised"
     in
         ( { page = HomePage
@@ -154,7 +152,7 @@ handleLoadGame gameId model =
             case gameInfo of
 
                 Just g ->
-                    Db.getField "player_name" g
+                    Games.getField "player_name" g
 
                 Nothing ->
                     model.playerName
@@ -173,8 +171,8 @@ handleLoadGame gameId model =
 
                 Just g ->
                     let
-                        s = Db.getField "status" g
-                        r = Db.getField "result" g
+                        s = Games.getField "status" g
+                        r = Games.getField "result" g
                     in
                         if s == "finished" then
                             r
@@ -216,9 +214,9 @@ replayMovesLoop moves board history =
 
         move :: rest ->
             let
-                fromStr = Db.getField "from_square" move
-                toStr = Db.getField "to_square" move
-                algebraic = Db.getField "algebraic" move
+                fromStr = Games.getField "from_square" move
+                toStr = Games.getField "to_square" move
+                algebraic = Games.getField "algebraic" move
                 from = Maybe.withDefault (-1) (String.toInt fromStr)
                 to = Maybe.withDefault (-1) (String.toInt toStr)
             in
