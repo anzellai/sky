@@ -10,7 +10,7 @@ import Std.Db as Db
 
 
 dbConn =
-    case Db.open "sqlite" "skychess.db" of
+    case Db.connect () of
 
         Ok conn ->
             conn

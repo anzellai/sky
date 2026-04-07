@@ -1538,6 +1538,9 @@ lowerQualified ctx parts =
         else if qualName == "Live.route" then
             GoIdent "sky_liveRoute"
 
+        else if qualName == "Db.connect" then
+            GoIdent "sky_dbConnect"
+
         else if qualName == "Db.open" then
             GoIdent "sky_dbOpen"
 

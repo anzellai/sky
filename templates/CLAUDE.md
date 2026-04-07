@@ -1131,7 +1131,7 @@ import Std.Db as Db
 import Modernc.Org.Sqlite as _   -- driver import needed for SQLite
 
 -- Open connection
-case Db.open "sqlite" "myapp.db" of
+db = Db.connect ()  -- reads [database] from sky.toml
     Ok conn -> ...
     Err e -> ...
 

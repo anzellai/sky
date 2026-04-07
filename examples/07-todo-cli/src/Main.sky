@@ -155,8 +155,11 @@ runCommand conn cmd cmdArg =
             showUsage ()
 
 
+db = Db.connect ()
+
+
 main =
-    case Db.open "sqlite" "todos.db" of
+    case db of
 
         Err e ->
             println ("Database error: " ++ e)

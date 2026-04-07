@@ -8,6 +8,10 @@ root = "src"
 [live]
 port = 8000
 
+[database]
+driver = "sqlite"
+path = "skychess.db"
+
 ["go.dependencies"]
 "crypto/sha256" = "latest"
 "encoding/hex" = "latest"
