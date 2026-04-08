@@ -686,7 +686,9 @@ getStdlibExports modName =
 checkAllModules : ModuleGraph -> Result String ModuleGraph
 checkAllModules graph =
     let
-        checkResult = checkModulesLoop graph.modules Env.empty []
+        checkResult =
+            checkModulesLoop graph.modules Env.empty Dict.empty
+                Adt.emptyRegistry []
         checkedModules = fst checkResult
         diagnostics = snd checkResult
     in
@@ -697,32 +699,42 @@ checkAllModules graph =
             }
 
 
-checkModulesLoop modules importedEnv diagnostics =
+checkModulesLoop modules importedEnv importedAliases importedRegistry diagnostics =
     case modules of
-        
+
         [] ->
             ( [], diagnostics )
-        
+
         mod :: rest ->
-            case Checker.checkModule mod.ast (Just importedEnv) of
-                
-                Ok result ->
-                    let
-                        checkedMod = { mod | checkResult = Just result }
-                        newImportedEnv = Env.union result.env importedEnv
-                        ( restModules, restDiags ) =
-                            checkModulesLoop rest newImportedEnv
-                                (List.append diagnostics result.diagnostics)
-                    in
-                        ( checkedMod :: restModules, restDiags )
-                
-                Err e ->
-                    let
-                        ( restModules, restDiags ) =
-                            checkModulesLoop rest importedEnv
-                                (List.append diagnostics [ e ])
-                    in
-                        ( mod :: restModules, restDiags )
+            checkOneModule mod rest importedEnv importedAliases
+                importedRegistry diagnostics
+
+
+checkOneModule mod rest importedEnv importedAliases importedRegistry diagnostics =
+    case Checker.checkModuleWithRegistryAndAliases mod.ast (Just importedEnv) (Just importedRegistry) (Just importedAliases) of
+
+        Ok result ->
+            let
+                checkedMod = { mod | checkResult = Just result }
+                newImportedEnv = Env.union result.env importedEnv
+                newAliases = Dict.union result.typeAliases importedAliases
+                newRegistry =
+                    Adt.mergeRegistries result.registry importedRegistry
+                ( restModules, restDiags ) =
+                    checkModulesLoop rest newImportedEnv newAliases
+                        newRegistry
+                        (List.append diagnostics result.diagnostics)
+            in
+                ( checkedMod :: restModules, restDiags )
+
+        Err e ->
+            let
+                ( restModules, restDiags ) =
+                    checkModulesLoop rest importedEnv importedAliases
+                        importedRegistry
+                        (List.append diagnostics [ e ])
+            in
+                ( mod :: restModules, restDiags )
 
 
 buildStdlibEnv : Env.TypeEnv

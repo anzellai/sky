@@ -1304,10 +1304,10 @@ expandTypeAliases aliases ty =
 expandTConstAlias : (Dict.Dict String Type) -> String -> Type -> Type
 expandTConstAlias aliases name fallback =
     case Dict.get name aliases of
-        
+
         Just expanded ->
-            expanded
-        
+            expandTypeAliases aliases expanded
+
         Nothing ->
             fallback
 
