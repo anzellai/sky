@@ -8,6 +8,7 @@ type TokenKind
     | TkInteger
     | TkFloat
     | TkString
+    | TkMultilineString
     | TkChar
     | TkKeyword
     | TkOperator

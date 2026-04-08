@@ -52,6 +52,9 @@ lexLoop state =
             else if ch == '-' && peekChar state.source (state.offset + 1) == '-' then
                 lexLoop (skipLineComment state)
             
+            else if ch == '"' && peekChar state.source (state.offset + 1) == '"' && peekChar state.source (state.offset + 2) == '"' then
+                lexLoop (lexMultilineString state)
+
             else if ch == '"' then
                 lexLoop (lexString state)
             
@@ -198,6 +201,84 @@ lexStringBody state =
                         | offset = state.offset + 1
                         , column = state.column + 1
                     }
+
+
+lexMultilineString : LexerState -> LexerState
+lexMultilineString state =
+    let
+        startOffset = state.offset
+        startLine = state.line
+        startCol = state.column
+        s1 =
+            { state
+                | offset = state.offset + 3
+                , column = state.column + 3
+            }
+        s2 = lexMultilineStringBody s1
+        s3 =
+            { s2
+                | offset = s2.offset + 3
+                , column = s2.column + 3
+            }
+        lexeme = String.slice startOffset s3.offset state.source
+        token =
+            { kind = TkMultilineString
+            , lexeme = lexeme
+            , span =
+                { start =
+                    { offset = startOffset
+                    , line = startLine
+                    , column = startCol
+                    }
+                , end =
+                    { offset = s3.offset
+                    , line = s3.line
+                    , column = s3.column
+                    }
+                }
+            }
+    in
+        { s3 | tokens = token :: s3.tokens }
+
+
+lexMultilineStringBody : LexerState -> LexerState
+lexMultilineStringBody state =
+    if state.offset >= String.length state.source then
+        state
+
+    else
+        lexMultilineStringStep state
+
+
+lexMultilineStringStep : LexerState -> LexerState
+lexMultilineStringStep state =
+    let
+        ch = charAt state.source state.offset
+    in
+        if ch == '"' && peekChar state.source (state.offset + 1) == '"' && peekChar state.source (state.offset + 2) == '"' then
+            state
+
+        else if ch == '\n' then
+            lexMultilineStringBody
+                { state
+                    | offset = state.offset + 1
+                    , line = state.line + 1
+                    , column = 1
+                }
+
+        else if ch == '\\' then
+            lexMultilineStringBody
+                { state
+                    | offset = state.offset + 2
+                    , column = state.column + 2
+                }
+
+        else
+            lexMultilineStringBody
+                { state
+                    | offset = state.offset + 1
+                    , column = state.column + 1
+                }
 
 
 lexChar : LexerState -> LexerState

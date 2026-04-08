@@ -158,7 +158,10 @@ tokenKindStr k =
         
         TkString ->
             "String"
-        
+
+        TkMultilineString ->
+            "MultilineString"
+
         TkChar ->
             "Char"
         
