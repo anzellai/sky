@@ -22,17 +22,13 @@ handleHome req =
     Task.succeed
         (
         Server.html
-            (
-            String.join ""
-                [ "<h1>Sky HTTP Server</h1>"
-                , "<ul>"
-                , "<li><a href='/hello/world'>Hello World</a></li>"
-                , "<li><a href='/api/status'>API Status</a></li>"
-                , "<li><a href='/cookie-demo'>Cookie Demo</a></li>"
-                , "<li><a href='/redirect'>Redirect</a></li>"
-                , "</ul>"
-                ]
-            )
+            """<h1>Sky HTTP Server</h1>
+<ul>
+    <li><a href='/hello/world'>Hello World</a></li>
+    <li><a href='/api/status'>API Status</a></li>
+    <li><a href='/cookie-demo'>Cookie Demo</a></li>
+    <li><a href='/redirect'>Redirect</a></li>
+</ul>"""
         )
 
 
@@ -95,12 +91,11 @@ handleCookieDemo req =
     in
         Task.succeed
             (
-            Server.html
-                (
-                "<h1>Visit #"
-                    ++ String.fromInt visitCount
-                        ++ "</h1><p>Refresh to increment!</p>"
-                )
+            let
+                countStr = String.fromInt visitCount
+            in
+                Server.html
+                    """<h1>Visit #{{countStr}}</h1><p>Refresh to increment!</p>"""
                 |> Server.withCookie visitCookie
             )
 

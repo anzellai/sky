@@ -36,57 +36,37 @@ firebaseAuthScript =
         authDomain = Result.withDefault "" (Os.getenv "AUTH_DOMAIN")
         projectId = Result.withDefault "" (Os.getenv "GOOGLE_CLOUD_PROJECT")
     in
-        "<script>"
-            ++ "var _fbReady=false,_fbUser=null;"
-                ++ "function _fbLoad(url,cb){"
-                    ++ "var s=document.createElement('script');"
-                        ++ "s.src=url;s.onload=cb;document.head.appendChild(s);"
-                            ++ "}"
-                                ++ "_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',function(){"
-                                    ++ "_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js',function(){"
-                                        ++ "firebase.initializeApp({apiKey:'"
-                                            ++ apiKey
-                                                ++ "',authDomain:'"
-                                                    ++ authDomain
-                                                        ++ "',projectId:'"
-                                                            ++ projectId
-                                                                ++ "'});"
-                                                                    ++ "_fbReady=true;"
-                                                                        ++ "var _skyAuthUid=null;"
-                                                                            ++ "firebase.auth().onAuthStateChanged(function(user){"
-                                                                                ++ "_fbUser=user;"
-                                                                                    ++ "if(user){"
-                                                                                        ++ "if(_skyAuthUid===user.uid)return;"
-                                                                                            ++ "_skyAuthUid=user.uid;"
-                                                                                                ++ "document.cookie='sky_user='+user.uid+';path=/;max-age=2592000;SameSite=Lax';"
-                                                                                                    ++ "user.getIdToken().then(function(token){"
-                                                                                                        ++ "function _trySend(t,n){"
-                                                                                                            ++ "if(window.__sky_send){window.__sky_send('FirebaseAuth',[t]);}"
-                                                                                                                ++ "else if(n<20){setTimeout(function(){_trySend(t,n+1)},100);}"
-                                                                                                                    ++ "}"
-                                                                                                                        ++ "_trySend(token,0);"
-                                                                                                                            ++ "});"
-                                                                                                                                ++ "}else{_skyAuthUid=null;"
-                                                                                                                                    ++ "document.cookie='sky_user=;path=/;max-age=0';"
-                                                                                                                                        ++ "}"
-                                                                                                                                            ++ "});"
-                                                                                                                                                ++ "});"
-                                                                                                                                                    ++ "});"
-                                                                                                                                                        ++ "function skySignIn(provider){"
-                                                                                                                                                            ++ "if(!_fbReady){setTimeout(function(){skySignIn(provider)},200);return;}"
-                                                                                                                                                                ++ "var el=document.getElementById('auth-error');"
-                                                                                                                                                                    ++ "if(el){el.style.display='none';}"
-                                                                                                                                                                        ++ "var p=provider==='facebook'"
-                                                                                                                                                                            ++ "?new firebase.auth.FacebookAuthProvider()"
-                                                                                                                                                                                ++ ":new firebase.auth.GoogleAuthProvider();"
-                                                                                                                                                                                    ++ "firebase.auth().signInWithPopup(p).catch(function(e){"
-                                                                                                                                                                                        ++ "if(el){el.textContent=e.message;el.style.display='block';}"
-                                                                                                                                                                                            ++ "});"
-                                                                                                                                                                                                ++ "}"
-                                                                                                                                                                                                    ++ "function skySignOut(){"
-                                                                                                                                                                                                        ++ "if(_fbReady){firebase.auth().signOut();}"
-                                                                                                                                                                                                            ++ "}"
-                                                                                                                                                                                                                ++ "</script>"
+        """<script>
+var _fbReady=false,_fbUser=null;
+function _fbLoad(url,cb){var s=document.createElement('script');s.src=url;s.onload=cb;document.head.appendChild(s);}
+_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js',function(){
+_fbLoad('https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js',function(){
+firebase.initializeApp({apiKey:'{{apiKey}}',authDomain:'{{authDomain}}',projectId:'{{projectId}}'});
+_fbReady=true;
+var _skyAuthUid=null;
+firebase.auth().onAuthStateChanged(function(user){
+_fbUser=user;
+if(user){
+if(_skyAuthUid===user.uid)return;
+_skyAuthUid=user.uid;
+document.cookie='sky_user='+user.uid+';path=/;max-age=2592000;SameSite=Lax';
+user.getIdToken().then(function(token){
+function _trySend(t,n){if(window.__sky_send){window.__sky_send('FirebaseAuth',[t]);}else if(n<20){setTimeout(function(){_trySend(t,n+1)},100);}}
+_trySend(token,0);
+});
+}else{_skyAuthUid=null;document.cookie='sky_user=;path=/;max-age=0';}
+});
+});
+});
+function skySignIn(provider){
+if(!_fbReady){setTimeout(function(){skySignIn(provider)},200);return;}
+var el=document.getElementById('auth-error');
+if(el){el.style.display='none';}
+var p=provider==='facebook'?new firebase.auth.FacebookAuthProvider():new firebase.auth.GoogleAuthProvider();
+firebase.auth().signInWithPopup(p).catch(function(e){if(el){el.textContent=e.message;el.style.display='block';}});
+}
+function skySignOut(){if(_fbReady){firebase.auth().signOut();}}
+</script>"""
 
 
 handleAuthCallback token = Auth.verifyToken token

@@ -3,6 +3,7 @@ module Compiler.ParserExpr exposing (..)
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
 import Sky.Core.String as String
+import Sky.Core.Char as Char
 import Sky.Core.List as List
 import Compiler.Token exposing (..)
 import Compiler.Ast exposing (..)
@@ -211,6 +212,7 @@ isStartOfPrimary state =
         || matchKind TkInteger state
         || matchKind TkFloat state
         || matchKind TkString state
+        || matchKind TkMultilineString state
         || matchKind TkChar state
         || matchKind TkLParen state
         || matchKind TkLBrace state
@@ -294,7 +296,15 @@ parsePrimary state =
             value = String.slice 1 (String.length tok.lexeme - 1) tok.lexeme
         in
             Ok ( StringLitExpr value tok.span, s1 )
-    
+
+    else if matchKind TkMultilineString state then
+        let
+            ( tok, s1 ) = advance state
+            content = String.slice 3 (String.length tok.lexeme - 3) tok.lexeme
+            expr = buildInterpolatedExpr content tok.span
+        in
+            Ok ( expr, s1 )
+
     else if matchKind TkChar state then
         let
             ( tok, s1 ) = advance state
@@ -720,3 +730,169 @@ parseFieldAccess base state =
             ( FieldAccessExpr (IdentifierExpr base.lexeme base.span)
                   field.lexeme
                   emptySpan, s2 )
+
+
+buildInterpolatedExpr : String -> SourceSpan -> Expression
+buildInterpolatedExpr content span =
+    let
+        parts = splitInterpolation content 0 0 []
+    in
+        partsToExpr parts span
+
+
+splitInterpolation : String -> Int -> Int -> (List String) -> List String
+splitInterpolation content pos segStart acc =
+    if pos >= String.length content then
+        let
+            lastSeg = String.slice segStart pos content
+        in
+            if String.isEmpty lastSeg then
+                List.reverse acc
+
+            else
+                List.reverse (("R" ++ lastSeg) :: acc)
+
+    else
+        splitInterpolationStep content pos segStart acc
+
+
+splitInterpolationStep : String -> Int -> Int -> (List String) -> List String
+splitInterpolationStep content pos segStart acc =
+    let
+        ch = String.slice pos (pos + 1) content
+        next = String.slice (pos + 1) (pos + 2) content
+    in
+        if ch == "{" && next == "{" then
+            let
+                closePos = findClosingDoubleBrace content (pos + 2)
+                exprStr = String.slice (pos + 2) closePos content
+                rawBefore = String.slice segStart pos content
+                accWithRaw =
+                    if String.isEmpty rawBefore then
+                        acc
+
+                    else
+                        ("R" ++ rawBefore) :: acc
+            in
+                splitInterpolation content (closePos + 2) (closePos + 2)
+                    (("E" ++ exprStr) :: accWithRaw)
+
+        else
+            splitInterpolation content (pos + 1) segStart acc
+
+
+findClosingDoubleBrace : String -> Int -> Int
+findClosingDoubleBrace content pos =
+    if pos >= String.length content then
+        pos
+
+    else
+        let
+            ch = String.slice pos (pos + 1) content
+            next = String.slice (pos + 1) (pos + 2) content
+        in
+            if ch == "}" && next == "}" then
+                pos
+
+            else
+                findClosingDoubleBrace content (pos + 1)
+
+
+partsToExpr : (List String) -> SourceSpan -> Expression
+partsToExpr parts span =
+    case parts of
+
+        [] ->
+            StringLitExpr "" span
+
+        p :: [] ->
+            partToExpr p span
+
+        _ ->
+            joinPartsWithConcat parts span
+
+
+partToExpr : String -> SourceSpan -> Expression
+partToExpr part span =
+    let
+        tag = String.slice 0 1 part
+        value = String.slice 1 (String.length part) part
+    in
+        if tag == "E" then
+            parseInterpolationExpr value span
+
+        else
+            StringLitExpr (escapeForGo value) span
+
+
+parseInterpolationExpr : String -> SourceSpan -> Expression
+parseInterpolationExpr src span =
+    let
+        trimmed = String.trim src
+    in
+        if String.contains " " trimmed then
+            buildInterpolationCall trimmed span
+
+        else if String.contains "." trimmed then
+            buildInterpolationDotExpr trimmed span
+
+        else
+            IdentifierExpr trimmed span
+
+
+buildInterpolationDotExpr : String -> SourceSpan -> Expression
+buildInterpolationDotExpr src span =
+    let
+        parts = String.split "." src
+        first = Maybe.withDefault "" (List.head parts)
+    in
+        if Char.isUpper (js (String.slice 0 1 first)) then
+            QualifiedExpr parts span
+
+        else
+            List.foldl (\field acc -> FieldAccessExpr acc field span)
+                (IdentifierExpr first span)
+                (List.drop 1 parts)
+
+
+buildInterpolationCall : String -> SourceSpan -> Expression
+buildInterpolationCall src span =
+    let
+        parts = List.filter (\p -> not (String.isEmpty p)) (String.split " " src)
+    in
+        case parts of
+
+            [] ->
+                IdentifierExpr "" span
+
+            fn :: args ->
+                CallExpr (parseInterpolationExpr fn span)
+                    (List.map (\a -> parseInterpolationExpr a span) args)
+                    span
+
+
+joinPartsWithConcat : (List String) -> SourceSpan -> Expression
+joinPartsWithConcat parts span =
+    case parts of
+
+        [] ->
+            StringLitExpr "" span
+
+        p :: [] ->
+            partToExpr p span
+
+        p :: rest ->
+            let
+                left = partToExpr p span
+                right = joinPartsWithConcat rest span
+            in
+                BinaryExpr "++" left right span
+
+
+escapeForGo : String -> String
+escapeForGo s =
+    s
+        |> String.replace "\\" "\\\\"
+        |> String.replace "\"" "\\\""
+        |> String.replace "\n" "\\n"
+        |> String.replace "\t" "\\t"

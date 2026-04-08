@@ -259,6 +259,20 @@ main =
 
 Key syntax: `|>` `<|` pipelines | `::` cons | `\x -> x + 1` lambdas | `let...in` | `case...of` with exhaustiveness | `{ record | field = value }` update | `module M exposing (..)` / `import M as Alias exposing (func)`
 
+### Multiline Strings
+
+Triple-quoted strings preserve newlines and indentation. Interpolation uses `{{expr}}`:
+
+```elm
+html =
+    """<div class="card">
+    <h1>{{title}}</h1>
+    <p>{{description}}</p>
+</div>"""
+```
+
+Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpolation expressions can be identifiers, field access (`{{record.field}}`), qualified names (`{{String.fromInt n}}`), or function calls (`{{String.fromInt count}}`).
+
 ## Examples
 
 | # | Name | Description |

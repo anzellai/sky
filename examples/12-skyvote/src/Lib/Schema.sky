@@ -7,23 +7,56 @@ initDb =
     let
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')))"
+                """CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    email TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )"""
                 []
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS ideas (id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', author_id TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'feature', status TEXT NOT NULL DEFAULT 'open', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT (datetime('now')))"
+                """CREATE TABLE IF NOT EXISTS ideas (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '',
+                    author_id TEXT NOT NULL,
+                    category TEXT NOT NULL DEFAULT 'feature',
+                    status TEXT NOT NULL DEFAULT 'open',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT (datetime('now'))
+                )"""
                 []
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS votes (id TEXT PRIMARY KEY, idea_id TEXT NOT NULL, user_id TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')), UNIQUE(idea_id, user_id))"
+                """CREATE TABLE IF NOT EXISTS votes (
+                    id TEXT PRIMARY KEY,
+                    idea_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now')),
+                    UNIQUE(idea_id, user_id)
+                )"""
                 []
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, idea_id TEXT NOT NULL, author_id TEXT NOT NULL, content TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now')))"
+                """CREATE TABLE IF NOT EXISTS comments (
+                    id TEXT PRIMARY KEY,
+                    idea_id TEXT NOT NULL,
+                    author_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )"""
                 []
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS activity_log (id TEXT PRIMARY KEY, event TEXT NOT NULL, data TEXT NOT NULL DEFAULT '', user_id TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')))"
+                """CREATE TABLE IF NOT EXISTS activity_log (
+                    id TEXT PRIMARY KEY,
+                    event TEXT NOT NULL,
+                    data TEXT NOT NULL DEFAULT '',
+                    user_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now'))
+                )"""
                 []
     in
         ()
