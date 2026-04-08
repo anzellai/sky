@@ -1,6 +1,7 @@
 module Compiler.Checker exposing (..)
 
 import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
 import Sky.Core.String as String
@@ -34,19 +35,70 @@ makeTypedDecl n s t = { name = n , scheme = s , prettyType = formatType t }
 makeFunError : String -> String -> Declaration -> CompilerError
 makeFunError fnName msg decl =
     let
+        parsed = parseSpanFromError msg
+        cleanMsg = snd parsed
+        errorSpan = fst parsed
         fullMsg =
-            if String.startsWith "In function" msg then
-                msg
-            
+            if String.startsWith "In function" cleanMsg then
+                cleanMsg
+
             else
-                "In function '" ++ fnName ++ "': " ++ msg
+                "In function '" ++ fnName ++ "': " ++ cleanMsg
+        span =
+            case errorSpan of
+
+                Just s ->
+                    if s.start.line > 0 then
+                        s
+
+                    else
+                        declSpan decl
+
+                Nothing ->
+                    declSpan decl
     in
         { category = "TYPE MISMATCH"
         , message = fullMsg
-        , span = declSpan decl
+        , span = span
         , filePath = ""
         , hint = ""
         }
+
+
+parseSpanFromError : String -> (Maybe SourceSpan, String)
+parseSpanFromError msg =
+    if String.startsWith "@" msg then
+        let
+            rest = String.slice 1 (String.length msg) msg
+            colonIdx = findCharIndex ":" rest 0
+            lineStr = String.slice 0 colonIdx rest
+            afterLine = String.slice (colonIdx + 1) (String.length rest) rest
+            colonIdx2 = findCharIndex ":" afterLine 0
+            colStr = String.slice 0 colonIdx2 afterLine
+            cleanMsg = String.trim (String.slice (colonIdx2 + 1) (String.length afterLine) afterLine)
+            line = Maybe.withDefault 1 (String.toInt lineStr)
+            col = Maybe.withDefault 1 (String.toInt colStr)
+            span =
+                { start = { offset = 0 , line = line , column = col }
+                , end = { offset = 0 , line = line , column = col + 1 }
+                }
+        in
+            ( Just span, cleanMsg )
+
+    else
+        ( Nothing, msg )
+
+
+findCharIndex : String -> String -> Int -> Int
+findCharIndex ch s pos =
+    if pos >= String.length s then
+        pos
+
+    else if String.slice pos (pos + 1) s == ch then
+        pos
+
+    else
+        findCharIndex ch s (pos + 1)
 
 
 declSpan : Declaration -> SourceSpan

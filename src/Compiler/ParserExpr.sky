@@ -73,7 +73,7 @@ parseExprLoop minPrec left state =
                                         parseExprLoop minPrec
                                             (
                                             BinaryExpr opToken.lexeme left right
-                                                emptySpan
+                                                advTok.span
                                             )
                                             s2
     
@@ -198,7 +198,7 @@ parseApplicationArgs fnCol fn state =
                         withField = applyFieldAccess arg s1
                     in
                         parseApplicationArgs fnCol
-                            (CallExpr fn [ fst withField ] emptySpan)
+                            (CallExpr fn [ fst withField ] (Ast.exprSpan fn))
                             (snd withField)
     
     else
@@ -336,7 +336,7 @@ parsePrimary state =
 parseCaseExpr : ParserState -> Result String (Expression, ParserState)
 parseCaseExpr state =
     let
-        ( _, s1 ) = advance state
+        ( caseTok, s1 ) = advance state
     in
         case parseExpr 0 s1 of
             
@@ -354,7 +354,7 @@ parseCaseExpr state =
                             branchCol = peekColumn s3
                             ( branches, s4 ) = parseCaseBranches branchCol s3
                         in
-                            Ok ( CaseExpr subject branches emptySpan, s4 )
+                            Ok ( CaseExpr subject branches caseTok.span, s4 )
 
 
 parseCaseBranches : Int -> ParserState -> (List CaseBranch, ParserState)
@@ -446,7 +446,7 @@ parseIfExpr state =
 parseLetExpr : ParserState -> Result String (Expression, ParserState)
 parseLetExpr state =
     let
-        ( _, s1 ) = advance state
+        ( letTok, s1 ) = advance state
         ( bindings, s2 ) = parseLetBindings s1
     in
         case consumeLex TkKeyword "in" s2 of
@@ -461,7 +461,7 @@ parseLetExpr state =
                         Err e
                     
                     Ok ( body, s4 ) ->
-                        Ok ( LetExpr bindings body emptySpan, s4 )
+                        Ok ( LetExpr bindings body letTok.span, s4 )
 
 
 parseLetBindings : ParserState -> (List LetBinding, ParserState)

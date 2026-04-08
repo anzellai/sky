@@ -19,6 +19,24 @@ type alias InferResult =
 
 inferExpr : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> Result String InferResult
 inferExpr counter registry env expr =
+    case inferExprInner counter registry env expr of
+
+        Ok result ->
+            Ok result
+
+        Err msg ->
+            if String.startsWith "@" msg then
+                Err msg
+
+            else
+                let
+                    span = Ast.exprSpan expr
+                in
+                    Err ("@" ++ String.fromInt span.start.line ++ ":" ++ String.fromInt span.start.column ++ ": " ++ msg)
+
+
+inferExprInner : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Expression -> Result String InferResult
+inferExprInner counter registry env expr =
     case expr of
         
         IntLitExpr _ _ _ ->
@@ -1145,9 +1163,9 @@ inferFunction counter registry env name params body annotation typeAliases =
 inferFunctionBody : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> String -> Env.TypeEnv -> Substitution -> (List Type) -> Type -> Expression -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> Result String DeclResult
 inferFunctionBody counter registry env name envWithSelf paramSub paramVars selfVar body annotation typeAliases =
     case inferExpr counter registry envWithSelf body of
-        
+
         Err e ->
-            Err ("In function '" ++ name ++ "': " ++ e)
+            Err e
         
         Ok bodyResult ->
             let

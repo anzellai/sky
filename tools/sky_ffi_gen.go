@@ -1097,6 +1097,9 @@ func mapGoTypeToSky(goType, pkg string, ancestors []string) string {
 	if strings.HasPrefix(goType, "map[") {
 		return "Any"
 		}
+	if strings.HasPrefix(goType, "func(") {
+		return mapGoFuncTypeToSky(goType, pkg, ancestors)
+		}
 	if strings.HasPrefix(goType, "*") {
 		inner := goType[1:]
 		skyInner := mapGoTypeToSky(inner, pkg, ancestors)
@@ -1110,6 +1113,92 @@ func mapGoTypeToSky(goType, pkg string, ancestors []string) string {
 		return parts[len(parts)-1]
 		}
 	return goType
+}
+
+func mapGoFuncTypeToSky(goType, pkg string, ancestors []string) string {
+	// Strip "func" prefix
+	inner := goType[4:]
+	// Find matching closing paren
+	depth := 0
+	closeIdx := -1
+	for i, ch := range inner {
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				break
+			}
+		}
+	}
+	if closeIdx < 0 {
+		return "Any"
+	}
+	paramStr := inner[1:closeIdx]
+	returnStr := strings.TrimSpace(inner[closeIdx+1:])
+
+	// Parse params
+	var skyParams []string
+	if paramStr != "" {
+		for _, p := range splitFuncParams(paramStr) {
+			p = strings.TrimSpace(p)
+			// Strip parameter names (e.g., "path string" -> "string")
+			parts := strings.Fields(p)
+			typ := parts[len(parts)-1]
+			skyParams = append(skyParams, mapGoTypeToSky(typ, pkg, ancestors))
+		}
+	}
+
+	// Parse return type
+	skyReturn := "Unit"
+	if returnStr != "" {
+		if strings.HasPrefix(returnStr, "(") && strings.HasSuffix(returnStr, ")") {
+			// Multiple returns — check for error
+			inner := returnStr[1 : len(returnStr)-1]
+			parts := splitFuncParams(inner)
+			var nonError []string
+			for _, p := range parts {
+				if strings.TrimSpace(p) != "error" {
+					nonError = append(nonError, strings.TrimSpace(p))
+				}
+			}
+			if len(nonError) == 1 {
+				skyReturn = mapGoTypeToSky(nonError[0], pkg, ancestors)
+			} else if len(nonError) == 0 {
+				skyReturn = "Unit"
+			} else {
+				skyReturn = "Any"
+			}
+		} else {
+			skyReturn = mapGoTypeToSky(returnStr, pkg, ancestors)
+		}
+	}
+
+	if len(skyParams) == 0 {
+		return skyReturn
+	}
+	all := append(skyParams, skyReturn)
+	// Wrap in parens to make it a valid type annotation
+	return "(" + strings.Join(all, " -> ") + ")"
+}
+
+func splitFuncParams(s string) []string {
+	var parts []string
+	depth := 0
+	start := 0
+	for i, ch := range s {
+		if ch == '(' {
+			depth++
+		} else if ch == ')' {
+			depth--
+		} else if ch == ',' && depth == 0 {
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
 }
 
 func buildReturnType(results []ParamDef, pkg string, ancestors []string) string {
