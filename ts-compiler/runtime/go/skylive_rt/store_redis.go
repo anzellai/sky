@@ -15,6 +15,7 @@ type RedisStore struct {
 	client *redis.Client
 	ttl    time.Duration
 	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // NewRedisStore connects to Redis at the given address and returns a store.
@@ -34,7 +35,10 @@ func NewRedisStore(addr string, ttl time.Duration) (*RedisStore, error) {
 		return nil, err
 	}
 
-	return &RedisStore{client: client, ttl: ttl, ctx: ctx}, nil
+	// Create a cancellable context for the store
+	ctx, cancel := context.WithCancel(ctx)
+
+	return &RedisStore{client: client, ttl: ttl, ctx: ctx, cancel: cancel}, nil
 }
 
 type redisSession struct {
@@ -159,4 +163,10 @@ func (s *RedisStore) Delete(sid string) {
 
 func (s *RedisStore) NewID() string {
 	return generateSessionID()
+}
+
+// Close closes the Redis client connection.
+func (s *RedisStore) Close() error {
+	s.cancel()
+	return s.client.Close()
 }
