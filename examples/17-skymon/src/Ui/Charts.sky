@@ -1,0 +1,106 @@
+module Ui.Charts exposing (sparkline, statusBar)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+
+
+-- Render a sparkline SVG from a list of values (most recent last).
+sparkline : Int -> Int -> List Int -> VNode
+sparkline width height values =
+    if List.isEmpty values then
+        text ""
+
+    else
+        let
+            maxVal = List.foldl (\v acc -> if v > acc then v else acc) 1 values
+            points = buildSparklinePoints width height maxVal values 0
+        in
+            node "svg"
+                [ attribute "width" (String.fromInt width)
+                , attribute "height" (String.fromInt height)
+                , attribute "viewBox" ("0 0 " ++ String.fromInt width ++ " " ++ String.fromInt height)
+                , class "sparkline"
+                ]
+                [ node "polyline"
+                      [ attribute "points" points
+                      , attribute "fill" "none"
+                      , attribute "stroke" "#38bdf8"
+                      , attribute "stroke-width" "1.5"
+                      ]
+                      []
+                ]
+
+
+buildSparklinePoints : Int -> Int -> Int -> List Int -> Int -> String
+buildSparklinePoints width height maxVal values idx =
+    case values of
+
+        [] ->
+            ""
+
+        v :: rest ->
+            let
+                total = idx + List.length rest + 1
+                x = idx * width // (total - 1 + 1)
+                y = height - (v * height // (maxVal + 1))
+                point = String.fromInt x ++ "," ++ String.fromInt y
+                remaining = buildSparklinePoints width height maxVal rest (idx + 1)
+            in
+                if String.isEmpty remaining then
+                    point
+
+                else
+                    point ++ " " ++ remaining
+
+
+-- Render a status bar showing recent check history as colored blocks.
+statusBar : Int -> List String -> VNode
+statusBar blockWidth statuses =
+    node "svg"
+        [ attribute "width" (String.fromInt (List.length statuses * (blockWidth + 2)))
+        , attribute "height" "20"
+        , class "status-bar-svg"
+        ]
+        (buildStatusBlocks statuses blockWidth 0)
+
+
+buildStatusBlocks : List String -> Int -> Int -> List VNode
+buildStatusBlocks statuses blockWidth idx =
+    case statuses of
+
+        [] ->
+            []
+
+        status :: rest ->
+            let
+                color = statusColor status
+                block =
+                    node "rect"
+                        [ attribute "x" (String.fromInt (idx * (blockWidth + 2)))
+                        , attribute "y" "0"
+                        , attribute "width" (String.fromInt blockWidth)
+                        , attribute "height" "20"
+                        , attribute "rx" "2"
+                        , attribute "fill" color
+                        ]
+                        []
+            in
+                block :: buildStatusBlocks rest blockWidth (idx + 1)
+
+
+statusColor : String -> String
+statusColor status =
+    if status == "healthy" then
+        "#22c55e"
+
+    else if status == "degraded" then
+        "#eab308"
+
+    else if status == "down" then
+        "#ef4444"
+
+    else
+        "#334155"

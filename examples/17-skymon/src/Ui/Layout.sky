@@ -1,0 +1,94 @@
+module Ui.Layout exposing (page)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick)
+import State exposing (..)
+import Ui.Styles exposing (globalStyles)
+
+
+page : Model -> VNode -> VNode
+page model content =
+    div []
+        [ node "style" [] [ text globalStyles ]
+        , viewHeader model
+        , div [ class "app" ] [ content ]
+        ]
+
+
+viewHeader : Model -> VNode
+viewHeader model =
+    node "header" [ class "header" ]
+        [ div [ class "header-inner" ]
+              [ a [ href "/", class "logo" ] [ text "\u2600 SkyMon" ]
+              , nav [ class "nav" ]
+                    [ a [ href "/", class "nav-link" ] [ text "Dashboard" ]
+                    , a [ href "/status", class "nav-link" ] [ text "Status" ]
+                    , viewSettingsLink model
+                    , viewAlertsLink model
+                    , viewAuthNav model
+                    ]
+              ]
+        ]
+
+
+viewSettingsLink : Model -> VNode
+viewSettingsLink model =
+    case model.session of
+
+        Just session ->
+            if session.role == Admin then
+                a [ href "/settings", class "nav-link" ] [ text "Settings" ]
+
+            else
+                text ""
+
+        Nothing ->
+            text ""
+
+
+viewAlertsLink : Model -> VNode
+viewAlertsLink model =
+    case model.session of
+
+        Just _ ->
+            a [ href "/alerts", class "nav-link" ] [ text "Alerts" ]
+
+        Nothing ->
+            text ""
+
+
+viewAuthNav : Model -> VNode
+viewAuthNav model =
+    case model.session of
+
+        Just session ->
+            viewLoggedIn session
+
+        Nothing ->
+            a [ href "/auth", class "nav-link" ] [ text "Sign In" ]
+
+
+viewLoggedIn : UserSession -> VNode
+viewLoggedIn session =
+    div [ class "user-info" ]
+        [ span [] [ text session.username ]
+        , viewRoleBadge session.role
+        , button [ onClick SignOut, class "btn btn-ghost btn-sm" ] [ text "Sign Out" ]
+        ]
+
+
+viewRoleBadge : Role -> VNode
+viewRoleBadge role =
+    case role of
+
+        Admin ->
+            span [ class "badge badge-admin" ] [ text "admin" ]
+
+        User ->
+            span [ class "badge badge-user" ] [ text "user" ]
+
+        Public ->
+            text ""

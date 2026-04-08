@@ -1,0 +1,257 @@
+module Lib.Metrics exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Json.Decode as Decode
+import Std.Db as Db
+import Lib.Database as Database
+import Lib.SafeQuery as SafeQuery
+
+
+createMetric : String -> String -> String -> String -> String
+createMetric name sourceType configJson visibility =
+    let
+        metId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ sourceType))
+        _ =
+            Db.exec Database.conn
+                "INSERT OR REPLACE INTO metrics (id, name, source_type, config_json, visibility) VALUES (?, ?, ?, ?, ?)"
+                [ metId, name, sourceType, configJson, visibility ]
+    in
+        metId
+
+
+deleteMetric : String -> ()
+deleteMetric metId =
+    let
+        _ = Db.exec Database.conn "DELETE FROM metric_history WHERE metric_id = ?" [ metId ]
+        _ = Db.exec Database.conn "DELETE FROM alerts WHERE metric_id = ?" [ metId ]
+        _ = Db.exec Database.conn "DELETE FROM metrics WHERE id = ?" [ metId ]
+    in
+        ()
+
+
+getMetrics : List (Dict String String)
+getMetrics =
+    Result.withDefault []
+        (Db.query Database.conn "SELECT * FROM metrics ORDER BY name" [])
+
+
+runMetric : Dict String String -> String
+runMetric metric =
+    let
+        sourceType = Database.getField "source_type" metric
+    in
+        if sourceType == "sql" then
+            runSqlMetric metric
+
+        else if sourceType == "http" then
+            runHttpMetric metric
+
+        else if sourceType == "api" then
+            runApiMetric metric
+
+        else
+            "error: unknown source type"
+
+
+runSqlMetric : Dict String String -> String
+runSqlMetric metric =
+    let
+        configJson = Database.getField "config_json" metric
+        dsn = extractJsonField "dsn" configJson
+        query = extractJsonField "query" configJson
+    in
+        if String.isEmpty dsn || String.isEmpty query then
+            "error: missing dsn or query in config"
+
+        else
+            runSafeQuery dsn query
+
+
+runSafeQuery : String -> String -> String
+runSafeQuery dsn query =
+    case Db.open "postgres" dsn of
+
+        Err e ->
+            "error: " ++ e
+
+        Ok extConn ->
+            runSafeQueryWithConn extConn query
+
+
+runSafeQueryWithConn extConn query =
+    case SafeQuery.runReadOnly extConn query [] of
+
+        Err e ->
+            "error: " ++ e
+
+        Ok rows ->
+            extractFirstValue rows
+
+
+extractFirstValue : List (Dict String String) -> String
+extractFirstValue rows =
+    case rows of
+
+        row :: _ ->
+            let
+                values = Dict.values row
+            in
+                case values of
+
+                    v :: _ ->
+                        v
+
+                    [] ->
+                        "0"
+
+        [] ->
+            "0"
+
+
+runHttpMetric : Dict String String -> String
+runHttpMetric metric =
+    let
+        configJson = Database.getField "config_json" metric
+        url = extractJsonField "url" configJson
+    in
+        if String.isEmpty url then
+            "error: missing url"
+
+        else
+            case Task.run (Http.get url) of
+
+                Ok resp ->
+                    String.fromInt resp.status
+
+                Err e ->
+                    "error: " ++ e
+
+
+runApiMetric : Dict String String -> String
+runApiMetric metric =
+    let
+        configJson = Database.getField "config_json" metric
+        url = extractJsonField "url" configJson
+        fieldPath = extractJsonField "field" configJson
+    in
+        if String.isEmpty url then
+            "error: missing url"
+
+        else
+            case Task.run (Http.get url) of
+
+                Ok resp ->
+                    if String.isEmpty fieldPath then
+                        resp.body
+
+                    else
+                        extractJsonField fieldPath resp.body
+
+                Err e ->
+                    "error: " ++ e
+
+
+recordMetricValue : String -> String -> ()
+recordMetricValue metId value =
+    let
+        _ =
+            Db.exec Database.conn
+                "UPDATE metrics SET last_value = ?, last_updated = datetime('now') WHERE id = ?"
+                [ value, metId ]
+        _ =
+            Db.exec Database.conn
+                "INSERT INTO metric_history (metric_id, value) VALUES (?, ?)"
+                [ metId, value ]
+    in
+        ()
+
+
+getMetricHistory : String -> Int -> List (Dict String String)
+getMetricHistory metId limit =
+    Result.withDefault []
+        (Db.query Database.conn
+            "SELECT value, recorded_at FROM metric_history WHERE metric_id = ? ORDER BY recorded_at DESC LIMIT ?"
+            [ metId, String.fromInt limit ]
+        )
+
+
+extractJsonField : String -> String -> String
+extractJsonField key json =
+    let
+        searchKey = "\"" ++ key ++ "\""
+        parts = String.split searchKey json
+    in
+        case List.drop 1 parts of
+
+            after :: _ ->
+                extractJsonValue (String.trim (dropUntilColon after))
+
+            [] ->
+                ""
+
+
+dropUntilColon : String -> String
+dropUntilColon s =
+    if String.isEmpty s then
+        ""
+
+    else if String.startsWith ":" s then
+        String.trim (String.slice 1 (String.length s) s)
+
+    else
+        dropUntilColon (String.slice 1 (String.length s) s)
+
+
+extractJsonValue : String -> String
+extractJsonValue s =
+    if String.startsWith "\"" s then
+        let
+            rest = String.slice 1 (String.length s) s
+            endQuote = findCharIndex '"' rest 0
+        in
+            if endQuote > 0 then
+                String.slice 0 endQuote rest
+
+            else
+                rest
+
+    else
+        let
+            endIdx = findEndOfValue s 0
+        in
+            String.trim (String.slice 0 endIdx s)
+
+
+findCharIndex : Char -> String -> Int -> Int
+findCharIndex ch s idx =
+    if idx >= String.length s then
+        -1
+
+    else if String.slice idx (idx + 1) s == String.fromChar ch then
+        idx
+
+    else
+        findCharIndex ch s (idx + 1)
+
+
+findEndOfValue : String -> Int -> Int
+findEndOfValue s idx =
+    if idx >= String.length s then
+        idx
+
+    else
+        let
+            ch = String.slice idx (idx + 1) s
+        in
+            if ch == "," || ch == "}" || ch == "]" then
+                idx
+
+            else
+                findEndOfValue s (idx + 1)

@@ -1,0 +1,86 @@
+module Page.Status exposing (viewStatus)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import State exposing (..)
+import Ui.Styles exposing (globalStyles)
+
+
+viewStatus : Model -> VNode
+viewStatus model =
+    let
+        publicMonitors =
+            List.filter (\m -> m.visibility == VisPublic) model.monitors
+        allHealthy =
+            List.all (\m -> m.status == Healthy) publicMonitors
+        hasMonitors = not (List.isEmpty publicMonitors)
+    in
+        div []
+            [ node "style" [] [ text globalStyles ]
+            , div [ class "status-page" ]
+                  [ viewStatusHeader allHealthy hasMonitors
+                  , viewStatusList publicMonitors
+                  , viewStatusFooter
+                  ]
+            ]
+
+
+viewStatusHeader : Bool -> Bool -> VNode
+viewStatusHeader allHealthy hasMonitors =
+    div [ class "status-header" ]
+        [ h1 [ style "font-size: 24px; margin-bottom: 8px; color: #f1f5f9" ]
+              [ text "\u2600 SkyMon Status" ]
+        , if hasMonitors && allHealthy then
+            p [ class "status-all-good" ] [ text "\u2713 All Systems Operational" ]
+
+          else if hasMonitors then
+            p [ style "color: #eab308; font-size: 18px" ] [ text "\u26a0 Some Issues Detected" ]
+
+          else
+            p [ style "color: #64748b" ] [ text "No monitors configured" ]
+        ]
+
+
+viewStatusList : (List Monitor) -> VNode
+viewStatusList monitors =
+    div []
+        (List.map viewStatusRow monitors)
+
+
+viewStatusRow : Monitor -> VNode
+viewStatusRow monitor =
+    div [ class "card", style "margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center" ]
+        [ div []
+              [ div [ style "font-weight: 600; color: #f1f5f9; margin-bottom: 4px" ]
+                    [ text monitor.name ]
+              , div [ style "font-size: 12px; color: #64748b" ]
+                    [ text (String.fromInt monitor.responseTime ++ "ms \u2022 " ++ monitor.lastChecked) ]
+              ]
+        , span [ class ("status-dot status-" ++ statusToString monitor.status) ] []
+        ]
+
+
+statusToString : MonitorStatus -> String
+statusToString s =
+    case s of
+
+        Healthy ->
+            "healthy"
+
+        Degraded ->
+            "degraded"
+
+        Down ->
+            "down"
+
+        Unknown ->
+            "unknown"
+
+
+viewStatusFooter : VNode
+viewStatusFooter =
+    div [ style "text-align: center; margin-top: 32px; color: #475569; font-size: 12px" ]
+        [ text "Powered by SkyMon \u2022 Built with Sky" ]

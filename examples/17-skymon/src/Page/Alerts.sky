@@ -1,0 +1,217 @@
+module Page.Alerts exposing (viewAlerts)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Maybe as Maybe
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput)
+import State exposing (..)
+import Lib.Database as Database
+import Lib.Alerts as Alerts
+import Ui.Layout as Layout
+
+
+viewAlerts : Model -> VNode
+viewAlerts model =
+    Layout.page model
+        (
+        div []
+            [ h2 [ class "section-title" ] [ text "Alert Rules" ]
+            , viewAddAlertForm model
+            , viewAlertList model
+            , viewAlertHistory
+            ]
+        )
+
+
+viewAddAlertForm : Model -> VNode
+viewAddAlertForm model =
+    div [ class "card", style "margin-bottom: 24px" ]
+        [ h3 [ style "font-size: 16px; color: #f1f5f9; margin-bottom: 16px" ]
+              [ text "Add Alert Rule" ]
+        , div [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Metric (select by name)" ]
+              , input
+                    [ type_ "text"
+                    , class "form-input"
+                    , placeholder "Metric name or ID"
+                    , value (Maybe.withDefault "" (Dict.get "alert_metric" model.configInput))
+                    , onInput InputAlertMetric
+                    ]
+              ]
+        , div [ style "display: grid; grid-template-columns: 1fr 1fr; gap: 16px" ]
+              [ div [ class "form-group" ]
+                    [ label [ class "form-label" ] [ text "Condition" ]
+                    , input
+                          [ type_ "text"
+                          , class "form-input"
+                          , placeholder "> < >= <= == != contains down"
+                          , value (Maybe.withDefault "" (Dict.get "alert_condition" model.configInput))
+                          , onInput InputAlertCondition
+                          ]
+                    ]
+              , div [ class "form-group" ]
+                    [ label [ class "form-label" ] [ text "Threshold" ]
+                    , input
+                          [ type_ "text"
+                          , class "form-input"
+                          , placeholder "100"
+                          , value (Maybe.withDefault "" (Dict.get "alert_threshold" model.configInput))
+                          , onInput InputAlertThreshold
+                          ]
+                    ]
+              ]
+        , div [ style "display: grid; grid-template-columns: 1fr 2fr; gap: 16px" ]
+              [ div [ class "form-group" ]
+                    [ label [ class "form-label" ] [ text "Notify via" ]
+                    , input
+                          [ type_ "text"
+                          , class "form-input"
+                          , placeholder "webhook, slack, or log"
+                          , value (Maybe.withDefault "log" (Dict.get "alert_notify_type" model.configInput))
+                          , onInput InputAlertNotifyType
+                          ]
+                    ]
+              , div [ class "form-group" ]
+                    [ label [ class "form-label" ] [ text "Webhook / Slack URL" ]
+                    , input
+                          [ type_ "text"
+                          , class "form-input"
+                          , placeholder "https://hooks.slack.com/services/..."
+                          , value (Maybe.withDefault "" (Dict.get "alert_notify_target" model.configInput))
+                          , onInput InputAlertTarget
+                          ]
+                    ]
+              ]
+        , button [ onClick AddAlert, class "btn btn-primary" ] [ text "Add Alert" ]
+        ]
+
+
+viewAlertList : Model -> VNode
+viewAlertList model =
+    if List.isEmpty model.alerts then
+        div [ class "empty-state" ]
+            [ h3 [] [ text "No alert rules yet" ]
+            , p [] [ text "Add a rule to get notified when metrics cross thresholds" ]
+            ]
+
+    else
+        div []
+            [ table [ class "table" ]
+                  [ node "thead" []
+                        [ tr []
+                              [ th [] [ text "Metric" ]
+                              , th [] [ text "Condition" ]
+                              , th [] [ text "Threshold" ]
+                              , th [] [ text "Notify" ]
+                              , th [] [ text "Status" ]
+                              , th [] [ text "" ]
+                              ]
+                        ]
+                  , node "tbody" []
+                        (List.map (viewAlertRow model) model.alerts)
+                  ]
+            ]
+
+
+viewAlertRow : Model -> AlertRule -> VNode
+viewAlertRow model alert =
+    let
+        metricName = findMetricName alert.metricId model.metrics
+    in
+        tr []
+            [ td [ style "font-weight: 600" ] [ text metricName ]
+            , td [ style "color: #a78bfa; font-family: monospace" ] [ text alert.condition ]
+            , td [ style "color: #38bdf8; font-weight: 600" ] [ text alert.threshold ]
+            , td [ style "color: #64748b" ]
+                  [ text (alert.notifyType ++ ": " ++ truncate 30 alert.notifyTarget) ]
+            , td []
+                  [ if alert.enabled then
+                        span [ style "color: #22c55e" ] [ text "\u2713 Active" ]
+
+                    else
+                        span [ style "color: #64748b" ] [ text "Disabled" ]
+                  ]
+            , td []
+                  [ button [ onClick (DeleteAlert alert.id), class "btn btn-danger btn-sm" ] [ text "Delete" ] ]
+            ]
+
+
+findMetricName : String -> (List Metric) -> String
+findMetricName metricId metrics =
+    case metrics of
+
+        [] ->
+            metricId
+
+        m :: rest ->
+            if m.id == metricId then
+                m.name
+
+            else
+                findMetricName metricId rest
+
+
+truncate : Int -> String -> String
+truncate maxLen s =
+    if String.length s > maxLen then
+        String.slice 0 maxLen s ++ "..."
+
+    else
+        s
+
+
+viewAlertHistory : VNode
+viewAlertHistory =
+    let
+        history = Alerts.getAlertHistory 50
+    in
+        div [ style "margin-top: 32px" ]
+            [ h2 [ class "section-title" ] [ text "Alert History" ]
+            , viewAlertHistoryContent history
+            ]
+
+
+viewAlertHistoryContent : (List (Dict String String)) -> VNode
+viewAlertHistoryContent history =
+    if List.isEmpty history then
+        div [ class "empty-state" ]
+            [ h3 [] [ text "No alerts fired yet" ]
+            , p [] [ text "Alert events will appear here when conditions are triggered" ]
+            ]
+
+    else
+        div [ style "max-height: 400px; overflow-y: auto" ]
+            [ table [ class "table" ]
+                  [ node "thead" []
+                        [ tr []
+                              [ th [] [ text "Time" ]
+                              , th [] [ text "Metric" ]
+                              , th [] [ text "Value" ]
+                              , th [] [ text "Condition" ]
+                              , th [] [ text "Notify" ]
+                              ]
+                        ]
+                  , node "tbody" []
+                        (List.map viewAlertHistoryRow history)
+                  ]
+            ]
+
+
+viewAlertHistoryRow : (Dict String String) -> VNode
+viewAlertHistoryRow row =
+    tr []
+        [ td [ style "color: #64748b; font-size: 12px" ]
+              [ text (Database.getField "fired_at" row) ]
+        , td [ style "font-weight: 600" ]
+              [ text (Database.getField "metric_id" row) ]
+        , td [ style "color: #ef4444; font-weight: 600" ]
+              [ text (Database.getField "metric_value" row) ]
+        , td [ style "color: #a78bfa; font-family: monospace" ]
+              [ text (Database.getField "condition" row ++ " " ++ Database.getField "threshold" row) ]
+        , td [ style "color: #64748b" ]
+              [ text (Database.getField "notify_type" row) ]
+        ]

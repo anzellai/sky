@@ -1,0 +1,66 @@
+module Lib.SafeQuery exposing (runReadOnly, isSelectOnly)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Dict as Dict
+import Std.Db as Db
+
+
+-- Run a query ONLY if it is a SELECT/WITH statement.
+-- Rejects INSERT, UPDATE, DELETE, DROP, ALTER, CREATE, TRUNCATE etc.
+runReadOnly : a -> String -> List String -> Result String (List (Dict String String))
+runReadOnly dbConn query params =
+    if isSelectOnly query then
+        Db.query dbConn query params
+
+    else
+        Err ("Query rejected: only SELECT queries are allowed. Got: " ++ String.slice 0 50 query)
+
+
+-- Check if a SQL query is read-only (SELECT or WITH ... SELECT).
+-- Strips comments and checks the first keyword.
+isSelectOnly : String -> Bool
+isSelectOnly query =
+    let
+        cleaned = stripSqlComments (String.trim query)
+        upper = String.toUpper cleaned
+        firstWord = getFirstWord upper
+    in
+        firstWord == "SELECT" || firstWord == "WITH" || firstWord == "EXPLAIN"
+
+
+stripSqlComments : String -> String
+stripSqlComments query =
+    if String.startsWith "--" query then
+        stripSqlComments (dropUntilNewline query)
+
+    else
+        query
+
+
+dropUntilNewline : String -> String
+dropUntilNewline s =
+    if String.isEmpty s then
+        ""
+
+    else if String.startsWith "\n" s then
+        String.trim (String.slice 1 (String.length s) s)
+
+    else
+        dropUntilNewline (String.slice 1 (String.length s) s)
+
+
+getFirstWord : String -> String
+getFirstWord s =
+    let
+        trimmed = String.trim s
+        parts = String.split " " trimmed
+    in
+        case parts of
+
+            word :: _ ->
+                word
+
+            [] ->
+                ""
