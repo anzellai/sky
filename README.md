@@ -106,8 +106,8 @@ docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky run src/Main.sky
 
 | Version | Focus | Status |
 |---------|-------|--------|
-| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 16 examples, `Std.Db`, Elm-style error messages, exhaustiveness checking | Current |
-| **v0.8.0** | Standard library: `Std.Auth`, `Std.Log`, `Std.Db.Doc` (Redis/Firestore). Fix nested `case...of`, ADT cross-module bugs. Expression-level error spans. Go interface/callback type checking | Planned |
+| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 17 examples, `Std.Db`, Elm-style error messages, exhaustiveness checking, multiline strings, cross-module type alias fix, Unicode-aware stdlib | Current |
+| **v0.8.0** | Standard library: `Std.Auth`, `Std.Log`, `Std.Db.Doc` (Redis/Firestore). Fix nested `case...of`. Expression-level error spans. Go interface/callback type checking | Planned |
 | **v0.9.0** | Stable compiler with full LSP/check support. Most common app types buildable without workarounds. Comprehensive real-world examples across domains | Planned |
 | **v1.0.0** | Fully typed codegen (no `any`), production-ready. Everything type-safe end-to-end. Milestone: Sky is ready for production use | Goal |
 
@@ -162,7 +162,7 @@ identity x = x
 | --------------- | ------------------ | --------------------- |
 | `Int`           | Integer            | `42`, `-7`            |
 | `Float`         | Floating point     | `3.14`, `-0.5`        |
-| `String`        | Text               | `"hello"`, `"line\n"` |
+| `String`        | Text               | `"hello"`, `"""multi"""` |
 | `Bool`          | Boolean            | `True`, `False`       |
 | `Char`          | Character          | `'a'`, `'Z'`          |
 | `Unit`          | Empty tuple        | `()`                  |
@@ -424,6 +424,36 @@ status =
 #### Case-Of
 
 See [Pattern Matching](#pattern-matching).
+
+### Multiline Strings
+
+Triple-quoted strings preserve newlines and indentation. Interpolation uses double braces `{{expr}}`:
+
+```elm
+renderCard : String -> Int -> String
+renderCard title count =
+    let
+        countStr = String.fromInt count
+    in
+        """<div class="card">
+    <h1>{{title}}</h1>
+    <span>{{countStr}} items</span>
+</div>"""
+```
+
+Single braces are literal -- safe for embedding JavaScript, CSS, JSON, and SQL without escaping:
+
+```elm
+initDb conn =
+    Db.execRaw conn
+        """CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )"""
+```
+
+Interpolation expressions support identifiers (`{{name}}`), field access (`{{record.field}}`), qualified names (`{{String.fromInt n}}`), and function calls (`{{String.fromInt count}}`).
 
 ### Go Interop (FFI)
 
@@ -1220,21 +1250,26 @@ Community-contributed Zed extension with syntax highlighting and LSP integration
 | `04-local-pkg`      | Multi-module project       | Local package imports (`Lib.Utils`)                            |
 | `05-mux-server`     | HTTP server                | `gorilla/mux`, `godotenv`, request handling, `errorToString`   |
 | `06-json`           | JSON encode/decode         | Elm-compatible `Json.Encode`, `Json.Decode`, pipeline decoding |
-| `07-todo-cli`       | CLI with SQLite            | Command-line args, `database/sql`, `modernc.org/sqlite`        |
+| `07-todo-cli`       | CLI with SQLite            | Command-line args, `Std.Db`, multiline SQL strings             |
 | `08-notes-app`      | Full CRUD web app          | HTTP server, database, auth, HTML templates                    |
 | `09-live-counter`   | Sky.Live counter           | Server-driven UI, routing, SSE subscriptions (`Time.every`)    |
 | `10-live-component` | Sky.Live components        | Component protocol, auto-wiring                                |
 | `11-fyne-stopwatch` | Desktop GUI                | Fyne toolkit, timers, data binding                             |
 | `12-skyvote`        | Full Sky.Live app          | SQLite, auth, voting, SSE auto-refresh                         |
-| `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n, image uploads |
+| `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n   |
 | `14-task-demo`      | Task effect boundary       | Task composition, error handling, sequencing                   |
-| `15-http-server`    | Sky.Http.Server            | Routing, cookies, middleware, request/response builders        |
-| `16-skychess`       | Sky.Live + SQLite           | Chess game with AI opponent, move history, game persistence    |
+| `15-http-server`    | Sky.Http.Server            | Routing, cookies, multiline HTML with `{{}}` interpolation     |
+| `16-skychess`       | Sky.Live chess             | AI opponent (minimax), proper ADT types (Kind, Colour, Piece)  |
+| `17-skymon`         | Sky.Live monitoring        | Uptime monitors, metrics, alerts, SVG charts, 20 modules      |
+
+Each example has its own `README.md` with build and run instructions.
 
 Run any example:
 
 ```bash
-sky run examples/01-hello-world/src/Main.sky
+cd examples/01-hello-world
+sky build src/Main.sky
+./sky-out/app
 ```
 
 ---
@@ -1267,7 +1302,7 @@ src/                              -- Sky compiler (self-hosted, 34 modules, ~4MB
 
 ts-compiler/                      -- Legacy TypeScript bootstrap (reference only)
 stdlib-go/                        -- Go runtime implementations for stdlib modules
-examples/                         -- 15 example projects
+examples/                         -- 17 example projects
 ```
 
 ### Key Design Decisions
@@ -1482,7 +1517,7 @@ The current compiler (v0.7.x) uses `any` for function parameters and returns. AD
 
 ## Type Safety Journey
 
-Sky's core principle is **"if it compiles, it works"**. A comprehensive audit identified 33 type safety gaps and all have been addressed. The compiler now self-hosts cleanly with strict type checking -- all 15 examples compile with zero warnings.
+Sky's core principle is **"if it compiles, it works"**. A comprehensive audit identified 33 type safety gaps and all have been addressed. The compiler now self-hosts cleanly with strict type checking -- all 17 examples compile with zero warnings.
 
 ### Parser: Indentation-Based Case Scoping
 
@@ -1558,7 +1593,7 @@ Sky is under active development. These are current limitations to be aware of:
 | **`sky check` doesn't understand Go callback types** | FFI callback params like `func(ResponseWriter, *Request)` can't unify with Sky functions. Runtime wrapping works correctly. |
 | **Zero-arg FFI functions need no `()`** | Call `Uuid.newString` not `Uuid.newString ()` — the binding declares the return type directly. |
 
-These will be addressed in future versions. Priorities for v0.8: nested `case`, ADT cross-module bugs, Go interface/callback type checking.
+Cross-module type alias unification and ADT exhaustiveness checking across modules are now fixed (v0.7.20). Priorities for v0.8: nested `case`, Go interface/callback type checking.
 
 ## Std.Db — Built-in Database Abstraction
 
