@@ -14,8 +14,9 @@ import (
 // It implements the SessionStore interface using modernc.org/sqlite
 // (pure Go, no CGo dependency).
 type SQLiteStore struct {
-	db  *sql.DB
-	ttl time.Duration
+	db    *sql.DB
+	ttl   time.Duration
+	stop  chan struct{}
 }
 
 // NewSQLiteStore opens (or creates) a SQLite database at dbPath and
@@ -51,7 +52,7 @@ func NewSQLiteStore(dbPath string, ttl time.Duration) (*SQLiteStore, error) {
 		return nil, err
 	}
 
-	store := &SQLiteStore{db: db, ttl: ttl}
+	store := &SQLiteStore{db: db, ttl: ttl, stop: make(chan struct{})}
 	go store.cleanup()
 	return store, nil
 }
@@ -174,9 +175,16 @@ func (s *SQLiteStore) NewID() string {
 func (s *SQLiteStore) cleanup() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		cutoff := time.Now().Add(-s.ttl).Unix()
-		s.db.Exec("DELETE FROM sessions WHERE last_seen < ?", cutoff)
+	for {
+		select {
+		case <-ticker.C:
+			cutoff := time.Now().Add(-s.ttl).Unix()
+			if _, err := s.db.Exec("DELETE FROM sessions WHERE last_seen < ?", cutoff); err != nil {
+				log.Printf("skylive_rt: SQLiteStore.cleanup: failed to delete expired sessions: %v", err)
+			}
+		case <-s.stop:
+			return
+		}
 	}
 }
 
@@ -269,4 +277,17 @@ func RebuildADT(m map[string]any) any {
 	default:
 		return nil
 	}
+}
+
+// Close stops the cleanup goroutine and closes the database connection.
+func (s *SQLiteStore) Close() error {
+	// Signal cleanup goroutine to stop
+	select {
+	case <-s.stop:
+		// Already closed
+	default:
+		close(s.stop)
+	}
+	// Close the database connection
+	return s.db.Close()
 }
