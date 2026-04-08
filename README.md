@@ -106,10 +106,10 @@ docker run --rm -v $(pwd)/my-app:/app -w /app anzel/sky sky run src/Main.sky
 
 | Version | Focus | Status |
 |---------|-------|--------|
-| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 17 examples, `Std.Db`, Elm-style error messages, exhaustiveness checking, multiline strings, cross-module type alias fix, Unicode-aware stdlib | Current |
-| **v0.8.0** | Standard library: `Std.Auth`, `Std.Log`, `Std.Db.Doc` (Redis/Firestore). Fix nested `case...of`. Expression-level error spans. Go interface/callback type checking | Planned |
-| **v0.9.0** | Stable compiler with full LSP/check support. Most common app types buildable without workarounds. Comprehensive real-world examples across domains | Planned |
-| **v1.0.0** | Fully typed codegen (no `any`), production-ready. Everything type-safe end-to-end. Milestone: Sky is ready for production use | Goal |
+| **v0.7.x** | Self-hosted compiler, Sky.Live, FFI generator, 17 examples, `Std.Db`, Elm-style errors, exhaustiveness checking, multiline strings with `{{}}` interpolation, cross-module type alias fix, Unicode-aware stdlib | Current |
+| **v0.8.0** | Fix nested `case...of` (most impactful limitation). Go interface/callback type checking in `sky check`. Expression-level error spans. `Std.Auth` module | Next |
+| **v0.9.0** | Stable compiler — all known limitations resolved. Full LSP support (diagnostics, rename, references). Comprehensive real-world examples. `sky-lang.org` playground | Planned |
+| **v1.0.0** | Fully typed codegen (no `any`). Go compiler as second type checker. Typed records, generics for core types. Production-ready | Goal |
 
 ---
 
