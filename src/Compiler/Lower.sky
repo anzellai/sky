@@ -1639,7 +1639,34 @@ lowerQualified ctx parts =
         
         else if qualName == "Db.txQueryDecode" then
             GoIdent "sky_dbTxQueryDecode"
-        
+
+        else if qualName == "Auth.register" then
+            GoIdent "sky_authRegister"
+
+        else if qualName == "Auth.login" then
+            GoIdent "sky_authLogin"
+
+        else if qualName == "Auth.verify" then
+            GoIdent "sky_authVerify"
+
+        else if qualName == "Auth.logout" then
+            GoIdent "sky_authLogout"
+
+        else if qualName == "Auth.verifyEmail" then
+            GoIdent "sky_authVerifyEmail"
+
+        else if qualName == "Auth.hashPassword" then
+            GoIdent "sky_authHashPassword"
+
+        else if qualName == "Auth.verifyPassword" then
+            GoIdent "sky_authVerifyPassword"
+
+        else if qualName == "Auth.setRole" then
+            GoIdent "sky_authSetRole"
+
+        else if qualName == "Auth.signToken" then
+            GoIdent "sky_authSignToken"
+
         else if List.length parts == 2 then
             let
                 modPart =

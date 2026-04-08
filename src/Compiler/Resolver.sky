@@ -678,7 +678,19 @@ getStdlibExports modName =
         , "txQuery"
         , "txQueryDecode"
         ]
-    
+
+    else if modName == "Std.Auth" then
+        [ "register"
+        , "login"
+        , "verify"
+        , "logout"
+        , "verifyEmail"
+        , "hashPassword"
+        , "verifyPassword"
+        , "setRole"
+        , "signToken"
+        ]
+
     else
         []
 

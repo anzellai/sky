@@ -310,7 +310,9 @@ writeMultiModuleOutput outDir projectRoot allDecls imports =
     let
         blankImports = collectBlankImports imports
         dbInitDecl = generateDbInitDecl imports
-        allDeclsWithInit = List.append allDecls dbInitDecl
+        authInitDecl = generateAuthInitDecl imports
+        allDeclsWithInit =
+            List.concat [ authInitDecl , dbInitDecl , allDecls ]
         goPackage = makeGoPackageWithImports allDeclsWithInit blankImports
         rawGoCode = Emit.emitPackage goPackage
         goCode = fixUnusedVars rawGoCode
@@ -812,15 +814,23 @@ dceMainGo outDir goCode =
                             ""
                 dbRuntimeContent =
                     case File.readFile (outDir ++ "/skydb_runtime.go") of
-                        
+
                         Ok content ->
                             content
-                        
+
+                        Err _ ->
+                            ""
+                authRuntimeContent =
+                    case File.readFile (outDir ++ "/skyauth_runtime.go") of
+
+                        Ok content ->
+                            content
+
                         Err _ ->
                             ""
             in
                 wrapperCat
-                    ++ "\n" ++ liveInitContent ++ "\n" ++ dbRuntimeContent
+                    ++ "\n" ++ liveInitContent ++ "\n" ++ dbRuntimeContent ++ "\n" ++ authRuntimeContent
         wrapperSeeds =
             List.filter (\name -> String.contains name wrapperContent)
                 (Dict.keys funcMap)
@@ -830,7 +840,7 @@ dceMainGo outDir goCode =
                 (Dict.keys funcMap)
         reachable =
             buildReachableSet
-                (List.concat [ [ "main" ] , wrapperSeeds , nonFuncSeeds ])
+                (List.concat [ [ "main" , "init" ] , wrapperSeeds , nonFuncSeeds ])
                 Dict.empty
                 funcMap
         totalFuncs = List.length pureFuncBlocks
@@ -1029,6 +1039,126 @@ extractTomlPath content =
         
         else
             path
+
+
+generateAuthInitDecl : (List Ast.ImportDecl) -> List GoDecl
+generateAuthInitDecl imports =
+    []
+
+
+readAuthConfig : String
+readAuthConfig =
+    case File.readFile "sky.toml" of
+
+        Err _ ->
+            ""
+
+        Ok content ->
+            let
+                method = extractTomlValueInSection "[auth]" "method" content
+                secret = extractTomlValueInSection "[auth]" "secret" content
+                bcryptCostStr = extractTomlValueInSection "[auth]" "bcrypt_cost" content
+                sessionTtlStr = extractTomlValueInSection "[auth]" "session_ttl" content
+                emailVerStr = extractTomlValueInSection "[auth]" "email_verification" content
+                bcryptCost =
+                    if String.isEmpty bcryptCostStr then
+                        "12"
+
+                    else
+                        bcryptCostStr
+                sessionTtl = parseTtlToSeconds sessionTtlStr
+                emailVer =
+                    if emailVerStr == "true" then
+                        "true"
+
+                    else
+                        "false"
+            in
+                if String.isEmpty secret then
+                    ""
+
+                else
+                    "skyAuthInit(\"" ++ method ++ "\", \"" ++ secret ++ "\", " ++ bcryptCost ++ ", " ++ sessionTtl ++ ", " ++ emailVer ++ ")"
+
+
+extractTomlValueInSection : String -> String -> String -> String
+extractTomlValueInSection section key content =
+    let
+        lines = String.split "\n" content
+    in
+        extractInSection lines section key False
+
+
+extractInSection : (List String) -> String -> String -> Bool -> String
+extractInSection lines section key inSection =
+    case lines of
+
+        [] ->
+            ""
+
+        line :: rest ->
+            let
+                trimmed = String.trim line
+            in
+                if String.startsWith "[" trimmed && trimmed == section then
+                    extractInSection rest section key True
+
+                else if String.startsWith "[" trimmed && inSection then
+                    ""
+
+                else if inSection && (String.contains (key ++ " =") trimmed || String.contains (key ++ "=") trimmed) then
+                    let
+                        parts = String.split "=" trimmed
+                    in
+                        case List.drop 1 parts of
+
+                            val :: _ ->
+                                String.trim (String.replace "\"" "" (String.trim val))
+
+                            [] ->
+                                ""
+
+                else
+                    extractInSection rest section key inSection
+
+
+parseTtlToSeconds : String -> String
+parseTtlToSeconds ttl =
+    if String.isEmpty ttl then
+        "86400"
+
+    else if String.endsWith "h" ttl then
+        let
+            hours = String.replace "h" "" ttl
+        in
+            case String.toInt hours of
+
+                Just n ->
+                    String.fromInt (n * 3600)
+
+                Nothing ->
+                    "86400"
+
+    else if String.endsWith "m" ttl then
+        let
+            mins = String.replace "m" "" ttl
+        in
+            case String.toInt mins of
+
+                Just n ->
+                    String.fromInt (n * 60)
+
+                Nothing ->
+                    "86400"
+
+    else
+        case String.toInt ttl of
+
+            Just n ->
+                String.fromInt n
+
+            Nothing ->
+                "86400"
 
 
 collectBlankImports : (List Ast.ImportDecl) -> List GoImport
@@ -2457,7 +2587,10 @@ generateAliasesForImport allModules imp =
     in
         if modName == "Std.Db" then
             generateSkyDbAliases
-        
+
+        else if modName == "Std.Auth" then
+            generateSkyAuthAliases
+
         else if Resolver.isStdlib modName then
             []
         
@@ -2504,6 +2637,33 @@ generateSkyDbAliases =
                     goFn = snd pair
                 in
                     [ GoDeclRaw ("var Std_Db_" ++ name ++ " = " ++ goFn) ]
+            )
+            fns
+
+
+generateSkyAuthAliases : List GoDecl
+generateSkyAuthAliases =
+    let
+        fns =
+            [ ( "Register", "sky_authRegister" )
+            , ( "Login", "sky_authLogin" )
+            , ( "Verify", "sky_authVerify" )
+            , ( "Logout", "sky_authLogout" )
+            , ( "VerifyEmail", "sky_authVerifyEmail" )
+            , ( "HashPassword", "sky_authHashPassword" )
+            , ( "VerifyPassword", "sky_authVerifyPassword" )
+            , ( "SetRole", "sky_authSetRole" )
+            , ( "SignToken", "sky_authSignToken" )
+            ]
+    in
+        List.concatMap
+            (
+            \pair ->
+                let
+                    name = fst pair
+                    goFn = snd pair
+                in
+                    [ GoDeclRaw ("var Std_Auth_" ++ name ++ " = " ++ goFn) ]
             )
             fns
 
