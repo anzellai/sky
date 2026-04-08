@@ -22,7 +22,11 @@ import Std.Log exposing (println)
 
 initDb conn =
     Db.execRaw conn
-        "CREATE TABLE IF NOT EXISTS todos (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, done INTEGER DEFAULT 0)"
+        """CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            done INTEGER DEFAULT 0
+        )"""
 
 
 addTodo conn todoTitle =

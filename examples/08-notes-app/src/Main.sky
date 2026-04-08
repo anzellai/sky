@@ -21,15 +21,34 @@ initDb _ =
     let
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, verified INTEGER DEFAULT 0, verification_token TEXT, created_at TEXT DEFAULT (datetime('now')))"
+                """CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    verified INTEGER DEFAULT 0,
+                    verification_token TEXT,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )"""
                 []
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, token TEXT NOT NULL UNIQUE, created_at TEXT DEFAULT (datetime('now')))"
+                """CREATE TABLE IF NOT EXISTS sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    token TEXT NOT NULL UNIQUE,
+                    created_at TEXT DEFAULT (datetime('now'))
+                )"""
                 []
         _ =
             Db.exec
-                "CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', created_at TEXT DEFAULT (datetime('now')), updated_at TEXT DEFAULT '')"
+                """CREATE TABLE IF NOT EXISTS notes (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    content TEXT NOT NULL DEFAULT '',
+                    created_at TEXT DEFAULT (datetime('now')),
+                    updated_at TEXT DEFAULT ''
+                )"""
                 []
     in
         ()

@@ -760,9 +760,12 @@ splitInterpolationStep : String -> Int -> Int -> (List String) -> List String
 splitInterpolationStep content pos segStart acc =
     let
         ch = String.slice pos (pos + 1) content
+        next = String.slice (pos + 1) (pos + 2) content
     in
-        if ch == "{" then
+        if ch == "{" && next == "{" then
             let
+                closePos = findClosingDoubleBrace content (pos + 2)
+                exprStr = String.slice (pos + 2) closePos content
                 rawBefore = String.slice segStart pos content
                 accWithRaw =
                     if String.isEmpty rawBefore then
@@ -770,30 +773,29 @@ splitInterpolationStep content pos segStart acc =
 
                     else
                         ("R" ++ rawBefore) :: acc
-                closePos = findClosingBrace content (pos + 1)
-                exprStr = String.slice (pos + 1) closePos content
             in
-                splitInterpolation content (closePos + 1) (closePos + 1)
+                splitInterpolation content (closePos + 2) (closePos + 2)
                     (("E" ++ exprStr) :: accWithRaw)
 
         else
             splitInterpolation content (pos + 1) segStart acc
 
 
-findClosingBrace : String -> Int -> Int
-findClosingBrace content pos =
+findClosingDoubleBrace : String -> Int -> Int
+findClosingDoubleBrace content pos =
     if pos >= String.length content then
         pos
 
     else
         let
             ch = String.slice pos (pos + 1) content
+            next = String.slice (pos + 1) (pos + 2) content
         in
-            if ch == "}" then
+            if ch == "}" && next == "}" then
                 pos
 
             else
-                findClosingBrace content (pos + 1)
+                findClosingDoubleBrace content (pos + 1)
 
 
 partsToExpr : (List String) -> SourceSpan -> Expression
