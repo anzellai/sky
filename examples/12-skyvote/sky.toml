@@ -6,12 +6,13 @@ entry = "src/Main.sky"
 root = "src"
 
 [live]
-port = 4000
+port = 8000
 
 [database]
 driver = "sqlite"
 path = "skyvote.db"
 
-["go.dependencies"]
-"crypto/sha256" = "latest"
-"encoding/hex" = "latest"
+[auth]
+method = "password"
+secret = "skyvote-dev-secret-change-in-prod"
+session_ttl = "24h"

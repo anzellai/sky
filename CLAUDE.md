@@ -173,6 +173,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | `Sky.Core.Random` | int, float, choice, shuffle | Task String a |
 | `Sky.Http.Server` | listen, get/post/put/delete routes, middleware | Task String () |
 | `Std.Db` | connect, open, exec, query, queryDecode, insertRow, getById, updateById, deleteById, findWhere, withTransaction | Result String a |
+| `Std.Auth` | register, login, verify, logout, verifyEmail, hashPassword, verifyPassword, setRole, signToken, verifyToken | Result String a |
 
 ### Prelude (implicitly imported)
 `Result (Ok/Err)`, `identity`, `not`, `always`, `fst`, `snd`, `clamp`, `modBy`, `errorToString`
@@ -228,7 +229,7 @@ HTTP-first (full HTML on load, patches on events), SSE subscriptions, session st
 ### Sky.Http.Server
 ```elm
 main =
-    Server.listen 8080
+    Server.listen 8000
         [ Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
         , Server.get "/api/users/:id" getUser
         , Server.post "/api/data" handlePost

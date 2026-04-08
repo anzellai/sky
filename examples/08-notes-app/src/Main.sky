@@ -361,11 +361,11 @@ main =
         _ = println ""
         _ = println "==========================================="
         _ = println " SkyNotes server running"
-        _ = println " http://localhost:4000"
+        _ = println " http://localhost:8000"
         _ = println "==========================================="
         _ = println ""
     in
-        Server.listen 4000
+        Server.listen 8000
             [ Server.any "/" handleLanding
             , Server.any "/auth/sign-in" handleSignIn
             , Server.any "/auth/sign-up" handleSignUp

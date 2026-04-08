@@ -45,6 +45,7 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 - [Language Features](#language-features)
 - [Standard Library](#standard-library)
 - [Std.Db — Database Abstraction](#stddb--built-in-database-abstraction)
+- [Std.Auth — Authentication](#stdauth--built-in-authentication)
 - [Sky.Live](#skylive)
 - [Package Management](#package-management)
 - [CLI Reference](#cli-reference)
@@ -659,6 +660,7 @@ result = Decode.decodeString userDecoder jsonString
 | `Std.Task`    | `succeed`, `fail`, `map`, `andThen`, `sequence`, `parallel`, `lazy`, `perform` |
 | `Std.Program` | `Program` type alias, `makeProgram`         |
 | `Std.Uuid`    | `v4` (UUID generation)                      |
+| `Std.Auth`    | `register`, `login`, `verify`, `logout`, `verifyEmail`, `hashPassword`, `verifyPassword`, `setRole`, `signToken`, `verifyToken` |
 
 ### Task and Concurrency
 
@@ -908,7 +910,7 @@ This avoids circular dependencies and gives all modules access to typed Msg cons
 
 ```toml
 [live]
-port = 4000
+port = 8000
 input = "blur"            # "debounce" | "blur"
 poll_interval = 5000      # ms (0 = SSE only; >0 enables polling fallback for serverless)
 
@@ -926,7 +928,7 @@ Sky.Live config values from `sky.toml` are embedded at compile time, but can be 
 
 | Variable | sky.toml | Default | Description |
 |---|---|---|---|
-| `SKY_LIVE_PORT` | `live.port` | `4000` | Server port |
+| `SKY_LIVE_PORT` | `live.port` | `8000` | Server port |
 | `SKY_LIVE_INPUT` | `live.input` | `debounce` | Input handling: `debounce` or `blur` |
 | `SKY_LIVE_POLL_INTERVAL` | `live.poll_interval` | `0` | Polling interval in ms (0 = SSE only) |
 | `SKY_LIVE_SESSION_STORE` | `live.session.store` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgresql` |
@@ -992,9 +994,24 @@ exposing = ["Utils.String", "Utils.Math"]
 "github.com/google/uuid" = "latest"
 "github.com/gorilla/mux" = "latest"
 
+# ---- Database Configuration ----
+[database]
+driver = "sqlite"                  # "sqlite" | "postgres"
+path = "myapp.db"                  # for sqlite
+# url = "postgres://user:pass@host/db"  # for postgres
+
+# ---- Authentication Configuration ----
+[auth]
+method = "password"                # "password" (more providers planned)
+secret = "your-secret-key"         # required: session signing key
+previous_secrets = "old-key-1,old-key-2"  # optional: previous keys for rotation
+bcrypt_cost = 12                   # optional: bcrypt work factor (default 12)
+session_ttl = "24h"                # optional: "24h", "30m", or seconds (default 24h)
+email_verification = false         # optional: require email verification (default false)
+
 # ---- Sky.Live Configuration ----
 [live]
-port = 4000                        # HTTP server port
+port = 8000                        # HTTP server port
 input = "debounce"                 # "debounce" (send on pause) | "blur" (send on blur/enter)
 poll_interval = 0                  # polling fallback interval in ms (0 = SSE only)
 
@@ -1251,11 +1268,11 @@ Community-contributed Zed extension with syntax highlighting and LSP integration
 | `05-mux-server`     | HTTP server                | `gorilla/mux`, `godotenv`, request handling, `errorToString`   |
 | `06-json`           | JSON encode/decode         | Elm-compatible `Json.Encode`, `Json.Decode`, pipeline decoding |
 | `07-todo-cli`       | CLI with SQLite            | Command-line args, `Std.Db`, multiline SQL strings             |
-| `08-notes-app`      | Full CRUD web app          | HTTP server, database, auth, HTML templates                    |
+| `08-notes-app`      | Full CRUD web app          | HTTP server, Std.Auth (bcrypt), SQLite, HTML templates         |
 | `09-live-counter`   | Sky.Live counter           | Server-driven UI, routing, SSE subscriptions (`Time.every`)    |
 | `10-live-component` | Sky.Live components        | Component protocol, auto-wiring                                |
 | `11-fyne-stopwatch` | Desktop GUI                | Fyne toolkit, timers, data binding                             |
-| `12-skyvote`        | Full Sky.Live app          | SQLite, auth, voting, SSE auto-refresh                         |
+| `12-skyvote`        | Full Sky.Live app          | Std.Auth (bcrypt), SQLite, voting, SSE auto-refresh            |
 | `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n   |
 | `14-task-demo`      | Task effect boundary       | Task composition, error handling, sequencing                   |
 | `15-http-server`    | Sky.Http.Server            | Routing, cookies, multiline HTML with `{{}}` interpolation     |
@@ -1665,6 +1682,99 @@ Query placeholders (`?`) are automatically converted to `$1, $2, $3` for Postgre
 | `Db.getBool field row` | Get bool field from Dict row |
 
 All query functions use parameterised queries (`?` placeholders) — no SQL injection possible.
+
+## Std.Auth — Built-in Authentication
+
+`Std.Auth` provides password hashing (bcrypt), session management, and user storage. Configure in `sky.toml`:
+
+```toml
+[database]
+driver = "sqlite"
+path = "myapp.db"
+
+[auth]
+method = "password"
+secret = "your-secret-key"          # required: used for session signing
+previous_secrets = "old-key-1"      # optional: previous keys for key rotation
+bcrypt_cost = 12                    # optional: bcrypt work factor (default 12)
+session_ttl = "24h"                 # optional: session lifetime (default 24h)
+email_verification = false          # optional: require email verification
+```
+
+Environment variable overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_PREVIOUS_SECRETS`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+
+### Key Rotation
+
+To rotate the session signing key without invalidating existing sessions:
+
+1. Move the current `secret` to `previous_secrets`
+2. Set a new `secret`
+3. Restart the app
+
+```toml
+[auth]
+secret = "new-key-2026-05"
+previous_secrets = "old-key-2026-04,old-key-2026-03"
+```
+
+`Auth.signToken` always signs with the current key. `Auth.verifyToken` checks the current key first, then falls back to previous keys. Remove old keys from `previous_secrets` once all sessions signed with them have expired.
+
+```elm
+import Std.Auth as Auth
+
+-- Register a new user (creates sky_users table automatically)
+case Auth.register "alice@example.com" "password123" of
+    Ok user -> ...    -- { id, email, role, verified }
+    Err msg -> ...    -- "Email already registered", etc.
+
+-- Login (returns session token + user info)
+case Auth.login "alice@example.com" "password123" of
+    Ok info -> ...    -- { token, user: { id, email, role, ... } }
+    Err msg -> ...    -- "Invalid email or password"
+
+-- Verify session token
+case Auth.verify sessionToken of
+    Ok user -> ...    -- { id, email, role, name, avatarUrl, verified }
+    Err msg -> ...    -- "Session expired", "Invalid session"
+
+-- Logout (deletes session)
+Auth.logout sessionToken
+
+-- Email verification (when email_verification = true)
+Auth.verifyEmail verificationToken
+
+-- Low-level utilities
+Auth.hashPassword "password"        -- Ok "bcrypt-hash-string"
+Auth.verifyPassword "pw" "hash"     -- True/False
+Auth.setRole userId "admin"         -- Ok ()
+Auth.signToken "payload"            -- Ok "hmac-signature"
+Auth.verifyToken "payload" "sig"    -- Ok "payload" (checks current + previous keys)
+```
+
+Auto-migration: `Auth.register` lazily creates `sky_users` and `sky_sessions` tables on first use. No manual schema setup required.
+
+### Email Verification Hook
+
+When `email_verification = true`, `Auth.register` returns a `verificationToken` in the result. Your app decides how to deliver it -- no built-in email sending:
+
+```elm
+case Auth.register email password of
+    Ok user ->
+        case Dict.get "verificationToken" user of
+            Just token ->
+                -- Send via your preferred method
+                sendVerificationEmail email token    -- HTTP API, SMTP, etc.
+            Nothing ->
+                ...    -- no verification required
+
+    Err msg -> ...
+```
+
+Default behaviour (development): the app logs the verification URL to the console. Production apps can use any email provider (SendGrid, SES, Mailgun) via Sky's HTTP client or Go FFI.
+
+### Custom User Fields
+
+For apps with custom user fields (e.g., username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table for app-specific columns. See `examples/12-skyvote` and `examples/08-notes-app` for this pattern.
 
 ## Contributing
 

@@ -9,4 +9,4 @@ sky build src/Main.sky
 ./sky-out/app
 ```
 
-The server listens on port 4000. Open `http://localhost:4000` in a browser.
+The server listens on port 8000. Open `http://localhost:8000` in a browser.

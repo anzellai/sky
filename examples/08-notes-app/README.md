@@ -10,4 +10,4 @@ sky build src/Main.sky
 ./sky-out/app
 ```
 
-Requires `sky install` first. The server listens on port 8080.
+Requires `sky install` first. The server listens on port 8000.

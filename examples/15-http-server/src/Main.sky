@@ -7,7 +7,7 @@ import Sky.Http.Server as Server
 import Sky.Http.Server exposing (Request, Response)
 
 main =
-    Server.listen 8080
+    Server.listen 8000
         [ Server.get "/" handleHome
         , Server.get "/hello/:name" handleHello
         , Server.get "/api/status" handleStatus

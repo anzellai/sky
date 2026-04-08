@@ -10,4 +10,4 @@ sky build src/Main.sky
 ./sky-out/app
 ```
 
-Requires `sky install` first to fetch Go dependencies. The server listens on port 4000.
+Requires `sky install` first to fetch Go dependencies. The server listens on port 8000.

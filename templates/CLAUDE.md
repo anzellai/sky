@@ -219,7 +219,7 @@ Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass
 ### Error Handling
 
 ```elm
-case Http.listenAndServe ":8080" handler of
+case Http.listenAndServe ":8000" handler of
     Ok _ -> println "Started"
     Err e -> println "Failed:" (errorToString e)
 ```
@@ -758,7 +758,7 @@ Random.shuffle [1,2,3,4]    -- Task String (List Int)
 import Sky.Http.Server as Server
 
 main =
-    Server.listen 8080
+    Server.listen 8000
         [ Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
         , Server.get "/api/users/:id" getUser
         , Server.post "/api/data" handlePost
@@ -934,7 +934,7 @@ import Sky.Core.Maybe as Maybe
 main =
     let
         _ = loadEnv ""   -- load .env file
-        port = Maybe.withDefault "4000" (getEnv "PORT")
+        port = Maybe.withDefault "8000" (getEnv "PORT")
         r = Mux.newRouter ()
         _ = Mux.routerHandleFunc r "/" indexHandler
     in
@@ -1124,8 +1124,16 @@ driver = "sqlite"               # "sqlite" | "postgres"
 path = "myapp.db"               # for sqlite
 # url = "postgres://user:pass@host/db"  # for postgres
 
+[auth]                          # only for Std.Auth apps
+method = "password"             # "password" (more planned)
+secret = "your-secret-key"     # required: session signing key
+previous_secrets = "old-key"   # optional: previous keys for rotation
+bcrypt_cost = 12                # optional (default 12)
+session_ttl = "24h"             # optional: "24h", "30m", or seconds
+email_verification = false      # optional (default false)
+
 [live]                          # only for Sky.Live apps
-port = 4000
+port = 8000
 input = "debounce"              # "debounce" | "blur"
 
 [live.session]
@@ -1190,9 +1198,65 @@ Db.withTransaction conn (\tx ->
 )
 ```
 
+## Std.Auth — Authentication
+
+```elm
+import Std.Auth as Auth
+
+-- Register (auto-creates sky_users + sky_sessions tables)
+Auth.register "alice@example.com" "password123"
+-- Ok { id, email, role, verified }
+
+-- Login (returns session token + user)
+Auth.login "alice@example.com" "password123"
+-- Ok { token, user: { id, email, role, name, avatarUrl, verified } }
+
+-- Verify session token
+Auth.verify sessionToken
+-- Ok { id, email, role, ... }
+
+-- Logout
+Auth.logout sessionToken
+
+-- Email verification (when email_verification = true in sky.toml)
+Auth.verifyEmail verificationToken
+
+-- Low-level: bcrypt hash/verify
+Auth.hashPassword "password"        -- Ok "bcrypt-hash"
+Auth.verifyPassword "pw" "hash"     -- True/False
+Auth.setRole userId "admin"
+Auth.signToken "payload"            -- Ok "hmac-signature"
+```
+
+Configure in sky.toml:
+```toml
+[auth]
+method = "password"
+secret = "your-secret-key"          # required
+previous_secrets = "old-key-1"      # optional: for key rotation
+bcrypt_cost = 12                    # optional (default 12)
+session_ttl = "24h"                 # optional (default 24h)
+email_verification = false          # optional (default false)
+```
+
+Env var overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_PREVIOUS_SECRETS`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+
+Key rotation: move current `secret` to `previous_secrets`, set new `secret`, restart. `signToken` uses current key; `verifyToken` checks current + previous keys.
+
+When `email_verification = true`, `Auth.register` returns a `verificationToken`. Your app delivers it:
+```elm
+case Auth.register email password of
+    Ok user ->
+        case Dict.get "verificationToken" user of
+            Just token -> sendVerificationEmail email token  -- your email provider
+            Nothing -> ...
+```
+
+For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table.
+
 ## Known Limitations (v0.7.x)
 
-- **No nested `case...of`** — extract inner `case` into a helper function (compiler bug — generates broken Go)
+- **No nested `case...of`** — FIXED in v0.7.21. Nested cases now generate unique variable names per depth
 - **No anonymous records in type annotations** — use `type alias` for record types in signatures
 - **No higher-kinded types** — no `Functor`, `Monad`, etc.
 - **No `where` clauses** — use `let...in` instead
