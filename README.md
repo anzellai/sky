@@ -45,6 +45,7 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 - [Language Features](#language-features)
 - [Standard Library](#standard-library)
 - [Std.Db — Database Abstraction](#stddb--built-in-database-abstraction)
+- [Std.Auth — Authentication](#stdauth--built-in-authentication)
 - [Sky.Live](#skylive)
 - [Package Management](#package-management)
 - [CLI Reference](#cli-reference)
