@@ -6,20 +6,24 @@ import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Crypto.Sha256 as Sha256
-import Encoding.Hex as Hex
 import Github.Com.Google.Uuid as Uuid
+import Std.Auth as Auth
 import Lib.Db as Db
 
+
+hashPassword : String -> String
 hashPassword password =
-    let
-        salted = "sky-notes-salt-v1:" ++ password
-        hash = Result.withDefault "" (Sha256.sum256 (String.toBytes salted))
-    in
-        Result.withDefault "" (Hex.encodeToString hash)
+    case Auth.hashPassword password of
+
+        Ok hash ->
+            hash
+
+        Err _ ->
+            ""
 
 
-verifyPassword password storedHash = hashPassword password == storedHash
+verifyPassword : String -> String -> Bool
+verifyPassword password storedHash = Auth.verifyPassword password storedHash
 
 
 generateToken _ = Result.withDefault "" (Uuid.newString ())
@@ -43,10 +47,10 @@ createUser email password =
                 [ email , passHash , token ]
     in
         case result of
-            
+
             Ok _ ->
                 Ok token
-            
+
             Err e ->
                 Err e
 
@@ -59,11 +63,11 @@ checkUserCredentials email password user =
         if verifyPassword password storedHash then
             if verified == "1" then
                 Ok user
-            
+
             else
                 Err
                     "Email not verified yet. Please check the server console for your verification link."
-        
+
         else
             Err "Invalid email or password."
 
@@ -78,10 +82,10 @@ authenticateUser email password =
         maybeUser = List.head userRows
     in
         case maybeUser of
-            
+
             Just user ->
                 checkUserCredentials email password user
-            
+
             Nothing ->
                 Err "Invalid email or password."
 
@@ -94,10 +98,10 @@ createSession userId =
                 [ userId , token ]
     in
         case result of
-            
+
             Ok _ ->
                 Ok token
-            
+
             Err _ ->
                 Err "Failed to create session."
 
@@ -121,9 +125,9 @@ verifyEmail token =
                 [ token ]
     in
         case result of
-            
+
             Ok _ ->
                 Ok "Your email has been verified! You can now sign in."
-            
+
             Err e ->
                 Err ("Verification failed: " ++ e)

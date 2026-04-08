@@ -9,6 +9,11 @@ root = "src"
 driver = "sqlite"
 path = "skynotes.db"
 
+[auth]
+method = "password"
+secret = "notes-app-dev-secret-change-in-prod"
+session_ttl = "24h"
+
 ["go.dependencies"]
 "net/http" = "latest"
 "github.com/gorilla/mux" = "latest"

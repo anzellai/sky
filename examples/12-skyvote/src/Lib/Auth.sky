@@ -6,22 +6,27 @@ import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Log exposing (println)
-import Crypto.Sha256 as Sha256
-import Encoding.Hex as Hex
 import Sky.Core.Crypto as Crypto
+import Std.Auth as Auth
 import Lib.Db as Db
 
+
+hashPassword : String -> String
 hashPassword password =
-    let
-        salted = "skyvote-salt-v1:" ++ password
-        hash = Result.withDefault "" (Sha256.sum256 (String.toBytes salted))
-    in
-        Result.withDefault "" (Hex.encodeToString hash)
+    case Auth.hashPassword password of
+
+        Ok hash ->
+            hash
+
+        Err _ ->
+            ""
 
 
-verifyPassword password storedHash = hashPassword password == storedHash
+verifyPassword : String -> String -> Bool
+verifyPassword password storedHash = Auth.verifyPassword password storedHash
 
 
+createUser : String -> String -> String -> Result String String
 createUser username email password =
     let
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
@@ -32,7 +37,7 @@ createUser username email password =
                 [ id , username , email , passHash ]
     in
         case result of
-            
+
             Ok _ ->
                 let
                     _ =
@@ -43,11 +48,12 @@ createUser username email password =
                             )
                 in
                     Ok id
-            
+
             Err e ->
                 Err "Username or email already taken."
 
 
+authenticateUser : String -> String -> Result String (Dict String String)
 authenticateUser email password =
     let
         rows =
@@ -58,7 +64,7 @@ authenticateUser email password =
         maybeUser = List.head userRows
     in
         case maybeUser of
-            
+
             Just user ->
                 let
                     storedHash = Db.getField "password_hash" user
@@ -68,18 +74,13 @@ authenticateUser email password =
                             _ = println ("[AUTH] Sign-in success: " ++ email)
                         in
                             Ok user
-                    
+
                     else
                         let
-                            _ =
-                                println
-                                    (
-                                    "[AUTH] Sign-in failed (bad password): "
-                                        ++ email
-                                    )
+                            _ = println ("[AUTH] Sign-in failed (bad password): " ++ email)
                         in
                             Err "Invalid email or password."
-            
+
             Nothing ->
                 let
                     _ = println ("[AUTH] Sign-in failed (not found): " ++ email)
@@ -87,6 +88,7 @@ authenticateUser email password =
                     Err "Invalid email or password."
 
 
+getUserById : String -> Maybe (Dict String String)
 getUserById userId =
     let
         rows =

@@ -12,6 +12,7 @@ port = 4000
 driver = "sqlite"
 path = "skyvote.db"
 
-["go.dependencies"]
-"crypto/sha256" = "latest"
-"encoding/hex" = "latest"
+[auth]
+method = "password"
+secret = "skyvote-dev-secret-change-in-prod"
+session_ttl = "24h"
