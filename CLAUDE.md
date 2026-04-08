@@ -279,6 +279,7 @@ Key syntax: `|>` `<|` pipelines | `::` cons | `\x -> x + 1` lambdas | `let...in`
 | 14 | task-demo | Task effect boundary demo |
 | 15 | http-server | Sky.Http.Server with routing + cookies |
 | 16 | skychess | Sky.Live chess game with AI, SQLite persistence |
+| 17 | skymon | Sky.Live monitoring dashboard with metrics, alerts |
 
 ## Compiler Optimisation Strategy (keep up to date)
 

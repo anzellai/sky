@@ -1,6 +1,7 @@
 module State exposing (..)
 
 import Sky.Core.Maybe exposing (..)
+import Chess.Piece exposing (..)
 
 type Page
     = HomePage
@@ -13,8 +14,8 @@ type alias Model =
     , playerName : String
     , nameInput : String
     , gameId : String
-    , board : Dict Int (Dict String String)
-    , turn : String
+    , board : Dict Int Piece
+    , turn : Colour
     , selectedSquare : Int
     , legalMoves : List Int
     , moveHistory : List String

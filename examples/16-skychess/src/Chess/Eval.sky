@@ -6,19 +6,19 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
-import Chess.Piece as Piece
+import Chess.Piece exposing (..)
 import Chess.Board as Board
 
-evaluate : (Dict Int (Dict String String)) -> Int
+evaluate : (Dict Int Piece) -> Int
 evaluate board =
     List.foldl
         (
         \sq acc ->
             case Dict.get sq board of
-                
+
                 Just piece ->
                     acc + evaluatePieceAt sq piece
-                
+
                 Nothing ->
                     acc
         )
@@ -26,31 +26,27 @@ evaluate board =
         Board.allSquares
 
 
-evaluatePieceAt : Int -> (Dict String String) -> Int
+evaluatePieceAt : Int -> Piece -> Int
 evaluatePieceAt sq piece =
     let
-        kind = Piece.pieceKind piece
-        colour = Piece.pieceColour piece
-        material = Piece.materialValue kind
--- Piece-square tables (from white's perspective, index 0=a8)
--- Values in centipawns
-        positional = pieceSquareValue kind colour sq
+        material = materialValue piece.kind
+        positional = pieceSquareValue piece.kind piece.colour sq
         total = material + positional
     in
-        if colour == "White" then
+        if piece.colour == White then
             total
-        
+
         else
             0 - total
 
 
-pieceSquareValue : String -> String -> Int -> Int
+pieceSquareValue : Kind -> Colour -> Int -> Int
 pieceSquareValue kind colour sq =
     let
         idx =
-            if colour == "White" then
+            if colour == White then
                 sq
-            
+
             else
                 mirrorIndex sq
         table = getTable kind
@@ -71,26 +67,26 @@ tableValue : (List Int) -> Int -> Int
 tableValue table idx = Maybe.withDefault 0 (List.head (List.drop idx table))
 
 
-getTable : String -> List Int
+getTable : Kind -> List Int
 getTable kind =
-    if kind == "Pawn" then
+    if kind == Pawn then
         pawnTable
-    
-    else if kind == "Knight" then
+
+    else if kind == Knight then
         knightTable
-    
-    else if kind == "Bishop" then
+
+    else if kind == Bishop then
         bishopTable
-    
-    else if kind == "Rook" then
+
+    else if kind == Rook then
         rookTable
-    
-    else if kind == "Queen" then
+
+    else if kind == Queen then
         queenTable
-    
-    else if kind == "King" then
+
+    else if kind == King then
         kingTable
-    
+
     else
         []
 

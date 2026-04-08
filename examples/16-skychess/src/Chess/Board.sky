@@ -5,29 +5,29 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Maybe as Maybe
 import Sky.Core.List as List
 import Sky.Core.String as String
-import Chess.Piece as Piece
+import Chess.Piece exposing (..)
 
 -- Square indexing: 0=a8, 1=b8, ..., 7=h8, 8=a7, ..., 63=h1
 -- Row 0 = rank 8 (black back rank), Row 7 = rank 1 (white back rank)
-getPiece : Int -> (Dict Int (Dict String String)) -> Maybe (Dict String String)
+getPiece : Int -> (Dict Int Piece) -> Maybe Piece
 getPiece sq board = Dict.get sq board
 
 
-setPiece : Int -> (Dict String String) -> (Dict Int (Dict String String)) -> Dict Int (Dict String String)
+setPiece : Int -> Piece -> (Dict Int Piece) -> Dict Int Piece
 setPiece sq piece board = Dict.insert sq piece board
 
 
-removePiece : Int -> (Dict Int (Dict String String)) -> Dict Int (Dict String String)
+removePiece : Int -> (Dict Int Piece) -> Dict Int Piece
 removePiece sq board = Dict.remove sq board
 
 
-movePiece : Int -> Int -> (Dict Int (Dict String String)) -> Dict Int (Dict String String)
+movePiece : Int -> Int -> (Dict Int Piece) -> Dict Int Piece
 movePiece from to board =
     case Dict.get from board of
-        
+
         Just piece ->
             Dict.insert to piece (Dict.remove from board)
-        
+
         Nothing ->
             board
 
@@ -59,25 +59,25 @@ fileToChar : Int -> String
 fileToChar f =
     if f == 0 then
         "a"
-    
+
     else if f == 1 then
         "b"
-    
+
     else if f == 2 then
         "c"
-    
+
     else if f == 3 then
         "d"
-    
+
     else if f == 4 then
         "e"
-    
+
     else if f == 5 then
         "f"
-    
+
     else if f == 6 then
         "g"
-    
+
     else
         "h"
 
@@ -86,48 +86,52 @@ isOnBoard : Int -> Int -> Bool
 isOnBoard row col = row >= 0 && row <= 7 && col >= 0 && col <= 7
 
 
-findKing : String -> (Dict Int (Dict String String)) -> Int
+findKing : Colour -> (Dict Int Piece) -> Int
 findKing colour board = findKingLoop colour board allSquares
 
 
-findKingLoop : String -> (Dict Int (Dict String String)) -> (List Int) -> Int
+findKingLoop : Colour -> (Dict Int Piece) -> (List Int) -> Int
 findKingLoop colour board squares =
     case squares of
-        
+
         [] ->
             -1
-        
+
         sq :: rest ->
-            case Dict.get sq board of
-                
-                Just piece ->
-                    if Piece.pieceKind piece == "King"
-                        && Piece.pieceColour piece == colour then
-                        sq
-                    
-                    else
-                        findKingLoop colour board rest
-                
-                Nothing ->
-                    findKingLoop colour board rest
+            checkKingSquare sq colour board rest
 
 
-allPiecesOfColour : String -> (Dict Int (Dict String String)) -> List (Int, Dict String String)
+checkKingSquare : Int -> Colour -> (Dict Int Piece) -> (List Int) -> Int
+checkKingSquare sq colour board rest =
+    case Dict.get sq board of
+
+        Just piece ->
+            if piece.kind == King && piece.colour == colour then
+                sq
+
+            else
+                findKingLoop colour board rest
+
+        Nothing ->
+            findKingLoop colour board rest
+
+
+allPiecesOfColour : Colour -> (Dict Int Piece) -> List (Int, Piece)
 allPiecesOfColour colour board =
     List.filterMap (\sq -> checkSquareColour sq colour board) allSquares
 
 
-checkSquareColour : Int -> String -> (Dict Int (Dict String String)) -> Maybe (Int, Dict String String)
+checkSquareColour : Int -> Colour -> (Dict Int Piece) -> Maybe (Int, Piece)
 checkSquareColour sq colour board =
     case Dict.get sq board of
-        
+
         Just piece ->
-            if Piece.pieceColour piece == colour then
+            if piece.colour == colour then
                 Just ( sq, piece )
-            
+
             else
                 Nothing
-        
+
         Nothing ->
             Nothing
 
@@ -202,39 +206,39 @@ allSquares =
 
 
 -- Initial board position
-initialBoard : Dict Int (Dict String String)
+initialBoard : Dict Int Piece
 initialBoard =
     Dict.fromList
-        [ ( 0, Piece.makePiece "Rook" "Black" )
-        , ( 1, Piece.makePiece "Knight" "Black" )
-        , ( 2, Piece.makePiece "Bishop" "Black" )
-        , ( 3, Piece.makePiece "Queen" "Black" )
-        , ( 4, Piece.makePiece "King" "Black" )
-        , ( 5, Piece.makePiece "Bishop" "Black" )
-        , ( 6, Piece.makePiece "Knight" "Black" )
-        , ( 7, Piece.makePiece "Rook" "Black" )
-        , ( 8, Piece.makePiece "Pawn" "Black" )
-        , ( 9, Piece.makePiece "Pawn" "Black" )
-        , ( 10, Piece.makePiece "Pawn" "Black" )
-        , ( 11, Piece.makePiece "Pawn" "Black" )
-        , ( 12, Piece.makePiece "Pawn" "Black" )
-        , ( 13, Piece.makePiece "Pawn" "Black" )
-        , ( 14, Piece.makePiece "Pawn" "Black" )
-        , ( 15, Piece.makePiece "Pawn" "Black" )
-        , ( 48, Piece.makePiece "Pawn" "White" )
-        , ( 49, Piece.makePiece "Pawn" "White" )
-        , ( 50, Piece.makePiece "Pawn" "White" )
-        , ( 51, Piece.makePiece "Pawn" "White" )
-        , ( 52, Piece.makePiece "Pawn" "White" )
-        , ( 53, Piece.makePiece "Pawn" "White" )
-        , ( 54, Piece.makePiece "Pawn" "White" )
-        , ( 55, Piece.makePiece "Pawn" "White" )
-        , ( 56, Piece.makePiece "Rook" "White" )
-        , ( 57, Piece.makePiece "Knight" "White" )
-        , ( 58, Piece.makePiece "Bishop" "White" )
-        , ( 59, Piece.makePiece "Queen" "White" )
-        , ( 60, Piece.makePiece "King" "White" )
-        , ( 61, Piece.makePiece "Bishop" "White" )
-        , ( 62, Piece.makePiece "Knight" "White" )
-        , ( 63, Piece.makePiece "Rook" "White" )
+        [ ( 0, makePiece Rook Black )
+        , ( 1, makePiece Knight Black )
+        , ( 2, makePiece Bishop Black )
+        , ( 3, makePiece Queen Black )
+        , ( 4, makePiece King Black )
+        , ( 5, makePiece Bishop Black )
+        , ( 6, makePiece Knight Black )
+        , ( 7, makePiece Rook Black )
+        , ( 8, makePiece Pawn Black )
+        , ( 9, makePiece Pawn Black )
+        , ( 10, makePiece Pawn Black )
+        , ( 11, makePiece Pawn Black )
+        , ( 12, makePiece Pawn Black )
+        , ( 13, makePiece Pawn Black )
+        , ( 14, makePiece Pawn Black )
+        , ( 15, makePiece Pawn Black )
+        , ( 48, makePiece Pawn White )
+        , ( 49, makePiece Pawn White )
+        , ( 50, makePiece Pawn White )
+        , ( 51, makePiece Pawn White )
+        , ( 52, makePiece Pawn White )
+        , ( 53, makePiece Pawn White )
+        , ( 54, makePiece Pawn White )
+        , ( 55, makePiece Pawn White )
+        , ( 56, makePiece Rook White )
+        , ( 57, makePiece Knight White )
+        , ( 58, makePiece Bishop White )
+        , ( 59, makePiece Queen White )
+        , ( 60, makePiece King White )
+        , ( 61, makePiece Bishop White )
+        , ( 62, makePiece Knight White )
+        , ( 63, makePiece Rook White )
         ]

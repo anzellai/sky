@@ -17,7 +17,7 @@ import State exposing (..)
 import Lib.Games as Games
 import Lib.GameLogic as Logic
 import Chess.Board as Board
-import Chess.Piece as Piece
+import Chess.Piece exposing (..)
 import Chess.Move as Move
 import Page.Home as Home
 import Page.Game as Game
@@ -34,7 +34,7 @@ init _req =
         , nameInput = ""
         , gameId = ""
         , board = Dict.empty
-        , turn = "White"
+        , turn = White
         , selectedSquare = -1
         , legalMoves = []
         , moveHistory = []
@@ -73,13 +73,13 @@ main =
 view : Model -> VNode
 view model =
     case model.page of
-        
+
         HomePage ->
             Home.viewHome model
-        
+
         GamePage ->
             Game.viewGame model
-        
+
         NotFoundPage ->
             Home.viewHome model
 
@@ -90,10 +90,10 @@ subscriptions model = Time.every 500 ComputerMove
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
     case msg of
-        
+
         Navigate page ->
             ( { model | page = page , notification = "" }, Cmd.none )
-        
+
         UpdateNameInput s ->
             let
                 games = Games.getGames s
@@ -103,28 +103,28 @@ update msg model =
                     , savedGames = games
                     , playerName = s
                 }, Cmd.none )
-        
+
         StartNewGame ->
             handleStartNewGame model
-        
+
         LoadGame gameId ->
             handleLoadGame gameId model
-        
+
         ClickSquare sq ->
             handleClickSquare sq model
-        
+
         ComputerMove ->
             handleComputerMove model
-        
+
         Resign ->
             handleResign model
-        
+
         BackToHome ->
             handleBackToHome model
-        
+
         Tick ->
             ( model, Cmd.none )
-        
+
         DeleteGame gameId ->
             handleDeleteGame gameId model
 
@@ -135,7 +135,7 @@ handleStartNewGame model =
         name =
             if model.nameInput == "" then
                 model.playerName
-            
+
             else
                 model.nameInput
     in
@@ -149,10 +149,10 @@ handleLoadGame gameId model =
         gameInfo = Games.getGame gameId
         playerName =
             case gameInfo of
-                
+
                 Just g ->
                     Games.getField "player_name" g
-                
+
                 Nothing ->
                     model.playerName
         result = replayMoves moves Board.initialBoard
@@ -161,13 +161,13 @@ handleLoadGame gameId model =
         moveCount = List.length history
         turn =
             if modBy 2 moveCount == 0 then
-                "White"
-            
+                White
+
             else
-                "Black"
+                Black
         status =
             case gameInfo of
-                
+
                 Just g ->
                     let
                         s = Games.getField "status" g
@@ -175,10 +175,10 @@ handleLoadGame gameId model =
                     in
                         if s == "finished" then
                             r
-                        
+
                         else
                             "playing"
-                
+
                 Nothing ->
                     "playing"
     in
@@ -200,16 +200,16 @@ handleLoadGame gameId model =
         }, Cmd.none )
 
 
-replayMoves : (List (Dict String String)) -> (Dict Int (Dict String String)) -> (Dict Int (Dict String String), List String)
+replayMoves : (List (Dict String String)) -> (Dict Int Piece) -> (Dict Int Piece, List String)
 replayMoves moves board = replayMovesLoop moves board []
 
 
 replayMovesLoop moves board history =
     case moves of
-        
+
         [] ->
             ( board, history )
-        
+
         move :: rest ->
             let
                 fromStr = Games.getField "from_square" move
@@ -223,7 +223,7 @@ replayMovesLoop moves board history =
                         newBoard = Board.movePiece from to board
                     in
                         replayMovesLoop rest newBoard (history ++ [ algebraic ])
-                
+
                 else
                     replayMovesLoop rest board history
 
@@ -232,7 +232,7 @@ startGameWithName : String -> Model -> (Model, Cmd Msg)
 startGameWithName name model =
     if name == "" then
         ( { model | errorMessage = "Please enter your name" }, Cmd.none )
-    
+
     else
         let
             gameId = Games.createGame name
@@ -242,7 +242,7 @@ startGameWithName name model =
                 , playerName = name
                 , gameId = gameId
                 , board = Board.initialBoard
-                , turn = "White"
+                , turn = White
                 , selectedSquare = -1
                 , legalMoves = []
                 , moveHistory = []
@@ -270,19 +270,19 @@ handleClickSquare : Int -> Model -> (Model, Cmd Msg)
 handleClickSquare sq model =
     if model.gameStatus /= "playing" then
         ( model, Cmd.none )
-    
-    else if model.turn /= "White" then
+
+    else if model.turn /= White then
         ( model, Cmd.none )
-    
+
     else if model.selectedSquare == -1 then
         trySelectPiece sq model
-    
+
     else if sq == model.selectedSquare then
         ( { model | selectedSquare = -1 , legalMoves = [] }, Cmd.none )
-    
+
     else if List.member sq model.legalMoves then
         Logic.executeWhiteMove model.selectedSquare sq model
-    
+
     else
         trySelectPiece sq model
 
@@ -290,34 +290,34 @@ handleClickSquare sq model =
 trySelectPiece : Int -> Model -> (Model, Cmd Msg)
 trySelectPiece sq model =
     case Dict.get sq model.board of
-        
+
         Just piece ->
             selectIfWhite sq piece model
-        
+
         Nothing ->
             ( model, Cmd.none )
 
 
-selectIfWhite : Int -> (Dict String String) -> Model -> (Model, Cmd Msg)
+selectIfWhite : Int -> Piece -> Model -> (Model, Cmd Msg)
 selectIfWhite sq piece model =
-    if Piece.pieceColour piece == "White" then
+    if piece.colour == White then
         let
-            moves = Move.legalMovesForSquare sq "White" model.board model
+            moves = Move.legalMovesForSquare sq White model.board model
         in
             ( { model | selectedSquare = sq , legalMoves = moves }, Cmd.none )
-    
+
     else
         ( model, Cmd.none )
 
 
 handleComputerMove : Model -> (Model, Cmd Msg)
 handleComputerMove model =
-    if model.turn /= "Black" then
+    if model.turn /= Black then
         ( { model | computerThinking = False }, Cmd.none )
-    
+
     else if model.gameStatus /= "playing" then
         ( { model | computerThinking = False }, Cmd.none )
-    
+
     else
         Logic.executeBlackMove model
 

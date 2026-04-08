@@ -9,7 +9,7 @@ import Std.Html exposing (..)
 import Std.Html.Attributes exposing (..)
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
-import Chess.Piece as Piece
+import Chess.Piece exposing (..)
 import Chess.Board as Board
 import Ui.Layout as Layout
 
@@ -43,10 +43,10 @@ viewStatusBar model =
 getStatusClass model =
     if model.gameStatus /= "playing" then
         "status-gameover"
-    
+
     else if model.computerThinking then
         "status-thinking"
-    
+
     else
         ""
 
@@ -54,19 +54,19 @@ getStatusClass model =
 getStatusText model =
     if model.gameStatus == "checkmate-white" then
         "Checkmate! You win!"
-    
+
     else if model.gameStatus == "checkmate-black" then
         "Checkmate! Computer wins."
-    
+
     else if model.gameStatus == "stalemate" then
         "Stalemate - Draw!"
-    
+
     else if model.gameStatus == "resigned" then
         "You resigned."
-    
+
     else if model.computerThinking then
         "Computer is thinking..."
-    
+
     else
         "Your turn (White)"
 
@@ -107,10 +107,10 @@ viewSquare sq model =
 
 hasPieceAt maybePiece =
     case maybePiece of
-        
+
         Just _ ->
             True
-        
+
         Nothing ->
             False
 
@@ -120,7 +120,7 @@ buildSquareClass isLight isSelected isLegal isLast hasPiece =
         base =
             if isLight then
                 "sq-light"
-            
+
             else
                 "sq-dark"
         sel = addSelectedClass isSelected isLight
@@ -134,10 +134,10 @@ addSelectedClass isSelected isLight =
     if isSelected then
         if isLight then
             " sq-selected"
-        
+
         else
             " sq-selected-dark"
-    
+
     else
         ""
 
@@ -145,10 +145,10 @@ addSelectedClass isSelected isLight =
 addLegalClass isLegal hasPiece =
     if isLegal && hasPiece then
         " sq-capture"
-    
+
     else if isLegal then
         " sq-legal"
-    
+
     else
         ""
 
@@ -156,23 +156,19 @@ addLegalClass isLegal hasPiece =
 addLastClass isLast isSelected =
     if isLast && not isSelected then
         " sq-last"
-    
+
     else
         ""
 
 
+viewPieceContent : (Maybe Piece) -> VNode
 viewPieceContent maybePiece =
     case maybePiece of
-        
+
         Just piece ->
             span [ class "piece" ]
-                [ text
-                      (
-                      Piece.symbol (Piece.pieceKind piece)
-                          (Piece.pieceColour piece)
-                      )
-                ]
-        
+                [ text (symbol piece.kind piece.colour) ]
+
         Nothing ->
             text ""
 
@@ -185,7 +181,7 @@ viewGameActions model =
             , button [ onClick BackToHome , class "btn btn-secondary btn-sm" ]
                   [ text "Home" ]
             ]
-    
+
     else
         div [ class "game-actions-bar" ]
             [ button [ onClick StartNewGame , class "btn btn-primary btn-sm" ]
@@ -206,7 +202,7 @@ viewCaptured label pieces =
 capturedSymbol kind =
     if kind == "captured-white" then
         ""
-    
+
     else
         kind
 
@@ -222,7 +218,7 @@ viewMoveRows : (List String) -> Int -> List VNode
 viewMoveRows moves num =
     if List.isEmpty moves then
         []
-    
+
     else
         let
             white = Maybe.withDefault "" (List.head moves)
@@ -233,7 +229,7 @@ viewMoveRows moves num =
             row =
                 if hasBlack then
                     viewOneMoveRow num white black
-                
+
                 else
                     viewOneMoveRow num white ""
         in
