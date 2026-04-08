@@ -368,12 +368,14 @@ foldr : (k -> v -> b -> b) -> b -> Dict k v -> b
 
 ### Sky.Core.Char
 
+Unicode-aware character classification (backed by Go's `unicode` package):
+
 ```elm
-isUpper : Char -> Bool
-isLower : Char -> Bool
-isAlpha : Char -> Bool
-isDigit : Char -> Bool
-isAlphaNum : Char -> Bool
+isUpper : Char -> Bool      -- unicode.IsUpper (supports accented chars)
+isLower : Char -> Bool      -- unicode.IsLower
+isAlpha : Char -> Bool      -- unicode.IsLetter (all Unicode letters)
+isDigit : Char -> Bool      -- unicode.IsDigit (all Unicode digits)
+isAlphaNum : Char -> Bool   -- IsLetter || IsDigit
 toUpper : Char -> Char
 toLower : Char -> Char
 toCode : Char -> Int
@@ -1117,6 +1119,11 @@ root = "src"
 "github.com/google/uuid" = "latest"
 "modernc.org/sqlite" = "latest"
 
+[database]                      # only for Std.Db apps
+driver = "sqlite"               # "sqlite" | "postgres"
+path = "myapp.db"               # for sqlite
+# url = "postgres://user:pass@host/db"  # for postgres
+
 [live]                          # only for Sky.Live apps
 port = 4000
 input = "debounce"              # "debounce" | "blur"
@@ -1191,12 +1198,16 @@ Db.withTransaction conn (\tx ->
 - **No `where` clauses** — use `let...in` instead
 - **No custom operators** — only built-in (`|>`, `<|`, `++`, `::`, etc.)
 - **Negative literal arguments need parentheses** — `f (-1)` not `f -1`
-- **`exposing (Constructor(..))` breaks cross-module calls** — avoid importing ADT constructors via `exposing` in dependency modules; use qualified accessors instead
-- **Cross-module zero-arg ADT constructors** — `Mod.Constructor` emits as function call; define lowercase accessors (`myVal = Constructor`) as workaround
+- **`import M as A exposing (Type(..))`** — combining `as` alias with `exposing` for ADT constructors breaks module loading; use `import M exposing (..)` without `as` instead
 - **`Dict.toList` returns string keys** — use `Dict.get` with explicit key ranges instead of `Dict.toList` for `Dict Int v`
 - **`sky check` doesn't understand Go interfaces** — concrete types can't unify with Go interfaces; code compiles and runs fine
 - **`sky check` doesn't understand Go callback types** — FFI callback params can't unify with Sky functions; runtime wrapping works
 - **Zero-arg FFI functions need no `()`** — call `Uuid.newString` not `Uuid.newString ()`
+
+### Fixed in v0.7.20
+- **Cross-module type alias unification** — `type alias Piece = { kind : Kind }` in module A now unifies correctly in module B's type annotations
+- **Cross-module ADT exhaustiveness** — missing case branches for imported ADTs are caught at compile time
+- **`exposing (Constructor(..))` qualified call issue** — resolved; use `import M exposing (..)` for unqualified constructors
 
 ## Coding Conventions
 
