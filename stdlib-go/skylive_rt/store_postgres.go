@@ -21,8 +21,9 @@ func init() {
 // PostgresStore is a session store backed by PostgreSQL.
 // It implements the SessionStore interface using github.com/lib/pq.
 type PostgresStore struct {
-	db  *sql.DB
-	ttl time.Duration
+	db   *sql.DB
+	ttl  time.Duration
+	stop chan struct{}
 }
 
 // NewPostgresStore connects to PostgreSQL at the given URL and initialises
@@ -58,9 +59,11 @@ func NewPostgresStore(url string, ttl time.Duration) (*PostgresStore, error) {
 	}
 
 	// Create index on last_seen for cleanup queries
-	db.Exec("CREATE INDEX IF NOT EXISTS idx_sky_sessions_last_seen ON sky_sessions (last_seen)")
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_sky_sessions_last_seen ON sky_sessions (last_seen)"); err != nil {
+		log.Printf("skylive_rt: PostgresStore.NewPostgresStore: failed to create index: %v", err)
+	}
 
-	store := &PostgresStore{db: db, ttl: ttl}
+	store := &PostgresStore{db: db, ttl: ttl, stop: make(chan struct{})}
 	go store.cleanup()
 	return store, nil
 }
@@ -172,8 +175,26 @@ func (s *PostgresStore) NewID() string {
 func (s *PostgresStore) cleanup() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		cutoff := time.Now().Add(-s.ttl).Unix()
-		s.db.Exec("DELETE FROM sky_sessions WHERE last_seen < $1", cutoff)
+	for {
+		select {
+		case <-ticker.C:
+			cutoff := time.Now().Add(-s.ttl).Unix()
+			if _, err := s.db.Exec("DELETE FROM sky_sessions WHERE last_seen < $1", cutoff); err != nil {
+				log.Printf("skylive_rt: PostgresStore.cleanup: failed to delete expired sessions: %v", err)
+			}
+		case <-s.stop:
+			return
+		}
 	}
+}
+
+// Close stops the cleanup goroutine and closes the database connection.
+func (s *PostgresStore) Close() error {
+	select {
+	case <-s.stop:
+		// Already closed
+	default:
+		close(s.stop)
+	}
+	return s.db.Close()
 }

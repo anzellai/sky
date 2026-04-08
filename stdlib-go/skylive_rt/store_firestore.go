@@ -37,6 +37,7 @@ type FirestoreStore struct {
 	collection string
 	ttl        time.Duration
 	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // sessionDoc is the Firestore document structure for sessions.
@@ -78,11 +79,15 @@ func NewFirestoreStore(storePath string, ttl time.Duration) (*FirestoreStore, er
 		return nil, err
 	}
 
+	// Create a cancellable context for the store
+	ctx, cancel := context.WithCancel(ctx)
+
 	store := &FirestoreStore{
 		client:     client,
 		collection: "sky_sessions",
 		ttl:        ttl,
 		ctx:        ctx,
+		cancel:     cancel,
 	}
 
 	// Start background cleanup goroutine
@@ -235,31 +240,43 @@ func (s *FirestoreStore) NewID() string {
 func (s *FirestoreStore) cleanup() {
 	ticker := time.NewTicker(5 * time.Minute) // Less frequent than in-memory stores
 	defer ticker.Stop()
-	for range ticker.C {
-		cutoff := time.Now().Add(-s.ttl).Unix()
-		iter := s.client.Collection(s.collection).
-			Where("last_seen", "<", cutoff).
-			Limit(100). // Process in batches to avoid timeouts
-			Documents(s.ctx)
-		defer iter.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			cutoff := time.Now().Add(-s.ttl).Unix()
+			iter := s.client.Collection(s.collection).
+				Where("last_seen", "<", cutoff).
+				Limit(100). // Process in batches to avoid timeouts
+				Documents(s.ctx)
 
-		batch := s.client.Batch()
-		count := 0
-		for {
-			doc, err := iter.Next()
-			if err != nil {
-				break
+			batch := s.client.Batch()
+			count := 0
+			for {
+				doc, err := iter.Next()
+				if err != nil {
+					break
+				}
+				batch.Delete(doc.Ref)
+				count++
 			}
-			batch.Delete(doc.Ref)
-			count++
-		}
-		if count > 0 {
-			_, err := batch.Commit(s.ctx)
-			if err != nil {
-				log.Printf("skylive_rt: FirestoreStore.cleanup: %v", err)
-			} else {
-				log.Printf("skylive_rt: FirestoreStore.cleanup: removed %d expired sessions", count)
+			iter.Stop()
+
+			if count > 0 {
+				_, err := batch.Commit(s.ctx)
+				if err != nil {
+					log.Printf("skylive_rt: FirestoreStore.cleanup: %v", err)
+				} else {
+					log.Printf("skylive_rt: FirestoreStore.cleanup: removed %d expired sessions", count)
+				}
 			}
+		case <-s.ctx.Done():
+			return
 		}
 	}
+}
+
+// Close stops the cleanup goroutine and closes the Firestore client.
+func (s *FirestoreStore) Close() error {
+	s.cancel()
+	return s.client.Close()
 }
