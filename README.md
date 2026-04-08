@@ -659,6 +659,7 @@ result = Decode.decodeString userDecoder jsonString
 | `Std.Task`    | `succeed`, `fail`, `map`, `andThen`, `sequence`, `parallel`, `lazy`, `perform` |
 | `Std.Program` | `Program` type alias, `makeProgram`         |
 | `Std.Uuid`    | `v4` (UUID generation)                      |
+| `Std.Auth`    | `register`, `login`, `verify`, `logout`, `verifyEmail`, `hashPassword`, `verifyPassword`, `setRole`, `signToken` |
 
 ### Task and Concurrency
 
@@ -992,6 +993,20 @@ exposing = ["Utils.String", "Utils.Math"]
 "github.com/google/uuid" = "latest"
 "github.com/gorilla/mux" = "latest"
 
+# ---- Database Configuration ----
+[database]
+driver = "sqlite"                  # "sqlite" | "postgres"
+path = "myapp.db"                  # for sqlite
+# url = "postgres://user:pass@host/db"  # for postgres
+
+# ---- Authentication Configuration ----
+[auth]
+method = "password"                # "password" (more providers planned)
+secret = "your-secret-key"         # required: session signing key
+bcrypt_cost = 12                   # optional: bcrypt work factor (default 12)
+session_ttl = "24h"                # optional: "24h", "30m", or seconds (default 24h)
+email_verification = false         # optional: require email verification (default false)
+
 # ---- Sky.Live Configuration ----
 [live]
 port = 4000                        # HTTP server port
@@ -1251,11 +1266,11 @@ Community-contributed Zed extension with syntax highlighting and LSP integration
 | `05-mux-server`     | HTTP server                | `gorilla/mux`, `godotenv`, request handling, `errorToString`   |
 | `06-json`           | JSON encode/decode         | Elm-compatible `Json.Encode`, `Json.Decode`, pipeline decoding |
 | `07-todo-cli`       | CLI with SQLite            | Command-line args, `Std.Db`, multiline SQL strings             |
-| `08-notes-app`      | Full CRUD web app          | HTTP server, database, auth, HTML templates                    |
+| `08-notes-app`      | Full CRUD web app          | HTTP server, Std.Auth (bcrypt), SQLite, HTML templates         |
 | `09-live-counter`   | Sky.Live counter           | Server-driven UI, routing, SSE subscriptions (`Time.every`)    |
 | `10-live-component` | Sky.Live components        | Component protocol, auto-wiring                                |
 | `11-fyne-stopwatch` | Desktop GUI                | Fyne toolkit, timers, data binding                             |
-| `12-skyvote`        | Full Sky.Live app          | SQLite, auth, voting, SSE auto-refresh                         |
+| `12-skyvote`        | Full Sky.Live app          | Std.Auth (bcrypt), SQLite, voting, SSE auto-refresh            |
 | `13-skyshop`        | E-commerce Sky.Live app    | Firestore, Firebase Auth, Stripe checkout, admin panel, i18n   |
 | `14-task-demo`      | Task effect boundary       | Task composition, error handling, sequencing                   |
 | `15-http-server`    | Sky.Http.Server            | Routing, cookies, multiline HTML with `{{}}` interpolation     |
@@ -1665,6 +1680,60 @@ Query placeholders (`?`) are automatically converted to `$1, $2, $3` for Postgre
 | `Db.getBool field row` | Get bool field from Dict row |
 
 All query functions use parameterised queries (`?` placeholders) — no SQL injection possible.
+
+## Std.Auth — Built-in Authentication
+
+`Std.Auth` provides password hashing (bcrypt), session management, and user storage. Configure in `sky.toml`:
+
+```toml
+[database]
+driver = "sqlite"
+path = "myapp.db"
+
+[auth]
+method = "password"
+secret = "your-secret-key"          # required: used for session signing
+bcrypt_cost = 12                    # optional: bcrypt work factor (default 12)
+session_ttl = "24h"                 # optional: session lifetime (default 24h)
+email_verification = false          # optional: require email verification
+```
+
+Environment variable overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+
+```elm
+import Std.Auth as Auth
+
+-- Register a new user (creates sky_users table automatically)
+case Auth.register "alice@example.com" "password123" of
+    Ok user -> ...    -- { id, email, role, verified }
+    Err msg -> ...    -- "Email already registered", etc.
+
+-- Login (returns session token + user info)
+case Auth.login "alice@example.com" "password123" of
+    Ok info -> ...    -- { token, user: { id, email, role, ... } }
+    Err msg -> ...    -- "Invalid email or password"
+
+-- Verify session token
+case Auth.verify sessionToken of
+    Ok user -> ...    -- { id, email, role, name, avatarUrl, verified }
+    Err msg -> ...    -- "Session expired", "Invalid session"
+
+-- Logout (deletes session)
+Auth.logout sessionToken
+
+-- Email verification (when email_verification = true)
+Auth.verifyEmail verificationToken
+
+-- Low-level utilities
+Auth.hashPassword "password"        -- Ok "bcrypt-hash-string"
+Auth.verifyPassword "pw" "hash"     -- True/False
+Auth.setRole userId "admin"         -- Ok ()
+Auth.signToken "payload"            -- Ok "hmac-signature"
+```
+
+Auto-migration: `Auth.register` lazily creates `sky_users` and `sky_sessions` tables on first use. No manual schema setup required.
+
+For apps with custom user fields (e.g., username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table for app-specific columns.
 
 ## Contributing
 
