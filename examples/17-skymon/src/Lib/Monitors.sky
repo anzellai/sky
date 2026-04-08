@@ -1,0 +1,91 @@
+module Lib.Monitors exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Sky.Core.Crypto as Crypto
+import Std.Db as Db
+import Lib.Database as Database
+
+
+createMonitor : String -> String -> Int -> String -> String
+createMonitor name url interval visibility =
+    let
+        monId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ url))
+        _ =
+            Db.exec Database.conn
+                "INSERT OR REPLACE INTO monitors (id, name, url, interval_secs, visibility) VALUES (?, ?, ?, ?, ?)"
+                [ monId, name, url, String.fromInt interval, visibility ]
+    in
+        monId
+
+
+deleteMonitor : String -> ()
+deleteMonitor monId =
+    let
+        _ = Db.exec Database.conn "DELETE FROM monitor_history WHERE monitor_id = ?" [ monId ]
+        _ = Db.exec Database.conn "DELETE FROM monitors WHERE id = ?" [ monId ]
+    in
+        ()
+
+
+getMonitors : List (Dict String String)
+getMonitors =
+    Result.withDefault []
+        (Db.query Database.conn "SELECT * FROM monitors ORDER BY name" [])
+
+
+checkEndpoint : String -> ( String, Int )
+checkEndpoint url =
+    let
+        result = Task.run (Http.get url)
+    in
+        case result of
+
+            Ok resp ->
+                checkResponseStatus resp
+
+            Err _ ->
+                ( "down", 0 )
+
+
+checkResponseStatus resp =
+    let
+        status = resp.status
+    in
+        if status >= 200 && status < 400 then
+            ( "healthy", 0 )
+
+        else if status >= 400 && status < 500 then
+            ( "degraded", 0 )
+
+        else
+            ( "down", 0 )
+
+
+recordCheck : String -> String -> Int -> ()
+recordCheck monId status responseTime =
+    let
+        _ =
+            Db.exec Database.conn
+                "UPDATE monitors SET status = ?, response_time = ?, last_checked = datetime('now') WHERE id = ?"
+                [ status, String.fromInt responseTime, monId ]
+        _ =
+            Db.exec Database.conn
+                "INSERT INTO monitor_history (monitor_id, status, response_time) VALUES (?, ?, ?)"
+                [ monId, status, String.fromInt responseTime ]
+    in
+        ()
+
+
+getMonitorHistory : String -> Int -> List (Dict String String)
+getMonitorHistory monId limit =
+    Result.withDefault []
+        (Db.query Database.conn
+            "SELECT status, response_time, checked_at FROM monitor_history WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT ?"
+            [ monId, String.fromInt limit ]
+        )

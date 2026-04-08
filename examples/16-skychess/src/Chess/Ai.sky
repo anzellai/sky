@@ -5,12 +5,12 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.Dict as Dict
 import Sky.Core.List as List
 import Sky.Core.Maybe as Maybe
-import Chess.Piece as Piece
+import Chess.Piece exposing (..)
 import Chess.Board as Board
 import Chess.Move as Move
 import Chess.Eval as Eval
 
-bestMove : (Dict Int (Dict String String)) -> Model -> (Int, Int)
+bestMove : (Dict Int Piece) -> Model -> (Int, Int)
 bestMove board model =
     let
         colour = model.turn
@@ -21,10 +21,10 @@ bestMove board model =
 
 pickBest moves board model colour best bestScore =
     case moves of
-        
+
         [] ->
             best
-        
+
         move :: rest ->
             let
                 from = fst move
@@ -33,21 +33,21 @@ pickBest moves board model colour best bestScore =
                 newBoard = fst result
 -- Simple negamax: evaluate from the perspective of the side to move.
 -- depth 0 = static evaluation, depth 1 = look at all replies.
-                score = negamax newBoard model (Piece.oppositeColour colour) 1
+                score = negamax newBoard model (oppositeColour colour) 1
                 adjustedScore = 0 - score
             in
                 if adjustedScore > bestScore then
                     pickBest rest board model colour move adjustedScore
-                
+
                 else
                     pickBest rest board model colour best bestScore
 
 
-negamax : (Dict Int (Dict String String)) -> Model -> String -> Int -> Int
+negamax : (Dict Int Piece) -> Model -> Colour -> Int -> Int
 negamax board model colour depth =
     if depth == 0 then
         evalForColour board colour
-    
+
     else
         let
             moves = Move.allLegalMoves colour board model
@@ -55,20 +55,20 @@ negamax board model colour depth =
             if List.isEmpty moves then
                 if Move.isInCheck colour board then
                     -100000
-                
+
                 else
                     0
-            
+
             else
                 negamaxLoop moves board model colour (-999999)
 
 
 negamaxLoop moves board model colour best =
     case moves of
-        
+
         [] ->
             best
-        
+
         move :: rest ->
             let
                 from = fst move
@@ -76,22 +76,22 @@ negamaxLoop moves board model colour best =
                 result = Move.applyMove from to board model
                 newBoard = fst result
                 score =
-                    0 - negamax newBoard model (Piece.oppositeColour colour) 0
+                    0 - negamax newBoard model (oppositeColour colour) 0
             in
                 if score > best then
                     negamaxLoop rest board model colour score
-                
+
                 else
                     negamaxLoop rest board model colour best
 
 
-evalForColour : (Dict Int (Dict String String)) -> String -> Int
+evalForColour : (Dict Int Piece) -> Colour -> Int
 evalForColour board colour =
     let
         score = Eval.evaluate board
     in
-        if colour == "White" then
+        if colour == White then
             score
-        
+
         else
             0 - score

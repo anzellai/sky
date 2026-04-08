@@ -1,0 +1,28 @@
+module Lib.Database exposing (conn, getField, getInt, getBool)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe as Maybe
+import Sky.Core.Dict as Dict
+import Std.Db as Db
+
+
+conn =
+    case Db.open "sqlite" "skymon.db" of
+
+        Ok c ->
+            c
+
+        Err _ ->
+            identity ""
+
+
+getField field row =
+    Db.getField field row
+
+
+getInt field row =
+    Db.getInt field row
+
+
+getBool field row =
+    Db.getBool field row

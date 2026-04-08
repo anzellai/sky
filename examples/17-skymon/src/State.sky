@@ -1,0 +1,126 @@
+module State exposing (..)
+
+import Sky.Core.Maybe exposing (..)
+
+
+type Page
+    = DashboardPage
+    | MonitorDetailPage String
+    | MetricDetailPage String
+    | SettingsPage
+    | AlertsPage
+    | StatusPage
+    | AuthPage
+    | NotFoundPage
+
+
+type Role
+    = Public
+    | User
+    | Admin
+
+
+
+
+type MonitorStatus
+    = Healthy
+    | Degraded
+    | Down
+    | Unknown
+
+
+type Visibility
+    = VisPublic
+    | VisUser
+    | VisAdmin
+
+
+type alias Monitor =
+    { id : String
+    , name : String
+    , url : String
+    , interval : Int
+    , status : MonitorStatus
+    , responseTime : Int
+    , lastChecked : String
+    , visibility : Visibility
+    }
+
+
+type alias Metric =
+    { id : String
+    , name : String
+    , sourceType : String
+    , config : Dict String String
+    , lastValue : String
+    , lastUpdated : String
+    , visibility : Visibility
+    , history : List ( String, String )
+    }
+
+
+type alias AlertRule =
+    { id : String
+    , metricId : String
+    , condition : String
+    , threshold : String
+    , notifyType : String
+    , notifyTarget : String
+    , enabled : Bool
+    }
+
+
+type alias UserSession =
+    { username : String
+    , avatarUrl : String
+    , role : Role
+    }
+
+
+type alias Model =
+    { page : Page
+    , session : Maybe UserSession
+    , monitors : List Monitor
+    , metrics : List Metric
+    , alerts : List AlertRule
+    , notification : String
+    , errorMessage : String
+    , editingMonitor : Maybe Monitor
+    , editingMetric : Maybe Metric
+    , configInput : Dict String String
+    }
+
+
+type Msg
+    = Navigate Page
+    | Tick
+    | RefreshData
+    | MonitorChecked String MonitorStatus Int
+    | MetricUpdated String String
+    | AddMonitor
+    | UpdateMonitor String
+    | DeleteMonitor String
+    | AddMetric
+    | UpdateMetric String
+    | DeleteMetric String
+    | AddAlert
+    | DeleteAlert String
+    | InputMonitorName String
+    | InputMonitorUrl String
+    | InputMonitorVis String
+    | InputMetricName String
+    | InputMetricType String
+    | InputMetricUrl String
+    | InputMetricQuery String
+    | InputMetricField String
+    | InputMetricVis String
+    | InputAlertMetric String
+    | InputAlertCondition String
+    | InputAlertThreshold String
+    | InputAlertNotifyType String
+    | InputAlertTarget String
+    | InputAuthUsername String
+    | InputAuthPassword String
+    | AuthCallback String
+    | SignOut
+    | DismissNotification

@@ -1,0 +1,216 @@
+module Lib.Auth exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Dict as Dict
+import Sky.Core.Result as Result
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Sky.Core.Crypto as Crypto
+import Sky.Core.Process as Process
+import Std.Db as Db
+import Lib.Database as Database
+
+
+getGitHubClientId : String
+getGitHubClientId =
+    Result.withDefault "" (Task.run (Process.loadEnv "GITHUB_CLIENT_ID"))
+
+
+getGitHubClientSecret : String
+getGitHubClientSecret =
+    Result.withDefault "" (Task.run (Process.loadEnv "GITHUB_CLIENT_SECRET"))
+
+
+getAdmins : String
+getAdmins =
+    Result.withDefault "" (Task.run (Process.loadEnv "SKYMON_ADMINS"))
+
+
+getGitHubAuthUrl : String
+getGitHubAuthUrl =
+    "https://github.com/login/oauth/authorize?client_id="
+        ++ getGitHubClientId
+            ++ "&scope=read:user,read:org"
+
+
+exchangeCodeForToken : String -> Result String String
+exchangeCodeForToken code =
+    let
+        body =
+            String.join "&"
+                [ "client_id=" ++ getGitHubClientId
+                , "client_secret=" ++ getGitHubClientSecret
+                , "code=" ++ code
+                ]
+        result =
+            Task.run
+                (Http.post "https://github.com/login/oauth/access_token" body)
+    in
+        case result of
+
+            Ok resp ->
+                Ok (extractParam "access_token" resp.body)
+
+            Err e ->
+                Err e
+
+
+getGitHubUser : String -> Result String (Dict String String)
+getGitHubUser token =
+    case Task.run (Http.get ("https://api.github.com/user?access_token=" ++ token)) of
+
+        Ok resp ->
+            let
+                login = extractJsonSimple "login" resp.body
+                avatar = extractJsonSimple "avatar_url" resp.body
+            in
+                Ok
+                    (Dict.fromList
+                        [ ( "username", login )
+                        , ( "avatar_url", avatar )
+                        ]
+                    )
+
+        Err e ->
+            Err e
+
+
+createSession : String -> String -> String -> String
+createSession username avatarUrl role =
+    let
+        sessionId = String.slice 0 32 (Crypto.sha256 (username ++ ":" ++ String.fromInt 0))
+        _ =
+            Db.exec Database.conn
+                "INSERT OR REPLACE INTO sessions (id, username, avatar_url, role) VALUES (?, ?, ?, ?)"
+                [ sessionId, username, avatarUrl, role ]
+    in
+        sessionId
+
+
+getSession : String -> Maybe (Dict String String)
+getSession sessionId =
+    case Db.query Database.conn "SELECT * FROM sessions WHERE id = ? LIMIT 1" [ sessionId ] of
+
+        Ok rows ->
+            case rows of
+
+                row :: _ ->
+                    Just row
+
+                [] ->
+                    Nothing
+
+        Err _ ->
+            Nothing
+
+
+deleteSession : String -> ()
+deleteSession sessionId =
+    let
+        _ = Db.exec Database.conn "DELETE FROM sessions WHERE id = ?" [ sessionId ]
+    in
+        ()
+
+
+resolveRole : String -> String
+resolveRole username =
+    let
+        admins = String.split "," (getAdmins)
+        isAdmin =
+            List.any (\a -> String.trim a == username) admins
+    in
+        if isAdmin then
+            "admin"
+
+        else
+            "user"
+
+
+extractParam : String -> String -> String
+extractParam key body =
+    let
+        parts = String.split (key ++ "=") body
+    in
+        case List.drop 1 parts of
+
+            after :: _ ->
+                let
+                    ampIdx = findAmpersand after 0
+                in
+                    if ampIdx > 0 then
+                        String.slice 0 ampIdx after
+
+                    else
+                        after
+
+            [] ->
+                ""
+
+
+findAmpersand : String -> Int -> Int
+findAmpersand s idx =
+    if idx >= String.length s then
+        -1
+
+    else if String.slice idx (idx + 1) s == "&" then
+        idx
+
+    else
+        findAmpersand s (idx + 1)
+
+
+extractJsonSimple : String -> String -> String
+extractJsonSimple key json =
+    let
+        searchKey = "\"" ++ key ++ "\""
+        parts = String.split searchKey json
+    in
+        case List.drop 1 parts of
+
+            after :: _ ->
+                extractAfterColon after
+
+            [] ->
+                ""
+
+
+extractAfterColon : String -> String
+extractAfterColon s =
+    if String.isEmpty s then
+        ""
+
+    else if String.startsWith ":" s then
+        extractQuotedValue (String.trim (String.slice 1 (String.length s) s))
+
+    else
+        extractAfterColon (String.slice 1 (String.length s) s)
+
+
+extractQuotedValue : String -> String
+extractQuotedValue s =
+    if String.startsWith "\"" s then
+        let
+            rest = String.slice 1 (String.length s) s
+            endIdx = findQuote rest 0
+        in
+            if endIdx > 0 then
+                String.slice 0 endIdx rest
+
+            else
+                rest
+
+    else
+        ""
+
+
+findQuote : String -> Int -> Int
+findQuote s idx =
+    if idx >= String.length s then
+        -1
+
+    else if String.slice idx (idx + 1) s == "\"" then
+        idx
+
+    else
+        findQuote s (idx + 1)

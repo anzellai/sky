@@ -1,0 +1,95 @@
+module Page.AuthPage exposing (viewAuth)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Dict as Dict
+import Sky.Core.Maybe as Maybe
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live.Events exposing (onClick, onInput)
+import State exposing (..)
+import Ui.Layout as Layout
+
+
+viewAuth : Model -> VNode
+viewAuth model =
+    Layout.page model
+        (
+        div [ style "max-width: 400px; margin: 48px auto" ]
+            [ div [ class "card" ]
+                  [ h2 [ style "font-size: 20px; color: #f1f5f9; margin-bottom: 24px; text-align: center" ]
+                        [ text "Sign In to SkyMon" ]
+                  , viewAuthBody model
+                  ]
+            ]
+        )
+
+
+viewAuthBody : Model -> VNode
+viewAuthBody model =
+    case model.session of
+
+        Just session ->
+            viewSignedIn session
+
+        Nothing ->
+            viewLoginContent model
+
+
+viewSignedIn : UserSession -> VNode
+viewSignedIn session =
+    div [ style "text-align: center" ]
+        [ p [ style "color: #22c55e; font-size: 18px; margin-bottom: 16px" ]
+              [ text ("\u2713 Signed in as " ++ session.username) ]
+        , a [ href "/", class "btn btn-primary", style "text-decoration: none; display: inline-block" ]
+              [ text "Go to Dashboard" ]
+        , div [ style "margin-top: 12px" ]
+              [ button [ onClick SignOut, class "btn btn-ghost btn-sm" ] [ text "Sign Out" ] ]
+        ]
+
+
+viewLoginContent : Model -> VNode
+viewLoginContent model =
+    div []
+        [ viewLoginForm model
+        , viewError model.errorMessage
+        ]
+
+
+viewLoginForm : Model -> VNode
+viewLoginForm model =
+    div []
+        [ div [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Username" ]
+              , input
+                    [ type_ "text"
+                    , class "form-input"
+                    , placeholder "Enter username"
+                    , value (Maybe.withDefault "" (Dict.get "auth_username" model.configInput))
+                    , onInput InputAuthUsername
+                    ]
+              ]
+        , div [ class "form-group" ]
+              [ label [ class "form-label" ] [ text "Password" ]
+              , input
+                    [ type_ "password"
+                    , class "form-input"
+                    , placeholder "Enter password"
+                    , value (Maybe.withDefault "" (Dict.get "auth_password" model.configInput))
+                    , onInput InputAuthPassword
+                    ]
+              ]
+        , button [ onClick (AuthCallback "login"), class "btn btn-primary", style "width: 100%" ]
+              [ text "Sign In" ]
+        , div [ style "margin-top: 16px; text-align: center; color: #64748b; font-size: 12px" ]
+              [ text "Default: admin / admin123" ]
+        ]
+
+
+viewError : String -> VNode
+viewError msg =
+    if msg == "" then
+        text ""
+
+    else
+        div [ style "margin-top: 16px; padding: 12px; background: #7f1d1d; color: #fca5a5; border-radius: 8px; font-size: 13px" ]
+            [ text msg ]

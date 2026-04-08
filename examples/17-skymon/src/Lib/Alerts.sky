@@ -1,0 +1,241 @@
+module Lib.Alerts exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Sky.Core.Http as Http
+import Sky.Core.Task as Task
+import Sky.Core.Crypto as Crypto
+import Std.Db as Db
+import Std.Log exposing (println)
+import Lib.Database as Database
+
+
+createAlert : String -> String -> String -> String -> String -> String
+createAlert metricId condition threshold notifyType notifyTarget =
+    let
+        alertId = String.slice 0 12 (Crypto.sha256 (metricId ++ ":" ++ condition ++ ":" ++ threshold))
+        _ =
+            Db.exec Database.conn
+                "INSERT OR REPLACE INTO alerts (id, metric_id, condition, threshold, notify_type, notify_target) VALUES (?, ?, ?, ?, ?, ?)"
+                [ alertId, metricId, condition, threshold, notifyType, notifyTarget ]
+    in
+        alertId
+
+
+deleteAlert : String -> ()
+deleteAlert alertId =
+    let
+        _ = Db.exec Database.conn "DELETE FROM alerts WHERE id = ?" [ alertId ]
+    in
+        ()
+
+
+getAlerts : List (Dict String String)
+getAlerts =
+    Result.withDefault []
+        (Db.query Database.conn "SELECT * FROM alerts ORDER BY created_at DESC" [])
+
+
+getAlertsForMetric : String -> List (Dict String String)
+getAlertsForMetric metricId =
+    Result.withDefault []
+        (Db.query Database.conn "SELECT * FROM alerts WHERE metric_id = ? ORDER BY created_at DESC" [ metricId ])
+
+
+-- Check all alerts against current metric values and fire notifications
+checkAlerts : (List (Dict String String)) -> (List (Dict String String)) -> ()
+checkAlerts alerts metrics =
+    case alerts of
+
+        [] ->
+            ()
+
+        alert :: rest ->
+            let
+                _ = checkOneAlert alert metrics
+            in
+                checkAlerts rest metrics
+
+
+checkOneAlert : (Dict String String) -> (List (Dict String String)) -> ()
+checkOneAlert alert metrics =
+    let
+        metricId = Database.getField "metric_id" alert
+        condition = Database.getField "condition" alert
+        threshold = Database.getField "threshold" alert
+        enabled = Database.getField "enabled" alert
+        metric = findMetricById metricId metrics
+    in
+        if enabled /= "1" then
+            ()
+
+        else
+            checkAlertCondition alert metric condition threshold
+
+
+checkAlertCondition : (Dict String String) -> (Maybe (Dict String String)) -> String -> String -> ()
+checkAlertCondition alert maybeMetric condition threshold =
+    case maybeMetric of
+
+        Nothing ->
+            ()
+
+        Just metric ->
+            let
+                value = Database.getField "last_value" metric
+                triggered = evaluateCondition value condition threshold
+            in
+                if triggered then
+                    fireAlert alert value
+
+                else
+                    ()
+
+
+evaluateCondition : String -> String -> String -> Bool
+evaluateCondition valueStr condition thresholdStr =
+    let
+        value = parseFloat valueStr
+        threshold = parseFloat thresholdStr
+    in
+        if condition == ">" then
+            value > threshold
+
+        else if condition == "<" then
+            value < threshold
+
+        else if condition == ">=" then
+            value >= threshold
+
+        else if condition == "<=" then
+            value <= threshold
+
+        else if condition == "==" then
+            value == threshold
+
+        else if condition == "!=" then
+            value /= threshold
+
+        else if condition == "contains" then
+            String.contains thresholdStr valueStr
+
+        else if condition == "down" then
+            valueStr == "down" || valueStr == "0" || String.startsWith "error" valueStr
+
+        else
+            False
+
+
+fireAlert : (Dict String String) -> String -> ()
+fireAlert alert currentValue =
+    let
+        alertId = Database.getField "id" alert
+        notifyType = Database.getField "notify_type" alert
+        notifyTarget = Database.getField "notify_target" alert
+        metricId = Database.getField "metric_id" alert
+        condition = Database.getField "condition" alert
+        threshold = Database.getField "threshold" alert
+        message =
+            "SkyMon Alert: metric " ++ metricId
+                ++ " value " ++ currentValue
+                    ++ " " ++ condition ++ " " ++ threshold
+        _ = recordAlertFired alertId metricId currentValue condition threshold notifyType
+        _ = println ("[ALERT] " ++ message)
+    in
+        if notifyType == "webhook" then
+            fireWebhook notifyTarget message
+
+        else if notifyType == "slack" then
+            fireSlack notifyTarget message
+
+        else
+            ()
+
+
+recordAlertFired : String -> String -> String -> String -> String -> String -> ()
+recordAlertFired alertId metricId value condition threshold notifyType =
+    let
+        _ =
+            Db.exec Database.conn
+                "INSERT INTO alert_history (alert_id, metric_id, metric_value, condition, threshold, notify_type) VALUES (?, ?, ?, ?, ?, ?)"
+                [ alertId, metricId, value, condition, threshold, notifyType ]
+    in
+        ()
+
+
+getAlertHistory : Int -> List (Dict String String)
+getAlertHistory limit =
+    Result.withDefault []
+        (Db.query Database.conn
+            "SELECT * FROM alert_history ORDER BY fired_at DESC LIMIT ?"
+            [ String.fromInt limit ]
+        )
+
+
+getAlertHistoryForMetric : String -> Int -> List (Dict String String)
+getAlertHistoryForMetric metricId limit =
+    Result.withDefault []
+        (Db.query Database.conn
+            "SELECT * FROM alert_history WHERE metric_id = ? ORDER BY fired_at DESC LIMIT ?"
+            [ metricId, String.fromInt limit ]
+        )
+
+
+fireWebhook : String -> String -> ()
+fireWebhook url message =
+    if String.isEmpty url then
+        ()
+
+    else
+        let
+            body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
+            _ = Task.run (Http.post url body)
+        in
+            ()
+
+
+fireSlack : String -> String -> ()
+fireSlack webhookUrl message =
+    if String.isEmpty webhookUrl then
+        ()
+
+    else
+        let
+            body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
+            _ = Task.run (Http.post webhookUrl body)
+        in
+            ()
+
+
+findMetricById : String -> (List (Dict String String)) -> Maybe (Dict String String)
+findMetricById metricId metrics =
+    case metrics of
+
+        [] ->
+            Nothing
+
+        m :: rest ->
+            if Database.getField "id" m == metricId then
+                Just m
+
+            else
+                findMetricById metricId rest
+
+
+escapeJson : String -> String
+escapeJson s =
+    String.replace "\"" "\\\"" (String.replace "\\" "\\\\" s)
+
+
+parseFloat : String -> Float
+parseFloat s =
+    case String.toInt s of
+
+        Ok n ->
+            identity n
+
+        Err _ ->
+            0

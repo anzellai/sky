@@ -1,0 +1,490 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Maybe exposing (..)
+import Sky.Core.List as List
+import Sky.Core.Dict as Dict
+import Sky.Core.String as String
+import Sky.Core.Result as Result
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Log exposing (println)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick, onInput)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+import Std.Time as Time
+import State exposing (..)
+import Lib.Schema as Schema
+import Lib.Monitors as Monitors
+import Lib.Metrics as Metrics
+import Lib.Database as Database
+import Page.Dashboard as Dashboard
+import Page.Status as StatusPage
+import Page.Settings as Settings
+import Page.AuthPage as AuthPage
+import Page.MonitorDetail as MonitorDetail
+import Page.MetricDetail as MetricDetail
+import Page.Alerts as AlertsPage
+import Lib.Alerts as Alerts
+
+
+init : a -> ( Model, Cmd Msg )
+init _req =
+    let
+        _ = Schema.initDb
+        _ = println "[SkyMon] Initialised"
+    in
+        ( { page = DashboardPage
+          , session = Nothing
+          , monitors = loadMonitors ()
+          , metrics = loadMetrics ()
+          , alerts = loadAlerts ()
+          , notification = ""
+          , errorMessage = ""
+          , editingMonitor = Nothing
+          , editingMetric = Nothing
+          , configInput = Dict.empty
+          }
+        , Cmd.none
+        )
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes =
+            [ route "/" DashboardPage
+            , route "/status" StatusPage
+            , route "/settings" SettingsPage
+            , route "/alerts" AlertsPage
+            , route "/auth" AuthPage
+            ]
+        , notFound = NotFoundPage
+        }
+
+
+view : Model -> VNode
+view model =
+    case model.page of
+
+        DashboardPage ->
+            Dashboard.viewDashboard model
+
+        StatusPage ->
+            StatusPage.viewStatus model
+
+        SettingsPage ->
+            Settings.viewSettings model
+
+        AlertsPage ->
+            AlertsPage.viewAlerts model
+
+        AuthPage ->
+            AuthPage.viewAuth model
+
+        MonitorDetailPage monId ->
+            MonitorDetail.viewMonitorDetail monId model
+
+        MetricDetailPage metId ->
+            MetricDetail.viewMetricDetail metId model
+
+        NotFoundPage ->
+            Dashboard.viewDashboard model
+
+
+subscriptions model =
+    Time.every 10000 Tick
+
+
+update : Msg -> Model -> ( Model, Cmd Msg )
+update msg model =
+    case msg of
+
+        Navigate page ->
+            ( { model | page = page, notification = "" }, Cmd.none )
+
+        Tick ->
+            handleTick model
+
+        RefreshData ->
+            ( { model | monitors = loadMonitors (), metrics = loadMetrics () }, Cmd.none )
+
+        AddMonitor ->
+            handleAddMonitor model
+
+        DeleteMonitor monId ->
+            handleDeleteMonitor monId model
+
+        AddMetric ->
+            handleAddMetric model
+
+        DeleteMetric metId ->
+            handleDeleteMetric metId model
+
+        AddAlert ->
+            handleAddAlert model
+
+        DeleteAlert alertId ->
+            handleDeleteAlert alertId model
+
+        InputMonitorName v ->
+            ( { model | configInput = Dict.insert "monitor_name" v model.configInput }, Cmd.none )
+
+        InputMonitorUrl v ->
+            ( { model | configInput = Dict.insert "monitor_url" v model.configInput }, Cmd.none )
+
+        InputMonitorVis v ->
+            ( { model | configInput = Dict.insert "monitor_visibility" v model.configInput }, Cmd.none )
+
+        InputMetricName v ->
+            ( { model | configInput = Dict.insert "metric_name" v model.configInput }, Cmd.none )
+
+        InputMetricType v ->
+            ( { model | configInput = Dict.insert "metric_type" v model.configInput }, Cmd.none )
+
+        InputMetricUrl v ->
+            ( { model | configInput = Dict.insert "metric_url" v model.configInput }, Cmd.none )
+
+        InputMetricQuery v ->
+            ( { model | configInput = Dict.insert "metric_query" v model.configInput }, Cmd.none )
+
+        InputMetricField v ->
+            ( { model | configInput = Dict.insert "metric_field" v model.configInput }, Cmd.none )
+
+        InputMetricVis v ->
+            ( { model | configInput = Dict.insert "metric_visibility" v model.configInput }, Cmd.none )
+
+        InputAlertMetric v ->
+            ( { model | configInput = Dict.insert "alert_metric" v model.configInput }, Cmd.none )
+
+        InputAlertCondition v ->
+            ( { model | configInput = Dict.insert "alert_condition" v model.configInput }, Cmd.none )
+
+        InputAlertThreshold v ->
+            ( { model | configInput = Dict.insert "alert_threshold" v model.configInput }, Cmd.none )
+
+        InputAlertNotifyType v ->
+            ( { model | configInput = Dict.insert "alert_notify_type" v model.configInput }, Cmd.none )
+
+        InputAlertTarget v ->
+            ( { model | configInput = Dict.insert "alert_notify_target" v model.configInput }, Cmd.none )
+
+        InputAuthUsername v ->
+            ( { model | configInput = Dict.insert "auth_username" v model.configInput }, Cmd.none )
+
+        InputAuthPassword v ->
+            ( { model | configInput = Dict.insert "auth_password" v model.configInput }, Cmd.none )
+
+        AuthCallback _ ->
+            handleAuth model
+
+        SignOut ->
+            ( { model | session = Nothing, page = DashboardPage }, Cmd.none )
+
+        DismissNotification ->
+            ( { model | notification = "" }, Cmd.none )
+
+        _ ->
+            ( model, Cmd.none )
+
+
+handleAuth : Model -> ( Model, Cmd Msg )
+handleAuth model =
+    let
+        username = Maybe.withDefault "" (Dict.get "auth_username" model.configInput)
+        password = Maybe.withDefault "" (Dict.get "auth_password" model.configInput)
+    in
+        if String.isEmpty username || String.isEmpty password then
+            ( { model | errorMessage = "Please enter username and password" }, Cmd.none )
+
+        else if username == "admin" && password == "admin123" then
+            ( { model
+                | session = Just { username = "admin", avatarUrl = "", role = Admin }
+                , configInput = Dict.empty
+                , notification = ""
+                , errorMessage = ""
+              }
+            , Cmd.none
+            )
+
+        else
+            ( { model
+                | session = Just { username = username, avatarUrl = "", role = User }
+                , configInput = Dict.empty
+                , notification = ""
+                , errorMessage = ""
+              }
+            , Cmd.none
+            )
+
+
+handleTick : Model -> ( Model, Cmd Msg )
+handleTick model =
+    let
+        _ = runAllChecks model.monitors
+        _ = runAllMetricCollections ()
+        _ = runAlertChecks ()
+    in
+        ( { model | monitors = loadMonitors (), metrics = loadMetrics (), alerts = loadAlerts () }, Cmd.none )
+
+
+runAllMetricCollections : () -> ()
+runAllMetricCollections _ =
+    let
+        rawMetrics = Metrics.getMetrics
+    in
+        collectMetrics rawMetrics
+
+
+collectMetrics : (List (Dict String String)) -> ()
+collectMetrics metrics =
+    case metrics of
+
+        [] ->
+            ()
+
+        met :: rest ->
+            let
+                value = Metrics.runMetric met
+                metId = Database.getField "id" met
+                _ = Metrics.recordMetricValue metId value
+            in
+                collectMetrics rest
+
+
+runAlertChecks : () -> ()
+runAlertChecks _ =
+    let
+        rawAlerts = Alerts.getAlerts
+        rawMetrics = Metrics.getMetrics
+        _ = Alerts.checkAlerts rawAlerts rawMetrics
+    in
+        ()
+
+
+runAllChecks : (List Monitor) -> ()
+runAllChecks monitors =
+    case monitors of
+
+        [] ->
+            ()
+
+        mon :: rest ->
+            let
+                result = Monitors.checkEndpoint mon.url
+                status = fst result
+                responseTime = snd result
+                _ = Monitors.recordCheck mon.id status responseTime
+            in
+                runAllChecks rest
+
+
+handleAddMonitor : Model -> ( Model, Cmd Msg )
+handleAddMonitor model =
+    let
+        name = Maybe.withDefault "New Monitor" (Dict.get "monitor_name" model.configInput)
+        url = Maybe.withDefault "" (Dict.get "monitor_url" model.configInput)
+        vis = Maybe.withDefault "user" (Dict.get "monitor_visibility" model.configInput)
+    in
+        if String.isEmpty url then
+            ( { model | errorMessage = "URL is required" }, Cmd.none )
+
+        else
+            let
+                _ = Monitors.createMonitor name url 30 vis
+            in
+                ( { model
+                    | monitors = loadMonitors ()
+                    , configInput = Dict.empty
+                    , notification = "Monitor added: " ++ name
+                    , errorMessage = ""
+                  }
+                , Cmd.none
+                )
+
+
+handleDeleteMonitor : String -> Model -> ( Model, Cmd Msg )
+handleDeleteMonitor monId model =
+    let
+        _ = Monitors.deleteMonitor monId
+    in
+        ( { model | monitors = loadMonitors (), notification = "Monitor deleted" }, Cmd.none )
+
+
+handleAddMetric : Model -> ( Model, Cmd Msg )
+handleAddMetric model =
+    let
+        name = Maybe.withDefault "New Metric" (Dict.get "metric_name" model.configInput)
+        sourceType = Maybe.withDefault "http" (Dict.get "metric_type" model.configInput)
+        url = Maybe.withDefault "" (Dict.get "metric_url" model.configInput)
+        query = Maybe.withDefault "" (Dict.get "metric_query" model.configInput)
+        vis = Maybe.withDefault "user" (Dict.get "metric_visibility" model.configInput)
+        field = Maybe.withDefault "" (Dict.get "metric_field" model.configInput)
+        configJson = buildMetricConfig sourceType url query field
+        _ = Metrics.createMetric name sourceType configJson vis
+    in
+        ( { model
+            | metrics = loadMetrics ()
+            , configInput = Dict.empty
+            , notification = "Metric added: " ++ name
+            , errorMessage = ""
+          }
+        , Cmd.none
+        )
+
+
+buildMetricConfig : String -> String -> String -> String -> String
+buildMetricConfig sourceType url query field =
+    if sourceType == "sql" then
+        "{\"dsn\":\"" ++ url ++ "\",\"query\":\"" ++ query ++ "\"}"
+
+    else
+        "{\"url\":\"" ++ url ++ "\"}"
+
+
+handleDeleteMetric : String -> Model -> ( Model, Cmd Msg )
+handleDeleteMetric metId model =
+    let
+        _ = Metrics.deleteMetric metId
+    in
+        ( { model | metrics = loadMetrics (), notification = "Metric deleted" }, Cmd.none )
+
+
+loadMonitors : () -> List Monitor
+loadMonitors _ =
+    List.map rowToMonitor (Monitors.getMonitors)
+
+
+rowToMonitor : (Dict String String) -> Monitor
+rowToMonitor row =
+    { id = Database.getField "id" row
+    , name = Database.getField "name" row
+    , url = Database.getField "url" row
+    , interval = Database.getInt "interval_secs" row
+    , status = parseStatus (Database.getField "status" row)
+    , responseTime = Database.getInt "response_time" row
+    , lastChecked = Database.getField "last_checked" row
+    , visibility = parseVisibility (Database.getField "visibility" row)
+    }
+
+
+loadMetrics : () -> List Metric
+loadMetrics _ =
+    List.map rowToMetric (Metrics.getMetrics)
+
+
+rowToMetric : (Dict String String) -> Metric
+rowToMetric row =
+    { id = Database.getField "id" row
+    , name = Database.getField "name" row
+    , sourceType = Database.getField "source_type" row
+    , config = Dict.empty
+    , lastValue = Database.getField "last_value" row
+    , lastUpdated = Database.getField "last_updated" row
+    , visibility = parseVisibility (Database.getField "visibility" row)
+    , history = []
+    }
+
+
+parseStatus : String -> MonitorStatus
+parseStatus s =
+    if s == "healthy" then
+        Healthy
+
+    else if s == "degraded" then
+        Degraded
+
+    else if s == "down" then
+        Down
+
+    else
+        Unknown
+
+
+parseVisibility : String -> Visibility
+parseVisibility s =
+    if s == "public" then
+        VisPublic
+
+    else if s == "admin" then
+        VisAdmin
+
+    else
+        VisUser
+
+
+
+
+
+
+
+
+handleAddAlert : Model -> ( Model, Cmd Msg )
+handleAddAlert model =
+    let
+        metricName = Maybe.withDefault "" (Dict.get "alert_metric" model.configInput)
+        condition = Maybe.withDefault ">" (Dict.get "alert_condition" model.configInput)
+        threshold = Maybe.withDefault "0" (Dict.get "alert_threshold" model.configInput)
+        notifyType = Maybe.withDefault "log" (Dict.get "alert_notify_type" model.configInput)
+        notifyTarget = Maybe.withDefault "" (Dict.get "alert_notify_target" model.configInput)
+        metricId = resolveMetricId metricName model.metrics
+    in
+        if String.isEmpty metricId then
+            ( { model | errorMessage = "Metric not found: " ++ metricName }, Cmd.none )
+
+        else
+            let
+                _ = Alerts.createAlert metricId condition threshold notifyType notifyTarget
+            in
+                ( { model
+                    | alerts = loadAlerts ()
+                    , configInput = Dict.empty
+                    , notification = "Alert added for metric: " ++ metricName
+                    , errorMessage = ""
+                  }
+                , Cmd.none
+                )
+
+
+handleDeleteAlert : String -> Model -> ( Model, Cmd Msg )
+handleDeleteAlert alertId model =
+    let
+        _ = Alerts.deleteAlert alertId
+    in
+        ( { model | alerts = loadAlerts (), notification = "Alert deleted" }, Cmd.none )
+
+
+resolveMetricId : String -> (List Metric) -> String
+resolveMetricId nameOrId metrics =
+    case metrics of
+
+        [] ->
+            ""
+
+        m :: rest ->
+            if m.id == nameOrId || m.name == nameOrId then
+                m.id
+
+            else
+                resolveMetricId nameOrId rest
+
+
+loadAlerts : () -> List AlertRule
+loadAlerts _ =
+    List.map rowToAlert (Alerts.getAlerts)
+
+
+rowToAlert : (Dict String String) -> AlertRule
+rowToAlert row =
+    { id = Database.getField "id" row
+    , metricId = Database.getField "metric_id" row
+    , condition = Database.getField "condition" row
+    , threshold = Database.getField "threshold" row
+    , notifyType = Database.getField "notify_type" row
+    , notifyTarget = Database.getField "notify_target" row
+    , enabled = Database.getField "enabled" row == "1"
+    }

@@ -6,7 +6,7 @@ import Sky.Core.List as List
 import Sky.Core.Dict as Dict
 import Sky.Core.String as String
 import Chess.Board as Board
-import Chess.Piece as Piece
+import Chess.Piece exposing (..)
 import Chess.Move as Move
 import Chess.Ai as Ai
 import Lib.Games as Games
@@ -55,8 +55,8 @@ buildWhiteUpdate from to newBoard newEp newCaptured newHistory model =
 
 afterWhiteMove updated =
     let
-        blackCanMove = Move.hasLegalMoves "Black" updated.board updated
-        blackInCheck = Move.isInCheck "Black" updated.board
+        blackCanMove = Move.hasLegalMoves Black updated.board updated
+        blackInCheck = Move.isInCheck Black updated.board
     in
         resolveAfterWhite updated blackCanMove blackInCheck
 
@@ -64,12 +64,12 @@ afterWhiteMove updated =
 resolveAfterWhite updated blackCanMove blackInCheck =
     if not blackCanMove && blackInCheck then
         finishGame "checkmate-white" updated
-    
+
     else if not blackCanMove then
         finishGame "stalemate" updated
-    
+
     else
-        ( { updated | turn = "Black" , computerThinking = True }, Cmd.none )
+        ( { updated | turn = Black , computerThinking = True }, Cmd.none )
 
 
 executeBlackMove : Model -> (Model, Cmd Msg)
@@ -78,11 +78,11 @@ executeBlackMove model =
         movePair = Ai.bestMove model.board model
         from = fst movePair
         to = snd movePair
-        pieces = Board.allPiecesOfColour "Black" model.board
+        pieces = Board.allPiecesOfColour Black model.board
         _ =
             println
                 ("[AI] Black pieces: " ++ String.fromInt (List.length pieces))
-        allMoves = Move.allLegalMoves "Black" model.board model
+        allMoves = Move.allLegalMoves Black model.board model
         _ =
             println
                 ("[AI] Legal moves: " ++ String.fromInt (List.length allMoves))
@@ -114,7 +114,7 @@ executeBlackMove model =
 applyBlackOr from to model =
     if from < 0 then
         ( { model | computerThinking = False }, Cmd.none )
-    
+
     else
         doBlackMove from to model
 
@@ -161,8 +161,8 @@ buildBlackUpdate from to newBoard newEp newCaptured newHistory model =
 
 afterBlackMove updated =
     let
-        whiteCanMove = Move.hasLegalMoves "White" updated.board updated
-        whiteInCheck = Move.isInCheck "White" updated.board
+        whiteCanMove = Move.hasLegalMoves White updated.board updated
+        whiteInCheck = Move.isInCheck White updated.board
     in
         resolveAfterBlack updated whiteCanMove whiteInCheck
 
@@ -170,12 +170,12 @@ afterBlackMove updated =
 resolveAfterBlack updated whiteCanMove whiteInCheck =
     if not whiteCanMove && whiteInCheck then
         finishGame "checkmate-black" updated
-    
+
     else if not whiteCanMove then
         finishGame "stalemate" updated
-    
+
     else
-        ( { updated | turn = "White" }, Cmd.none )
+        ( { updated | turn = White }, Cmd.none )
 
 
 finishGame : String -> Model -> (Model, Cmd Msg)
@@ -189,9 +189,9 @@ finishGame result model =
 appendCaptured : (Maybe String) -> (List String) -> List String
 appendCaptured captured existing =
     case captured of
-        
+
         Just sym ->
             existing ++ [ sym ]
-        
+
         Nothing ->
             existing

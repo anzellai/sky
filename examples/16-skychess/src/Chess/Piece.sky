@@ -2,98 +2,141 @@ module Chess.Piece exposing (..)
 
 import Sky.Core.Prelude exposing (..)
 
--- Unicode chess piece symbols
--- White pieces: filled glyphs, Black pieces: outlined glyphs
-symbol kind colour =
-    if colour == "White" then
-        whiteSymbol kind
-    
-    else
-        blackSymbol kind
+
+type Colour
+    = White
+    | Black
 
 
-whiteSymbol kind =
-    if kind == "King" then
-        "\u2654"
-    
-    else if kind == "Queen" then
-        "\u2655"
-    
-    else if kind == "Rook" then
-        "\u2656"
-    
-    else if kind == "Bishop" then
-        "\u2657"
-    
-    else if kind == "Knight" then
-        "\u2658"
-    
-    else if kind == "Pawn" then
-        "\u2659"
-    
-    else
-        ""
+type Kind
+    = King
+    | Queen
+    | Rook
+    | Bishop
+    | Knight
+    | Pawn
 
 
-blackSymbol kind =
-    if kind == "King" then
-        "\u265A"
-    
-    else if kind == "Queen" then
-        "\u265B"
-    
-    else if kind == "Rook" then
-        "\u265C"
-    
-    else if kind == "Bishop" then
-        "\u265D"
-    
-    else if kind == "Knight" then
-        "\u265E"
-    
-    else if kind == "Pawn" then
-        "\u265F"
-    
-    else
-        ""
+type alias Piece =
+    { kind : Kind
+    , colour : Colour
+    }
 
 
-materialValue kind =
-    if kind == "Queen" then
-        900
-    
-    else if kind == "Rook" then
-        500
-    
-    else if kind == "Bishop" then
-        330
-    
-    else if kind == "Knight" then
-        320
-    
-    else if kind == "Pawn" then
-        100
-    
-    else
-        0
-
-
-isSliding kind = kind == "Queen" || kind == "Rook" || kind == "Bishop"
-
-
+makePiece : Kind -> Colour -> Piece
 makePiece kind colour =
-    Dict.fromList [ ( "kind", kind ) , ( "colour", colour ) ]
+    { kind = kind, colour = colour }
 
 
-pieceKind p = Maybe.withDefault "" (Dict.get "kind" p)
-
-
-pieceColour p = Maybe.withDefault "" (Dict.get "colour" p)
-
-
+oppositeColour : Colour -> Colour
 oppositeColour colour =
-    if colour == "White" then
-        "Black"
-    
-    else
-        "White"
+    case colour of
+
+        White ->
+            Black
+
+        Black ->
+            White
+
+
+symbol : Kind -> Colour -> String
+symbol kind colour =
+    case colour of
+
+        White ->
+            whiteSymbol kind
+
+        Black ->
+            blackSymbol kind
+
+
+whiteSymbol : Kind -> String
+whiteSymbol kind =
+    case kind of
+
+        King ->
+            "\u2654"
+
+        Queen ->
+            "\u2655"
+
+        Rook ->
+            "\u2656"
+
+        Bishop ->
+            "\u2657"
+
+        Knight ->
+            "\u2658"
+
+        Pawn ->
+            "\u2659"
+
+
+blackSymbol : Kind -> String
+blackSymbol kind =
+    case kind of
+
+        King ->
+            "\u265A"
+
+        Queen ->
+            "\u265B"
+
+        Rook ->
+            "\u265C"
+
+        Bishop ->
+            "\u265D"
+
+        Knight ->
+            "\u265E"
+
+        Pawn ->
+            "\u265F"
+
+
+materialValue : Kind -> Int
+materialValue kind =
+    case kind of
+
+        Queen ->
+            900
+
+        Rook ->
+            500
+
+        Bishop ->
+            330
+
+        Knight ->
+            320
+
+        Pawn ->
+            100
+
+        King ->
+            0
+
+
+piecePrefix : Kind -> String
+piecePrefix kind =
+    case kind of
+
+        King ->
+            "K"
+
+        Queen ->
+            "Q"
+
+        Rook ->
+            "R"
+
+        Bishop ->
+            "B"
+
+        Knight ->
+            "N"
+
+        Pawn ->
+            ""
