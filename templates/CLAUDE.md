@@ -219,7 +219,7 @@ Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass
 ### Error Handling
 
 ```elm
-case Http.listenAndServe ":8080" handler of
+case Http.listenAndServe ":8000" handler of
     Ok _ -> println "Started"
     Err e -> println "Failed:" (errorToString e)
 ```
@@ -758,7 +758,7 @@ Random.shuffle [1,2,3,4]    -- Task String (List Int)
 import Sky.Http.Server as Server
 
 main =
-    Server.listen 8080
+    Server.listen 8000
         [ Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
         , Server.get "/api/users/:id" getUser
         , Server.post "/api/data" handlePost
@@ -934,7 +934,7 @@ import Sky.Core.Maybe as Maybe
 main =
     let
         _ = loadEnv ""   -- load .env file
-        port = Maybe.withDefault "4000" (getEnv "PORT")
+        port = Maybe.withDefault "8000" (getEnv "PORT")
         r = Mux.newRouter ()
         _ = Mux.routerHandleFunc r "/" indexHandler
     in
@@ -1132,7 +1132,7 @@ session_ttl = "24h"             # optional: "24h", "30m", or seconds
 email_verification = false      # optional (default false)
 
 [live]                          # only for Sky.Live apps
-port = 4000
+port = 8000
 input = "debounce"              # "debounce" | "blur"
 
 [live.session]
@@ -1238,6 +1238,15 @@ email_verification = false          # optional (default false)
 ```
 
 Env var overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+
+When `email_verification = true`, `Auth.register` returns a `verificationToken`. Your app delivers it:
+```elm
+case Auth.register email password of
+    Ok user ->
+        case Dict.get "verificationToken" user of
+            Just token -> sendVerificationEmail email token  -- your email provider
+            Nothing -> ...
+```
 
 For apps with custom user fields (username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table.
 

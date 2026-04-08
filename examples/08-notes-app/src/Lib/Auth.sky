@@ -38,7 +38,7 @@ createUser email password =
         _ = println "[Email Service] New user registration"
         _ = println ("[Email Service] To: " ++ email)
         _ = println "[Email Service] Verify your email at:"
-        _ = println ("  http://localhost:4000/auth/verify?token=" ++ token)
+        _ = println ("  http://localhost:8000/auth/verify?token=" ++ token)
         _ = println "=========================================="
         _ = println ""
         result =

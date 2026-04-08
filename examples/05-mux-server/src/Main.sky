@@ -34,9 +34,9 @@ setupRoutes router =
 
 startServer router =
     let
-        _ = println "Server starting on port 4000"
+        _ = println "Server starting on port 8000"
     in
-        Http.listenAndServe ":4000" router
+        Http.listenAndServe ":8000" router
 
 
 main =

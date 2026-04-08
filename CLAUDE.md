@@ -229,7 +229,7 @@ HTTP-first (full HTML on load, patches on events), SSE subscriptions, session st
 ### Sky.Http.Server
 ```elm
 main =
-    Server.listen 8080
+    Server.listen 8000
         [ Server.get "/" (\_ -> Task.succeed (Server.text "Hello!"))
         , Server.get "/api/users/:id" getUser
         , Server.post "/api/data" handlePost

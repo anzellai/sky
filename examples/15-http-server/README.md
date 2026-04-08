@@ -9,4 +9,4 @@ sky build src/Main.sky
 ./sky-out/app
 ```
 
-Open `http://localhost:8080` in your browser. Includes GET/POST routes, cookie handling, and static file serving.
+Open `http://localhost:8000` in your browser. Includes GET/POST routes, cookie handling, and static file serving.

@@ -13,6 +13,7 @@ path = "skynotes.db"
 method = "password"
 secret = "notes-app-dev-secret-change-in-prod"
 session_ttl = "24h"
+email_verification = true
 
 ["go.dependencies"]
 "net/http" = "latest"

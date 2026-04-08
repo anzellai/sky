@@ -6,7 +6,7 @@ entry = "src/Main.sky"
 root = "src"
 
 [live]
-port = 4000
+port = 8000
 
 [database]
 driver = "sqlite"

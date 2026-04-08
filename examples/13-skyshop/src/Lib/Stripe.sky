@@ -37,7 +37,7 @@ domainUrl =
             let
                 effectivePort =
                     if port_ == "" then
-                        "4000"
+                        "8000"
                     
                     else
                         port_

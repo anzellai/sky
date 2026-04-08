@@ -3,4 +3,4 @@ version = "0.1.0"
 entry = "src/Main.sky"
 
 [live]
-port = 4000
+port = 8000

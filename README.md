@@ -909,7 +909,7 @@ This avoids circular dependencies and gives all modules access to typed Msg cons
 
 ```toml
 [live]
-port = 4000
+port = 8000
 input = "blur"            # "debounce" | "blur"
 poll_interval = 5000      # ms (0 = SSE only; >0 enables polling fallback for serverless)
 
@@ -927,7 +927,7 @@ Sky.Live config values from `sky.toml` are embedded at compile time, but can be 
 
 | Variable | sky.toml | Default | Description |
 |---|---|---|---|
-| `SKY_LIVE_PORT` | `live.port` | `4000` | Server port |
+| `SKY_LIVE_PORT` | `live.port` | `8000` | Server port |
 | `SKY_LIVE_INPUT` | `live.input` | `debounce` | Input handling: `debounce` or `blur` |
 | `SKY_LIVE_POLL_INTERVAL` | `live.poll_interval` | `0` | Polling interval in ms (0 = SSE only) |
 | `SKY_LIVE_SESSION_STORE` | `live.session.store` | `memory` | Session store: `memory`, `sqlite`, `redis`, `postgresql` |
@@ -1009,7 +1009,7 @@ email_verification = false         # optional: require email verification (defau
 
 # ---- Sky.Live Configuration ----
 [live]
-port = 4000                        # HTTP server port
+port = 8000                        # HTTP server port
 input = "debounce"                 # "debounce" (send on pause) | "blur" (send on blur/enter)
 poll_interval = 0                  # polling fallback interval in ms (0 = SSE only)
 
@@ -1733,7 +1733,28 @@ Auth.signToken "payload"            -- Ok "hmac-signature"
 
 Auto-migration: `Auth.register` lazily creates `sky_users` and `sky_sessions` tables on first use. No manual schema setup required.
 
-For apps with custom user fields (e.g., username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table for app-specific columns.
+### Email Verification Hook
+
+When `email_verification = true`, `Auth.register` returns a `verificationToken` in the result. Your app decides how to deliver it -- no built-in email sending:
+
+```elm
+case Auth.register email password of
+    Ok user ->
+        case Dict.get "verificationToken" user of
+            Just token ->
+                -- Send via your preferred method
+                sendVerificationEmail email token    -- HTTP API, SMTP, etc.
+            Nothing ->
+                ...    -- no verification required
+
+    Err msg -> ...
+```
+
+Default behaviour (development): the app logs the verification URL to the console. Production apps can use any email provider (SendGrid, SES, Mailgun) via Sky's HTTP client or Go FFI.
+
+### Custom User Fields
+
+For apps with custom user fields (e.g., username, avatar), use `Auth.hashPassword`/`Auth.verifyPassword` for the crypto while keeping your own users table for app-specific columns. See `examples/12-skyvote` and `examples/08-notes-app` for this pattern.
 
 ## Contributing
 
