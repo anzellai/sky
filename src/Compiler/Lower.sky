@@ -25,6 +25,7 @@ type alias LowerCtx =
     , exposedStdlib : Dict.Dict String String
     , paramNames : Set.Set String
     , typedDecls : Dict.Dict String Scheme
+    , caseDepth : Int
     }
 
 
@@ -45,6 +46,7 @@ emptyCtx =
     , exposedStdlib = Dict.empty
     , paramNames = Set.empty
     , typedDecls = Dict.empty
+    , caseDepth = 0
     }
 
 
@@ -2284,26 +2286,60 @@ extractTupleBindings tmpName items idx tupleSize =
 lowerCase : LowerCtx -> Expression -> (List CaseBranch) -> GoExpr
 lowerCase ctx subject branches =
     let
+        deepCtx = { ctx | caseDepth = ctx.caseDepth + 1 }
         subjectExpr = lowerExpr ctx subject
-        switchCode = lowerCaseToSwitch ctx subjectExpr branches
+        switchCode = lowerCaseToSwitch deepCtx subjectExpr branches
     in
         GoCallExpr (GoFuncLit [] (GoRawExpr switchCode)) []
+
+
+caseSubjectVar : Int -> String
+caseSubjectVar depth =
+    if depth <= 1 then
+        "__subject"
+
+    else
+        "__subject_" ++ String.fromInt depth
+
+
+caseTagVar : Int -> String
+caseTagVar depth =
+    if depth <= 1 then
+        "__sky_tag"
+
+    else
+        "__sky_tag_" ++ String.fromInt depth
+
+
+caseNameVar : Int -> String
+caseNameVar depth =
+    if depth <= 1 then
+        "__sky_name"
+
+    else
+        "__sky_name_" ++ String.fromInt depth
 
 
 lowerCaseToSwitch : LowerCtx -> GoExpr -> (List CaseBranch) -> String
 lowerCaseToSwitch ctx subjectExpr branches =
     let
         subjectCode = emitGoExprInline subjectExpr
+        depth = ctx.caseDepth
+        subVar = caseSubjectVar depth
+        tagVar = caseTagVar depth
+        nameVar = caseNameVar depth
         hasCustomAdtBranch = List.any (branchIsCustomAdt) branches
         tagExtract =
             if hasCustomAdtBranch then
-                "__sky_tag := sky_adtTag(__subject); __sky_name := sky_getSkyName(__subject); _ = __sky_name; "
-            
+                tagVar ++ " := sky_adtTag(" ++ subVar ++ "); " ++ nameVar ++ " := sky_getSkyName(" ++ subVar ++ "); _ = " ++ nameVar ++ "; "
+
             else
                 ""
     in
         String.join ""
-            [ "func() any { __subject := "
+            [ "func() any { "
+            , subVar
+            , " := "
             , subjectCode
             , "; "
             , tagExtract
@@ -2341,8 +2377,9 @@ emitBranchCode ctx pair =
                 | paramNames =
                     Set.union ctx.paramNames (Set.fromList patVarNames)
             }
-        condition = patternToCondition branchCtx "__subject" branch.pattern
-        bindings = patternToBindings branchCtx "__subject" branch.pattern
+        subVar = caseSubjectVar ctx.caseDepth
+        condition = patternToCondition branchCtx subVar branch.pattern
+        bindings = patternToBindings branchCtx subVar branch.pattern
         bodyCode = exprToGoString branchCtx branch.body
     in
         String.join ""
@@ -2402,12 +2439,27 @@ patternToCondition ctx varName pat =
                         let
                             tagIdx = lookupCtorTagIndex ctx ctorName
                         in
-                            if varName == "__subject" then
-                                "(__sky_name == \""
-                                    ++ ctorName
-                                        ++ "\" || (__sky_name == \"\" && __sky_tag == "
-                                            ++ String.fromInt tagIdx ++ "))"
-                            
+                            if String.startsWith "__subject" varName then
+                                let
+                                    suffix = String.slice 9 (String.length varName) varName
+                                    tagVar =
+                                        if String.isEmpty suffix then
+                                            "__sky_tag"
+
+                                        else
+                                            "__sky_tag" ++ suffix
+                                    nameVar =
+                                        if String.isEmpty suffix then
+                                            "__sky_name"
+
+                                        else
+                                            "__sky_name" ++ suffix
+                                in
+                                    "(" ++ nameVar ++ " == \""
+                                        ++ ctorName
+                                            ++ "\" || (" ++ nameVar ++ " == \"\" && " ++ tagVar ++ " == "
+                                                ++ String.fromInt tagIdx ++ "))"
+
                             else
                                 "(sky_getSkyName("
                                     ++ varName
