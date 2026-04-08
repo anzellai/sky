@@ -291,16 +291,147 @@ lowerCamelCase s =
 
 mapGoFuncType : String -> String
 mapGoFuncType goType =
-    if goType == "func()" then
-        -- Unrecognised function type — map to Any
-        -- Future: parse param/return types and generate proper Sky function type
-        "Any"
-    
-    else if goType == "func() error" then
-        "Any"
-    
+    let
+        inner = String.slice 4 (String.length goType) goType
+        parenClose = findMatchingParen inner 1 1
+        paramStr = String.slice 1 parenClose inner
+        returnStr = String.trim (String.slice (parenClose + 1) (String.length inner) inner)
+        params = parseGoFuncParams paramStr
+        returnType = parseGoReturnType returnStr
+    in
+        buildSkyFuncType params returnType
+
+
+findMatchingParen : String -> Int -> Int -> Int
+findMatchingParen s pos depth =
+    if pos >= String.length s then
+        pos
+
     else
-        "Any"
+        let
+            ch = String.slice pos (pos + 1) s
+        in
+            if ch == "(" then
+                findMatchingParen s (pos + 1) (depth + 1)
+
+            else if ch == ")" && depth <= 1 then
+                pos
+
+            else if ch == ")" then
+                findMatchingParen s (pos + 1) (depth - 1)
+
+            else
+                findMatchingParen s (pos + 1) depth
+
+
+parseGoFuncParams : String -> List String
+parseGoFuncParams paramStr =
+    let
+        trimmed = String.trim paramStr
+    in
+        if String.isEmpty trimmed then
+            []
+
+        else
+            List.map (\p -> mapGoTypeToSky (extractParamType (String.trim p)))
+                (splitGoParams trimmed 0 0 0 [])
+
+
+extractParamType : String -> String
+extractParamType param =
+    let
+        parts = String.split " " param
+    in
+        if List.length parts >= 2 then
+            Maybe.withDefault param (List.head (List.reverse parts))
+
+        else
+            param
+
+
+splitGoParams : String -> Int -> Int -> Int -> (List String) -> List String
+splitGoParams s pos depth segStart acc =
+    if pos >= String.length s then
+        let
+            last = String.trim (String.slice segStart pos s)
+        in
+            if String.isEmpty last then
+                List.reverse acc
+
+            else
+                List.reverse (last :: acc)
+
+    else
+        let
+            ch = String.slice pos (pos + 1) s
+        in
+            if ch == "(" then
+                splitGoParams s (pos + 1) (depth + 1) segStart acc
+
+            else if ch == ")" then
+                splitGoParams s (pos + 1) (depth - 1) segStart acc
+
+            else if ch == "," && depth == 0 then
+                let
+                    seg = String.trim (String.slice segStart pos s)
+                in
+                    splitGoParams s (pos + 1) 0 (pos + 1) (seg :: acc)
+
+            else
+                splitGoParams s (pos + 1) depth segStart acc
+
+
+parseGoReturnType : String -> String
+parseGoReturnType returnStr =
+    if String.isEmpty returnStr then
+        "Unit"
+
+    else if String.startsWith "(" returnStr then
+        let
+            inner = String.slice 1 (String.length returnStr - 1) returnStr
+            parts = splitGoParams inner 0 0 0 []
+        in
+            parseGoReturnTuple parts
+
+    else
+        mapGoTypeToSky returnStr
+
+
+parseGoReturnTuple : (List String) -> String
+parseGoReturnTuple parts =
+    let
+        nonError = List.filter (\p -> String.trim p /= "error") parts
+        hasError = List.any (\p -> String.trim p == "error") parts
+    in
+        if hasError && List.isEmpty nonError then
+            "Unit"
+
+        else if hasError then
+            case nonError of
+
+                t :: [] ->
+                    mapGoTypeToSky (String.trim t)
+
+                _ ->
+                    "Any"
+
+        else
+            case parts of
+
+                t :: [] ->
+                    mapGoTypeToSky (String.trim t)
+
+                _ ->
+                    "Any"
+
+
+buildSkyFuncType : (List String) -> String -> String
+buildSkyFuncType params returnType =
+    if List.isEmpty params then
+        returnType
+
+    else
+        String.join " -> " (List.append params [ returnType ])
 
 
 typeMapperDummy_ = ""

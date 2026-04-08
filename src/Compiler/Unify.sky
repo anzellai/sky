@@ -5,6 +5,7 @@ import Sky.Core.Dict as Dict
 import Sky.Core.Set as Set
 import Sky.Core.List as List
 import Sky.Core.String as String
+import Sky.Core.Char as Char
 import Sky.Core.Ref as Ref
 import Compiler.Types exposing (..)
 
@@ -88,13 +89,16 @@ unifyConst nameA t1 t2 =
         TConst nameB ->
             if nameA == nameB then
                 Ok emptySub
-            
+
             else if isUniversalUnifier nameA || isUniversalUnifier nameB then
                 Ok emptySub
-            
+
             else if isQualifiedMatch nameA nameB then
                 Ok emptySub
-            
+
+            else if isOpaqueFfiType nameA && isOpaqueFfiType nameB then
+                Ok emptySub
+
             else
                 Err ("Type mismatch: " ++ nameA ++ " vs " ++ nameB)
         
@@ -313,6 +317,35 @@ isQualifiedMatch nameA nameB =
 isUniversalUnifier : String -> Bool
 isUniversalUnifier name =
     name == "JsValue" || name == "Foreign" || name == "Any"
+
+
+isOpaqueFfiType : String -> Bool
+isOpaqueFfiType name =
+    not (isSkyBuiltinType name)
+        && not (String.isEmpty name)
+        && Char.isUpper (js (String.slice 0 1 name))
+
+
+isSkyBuiltinType : String -> Bool
+isSkyBuiltinType name =
+    name == "Int"
+        || name == "Float"
+        || name == "String"
+        || name == "Bool"
+        || name == "Char"
+        || name == "Unit"
+        || name == "Bytes"
+        || name == "Error"
+        || name == "List"
+        || name == "Dict"
+        || name == "Set"
+        || name == "Array"
+        || name == "Maybe"
+        || name == "Result"
+        || name == "Cmd"
+        || name == "Sub"
+        || name == "VNode"
+        || name == "Task"
 
 
 isNumericCoercion : String -> String -> Bool
