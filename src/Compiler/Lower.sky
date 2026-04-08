@@ -1667,6 +1667,9 @@ lowerQualified ctx parts =
         else if qualName == "Auth.signToken" then
             GoIdent "sky_authSignToken"
 
+        else if qualName == "Auth.verifyToken" then
+            GoIdent "sky_authVerifyToken"
+
         else if List.length parts == 2 then
             let
                 modPart =

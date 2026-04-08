@@ -689,6 +689,7 @@ getStdlibExports modName =
         , "verifyPassword"
         , "setRole"
         , "signToken"
+        , "verifyToken"
         ]
 
     else

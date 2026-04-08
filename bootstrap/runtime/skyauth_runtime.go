@@ -23,6 +23,7 @@ import (
 type skyAuthConfig struct {
 	Method            string
 	Secret            string
+	PreviousSecrets   []string
 	BcryptCost        int
 	SessionTTL        time.Duration
 	EmailVerification bool
@@ -70,9 +71,29 @@ func init() {
 		}
 	}
 
+	// Read previous secrets for key rotation
+	var prevSecrets []string
+	if data, err := os.ReadFile("sky.toml"); err == nil {
+		if ps := skyAuthExtractToml(string(data), "[auth]", "previous_secrets"); ps != "" {
+			for _, s := range strings.Split(ps, ",") {
+				if trimmed := strings.TrimSpace(s); trimmed != "" {
+					prevSecrets = append(prevSecrets, trimmed)
+				}
+			}
+		}
+	}
+
 	// Finally override with env vars
 	if v := os.Getenv("SKY_AUTH_SECRET"); v != "" { secret = v }
 	if v := os.Getenv("SKY_AUTH_METHOD"); v != "" { method = v }
+	if v := os.Getenv("SKY_AUTH_PREVIOUS_SECRETS"); v != "" {
+		prevSecrets = nil
+		for _, s := range strings.Split(v, ",") {
+			if trimmed := strings.TrimSpace(s); trimmed != "" {
+				prevSecrets = append(prevSecrets, trimmed)
+			}
+		}
+	}
 	if v := os.Getenv("SKY_AUTH_BCRYPT_COST"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil { cost = n }
 	}
@@ -100,6 +121,7 @@ func init() {
 		skyAuthCfg = &skyAuthConfig{
 			Method:            method,
 			Secret:            secret,
+			PreviousSecrets:   prevSecrets,
 			BcryptCost:        cost,
 			SessionTTL:        time.Duration(ttlSecs) * time.Second,
 			EmailVerification: emailVer,
@@ -440,6 +462,35 @@ func sky_authSignToken(payload any) any {
 	mac := hmac.New(sha256.New, []byte(skyAuthCfg.Secret))
 	mac.Write([]byte(sky_asString(payload)))
 	return SkyOk(hex.EncodeToString(mac.Sum(nil)))
+}
+
+// sky_authVerifyToken verifies an HMAC signature against the current secret
+// and all previous secrets (for key rotation). Returns Ok payload if valid.
+func sky_authVerifyToken(payload, signature any) any {
+	if skyAuthCfg == nil || skyAuthCfg.Secret == "" {
+		return SkyErr("Auth secret not configured")
+	}
+	payloadStr := sky_asString(payload)
+	sigStr := sky_asString(signature)
+
+	// Check current secret first
+	if skyAuthCheckHMAC(payloadStr, sigStr, skyAuthCfg.Secret) {
+		return SkyOk(payloadStr)
+	}
+	// Fall back to previous secrets (key rotation)
+	for _, prevSecret := range skyAuthCfg.PreviousSecrets {
+		if skyAuthCheckHMAC(payloadStr, sigStr, prevSecret) {
+			return SkyOk(payloadStr)
+		}
+	}
+	return SkyErr("Invalid signature")
+}
+
+func skyAuthCheckHMAC(payload, signature, secret string) bool {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(signature))
 }
 
 // --- Helpers ---

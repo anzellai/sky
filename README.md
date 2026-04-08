@@ -660,7 +660,7 @@ result = Decode.decodeString userDecoder jsonString
 | `Std.Task`    | `succeed`, `fail`, `map`, `andThen`, `sequence`, `parallel`, `lazy`, `perform` |
 | `Std.Program` | `Program` type alias, `makeProgram`         |
 | `Std.Uuid`    | `v4` (UUID generation)                      |
-| `Std.Auth`    | `register`, `login`, `verify`, `logout`, `verifyEmail`, `hashPassword`, `verifyPassword`, `setRole`, `signToken` |
+| `Std.Auth`    | `register`, `login`, `verify`, `logout`, `verifyEmail`, `hashPassword`, `verifyPassword`, `setRole`, `signToken`, `verifyToken` |
 
 ### Task and Concurrency
 
@@ -1004,6 +1004,7 @@ path = "myapp.db"                  # for sqlite
 [auth]
 method = "password"                # "password" (more providers planned)
 secret = "your-secret-key"         # required: session signing key
+previous_secrets = "old-key-1,old-key-2"  # optional: previous keys for rotation
 bcrypt_cost = 12                   # optional: bcrypt work factor (default 12)
 session_ttl = "24h"                # optional: "24h", "30m", or seconds (default 24h)
 email_verification = false         # optional: require email verification (default false)
@@ -1694,12 +1695,29 @@ path = "myapp.db"
 [auth]
 method = "password"
 secret = "your-secret-key"          # required: used for session signing
+previous_secrets = "old-key-1"      # optional: previous keys for key rotation
 bcrypt_cost = 12                    # optional: bcrypt work factor (default 12)
 session_ttl = "24h"                 # optional: session lifetime (default 24h)
 email_verification = false          # optional: require email verification
 ```
 
-Environment variable overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+Environment variable overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_PREVIOUS_SECRETS`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+
+### Key Rotation
+
+To rotate the session signing key without invalidating existing sessions:
+
+1. Move the current `secret` to `previous_secrets`
+2. Set a new `secret`
+3. Restart the app
+
+```toml
+[auth]
+secret = "new-key-2026-05"
+previous_secrets = "old-key-2026-04,old-key-2026-03"
+```
+
+`Auth.signToken` always signs with the current key. `Auth.verifyToken` checks the current key first, then falls back to previous keys. Remove old keys from `previous_secrets` once all sessions signed with them have expired.
 
 ```elm
 import Std.Auth as Auth
@@ -1730,6 +1748,7 @@ Auth.hashPassword "password"        -- Ok "bcrypt-hash-string"
 Auth.verifyPassword "pw" "hash"     -- True/False
 Auth.setRole userId "admin"         -- Ok ()
 Auth.signToken "payload"            -- Ok "hmac-signature"
+Auth.verifyToken "payload" "sig"    -- Ok "payload" (checks current + previous keys)
 ```
 
 Auto-migration: `Auth.register` lazily creates `sky_users` and `sky_sessions` tables on first use. No manual schema setup required.

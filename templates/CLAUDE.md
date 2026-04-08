@@ -1127,6 +1127,7 @@ path = "myapp.db"               # for sqlite
 [auth]                          # only for Std.Auth apps
 method = "password"             # "password" (more planned)
 secret = "your-secret-key"     # required: session signing key
+previous_secrets = "old-key"   # optional: previous keys for rotation
 bcrypt_cost = 12                # optional (default 12)
 session_ttl = "24h"             # optional: "24h", "30m", or seconds
 email_verification = false      # optional (default false)
@@ -1232,12 +1233,15 @@ Configure in sky.toml:
 [auth]
 method = "password"
 secret = "your-secret-key"          # required
+previous_secrets = "old-key-1"      # optional: for key rotation
 bcrypt_cost = 12                    # optional (default 12)
 session_ttl = "24h"                 # optional (default 24h)
 email_verification = false          # optional (default false)
 ```
 
-Env var overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+Env var overrides: `SKY_AUTH_SECRET`, `SKY_AUTH_PREVIOUS_SECRETS`, `SKY_AUTH_METHOD`, `SKY_AUTH_BCRYPT_COST`, `SKY_AUTH_SESSION_TTL`, `SKY_AUTH_EMAIL_VERIFICATION`.
+
+Key rotation: move current `secret` to `previous_secrets`, set new `secret`, restart. `signToken` uses current key; `verifyToken` checks current + previous keys.
 
 When `email_verification = true`, `Auth.register` returns a `verificationToken`. Your app delivers it:
 ```elm

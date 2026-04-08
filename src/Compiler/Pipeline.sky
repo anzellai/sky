@@ -2654,6 +2654,7 @@ generateSkyAuthAliases =
             , ( "VerifyPassword", "sky_authVerifyPassword" )
             , ( "SetRole", "sky_authSetRole" )
             , ( "SignToken", "sky_authSignToken" )
+            , ( "VerifyToken", "sky_authVerifyToken" )
             ]
     in
         List.concatMap
