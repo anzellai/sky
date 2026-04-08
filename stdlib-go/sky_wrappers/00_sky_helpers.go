@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 type SkyResult struct {
@@ -711,14 +712,20 @@ func Sky_string_Repeat(n any, s any) any {
 
 func Sky_string_PadLeft(n any, ch any, s any) any {
 	str := sky_asString(s)
-	for len([]rune(str)) < sky_asInt(n) { str = sky_asString(ch) + str }
-	return str
+	runes := []rune(str)
+	target := sky_asInt(n)
+	if len(runes) >= target { return str }
+	padding := strings.Repeat(sky_asString(ch), target - len(runes))
+	return padding + str
 }
 
 func Sky_string_PadRight(n any, ch any, s any) any {
 	str := sky_asString(s)
-	for len([]rune(str)) < sky_asInt(n) { str = str + sky_asString(ch) }
-	return str
+	runes := []rune(str)
+	target := sky_asInt(n)
+	if len(runes) >= target { return str }
+	padding := strings.Repeat(sky_asString(ch), target - len(runes))
+	return str + padding
 }
 
 func Sky_string_Left(n any, s any) any {
@@ -1623,36 +1630,32 @@ func Sky_errorToString(e any) any {
 func Sky_char_IsUpper(c any) any {
 	s := sky_asString(c)
 	if len(s) == 0 { return false }
-	r := []rune(s)[0]
-	return r >= 'A' && r <= 'Z'
+	return unicode.IsUpper([]rune(s)[0])
 }
 
 func Sky_char_IsLower(c any) any {
 	s := sky_asString(c)
 	if len(s) == 0 { return false }
-	r := []rune(s)[0]
-	return r >= 'a' && r <= 'z'
+	return unicode.IsLower([]rune(s)[0])
 }
 
 func Sky_char_IsAlpha(c any) any {
 	s := sky_asString(c)
 	if len(s) == 0 { return false }
-	r := []rune(s)[0]
-	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+	return unicode.IsLetter([]rune(s)[0])
 }
 
 func Sky_char_IsDigit(c any) any {
 	s := sky_asString(c)
 	if len(s) == 0 { return false }
-	r := []rune(s)[0]
-	return r >= '0' && r <= '9'
+	return unicode.IsDigit([]rune(s)[0])
 }
 
 func Sky_char_IsAlphaNum(c any) any {
 	s := sky_asString(c)
 	if len(s) == 0 { return false }
 	r := []rune(s)[0]
-	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
 }
 
 func Sky_char_ToUpper(c any) any {
