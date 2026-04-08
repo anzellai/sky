@@ -1439,7 +1439,7 @@ doUpgrade latest =
         isDev = current == "dev" || String.contains "-dev" current
     in
         if not isDev && compareVersions latest current <= 0 then
-            println ("Already up to date (v" ++ current ++ ").")
+            println ("Already up to date (" ++ current ++ ").")
         
         else
             performUpgrade latest current
