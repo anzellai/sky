@@ -75,6 +75,26 @@ main =
 
 Note: `/=` is Elm-compatible not-equal (alias for `!=`). `//` is integer division (always returns `Int`). Both forms are supported.
 
+### Multiline Strings
+
+Triple-quoted strings preserve newlines. Interpolation uses double braces `{{expr}}`:
+
+```elm
+html =
+    """<div class="card">
+    <h1>{{title}}</h1>
+    <p>{{description}}</p>
+</div>"""
+
+sql =
+    """CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL
+    )"""
+```
+
+Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpolation expressions support identifiers, field access, qualified names, and function calls.
+
 ### Patterns
 
 Literals, constructors (`Just x`, `Ok v`, `Err e`), tuples `(a, b)`, lists `[]`, `[x]`, `x :: xs`, wildcards `_`, as-patterns `Just x as original`, nested `Ok (Just x)`
