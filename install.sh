@@ -154,9 +154,9 @@ main() {
 
     printf "\n${GREEN}${BOLD}Sky v${VERSION} installed successfully!${NC}\n\n"
     echo "  Get started:"
-    echo "    mkdir my-project && cd my-project"
-    echo "    mkdir -p src"
-    echo "    sky run src/Main.sky"
+    echo "    sky init my-app"
+    echo "    cd my-app"
+    echo "    sky run"
     echo ""
     echo "  The LSP is built-in: sky lsp"
     echo ""
