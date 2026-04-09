@@ -46,3 +46,4 @@ examples/13-skyshop/assets/
 
 # Bootstrap build artifact (source is kept, binary is not)
 bootstrap/app
+sky-lang.org
