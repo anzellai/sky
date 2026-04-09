@@ -53,6 +53,7 @@ Sky is named for having no limits. It's experimental, opinionated, and built for
 - [CLI Reference](#cli-reference)
 - [Editor Integration](#editor-integration)
 - [Examples](#examples)
+- [Built with Sky](#built-with-sky)
 - [Architecture](#architecture)
 - [Compiler Optimisation Journey](#compiler-optimisation-journey)
 - [Contributing](#contributing)
@@ -1290,6 +1291,21 @@ cd examples/01-hello-world
 sky build src/Main.sky
 ./sky-out/app
 ```
+
+---
+
+## Built with Sky
+
+Standalone projects written in Sky and shipped as production binaries or libraries. Each one is its own repository with its own release cycle.
+
+| Project | Description | Type |
+|---|---|---|
+| [**sky-env**](https://github.com/anzellai/sky-env) | Encrypted environment variable manager. AES-256-CBC SQLite, portable across machines, six commands (`init`/`import`/`print`/`set`/`list`/`diff`). Single 8MB binary, no runtime deps beyond `openssl`. | CLI tool |
+| [**sky-log**](https://github.com/anzellai/sky-log) | Real-time log viewer built with Sky.Live. Server-driven UI over SSE, regex filtering, dark/light theme. | Web app |
+| [**sky-tailwind**](https://github.com/anzellai/sky-tailwind) | Tailwind CSS utility classes for Sky.Live apps via `Std.Css`. Type-safe, composable, zero-runtime — class names checked at compile time. | Library |
+| [**tree-sitter-sky**](https://github.com/anzellai/tree-sitter-sky) | Tree-sitter grammar for Sky. Powers syntax highlighting in editors that use tree-sitter (Neovim, Helix, Zed, Emacs). | Tooling |
+
+> Building something with Sky? Open an issue or PR to add it here.
 
 ---
 
