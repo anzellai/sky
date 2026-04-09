@@ -165,8 +165,8 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
 | `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy | Task err a |
-| `Sky.Core.File` | readFile, writeFile, mkdirAll, readDir, exists | Task String a |
-| `Sky.Core.Process` | run, exit, getCwd, loadEnv | Task String a |
+| `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy | Task String a |
+| `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task String a |
 | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task String a |
 | `Sky.Core.Time` | now, unixMillis, sleep | Task String Int |
 | `Sky.Core.Http` | get, post, request | Task String Response |
@@ -330,34 +330,32 @@ All issues below are FIXED — listed for context if debugging regressions:
 - **Lexer** — `alias` removed from keywords (contextual only)
 - **Type safety audit** — 33 gaps fixed: case fallthrough panics, FFI panic recovery, float-aware arithmetic, rune-based strings, numeric sorting, typed FFI boundaries, session ADT rebuilding, exhaustiveness checking
 
-**Coding constraints**:
-- Never write nested `case` inside a `case` branch — extract to helper functions.
-
 ### Known Limitations (v0.7.x)
 
 These are current compiler limitations users must work around:
 
-1. **No nested `case...of`** — The lowerer generates broken Go (nested IIFEs with variable capture issues) when `case` expressions appear inside `case` branches. **Workaround**: extract the inner `case` into a separate helper function. This is the single most impactful limitation.
-2. **No anonymous records in function signatures** — Record types must be defined as type aliases; inline `{ field : Type }` in annotations is not supported.
-3. **No higher-kinded types** — No `Functor`, `Monad`, etc. Use concrete types.
-4. **No `where` clauses** — Use `let...in` instead.
-5. **No custom operators** — Only built-in operators (`|>`, `<|`, `++`, `::`, etc.).
-6. **Negative literal arguments need parentheses** — `f -1` parses as subtraction; use `f (-1)`.
-7. **FFI callback wrapping is limited** — Only `func(ResponseWriter, *Request)` HTTP handlers are auto-wrapped. Other Go callback signatures may require manual wrappers.
-8. **`exposing (Constructor(..))` breaks cross-module qualified calls** — Importing ADT constructors via `exposing (Colour(..))` in a dependency module causes the lowerer to misresolve qualified calls like `Move.foo` as record field access (`move.foo`) instead of `Chess_Move_Foo`. **Workaround**: use `import Foo as Foo` without `exposing` constructors, and reference values via lowercase accessor functions defined in the source module.
-9. **Cross-module zero-arg ADT constructors emitted as function calls** — When a zero-arg constructor like `King` is referenced cross-module as `Piece.King`, the lowerer emits `Chess_Piece_King()` (function call) instead of `Chess_Piece_King` (value). **Workaround**: define lowercase accessor functions (`king = King`) in the defining module and use `Piece.king` instead.
-10. **`Dict.toList` returns string keys** — Sky's `Dict` uses `map[string]any` internally, so `Dict.toList` returns string keys even for `Dict Int v`. Arithmetic on these keys silently produces 0. **Workaround**: iterate over known key ranges with `Dict.get` instead of using `Dict.toList`.
-11. **Non-exhaustive case expressions** — FIXED. Now a compile error (was a dead binding in Infer.sky — exhaustiveness result computed but never checked). Shows missing patterns with source context.
-12. **`sky check` does not understand Go interface subtyping** — The type checker cannot verify that a concrete Go type (e.g. `Label`) satisfies a Go interface (e.g. `CanvasObject`). Calls like `Fyne.windowSetContent window label` fail check but compile and run correctly. **No workaround** — this requires the checker to model Go interface satisfaction.
-13. **`sky check` does not understand Go callback function types** — FFI functions expecting `func(ResponseWriter, *Request)` cannot unify with Sky function types `Writer -> Request -> Unit`. Calls like `Mux.routerHandleFunc router "/" handler` fail check but the lowerer wraps handlers correctly at runtime. **No workaround** — requires callback type mapping in the checker.
-14. **Zero-arg FFI functions require no `()` argument** — FFI bindings for zero-arg Go functions (e.g. `Uuid.newString`, `FyneApp.new`) declare the return type directly. Calling them with `()` causes a type error. **Use**: `Uuid.newString` not `Uuid.newString ()`.
-15. **Multi-module stdlib alias collision** — FIXED. `isStdlibCallee` now checks `ctx.importAliases` to distinguish stdlib from local modules, rather than relying on a hardcoded alias whitelist. `import Std.Db as Db` alongside `import Lib.Db as Db` works correctly.
+1. **No anonymous records in function signatures** — Record types must be defined as type aliases; inline `{ field : Type }` in annotations is not supported.
+2. **No higher-kinded types** — No `Functor`, `Monad`, etc. Use concrete types. (Intentional — Hindley-Milner only.)
+3. **No `where` clauses** — Use `let...in` instead. (Intentional.)
+4. **No custom operators** — Only built-in operators (`|>`, `<|`, `++`, `::`, etc.). (Intentional.)
+5. **Negative literal arguments need parentheses** — `f -1` parses as `f - 1` (subtraction). Use `f (-1)` — matches Elm's behaviour.
+6. **`exposing (Constructor(..))` with `as` alias breaks module loading** — `import Foo as F exposing (Type(..))` causes the loader to misresolve qualified calls. **Workaround**: use `import Foo exposing (..)` without the `as` alias, OR use `import Foo as F` without `exposing` constructors and reference values via lowercase accessor functions.
+7. **`Dict.toList` returns string keys** — Sky's `Dict` uses `map[string]any` internally, so `Dict.toList` returns string keys even for `Dict Int v`. Arithmetic on these keys silently produces 0. **Workaround**: iterate over known key ranges with `Dict.get` instead of using `Dict.toList`.
+8. **`sky check` does not fully model Go interface satisfaction** — Opaque FFI types unify with each other (v0.7.21 fix), but the checker still cannot verify that a concrete Go type (e.g. `Label`) satisfies a named Go interface (e.g. `CanvasObject`). Calls like `Fyne.windowSetContent window label` may fail `sky check` but compile and run correctly.
+9. **Zero-arg FFI functions require no `()` argument** — FFI bindings for zero-arg Go functions (e.g. `Uuid.newString`, `FyneApp.new`) declare the return type directly. Calling them with `()` causes a type error. **Use**: `Uuid.newString` not `Uuid.newString ()`.
 
-30. **Lexer: `from` keyword blocks parameter names** — FIXED. Same class of bug as #22 (`alias`). `isKeyword` in Token.sky listed `from` as a keyword, causing the lexer to emit `TkKeyword` instead of `TkIdentifier`. Functions with `from` as a parameter name silently failed to parse because `parseFunParams` only accepts `TkIdentifier` tokens. `parseDeclsHelper` caught the error and called `skipToNextDecl`, dropping the function entirely. Fix: remove `from` from `isKeyword` — it's not used as a keyword in any parser dispatch. Impact: ALL functions using `from` as a parameter were silently dropped in dependency modules. This was the root cause of the chess example build failures; the reported cons pattern bug (#32 below) was also a symptom.
+### Recently Fixed (v0.7.x — listed for regression context)
 
-31. **Parser: negative literals require parentheses as function arguments** — NOT A BUG (Elm convention). `f -1` is parsed as `f - 1` (subtraction). Use `f (-1)` for negative arguments — this matches Elm's behaviour. Negative literals work without parentheses in `let` bindings (`x = -1`) and as standalone expressions.
+- **Nested `case...of`** — FIXED in v0.7.21. `caseDepth` counter in `LowerCtx` generates unique `__subject_N` variables per nesting level. Triple-nested case expressions compile and run correctly.
+- **FFI callback wrapping** — FIXED in v0.7.21. `mapGoFuncType` parses arbitrary Go callback signatures (not just `func(ResponseWriter, *Request)`).
+- **`sky check` Go callback function types** — FIXED in v0.7.21. Callback parsing in `TypeMapper.sky` handles `func(...)` types properly.
+- **Non-exhaustive case expressions** — FIXED. Now a compile error (was a dead binding in Infer.sky). Shows missing patterns with source context.
+- **Multi-module stdlib alias collision** — FIXED. `isStdlibCallee` checks `ctx.importAliases` instead of a hardcoded whitelist. `import Std.Db as Db` alongside `import Lib.Db as Db` works.
+- **Lexer: `from` keyword blocked parameter names** — FIXED. Same class as the earlier `alias` bug. Removed `from` from `isKeyword` in Token.sky. Was the root cause of the cons-pattern-in-recursive-functions symptom.
+- **`bin` field in sky.toml respected** — FIXED. `cmdBuild`, `cmdRun`, and the typed-build path now read `bin` from sky.toml and produce the configured binary path (defaults to `app`).
+- **Cross-module zero-arg ADT constructors emitted as function calls** — FIXED. `lowerQualifiedImport` in Lower.sky now consults `ctx.importedConstructors` and emits `Piece_King` (value) for zero-arg constructors instead of `Piece_King()` (call). Multi-arg constructors retain the existing call form so `Piece.Box 42` still works.
 
-32. **Lowerer: cons pattern in recursive functions** — FIXED (was symptom of #30). Cons patterns (`x :: rest`) work correctly in both Main and dependency modules. The earlier failures were caused by functions containing `from` as a parameter being silently dropped by the `from` keyword bug.
+**Coding constraints**: none active. (The "no nested case" rule is no longer required as of v0.7.21.)
 
 ### Techniques from TS Compiler (to port)
 

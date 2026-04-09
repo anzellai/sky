@@ -448,11 +448,15 @@ indexedMap : (Int -> a -> b) -> Array a -> Array b
 ```elm
 readFile : String -> Result Error String
 writeFile : String -> String -> Result Error Unit
+append : String -> String -> Result Error Unit       -- creates file if missing, appends otherwise
 exists : String -> Bool
 remove : String -> Result Error Unit
 mkdirAll : String -> Result Error Unit
 readDir : String -> Result Error (List String)
 isDir : String -> Bool
+tempFile : String -> Result Error String             -- create temp file with prefix, returns path
+tempDir : String -> Result Error String              -- create temp dir with prefix, returns path
+copy : String -> String -> Result Error Unit
 ```
 
 ### Sky.Core.Process
