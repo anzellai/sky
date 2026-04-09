@@ -739,7 +739,7 @@ handlePromotion kind colour to board =
         row = to // 8
     in
         if kind == Pawn && (row == 0 || row == 7) then
-            Board.setPiece to (makePiece Queen colour) board
+            Board.setPiece to (Piece Queen colour) board
 
         else
             board

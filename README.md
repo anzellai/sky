@@ -1300,7 +1300,7 @@ Standalone projects written in Sky and shipped as production binaries or librari
 
 | Project | Description | Type |
 |---|---|---|
-| [**sky-env**](https://github.com/anzellai/sky-env) | Encrypted environment variable manager. AES-256-CBC SQLite, portable across machines, six commands (`init`/`import`/`print`/`set`/`list`/`diff`). Single 8MB binary, no runtime deps beyond `openssl`. | CLI tool |
+| [**sky-env**](https://github.com/anzellai/sky-env) | Encrypted environment variable manager. AES-256-CBC SQLite, portable across machines, seven commands (`init`/`import`/`print`/`set`/`list`/`diff`/`rotate`). `rotate` re-encrypts every value under a fresh secret with transactional safety (in-memory validation, timestamped backup, atomic write-back). Single 8MB binary, no runtime deps beyond `openssl`. | CLI tool |
 | [**sky-log**](https://github.com/anzellai/sky-log) | Real-time log viewer built with Sky.Live. Server-driven UI over SSE, regex filtering, dark/light theme. | Web app |
 | [**sky-tailwind**](https://github.com/anzellai/sky-tailwind) | Tailwind CSS utility classes for Sky.Live apps via `Std.Css`. Type-safe, composable, zero-runtime — class names checked at compile time. | Library |
 | [**tree-sitter-sky**](https://github.com/anzellai/tree-sitter-sky) | Tree-sitter grammar for Sky. Powers syntax highlighting in editors that use tree-sitter (Neovim, Helix, Zed, Emacs). | Tooling |

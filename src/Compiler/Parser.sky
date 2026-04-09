@@ -21,11 +21,14 @@ dispatchDeclaration first second state =
     else if first == "type" then
         parseTypeDecl state
     
-    else if matchKind TkIdentifier state
+    else if (matchKind TkIdentifier state || matchKind TkUpperIdentifier state)
         && tokenKindEq (peekAt1Kind state) TkColon then
         parseTypeAnnot state
-    
+
     else if matchKind TkIdentifier state then
+        parseFunDecl state
+
+    else if matchKind TkUpperIdentifier state then
         parseFunDecl state
     
     else
@@ -96,12 +99,118 @@ parse tokens =
         state = initState (filterLayout tokens)
     in
         case parseModule state of
-            
+
             Ok ( mod, _ ) ->
-                Ok mod
-            
+                Ok (elaborateModule mod)
+
             Err e ->
                 Err e
+
+
+-- Post-parse elaboration: synthesize a constructor function for every
+-- record-typed `type alias` so users can write `Result.map3 User a b c`
+-- instead of declaring a separate `makeUser` helper. Skips synthesis if
+-- the user has already defined a value with the same name.
+elaborateModule : Module -> Module
+elaborateModule mod =
+    let
+        existing = collectValueDeclNames mod.declarations
+        synthesized =
+            List.concatMap (synthesizeRecordCtor existing) mod.declarations
+    in
+        { mod | declarations = List.append mod.declarations synthesized }
+
+
+collectValueDeclNames : (List Declaration) -> List String
+collectValueDeclNames decls =
+    List.filterMap valueDeclName decls
+
+
+valueDeclName : Declaration -> Maybe String
+valueDeclName decl =
+    case decl of
+
+        FunDecl name _ _ _ ->
+            Just name
+
+        TypeAnnotDecl name _ _ ->
+            Just name
+
+        _ ->
+            Nothing
+
+
+synthesizeRecordCtor : (List String) -> Declaration -> List Declaration
+synthesizeRecordCtor existing decl =
+    case decl of
+
+        TypeAliasDecl name typeParams body span ->
+            case body of
+
+                RecordTypeExpr fields _ ->
+                    if listMember name existing then
+                        []
+
+                    else
+                        [ buildCtorAnnot name typeParams fields span
+                        , buildCtorFun name fields span
+                        ]
+
+                _ ->
+                    []
+
+        _ ->
+            []
+
+
+listMember : String -> (List String) -> Bool
+listMember needle items =
+    case items of
+
+        [] ->
+            False
+
+        x :: xs ->
+            if x == needle then
+                True
+
+            else
+                listMember needle xs
+
+
+buildCtorAnnot : String -> (List String) -> (List NamedType) -> SourceSpan -> Declaration
+buildCtorAnnot name typeParams fields span =
+    let
+        resultType =
+            TypeRef [ name ]
+                (List.map (\p -> TypeVar p span) typeParams)
+                span
+        funType = buildFunType fields resultType span
+    in
+        TypeAnnotDecl name funType span
+
+
+buildFunType : (List NamedType) -> TypeExpr -> SourceSpan -> TypeExpr
+buildFunType fields resultType span =
+    case fields of
+
+        [] ->
+            resultType
+
+        f :: rest ->
+            FunType f.type_ (buildFunType rest resultType span) span
+
+
+buildCtorFun : String -> (List NamedType) -> SourceSpan -> Declaration
+buildCtorFun name fields span =
+    let
+        params = List.map (\f -> PVariable f.name span) fields
+        recordExpr =
+            RecordExpr
+                (List.map (\f -> { name = f.name , value = IdentifierExpr f.name span }) fields)
+                span
+    in
+        FunDecl name params recordExpr span
 
 
 parseModule : ParserState -> Result String (Module, ParserState)
