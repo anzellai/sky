@@ -21,7 +21,7 @@ main =
 
 Sky compiles to Go. You get a single binary that runs your fullstack app -- API server, database access, and server-rendered interactive UI -- all from one codebase, one language, one deployment artifact.
 
-The compiler, CLI, formatter, and LSP are all **self-hosted** -- written in Sky itself, compiled to a ~4MB native Go binary. Zero Node.js/TypeScript/npm dependencies. The compiler bootstraps through 3+ generations of self-compilation.
+The compiler, CLI, formatter, and LSP are all **self-hosted** -- written in Sky itself, compiled to a ~6MB native Go binary. Zero Node.js/TypeScript/npm dependencies. The compiler bootstraps through 3+ generations of self-compilation.
 
 ### Why Sky exists
 
@@ -1302,7 +1302,7 @@ source.sky -> lexer -> layout filtering -> parser -> AST -> module graph -> type
 ### Source Layout (Self-Hosted Sky Compiler)
 
 ```
-src/                              -- Sky compiler (self-hosted, 34 modules, ~4MB binary)
+src/                              -- Sky compiler (self-hosted, 34 modules, ~6MB binary)
   Main.sky                        -- CLI entry (build/run/check/fmt/add/install/update/upgrade/lsp/clean)
   Compiler/                       -- 21 modules: lexer, parser, type checker, lowerer, emitter
     Lexer.sky, Parser.sky, ParserExpr.sky, ParserPattern.sky
@@ -1331,7 +1331,7 @@ examples/                         -- 17 example projects
 - **Go as backend** -- compiles to readable Go code, leverages Go's toolchain and ecosystem
 - **Auto-generated FFI** -- Go packages introspected at build time; type-safe Task-wrapped wrappers generated automatically
 - **Pointer safety** -- Go `*primitive` -> `Maybe T`, opaque struct pointers are transparent handles
-- **~4MB native binary** -- no Node.js, no npm, no TypeScript runtime. Just Go
+- **~6MB native binary** -- no Node.js, no npm, no TypeScript runtime. Just Go
 
 ---
 

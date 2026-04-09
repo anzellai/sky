@@ -23,7 +23,7 @@ FFI boundary mapping: Go `(T, error)` → `Result String T` | Go `error` → `Re
 
 ## Project Overview
 
-Sky is a pure functional language (Elm-inspired) compiling to Go. Self-hosted compiler, CLI, formatter, LSP, FFI generator — ~4MB native binary. Zero Node.js/TypeScript dependencies.
+Sky is a pure functional language (Elm-inspired) compiling to Go. Self-hosted compiler, CLI, formatter, LSP, FFI generator — ~6MB native binary. Zero Node.js/TypeScript dependencies.
 
 ## Architecture
 

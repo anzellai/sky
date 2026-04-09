@@ -1,6 +1,6 @@
 # CLAUDE.md — Sky Language Project
 
-This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is fully self-hosted (written in Sky, ~4MB native binary, zero Node/TypeScript dependencies).
+This is a [Sky](https://github.com/anzellai/sky) project. Sky is a pure functional language inspired by Elm, compiling to Go. The compiler is fully self-hosted (written in Sky, ~6MB native binary, zero Node/TypeScript dependencies).
 
 **Core principle: if it compiles, it works.** All side effects flow through `Task`. No runtime panics, no nil leakage, no partial bindings.
 
