@@ -106,18 +106,6 @@ func init() {
 		if method == "" { method = "password" }
 		if cost == 0 { cost = 12 }
 		if ttlSecs == 0 { ttlSecs = 86400 }
-		// Also init database if not already connected
-		if skyDbGetDefault() == nil {
-			if data, err := os.ReadFile("sky.toml"); err == nil {
-				content := string(data)
-				driver := skyAuthExtractToml(content, "[database]", "driver")
-				path := skyAuthExtractToml(content, "[database]", "path")
-				if path == "" { path = skyAuthExtractToml(content, "[database]", "url") }
-				if driver != "" && path != "" {
-					skyDbAutoConnect(driver, path)
-				}
-			}
-		}
 		skyAuthCfg = &skyAuthConfig{
 			Method:            method,
 			Secret:            secret,
@@ -193,6 +181,18 @@ func skyAuthInit(method, secret string, bcryptCost int, sessionTTLSecs int, emai
 func skyAuthEnsureTables() {
 	if skyAuthTablesCreated {
 		return
+	}
+	// Try to connect database if not already connected
+	if skyDbGetDefault() == nil {
+		if data, err := os.ReadFile("sky.toml"); err == nil {
+			content := string(data)
+			driver := skyAuthExtractToml(content, "[database]", "driver")
+			path := skyAuthExtractToml(content, "[database]", "path")
+			if path == "" { path = skyAuthExtractToml(content, "[database]", "url") }
+			if driver != "" && path != "" {
+				skyDbAutoConnect(driver, path)
+			}
+		}
 	}
 	conn := skyDbGetDefault()
 	if conn == nil {
