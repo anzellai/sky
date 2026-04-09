@@ -1243,6 +1243,161 @@ buildStdlibEnv =
                             ]
                         )
                 } )
+                , ( "Decode.string", mono (TApp (TConst "Decoder") [ TConst "String" ]) )
+                , ( "Decode.int", mono (TApp (TConst "Decoder") [ TConst "Int" ]) )
+                , ( "Decode.float", mono (TApp (TConst "Decoder") [ TConst "Float" ]) )
+                , ( "Decode.bool", mono (TApp (TConst "Decoder") [ TConst "Bool" ]) )
+                , ( "Decode.succeed", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TVar 0 (Just "a"))
+                        (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                } )
+                , ( "Decode.fail", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TConst "String")
+                        (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                } )
+                , ( "Decode.field", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TConst "String")
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                        )
+                } )
+                , ( "Decode.at", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TApp (TConst "List") [ TConst "String" ])
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                        )
+                } )
+                , ( "Decode.list", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                        (
+                        TApp (TConst "Decoder")
+                            [ TApp (TConst "List") [ TVar 0 (Just "a") ] ]
+                        )
+                } )
+                , ( "Decode.nullable", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                        (
+                        TApp (TConst "Decoder")
+                            [ TApp (TConst "Maybe") [ TVar 0 (Just "a") ] ]
+                        )
+                } )
+                , ( "Decode.oneOf", { quantified = [ 0 ]
+                , type_ =
+                    TFun
+                        (
+                        TApp (TConst "List")
+                            [ TApp (TConst "Decoder") [ TVar 0 (Just "a") ] ]
+                        )
+                        (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                } )
+                , ( "Decode.map", { quantified = [ 0 , 1 ]
+                , type_ =
+                    TFun (TFun (TVar 0 (Just "a")) (TVar 1 (Just "b")))
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                        )
+                } )
+                , ( "Decode.map2", { quantified = [ 0 , 1 , 2 ]
+                , type_ =
+                    TFun
+                        (
+                        TFun (TVar 0 (Just "a"))
+                            (TFun (TVar 1 (Just "b")) (TVar 2 (Just "c")))
+                        )
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (
+                            TFun (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                                (TApp (TConst "Decoder") [ TVar 2 (Just "c") ])
+                            )
+                        )
+                } )
+                , ( "Decode.map3", { quantified = [ 0 , 1 , 2 , 3 ]
+                , type_ =
+                    TFun
+                        (
+                        TFun (TVar 0 (Just "a"))
+                            (
+                            TFun (TVar 1 (Just "b"))
+                                (TFun (TVar 2 (Just "c")) (TVar 3 (Just "d")))
+                            )
+                        )
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (
+                            TFun (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                                (
+                                TFun (TApp (TConst "Decoder") [ TVar 2 (Just "c") ])
+                                    (TApp (TConst "Decoder") [ TVar 3 (Just "d") ])
+                                )
+                            )
+                        )
+                } )
+                , ( "Decode.andThen", { quantified = [ 0 , 1 ]
+                , type_ =
+                    TFun
+                        (
+                        TFun (TVar 0 (Just "a"))
+                            (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                        )
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                        )
+                } )
+                , ( "Decode.decodeString", { quantified = [ 0 ]
+                , type_ =
+                    TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                        (
+                        TFun (TConst "String")
+                            (
+                            TApp (TConst "Result")
+                                [ TConst "String" , TVar 0 (Just "a") ]
+                            )
+                        )
+                } )
+                , ( "Pipeline.required", { quantified = [ 0 , 1 ]
+                , type_ =
+                    TFun (TConst "String")
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (
+                            TFun
+                                (
+                                TApp (TConst "Decoder")
+                                    [ TFun (TVar 0 (Just "a")) (TVar 1 (Just "b")) ]
+                                )
+                                (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                            )
+                        )
+                } )
+                , ( "Pipeline.optional", { quantified = [ 0 , 1 ]
+                , type_ =
+                    TFun (TConst "String")
+                        (
+                        TFun (TApp (TConst "Decoder") [ TVar 0 (Just "a") ])
+                            (
+                            TFun (TVar 0 (Just "a"))
+                                (
+                                TFun
+                                    (
+                                    TApp (TConst "Decoder")
+                                        [ TFun (TVar 0 (Just "a")) (TVar 1 (Just "b")) ]
+                                    )
+                                    (TApp (TConst "Decoder") [ TVar 1 (Just "b") ])
+                                )
+                            )
+                        )
+                } )
                 ]
     in
         Env.union stdFunctions prelude
