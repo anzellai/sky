@@ -140,6 +140,8 @@ result = Task.perform pipeline
 - `Task.sequence : List (Task err a) -> Task err (List a)` -- run sequentially
 - `Task.parallel : List (Task err a) -> Task err (List a)` -- run concurrently (goroutines)
 - `Task.lazy : (() -> a) -> Task err a` -- defer computation until executed
+- `Task.map2/3/4/5` -- combine N independent Tasks (sequential, like Result.mapN) (v0.7.25+)
+- `Task.andMap : Task e a -> Task e (a -> b) -> Task e b` -- pipeline-style applicative (v0.7.25+)
 
 **Concurrency:**
 
@@ -259,13 +261,27 @@ andThen : (a -> Maybe b) -> Maybe a -> Maybe b
 
 ```elm
 map : (a -> b) -> Result e a -> Result e b
-map2 : (a -> b -> c) -> Result e a -> Result e b -> Result e c
-map3 : (a -> b -> c -> d) -> Result e a -> Result e b -> Result e c -> Result e d
 andThen : (a -> Result e b) -> Result e a -> Result e b
 withDefault : a -> Result e a -> a
 fromMaybe : e -> Maybe a -> Result e a
 mapError : (e -> f) -> Result e a -> Result f a
+
+-- Applicative combinators (v0.7.25+)
+map2 : (a -> b -> c) -> Result e a -> Result e b -> Result e c
+map3 : (a -> b -> c -> d) -> Result e a -> Result e b -> Result e c -> Result e d
+map4 : (a -> b -> c -> d -> f) -> Result e a -> Result e b -> Result e c -> Result e d -> Result e f
+map5 : (a -> b -> c -> d -> f -> g) -> Result e a -> Result e b -> Result e c -> Result e d -> Result e f -> Result e g
+andMap : Result e a -> Result e (a -> b) -> Result e b      -- pipeline-style for arity > 5
+combine : List (Result e a) -> Result e (List a)             -- collect a homogeneous list
+traverse : (a -> Result e b) -> List a -> Result e (List b)  -- map then combine
 ```
+
+**When to use which:**
+- `map2..5` — combine N **independent** Results of **different types** into a record. Each parser fails-fast with the first Err. Perfect for form validation, JSON-style record building.
+- `andMap` — same idea but pipeline-style; use for arity > 5 fields. `Ok make |> andMap a |> andMap b |> ...`
+- `combine` — collect a **homogeneous list** of Results. `[Ok 1, Ok 2, Ok 3]` → `Ok [1, 2, 3]`. First Err short-circuits.
+- `traverse` — `combine << List.map f`. Map a fallible function over a list.
+- `andThen` — for **dependent** computations where each step needs the previous result. Sequential by nature.
 
 ### Sky.Core.List
 

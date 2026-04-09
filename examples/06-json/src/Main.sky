@@ -206,6 +206,103 @@ flexibleExample =
 
 
 -- ============================================================
+-- Result combinators (v0.7.25+) — for combining MULTIPLE Results
+-- WITHOUT decoders (e.g. form validation, multiple parses).
+-- ============================================================
+-- 10. Heterogeneous combine via Result.map3
+--     Each parser returns a different type; combine them into a record.
+
+parseString : String -> String -> Result String String
+parseString fieldName value =
+    if String.isEmpty value then
+        Err ("missing field: " ++ fieldName)
+
+    else
+        Ok value
+
+
+parseAge : String -> Result String Int
+parseAge value =
+    case String.toInt value of
+
+        Just n ->
+            if n >= 0 && n <= 150 then
+                Ok n
+
+            else
+                Err "age out of range"
+
+        Nothing ->
+            Err "age must be a number"
+
+
+parseFlag : String -> Result String Bool
+parseFlag value =
+    if value == "true" then
+        Ok True
+
+    else if value == "false" then
+        Ok False
+
+    else
+        Err "flag must be true or false"
+
+
+makeProfile name age active =
+    { name = name , age = age , active = active }
+
+
+-- All three Results combine via map3 — no nested case, no andThen pyramid.
+-- If any one fails, the whole expression returns that Err.
+profileFromInputs name age active =
+    Result.map3 makeProfile
+        (parseString "name" name)
+        (parseAge age)
+        (parseFlag active)
+
+
+combineHeterogeneousExample =
+    case profileFromInputs "Alice" "30" "true" of
+
+        Ok p ->
+            "OK: " ++ p.name ++ ", age " ++ String.fromInt p.age
+
+        Err e ->
+            "ERR: " ++ e
+
+
+-- 11. Homogeneous combine via Result.combine
+--     Same type, variable length — collect a list of Results into a Result of list.
+combineHomogeneousExample =
+    let
+        parses =
+            Result.combine
+                [ parseAge "25" , parseAge "30" , parseAge "42" ]
+    in
+        case parses of
+
+            Ok ages ->
+                "OK ages: "
+                    ++ String.join ", " (List.map String.fromInt ages)
+
+            Err e ->
+                "ERR: " ++ e
+
+
+-- 12. Result.traverse — map a function over a list and collect.
+--     Equivalent to (Result.combine << List.map f) but in one pass.
+traverseExample =
+    case Result.traverse parseAge [ "20" , "30" , "40" ] of
+
+        Ok ages ->
+            "Sum of ages: "
+                ++ String.fromInt (List.foldl (\a acc -> a + acc) 0 ages)
+
+        Err e ->
+            "ERR: " ++ e
+
+
+-- ============================================================
 -- Main
 -- ============================================================
 main =
@@ -238,5 +335,14 @@ main =
         _ = println ""
         _ = println "9. oneOf (flexible):"
         _ = println flexibleExample
+        _ = println ""
+        _ = println "10. Result.map3 (heterogeneous combine):"
+        _ = println combineHeterogeneousExample
+        _ = println ""
+        _ = println "11. Result.combine (homogeneous list):"
+        _ = println combineHomogeneousExample
+        _ = println ""
+        _ = println "12. Result.traverse:"
+        _ = println traverseExample
     in
         println "Done!"

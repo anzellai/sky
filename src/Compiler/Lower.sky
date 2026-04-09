@@ -1233,7 +1233,22 @@ lowerQualified ctx parts =
         
         else if qualName == "Task.parallel" then
             GoIdent "sky_taskParallel"
-        
+
+        else if qualName == "Task.map2" then
+            GoIdent "sky_taskMap2"
+
+        else if qualName == "Task.map3" then
+            GoIdent "sky_taskMap3"
+
+        else if qualName == "Task.map4" then
+            GoIdent "sky_taskMap4"
+
+        else if qualName == "Task.map5" then
+            GoIdent "sky_taskMap5"
+
+        else if qualName == "Task.andMap" then
+            GoIdent "sky_taskAndMap"
+
         else if qualName == "List.parallelMap" then
             GoIdent "sky_parallelMap"
         
@@ -1248,7 +1263,28 @@ lowerQualified ctx parts =
         
         else if qualName == "Result.mapError" then
             GoIdent "sky_resultMapError"
-        
+
+        else if qualName == "Result.map2" then
+            GoIdent "sky_resultMap2"
+
+        else if qualName == "Result.map3" then
+            GoIdent "sky_resultMap3"
+
+        else if qualName == "Result.map4" then
+            GoIdent "sky_resultMap4"
+
+        else if qualName == "Result.map5" then
+            GoIdent "sky_resultMap5"
+
+        else if qualName == "Result.andMap" then
+            GoIdent "sky_resultAndMap"
+
+        else if qualName == "Result.combine" then
+            GoIdent "sky_resultCombine"
+
+        else if qualName == "Result.traverse" then
+            GoIdent "sky_resultTraverse"
+
         else if qualName == "Maybe.withDefault" || qualName == "withDefault" then
             GoIdent "sky_maybeWithDefault"
         
@@ -3394,9 +3430,13 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_call(f any, arg any) any { if fn, ok := f.(func(any) any); ok { return fn(arg) }; if s, ok := f.(string); ok { if args, ok := arg.([]any); ok { parts := make([]string, len(args)); for i, a := range args { parts[i] = sky_asString(a) }; return s + \"(\" + strings.Join(parts, \", \") + \")\" }; return s + \" \" + sky_asString(arg) }; panic(fmt.Sprintf(\"sky_call: cannot call %T\", f)) }"
     , GoDeclRaw
-          "func sky_call2(f any, a any, b any) any { return sky_call(sky_call(f, a), b) }"
+          "func sky_call2(f any, a any, b any) any { if f2, ok := f.(func(any, any) any); ok { return f2(a, b) }; return sky_call(sky_call(f, a), b) }"
     , GoDeclRaw
-          "func sky_call3(f any, a any, b any, c any) any { return sky_call(sky_call(sky_call(f, a), b), c) }"
+          "func sky_call3(f any, a any, b any, c any) any { if f3, ok := f.(func(any, any, any) any); ok { return f3(a, b, c) }; return sky_call(sky_call(sky_call(f, a), b), c) }"
+    , GoDeclRaw
+          "func sky_call4(f any, a any, b any, c any, d any) any { if f4, ok := f.(func(any, any, any, any) any); ok { return f4(a, b, c, d) }; return sky_call(sky_call(sky_call(sky_call(f, a), b), c), d) }"
+    , GoDeclRaw
+          "func sky_call5(f any, a any, b any, c any, d any, e any) any { if f5, ok := f.(func(any, any, any, any, any) any); ok { return f5(a, b, c, d, e) }; return sky_call(sky_call(sky_call(sky_call(sky_call(f, a), b), c), d), e) }"
     , GoDeclRaw
           "func sky_taskSucceed(value any) any { return func() any { return SkyOk(value) } }"
     , GoDeclRaw
@@ -3411,6 +3451,16 @@ generateHelperDecls =
           "func sky_taskRun(task any) any { r := sky_runTask(task); return r }"
     , GoDeclRaw
           "func sky_taskSequence(tasks any) any { return func() any { items := sky_asList(tasks); results := make([]any, 0, len(items)); for _, t := range items { r := sky_runTask(t); if sky_asSkyResult(r).Tag == 1 { return r }; results = append(results, sky_asSkyResult(r).OkValue) }; return SkyOk(results) } }"
+    , GoDeclRaw
+          "func sky_taskMap2(fn any) any { return func(ta any) any { return func(tb any) any { return func() any { ra := sky_runTask(ta); sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; rb := sky_runTask(tb); sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; return SkyOk(sky_call2(fn, sa.OkValue, sb.OkValue)) } } } }"
+    , GoDeclRaw
+          "func sky_taskMap3(fn any) any { return func(ta any) any { return func(tb any) any { return func(tc any) any { return func() any { ra := sky_runTask(ta); sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; rb := sky_runTask(tb); sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; rc := sky_runTask(tc); sc := sky_asSkyResult(rc); if sc.Tag == 1 { return rc }; return SkyOk(sky_call3(fn, sa.OkValue, sb.OkValue, sc.OkValue)) } } } } }"
+    , GoDeclRaw
+          "func sky_taskMap4(fn any) any { return func(ta any) any { return func(tb any) any { return func(tc any) any { return func(td any) any { return func() any { ra := sky_runTask(ta); sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; rb := sky_runTask(tb); sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; rc := sky_runTask(tc); sc := sky_asSkyResult(rc); if sc.Tag == 1 { return rc }; rd := sky_runTask(td); sd := sky_asSkyResult(rd); if sd.Tag == 1 { return rd }; return SkyOk(sky_call4(fn, sa.OkValue, sb.OkValue, sc.OkValue, sd.OkValue)) } } } } } }"
+    , GoDeclRaw
+          "func sky_taskMap5(fn any) any { return func(ta any) any { return func(tb any) any { return func(tc any) any { return func(td any) any { return func(te any) any { return func() any { ra := sky_runTask(ta); sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; rb := sky_runTask(tb); sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; rc := sky_runTask(tc); sc := sky_asSkyResult(rc); if sc.Tag == 1 { return rc }; rd := sky_runTask(td); sd := sky_asSkyResult(rd); if sd.Tag == 1 { return rd }; ree := sky_runTask(te); see := sky_asSkyResult(ree); if see.Tag == 1 { return ree }; return SkyOk(sky_call5(fn, sa.OkValue, sb.OkValue, sc.OkValue, sd.OkValue, see.OkValue)) } } } } } } }"
+    , GoDeclRaw
+          "func sky_taskAndMap(targ any) any { return func(tfunc any) any { return func() any { ra := sky_runTask(targ); sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; rf := sky_runTask(tfunc); sf := sky_asSkyResult(rf); if sf.Tag == 1 { return rf }; return SkyOk(sky_call(sf.OkValue, sa.OkValue)) } } }"
     , GoDeclRaw
           "func sky_taskLazy(f any) any { return func() any { return SkyOk(sky_call(f, struct{}{})) } }"
     , GoDeclRaw
@@ -3481,6 +3531,20 @@ generateHelperDecls =
           "func sky_resultAndThen(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 0 { return fn.(func(any) any)(res.OkValue) }; return r } }"
     , GoDeclRaw
           "func sky_resultMapError(fn any) any { return func(r any) any { res := sky_asSkyResult(r); if res.Tag == 1 { return SkyErr(fn.(func(any) any)(res.ErrValue)) }; return r } }"
+    , GoDeclRaw
+          "func sky_resultMap2(fn any) any { return func(ra any) any { return func(rb any) any { sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; return SkyOk(sky_call2(fn, sa.OkValue, sb.OkValue)) } } }"
+    , GoDeclRaw
+          "func sky_resultMap3(fn any) any { return func(ra any) any { return func(rb any) any { return func(rc any) any { sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; sc := sky_asSkyResult(rc); if sc.Tag == 1 { return rc }; return SkyOk(sky_call3(fn, sa.OkValue, sb.OkValue, sc.OkValue)) } } } }"
+    , GoDeclRaw
+          "func sky_resultMap4(fn any) any { return func(ra any) any { return func(rb any) any { return func(rc any) any { return func(rd any) any { sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; sc := sky_asSkyResult(rc); if sc.Tag == 1 { return rc }; sd := sky_asSkyResult(rd); if sd.Tag == 1 { return rd }; return SkyOk(sky_call4(fn, sa.OkValue, sb.OkValue, sc.OkValue, sd.OkValue)) } } } } }"
+    , GoDeclRaw
+          "func sky_resultMap5(fn any) any { return func(ra any) any { return func(rb any) any { return func(rc any) any { return func(rd any) any { return func(re any) any { sa := sky_asSkyResult(ra); if sa.Tag == 1 { return ra }; sb := sky_asSkyResult(rb); if sb.Tag == 1 { return rb }; sc := sky_asSkyResult(rc); if sc.Tag == 1 { return rc }; sd := sky_asSkyResult(rd); if sd.Tag == 1 { return rd }; se := sky_asSkyResult(re); if se.Tag == 1 { return re }; return SkyOk(sky_call5(fn, sa.OkValue, sb.OkValue, sc.OkValue, sd.OkValue, se.OkValue)) } } } } } }"
+    , GoDeclRaw
+          "func sky_resultAndMap(rArg any) any { return func(rFunc any) any { sa := sky_asSkyResult(rArg); if sa.Tag == 1 { return rArg }; sf := sky_asSkyResult(rFunc); if sf.Tag == 1 { return rFunc }; return SkyOk(sky_call(sf.OkValue, sa.OkValue)) } }"
+    , GoDeclRaw
+          "func sky_resultCombine(rs any) any { items := sky_asList(rs); out := make([]any, 0, len(items)); for _, r := range items { sr := sky_asSkyResult(r); if sr.Tag == 1 { return r }; out = append(out, sr.OkValue) }; return SkyOk(out) }"
+    , GoDeclRaw
+          "func sky_resultTraverse(fn any) any { return func(items any) any { list := sky_asList(items); out := make([]any, 0, len(list)); for _, x := range list { r := sky_call(fn, x); sr := sky_asSkyResult(r); if sr.Tag == 1 { return r }; out = append(out, sr.OkValue) }; return SkyOk(out) } }"
     , GoDeclRaw
           "func sky_maybeWithDefault(def any) any { return func(m any) any { mb := sky_asSkyMaybe(m); if mb.Tag == 0 { return mb.JustValue }; return def } }"
     , GoDeclRaw

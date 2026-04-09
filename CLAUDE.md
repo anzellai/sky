@@ -151,7 +151,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 | `Sky.Core.Dict` | empty, insert, get, remove, keys, values, map, foldl, union, member |
 | `Sky.Core.Set` | empty, insert, remove, member, union, diff, intersect, fromList |
 | `Sky.Core.Maybe` | withDefault, map, andThen |
-| `Sky.Core.Result` | withDefault, map, andThen, mapError |
+| `Sky.Core.Result` | withDefault, map, andThen, mapError, **map2/3/4/5, andMap, combine, traverse** |
 | `Sky.Core.Math` | sqrt, pow, abs, floor, ceil, round, sin, cos, pi, min, max |
 | `Sky.Core.Regex` | match, find, findAll, replace, split |
 | `Sky.Core.Crypto` | sha256, sha512, md5, hmacSha256 |
@@ -164,7 +164,7 @@ Safety: formatter refuses to write if output loses >1/3 of code lines (prevents 
 ### Task-Wrapped Effects
 | Module | Key Functions | Returns |
 |--------|--------------|---------|
-| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy | Task err a |
+| `Sky.Core.Task` | succeed, fail, map, andThen, perform, sequence, parallel, lazy, **map2/3/4/5, andMap** | Task err a |
 | `Sky.Core.File` | readFile, writeFile, append, mkdirAll, readDir, exists, remove, isDir, tempFile, tempDir, copy | Task String a |
 | `Sky.Core.Process` | run, exit, getEnv, getCwd, loadEnv | Task String a |
 | `Sky.Core.Io` | readLine, readBytes, writeStdout, writeStderr | Task String a |
@@ -354,6 +354,7 @@ These are current compiler limitations users must work around:
 - **Lexer: `from` keyword blocked parameter names** — FIXED. Same class as the earlier `alias` bug. Removed `from` from `isKeyword` in Token.sky. Was the root cause of the cons-pattern-in-recursive-functions symptom.
 - **`bin` field in sky.toml respected** — FIXED. `cmdBuild`, `cmdRun`, and the typed-build path now read `bin` from sky.toml and produce the configured binary path (defaults to `app`).
 - **Cross-module zero-arg ADT constructors emitted as function calls** — FIXED. `lowerQualifiedImport` in Lower.sky now consults `ctx.importedConstructors` and emits `Piece_King` (value) for zero-arg constructors instead of `Piece_King()` (call). Multi-arg constructors retain the existing call form so `Piece.Box 42` still works.
+- **Applicative combinators for Result and Task** — ADDED in v0.7.25. `Result.map2/3/4/5`, `Result.andMap`, `Result.combine`, `Result.traverse`, plus matching `Task.map2/3/4/5`, `Task.andMap`. Solves the heterogeneous-Result-combine and homogeneous-list-of-Results cases without needing nested case or `andThen` lambdas. Also upgraded `sky_call2`/`sky_call3` and added `sky_call4`/`sky_call5` to handle both curried and uncurried multi-arg Sky functions, fixing a latent issue where local-module functions passed to higher-order helpers crashed at runtime.
 
 **Coding constraints**: none active. (The "no nested case" rule is no longer required as of v0.7.21.)
 
