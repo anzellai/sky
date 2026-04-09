@@ -23,9 +23,8 @@ type alias Piece =
     }
 
 
-makePiece : Kind -> Colour -> Piece
-makePiece kind colour =
-    { kind = kind, colour = colour }
+-- The `Piece` constructor (`Piece : Kind -> Colour -> Piece`) is
+-- auto-generated from the type alias above (Sky v0.7.26+).
 
 
 oppositeColour : Colour -> Colour

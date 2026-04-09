@@ -211,6 +211,19 @@ flexibleExample =
 -- ============================================================
 -- 10. Heterogeneous combine via Result.map3
 --     Each parser returns a different type; combine them into a record.
+--
+-- The type alias name `Profile` is also a constructor function
+-- (v0.7.26+), so we don't need a separate `makeProfile` helper.
+-- Sky auto-generates `Profile : String -> Int -> Bool -> Profile`
+-- from the field declaration order, just like Elm.
+
+
+type alias Profile =
+    { name : String
+    , age : Int
+    , active : Bool
+    }
+
 
 parseString : String -> String -> Result String String
 parseString fieldName value =
@@ -248,14 +261,11 @@ parseFlag value =
         Err "flag must be true or false"
 
 
-makeProfile name age active =
-    { name = name , age = age , active = active }
-
-
--- All three Results combine via map3 — no nested case, no andThen pyramid.
--- If any one fails, the whole expression returns that Err.
+-- All three Results combine via map3 — no nested case, no andThen
+-- pyramid, no makeProfile helper. The type alias `Profile` IS the
+-- constructor, courtesy of Sky's auto-generated record constructors.
 profileFromInputs name age active =
-    Result.map3 makeProfile
+    Result.map3 Profile
         (parseString "name" name)
         (parseAge age)
         (parseFlag active)

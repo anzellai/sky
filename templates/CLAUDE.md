@@ -283,6 +283,39 @@ traverse : (a -> Result e b) -> List a -> Result e (List b)  -- map then combine
 - `traverse` — `combine << List.map f`. Map a fallible function over a list.
 - `andThen` — for **dependent** computations where each step needs the previous result. Sequential by nature.
 
+### Auto record constructors (v0.7.26+)
+
+Every record type alias **automatically generates a constructor function** with the same name. Field declaration order in the type alias is the positional argument order of the constructor.
+
+```elm
+type alias Profile =
+    { name : String
+    , age : Int
+    , active : Bool
+    }
+
+-- Sky auto-generates:
+--   Profile : String -> Int -> Bool -> Profile
+--   Profile name age active = { name = name, age = age, active = active }
+
+-- Use it directly:
+alice = Profile "Alice" 30 True
+
+-- Or with applicative combinators (no makeProfile helper needed):
+result =
+    Result.map3 Profile
+        (parseString "name" formData.name)
+        (parseInt "age" formData.age)
+        (parseBool "active" formData.active)
+```
+
+This is exactly Elm's behavior. Notes:
+
+- Only **record** type aliases generate constructors. Aliases like `type alias Name = String` don't.
+- If you define a function with the same name as the type alias, **your definition wins** — Sky skips the auto-generation. This lets you provide a custom constructor with validation, defaults, etc.
+- Adding a field in the middle of a type alias is a **breaking change** for any code that uses the constructor positionally. Same trade-off Elm made.
+- Constructors are exported from a module the same way the type alias is. `module Foo exposing (Profile)` exposes both the type and the constructor.
+
 ### Sky.Core.List
 
 ```elm
@@ -1453,8 +1486,10 @@ getUsers db =
 -- JSON decoding with pipeline
 type alias User = { name : String, age : Int }
 
+-- Sky auto-generates `User : String -> Int -> User` from the type
+-- alias above (v0.7.26+), so you can use it as a constructor directly:
 userDecoder =
-    Decode.succeed (\n a -> { name = n, age = a })
+    Decode.succeed User    -- the type alias name IS the constructor
         |> Pipeline.required "name" Decode.string
         |> Pipeline.required "age" Decode.int
 
