@@ -49,6 +49,9 @@ lexLoop state =
             else if ch == ' ' || ch == '\t' then
                 lexLoop (skipWhitespace state)
             
+            else if ch == '{' && peekChar state.source (state.offset + 1) == '-' then
+                lexLoop (skipBlockComment state)
+
             else if ch == '-' && peekChar state.source (state.offset + 1) == '-' then
                 lexLoop (skipLineComment state)
             
@@ -128,6 +131,70 @@ skipWhitespace state =
             
             else
                 state
+
+
+skipBlockComment : LexerState -> LexerState
+skipBlockComment state =
+    let
+        s1 =
+            { state
+                | offset = state.offset + 2
+                , column = state.column + 2
+            }
+    in
+        skipBlockCommentBody s1 1
+
+
+skipBlockCommentBody : LexerState -> Int -> LexerState
+skipBlockCommentBody state depth =
+    if state.offset >= String.length state.source then
+        state
+
+    else if depth == 0 then
+        state
+
+    else
+        skipBlockCommentStep state depth
+
+
+skipBlockCommentStep : LexerState -> Int -> LexerState
+skipBlockCommentStep state depth =
+    let
+        ch = charAt state.source state.offset
+        next = peekChar state.source (state.offset + 1)
+    in
+        if ch == '{' && next == '-' then
+            skipBlockCommentBody
+                { state
+                    | offset = state.offset + 2
+                    , column = state.column + 2
+                }
+                (depth + 1)
+
+        else if ch == '-' && next == '}' then
+            skipBlockCommentBody
+                { state
+                    | offset = state.offset + 2
+                    , column = state.column + 2
+                }
+                (depth - 1)
+
+        else if ch == '\n' then
+            skipBlockCommentBody
+                { state
+                    | offset = state.offset + 1
+                    , line = state.line + 1
+                    , column = 1
+                }
+                depth
+
+        else
+            skipBlockCommentBody
+                { state
+                    | offset = state.offset + 1
+                    , column = state.column + 1
+                }
+                depth
 
 
 skipLineComment : LexerState -> LexerState
