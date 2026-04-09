@@ -81,12 +81,20 @@ pipelineExample =
 
 
 -- 5. Pipeline with optional fields
+type alias UserProfile =
+    { username : String
+    , bio : String
+    , followers : Int
+    }
+
+
+-- The auto-generated `UserProfile : String -> String -> Int -> UserProfile`
+-- constructor (v0.7.26+) lets us drop the explicit lambda. The fields
+-- match the JSON shape one-to-one, so the type checker enforces both
+-- shape and order — try changing `bio` to a different type and `sky
+-- check` will flag the mismatch.
 profileDecoder =
-    Decode.succeed
-        (
-        \username bio followers ->
-            { username = username , bio = bio , followers = followers }
-        )
+    Decode.succeed UserProfile
         |> Pipeline.required "username" Decode.string
         |> Pipeline.optional "bio" Decode.string "No bio provided"
         |> Pipeline.optional "followers" Decode.int 0
@@ -216,20 +224,15 @@ flexibleExample =
 -- (v0.7.26+), so we don't need a separate `makeProfile` helper.
 -- Sky auto-generates `Profile : String -> Int -> Bool -> Profile`
 -- from the field declaration order, just like Elm.
-
-
 type alias Profile =
-    { name : String
-    , age : Int
-    , active : Bool
-    }
+    { name : String , age : Int , active : Bool }
 
 
 parseString : String -> String -> Result String String
 parseString fieldName value =
     if String.isEmpty value then
         Err ("missing field: " ++ fieldName)
-
+    
     else
         Ok value
 
@@ -237,14 +240,14 @@ parseString fieldName value =
 parseAge : String -> Result String Int
 parseAge value =
     case String.toInt value of
-
+        
         Just n ->
             if n >= 0 && n <= 150 then
                 Ok n
-
+            
             else
                 Err "age out of range"
-
+        
         Nothing ->
             Err "age must be a number"
 
@@ -253,10 +256,10 @@ parseFlag : String -> Result String Bool
 parseFlag value =
     if value == "true" then
         Ok True
-
+    
     else if value == "false" then
         Ok False
-
+    
     else
         Err "flag must be true or false"
 
@@ -265,18 +268,16 @@ parseFlag value =
 -- pyramid, no makeProfile helper. The type alias `Profile` IS the
 -- constructor, courtesy of Sky's auto-generated record constructors.
 profileFromInputs name age active =
-    Result.map3 Profile
-        (parseString "name" name)
-        (parseAge age)
+    Result.map3 Profile (parseString "name" name) (parseAge age)
         (parseFlag active)
 
 
 combineHeterogeneousExample =
     case profileFromInputs "Alice" "30" "true" of
-
+        
         Ok p ->
             "OK: " ++ p.name ++ ", age " ++ String.fromInt p.age
-
+        
         Err e ->
             "ERR: " ++ e
 
@@ -286,15 +287,13 @@ combineHeterogeneousExample =
 combineHomogeneousExample =
     let
         parses =
-            Result.combine
-                [ parseAge "25" , parseAge "30" , parseAge "42" ]
+            Result.combine [ parseAge "25" , parseAge "30" , parseAge "42" ]
     in
         case parses of
-
+            
             Ok ages ->
-                "OK ages: "
-                    ++ String.join ", " (List.map String.fromInt ages)
-
+                "OK ages: " ++ String.join ", " (List.map String.fromInt ages)
+            
             Err e ->
                 "ERR: " ++ e
 
@@ -303,11 +302,11 @@ combineHomogeneousExample =
 --     Equivalent to (Result.combine << List.map f) but in one pass.
 traverseExample =
     case Result.traverse parseAge [ "20" , "30" , "40" ] of
-
+        
         Ok ages ->
             "Sum of ages: "
                 ++ String.fromInt (List.foldl (\a acc -> a + acc) 0 ages)
-
+        
         Err e ->
             "ERR: " ++ e
 
@@ -356,3 +355,7 @@ main =
         _ = println traverseExample
     in
         println "Done!"
+
+
+Profile : String -> Int -> Bool -> Profile
+Profile name age active = { name = name , age = age , active = active }
