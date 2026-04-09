@@ -1,5 +1,7 @@
 # Sky
 
+[sky-lang.org](https://sky-lang.org) | [Examples](examples/) | [Install](#quick-start)
+
 > **Experimental** -- Sky is under active development. APIs and internals will change.
 
 Sky is an experimental programming language that combines **Go's pragmatism** with **Elm's elegance** to create a simple, fullstack language where you write FP code and ship a single portable binary.
