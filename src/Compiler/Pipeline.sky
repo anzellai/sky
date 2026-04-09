@@ -131,11 +131,13 @@ buildCheckEnv entryFilePath mod =
         ffiDeduped = deduplicateFfiModules ffiModules []
         typeCheckModules = List.append localModules ffiDeduped
         stdlibEnv = Resolver.buildStdlibEnv
-        depTypeEnv = Resolver.buildDepTypeEnv mod.imports typeCheckModules
+        importedAliases = buildImportedAliases localModules
+        depTypeEnv =
+            Resolver.buildDepTypeEnv mod.imports typeCheckModules
+                importedAliases
         adtEnv = buildAdtEnvFromModules localModules
         combinedEnv = Env.union adtEnv (Env.union depTypeEnv stdlibEnv)
         importedRegistry = buildImportedRegistry localModules
-        importedAliases = buildImportedAliases localModules
     in
         ( combinedEnv, importedRegistry, importedAliases )
 
@@ -176,7 +178,10 @@ compileMultiModule entryPath outDir srcRoot entryMod =
                 )
         aliasMap = buildAliasMap entryMod.imports
         stdlibEnv = Resolver.buildStdlibEnv
-        depTypeEnv = Resolver.buildDepTypeEnv entryMod.imports typeCheckModules
+        importedAliasesForCompile = buildImportedAliases localModules
+        depTypeEnv =
+            Resolver.buildDepTypeEnv entryMod.imports typeCheckModules
+                importedAliasesForCompile
         combinedEnv = Env.union depTypeEnv stdlibEnv
         localNames = Set.fromList (List.map fst localModules)
         ffiNames =
@@ -2258,9 +2263,16 @@ buildImportedAliases modules =
 addModuleAliases counter pair acc =
     let
         mod = snd pair
+        -- Seed each module's alias resolution with already-accumulated
+        -- aliases so a module's local alias can reference cross-module
+        -- aliases by name. Without this, `myCounter : Counter` (where
+        -- Counter is from another module) would store a TConst "Counter"
+        -- placeholder instead of the resolved record, defeating the
+        -- whole point of pre-expanding aliases at registration time.
         ( _, aliases ) =
-            Checker.registerTypeAliases counter mod.declarations
+            Checker.registerTypeAliasesWithSeed counter mod.declarations
                 Env.createPreludeEnv
+                acc
     in
         Dict.union acc aliases
 

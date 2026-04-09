@@ -82,10 +82,10 @@ unifyInner t1 t2 =
 unifyConst : String -> Type -> Type -> Result String Substitution
 unifyConst nameA t1 t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar id2 t1
-        
+
         TConst nameB ->
             if nameA == nameB then
                 Ok emptySub
@@ -101,47 +101,46 @@ unifyConst nameA t1 t2 =
 
             else
                 Err ("Type mismatch: " ++ nameA ++ " vs " ++ nameB)
-        
+
         _ ->
             if isUniversalUnifier nameA then
                 Ok emptySub
-            
+
             else
-                Err
-                    (
-                    "Cannot unify "
-                        ++ formatType t1 ++ " with " ++ formatType t2
-                    )
+                Err (cannotUnifyMsg t1 t2)
 
 
 unifyFun : Type -> Type -> Type -> Result String Substitution
 unifyFun fromA toA t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar id2 (TFun fromA toA)
-        
+
         TFun fromB toB ->
             unifyFunParts fromA toA fromB toB
-        
+
         TConst name ->
             if isUniversalUnifier name then
                 Ok emptySub
-            
+
             else
-                Err
-                    (
-                    "Cannot unify "
-                        ++ formatType (TFun fromA toA)
-                            ++ " with " ++ formatType t2
-                    )
-        
+                Err (cannotUnifyMsg (TFun fromA toA) t2)
+
         _ ->
-            Err
-                (
-                "Cannot unify "
-                    ++ formatType (TFun fromA toA) ++ " with " ++ formatType t2
-                )
+            Err (cannotUnifyMsg (TFun fromA toA) t2)
+
+
+-- Format a "Cannot unify X with Y" error with consistent letter
+-- naming for type variables across both X and Y. Without this, two
+-- references to the same TVar in an error appeared as "t108" — opaque
+-- to users. Now they appear as "a", and a related TVar appears as "b".
+cannotUnifyMsg : Type -> Type -> String
+cannotUnifyMsg t1 t2 =
+    let
+        pair = formatTypePairForError t1 t2
+    in
+        "Cannot unify " ++ fst pair ++ " with " ++ snd pair
 
 
 unifyFunParts : Type -> Type -> Type -> Type -> Result String Substitution
@@ -169,32 +168,22 @@ unifyFunReturn s1 toA toB =
 unifyApp : Type -> (List Type) -> Type -> Result String Substitution
 unifyApp ctorA argsA t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar id2 (TApp ctorA argsA)
-        
+
         TApp ctorB argsB ->
             unifyAppParts ctorA argsA ctorB argsB
-        
+
         TConst name ->
             if isUniversalUnifier name then
                 Ok emptySub
-            
+
             else
-                Err
-                    (
-                    "Cannot unify "
-                        ++ formatType (TApp ctorA argsA)
-                            ++ " with " ++ formatType t2
-                    )
-        
+                Err (cannotUnifyMsg (TApp ctorA argsA) t2)
+
         _ ->
-            Err
-                (
-                "Cannot unify "
-                    ++ formatType (TApp ctorA argsA)
-                        ++ " with " ++ formatType t2
-                )
+            Err (cannotUnifyMsg (TApp ctorA argsA) t2)
 
 
 unifyAppParts : Type -> (List Type) -> Type -> (List Type) -> Result String Substitution
@@ -213,10 +202,10 @@ unifyAppParts ctorA argsA ctorB argsB =
 unifyTuple : (List Type) -> Type -> Result String Substitution
 unifyTuple itemsA t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar id2 (TTuple itemsA)
-        
+
         TTuple itemsB ->
             if List.length itemsA /= List.length itemsB then
                 Err
@@ -225,81 +214,67 @@ unifyTuple itemsA t2 =
                         ++ String.fromInt (List.length itemsA)
                             ++ " vs " ++ String.fromInt (List.length itemsB)
                     )
-            
+
             else
                 unifyList itemsA itemsB emptySub
-        
+
         TConst name ->
             if isUniversalUnifier name then
                 Ok emptySub
-            
+
             else
-                Err
-                    (
-                    "Cannot unify "
-                        ++ formatType (TTuple itemsA)
-                            ++ " with " ++ formatType t2
-                    )
-        
+                Err (cannotUnifyMsg (TTuple itemsA) t2)
+
         _ ->
-            Err
-                (
-                "Cannot unify "
-                    ++ formatType (TTuple itemsA) ++ " with " ++ formatType t2
-                )
+            Err (cannotUnifyMsg (TTuple itemsA) t2)
 
 
 unifyRecord : (Dict.Dict String Type) -> Type -> Result String Substitution
 unifyRecord fieldsA t2 =
     case t2 of
-        
+
         TVar id2 _ ->
             bindVar id2 (TRecord fieldsA)
-        
+
         TRecord fieldsB ->
             unifyRecords fieldsA fieldsB
-        
+
         TConst name ->
             if isUniversalUnifier name then
                 Ok emptySub
-            
+
             else
-                Err
-                    (
-                    "Cannot unify "
-                        ++ formatType (TRecord fieldsA)
-                            ++ " with " ++ formatType t2
-                    )
-        
+                Err (cannotUnifyMsg (TRecord fieldsA) t2)
+
         _ ->
-            Err
-                (
-                "Cannot unify "
-                    ++ formatType (TRecord fieldsA) ++ " with " ++ formatType t2
-                )
+            Err (cannotUnifyMsg (TRecord fieldsA) t2)
 
 
 bindVar : Int -> Type -> Result String Substitution
 bindVar id t =
     case t of
-        
+
         TVar otherId _ ->
             if id == otherId then
                 Ok emptySub
-            
+
             else
                 Ok (Dict.insert id t Dict.empty)
-        
+
         _ ->
             if Set.member id (freeVars t) then
-                Err
-                    (
-                    "Infinite type: t"
-                        ++ String.fromInt id ++ " occurs in " ++ formatType t
-                    )
-            
+                Err (infiniteTypeMsg id t)
+
             else
                 Ok (Dict.insert id t Dict.empty)
+
+
+infiniteTypeMsg : Int -> Type -> String
+infiniteTypeMsg id t =
+    let
+        pair = formatTypePairForError (TVar id Nothing) t
+    in
+        "Infinite type: " ++ fst pair ++ " occurs in " ++ snd pair
 
 
 isQualifiedMatch : String -> String -> Bool
