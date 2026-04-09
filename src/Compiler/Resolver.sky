@@ -975,6 +975,113 @@ buildStdlibEnv =
                         (TFun (TVar 0 (Just "a")) (TConst "Unit"))
                 } )
                 , ( "Process.exit", mono (TFun (TConst "Int") (TConst "Unit")) )
+                , ( "Process.getEnv", mono
+                                          (
+                                          TFun (TConst "String")
+                                              (TApp (TConst "Maybe") [ TConst "String" ])
+                                          ) )
+                , ( "Process.getCwd", mono
+                                          (
+                                          TApp (TConst "Result")
+                                              [ TConst "String" , TConst "String" ]
+                                          ) )
+                , ( "Path.join", mono
+                                     (
+                                     TFun (TApp (TConst "List") [ TConst "String" ])
+                                         (TConst "String")
+                                     ) )
+                , ( "Path.dir", mono (TFun (TConst "String") (TConst "String")) )
+                , ( "Path.base", mono (TFun (TConst "String") (TConst "String")) )
+                , ( "Path.ext", mono (TFun (TConst "String") (TConst "String")) )
+                , ( "Path.isAbsolute", mono (TFun (TConst "String") (TConst "Bool")) )
+                , ( "Path.expandHome", mono (TFun (TConst "String") (TConst "String")) )
+                , ( "File.exists", mono (TFun (TConst "String") (TConst "Bool")) )
+                , ( "File.remove", mono
+                                       (
+                                       TFun (TConst "String")
+                                           (
+                                           TApp (TConst "Result")
+                                               [ TConst "String" , TConst "Unit" ]
+                                           )
+                                       ) )
+                , ( "File.readDir", mono
+                                        (
+                                        TFun (TConst "String")
+                                            (
+                                            TApp (TConst "Result")
+                                                [ TConst "String"
+                                                , TApp (TConst "List") [ TConst "String" ]
+                                                ]
+                                            )
+                                        ) )
+                , ( "File.isDir", mono (TFun (TConst "String") (TConst "Bool")) )
+                , ( "File.tempFile", mono
+                                         (
+                                         TFun (TConst "String")
+                                             (
+                                             TApp (TConst "Result")
+                                                 [ TConst "String" , TConst "String" ]
+                                             )
+                                         ) )
+                , ( "File.tempDir", mono
+                                        (
+                                        TFun (TConst "String")
+                                            (
+                                            TApp (TConst "Result")
+                                                [ TConst "String" , TConst "String" ]
+                                            )
+                                        ) )
+                , ( "File.copy", mono
+                                     (
+                                     TFun (TConst "String")
+                                         (
+                                         TFun (TConst "String")
+                                             (
+                                             TApp (TConst "Result")
+                                                 [ TConst "String" , TConst "Unit" ]
+                                             )
+                                         )
+                                     ) )
+                , ( "Url.parse", mono
+                                     (
+                                     TFun (TConst "String")
+                                         (
+                                         TApp (TConst "Result")
+                                             [ TConst "String"
+                                             , TApp (TConst "Dict")
+                                                   [ TConst "String" , TConst "String" ]
+                                             ]
+                                         )
+                                     ) )
+                , ( "Url.encode", mono (TFun (TConst "String") (TConst "String")) )
+                , ( "Url.decode", mono
+                                      (
+                                      TFun (TConst "String")
+                                          (
+                                          TApp (TConst "Result")
+                                              [ TConst "String" , TConst "String" ]
+                                          )
+                                      ) )
+                , ( "Url.queryString", mono
+                                           (
+                                           TFun
+                                               (
+                                               TApp (TConst "Dict")
+                                                   [ TConst "String" , TConst "String" ]
+                                               )
+                                               (TConst "String")
+                                           ) )
+                , ( "Url.parseQuery", mono
+                                          (
+                                          TFun (TConst "String")
+                                              (
+                                              TApp (TConst "Result")
+                                                  [ TConst "String"
+                                                  , TApp (TConst "Dict")
+                                                        [ TConst "String" , TConst "String" ]
+                                                  ]
+                                              )
+                                          ) )
                 , ( "File.readFile", mono
                                          (
                                          TFun (TConst "String")
@@ -998,6 +1105,19 @@ buildStdlibEnv =
                                                   )
                                               )
                                           ) )
+                , ( "File.append", mono
+                                       (
+                                       TFun (TConst "String")
+                                           (
+                                           TFun (TConst "String")
+                                               (
+                                               TApp (TConst "Result")
+                                                   [ TConst "String"
+                                                   , TConst "Unit"
+                                                   ]
+                                               )
+                                           )
+                                       ) )
                 , ( "File.mkdirAll", mono
                                          (
                                          TFun (TConst "String")

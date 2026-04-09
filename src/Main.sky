@@ -88,41 +88,42 @@ cmdBuildTyped _ =
     let
         entryFile =
             case Args.getArg 2 of
-                
+
                 Just f ->
                     f
-                
+
                 Nothing ->
                     "src/Main.sky"
         outDir = "sky-out"
+        binName = readBinName ()
         result = LowerTyped.compileTyped entryFile outDir
     in
-        cmdBuildTypedResult result outDir
+        cmdBuildTypedResult result outDir binName
 
 
-cmdBuildTypedResult result outDir =
+cmdBuildTypedResult result outDir binName =
     case result of
-        
+
         Err e ->
             println ("Error: " ++ e)
-        
+
         Ok _ ->
             let
                 _ = println "Typed Go code generated"
                 _ = println "Running go build..."
                 buildResult =
                     Process.run "sh"
-                        [ "-c" , "cd " ++ outDir ++ " && go build -o app" ]
+                        [ "-c" , "cd " ++ outDir ++ " && go build -o " ++ binName ]
             in
-                cmdBuildTypedGo buildResult outDir
+                cmdBuildTypedGo buildResult outDir binName
 
 
-cmdBuildTypedGo buildResult outDir =
+cmdBuildTypedGo buildResult outDir binName =
     case buildResult of
-        
+
         Ok _ ->
-            println ("Build complete: " ++ outDir ++ "/app")
-        
+            println ("Build complete: " ++ outDir ++ "/" ++ binName)
+
         Err e ->
             println ("go build failed: " ++ errorToString e)
 
@@ -131,27 +132,92 @@ cmdBuild _ =
     let
         entryFile =
             case Args.getArg 2 of
-                
+
                 Just f ->
                     f
-                
+
                 Nothing ->
                     "src/Main.sky"
         outDir = "sky-out"
+        binName = readBinName ()
     in
         case Pipeline.compile entryFile outDir of
-            
+
             Err e ->
                 let
                     _ = println ("Error: " ++ e)
                 in
                     Process.exit 1
-            
+
             Ok code ->
-                buildGoProject outDir
+                buildGoProject outDir binName
 
 
-buildGoProject outDir =
+readBinName : () -> String
+readBinName _ =
+    case File.readFile "sky.toml" of
+
+        Err _ ->
+            "app"
+
+        Ok content ->
+            extractBinFromToml content
+
+
+extractBinFromToml : String -> String
+extractBinFromToml content =
+    let
+        lines = String.split "\n" content
+        matching =
+            List.filter
+                (\l ->
+                    let
+                        trimmed = String.trim l
+                    in
+                        String.startsWith "bin " trimmed
+                            || String.startsWith "bin=" trimmed
+                )
+                lines
+    in
+        case matching of
+
+            line :: _ ->
+                parseBinValue line
+
+            [] ->
+                "app"
+
+
+parseBinValue : String -> String
+parseBinValue line =
+    let
+        parts = String.split "=" line
+    in
+        case List.drop 1 parts of
+
+            val :: _ ->
+                let
+                    cleaned = String.trim (String.replace "\"" "" (String.trim val))
+                    binBase =
+                        case List.head (List.reverse (String.split "/" cleaned)) of
+
+                            Just name ->
+                                name
+
+                            Nothing ->
+                                cleaned
+                in
+                    if String.isEmpty binBase then
+                        "app"
+
+                    else
+                        binBase
+
+            [] ->
+                "app"
+
+
+buildGoProject outDir binName =
     let
         goModPath = outDir ++ "/go.mod"
         goSumPath = outDir ++ "/go.sum"
@@ -234,26 +300,26 @@ buildGoProject outDir =
                 , "cd "
                     ++ outDir
                         ++ " && go build -gcflags=all=-l -ldflags='-X main.skyVersion="
-                            ++ Args.skyVersion ++ "' -o app"
+                            ++ Args.skyVersion ++ "' -o " ++ binName
                 ]
     in
-        handleBuildResult outDir buildResult
+        handleBuildResult outDir binName buildResult
 
 
-handleBuildResult outDir buildResult =
+handleBuildResult outDir binName buildResult =
     case buildResult of
-        
+
         Ok _ ->
             let
-                _ = println ("Build complete: " ++ outDir ++ "/app")
+                _ = println ("Build complete: " ++ outDir ++ "/" ++ binName)
                 _ = checkForUpdates ()
             in
                 ()
-        
+
         Err e ->
             if String.contains "no required module" (errorToString e) then
-                retryBuildWithTidy outDir e
-            
+                retryBuildWithTidy outDir binName e
+
             else
                 let
                     _ = println ("go build failed: " ++ errorToString e)
@@ -261,7 +327,7 @@ handleBuildResult outDir buildResult =
                     Process.exit 1
 
 
-retryBuildWithTidy outDir originalErr =
+retryBuildWithTidy outDir binName originalErr =
     let
         _ = println "Missing Go dependencies, running go mod tidy..."
         tidyResult =
@@ -269,10 +335,10 @@ retryBuildWithTidy outDir originalErr =
                 [ "-c" , "cd " ++ outDir ++ " && go mod tidy 2>&1" ]
         _ =
             case tidyResult of
-                
+
                 Ok _ ->
                     ()
-                
+
                 Err te ->
                     let
                         _ = println ("go mod tidy failed: " ++ errorToString te)
@@ -282,14 +348,14 @@ retryBuildWithTidy outDir originalErr =
         retryResult =
             Process.run "sh"
                 [ "-c"
-                , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o app"
+                , "cd " ++ outDir ++ " && go build -gcflags=all=-l -o " ++ binName
                 ]
     in
         case retryResult of
-            
+
             Ok _ ->
                 let
-                    _ = println ("Build complete: " ++ outDir ++ "/app")
+                    _ = println ("Build complete: " ++ outDir ++ "/" ++ binName)
                 in
                     ()
             
@@ -303,7 +369,8 @@ retryBuildWithTidy outDir originalErr =
 cmdRun _ =
     let
         _ = cmdBuild ()
-        _ = Process.execInherit "./sky-out/app" []
+        binName = readBinName ()
+        _ = Process.execInherit ("./sky-out/" ++ binName) []
     in
         ()
 

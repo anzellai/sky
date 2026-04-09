@@ -1252,6 +1252,8 @@ makeGoPackage decls =
         , { path = "encoding/json" , alias_ = "encoding_json" }
         , { path = "time" , alias_ = "" }
         , { path = "context" , alias_ = "" }
+        , { path = "path/filepath" , alias_ = "filepath" }
+        , { path = "net/url" , alias_ = "url" }
         ]
     , declarations = decls
     }

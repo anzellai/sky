@@ -933,10 +933,49 @@ lowerQualified ctx parts =
         
         else if qualName == "File.writeFile" then
             GoIdent "sky_fileWrite"
-        
+
+        else if qualName == "File.append" then
+            GoIdent "sky_fileAppend"
+
         else if qualName == "File.mkdirAll" then
             GoIdent "sky_fileMkdirAll"
-        
+
+        else if qualName == "File.exists" then
+            GoIdent "sky_fileExists"
+
+        else if qualName == "File.remove" then
+            GoIdent "sky_fileRemove"
+
+        else if qualName == "File.readDir" then
+            GoIdent "sky_fileReadDir"
+
+        else if qualName == "File.isDir" then
+            GoIdent "sky_fileIsDir"
+
+        else if qualName == "File.tempFile" then
+            GoIdent "sky_fileTempFile"
+
+        else if qualName == "File.tempDir" then
+            GoIdent "sky_fileTempDir"
+
+        else if qualName == "File.copy" then
+            GoIdent "sky_fileCopy"
+
+        else if qualName == "Url.parse" then
+            GoIdent "sky_urlParse"
+
+        else if qualName == "Url.encode" then
+            GoIdent "sky_urlEncode"
+
+        else if qualName == "Url.decode" then
+            GoIdent "sky_urlDecode"
+
+        else if qualName == "Url.queryString" then
+            GoIdent "sky_urlQueryString"
+
+        else if qualName == "Url.parseQuery" then
+            GoIdent "sky_urlParseQuery"
+
         else if qualName == "Process.exit" then
             GoIdent "sky_processExit"
         
@@ -945,7 +984,31 @@ lowerQualified ctx parts =
         
         else if qualName == "Process.execInherit" then
             GoIdent "sky_processExecInherit"
-        
+
+        else if qualName == "Process.getEnv" then
+            GoIdent "sky_processGetEnv"
+
+        else if qualName == "Process.getCwd" then
+            GoCallExpr (GoIdent "sky_processGetCwd") []
+
+        else if qualName == "Path.join" then
+            GoIdent "sky_pathJoin"
+
+        else if qualName == "Path.dir" then
+            GoIdent "sky_pathDir"
+
+        else if qualName == "Path.base" then
+            GoIdent "sky_pathBase"
+
+        else if qualName == "Path.ext" then
+            GoIdent "sky_pathExt"
+
+        else if qualName == "Path.isAbsolute" then
+            GoIdent "sky_pathIsAbsolute"
+
+        else if qualName == "Path.expandHome" then
+            GoIdent "sky_pathExpandHome"
+
         else if qualName == "Args.getArgs" then
             GoIdent "sky_processGetArgs"
         
@@ -1729,15 +1792,25 @@ lowerQualifiedImport ctx parts =
                     ""
     in
         case Dict.get modPart ctx.importAliases of
-            
+
             Just qualModName ->
                 let
                     prefix = String.replace "." "_" qualModName
                     safeFuncPart = sanitizeGoIdent funcPart
                     goName = prefix ++ "_" ++ capitalizeFirst safeFuncPart
                 in
-                    GoCallExpr (GoIdent goName) []
-            
+                    case Dict.get funcPart ctx.importedConstructors of
+
+                        Just info ->
+                            if info.arity == 0 then
+                                GoIdent goName
+
+                            else
+                                GoCallExpr (GoIdent goName) []
+
+                        Nothing ->
+                            GoCallExpr (GoIdent goName) []
+
             Nothing ->
                 GoSelectorExpr (GoIdent (String.toLower modPart)) funcPart
 
@@ -3175,6 +3248,8 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_fileWrite(path any) any { return func(content any) any { err := os.WriteFile(sky_asString(path), []byte(sky_asString(content)), 0644); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
     , GoDeclRaw
+          "func sky_fileAppend(path any) any { return func(content any) any { f, err := os.OpenFile(sky_asString(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644); if err != nil { return SkyErr(err.Error()) }; defer f.Close(); if _, err := f.WriteString(sky_asString(content)); err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
+    , GoDeclRaw
           "func sky_fileMkdirAll(path any) any { err := os.MkdirAll(sky_asString(path), 0755); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) }"
     , GoDeclRaw
           "func sky_processRun(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; out, err := exec.Command(sky_asString(cmd), cmdArgs...).CombinedOutput(); if err != nil { return SkyErr(err.Error() + \": \" + string(out)) }; return SkyOk(string(out)) } }"
@@ -3188,6 +3263,46 @@ generateHelperDecls =
           "func sky_processGetArgs(u any) any { args := make([]any, len(os.Args)); for i, a := range os.Args { args[i] = a }; return args }"
     , GoDeclRaw
           "func sky_processGetArg(n any) any { idx := sky_asInt(n); if idx < len(os.Args) { return SkyJust(os.Args[idx]) }; return SkyNothing() }"
+    , GoDeclRaw
+          "func sky_processGetEnv(key any) any { v := os.Getenv(sky_asString(key)); if v == \"\" { return SkyNothing() }; return SkyJust(v) }"
+    , GoDeclRaw
+          "func sky_processGetCwd() any { d, err := os.Getwd(); if err != nil { return SkyErr(err.Error()) }; return SkyOk(d) }"
+    , GoDeclRaw
+          "func sky_pathJoin(parts any) any { ps := sky_asList(parts); strs := make([]string, len(ps)); for i, p := range ps { strs[i] = sky_asString(p) }; return filepath.Join(strs...) }"
+    , GoDeclRaw
+          "func sky_pathDir(p any) any { return filepath.Dir(sky_asString(p)) }"
+    , GoDeclRaw
+          "func sky_pathBase(p any) any { return filepath.Base(sky_asString(p)) }"
+    , GoDeclRaw
+          "func sky_pathExt(p any) any { return filepath.Ext(sky_asString(p)) }"
+    , GoDeclRaw
+          "func sky_pathIsAbsolute(p any) any { return filepath.IsAbs(sky_asString(p)) }"
+    , GoDeclRaw
+          "func sky_pathExpandHome(p any) any { s := sky_asString(p); if strings.HasPrefix(s, \"~/\") { return filepath.Join(os.Getenv(\"HOME\"), s[2:]) }; if s == \"~\" { return os.Getenv(\"HOME\") }; return s }"
+    , GoDeclRaw
+          "func sky_fileExists(p any) any { _, err := os.Stat(sky_asString(p)); return err == nil }"
+    , GoDeclRaw
+          "func sky_fileRemove(p any) any { err := os.Remove(sky_asString(p)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) }"
+    , GoDeclRaw
+          "func sky_fileReadDir(p any) any { entries, err := os.ReadDir(sky_asString(p)); if err != nil { return SkyErr(err.Error()) }; out := make([]any, len(entries)); for i, e := range entries { out[i] = e.Name() }; return SkyOk(out) }"
+    , GoDeclRaw
+          "func sky_fileIsDir(p any) any { info, err := os.Stat(sky_asString(p)); if err != nil { return false }; return info.IsDir() }"
+    , GoDeclRaw
+          "func sky_fileTempFile(prefix any) any { f, err := os.CreateTemp(\"\", sky_asString(prefix) + \"*\"); if err != nil { return SkyErr(err.Error()) }; defer f.Close(); return SkyOk(f.Name()) }"
+    , GoDeclRaw
+          "func sky_fileTempDir(prefix any) any { d, err := os.MkdirTemp(\"\", sky_asString(prefix) + \"*\"); if err != nil { return SkyErr(err.Error()) }; return SkyOk(d) }"
+    , GoDeclRaw
+          "func sky_fileCopy(src any) any { return func(dst any) any { data, err := os.ReadFile(sky_asString(src)); if err != nil { return SkyErr(err.Error()) }; if err := os.WriteFile(sky_asString(dst), data, 0644); err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
+    , GoDeclRaw
+          "func sky_urlParse(s any) any { u, err := url.Parse(sky_asString(s)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(map[string]any{\"scheme\": u.Scheme, \"host\": u.Host, \"path\": u.Path, \"rawQuery\": u.RawQuery, \"fragment\": u.Fragment}) }"
+    , GoDeclRaw
+          "func sky_urlEncode(s any) any { return url.QueryEscape(sky_asString(s)) }"
+    , GoDeclRaw
+          "func sky_urlDecode(s any) any { v, err := url.QueryUnescape(sky_asString(s)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(v) }"
+    , GoDeclRaw
+          "func sky_urlQueryString(m any) any { mm := sky_asMap(m); v := url.Values{}; for k, val := range mm { v.Set(k, sky_asString(val)) }; return v.Encode() }"
+    , GoDeclRaw
+          "func sky_urlParseQuery(s any) any { v, err := url.ParseQuery(sky_asString(s)); if err != nil { return SkyErr(err.Error()) }; m := make(map[string]any); for k, vals := range v { if len(vals) > 0 { m[k] = vals[0] } }; return SkyOk(m) }"
     , GoDeclRaw "func sky_refNew(v any) any { return &SkyRef{Value: v} }"
     , GoDeclRaw "type SkyRef struct { Value any }"
     , GoDeclRaw
