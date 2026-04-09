@@ -29,7 +29,7 @@ type alias TypedDecl =
 
 
 makeTypedDecl : String -> Scheme -> Type -> TypedDecl
-makeTypedDecl n s t = { name = n , scheme = s , prettyType = formatType t }
+makeTypedDecl n s t = { name = n , scheme = s , prettyType = formatScheme s }
 
 
 makeFunError : String -> String -> Declaration -> CompilerError
@@ -137,23 +137,28 @@ checkModuleWithRegistryAndAliases mod imports importedRegistry importedAliases =
         counter = Ref.new 100
         baseEnv =
             case imports of
-                
+
                 Just importedEnv ->
                     Env.union importedEnv Env.createPreludeEnv
-                
+
                 Nothing ->
                     Env.createPreludeEnv
         moduleName = String.join "." mod.name
-        ( aliasEnv, localAliases ) =
-            registerTypeAliases counter mod.declarations baseEnv
-        mergedAliases =
+        importedAliasesDict =
             case importedAliases of
-                
+
                 Just ia ->
-                    Dict.union localAliases ia
-                
+                    ia
+
                 Nothing ->
-                    localAliases
+                    Dict.empty
+        -- Seed local alias registration with the imported alias dict
+        -- so a local alias can reference cross-module aliases by name
+        -- and get them inlined.
+        ( aliasEnv, localAliases ) =
+            registerTypeAliasesWithSeed counter mod.declarations baseEnv
+                importedAliasesDict
+        mergedAliases = Dict.union localAliases importedAliasesDict
         qualifiedAliases =
             addQualifiedAliases moduleName mod.imports mergedAliases
         _ = Unify.setTypeAliases qualifiedAliases
@@ -169,7 +174,10 @@ checkModuleWithRegistryAndAliases mod imports importedRegistry importedAliases =
                     localRegistry
         env0 = Env.union adtEnv aliasEnv
         annotations = collectAnnotations mod.declarations
-        env1 = preRegisterFunctions counter mod.declarations env0
+        env1 =
+            preRegisterFunctions counter annotations qualifiedAliases
+                mod.declarations
+                env0
         ( typedDecls, finalEnv, inferDiags ) =
             inferAllDeclarations counter registry env1 mod.declarations
                 annotations
@@ -193,16 +201,27 @@ checkModuleWithRegistryAndAliases mod imports importedRegistry importedAliases =
 
 registerTypeAliases : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> (Env.TypeEnv, Dict.Dict String Type)
 registerTypeAliases counter decls env =
-    registerTypeAliasesLoop counter decls env Dict.empty
+    registerTypeAliasesWithSeed counter decls env Dict.empty
+
+
+-- Register a module's type aliases starting from a SEED dict that
+-- contains aliases from imported modules. This way, when a local
+-- alias references a cross-module alias (e.g. `myCounter : Counter`
+-- where Counter is from another module), the resolved record is
+-- substituted inline at registration time, producing fully-resolved
+-- record types that don't need runtime alias expansion.
+registerTypeAliasesWithSeed : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
+registerTypeAliasesWithSeed counter decls env seed =
+    registerTypeAliasesLoop counter decls env seed
 
 
 registerTypeAliasesLoop : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
 registerTypeAliasesLoop counter decls env aliases =
     case decls of
-        
+
         [] ->
             ( env, aliases )
-        
+
         decl :: rest ->
             registerOneTypeAlias counter decl rest env aliases
 
@@ -210,17 +229,23 @@ registerTypeAliasesLoop counter decls env aliases =
 registerOneTypeAlias : (Ref.Ref Int) -> Declaration -> (List Declaration) -> Env.TypeEnv -> (Dict.Dict String Type) -> (Env.TypeEnv, Dict.Dict String Type)
 registerOneTypeAlias counter decl rest env aliases =
     case decl of
-        
+
         TypeAliasDecl aliasName aliasParams aliasBody _ ->
             let
                 paramVars =
                     List.map (\p -> freshVar counter (Just p)) aliasParams
                 paramMap = Adt.buildParamMap aliasParams paramVars Dict.empty
-                resolvedType = Adt.resolveTypeExpr paramMap aliasBody
+                -- Combine type-parameter bindings with the accumulated
+                -- alias dict. resolveTypeExpr looks up names in the
+                -- combined map, so an alias body can reference both its
+                -- own type parameters AND any previously-registered
+                -- aliases (from this module or imported ones).
+                combined = Dict.union paramMap aliases
+                resolvedType = Adt.resolveTypeExpr combined aliasBody
                 newAliases = Dict.insert aliasName resolvedType aliases
             in
                 registerTypeAliasesLoop counter rest env newAliases
-        
+
         _ ->
             registerTypeAliasesLoop counter rest env aliases
 
@@ -281,29 +306,46 @@ collectAnnotationsLoop decls acc =
                     collectAnnotationsLoop rest acc
 
 
-preRegisterFunctions : (Ref.Ref Int) -> (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
-preRegisterFunctions counter decls env =
+preRegisterFunctions : (Ref.Ref Int) -> (Dict.Dict String TypeExpr) -> (Dict.Dict String Type) -> (List Declaration) -> Env.TypeEnv -> Env.TypeEnv
+preRegisterFunctions counter annotations typeAliases decls env =
     case decls of
-        
+
         [] ->
             env
-        
+
         decl :: rest ->
-            preRegisterOneFunction counter decl rest env
+            preRegisterOneFunction counter annotations typeAliases decl rest env
 
 
-preRegisterOneFunction counter decl rest env =
+preRegisterOneFunction counter annotations typeAliases decl rest env =
     case decl of
-        
+
         FunDecl name _ _ _ ->
             let
-                tv = freshVar counter Nothing
-                newEnv = Env.extend name (mono tv) env
+                -- When the user has provided an annotation, register the
+                -- function with the resolved annotated type so use sites
+                -- in EARLIER declarations of the same module (recursive
+                -- and forward references) see the user's declared type
+                -- instead of a fresh polymorphic placeholder. Without
+                -- this, a forward reference would be treated as fully
+                -- polymorphic and never validated against the annotation.
+                scheme =
+                    case Dict.get name annotations of
+
+                        Just annotExpr ->
+                            Env.generalizeInEnv env
+                                (Adt.resolveAnnotation counter typeAliases
+                                    annotExpr)
+
+                        Nothing ->
+                            mono (freshVar counter Nothing)
+                newEnv = Env.extend name scheme env
             in
-                preRegisterFunctions counter rest newEnv
-        
+                preRegisterFunctions counter annotations typeAliases rest
+                    newEnv
+
         _ ->
-            preRegisterFunctions counter rest env
+            preRegisterFunctions counter annotations typeAliases rest env
 
 
 inferAllDeclarations : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Declaration) -> (Dict.Dict String TypeExpr) -> (Dict.Dict String Type) -> (List TypedDecl, Env.TypeEnv, List String)

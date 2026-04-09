@@ -251,9 +251,84 @@ resolveTypeRef paramMap parts args =
 resolveTypeVarExpr : (Dict.Dict String Type) -> String -> Type
 resolveTypeVarExpr paramMap name =
     case Dict.get name paramMap of
-        
+
         Just tv ->
             tv
-        
+
         Nothing ->
             TVar 0 (Just name)
+
+
+-- Resolve an annotation TypeExpr from a function signature into a Type,
+-- assigning a FRESH type variable id to each distinct lowercase type
+-- variable name. Without this, all `TypeVar` references would resolve
+-- to `TVar 0 (Just "name")`, making `f : a -> b -> a` indistinguishable
+-- from `f : a -> a -> a` at the type level.
+--
+-- Type alias names (uppercase) still resolve via the typeAliases dict
+-- to their stored canonical form. The annotation may freely mix
+-- aliases and type variables.
+resolveAnnotation : (Ref.Ref Int) -> (Dict.Dict String Type) -> TypeExpr -> Type
+resolveAnnotation counter typeAliases annotExpr =
+    let
+        varNames = collectAnnotationVarNames annotExpr []
+        freshVars = List.map (\n -> freshVar counter (Just n)) varNames
+        varMap = buildParamMap varNames freshVars Dict.empty
+        combined = Dict.union varMap typeAliases
+    in
+        resolveTypeExpr combined annotExpr
+
+
+collectAnnotationVarNames : TypeExpr -> (List String) -> List String
+collectAnnotationVarNames texpr acc =
+    case texpr of
+
+        TypeVar name _ ->
+            if listContainsString name acc then
+                acc
+
+            else
+                List.append acc [ name ]
+
+        TypeRef _ args _ ->
+            List.foldl
+                (\arg acc2 -> collectAnnotationVarNames arg acc2)
+                acc
+                args
+
+        FunType fromT toT _ ->
+            collectAnnotationVarNames toT
+                (collectAnnotationVarNames fromT acc)
+
+        RecordTypeExpr fields _ ->
+            List.foldl
+                (\f acc2 -> collectAnnotationVarNames f.type_ acc2)
+                acc
+                fields
+
+        TupleTypeExpr items _ ->
+            List.foldl
+                (\item acc2 -> collectAnnotationVarNames item acc2)
+                acc
+                items
+
+        UnitTypeExpr _ ->
+            acc
+
+        _ ->
+            acc
+
+
+listContainsString : String -> (List String) -> Bool
+listContainsString needle items =
+    case items of
+
+        [] ->
+            False
+
+        x :: rest ->
+            if x == needle then
+                True
+
+            else
+                listContainsString needle rest

@@ -1403,31 +1403,32 @@ buildStdlibEnv =
         Env.union stdFunctions prelude
 
 
-buildDepTypeEnv : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> Env.TypeEnv
-buildDepTypeEnv entryImports loadedModules =
-    buildDepTypeEnvLoop entryImports loadedModules Env.empty
+buildDepTypeEnv : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> (Dict.Dict String Type) -> Env.TypeEnv
+buildDepTypeEnv entryImports loadedModules typeAliases =
+    buildDepTypeEnvLoop entryImports loadedModules typeAliases Env.empty
 
 
-buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> Env.TypeEnv -> Env.TypeEnv
-buildDepTypeEnvLoop entryImports modules env =
+buildDepTypeEnvLoop : (List Ast.ImportDecl) -> (List (String, Ast.Module)) -> (Dict.Dict String Type) -> Env.TypeEnv -> Env.TypeEnv
+buildDepTypeEnvLoop entryImports modules typeAliases env =
     case modules of
-        
+
         [] ->
             env
-        
+
         pair :: rest ->
-            buildDepTypeEnvLoop entryImports rest
-                (addOneModuleTypes entryImports pair env)
+            buildDepTypeEnvLoop entryImports rest typeAliases
+                (addOneModuleTypes entryImports typeAliases pair env)
 
 
-addOneModuleTypes : (List Ast.ImportDecl) -> (String, Ast.Module) -> Env.TypeEnv -> Env.TypeEnv
-addOneModuleTypes entryImports pair env =
-    addOneModuleTypesInner entryImports (fst pair) (snd pair) env
+addOneModuleTypes : (List Ast.ImportDecl) -> (Dict.Dict String Type) -> (String, Ast.Module) -> Env.TypeEnv -> Env.TypeEnv
+addOneModuleTypes entryImports typeAliases pair env =
+    addOneModuleTypesInner entryImports typeAliases (fst pair) (snd pair) env
 
 
-addOneModuleTypesInner : (List Ast.ImportDecl) -> String -> Ast.Module -> Env.TypeEnv -> Env.TypeEnv
-addOneModuleTypesInner entryImports modName mod env =
-    addAnnotationsToEnv (findImportAlias entryImports modName)
+addOneModuleTypesInner : (List Ast.ImportDecl) -> (Dict.Dict String Type) -> String -> Ast.Module -> Env.TypeEnv -> Env.TypeEnv
+addOneModuleTypesInner entryImports typeAliases modName mod env =
+    addAnnotationsToEnv typeAliases
+        (findImportAlias entryImports modName)
         (findExposedNames entryImports modName)
         (collectModuleAnnotations mod.declarations)
         env
@@ -1535,33 +1536,33 @@ collectOneAnnotation decl acc =
             acc
 
 
-addAnnotationsToEnv : String -> (List String) -> (List (String, TypeExpr)) -> Env.TypeEnv -> Env.TypeEnv
-addAnnotationsToEnv qualPrefix exposed annotations env =
+addAnnotationsToEnv : (Dict.Dict String Type) -> String -> (List String) -> (List (String, TypeExpr)) -> Env.TypeEnv -> Env.TypeEnv
+addAnnotationsToEnv typeAliases qualPrefix exposed annotations env =
     case annotations of
-        
+
         [] ->
             env
-        
+
         ann :: rest ->
-            addAnnotationsToEnv qualPrefix exposed rest
-                (addOneAnnotation qualPrefix exposed ann env)
+            addAnnotationsToEnv typeAliases qualPrefix exposed rest
+                (addOneAnnotation typeAliases qualPrefix exposed ann env)
 
 
-addOneAnnotation : String -> (List String) -> (String, TypeExpr) -> Env.TypeEnv -> Env.TypeEnv
-addOneAnnotation qualPrefix exposed ann env =
-    addOneAnnotationInner qualPrefix exposed (fst ann) (snd ann) env
+addOneAnnotation : (Dict.Dict String Type) -> String -> (List String) -> (String, TypeExpr) -> Env.TypeEnv -> Env.TypeEnv
+addOneAnnotation typeAliases qualPrefix exposed ann env =
+    addOneAnnotationInner typeAliases qualPrefix exposed (fst ann) (snd ann) env
 
 
-addOneAnnotationInner : String -> (List String) -> String -> TypeExpr -> Env.TypeEnv -> Env.TypeEnv
-addOneAnnotationInner qualPrefix exposed funcName texpr env =
+addOneAnnotationInner : (Dict.Dict String Type) -> String -> (List String) -> String -> TypeExpr -> Env.TypeEnv -> Env.TypeEnv
+addOneAnnotationInner typeAliases qualPrefix exposed funcName texpr env =
     let
-        scheme = typeExprToScheme texpr
+        scheme = typeExprToScheme typeAliases texpr
         qualName = qualPrefix ++ "." ++ funcName
         envWithQual = Env.extend qualName scheme env
     in
         if isExposed funcName exposed then
             Env.extend funcName scheme envWithQual
-        
+
         else
             envWithQual
 
@@ -1569,26 +1570,33 @@ addOneAnnotationInner qualPrefix exposed funcName texpr env =
 isExposed : String -> (List String) -> Bool
 isExposed funcName exposed =
     case exposed of
-        
+
         [] ->
             False
-        
+
         name :: rest ->
             if name == "*" || name == funcName then
                 True
-            
+
             else
                 isExposed funcName rest
 
 
-typeExprToScheme : TypeExpr -> Scheme
-typeExprToScheme texpr =
+typeExprToScheme : (Dict.Dict String Type) -> TypeExpr -> Scheme
+typeExprToScheme typeAliases texpr =
     let
         startId = 0 - 1
         varNames = Set.toList (collectTypeVarNames texpr)
         varPairs = assignVarIds varNames startId []
         paramMap = buildParamMap varPairs Dict.empty
-        resolvedType = Adt.resolveTypeExpr paramMap texpr
+        -- Combine type variable bindings with the project-wide type
+        -- alias dict so resolveTypeExpr expands alias names inline.
+        -- This makes dep-module schemes like `Dict Int Piece` resolve
+        -- to `Dict Int { kind, value }` at scheme registration time,
+        -- so the unifier never needs to expand at call sites (where
+        -- the Ref-based registry would be empty in single-file mode).
+        combined = Dict.union paramMap typeAliases
+        resolvedType = Adt.resolveTypeExpr combined texpr
         quantified = List.map snd varPairs
     in
         { quantified = quantified , type_ = resolvedType }

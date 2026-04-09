@@ -1187,19 +1187,53 @@ inferFunctionBody counter registry env name envWithSelf paramSub paramVars selfV
 inferFunctionSelfUnify : (Ref.Ref Int) -> Env.TypeEnv -> String -> Substitution -> Type -> Type -> Expression -> (Maybe TypeExpr) -> (Dict.Dict String Type) -> Result String DeclResult
 inferFunctionSelfUnify counter env name bodySub funType selfType body annotation typeAliases =
     case unify selfType funType of
-        
+
         Err e ->
             Err ("Recursive type error in '" ++ name ++ "': " ++ e)
-        
+
         Ok selfSub ->
             let
                 finalSub = composeSubs selfSub bodySub
                 finalType = applySub finalSub funType
-                diagnostics =
-                    checkAnnotation counter env finalType annotation typeAliases
-                scheme = Env.generalizeInEnv env finalType
+                annotResult =
+                    applyAnnotationConstraint counter typeAliases finalType
+                        annotation
+                schemeType = fst annotResult
+                diagnostics = snd annotResult
+                scheme = Env.generalizeInEnv env schemeType
             in
                 Ok { name = name , scheme = scheme , diagnostics = diagnostics }
+
+
+-- When an annotation is present, unify the inferred body type with
+-- the resolved annotation type. The substitution from this unification
+-- is applied to the inferred type, producing a type that has BOTH the
+-- structure inferred from the body AND the constraints from the
+-- annotation. The user's declared types win where they're more
+-- specific (e.g. `String` vs an inferred `a`); the body's structure
+-- wins where the annotation is loose.
+--
+-- If unification fails, the inferred type is returned unchanged and
+-- a diagnostic is produced. This preserves the existing behaviour for
+-- code that has annotations but doesn't satisfy them.
+applyAnnotationConstraint : (Ref.Ref Int) -> (Dict.Dict String Type) -> Type -> (Maybe TypeExpr) -> ( Type, List String )
+applyAnnotationConstraint counter typeAliases inferredType annotation =
+    case annotation of
+
+        Nothing ->
+            ( inferredType, [] )
+
+        Just annotExpr ->
+            let
+                annotType = Adt.resolveAnnotation counter typeAliases annotExpr
+            in
+                case unify inferredType annotType of
+
+                    Ok sub ->
+                        ( applySub sub annotType, [] )
+
+                    Err e ->
+                        ( inferredType, [ "Type annotation mismatch: " ++ e ] )
 
 
 bindParams : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> (List Pattern) -> (List Type) -> Result String (Substitution, Env.TypeEnv)

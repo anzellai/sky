@@ -168,22 +168,22 @@ mono t = { quantified = [] , type_ = t }
 formatType : Type -> String
 formatType t =
     case t of
-        
+
         TVar id name ->
             formatVarName id name
-        
+
         TConst name ->
             name
-        
+
         TFun fromT toT ->
             formatFunFrom fromT ++ " -> " ++ formatType toT
-        
+
         TApp ctor args ->
             formatType ctor ++ " " ++ String.join " " (List.map formatType args)
-        
+
         TTuple items ->
             "( " ++ String.join " , " (List.map formatType items) ++ " )"
-        
+
         TRecord fields ->
             let
                 fieldStrs =
@@ -192,9 +192,219 @@ formatType t =
                         (Dict.toList fields)
             in
                 "{ " ++ String.join " , " fieldStrs ++ " }"
-        
+
         _ ->
             "?"
+
+
+-- Pretty-print a Scheme by renaming quantified type variables to
+-- friendly letters (a, b, c, ...). Used by the LSP hover handler and
+-- in TypedDecl construction so users see `forall a b. a -> b -> a`
+-- instead of `t108 -> t107 -> t108`.
+--
+-- Free (non-quantified) variables keep their `t<id>` form so debug
+-- output during inference still distinguishes distinct in-flight vars.
+formatScheme : Scheme -> String
+formatScheme scheme =
+    let
+        renaming = buildSchemeRenaming scheme.quantified
+        renamedType = applyNameRenaming renaming scheme.type_
+    in
+        formatType renamedType
+
+
+-- Build a Dict Int String mapping each quantified id to a letter:
+-- ids[0] -> "a", ids[1] -> "b", etc. After "z" we wrap to "a1", "b1", ...
+buildSchemeRenaming : (List Int) -> Dict.Dict Int String
+buildSchemeRenaming ids = buildSchemeRenamingLoop ids 0 Dict.empty
+
+
+buildSchemeRenamingLoop : (List Int) -> Int -> (Dict.Dict Int String) -> Dict.Dict Int String
+buildSchemeRenamingLoop ids index acc =
+    case ids of
+
+        [] ->
+            acc
+
+        id :: rest ->
+            let
+                letter = letterForIndex index
+                next = Dict.insert id letter acc
+            in
+                buildSchemeRenamingLoop rest (index + 1) next
+
+
+letterForIndex : Int -> String
+letterForIndex i =
+    let
+        primary = modBy 26 i
+        suffix = i // 26
+        letter = singleLetter primary
+    in
+        if suffix == 0 then
+            letter
+
+        else
+            letter ++ String.fromInt suffix
+
+
+singleLetter : Int -> String
+singleLetter n =
+    if n == 0 then "a"
+    else if n == 1 then "b"
+    else if n == 2 then "c"
+    else if n == 3 then "d"
+    else if n == 4 then "e"
+    else if n == 5 then "f"
+    else if n == 6 then "g"
+    else if n == 7 then "h"
+    else if n == 8 then "i"
+    else if n == 9 then "j"
+    else if n == 10 then "k"
+    else if n == 11 then "l"
+    else if n == 12 then "m"
+    else if n == 13 then "n"
+    else if n == 14 then "o"
+    else if n == 15 then "p"
+    else if n == 16 then "q"
+    else if n == 17 then "r"
+    else if n == 18 then "s"
+    else if n == 19 then "t"
+    else if n == 20 then "u"
+    else if n == 21 then "v"
+    else if n == 22 then "w"
+    else if n == 23 then "x"
+    else if n == 24 then "y"
+    else "z"
+
+
+-- Apply a Dict Int String renaming to a type, replacing TVar with the
+-- mapped letter as a name hint while preserving the id (so unification
+-- still works correctly when the renamed type is later compared).
+applyNameRenaming : (Dict.Dict Int String) -> Type -> Type
+applyNameRenaming renaming t =
+    case t of
+
+        TVar id _ ->
+            case Dict.get id renaming of
+
+                Just letter ->
+                    TVar id (Just letter)
+
+                Nothing ->
+                    t
+
+        TConst _ ->
+            t
+
+        TFun fromT toT ->
+            TFun (applyNameRenaming renaming fromT)
+                (applyNameRenaming renaming toT)
+
+        TApp ctor args ->
+            TApp (applyNameRenaming renaming ctor)
+                (List.map (applyNameRenaming renaming) args)
+
+        TTuple items ->
+            TTuple (List.map (applyNameRenaming renaming) items)
+
+        TRecord fields ->
+            TRecord (Dict.map (\_ v -> applyNameRenaming renaming v) fields)
+
+
+-- Format a type for an error message: collect every TVar id, assign
+-- letters (a, b, c, ...) in encounter order, then format. Used by
+-- unification error messages so users see `a -> Int` instead of
+-- `t105 -> Int`. The renaming is local to one call (no shared state),
+-- so two separate errors use independent letter assignments.
+formatTypeForError : Type -> String
+formatTypeForError t =
+    let
+        ids = collectTypeVarIds t []
+        renaming = buildSchemeRenaming ids
+    in
+        formatType (applyNameRenaming renaming t)
+
+
+-- Format two types for a single error message with CONSISTENT
+-- letter assignments across both. So `t105 -> t106` and `String -> t106`
+-- become `a -> b` and `String -> b` (the shared b makes the
+-- relationship clear).
+formatTypePairForError : Type -> Type -> ( String, String )
+formatTypePairForError t1 t2 =
+    let
+        ids1 = collectTypeVarIds t1 []
+        ids2 = collectTypeVarIds t2 []
+        combined = uniqueIds (List.append ids1 ids2)
+        renaming = buildSchemeRenaming combined
+    in
+        ( formatType (applyNameRenaming renaming t1)
+        , formatType (applyNameRenaming renaming t2)
+        )
+
+
+-- Walk a type collecting all TVar ids in encounter order.
+collectTypeVarIds : Type -> (List Int) -> List Int
+collectTypeVarIds t acc =
+    case t of
+
+        TVar id _ ->
+            if listContainsInt id acc then
+                acc
+
+            else
+                List.append acc [ id ]
+
+        TConst _ ->
+            acc
+
+        TFun fromT toT ->
+            collectTypeVarIds toT (collectTypeVarIds fromT acc)
+
+        TApp ctor args ->
+            List.foldl (\a a2 -> collectTypeVarIds a a2)
+                (collectTypeVarIds ctor acc)
+                args
+
+        TTuple items ->
+            List.foldl (\a a2 -> collectTypeVarIds a a2) acc items
+
+        TRecord fields ->
+            Dict.foldl (\_ v a2 -> collectTypeVarIds v a2) acc fields
+
+
+listContainsInt : Int -> (List Int) -> Bool
+listContainsInt needle items =
+    case items of
+
+        [] ->
+            False
+
+        x :: rest ->
+            if x == needle then
+                True
+
+            else
+                listContainsInt needle rest
+
+
+uniqueIds : (List Int) -> List Int
+uniqueIds ids = uniqueIdsLoop ids []
+
+
+uniqueIdsLoop : (List Int) -> (List Int) -> List Int
+uniqueIdsLoop ids acc =
+    case ids of
+
+        [] ->
+            acc
+
+        x :: rest ->
+            if listContainsInt x acc then
+                uniqueIdsLoop rest acc
+
+            else
+                uniqueIdsLoop rest (List.append acc [ x ])
 
 
 typeToGo : Type -> String
