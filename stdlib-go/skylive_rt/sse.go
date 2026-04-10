@@ -378,7 +378,7 @@ func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.Ra
 			return
 		}
 
-		newModel, _ := m.app.Update(msg, sess.Model)
+		newModel, cmds := m.app.Update(msg, sess.Model)
 		newView := m.app.View(newModel)
 		AssignSkyIDs(newView)
 		patches := Diff(sess.PrevView, newView)
@@ -388,6 +388,116 @@ func (m *SSEManager) processSubMsg(sid string, msgName string, msgArgs []json.Ra
 		if m.store.Set(sid, sess) {
 			if len(patches) > 0 {
 				m.SendPatches(sid, patches, "", "")
+			}
+			if len(cmds) > 0 {
+				go func() { m.SpawnCmds(sid, cmds) }()
+			}
+			return // success
+		}
+		// Version conflict — retry with fresh session
+	}
+}
+
+
+// SpawnCmds processes a list of Cmd actions, spawning goroutines for
+// async CmdPerform commands. Called after a successful model save.
+func (m *SSEManager) SpawnCmds(sid string, cmds []any) {
+	for _, cmd := range cmds {
+		action, ok := cmd.(map[string]any)
+		if !ok {
+			continue
+		}
+		skyName, _ := action["SkyName"].(string)
+		if skyName == "CmdPerform" {
+			task := action["task"]
+			toMsg, ok := action["toMsg"].(func(any) any)
+			if !ok {
+				continue
+			}
+			go m.runCmdTask(sid, task, toMsg)
+		}
+	}
+}
+
+
+// runCmdTask executes a Task thunk in a goroutine and dispatches
+// the result as a Msg through the full update/view/diff/SSE cycle.
+func (m *SSEManager) runCmdTask(sid string, task any, toMsg func(any) any) {
+	// Execute the task with panic recovery
+	var result any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Cmd] Task panic (sid=%s): %v", sid[:8], r)
+				// Build an Err-like result. The toMsg mapper expects
+				// a SkyResult which lives in the main package; use a
+				// map fallback that sky_asSkyResult can handle.
+				result = map[string]any{
+					"Tag": 1, "SkyName": "Err",
+					"ErrValue": fmt.Sprintf("task panic: %v", r),
+				}
+			}
+		}()
+		if thunk, ok := task.(func() any); ok {
+			result = thunk()
+		} else if thunk2, ok := task.(func(any) any); ok {
+			result = thunk2(struct{}{})
+		} else {
+			result = task
+		}
+	}()
+
+	// Apply the toMsg mapper to convert Result -> Msg
+	var msg any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Cmd] toMsg panic (sid=%s): %v", sid[:8], r)
+			}
+		}()
+		msg = toMsg(result)
+	}()
+	if msg == nil {
+		return
+	}
+
+	// Dispatch the Msg through the full update cycle
+	m.processCmdResult(sid, msg)
+}
+
+
+// processCmdResult dispatches a pre-built Msg (from a completed Cmd)
+// through the update/view/diff/SSE cycle with session locking and
+// optimistic concurrency. Structurally identical to processSubMsg
+// but takes a Msg value instead of decoding from name+args.
+func (m *SSEManager) processCmdResult(sid string, msg any) {
+	m.sessLock.Lock(sid)
+	defer m.sessLock.Unlock(sid)
+
+	const maxRetries = 3
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		sess, ok := m.store.Get(sid)
+		if !ok {
+			return // session expired — silently drop
+		}
+		if m.app.FixModel != nil {
+			sess.Model = m.app.FixModel(sess.Model)
+		}
+
+		newModel, cmds := m.app.Update(msg, sess.Model)
+		newView := m.app.View(newModel)
+		AssignSkyIDs(newView)
+		patches := Diff(sess.PrevView, newView)
+
+		sess.Model = newModel
+		sess.PrevView = newView
+		if m.store.Set(sid, sess) {
+			if len(patches) > 0 {
+				m.SendPatches(sid, patches, "", "")
+			}
+			// Recursively spawn any new commands from this update
+			if len(cmds) > 0 {
+				go func() { m.SpawnCmds(sid, cmds) }()
 			}
 			return // success
 		}

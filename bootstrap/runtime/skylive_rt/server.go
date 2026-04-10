@@ -303,6 +303,9 @@ func StartServer(config LiveConfig, app LiveApp) {
 		mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))
 	}
 
+	// SSE manager — created before event handler so cmds can be dispatched
+	sseManager := NewSSEManager(&app, store, sessLock)
+
 	// Event handler — processes Msg from the JS client
 	mux.HandleFunc("POST /_sky/event", func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -312,7 +315,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 				json.NewEncoder(w).Encode(EventResponse{})
 			}
 		}()
-		handleEvent(w, r, store, &app, sessLock)
+		handleEvent(w, r, store, &app, sessLock, sseManager)
 	})
 
 	// URL resolver — maps a URL path back to a Navigate Msg (for browser back/forward)
@@ -336,8 +339,7 @@ func StartServer(config LiveConfig, app LiveApp) {
 		fmt.Fprintf(w, `{"inputMode":%q,"pollInterval":%d}`, inputMode, pollInterval)
 	})
 
-	// SSE subscriptions
-	sseManager := NewSSEManager(&app, store, sessLock)
+	// SSE stream
 	mux.HandleFunc("GET /_sky/stream", sseManager.HandleSSE)
 
 	// Start subscription timers if app defines subscriptions
@@ -502,7 +504,7 @@ func handlePageRequest(w http.ResponseWriter, r *http.Request, store SessionStor
 	w.Write([]byte(html))
 }
 
-func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker) {
+func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app *LiveApp, sessLock *SessionLocker, sseMgr *SSEManager) {
 	setSecurityHeaders(w)
 
 	// Rate limit per IP (30 req/s, burst 60)
@@ -570,7 +572,6 @@ func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app
 		oldPage := getPageFromModel(sess.Model)
 
 		newModel, cmds := app.Update(msg, sess.Model)
-		_ = cmds
 		newView := app.View(newModel)
 		AssignSkyIDs(newView)
 
@@ -585,6 +586,10 @@ func handleEvent(w http.ResponseWriter, r *http.Request, store SessionStore, app
 			if !pagesEqual(oldPage, newPage) {
 				resp.URL = app.URLForPage(newPage)
 				resp.Title = app.TitleForPage(newPage)
+			}
+			// Spawn async commands from this update
+			if sseMgr != nil && len(cmds) > 0 {
+				sseMgr.SpawnCmds(env.SID, cmds)
 			}
 			break // success
 		}

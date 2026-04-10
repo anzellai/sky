@@ -624,10 +624,13 @@ lowerStdlibExposed modPath name =
     else if modPath == "Std.Cmd" then
         if name == "none" then
             GoCallExpr (GoIdent "sky_cmdNone") []
-        
+
         else if name == "batch" then
             GoIdent "sky_cmdBatch"
-        
+
+        else if name == "perform" then
+            GoIdent "sky_cmdPerform"
+
         else
             GoIdent ("sky_cmd_" ++ name)
     
@@ -1539,9 +1542,12 @@ lowerQualified ctx parts =
         
         else if qualName == "Cmd.none" then
             GoCallExpr (GoIdent "sky_cmdNone") []
-        
+
         else if qualName == "Cmd.batch" then
             GoIdent "sky_cmdBatch"
+
+        else if qualName == "Cmd.perform" then
+            GoIdent "sky_cmdPerform"
         
         else if qualName == "Sub.none" then
             GoCallExpr (GoIdent "sky_subNone") []
@@ -3723,7 +3729,8 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_jsonPipeOptional(key any) any { return func(decoder any) any { return func(def any) any { return func(pipeline any) any { return func(v any) any { pr := sky_call(pipeline, v); pres := sky_asSkyResult(pr); if pres.Tag == 1 { return pr }; m, ok := v.(map[string]any); if !ok { return SkyOk(sky_call(pres.OkValue, def)) }; val, exists := m[sky_asString(key)]; if !exists { return SkyOk(sky_call(pres.OkValue, def)) }; fr := sky_call(decoder, val); fres := sky_asSkyResult(fr); if fres.Tag == 1 { return SkyOk(sky_call(pres.OkValue, def)) }; return SkyOk(sky_call(pres.OkValue, fres.OkValue)) } } } } }"
     , GoDeclRaw "func sky_cmdNone() any { return []any{} }"
-    , GoDeclRaw "func sky_cmdBatch(cmds any) any { return sky_asList(cmds) }"
+    , GoDeclRaw "func sky_cmdBatch(cmds any) any { items := sky_asList(cmds); var result []any; for _, item := range items { if sub, ok := item.([]any); ok { result = append(result, sub...) } }; if result == nil { return []any{} }; return result }"
+    , GoDeclRaw "func sky_cmdPerform(task any) any { return func(toMsg any) any { return []any{map[string]any{\"SkyName\": \"CmdPerform\", \"task\": task, \"toMsg\": toMsg}} } }"
     , GoDeclRaw
           "func sky_subNone() any { return map[string]any{\"SkyName\": \"SubNone\"} }"
     , GoDeclRaw
