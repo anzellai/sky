@@ -1215,6 +1215,9 @@ buildStdlibEnv =
                             )
                         )
                 } )
+                , ( "Time.sleep", mono (TFun (TConst "Int") (TApp (TConst "Task") [ TConst "String" , TConst "Unit" ])) )
+                , ( "Random.int", mono (TFun (TConst "Int") (TFun (TConst "Int") (TApp (TConst "Task") [ TConst "String" , TConst "Int" ]))) )
+                , ( "Random.float", mono (TFun (TConst "Float") (TFun (TConst "Float") (TApp (TConst "Task") [ TConst "String" , TConst "Float" ]))) )
                 , ( "Task.perform", { quantified = [ 0 , 1 ]
                 , type_ =
                     TFun

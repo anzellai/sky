@@ -4,11 +4,14 @@ import Sky.Core.Prelude exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Random as Random
 import Std.Live as Live exposing (app, route)
 import Std.Html exposing (..)
 import Std.Live.Events exposing (onClick)
 import Std.Cmd as Cmd
 import Std.Sub as Sub
+
 
 type Page
     = DashboardPage
@@ -25,20 +28,19 @@ type Msg
 
 
 init _ =
-    ( { page = DashboardPage , jobs = [] , nextId = 1 , ok = 0 , fail = 0 }, Cmd.none )
+    ( { page = DashboardPage, jobs = [], nextId = 1, ok = 0, fail = 0 }
+    , Cmd.none
+    )
 
 
 addJob model name task =
     let
         jid = model.nextId
-        job = { id = jid , name = name , running = True , result = "" }
+        job = { id = jid, name = name, running = True, result = "" }
     in
-        ( { model | jobs = List.append model.jobs [ job ] , nextId = jid + 1 }, Cmd.perform
-                                                                                    task
-                                                                                    (
-                                                                                    JobDone
-                                                                                        jid
-                                                                                    ) )
+        ( { model | jobs = List.append model.jobs [ job ], nextId = jid + 1 }
+        , Cmd.perform task (JobDone jid)
+        )
 
 
 doBatch model =
@@ -47,149 +49,83 @@ doBatch model =
         i2 = i1 + 1
         i3 = i2 + 1
         js =
-            [ { id = i1 , name = "Batch A" , running = True , result = "" }
-            , { id = i2 , name = "Batch B" , running = True , result = "" }
-            , { id = i3 , name = "Batch C" , running = True , result = "" }
+            [ { id = i1, name = "Batch: resize images", running = True, result = "" }
+            , { id = i2, name = "Batch: send emails", running = True, result = "" }
+            , { id = i3, name = "Batch: generate report", running = True, result = "" }
             ]
+        t1 = Task.andThen (\_ -> Task.succeed "3 images resised") (Time.sleep 1500)
+        t2 = Task.andThen (\_ -> Task.succeed "12 emails sent") (Time.sleep 2500)
+        t3 = Task.andThen (\_ -> Task.succeed "Report: 42 pages") (Time.sleep 4000)
     in
-        ( { model | jobs = List.append model.jobs js , nextId = i3 + 1 }, Cmd.batch
-                                                                              [ Cmd.perform
-                                                                                    (
-                                                                                    Task.lazy
-                                                                                        (
-                                                                                        \_ ->
-                                                                                            "A done"
-                                                                                        )
-                                                                                    )
-                                                                                    (
-                                                                                    JobDone
-                                                                                        i1
-                                                                                    )
-                                                                              , Cmd.perform
-                                                                                    (
-                                                                                    Task.lazy
-                                                                                        (
-                                                                                        \_ ->
-                                                                                            "B done"
-                                                                                        )
-                                                                                    )
-                                                                                    (
-                                                                                    JobDone
-                                                                                        i2
-                                                                                    )
-                                                                              , Cmd.perform
-                                                                                    (
-                                                                                    Task.lazy
-                                                                                        (
-                                                                                        \_ ->
-                                                                                            "C done"
-                                                                                        )
-                                                                                    )
-                                                                                    (
-                                                                                    JobDone
-                                                                                        i3
-                                                                                    )
-                                                                              ] )
+        ( { model | jobs = List.append model.jobs js, nextId = i3 + 1 }
+        , Cmd.batch [ Cmd.perform t1 (JobDone i1), Cmd.perform t2 (JobDone i2), Cmd.perform t3 (JobDone i3) ]
+        )
 
 
 resolveResult result =
     case result of
-        
-        Ok v ->
-            v
-        
-        Err e ->
-            "Error: " ++ e
+        Ok v -> v
+        Err e -> "Error: " ++ e
 
 
 handleDone jid result model =
     let
         r = resolveResult result
-        newJobs =
-            List.map
-                (
-                \j ->
-                    if j.id == jid then
-                        { j | running = False , result = r }
-                    
-                    else
-                        j
-                )
-                model.jobs
+        newJobs = List.map (\j -> if j.id == jid then { j | running = False, result = r } else j) model.jobs
         addOk =
             case result of
-                
-                Ok _ ->
-                    1
-                
-                Err _ ->
-                    0
+                Ok _ -> 1
+                Err _ -> 0
         addFail =
             case result of
-                
-                Ok _ ->
-                    0
-                
-                Err _ ->
-                    1
+                Ok _ -> 0
+                Err _ -> 1
     in
-        ( { model
-            | jobs = newJobs
-            , ok = model.ok + addOk
-            , fail = model.fail + addFail
-        }, Cmd.none )
+        ( { model | jobs = newJobs, ok = model.ok + addOk, fail = model.fail + addFail }
+        , Cmd.none
+        )
 
 
 update msg model =
     case msg of
-        
         Navigate p ->
             ( { model | page = p }, Cmd.none )
-        
+
         RunFast ->
-            addJob model "Fast computation" (Task.lazy (\_ -> "Result: 42"))
-        
+            addJob model "Fast computation" (Task.andThen (\_ -> Task.succeed "Result: 42") (Time.sleep 500))
+
         RunSlow ->
-            addJob model "Heavy processing"
-                (Task.lazy (\_ -> "Processed 1337 records"))
-        
+            addJob model "Heavy processing" (Task.andThen (\_ -> Task.andThen (\n -> Task.succeed ("Processed " ++ String.fromInt n ++ " records")) (Random.int 100 9999)) (Time.sleep 3000))
+
         RunFail ->
-            addJob model "Unreliable API call" (Task.fail "Connection timeout")
-        
+            addJob model "Unreliable API call" (Task.andThen (\_ -> Task.fail "Connection timeout") (Time.sleep 2000))
+
         RunBatch ->
             doBatch model
-        
+
         JobDone jid result ->
             handleDone jid result model
-        
+
         ClearDone ->
             ( { model | jobs = List.filter (\j -> j.running) model.jobs }, Cmd.none )
 
 
-subscriptions model = Sub.none
+subscriptions model =
+    Sub.none
 
 
 viewJob job =
     let
-        status =
-            if job.running then
-                "[running]"
-            
-            else
-                job.result
+        status = if job.running then "[running]" else job.result
+        jid = String.fromInt job.id
+        jname = job.name
     in
-        let
-            jid = String.fromInt job.id
-            jname = job.name
-        in
-            div [] [ text ("""#{{jid}} {{jname}} - {{status}}""") ]
+        div [] [ text ("""#{{jid}} {{jname}} - {{status}}""") ]
 
 
 view model =
     let
-        running =
-            String.fromInt
-                (List.length (List.filter (\j -> j.running) model.jobs))
+        running = String.fromInt (List.length (List.filter (\j -> j.running) model.jobs))
         okCount = String.fromInt model.ok
         failCount = String.fromInt model.fail
         total = String.fromInt (List.length model.jobs)
@@ -197,16 +133,11 @@ view model =
         div []
             [ h1 [] [ text "Job Queue Dashboard" ]
             , p [] [ text "Async Cmd.perform with Sky.Live" ]
-            , p []
-                  [ text
-                        (
-                        """Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}"""
-                        )
-                  ]
+            , p [] [ text ("""Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}""") ]
             , div []
-                  [ button [ onClick RunFast ] [ text "Fast Job" ]
-                  , button [ onClick RunSlow ] [ text "Slow Job" ]
-                  , button [ onClick RunFail ] [ text "Failing Job" ]
+                  [ button [ onClick RunFast ] [ text "Fast Job (0.5s)" ]
+                  , button [ onClick RunSlow ] [ text "Slow Job (3s)" ]
+                  , button [ onClick RunFail ] [ text "Failing Job (2s)" ]
                   , button [ onClick RunBatch ] [ text "Batch (3 jobs)" ]
                   , button [ onClick ClearDone ] [ text "Clear Finished" ]
                   ]
