@@ -106,17 +106,17 @@ verifyToken idToken =
                                 )
                     in
                         Err "Authentication failed. Please try again."
-                
-                Err e ->
-                    let
-                        _ =
-                            println
-                                (
-                                "[AUTH] Firebase auth client error: "
-                                    ++ errorToString e
-                                )
-                    in
-                        Err "Authentication service unavailable."
+
+        Err e ->
+            let
+                _ =
+                    println
+                        (
+                        "[AUTH] Firebase auth client error: "
+                            ++ errorToString e
+                        )
+            in
+                Err "Authentication service unavailable."
 
 
 findOrCreateUser uid email name =
@@ -143,14 +143,14 @@ findOrCreateUser uid email name =
         result = Db.getDoc "users" uid
     in
         case result of
-            
+
             Ok maybeUser ->
                 case maybeUser of
-                    
+
                     Just user ->
                         if Db.getBool "suspended" user then
                             Err "Account suspended. Please contact support."
-                        
+
                         else
                             let
                                 _ =
@@ -163,12 +163,12 @@ findOrCreateUser uid email name =
                                         )
                             in
                                 Ok user
-                    
+
                     Nothing ->
                         Err "Failed to load user profile."
-                    
-                    Err e ->
-                        Err e
+
+            Err e ->
+                Err e
 
 
 -- ══════════════════════════════════════════════════════

@@ -441,10 +441,19 @@ checkDeclExhaustiveness registry decl =
 checkExprExhaustiveness : AdtRegistry -> Expression -> List String
 checkExprExhaustiveness registry expr =
     case expr of
-        
-        CaseExpr _ branches _ ->
-            List.concatMap (\b -> checkExprExhaustiveness registry b.body)
-                branches
+
+        CaseExpr subject branches span ->
+            let
+                -- Check THIS case expression's branches for exhaustiveness
+                -- using pattern-level analysis (no type info needed).
+                selfWarnings = checkCasePatternsExhaustive registry branches span
+                -- Recurse into branch bodies
+                childWarnings =
+                    List.concatMap
+                        (\b -> checkExprExhaustiveness registry b.body)
+                        branches
+            in
+                List.append selfWarnings childWarnings
         
         IfExpr cond thenB elseB _ ->
             List.concat
@@ -480,6 +489,114 @@ checkExprExhaustiveness registry expr =
         
         ParenExpr inner _ ->
             checkExprExhaustiveness registry inner
-        
+
         _ ->
             []
+
+
+-- Pattern-level exhaustiveness check: detects missing Maybe/Result/ADT
+-- branches from patterns alone, without needing the inferred subject type.
+-- This catches cases the type-directed check in Infer.sky misses
+-- (e.g. in unannotated dependency module functions).
+checkCasePatternsExhaustive : AdtRegistry -> (List CaseBranch) -> SourceSpan -> List String
+checkCasePatternsExhaustive registry branches span =
+    let
+        patterns = List.map (\b -> b.pattern) branches
+        hasCatchAll = List.any isCatchAllPattern patterns
+    in
+        if hasCatchAll then
+            []
+
+        else
+            let
+                ctorNames = collectBranchCtorNames patterns
+                maybeWarning = checkPatternCtors registry ctorNames patterns
+            in
+                case maybeWarning of
+
+                    Just warning ->
+                        [ "@"
+                            ++ String.fromInt span.start.line
+                                ++ ":"
+                                    ++ String.fromInt span.start.column
+                                        ++ ": Non-exhaustive case expression: "
+                                            ++ warning
+                        ]
+
+                    Nothing ->
+                        []
+
+
+isCatchAllPattern : Pattern -> Bool
+isCatchAllPattern pat =
+    case pat of
+
+        PWildcard _ ->
+            True
+
+        PVariable _ _ ->
+            True
+
+        PAs inner _ _ ->
+            isCatchAllPattern inner
+
+        _ ->
+            False
+
+
+collectBranchCtorNames : (List Pattern) -> Set.Set String
+collectBranchCtorNames patterns =
+    List.foldl addPatCtorName Set.empty patterns
+
+
+addPatCtorName : Pattern -> (Set.Set String) -> Set.Set String
+addPatCtorName pat acc =
+    case pat of
+
+        PConstructor parts _ _ ->
+            case List.reverse parts of
+
+                name :: _ ->
+                    Set.insert name acc
+
+                [] ->
+                    acc
+
+        _ ->
+            acc
+
+
+checkPatternCtors : AdtRegistry -> (Set.Set String) -> (List Pattern) -> Maybe String
+checkPatternCtors registry ctorNames patterns =
+    if Set.member "Just" ctorNames || Set.member "Nothing" ctorNames then
+        Exhaustive.checkMaybeExhaustiveness patterns
+
+    else if Set.member "Ok" ctorNames || Set.member "Err" ctorNames then
+        Exhaustive.checkResultExhaustiveness patterns
+
+    else
+        checkAdtPatternExhaustiveness registry ctorNames patterns
+
+
+checkAdtPatternExhaustiveness : AdtRegistry -> (Set.Set String) -> (List Pattern) -> Maybe String
+checkAdtPatternExhaustiveness registry ctorNames patterns =
+    if Set.isEmpty ctorNames then
+        Nothing
+
+    else
+        let
+            firstCtor = Set.toList ctorNames
+        in
+            case firstCtor of
+
+                name :: _ ->
+                    case Dict.get name registry of
+
+                        Just adt ->
+                            Exhaustive.checkAdtExhaustiveness adt patterns
+
+                        Nothing ->
+                            Nothing
+
+                [] ->
+                    Nothing

@@ -280,7 +280,7 @@ findDocAndCollection docId =
 
 setCartState docId newState =
     case findDocAndCollection docId of
-        
+
         Ok ( collection, doc ) ->
             let
                 updatedDoc = Dict.insert "state" newState doc
@@ -292,12 +292,15 @@ setCartState docId newState =
                         )
             in
                 case result of
-                    
+
                     Ok v ->
                         Ok v
-                    
+
                     Err e ->
                         Err e
+
+        Err e ->
+            Err e
 
 
 setCheckout docId link reference remarks =
