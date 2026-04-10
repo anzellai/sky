@@ -1,0 +1,64 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Live as Live exposing (app, route)
+import Std.Html exposing (..)
+import Std.Live.Events exposing (onClick)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+
+type Page = DashboardPage
+
+type Msg
+    = Navigate Page
+    | RunTask
+    | TaskDone (Result String String)
+    | Reset
+
+
+init _ =
+    ( { page = DashboardPage, status = "idle", result = "" }
+    , Cmd.none
+    )
+
+
+update msg model =
+    case msg of
+        Navigate page -> ( { model | page = page }, Cmd.none )
+        RunTask ->
+            let toMsg = TaskDone in
+            ( { model | status = "running" }, Cmd.perform (Task.lazy (\_ -> "Hello from async Cmd!")) toMsg )
+        TaskDone result ->
+            let r = case result of
+                         Ok v -> v
+                         Err e -> "Error: " ++ e
+            in ( { model | status = "done", result = r }, Cmd.none )
+        Reset -> ( { model | status = "idle", result = "" }, Cmd.none )
+
+
+subscriptions model = Sub.none
+
+
+view model =
+    div []
+        [ h1 [] [ text "Async Cmd Demo" ]
+        , p [] [ text ("Status: " ++ model.status) ]
+        , p [] [ text ("Result: " ++ model.result) ]
+        , button [ onClick RunTask ] [ text "Run Async Task" ]
+        , button [ onClick Reset ] [ text "Reset" ]
+        ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" DashboardPage ]
+        , notFound = DashboardPage
+        }

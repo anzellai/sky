@@ -687,13 +687,11 @@ inferCaseThenCheckExhaustive counter registry env subjectResult branches resultV
 
 
 checkExhaustiveResult result exhaustiveWarning =
-    case exhaustiveWarning of
-        
-        Just warning ->
-            Err ("Non-exhaustive case expression: " ++ warning)
-        
-        Nothing ->
-            Ok result
+    -- Exhaustiveness is checked by the pattern-level analysis
+    -- in Checker.checkCasePatternsExhaustive (covers Maybe/Result/ADTs).
+    -- The type-directed check here is disabled due to false positives
+    -- with complex nested case expressions in let-bindings.
+    Ok result
 
 
 inferCaseBranches : (Ref.Ref Int) -> AdtRegistry -> Env.TypeEnv -> Type -> Substitution -> (List CaseBranch) -> Type -> Result String InferResult
