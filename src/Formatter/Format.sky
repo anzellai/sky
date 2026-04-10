@@ -366,9 +366,7 @@ formatExpr expr =
                 (
                 concat
                     [ text "("
-                    , softline
                     , formatExpr inner
-                    , softline
                     , text ")"
                     ]
                 )
@@ -377,10 +375,10 @@ formatExpr expr =
 formatTuple : (List Expression) -> Doc
 formatTuple items =
     case items of
-        
+
         [] ->
             text "()"
-        
+
         first :: rest ->
             group
                 (
@@ -390,10 +388,11 @@ formatTuple items =
                     , concat
                           (
                           List.map
-                              (\item -> concat [ text ", " , formatExpr item ])
+                              (\item -> concat [ line , text ", " , formatExpr item ])
                               rest
                           )
-                    , text " )"
+                    , line
+                    , text ")"
                     ]
                 )
 
@@ -487,26 +486,21 @@ formatRecordUpdate base fields =
         )
 
 
--- align ensures continuation args are at column >= callee start,
--- which the parser's column-based layout rules require.
 formatCall : Expression -> (List Expression) -> Doc
 formatCall callee args =
     group
         (
-        align
-            (
-            concat
-                [ formatExpr callee
-                , indent
+        concat
+            [ formatExpr callee
+            , indent
+                  (
+                  concat
                       (
-                      concat
-                          (
-                          List.map (\arg -> concat [ line , formatExpr arg ])
-                              args
-                          )
+                      List.map (\arg -> concat [ line , formatExpr arg ])
+                          args
                       )
-                ]
-            )
+                  )
+            ]
         )
 
 
