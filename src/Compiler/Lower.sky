@@ -3446,7 +3446,7 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_taskAndThen(fn any) any { return func(task any) any { return func() any { r := sky_runTask(task); if sky_asSkyResult(r).Tag == 0 { next := fn.(func(any) any)(sky_asSkyResult(r).OkValue); return sky_runTask(next) }; return r } } }"
     , GoDeclRaw
-          "func sky_taskPerform(task any) any { r := sky_runTask(task); if sr, ok := r.(SkyResult); ok { if sr.Tag == 0 { return sr.OkValue }; return r }; return r }"
+          "func sky_taskPerform(task any) any { return sky_runTask(task) }"
     , GoDeclRaw
           "func sky_taskRun(task any) any { r := sky_runTask(task); return r }"
     , GoDeclRaw

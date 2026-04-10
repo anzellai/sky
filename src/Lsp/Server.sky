@@ -996,7 +996,7 @@ stdlibTypeMap =
         , ( "Task.fail", "err -> Task err a" )
         , ( "Task.andThen", "(a -> Task err b) -> Task err a -> Task err b" )
         , ( "Task.map", "(a -> b) -> Task err a -> Task err b" )
-        , ( "Task.perform", "Task err a -> a" )
+        , ( "Task.perform", "Task err a -> Result err a" )
         , ( "Task.run", "Task err a -> Result err a" )
         , ( "Task.sequence", "List (Task err a) -> Task err (List a)" )
         , ( "File.readFile", "String -> Task String String" )
