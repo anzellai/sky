@@ -137,20 +137,62 @@ lowerDeclarations ctx decls = List.concatMap (lowerDeclWithType ctx) decls
 lowerDeclWithType : LowerCtx -> Declaration -> List GoDecl
 lowerDeclWithType ctx decl =
     case decl of
-        
+
         FunDecl name params body _ ->
-            let
-                funcDecl = lowerFunction ctx name params body
-                typeComment = makeTypeComment ctx name
-            in
-                if String.isEmpty typeComment then
-                    [ funcDecl ]
-                
-                else
-                    [ GoDeclRaw typeComment , funcDecl ]
-        
+            if List.isEmpty params && name /= "main" then
+                lowerZeroArityDecl ctx name body
+
+            else
+                let
+                    funcDecl = lowerFunction ctx name params body
+                    typeComment = makeTypeComment ctx name
+                in
+                    if String.isEmpty typeComment then
+                        [ funcDecl ]
+
+                    else
+                        [ GoDeclRaw typeComment , funcDecl ]
+
         _ ->
             []
+
+
+-- Lower a zero-arity declaration as a memoised function.
+-- Instead of re-evaluating the body on every call (which breaks
+-- Ref.new, Dict.empty singletons, etc.), evaluate once and cache.
+-- Emits: var _memo_<name> any; var _memoOk_<name> bool
+--        func <name>() any { if !_memoOk_<name> { ... }; return _memo_<name> }
+lowerZeroArityDecl : LowerCtx -> String -> Expression -> List GoDecl
+lowerZeroArityDecl ctx name body =
+    let
+        goName =
+            if String.isEmpty ctx.modulePrefix then
+                sanitizeGoIdent name
+
+            else
+                ctx.modulePrefix
+                    ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
+        goExpr = lowerExpr ctx body
+        exprStr = emitGoExprInline goExpr
+        memoVar = "_memo_" ++ goName
+        memoFlag = "_memoOk_" ++ goName
+        varDecl = GoDeclRaw ("var " ++ memoVar ++ " any")
+        flagDecl = GoDeclRaw ("var " ++ memoFlag ++ " bool")
+        funcDecl =
+            GoDeclRaw
+                (
+                "func " ++ goName ++ "() any { if !" ++ memoFlag
+                    ++ " { " ++ memoVar ++ " = " ++ exprStr ++ "; "
+                        ++ memoFlag ++ " = true }; return " ++ memoVar
+                            ++ " }"
+                )
+        typeComment = makeTypeComment ctx name
+    in
+        if String.isEmpty typeComment then
+            [ varDecl , flagDecl , funcDecl ]
+
+        else
+            [ GoDeclRaw typeComment , varDecl , flagDecl , funcDecl ]
 
 
 makeTypeComment : LowerCtx -> String -> String
@@ -428,7 +470,10 @@ lowerIdentifier ctx name =
             
             else if name == "writeEmbeddedRuntime" then
                 GoIdent "sky_writeEmbeddedRuntime"
-            
+
+            else if name == "readEmbeddedTemplate" then
+                GoIdent "sky_readEmbeddedTemplate"
+
             else if name == "clamp" then
                 GoIdent "sky_clamp"
             
@@ -444,13 +489,13 @@ lowerIdentifier ctx name =
                     in
                         if isZeroArityFn name ctx then
                             GoCallExpr (GoIdent goName) []
-                        
+
                         else
                             GoIdent goName
-                
+
                 else if isZeroArityFn name ctx then
                     GoCallExpr (GoIdent (sanitizeGoIdent name)) []
-                
+
                 else
                     GoIdent (sanitizeGoIdent name)
             
@@ -3293,6 +3338,8 @@ generateHelperDecls =
           "func sky_processExecInherit(cmd any) any { return func(args any) any { argStrs := sky_asList(args); cmdArgs := make([]string, len(argStrs)); for i, a := range argStrs { cmdArgs[i] = sky_asString(a) }; c := exec.Command(sky_asString(cmd), cmdArgs...); c.Stdin = os.Stdin; c.Stdout = os.Stdout; c.Stderr = os.Stderr; err := c.Run(); if err != nil { return SkyErr(err.Error()) }; return SkyOk(struct{}{}) } }"
     , GoDeclRaw
           "func sky_writeEmbeddedRuntime(outDir any) any { writeEmbeddedRuntimeFiles(sky_asString(outDir)); return struct{}{} }"
+    , GoDeclRaw
+          "func sky_readEmbeddedTemplate(name any) any { return readEmbeddedTemplate(sky_asString(name)) }"
     , GoDeclRaw
           "func sky_processExit(code any) any { os.Exit(sky_asInt(code)); return struct{}{} }"
     , GoDeclRaw

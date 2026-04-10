@@ -721,38 +721,50 @@ copyClaudeMdTemplate basePath =
 
 tryCopyTemplate basePath =
     let
+        claudeMdPath = basePath ++ "CLAUDE.md"
+        -- Try embedded template first (works for installed binaries)
+        embedded = readEmbeddedTemplate "CLAUDE.md"
+    in
+        if not (String.isEmpty embedded) then
+            let
+                _ = File.writeFile claudeMdPath embedded
+            in
+                True
+
+        else
+            -- Fall back to disk paths (works for repo dev builds)
+            tryCopyTemplateDisk basePath
+
+
+tryCopyTemplateDisk basePath =
+    let
         skyBin = findSkyBin ()
         binDir = dirOfPath skyBin
         templatePath = binDir ++ "/../templates/CLAUDE.md"
         claudeMdPath = basePath ++ "CLAUDE.md"
     in
         case File.readFile templatePath of
-            
+
             Ok content ->
                 let
                     _ = File.writeFile claudeMdPath content
                 in
                     True
-            
+
             Err _ ->
-                tryAlternateTemplatePath basePath binDir
-
-
-tryAlternateTemplatePath basePath binDir =
-    let
-        altPath = binDir ++ "/templates/CLAUDE.md"
-        claudeMdPath = basePath ++ "CLAUDE.md"
-    in
-        case File.readFile altPath of
-            
-            Ok content ->
                 let
-                    _ = File.writeFile claudeMdPath content
+                    altPath = binDir ++ "/templates/CLAUDE.md"
                 in
-                    True
-            
-            Err _ ->
-                False
+                    case File.readFile altPath of
+
+                        Ok content2 ->
+                            let
+                                _ = File.writeFile claudeMdPath content2
+                            in
+                                True
+
+                        Err _ ->
+                            False
 
 
 cmdAdd _ =
