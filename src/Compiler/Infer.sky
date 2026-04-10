@@ -47,7 +47,10 @@ inferExprInner counter registry env expr =
         
         StringLitExpr _ _ ->
             Ok { substitution = emptySub , type_ = TConst "String" }
-        
+
+        MultilineStringExpr _ _ ->
+            Ok { substitution = emptySub , type_ = TConst "String" }
+
         CharLitExpr _ _ ->
             Ok { substitution = emptySub , type_ = TConst "Char" }
         

@@ -301,9 +301,8 @@ parsePrimary state =
         let
             ( tok, s1 ) = advance state
             content = String.slice 3 (String.length tok.lexeme - 3) tok.lexeme
-            expr = buildInterpolatedExpr content tok.span
         in
-            Ok ( expr, s1 )
+            Ok ( MultilineStringExpr content tok.span, s1 )
 
     else if matchKind TkChar state then
         let

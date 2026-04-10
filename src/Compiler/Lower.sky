@@ -302,6 +302,148 @@ lowerParam pat =
             { name = "_p" , type_ = "any" }
 
 
+-- Lower a multiline string by handling {{expr}} interpolation.
+-- Splits the content on {{ and }}, generating Go concat calls
+-- for interpolated expressions and raw string literals for text.
+lowerMultilineString : LowerCtx -> String -> SourceSpan -> GoExpr
+lowerMultilineString ctx content span =
+    if not (String.contains "{{" content) then
+        GoStringLit (escapeNewlines content)
+
+    else
+        let
+            parts = splitMultilineParts content 0 0 []
+            goExprs = List.map (lowerMultilinePart ctx span) parts
+        in
+            joinGoExprs goExprs
+
+
+splitMultilineParts : String -> Int -> Int -> (List String) -> List String
+splitMultilineParts content pos segStart acc =
+    if pos >= String.length content then
+        let
+            last = String.slice segStart pos content
+        in
+            if String.isEmpty last then
+                List.reverse acc
+
+            else
+                List.reverse (("R" ++ last) :: acc)
+
+    else
+        let
+            ch = String.slice pos (pos + 1) content
+            next = String.slice (pos + 1) (pos + 2) content
+        in
+            if ch == "{" && next == "{" then
+                let
+                    closePos = findCloseBrace content (pos + 2)
+                    exprStr = String.slice (pos + 2) closePos content
+                    rawBefore = String.slice segStart pos content
+                    accWithRaw =
+                        if String.isEmpty rawBefore then
+                            acc
+
+                        else
+                            ("R" ++ rawBefore) :: acc
+                in
+                    splitMultilineParts content (closePos + 2) (closePos + 2)
+                        (("E" ++ exprStr) :: accWithRaw)
+
+            else
+                splitMultilineParts content (pos + 1) segStart acc
+
+
+findCloseBrace : String -> Int -> Int
+findCloseBrace content pos =
+    if pos >= String.length content then
+        pos
+
+    else
+        let
+            ch = String.slice pos (pos + 1) content
+            next = String.slice (pos + 1) (pos + 2) content
+        in
+            if ch == "}" && next == "}" then
+                pos
+
+            else
+                findCloseBrace content (pos + 1)
+
+
+escapeNewlines : String -> String
+escapeNewlines s = String.replace "\n" "\\n" (String.replace "\r" "\\r" s)
+
+
+lowerMultilinePart : LowerCtx -> SourceSpan -> String -> GoExpr
+lowerMultilinePart ctx span part =
+    let
+        tag = String.slice 0 1 part
+        value = String.slice 1 (String.length part) part
+    in
+        if tag == "E" then
+            lowerInterpolationExpr ctx value span
+
+        else
+            GoStringLit (escapeNewlines value)
+
+
+lowerInterpolationExpr : LowerCtx -> String -> SourceSpan -> GoExpr
+lowerInterpolationExpr ctx src span =
+    let
+        trimmed = String.trim src
+    in
+        if String.contains " " trimmed then
+            let
+                parts = String.split " " trimmed
+            in
+                case parts of
+                    fn :: args ->
+                        let
+                            callee =
+                                if String.contains "." fn then
+                                    QualifiedExpr (String.split "." fn) span
+
+                                else
+                                    IdentifierExpr fn span
+                            argExprs =
+                                List.map
+                                    (\a ->
+                                        if String.contains "." a then
+                                            QualifiedExpr (String.split "." a) span
+
+                                        else
+                                            IdentifierExpr a span
+                                    )
+                                    args
+                        in
+                            lowerExpr ctx (CallExpr callee argExprs span)
+
+                    [] ->
+                        GoStringLit ""
+
+        else if String.contains "." trimmed then
+            GoCallExpr (GoIdent "sky_asString")
+                [ lowerExpr ctx (QualifiedExpr (String.split "." trimmed) span) ]
+
+        else
+            GoCallExpr (GoIdent "sky_asString")
+                [ lowerExpr ctx (IdentifierExpr trimmed span) ]
+
+
+joinGoExprs : (List GoExpr) -> GoExpr
+joinGoExprs exprs =
+    case exprs of
+        [] ->
+            GoStringLit ""
+
+        e :: [] ->
+            e
+
+        e :: rest ->
+            GoCallExpr (GoIdent "sky_concat") [ e, joinGoExprs rest ]
+
+
 lowerExpr : LowerCtx -> Expression -> GoExpr
 lowerExpr ctx expr =
     case expr of
@@ -314,7 +456,10 @@ lowerExpr ctx expr =
         
         StringLitExpr s _ ->
             GoStringLit s
-        
+
+        MultilineStringExpr content span ->
+            lowerMultilineString ctx content span
+
         CharLitExpr s _ ->
             GoCallExpr (GoIdent "string")
                 [ GoBasicLit

@@ -8,6 +8,7 @@ type Expression
     | IntLitExpr Int String SourceSpan
     | FloatLitExpr Float String SourceSpan
     | StringLitExpr String SourceSpan
+    | MultilineStringExpr String SourceSpan
     | CharLitExpr String SourceSpan
     | BoolLitExpr Bool SourceSpan
     | UnitExpr SourceSpan

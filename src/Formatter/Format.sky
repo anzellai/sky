@@ -307,6 +307,9 @@ formatExpr expr =
         
         StringLitExpr s _ ->
             text ("\"" ++ quoteString s ++ "\"")
+
+        MultilineStringExpr s _ ->
+            text ("\"\"\"" ++ s ++ "\"\"\"")
         
         CharLitExpr s _ ->
             text s

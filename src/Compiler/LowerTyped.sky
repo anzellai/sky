@@ -536,7 +536,10 @@ exprToGo expr =
         
         StringLitExpr s _ ->
             "\"" ++ s ++ "\""
-        
+
+        MultilineStringExpr s _ ->
+            "\"" ++ s ++ "\""
+
         IntLitExpr n _ _ ->
             String.fromInt n
         
