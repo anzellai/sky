@@ -37,7 +37,7 @@ import Page.Static as Static
 init : a -> (Model, Cmd Msg)
 init req =
     let
-        _ = Db.initDb
+        _ = Db.initDb ()
         _ = println "[APP] SkyShop initialised"
         products = Products.listProducts
         -- Check for sky_user cookie to pre-load user (instant auth on page load)

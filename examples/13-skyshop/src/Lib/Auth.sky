@@ -19,13 +19,13 @@ import Os
 ctx = Context.background ()
 
 
-adminEmails =
+adminEmails _ =
     let
         envAdmins = Result.withDefault "" (Os.getenv "ADMIN_EMAILS")
     in
         if envAdmins == "" then
             [ "admin@example.com" ]
-        
+
         else
             String.split "," envAdmins
 
@@ -121,7 +121,7 @@ verifyToken idToken =
 
 findOrCreateUser uid email name =
     let
-        isAdminUser = List.member email adminEmails
+        isAdminUser = List.member email (adminEmails ())
         adminStr =
             if isAdminUser then
                 "true"

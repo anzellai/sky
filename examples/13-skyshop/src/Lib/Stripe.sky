@@ -14,7 +14,7 @@ import Github.Com.Stripe.StripeGo.V84 as Stripe
 import Github.Com.Stripe.StripeGo.V84.Checkout.Session as Session
 import Github.Com.Stripe.StripeGo.V84.Customer as Customer
 
-initStripe =
+initStripe _ =
     let
         key = Result.withDefault "" (Os.getenv "STRIPE_API_KEY")
         _ = Stripe.setKey key
@@ -22,10 +22,10 @@ initStripe =
         key
 
 
-apiKey = initStripe
+apiKey = initStripe ()
 
 
-domainUrl =
+domainUrl _ =
     let
         domain = Result.withDefault "" (Os.getenv "DOMAIN")
         port_ = Result.withDefault "" (Os.getenv "SKY_LIVE_PORT")
@@ -128,8 +128,8 @@ createCheckoutSession cartId items userId userName userEmail remarks =
             
             Ok customerId ->
                 let
-                    successUrl = domainUrl ++ "/order/" ++ cartId ++ "/success"
-                    cancelUrl = domainUrl ++ "/cart"
+                    successUrl = domainUrl () ++ "/order/" ++ cartId ++ "/success"
+                    cancelUrl = domainUrl () ++ "/cart"
                     lineItems = List.map buildLineItem items
                     shippingCollection =
                         Stripe.newCheckoutSessionShippingAddressCollectionParams

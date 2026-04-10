@@ -549,7 +549,7 @@ page model content =
     div [ tw [ minHScreen , flex , flexCol ] ]
         [ styles
         , globalStyles
-        , raw OAuth.firebaseAuthScript
+        , raw (OAuth.firebaseAuthScript ())
         , viewHeader model
         , viewNotification model
         , div [ tw [ flex1 , maxW7xl , mxAuto , wFull , px4 , py8 ] ]
