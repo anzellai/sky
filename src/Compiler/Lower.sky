@@ -2126,25 +2126,36 @@ checkPartialApplication ctx callee argCount =
 
 checkPartialIdent ctx name argCount =
     case Dict.get name ctx.localFunctionArity of
-        
+
         Just arity ->
             if argCount < arity then
                 let
                     goName =
                         if String.isEmpty ctx.modulePrefix then
                             sanitizeGoIdent name
-                        
+
                         else
                             ctx.modulePrefix
                                 ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
                 in
                     Just { goFuncName = goName , totalArity = arity }
-            
+
             else
                 Nothing
-        
+
         Nothing ->
-            Nothing
+            -- Also check ADT constructors for partial application
+            case Dict.get name ctx.importedConstructors of
+
+                Just info ->
+                    if argCount < info.arity then
+                        Just { goFuncName = sanitizeGoIdent name , totalArity = info.arity }
+
+                    else
+                        Nothing
+
+                Nothing ->
+                    Nothing
 
 
 generatePartialClosure : PartialApp -> (List GoExpr) -> Int -> GoExpr

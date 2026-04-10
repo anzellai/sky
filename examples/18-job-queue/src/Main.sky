@@ -11,46 +11,132 @@ import Std.Cmd as Cmd
 import Std.Sub as Sub
 
 
-type Page = DashboardPage
+type Page
+    = DashboardPage
+
 
 type Msg
     = Navigate Page
-    | RunTask
-    | TaskDone (Result String String)
-    | Reset
+    | RunFast
+    | RunSlow
+    | RunFail
+    | RunBatch
+    | JobDone Int (Result String String)
+    | ClearDone
 
 
 init _ =
-    ( { page = DashboardPage, status = "idle", result = "" }
+    ( { page = DashboardPage, jobs = [], nextId = 1, ok = 0, fail = 0 }
     , Cmd.none
     )
 
 
+addJob model name task =
+    let
+        jid = model.nextId
+        job = { id = jid, name = name, running = True, result = "" }
+    in
+        ( { model | jobs = List.append model.jobs [ job ], nextId = jid + 1 }
+        , Cmd.perform task (JobDone jid)
+        )
+
+
+doBatch model =
+    let
+        i1 = model.nextId
+        i2 = i1 + 1
+        i3 = i2 + 1
+        js =
+            [ { id = i1, name = "Batch A", running = True, result = "" }
+            , { id = i2, name = "Batch B", running = True, result = "" }
+            , { id = i3, name = "Batch C", running = True, result = "" }
+            ]
+    in
+        ( { model | jobs = List.append model.jobs js, nextId = i3 + 1 }
+        , Cmd.batch
+              [ Cmd.perform (Task.lazy (\_ -> "A done")) (JobDone i1)
+              , Cmd.perform (Task.lazy (\_ -> "B done")) (JobDone i2)
+              , Cmd.perform (Task.lazy (\_ -> "C done")) (JobDone i3)
+              ]
+        )
+
+
+resolveResult result =
+    case result of
+        Ok v -> v
+        Err e -> "Error: " ++ e
+
+
+handleDone jid result model =
+    let
+        r = resolveResult result
+        newJobs = List.map (\j -> if j.id == jid then { j | running = False, result = r } else j) model.jobs
+        addOk =
+            case result of
+                Ok _ -> 1
+                Err _ -> 0
+        addFail =
+            case result of
+                Ok _ -> 0
+                Err _ -> 1
+    in
+        ( { model | jobs = newJobs, ok = model.ok + addOk, fail = model.fail + addFail }
+        , Cmd.none
+        )
+
+
 update msg model =
     case msg of
-        Navigate page -> ( { model | page = page }, Cmd.none )
-        RunTask ->
-            let toMsg = TaskDone in
-            ( { model | status = "running" }, Cmd.perform (Task.lazy (\_ -> "Hello from async Cmd!")) toMsg )
-        TaskDone result ->
-            let r = case result of
-                         Ok v -> v
-                         Err e -> "Error: " ++ e
-            in ( { model | status = "done", result = r }, Cmd.none )
-        Reset -> ( { model | status = "idle", result = "" }, Cmd.none )
+        Navigate p ->
+            ( { model | page = p }, Cmd.none )
+
+        RunFast ->
+            addJob model "Fast computation" (Task.lazy (\_ -> "Result: 42"))
+
+        RunSlow ->
+            addJob model "Heavy processing" (Task.lazy (\_ -> "Processed 1337 records"))
+
+        RunFail ->
+            addJob model "Unreliable API call" (Task.fail "Connection timeout")
+
+        RunBatch ->
+            doBatch model
+
+        JobDone jid result ->
+            handleDone jid result model
+
+        ClearDone ->
+            ( { model | jobs = List.filter (\j -> j.running) model.jobs }, Cmd.none )
 
 
-subscriptions model = Sub.none
+subscriptions model =
+    Sub.none
+
+
+viewJob job =
+    let
+        status = if job.running then "[running]" else job.result
+    in
+        div [] [ text ("#" ++ String.fromInt job.id ++ " " ++ job.name ++ " - " ++ status) ]
 
 
 view model =
-    div []
-        [ h1 [] [ text "Async Cmd Demo" ]
-        , p [] [ text ("Status: " ++ model.status) ]
-        , p [] [ text ("Result: " ++ model.result) ]
-        , button [ onClick RunTask ] [ text "Run Async Task" ]
-        , button [ onClick Reset ] [ text "Reset" ]
-        ]
+    let
+        running = List.length (List.filter (\j -> j.running) model.jobs)
+    in
+        div []
+            [ h1 [] [ text "Job Queue Dashboard" ]
+            , p [] [ text "Async Cmd.perform with Sky.Live" ]
+            , p [] [ text ("Running: " ++ String.fromInt running ++ " | OK: " ++ String.fromInt model.ok ++ " | Failed: " ++ String.fromInt model.fail ++ " | Total: " ++ String.fromInt (List.length model.jobs)) ]
+            , div []
+                  [ button [ onClick RunFast ] [ text "Fast Job" ]
+                  , button [ onClick RunSlow ] [ text "Slow Job" ]
+                  , button [ onClick RunFail ] [ text "Failing Job" ]
+                  , button [ onClick RunBatch ] [ text "Batch (3 jobs)" ]
+                  , button [ onClick ClearDone ] [ text "Clear Finished" ]
+                  ]
+            , div [] (List.map viewJob (List.reverse model.jobs))
+            ]
 
 
 main =
