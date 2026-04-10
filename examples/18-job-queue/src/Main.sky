@@ -33,14 +33,35 @@ init _ =
     )
 
 
+mkJob id name =
+    { id = id, name = name, running = True, result = "" }
+
+
 addJob model name task =
     let
         jid = model.nextId
-        job = { id = jid, name = name, running = True, result = "" }
+        job = mkJob jid name
+        cmd = Cmd.perform task (JobDone jid)
     in
         ( { model | jobs = List.append model.jobs [ job ], nextId = jid + 1 }
-        , Cmd.perform task (JobDone jid)
+        , cmd
         )
+
+
+sleepThen ms value =
+    Time.sleep ms
+        |> Task.andThen (\_ -> Task.succeed value)
+
+
+sleepThenRandom ms lo hi =
+    Time.sleep ms
+        |> Task.andThen (\_ -> Random.int lo hi)
+        |> Task.andThen (\n -> Task.succeed ("Processed " ++ String.fromInt n ++ " records"))
+
+
+sleepThenFail ms msg =
+    Time.sleep ms
+        |> Task.andThen (\_ -> Task.fail msg)
 
 
 doBatch model =
@@ -48,38 +69,53 @@ doBatch model =
         i1 = model.nextId
         i2 = i1 + 1
         i3 = i2 + 1
-        js =
-            [ { id = i1, name = "Batch: resize images", running = True, result = "" }
-            , { id = i2, name = "Batch: send emails", running = True, result = "" }
-            , { id = i3, name = "Batch: generate report", running = True, result = "" }
+        jobs =
+            [ mkJob i1 "Batch: resize images"
+            , mkJob i2 "Batch: send emails"
+            , mkJob i3 "Batch: generate report"
             ]
-        t1 = Task.andThen (\_ -> Task.succeed "3 images resised") (Time.sleep 1500)
-        t2 = Task.andThen (\_ -> Task.succeed "12 emails sent") (Time.sleep 2500)
-        t3 = Task.andThen (\_ -> Task.succeed "Report: 42 pages") (Time.sleep 4000)
+        cmd =
+            Cmd.batch
+                [ Cmd.perform (sleepThen 1500 "3 images resised") (JobDone i1)
+                , Cmd.perform (sleepThen 2500 "12 emails sent") (JobDone i2)
+                , Cmd.perform (sleepThen 4000 "Report: 42 pages") (JobDone i3)
+                ]
     in
-        ( { model | jobs = List.append model.jobs js, nextId = i3 + 1 }
-        , Cmd.batch [ Cmd.perform t1 (JobDone i1), Cmd.perform t2 (JobDone i2), Cmd.perform t3 (JobDone i3) ]
+        ( { model | jobs = List.append model.jobs jobs, nextId = i3 + 1 }
+        , cmd
         )
 
 
 resolveResult result =
     case result of
-        Ok v -> v
-        Err e -> "Error: " ++ e
+        Ok v ->
+            v
+
+        Err e ->
+            "Error: " ++ e
 
 
 handleDone jid result model =
     let
         r = resolveResult result
-        newJobs = List.map (\j -> if j.id == jid then { j | running = False, result = r } else j) model.jobs
+        newJobs =
+            List.map
+                (\j -> if j.id == jid then { j | running = False, result = r } else j)
+                model.jobs
         addOk =
             case result of
-                Ok _ -> 1
-                Err _ -> 0
+                Ok _ ->
+                    1
+
+                Err _ ->
+                    0
         addFail =
             case result of
-                Ok _ -> 0
-                Err _ -> 1
+                Ok _ ->
+                    0
+
+                Err _ ->
+                    1
     in
         ( { model | jobs = newJobs, ok = model.ok + addOk, fail = model.fail + addFail }
         , Cmd.none
@@ -92,13 +128,13 @@ update msg model =
             ( { model | page = p }, Cmd.none )
 
         RunFast ->
-            addJob model "Fast computation" (Task.andThen (\_ -> Task.succeed "Result: 42") (Time.sleep 500))
+            addJob model "Fast computation" (sleepThen 500 "Result: 42")
 
         RunSlow ->
-            addJob model "Heavy processing" (Task.andThen (\_ -> Task.andThen (\n -> Task.succeed ("Processed " ++ String.fromInt n ++ " records")) (Random.int 100 9999)) (Time.sleep 3000))
+            addJob model "Heavy processing" (sleepThenRandom 3000 100 9999)
 
         RunFail ->
-            addJob model "Unreliable API call" (Task.andThen (\_ -> Task.fail "Connection timeout") (Time.sleep 2000))
+            addJob model "Unreliable API call" (sleepThenFail 2000 "Connection timeout")
 
         RunBatch ->
             doBatch model
@@ -107,7 +143,9 @@ update msg model =
             handleDone jid result model
 
         ClearDone ->
-            ( { model | jobs = List.filter (\j -> j.running) model.jobs }, Cmd.none )
+            ( { model | jobs = List.filter (\j -> j.running) model.jobs }
+            , Cmd.none
+            )
 
 
 subscriptions model =
