@@ -377,7 +377,20 @@ handleStartCheckout model =
                                                     "Checkout failed: " ++ e
                                                 , notificationType = "error"
                                             }, Cmd.none )
-        
+
+                                Err e ->
+                                    ( { model
+                                        | notification =
+                                            "Could not create order: " ++ e
+                                        , notificationType = "error"
+                                    }, Cmd.none )
+
+                Nothing ->
+                    ( { model
+                        | notification = "No active cart."
+                        , notificationType = "error"
+                    }, Cmd.none )
+
         Nothing ->
             ( { model | page = AuthSignInPage }, Cmd.none )
 
@@ -511,6 +524,12 @@ handleVerifyPayment orderId model =
                                             | notification = e
                                             , notificationType = "error"
                                         }, Cmd.none )
+
+            Nothing ->
+                ( { base
+                    | notification = "Order not found."
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 -- ══════════════════════════════════════════════════════
