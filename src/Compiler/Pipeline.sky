@@ -2773,28 +2773,42 @@ generateAliasesFromModuleInner modName mod =
                         else if isGoPackageName safeName then
                             []
                         
+                        else if isZeroArityInModule name mod then
+                                -- Zero-arity functions are memoised. Don't
+                                -- generate var aliases (they would evaluate
+                                -- at Go init time, too early for DB etc.).
+                                -- Instead generate function aliases that
+                                -- delegate to the memoised original.
+                                [ GoDeclRaw
+                                      (
+                                      "func "
+                                          ++ safeName
+                                              ++ "() any { return "
+                                                  ++ prefixedName ++ "() }"
+                                      )
+                                , GoDeclRaw
+                                      (
+                                      "func "
+                                          ++ capitalizeFirst safeName
+                                              ++ "() any { return "
+                                                  ++ prefixedName ++ "() }"
+                                      )
+                                ]
+
                         else
-                            let
-                                callSuffix =
-                                    if isZeroArityInModule name mod then
-                                        "()"
-                                    
-                                    else
-                                        ""
-                            in
                                 [ GoDeclRaw
                                       (
                                       "var "
                                           ++ safeName
                                               ++ " = "
-                                                  ++ prefixedName ++ callSuffix
+                                                  ++ prefixedName
                                       )
                                 , GoDeclRaw
                                       (
                                       "var "
                                           ++ capitalizeFirst safeName
                                               ++ " = "
-                                                  ++ prefixedName ++ callSuffix
+                                                  ++ prefixedName
                                       )
                                 ]
             )

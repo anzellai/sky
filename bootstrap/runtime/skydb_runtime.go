@@ -72,6 +72,12 @@ func skyDbConn(conn any) *SkyDbConn {
 	if db, ok := conn.(*sql.DB); ok {
 		return &SkyDbConn{DB: db, Driver: "sqlite"}
 	}
+	// Fallback: zero-arity memoised function — call it to get the connection.
+	// This handles the case where an exposed zero-arity conn function
+	// is passed as a value before being called.
+	if fn, ok := conn.(func() any); ok {
+		return skyDbConn(fn())
+	}
 	return &SkyDbConn{}
 }
 
