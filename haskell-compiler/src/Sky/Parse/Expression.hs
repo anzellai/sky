@@ -20,31 +20,62 @@ import qualified Sky.Reporting.Annotation as A
 expression :: (Row -> Col -> x) -> Parser x Src.Expr
 expression mkError = do
     expr1 <- addLocation (exprApp mkError)
-    freshLine mkError  -- allow operator on next line if indented
-    -- Check for binary operators
+    spaces
+    -- Check for binary operators (binopRest handles multiline via tryFreshLine)
     binopRest mkError expr1
 
 
 -- | Parse binary operator continuation
--- Uses freshLine to allow operators on the next line (e.g., |> pipelines)
+-- Tries same-line operator first, then tries next-line operator (for |> pipelines)
 binopRest :: (Row -> Col -> x) -> Src.Expr -> Parser x Src.Expr
 binopRest mkError left = do
-    col <- getCol
-    indent <- getIndent
-    if col <= indent
-        then return left  -- not indented, stop (prevents consuming next declaration)
-        else
-            oneOfWithFallback
-                [ do
+    -- First try: same-line operator
+    row0 <- getRow
+    result <- oneOfWithFallback
+        [ do op <- addLocation (operator mkError)
+             freshLine mkError
+             right <- addLocation (exprApp mkError)
+             spaces
+             let chain = Src.Binops [(left, op)] right
+             addLocation (return chain) >>= \located ->
+                 binopRest mkError located
+        ]
+        left
+    row1 <- getRow
+    -- If we didn't find a same-line operator (row unchanged), try next line
+    if row0 == row1
+        then tryNextLineOp mkError result
+        else return result
+
+
+-- | Try to find an operator on the next line (indented continuation)
+tryNextLineOp :: (Row -> Col -> x) -> Src.Expr -> Parser x Src.Expr
+tryNextLineOp mkError left = Parser $ \s cok eok cerr eerr ->
+    let
+        -- Peek ahead: skip whitespace and check for indented operator
+        s' = skipWhitespace s
+    in
+    if _col s' > _indent s' && isOperatorStart (_src s')
+        then
+            -- There's an indented operator on the next line — parse it
+            let parser = do
+                    freshLine mkError
                     op <- addLocation (operator mkError)
                     freshLine mkError
                     right <- addLocation (exprApp mkError)
-                    freshLine mkError
+                    spaces
                     let chain = Src.Binops [(left, op)] right
                     addLocation (return chain) >>= \located ->
                         binopRest mkError located
-                ]
-                left
+                (Parser p) = parser
+            in p s cok eok cerr eerr
+        else
+            -- No operator — return left unchanged
+            eok left s
+  where
+    isOperatorStart txt = case T.uncons txt of
+        Just (c, _) -> c `elem` ("+-*/<>=!&|^~%?@#$:.\\" :: [Char])
+        Nothing -> False
 
 
 -- | Parse function application: f a b c
@@ -86,7 +117,7 @@ exprAtom_ mkError =
     oneOf mkError
         [ -- Parenthesised / tuple / unit
           do char mkError '('
-             spaces
+             freshLine mkError  -- allow content on next line
              mc <- peek
              case mc of
                  Just ')' -> do
@@ -94,15 +125,15 @@ exprAtom_ mkError =
                      return Src.Unit
                  _ -> do
                      e1 <- expression mkError
-                     spaces
+                     freshLine mkError
                      mc2 <- peek
                      case mc2 of
                          Just ',' -> do
                              char mkError ','
-                             spaces
+                             freshLine mkError
                              e2 <- expression mkError
                              more <- tupleRest mkError
-                             spaces
+                             freshLine mkError
                              char mkError ')'
                              return (Src.Tuple e1 e2 more)
                          Just ')' -> do
@@ -169,7 +200,7 @@ exprAtom_ mkError =
              params <- lambdaParams mkError
              spaces
              string mkError (T.pack "->")
-             spaces
+             freshLine mkError  -- body may be on next line
              body <- expression mkError
              return (Src.Lambda params body)
 

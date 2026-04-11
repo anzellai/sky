@@ -13,6 +13,7 @@ module Sky.Parse.Primitives
     , oneOfWithFallback
     -- Positioning
     , getPosition
+    , getRow
     , getCol
     , getIndent
     , setIndent
@@ -134,6 +135,12 @@ oneOfWithFallback parsers fallback = Parser $ \s cok eok cerr _eerr ->
 getPosition :: Parser x (Row, Col)
 getPosition = Parser $ \s _ eok _ _ ->
     eok (_row s, _col s) s
+
+
+-- | Get current row
+getRow :: Parser x Row
+getRow = Parser $ \s _ eok _ _ ->
+    eok (_row s) s
 
 
 -- | Get current column
