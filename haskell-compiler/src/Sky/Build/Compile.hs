@@ -251,18 +251,41 @@ exprToGo (A.At _ expr) = case expr of
 -- ═══════════════════════════════════════════════════════════
 
 -- | Map a kernel function to its Go equivalent
+-- For generic functions, append [any, ...] type params until type checker provides real types
 kernelToGo :: String -> String -> GoIr.GoExpr
 kernelToGo modName funcName =
     case Kernel.lookup modName funcName of
-        Just ki -> GoIr.GoIdent (Kernel._ki_goName ki)
+        Just ki ->
+            if Kernel._ki_typed ki
+            then GoIr.GoIdent (Kernel._ki_goName ki ++ genericParams modName funcName)
+            else GoIr.GoIdent (Kernel._ki_goName ki)
         Nothing ->
-            -- Fallback: try direct mapping
             case (modName, funcName) of
                 ("Log", "println") -> GoIr.GoQualified "rt" "Log_println"
-                ("Basics", "add")  -> GoIr.GoIdent "+"  -- handled via Binop
+                ("Basics", "add")  -> GoIr.GoIdent "+"
                 ("Basics", "sub")  -> GoIr.GoIdent "-"
                 ("Basics", "not")  -> GoIr.GoQualified "rt" "Basics_not"
                 _ -> GoIr.GoQualified "rt" (modName ++ "_" ++ funcName)
+
+
+-- | Get generic type parameters for a kernel function.
+-- Until the type checker provides real types, use any-typed wrappers for Task functions
+-- and [any, ...] type params for other generics.
+genericParams :: String -> String -> String
+genericParams modName funcName = case (modName, funcName) of
+    -- Task functions use any-typed wrappers (don't need generic params)
+    ("Task", _)  -> ""
+    -- Other generic functions
+    ("Result", "map")    -> "[any, any, any]"
+    ("Result", "andThen") -> "[any, any, any]"
+    ("Result", "withDefault") -> "[any, any]"
+    ("Maybe", "map")     -> "[any, any]"
+    ("Maybe", "andThen") -> "[any, any]"
+    ("Maybe", "withDefault") -> "[any]"
+    ("List", "map")      -> "[any, any]"
+    ("List", "filter")   -> "[any]"
+    ("List", "foldl")    -> "[any, any]"
+    _                    -> ""
 
 
 -- | Map a constructor to Go
@@ -286,10 +309,11 @@ ctorToGo opts home typeName ctorName _annot = case ctorName of
 binopToGo :: String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
 binopToGo op left right = case op of
     -- Pipe operators — desugar to function application
-    "|>" -> GoIr.GoCall (exprToGo right) [exprToGo left]
-    "<|" -> GoIr.GoCall (exprToGo left) [exprToGo right]
+    -- a |> f becomes f(a), but if f is already a call f(x), becomes f(x, a)
+    "|>" -> pipeApply left right
+    "<|" -> pipeApply right left
 
-    -- Composition operators
+    -- Composition operators (>> and <<)
     ">>" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeL") [exprToGo left, exprToGo right]
     "<<" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeR") [exprToGo left, exprToGo right]
 
@@ -304,6 +328,20 @@ binopToGo op left right = case op of
 
     -- Standard arithmetic, comparison, logic
     _ -> GoIr.GoBinary op (exprToGo left) (exprToGo right)
+
+
+-- | Apply a pipe: `value |> func` becomes `func(value)`
+-- If func is already a call `f(args...)`, append value as additional arg: `f(args..., value)`
+pipeApply :: Can.Expr -> Can.Expr -> GoIr.GoExpr
+pipeApply valueExpr funcExpr =
+    let goValue = exprToGo valueExpr
+    in case funcExpr of
+        -- If the RHS is a function call with args: f(a) |> g(b) → g(b, f(a))
+        A.At _ (Can.Call innerFunc innerArgs) ->
+            GoIr.GoCall (exprToGo innerFunc) (map exprToGo innerArgs ++ [goValue])
+        -- Otherwise: a |> f → f(a)
+        _ ->
+            GoIr.GoCall (exprToGo funcExpr) [goValue]
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -731,5 +769,34 @@ runtimeGoSource = unlines
     , ""
     , "func Concat(a, b any) any {"
     , "\treturn fmt.Sprintf(\"%v%v\", a, b)"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Any-typed Task wrappers (until type checker provides types)"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func AnyTaskSucceed(v any) any {"
+    , "\treturn func() any { return Ok[any, any](v) }"
+    , "}"
+    , ""
+    , "func AnyTaskFail(e any) any {"
+    , "\treturn func() any { return Err[any, any](e) }"
+    , "}"
+    , ""
+    , "func AnyTaskAndThen(fn any, task any) any {"
+    , "\treturn func() any {"
+    , "\t\tt := task.(func() any)"
+    , "\t\tr := t().(SkyResult[any, any])"
+    , "\t\tif r.Tag == 0 {"
+    , "\t\t\tnext := fn.(func(any) any)(r.OkValue).(func() any)"
+    , "\t\t\treturn next()"
+    , "\t\t}"
+    , "\t\treturn Err[any, any](r.ErrValue)"
+    , "\t}"
+    , "}"
+    , ""
+    , "func AnyTaskRun(task any) any {"
+    , "\tt := task.(func() any)"
+    , "\treturn t()"
     , "}"
     ]

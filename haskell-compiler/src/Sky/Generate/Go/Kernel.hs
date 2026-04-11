@@ -123,14 +123,16 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     -- Task
     -- ═══════════════════════════════════════════════════════
-    , (("Task", "succeed"),       KernelInfo "rt.Task_succeed" 1 True)
-    , (("Task", "fail"),          KernelInfo "rt.Task_fail" 1 True)
+    -- Task: use any-typed wrappers until type checker provides real types
+    , (("Task", "succeed"),       KernelInfo "rt.AnyTaskSucceed" 1 False)
+    , (("Task", "fail"),          KernelInfo "rt.AnyTaskFail" 1 False)
     , (("Task", "map"),           KernelInfo "rt.Task_map" 2 True)
-    , (("Task", "andThen"),       KernelInfo "rt.Task_andThen" 2 True)
+    , (("Task", "andThen"),       KernelInfo "rt.AnyTaskAndThen" 2 False)
     , (("Task", "perform"),       KernelInfo "rt.Task_perform" 1 True)
     , (("Task", "sequence"),      KernelInfo "rt.Task_sequence" 1 True)
     , (("Task", "parallel"),      KernelInfo "rt.Task_parallel" 1 True)
     , (("Task", "lazy"),          KernelInfo "rt.Task_lazy" 1 True)
+    , (("Task", "run"),           KernelInfo "rt.AnyTaskRun" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Cmd

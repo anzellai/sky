@@ -20,27 +20,31 @@ import qualified Sky.Reporting.Annotation as A
 expression :: (Row -> Col -> x) -> Parser x Src.Expr
 expression mkError = do
     expr1 <- addLocation (exprApp mkError)
-    spaces
+    freshLine mkError  -- allow operator on next line if indented
     -- Check for binary operators
     binopRest mkError expr1
 
 
 -- | Parse binary operator continuation
+-- Uses freshLine to allow operators on the next line (e.g., |> pipelines)
 binopRest :: (Row -> Col -> x) -> Src.Expr -> Parser x Src.Expr
-binopRest mkError left =
-    oneOfWithFallback
-        [ do
-            op <- addLocation (operator mkError)
-            spaces
-            right <- addLocation (exprApp mkError)
-            spaces
-            -- Build up the binop chain
-            let chain = Src.Binops [(left, op)] right
-            -- Continue looking for more operators
-            addLocation (return chain) >>= \located ->
-                binopRest mkError located
-        ]
-        left
+binopRest mkError left = do
+    col <- getCol
+    indent <- getIndent
+    if col <= indent
+        then return left  -- not indented, stop (prevents consuming next declaration)
+        else
+            oneOfWithFallback
+                [ do
+                    op <- addLocation (operator mkError)
+                    freshLine mkError
+                    right <- addLocation (exprApp mkError)
+                    freshLine mkError
+                    let chain = Src.Binops [(left, op)] right
+                    addLocation (return chain) >>= \located ->
+                        binopRest mkError located
+                ]
+                left
 
 
 -- | Parse function application: f a b c
