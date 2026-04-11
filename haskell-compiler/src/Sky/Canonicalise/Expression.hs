@@ -1,2 +1,297 @@
-module Sky.Canonicalise.Expression where
--- TODO: implement
+-- | Canonicalise expressions — resolve all variable references.
+module Sky.Canonicalise.Expression
+    ( canonicaliseExpr
+    )
+    where
+
+import qualified Data.Map.Strict as Map
+import qualified Sky.AST.Source as Src
+import qualified Sky.AST.Canonical as Can
+import qualified Sky.Reporting.Annotation as A
+import qualified Sky.Sky.ModuleName as ModuleName
+import qualified Sky.Canonicalise.Environment as Env
+import qualified Sky.Canonicalise.Pattern as CanPat
+import qualified Sky.Canonicalise.Type as CanType
+
+
+-- | Canonicalise a source expression
+canonicaliseExpr :: Env.Env -> Src.Expr -> Can.Expr
+canonicaliseExpr env (A.At region expr) =
+    A.At region $ canonicaliseExpr_ env region expr
+
+
+canonicaliseExpr_ :: Env.Env -> A.Region -> Src.Expr_ -> Can.Expr_
+canonicaliseExpr_ env region expr = case expr of
+
+    Src.Var name ->
+        resolveVar env name
+
+    Src.VarQual qualifier name ->
+        resolveQualVar env qualifier name
+
+    Src.Chr c ->
+        Can.Chr c
+
+    Src.Str s ->
+        Can.Str s
+
+    Src.MultilineStr s ->
+        Can.Str s  -- desugar multiline to plain string for now
+
+    Src.Int n ->
+        Can.Int n
+
+    Src.Float f ->
+        Can.Float f
+
+    Src.List items ->
+        Can.List (map (canonicaliseExpr env) items)
+
+    Src.Negate inner ->
+        Can.Negate (canonicaliseExpr env inner)
+
+    Src.Binops pairs final ->
+        canonicaliseBinops env pairs final
+
+    Src.Lambda params body ->
+        let paramNames = concatMap CanPat.patternNames params
+            bodyEnv = Env.addLocals paramNames env
+            canParams = map (CanPat.canonicalisePattern env) params
+            canBody = canonicaliseExpr bodyEnv body
+        in Can.Lambda canParams canBody
+
+    Src.Call func args ->
+        Can.Call (canonicaliseExpr env func) (map (canonicaliseExpr env) args)
+
+    Src.If branches elseExpr ->
+        Can.If
+            (map (\(c, b) -> (canonicaliseExpr env c, canonicaliseExpr env b)) branches)
+            (canonicaliseExpr env elseExpr)
+
+    Src.Let defs body ->
+        canonicaliseLet env defs body
+
+    Src.Case subject branches ->
+        let canSubject = canonicaliseExpr env subject
+            canBranches = map (canonicaliseCaseBranch env) branches
+        in Can.Case canSubject canBranches
+
+    Src.Accessor field ->
+        Can.Accessor field
+
+    Src.Access target (A.At r field) ->
+        Can.Access (canonicaliseExpr env target) (A.At r field)
+
+    Src.Update (A.At r name) fields ->
+        Can.Update (A.At r name) (canonicaliseExpr env (A.At region (Src.Var name)))
+            (Map.fromList $ map (\(A.At fr fn, fe) ->
+                (fn, Can.FieldUpdate fr (canonicaliseExpr env fe))) fields)
+
+    Src.Record fields ->
+        Can.Record $ Map.fromList $
+            map (\(A.At _ name, val) -> (name, canonicaliseExpr env val)) fields
+
+    Src.Unit ->
+        Can.Unit
+
+    Src.Tuple a b rest ->
+        Can.Tuple
+            (canonicaliseExpr env a)
+            (canonicaliseExpr env b)
+            (case rest of
+                [] -> Nothing
+                (r:_) -> Just (canonicaliseExpr env r))
+
+    Src.Op op ->
+        -- Standalone operator reference (e.g., passed as function)
+        resolveOperator env op
+
+
+-- ═══════════════════════════════════════════════════════════
+-- VARIABLE RESOLUTION
+-- ═══════════════════════════════════════════════════════════
+
+-- | Resolve a bare variable name
+resolveVar :: Env.Env -> String -> Can.Expr_
+resolveVar env name =
+    -- Check constructors first (uppercase)
+    case Env.lookupCtor name env of
+        Just ctor ->
+            Can.VarCtor (Can._u_opts (Env._ch_union ctor))
+                (Env._ch_home ctor)
+                (Env._ch_type ctor)
+                (Env._ch_name ctor)
+                (Env._ch_annot ctor)
+        Nothing ->
+            -- Check variables
+            case Env.lookupVar name env of
+                Just Env.VarLocal ->
+                    Can.VarLocal name
+                Just (Env.VarTopLevel home) ->
+                    Can.VarTopLevel home name
+                Just (Env.VarKernel modName funcName) ->
+                    Can.VarKernel modName funcName
+                Nothing ->
+                    -- Unknown variable — emit as local (will be caught by type checker)
+                    Can.VarLocal name
+
+
+-- | Resolve a qualified variable (e.g., Task.succeed, String.fromInt)
+resolveQualVar :: Env.Env -> String -> String -> Can.Expr_
+resolveQualVar env qualifier name =
+    -- Check qualified constructors first
+    case Env.lookupQualCtor qualifier name env of
+        Just ctor ->
+            Can.VarCtor (Can._u_opts (Env._ch_union ctor))
+                (Env._ch_home ctor)
+                (Env._ch_type ctor)
+                (Env._ch_name ctor)
+                (Env._ch_annot ctor)
+        Nothing ->
+            -- Check qualified variables
+            case Env.lookupQualVar qualifier name env of
+                Just (Env.VarKernel modName funcName) ->
+                    Can.VarKernel modName funcName
+                Just (Env.VarTopLevel home) ->
+                    Can.VarTopLevel home name
+                Just Env.VarLocal ->
+                    Can.VarLocal name
+                Nothing ->
+                    -- Unknown qualified name — might be from unresolved import
+                    Can.VarTopLevel (ModuleName.Canonical qualifier) name
+
+
+-- | Resolve an operator to its canonical form
+resolveOperator :: Env.Env -> String -> Can.Expr_
+resolveOperator _env op = case op of
+    "+"  -> Can.VarKernel "Basics" "add"
+    "-"  -> Can.VarKernel "Basics" "sub"
+    "*"  -> Can.VarKernel "Basics" "mul"
+    "/"  -> Can.VarKernel "Basics" "fdiv"
+    "//" -> Can.VarKernel "Basics" "idiv"
+    "==" -> Can.VarKernel "Basics" "eq"
+    "/=" -> Can.VarKernel "Basics" "neq"
+    "<"  -> Can.VarKernel "Basics" "lt"
+    ">"  -> Can.VarKernel "Basics" "gt"
+    "<=" -> Can.VarKernel "Basics" "le"
+    ">=" -> Can.VarKernel "Basics" "ge"
+    "&&" -> Can.VarKernel "Basics" "and"
+    "||" -> Can.VarKernel "Basics" "or"
+    "++" -> Can.VarKernel "Basics" "append"
+    "::" -> Can.VarKernel "List" "cons"
+    _    -> Can.VarKernel "Basics" op
+
+
+-- ═══════════════════════════════════════════════════════════
+-- BINARY OPERATORS
+-- ═══════════════════════════════════════════════════════════
+
+-- | Canonicalise a binary operator chain.
+-- `Binops [(e1, op1), (e2, op2)] final` → nested Binop nodes
+canonicaliseBinops :: Env.Env -> [(Src.Expr, A.Located String)] -> Src.Expr -> Can.Expr_
+canonicaliseBinops env pairs final =
+    let canFinal = canonicaliseExpr env final
+    in foldl (applyBinop env) (A.toValue canFinal) pairs
+  where
+    applyBinop e acc (leftExpr, A.At _ op) =
+        let
+            canLeft = canonicaliseExpr e leftExpr
+            -- Wrap accumulated result in a Located for the Binop
+            accExpr = A.At A.one acc
+            (opHome, opName) = resolveOpName op
+            opAnnot = operatorAnnotation op
+        in
+        Can.Binop op opHome opName opAnnot canLeft accExpr
+
+
+-- | Resolve operator to its home module and canonical name
+resolveOpName :: String -> (ModuleName.Canonical, String)
+resolveOpName op = case op of
+    "++"  -> (ModuleName.basics, "append")
+    "::"  -> (ModuleName.list, "cons")
+    "|>"  -> (ModuleName.basics, "apR")
+    "<|"  -> (ModuleName.basics, "apL")
+    ">>"  -> (ModuleName.basics, "composeL")
+    "<<"  -> (ModuleName.basics, "composeR")
+    "+"   -> (ModuleName.basics, "add")
+    "-"   -> (ModuleName.basics, "sub")
+    "*"   -> (ModuleName.basics, "mul")
+    "/"   -> (ModuleName.basics, "fdiv")
+    "//"  -> (ModuleName.basics, "idiv")
+    "=="  -> (ModuleName.basics, "eq")
+    "/="  -> (ModuleName.basics, "neq")
+    "<"   -> (ModuleName.basics, "lt")
+    ">"   -> (ModuleName.basics, "gt")
+    "<="  -> (ModuleName.basics, "le")
+    ">="  -> (ModuleName.basics, "ge")
+    "&&"  -> (ModuleName.basics, "and")
+    "||"  -> (ModuleName.basics, "or")
+    _     -> (ModuleName.basics, op)
+
+
+-- | Placeholder annotation for operators (will be filled by type checker)
+operatorAnnotation :: String -> Can.Annotation
+operatorAnnotation _ = Can.Forall [] Can.TUnit  -- placeholder
+
+
+-- ═══════════════════════════════════════════════════════════
+-- LET EXPRESSIONS
+-- ═══════════════════════════════════════════════════════════
+
+-- | Canonicalise let-in expressions
+canonicaliseLet :: Env.Env -> [A.Located Src.Def] -> Src.Expr -> Can.Expr_
+canonicaliseLet env defs body =
+    let
+        -- Collect all binding names first (for mutual visibility)
+        allNames = concatMap (\(A.At _ d) ->
+            case Src._defName d of A.At _ n -> [n]) defs
+        letEnv = Env.addLocals allNames env
+
+        -- Canonicalise each definition
+        canDefs = map (canonicaliseDef letEnv) defs
+        canBody = canonicaliseExpr letEnv body
+    in
+    -- Fold defs into nested Can.Let (wrapping each in a Located)
+    let wrapLet d bodyExpr = A.At A.one (Can.Let d bodyExpr)
+    in A.toValue (foldr wrapLet canBody canDefs)
+
+
+-- | Canonicalise a let binding
+canonicaliseDef :: Env.Env -> A.Located Src.Def -> Can.Def
+canonicaliseDef env (A.At _ def) =
+    let
+        name = Src._defName def
+        params = Src._defPatterns def
+        paramNames = concatMap CanPat.patternNames params
+        bodyEnv = Env.addLocals paramNames env
+        canParams = map (CanPat.canonicalisePattern env) params
+        canBody = canonicaliseExpr bodyEnv (Src._defBody def)
+    in
+    case Src._defType def of
+        Nothing ->
+            Can.Def name canParams canBody
+        Just (A.At _ srcType) ->
+            let home = Env._home env
+                canType = CanType.canonicaliseTypeAnnotation home srcType
+                freeVars = CanType.freeTypeVars srcType
+                typedPatterns = zip canParams (arrowArgs canType)
+            in Can.TypedDef name freeVars typedPatterns canBody (arrowResult canType)
+  where
+    arrowArgs (Can.TLambda from to) = from : arrowArgs to
+    arrowArgs _ = []
+    arrowResult (Can.TLambda _ to) = arrowResult to
+    arrowResult t = t
+
+
+-- ═══════════════════════════════════════════════════════════
+-- CASE EXPRESSIONS
+-- ═══════════════════════════════════════════════════════════
+
+-- | Canonicalise a case branch
+canonicaliseCaseBranch :: Env.Env -> (Src.Pattern, Src.Expr) -> Can.CaseBranch
+canonicaliseCaseBranch env (pat, body) =
+    let patNames = CanPat.patternNames pat
+        branchEnv = Env.addLocals patNames env
+        canPat = CanPat.canonicalisePattern env pat
+        canBody = canonicaliseExpr branchEnv body
+    in Can.CaseBranch canPat canBody

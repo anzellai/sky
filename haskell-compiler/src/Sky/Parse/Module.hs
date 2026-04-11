@@ -226,7 +226,7 @@ moduleDeclarations = go [] [] [] []
         oneOfWithFallback
             [ do
                 (declType, payload) <- declaration (\r c -> DeclarationError r c)
-                spaces
+                freshLine (\r c -> DeclarationError r c)
                 case declType of
                     DeclValue ->
                         case A.toValue payload of

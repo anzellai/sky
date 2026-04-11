@@ -1,21 +1,26 @@
 -- | Single-module compilation pipeline.
--- Source → Parse → (TODO: Canonicalise → Constrain → Solve → Optimise) → Generate Go
+-- Source → Parse → Canonicalise → (TODO: Type Check) → Generate Go
 module Sky.Build.Compile where
 
+import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import qualified Data.Map.Strict as Map
-import System.Directory (createDirectoryIfMissing)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, copyFile)
+import System.FilePath (takeDirectory, (</>))
 
 import qualified Sky.AST.Source as Src
+import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
+import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Parse.Module as Parse
+import qualified Sky.Canonicalise.Module as Canonicalise
 import qualified Sky.Generate.Go.Ir as GoIr
 import qualified Sky.Generate.Go.Builder as GoBuilder
+import qualified Sky.Generate.Go.Kernel as Kernel
 import qualified Sky.Sky.Toml as Toml
 
 
--- | Full compilation: parse → codegen → write Go
+-- | Full compilation: parse → canonicalise → codegen → write Go
 compile :: Toml.SkyConfig -> FilePath -> FilePath -> IO (Either String FilePath)
 compile config entryPath outDir = do
     -- Phase 1: Read source
@@ -24,60 +29,75 @@ compile config entryPath outDir = do
 
     -- Phase 2: Parse
     putStrLn "-- Parsing"
-    putStrLn $ "   Source: " ++ show (T.length source) ++ " chars"
     case Parse.parseModule source of
         Left err -> do
             putStrLn $ "   PARSE FAILED: " ++ show err
             return (Left $ "Parse error: " ++ show err)
-        Right modul -> do
-            let modName = case Src._name modul of
+        Right srcMod -> do
+            let modName = case Src._name srcMod of
                     Just (A.At _ names) -> concatMap id names
                     Nothing -> "Main"
-                declCount = length (Src._values modul) + length (Src._unions modul) + length (Src._aliases modul)
-                importCount = length (Src._imports modul)
-
+                declCount = length (Src._values srcMod) + length (Src._unions srcMod) + length (Src._aliases srcMod)
             putStrLn $ "   Module: " ++ modName
-            putStrLn $ "   " ++ show declCount ++ " declarations, " ++ show importCount ++ " imports"
+            putStrLn $ "   " ++ show declCount ++ " declarations"
 
-            -- Phase 3: Type Check (TODO — skip for now)
-            putStrLn "-- Type Checking (skipped — not yet implemented)"
+            -- Phase 3: Canonicalise
+            putStrLn "-- Canonicalising"
+            case Canonicalise.canonicalise srcMod of
+                Left err -> do
+                    putStrLn $ "   CANONICALISE FAILED: " ++ err
+                    return (Left $ "Canonicalise error: " ++ err)
+                Right canMod -> do
+                    putStrLn "   Names resolved"
 
-            -- Phase 4: Generate Go
-            putStrLn "-- Generating Go"
-            let goCode = generateGo modul config
+                    -- Phase 4: Type Check (TODO — skip for now)
+                    putStrLn "-- Type Checking (skipped — not yet implemented)"
 
-            -- Phase 5: Write output
-            let mainGoPath = outDir ++ "/main.go"
-            writeFile mainGoPath goCode
-            putStrLn $ "   Wrote " ++ mainGoPath
+                    -- Phase 5: Generate Go
+                    putStrLn "-- Generating Go"
+                    let goCode = generateGo canMod srcMod config
 
-            -- Write go.mod if missing
-            let goModPath = outDir ++ "/go.mod"
-            writeFile goModPath $ unlines
-                [ "module sky-app"
-                , ""
-                , "go 1.21"
-                ]
+                    -- Phase 6: Write output
+                    createDirectoryIfMissing True outDir
+                    let mainGoPath = outDir </> "main.go"
+                    writeFile mainGoPath goCode
+                    putStrLn $ "   Wrote " ++ mainGoPath
 
-            putStrLn "Compilation successful"
-            return (Right mainGoPath)
+                    -- Copy runtime package
+                    copyRuntime outDir
+
+                    -- Write go.mod
+                    let goModPath = outDir </> "go.mod"
+                    writeFile goModPath $ unlines
+                        [ "module sky-app"
+                        , ""
+                        , "go 1.21"
+                        ]
+
+                    putStrLn "Compilation successful"
+                    return (Right mainGoPath)
 
 
--- | Generate Go source from a parsed module.
--- For now, does a simple direct translation without type checking.
--- Each top-level value becomes a Go function.
-generateGo :: Src.Module -> Toml.SkyConfig -> String
-generateGo modul config =
+-- | Copy the Go runtime package into the output directory
+copyRuntime :: FilePath -> IO ()
+copyRuntime outDir = do
+    let rtDir = outDir </> "rt"
+    createDirectoryIfMissing True rtDir
+    -- Write rt package inline (for now, until we have a separate runtime-go dir)
+    writeFile (rtDir </> "rt.go") runtimeGoSource
+
+
+-- ═══════════════════════════════════════════════════════════
+-- GO CODE GENERATION (from Canonical AST)
+-- ═══════════════════════════════════════════════════════════
+
+-- | Generate Go source from a canonical module
+generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> String
+generateGo canMod srcMod config =
     let
-        -- Collect imports needed
-        imports = collectGoImports modul
-
-        -- Generate declarations for each value
-        decls = concatMap generateValueDecl (Src._values modul)
-
-        -- Generate main function
-        mainDecl = generateMainFunc modul
-
+        imports = collectGoImports canMod srcMod
+        decls = generateDecls canMod
+        mainDecl = generateMainFunc canMod srcMod
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
@@ -86,250 +106,630 @@ generateGo modul config =
     in GoBuilder.renderPackage pkg
 
 
--- | Determine Go imports from Sky imports
-collectGoImports :: Src.Module -> [GoIr.GoImport]
-collectGoImports modul =
-    [ GoIr.GoImport "fmt" Nothing
-    ]
+-- | Collect Go imports needed
+collectGoImports :: Can.Module -> Src.Module -> [GoIr.GoImport]
+collectGoImports _canMod _srcMod =
+    -- Only import rt for now. fmt is used inside rt, not in main.go directly.
+    -- TODO: scan generated code for fmt.Println usage and add "fmt" if needed
+    [ GoIr.GoImport "sky-app/rt" (Just "rt") ]
 
 
--- | Generate Go code for a top-level value declaration
-generateValueDecl :: A.Located Src.Value -> [GoIr.GoDecl]
-generateValueDecl (A.At _ val) =
-    let name = case Src._valueName val of
-            A.At _ n -> n
+-- | Check if module imports Task
+isTaskImport :: Src.Import -> Bool
+isTaskImport imp =
+    let segs = case Src._importName imp of A.At _ s -> s
+    in segs == ["Sky", "Core", "Task"]
+
+
+-- ═══════════════════════════════════════════════════════════
+-- DECLARATIONS
+-- ═══════════════════════════════════════════════════════════
+
+-- | Generate Go declarations from canonical decls
+generateDecls :: Can.Module -> [GoIr.GoDecl]
+generateDecls canMod = declsToList (Can._decls canMod) []
+  where
+    declsToList Can.SaveTheEnvironment acc = acc
+    declsToList (Can.Declare def rest) acc =
+        declsToList rest (acc ++ generateDef def)
+    declsToList (Can.DeclareRec def defs rest) acc =
+        declsToList rest (acc ++ generateDef def ++ concatMap generateDef defs)
+
+
+-- | Generate Go for a single definition
+generateDef :: Can.Def -> [GoIr.GoDecl]
+generateDef def =
+    let (name, params, body) = case def of
+            Can.Def (A.At _ n) pats expr -> (n, pats, expr)
+            Can.TypedDef (A.At _ n) _ typedPats expr _ ->
+                (n, map fst typedPats, expr)
     in
-        -- Skip "main" — handled separately
-        if name == "main"
-            then []
-            else
-                [ GoIr.GoDeclFunc GoIr.GoFuncDecl
-                    { GoIr._gf_name = name
-                    , GoIr._gf_typeParams = []
-                    , GoIr._gf_params = map patternToParam (Src._valuePatterns val)
-                    , GoIr._gf_returnType = "any"
-                    , GoIr._gf_body = [GoIr.GoReturn (exprToGo (Src._valueBody val))]
-                    }
-                ]
+    -- Skip "main" — handled separately
+    if name == "main" then []
+    else
+        [ GoIr.GoDeclFunc GoIr.GoFuncDecl
+            { GoIr._gf_name = name
+            , GoIr._gf_typeParams = []
+            , GoIr._gf_params = map patternToParam params
+            , GoIr._gf_returnType = "any"
+            , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
+            }
+        ]
 
 
--- | Convert a pattern to a Go parameter
-patternToParam :: Src.Pattern -> GoIr.GoParam
-patternToParam (A.At _ pat) = case pat of
-    Src.PVar name -> GoIr.GoParam name "any"
-    _             -> GoIr.GoParam "_" "any"
+-- ═══════════════════════════════════════════════════════════
+-- EXPRESSION CODE GENERATION
+-- ═══════════════════════════════════════════════════════════
 
-
--- | Convert a Sky expression to a Go expression (simple direct translation)
-exprToGo :: Src.Expr -> GoIr.GoExpr
+-- | Convert a canonical expression to Go IR
+exprToGo :: Can.Expr -> GoIr.GoExpr
 exprToGo (A.At _ expr) = case expr of
-    Src.Str s ->
+
+    Can.Str s ->
         GoIr.GoStringLit s
 
-    Src.MultilineStr s ->
-        GoIr.GoStringLit s  -- TODO: handle interpolation
-
-    Src.Int n ->
+    Can.Int n ->
         GoIr.GoIntLit n
 
-    Src.Float f ->
+    Can.Float f ->
         GoIr.GoFloatLit f
 
-    Src.Chr c ->
+    Can.Chr c ->
         GoIr.GoRuneLit c
 
-    Src.Var name ->
-        GoIr.GoIdent (goName name)
-
-    Src.VarQual modName funcName ->
-        GoIr.GoIdent (goQualName modName funcName)
-
-    Src.Call func args ->
-        -- Direct function call
-        let goFunc = exprToGo func
-            goArgs = map exprToGo args
-        in case goFunc of
-            GoIr.GoIdent "fmt_Println" ->
-                GoIr.GoCall (GoIr.GoQualified "fmt" "Println") goArgs
-            GoIr.GoIdent "String_fromInt" ->
-                GoIr.GoCall (GoIr.GoQualified "fmt" "Sprint") goArgs
-            GoIr.GoIdent "String_fromFloat" ->
-                GoIr.GoCall (GoIr.GoQualified "fmt" "Sprint") goArgs
-            _ ->
-                GoIr.GoCall goFunc goArgs
-
-    Src.If branches elseExpr ->
-        -- If-then-else chain → Go if/else IIFE
-        let goElse = exprToGo elseExpr
-            goIfs = map (\(cond, body) -> (exprToGo cond, exprToGo body)) branches
-        in case goIfs of
-            [(cond, body)] ->
-                GoIr.GoBlock
-                    [GoIr.GoIf cond [GoIr.GoReturn body] [GoIr.GoReturn goElse]]
-                    (GoIr.GoRaw "")  -- unreachable, returns above
-            _ ->
-                GoIr.GoRaw "/* multi-branch if TODO */"
-
-    Src.Let defs body ->
-        -- Let-in becomes Go IIFE: func() T { stmts; return body }()
-        GoIr.GoBlock
-            (concatMap defToStmts defs)
-            (exprToGo body)
-
-    Src.Case subject branches ->
-        -- Case-of → Go switch IIFE
-        let goSubject = exprToGo subject
-            goBranches = map (\(pat, body) -> (patternToGoExpr pat, [GoIr.GoReturn (exprToGo body)])) branches
-        in GoIr.GoBlock
-            []
-            (GoIr.GoRaw "/* case TODO */")
-
-    Src.Lambda params body ->
-        GoIr.GoFuncLit
-            (map patternToParam params)
-            "any"
-            [GoIr.GoReturn (exprToGo body)]
-
-    Src.List items ->
-        GoIr.GoSliceLit "any" (map exprToGo items)
-
-    Src.Tuple a b rest ->
-        GoIr.GoRaw "/* tuple TODO */"
-
-    Src.Record fields ->
-        GoIr.GoRaw "/* record TODO */"
-
-    Src.Unit ->
+    Can.Unit ->
         GoIr.GoRaw "struct{}{}"
 
-    Src.Negate inner ->
+    Can.VarLocal name ->
+        GoIr.GoIdent name
+
+    Can.VarTopLevel home name ->
+        GoIr.GoIdent name
+
+    Can.VarKernel modName funcName ->
+        kernelToGo modName funcName
+
+    Can.VarCtor opts home typeName ctorName annot ->
+        ctorToGo opts home typeName ctorName annot
+
+    Can.List items ->
+        GoIr.GoSliceLit "any" (map exprToGo items)
+
+    Can.Negate inner ->
         GoIr.GoUnary "-" (exprToGo inner)
 
-    Src.Binops pairs final ->
-        -- Simple binary chain
-        foldl (\acc (e, A.At _ op) -> GoIr.GoBinary (goOp op) acc (exprToGo e))
-            (exprToGo final)
-            (reverse pairs)
+    Can.Binop op opHome opName _annot left right ->
+        binopToGo op left right
 
-    Src.Access target (A.At _ field) ->
+    Can.Lambda params body ->
+        GoIr.GoFuncLit
+            (map patternToParam params)
+            "any"  -- TODO: infer from type checker
+            [GoIr.GoReturn (exprToGo body)]
+
+    Can.Call func args ->
+        let goFunc = exprToGo func
+            goArgs = map exprToGo args
+        in GoIr.GoCall goFunc goArgs
+
+    Can.If branches elseExpr ->
+        ifToGo branches elseExpr
+
+    Can.Let def body ->
+        letToGo def body
+
+    Can.LetRec defs body ->
+        let stmts = concatMap defToStmts defs
+        in GoIr.GoBlock stmts (exprToGo body)
+
+    Can.LetDestruct pat valExpr body ->
+        GoIr.GoBlock
+            [GoIr.GoShortDecl (patternName pat) (exprToGo valExpr)]
+            (exprToGo body)
+
+    Can.Case subject branches ->
+        caseToGo subject branches
+
+    Can.Accessor field ->
+        GoIr.GoRaw $ "/* .accessor " ++ field ++ " */"
+
+    Can.Access target (A.At _ field) ->
         GoIr.GoSelector (exprToGo target) field
 
-    Src.Accessor field ->
-        GoIr.GoRaw ("/* .accessor " ++ field ++ " */")
-
-    Src.Update (A.At _ name) fields ->
+    Can.Update _name baseExpr fields ->
         GoIr.GoRaw "/* record update TODO */"
 
-    Src.Op op ->
-        GoIr.GoIdent op
+    Can.Record fields ->
+        GoIr.GoRaw "/* record TODO */"
+
+    Can.Tuple a b mC ->
+        GoIr.GoRaw "/* tuple TODO */"
 
 
--- | Convert a let binding to Go statements
-defToStmts :: A.Located Src.Def -> [GoIr.GoStmt]
-defToStmts (A.At _ def) =
-    let name = case Src._defName def of A.At _ n -> n
-    in [GoIr.GoShortDecl name (exprToGo (Src._defBody def))]
+-- ═══════════════════════════════════════════════════════════
+-- KERNEL FUNCTION RESOLUTION
+-- ═══════════════════════════════════════════════════════════
 
+-- | Map a kernel function to its Go equivalent
+kernelToGo :: String -> String -> GoIr.GoExpr
+kernelToGo modName funcName =
+    case Kernel.lookup modName funcName of
+        Just ki -> GoIr.GoIdent (Kernel._ki_goName ki)
+        Nothing ->
+            -- Fallback: try direct mapping
+            case (modName, funcName) of
+                ("Log", "println") -> GoIr.GoQualified "rt" "Log_println"
+                ("Basics", "add")  -> GoIr.GoIdent "+"  -- handled via Binop
+                ("Basics", "sub")  -> GoIr.GoIdent "-"
+                ("Basics", "not")  -> GoIr.GoQualified "rt" "Basics_not"
+                _ -> GoIr.GoQualified "rt" (modName ++ "_" ++ funcName)
+
+
+-- | Map a constructor to Go
+-- Without type info, use [any, any] as type params for generic constructors
+ctorToGo :: Can.CtorOpts -> ModuleName.Canonical -> String -> String -> Can.Annotation -> GoIr.GoExpr
+ctorToGo opts home typeName ctorName _annot = case ctorName of
+    "Ok"      -> GoIr.GoIdent "rt.Ok[any, any]"
+    "Err"     -> GoIr.GoIdent "rt.Err[any, any]"
+    "Just"    -> GoIr.GoIdent "rt.Just[any]"
+    "Nothing" -> GoIr.GoCall (GoIr.GoIdent "rt.Nothing[any]") []
+    "True"    -> GoIr.GoBoolLit True
+    "False"   -> GoIr.GoBoolLit False
+    _         -> GoIr.GoQualified "rt" ctorName
+
+
+-- ═══════════════════════════════════════════════════════════
+-- BINARY OPERATORS
+-- ═══════════════════════════════════════════════════════════
+
+-- | Convert a binary operator application to Go
+binopToGo :: String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+binopToGo op left right = case op of
+    -- Pipe operators — desugar to function application
+    "|>" -> GoIr.GoCall (exprToGo right) [exprToGo left]
+    "<|" -> GoIr.GoCall (exprToGo left) [exprToGo right]
+
+    -- Composition operators
+    ">>" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeL") [exprToGo left, exprToGo right]
+    "<<" -> GoIr.GoCall (GoIr.GoQualified "rt" "ComposeR") [exprToGo left, exprToGo right]
+
+    -- String/list concat — use runtime helper until type checker provides types
+    "++" -> GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGo left, exprToGo right]
+
+    -- Cons operator
+    "::" -> GoIr.GoCall (GoIr.GoQualified "rt" "List_cons") [exprToGo left, exprToGo right]
+
+    -- Not-equal
+    "/=" -> GoIr.GoBinary "!=" (exprToGo left) (exprToGo right)
+
+    -- Standard arithmetic, comparison, logic
+    _ -> GoIr.GoBinary op (exprToGo left) (exprToGo right)
+
+
+-- ═══════════════════════════════════════════════════════════
+-- IF-THEN-ELSE
+-- ═══════════════════════════════════════════════════════════
+
+-- | Convert if-then-else to Go (IIFE with if chain)
+ifToGo :: [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
+ifToGo branches elseExpr =
+    let
+        buildIf [] = [GoIr.GoReturn (exprToGo elseExpr)]
+        buildIf ((cond, body):rest) =
+            [GoIr.GoIf (exprToGo cond) [GoIr.GoReturn (exprToGo body)] (buildIf rest)]
+    in
+    GoIr.GoBlock (buildIf branches) (GoIr.GoRaw "panic(\"unreachable\")")
+
+
+-- ═══════════════════════════════════════════════════════════
+-- LET-IN
+-- ═══════════════════════════════════════════════════════════
+
+-- | Convert let-in to Go (IIFE with local declarations)
+letToGo :: Can.Def -> Can.Expr -> GoIr.GoExpr
+letToGo def body =
+    GoIr.GoBlock (defToStmts def) (exprToGo body)
+
+
+-- | Convert a definition to Go statements
+defToStmts :: Can.Def -> [GoIr.GoStmt]
+defToStmts def = case def of
+    Can.Def (A.At _ name) [] body ->
+        -- Simple binding: name := expr (use = for _, := for named)
+        if name == "_"
+        then [GoIr.GoExprStmt (exprToGo body)]
+        else [GoIr.GoShortDecl name (exprToGo body)]
+
+    Can.Def (A.At _ name) params body ->
+        -- Function binding: name := func(params) { return body }
+        let goParams = map patternToParam params
+        in [GoIr.GoShortDecl name
+            (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])]
+
+    Can.TypedDef (A.At _ name) _ [] body _ ->
+        [GoIr.GoShortDecl name (exprToGo body)]
+
+    Can.TypedDef (A.At _ name) _ typedPats body _ ->
+        let goParams = map (patternToParam . fst) typedPats
+        in [GoIr.GoShortDecl name
+            (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])]
+
+
+-- ═══════════════════════════════════════════════════════════
+-- CASE-OF
+-- ═══════════════════════════════════════════════════════════
+
+-- | Convert case-of to Go (IIFE with switch or if-chain)
+caseToGo :: Can.Expr -> [Can.CaseBranch] -> GoIr.GoExpr
+caseToGo subject branches =
+    let
+        goSubject = exprToGo subject
+        -- Detect the type from patterns to know how to type-assert
+        subjectType = detectSubjectType branches
+        -- For typed subjects, use type assertion; for any, use directly
+        subjectDecl = case subjectType of
+            Just typeName ->
+                GoIr.GoShortDecl "__subject"
+                    (GoIr.GoTypeAssert goSubject typeName)
+            Nothing ->
+                GoIr.GoShortDecl "__subject" goSubject
+        branchStmts = concatMap (caseBranchToStmts "__subject") branches
+        panicStmt = GoIr.GoExprStmt (GoIr.GoRaw "panic(\"non-exhaustive case expression\")")
+    in
+    GoIr.GoBlock
+        (subjectDecl : branchStmts ++ [panicStmt])
+        (GoIr.GoRaw "nil")  -- unreachable, branches return
+
+
+-- | Detect the Go type of the case subject from the patterns
+detectSubjectType :: [Can.CaseBranch] -> Maybe String
+detectSubjectType branches =
+    case branches of
+        (Can.CaseBranch (A.At _ pat) _ : _) -> patternGoType pat
+        _ -> Nothing
+  where
+    patternGoType (Can.PCtor home typeName _ ctorName _ _)
+        | ctorName == "Ok" || ctorName == "Err" = Just "rt.SkyResult[any, any]"
+        | ctorName == "Just" || ctorName == "Nothing" = Just "rt.SkyMaybe[any]"
+        | otherwise = Just "rt.SkyADT"
+    patternGoType (Can.PBool _) = Nothing  -- bool doesn't need assertion
+    patternGoType (Can.PInt _) = Nothing
+    patternGoType (Can.PStr _) = Nothing
+    patternGoType _ = Nothing
+
+
+-- | Convert a case branch to Go if-statement
+caseBranchToStmts :: String -> Can.CaseBranch -> [GoIr.GoStmt]
+caseBranchToStmts subject (Can.CaseBranch pat body) =
+    let
+        (A.At _ patInner) = pat
+        cond = patternCondition subject patInner
+        bindings = patternBindings subject patInner
+        bodyStmts = bindings ++ [GoIr.GoReturn (exprToGo body)]
+    in
+    case cond of
+        Nothing -> bodyStmts  -- always matches (PVar, PAnything)
+        Just condExpr -> [GoIr.GoIf condExpr bodyStmts []]
+
+
+-- | Generate a Go condition for pattern matching
+patternCondition :: String -> Can.Pattern_ -> Maybe GoIr.GoExpr
+patternCondition subject pat = case pat of
+    Can.PAnything -> Nothing  -- always matches
+    Can.PVar _ -> Nothing     -- always matches
+
+    Can.PInt n ->
+        Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoIntLit n)
+
+    Can.PStr s ->
+        Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoStringLit s)
+
+    Can.PBool True ->
+        Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoBoolLit True)
+
+    Can.PBool False ->
+        Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoBoolLit False)
+
+    Can.PChr c ->
+        Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoRuneLit c)
+
+    Can.PCtor home typeName _union ctorName ctorIdx args ->
+        -- Match on .Tag field
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoSelector (GoIr.GoIdent subject) "Tag")
+            (GoIr.GoIntLit ctorIdx)
+
+    Can.PUnit -> Nothing  -- always matches
+
+    _ -> Nothing  -- fallback: always match (TODO: handle more patterns)
+
+
+-- | Generate Go variable bindings from a pattern
+patternBindings :: String -> Can.Pattern_ -> [GoIr.GoStmt]
+patternBindings subject pat = case pat of
+    Can.PVar name ->
+        [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
+
+    Can.PAnything -> []
+    Can.PUnit -> []
+    Can.PInt _ -> []
+    Can.PStr _ -> []
+    Can.PBool _ -> []
+    Can.PChr _ -> []
+
+    Can.PCtor _home typeName _union ctorName _ctorIdx args ->
+        -- Bind constructor arguments
+        concatMap (bindCtorArg subject ctorName) args
+
+    _ -> []
+
+
+-- | Bind a constructor argument to a local variable
+bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
+bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
+    let (A.At _ innerPat) = pat
+    in case innerPat of
+        Can.PVar name ->
+            let fieldAccess = case ctorName of
+                    "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
+                    "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
+                    "Just" -> GoIr.GoSelector (GoIr.GoIdent subject) "JustValue"
+                    _      -> GoIr.GoIndex
+                                (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
+                                (GoIr.GoIntLit idx)
+            in [ GoIr.GoShortDecl name fieldAccess ]
+        Can.PAnything -> []
+        _ -> []  -- TODO: nested pattern matching
+
+
+-- ═══════════════════════════════════════════════════════════
+-- MAIN FUNCTION
+-- ═══════════════════════════════════════════════════════════
 
 -- | Generate the main() function
-generateMainFunc :: Src.Module -> [GoIr.GoDecl]
-generateMainFunc modul =
-    case findMain modul of
+generateMainFunc :: Can.Module -> Src.Module -> [GoIr.GoDecl]
+generateMainFunc canMod srcMod =
+    case findMain canMod of
         Nothing ->
             [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = "main"
                 , GoIr._gf_typeParams = []
                 , GoIr._gf_params = []
                 , GoIr._gf_returnType = ""
-                , GoIr._gf_body = [GoIr.GoExprStmt (GoIr.GoCall (GoIr.GoQualified "fmt" "Println") [GoIr.GoStringLit "No main function"])]
+                , GoIr._gf_body = [GoIr.GoExprStmt (GoIr.GoCall (GoIr.GoQualified "rt" "Log_println") [GoIr.GoStringLit "No main function"])]
                 }
             ]
-        Just val ->
+        Just def ->
+            let body = defBody def
+                hasTask = any isTaskImport (Src._imports srcMod)
+                stmts = exprToMainStmts body
+                wrappedStmts = if hasTask
+                    then stmts  -- TODO: wrap in rt.RunMainTask
+                    else stmts
+            in
             [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = "main"
                 , GoIr._gf_typeParams = []
                 , GoIr._gf_params = []
                 , GoIr._gf_returnType = ""
-                , GoIr._gf_body = exprToMainStmts (Src._valueBody val)
+                , GoIr._gf_body = wrappedStmts
                 }
             ]
 
 
--- | Find the main function in a module
-findMain :: Src.Module -> Maybe Src.Value
-findMain modul =
-    case filter isMain (Src._values modul) of
-        (A.At _ val : _) -> Just val
-        _ -> Nothing
+-- | Find the main definition
+findMain :: Can.Module -> Maybe Can.Def
+findMain canMod = findMainInDecls (Can._decls canMod)
   where
-    isMain (A.At _ val) = case Src._valueName val of
-        A.At _ "main" -> True
-        _ -> False
+    findMainInDecls Can.SaveTheEnvironment = Nothing
+    findMainInDecls (Can.Declare def rest) =
+        if defName def == "main" then Just def else findMainInDecls rest
+    findMainInDecls (Can.DeclareRec def defs rest) =
+        if defName def == "main" then Just def
+        else case filter (\d -> defName d == "main") defs of
+            (d:_) -> Just d
+            [] -> findMainInDecls rest
 
 
--- NAME MAPPING
+-- | Get the name from a definition
+defName :: Can.Def -> String
+defName (Can.Def (A.At _ n) _ _) = n
+defName (Can.TypedDef (A.At _ n) _ _ _ _) = n
+
+
+-- | Get the body expression from a definition
+defBody :: Can.Def -> Can.Expr
+defBody (Can.Def _ _ body) = body
+defBody (Can.TypedDef _ _ _ body _) = body
+
 
 -- | Convert the main body to Go statements (not a return value)
-exprToMainStmts :: Src.Expr -> [GoIr.GoStmt]
+exprToMainStmts :: Can.Expr -> [GoIr.GoStmt]
 exprToMainStmts (A.At _ expr) = case expr of
-    Src.Let defs body ->
+    Can.Let def body ->
+        defToStmts def ++ exprToMainStmts body
+
+    Can.LetRec defs body ->
         concatMap defToStmts defs ++ exprToMainStmts body
-    Src.Call _ _ ->
+
+    Can.LetDestruct _pat valExpr body ->
+        [GoIr.GoExprStmt (exprToGo valExpr)] ++ exprToMainStmts body
+
+    Can.Call _ _ ->
         [GoIr.GoExprStmt (exprToGo (A.At A.one expr))]
+
     _ ->
         [GoIr.GoExprStmt (exprToGo (A.At A.one expr))]
 
 
--- | Convert a pattern to a Go expression (for switch case values)
-patternToGoExpr :: Src.Pattern -> GoIr.GoExpr
-patternToGoExpr (A.At _ pat) = case pat of
-    Src.PInt n     -> GoIr.GoIntLit n
-    Src.PStr s     -> GoIr.GoStringLit s
-    Src.PBool b    -> GoIr.GoBoolLit b
-    Src.PVar name  -> GoIr.GoIdent name
-    Src.PAnything  -> GoIr.GoIdent "_"
-    _              -> GoIr.GoRaw "/* pattern */"
+-- ═══════════════════════════════════════════════════════════
+-- HELPERS
+-- ═══════════════════════════════════════════════════════════
+
+-- | Convert a pattern to a Go function parameter
+patternToParam :: Can.Pattern -> GoIr.GoParam
+patternToParam (A.At _ pat) = case pat of
+    Can.PVar name -> GoIr.GoParam name "any"
+    _ -> GoIr.GoParam "_" "any"
 
 
--- | Map a Sky variable name to Go
-goName :: String -> String
-goName "println" = "fmt_Println"
-goName name = name
+-- | Extract a single name from a pattern (for destructuring)
+patternName :: Can.Pattern -> String
+patternName (A.At _ pat) = case pat of
+    Can.PVar name -> name
+    _ -> "_"
 
 
--- | Map a qualified Sky name to Go
-goQualName :: String -> String -> String
-goQualName "Std.Log" "println"     = "fmt_Println"
-goQualName "String"  "fromInt"     = "String_fromInt"
-goQualName "String"  "fromFloat"   = "String_fromFloat"
-goQualName "String"  "length"      = "String_length"
-goQualName "String"  "toUpper"     = "String_toUpper"
-goQualName "String"  "toLower"     = "String_toLower"
-goQualName "String"  "join"        = "String_join"
-goQualName "String"  "split"       = "String_split"
-goQualName "List"    "map"         = "List_map"
-goQualName "List"    "filter"      = "List_filter"
-goQualName "List"    "foldl"       = "List_foldl"
-goQualName "List"    "length"      = "List_length"
-goQualName "List"    "append"      = "List_append"
-goQualName "List"    "reverse"     = "List_reverse"
-goQualName "Maybe"   "withDefault" = "Maybe_withDefault"
-goQualName "Result"  "withDefault" = "Result_withDefault"
-goQualName "Task"    "succeed"     = "Task_succeed"
-goQualName "Task"    "fail"        = "Task_fail"
-goQualName "Task"    "andThen"     = "Task_andThen"
-goQualName "Task"    "perform"     = "Task_perform"
-goQualName "Task"    "lazy"        = "Task_lazy"
-goQualName "Cmd"     "none"        = "Cmd_none"
-goQualName "Cmd"     "batch"       = "Cmd_batch"
-goQualName "Cmd"     "perform"     = "Cmd_perform"
-goQualName modName funcName = modName ++ "_" ++ funcName
+-- ═══════════════════════════════════════════════════════════
+-- GO RUNTIME SOURCE (embedded)
+-- ═══════════════════════════════════════════════════════════
 
-
--- | Map a Sky operator to Go
-goOp :: String -> String
-goOp "++" = "+"  -- string concat in Go
-goOp "/=" = "!=" -- not equal
-goOp "|>" = "|>" -- needs special handling (pipe)
-goOp "<|" = "<|" -- needs special handling (reverse pipe)
-goOp op   = op
+-- | The Go runtime package source — typed with generics
+runtimeGoSource :: String
+runtimeGoSource = unlines
+    [ "package rt"
+    , ""
+    , "import ("
+    , "\t\"fmt\""
+    , "\t\"strconv\""
+    , ")"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Result"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "type SkyResult[E any, A any] struct {"
+    , "\tTag      int"
+    , "\tOkValue  A"
+    , "\tErrValue E"
+    , "}"
+    , ""
+    , "func Ok[E any, A any](v A) SkyResult[E, A] {"
+    , "\treturn SkyResult[E, A]{Tag: 0, OkValue: v}"
+    , "}"
+    , ""
+    , "func Err[E any, A any](e E) SkyResult[E, A] {"
+    , "\treturn SkyResult[E, A]{Tag: 1, ErrValue: e}"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Maybe"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "type SkyMaybe[A any] struct {"
+    , "\tTag       int"
+    , "\tJustValue A"
+    , "}"
+    , ""
+    , "func Just[A any](v A) SkyMaybe[A] {"
+    , "\treturn SkyMaybe[A]{Tag: 0, JustValue: v}"
+    , "}"
+    , ""
+    , "func Nothing[A any]() SkyMaybe[A] {"
+    , "\treturn SkyMaybe[A]{Tag: 1}"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Task"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "type SkyTask[E any, A any] func() SkyResult[E, A]"
+    , ""
+    , "func Task_succeed[E any, A any](v A) SkyTask[E, A] {"
+    , "\treturn func() SkyResult[E, A] { return Ok[E, A](v) }"
+    , "}"
+    , ""
+    , "func Task_fail[E any, A any](e E) SkyTask[E, A] {"
+    , "\treturn func() SkyResult[E, A] { return Err[E, A](e) }"
+    , "}"
+    , ""
+    , "func Task_andThen[E any, A any, B any](fn func(A) SkyTask[E, B], task SkyTask[E, A]) SkyTask[E, B] {"
+    , "\treturn func() SkyResult[E, B] {"
+    , "\t\tr := task()"
+    , "\t\tif r.Tag == 0 {"
+    , "\t\t\treturn fn(r.OkValue)()"
+    , "\t\t}"
+    , "\t\treturn Err[E, B](r.ErrValue)"
+    , "\t}"
+    , "}"
+    , ""
+    , "func Task_run[E any, A any](task SkyTask[E, A]) SkyResult[E, A] {"
+    , "\treturn task()"
+    , "}"
+    , ""
+    , "func RunMainTask[E any, A any](task SkyTask[E, A]) {"
+    , "\tr := task()"
+    , "\tif r.Tag == 1 {"
+    , "\t\tfmt.Println(\"Error:\", r.ErrValue)"
+    , "\t}"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Composition"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func ComposeL[A any, B any, C any](f func(A) B, g func(B) C) func(A) C {"
+    , "\treturn func(a A) C { return g(f(a)) }"
+    , "}"
+    , ""
+    , "func ComposeR[A any, B any, C any](g func(B) C, f func(A) B) func(A) C {"
+    , "\treturn func(a A) C { return g(f(a)) }"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Log"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func Log_println(s any) any {"
+    , "\tfmt.Println(s)"
+    , "\treturn struct{}{}"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// String"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func String_fromInt(n int) string {"
+    , "\treturn strconv.Itoa(n)"
+    , "}"
+    , ""
+    , "func String_fromFloat(f float64) string {"
+    , "\treturn strconv.FormatFloat(f, 'f', -1, 64)"
+    , "}"
+    , ""
+    , "func String_length(s string) int {"
+    , "\treturn len(s)"
+    , "}"
+    , ""
+    , "func String_isEmpty(s string) bool {"
+    , "\treturn len(s) == 0"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Basics"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func Basics_identity[A any](a A) A {"
+    , "\treturn a"
+    , "}"
+    , ""
+    , "func Basics_always[A any, B any](a A, _ B) A {"
+    , "\treturn a"
+    , "}"
+    , ""
+    , "func Basics_not(b bool) bool {"
+    , "\treturn !b"
+    , "}"
+    , ""
+    , "func Basics_toString(v any) string {"
+    , "\treturn fmt.Sprintf(\"%v\", v)"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Concat (temporary — will use + when types are known)"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func Concat(a, b any) any {"
+    , "\treturn fmt.Sprintf(\"%v%v\", a, b)"
+    , "}"
+    ]

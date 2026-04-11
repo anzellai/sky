@@ -55,7 +55,8 @@ declaration mkError =
                      spaces
                      char mkError '='
                      freshLine mkError
-                     body <- expression mkError
+                     bodyCol <- getCol
+                     body <- withIndent bodyCol (expression mkError)
                      return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
 
         , -- Uppercase value (constructor used as function — from auto-generated record constructors)
@@ -64,8 +65,9 @@ declaration mkError =
              params <- functionParams mkError
              spaces
              char mkError '='
-             spaces
-             body <- expression mkError
+             freshLine mkError
+             bodyCol <- getCol
+             body <- withIndent bodyCol (expression mkError)
              return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
         ]
 

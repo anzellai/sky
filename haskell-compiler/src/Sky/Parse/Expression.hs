@@ -344,7 +344,7 @@ exprCase mkError = do
     subject <- expression mkError
     spaces
     keyword mkError (T.pack "of")
-    spaces
+    freshLine mkError  -- skip to first branch (may be on next line)
     branchCol <- getCol
     branches <- caseBranches mkError branchCol
     return (Src.Case subject branches)
@@ -355,7 +355,7 @@ exprCase mkError = do
 caseBranches :: (Row -> Col -> x) -> Col -> Parser x [(Src.Pattern, Src.Expr)]
 caseBranches mkError branchCol = do
     first <- caseBranch mkError
-    spaces
+    freshLine mkError  -- skip whitespace/newlines between branches
     rest <- moreCaseBranches mkError branchCol
     return (first : rest)
 
@@ -367,7 +367,7 @@ moreCaseBranches mkError branchCol = do
         then oneOfWithFallback
             [ do
                 b <- caseBranch mkError
-                spaces
+                freshLine mkError
                 rest <- moreCaseBranches mkError branchCol
                 return (b : rest)
             ]
@@ -380,7 +380,7 @@ caseBranch mkError = do
     pat <- pattern_ mkError
     spaces
     string mkError (T.pack "->")
-    spaces
+    freshLine mkError  -- body may be on next line
     body <- expression mkError
     return (pat, body)
 
