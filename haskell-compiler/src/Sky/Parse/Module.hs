@@ -3,6 +3,7 @@
 module Sky.Parse.Module where
 
 import qualified Data.Text as T
+import Debug.Trace (trace)
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine)
 import Sky.Parse.Variable (lower, upper)
@@ -28,16 +29,17 @@ parseModule src =
 
 moduleParser :: Parser ModuleError Src.Module
 moduleParser = do
-    spaces
+    freshLine (\r c -> ModuleExpected r c)
     -- Parse module header
     mHeader <- moduleHeader
-    spaces
+    freshLine (\r c -> ModuleExpected r c)
     -- Parse imports
     imports <- moduleImports
-    spaces
+    freshLine (\r c -> ModuleExpected r c)
     -- Parse declarations
     (values, unions, aliases, binops) <- moduleDeclarations
-    spaces
+    freshLine (\r c -> ModuleExpected r c)
+    -- Allow trailing whitespace before EOF
     end (\r c -> ModuleExpected r c)
     return Src.Module
         { Src._name = mHeader
@@ -53,20 +55,19 @@ moduleParser = do
 
 -- | Parse module header: module Name.Space exposing (..)
 moduleHeader :: Parser ModuleError (Maybe (A.Located [String]))
-moduleHeader =
-    oneOfWithFallback
-        [ do
+moduleHeader = do
+    mc <- peek
+    case mc of
+        Just 'm' -> do
             keyword (\r c -> ModuleExpected r c) (T.pack "module")
             spaces
             name <- addLocation (moduleName (\r c -> ModuleNameExpected r c))
             spaces
-            -- Parse exposing clause
             keyword (\r c -> ModuleExpected r c) (T.pack "exposing")
             spaces
             _ <- exposingClause (\r c -> ModuleExpected r c)
             return (Just name)
-        ]
-        Nothing
+        _ -> return Nothing
 
 
 -- | Parse a dotted module name: Sky.Core.List
@@ -171,7 +172,7 @@ moduleImports =
     oneOfWithFallback
         [ do
             imp <- moduleImport
-            spaces
+            freshLine (\r c -> ImportExpected r c)
             rest <- moduleImports
             return (imp : rest)
         ]

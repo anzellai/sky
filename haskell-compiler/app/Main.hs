@@ -3,6 +3,11 @@ module Main where
 import Options.Applicative
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
+import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Process (callProcess)
+
+import qualified Sky.Build.Compile as Compile
+import qualified Sky.Sky.Toml as Toml
 
 
 -- | Sky compiler CLI
@@ -85,10 +90,21 @@ runCommand cmd = case cmd of
         return (Right ())
 
     Build path -> do
-        putStrLn $ "Building " ++ path ++ "..."
-        -- TODO: implement Build.Compile.compile
-        putStrLn "Build not yet implemented"
-        return (Right ())
+        -- Read sky.toml if it exists
+        hasToml <- doesFileExist "sky.toml"
+        config <- if hasToml
+            then Toml.parseSkyToml <$> readFile "sky.toml"
+            else return Toml.defaultConfig
+        let outDir = "sky-out"
+        createDirectoryIfMissing True outDir
+        result <- Compile.compile config path outDir
+        case result of
+            Left err -> return (Left err)
+            Right goPath -> do
+                putStrLn "Running go build..."
+                callProcess "sh" ["-c", "cd " ++ outDir ++ " && go build -o " ++ Toml._binName config ++ " ."]
+                putStrLn $ "Build complete: " ++ outDir ++ "/" ++ Toml._binName config
+                return (Right ())
 
     Run path -> do
         putStrLn $ "Running " ++ path ++ "..."
