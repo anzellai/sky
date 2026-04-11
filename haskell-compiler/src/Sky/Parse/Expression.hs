@@ -281,7 +281,7 @@ exprLet mkError = do
 letBindings :: (Row -> Col -> x) -> Col -> Parser x [A.Located Src.Def]
 letBindings mkError bindingCol = do
     first <- addLocation (letBinding mkError)
-    spaces
+    freshLine mkError
     rest <- moreLetBindings mkError bindingCol
     return (first : rest)
 
@@ -293,7 +293,7 @@ moreLetBindings mkError bindingCol = do
     if col == bindingCol && not (isInKeyword src)
         then do
             b <- addLocation (letBinding mkError)
-            spaces
+            freshLine mkError
             rest <- moreLetBindings mkError bindingCol
             return (b : rest)
         else return []
