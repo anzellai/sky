@@ -4,7 +4,7 @@ module Sky.Parse.Declaration where
 
 import qualified Data.Text as T
 import Sky.Parse.Primitives
-import Sky.Parse.Space (spaces, freshLine)
+import Sky.Parse.Space (spaces, freshLine, skipWhitespace)
 import Sky.Parse.Variable (lower, upper)
 import Sky.Parse.Expression (expression)
 import Sky.Parse.Pattern (pattern_)
@@ -54,7 +54,7 @@ declaration mkError =
                      params <- functionParams mkError
                      spaces
                      char mkError '='
-                     spaces
+                     freshLine mkError
                      body <- expression mkError
                      return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
 

@@ -5,7 +5,7 @@ module Sky.Parse.Expression where
 
 import qualified Data.Text as T
 import Sky.Parse.Primitives
-import Sky.Parse.Space (spaces, freshLine, checkIndent)
+import Sky.Parse.Space (spaces, freshLine, checkIndent, skipWhitespace)
 import Sky.Parse.Variable (lower, upper)
 import Sky.Parse.Number (number, Number(..))
 import Sky.Parse.String (stringLiteral, charLiteral, StringResult(..))
@@ -265,11 +265,12 @@ elseIfChain mkError =
 
 exprLet :: (Row -> Col -> x) -> Parser x Src.Expr_
 exprLet mkError = do
+    freshLine mkError
     bindingCol <- getCol
     bindings <- letBindings mkError bindingCol
-    spaces
+    freshLine mkError
     keyword mkError (T.pack "in")
-    spaces
+    freshLine mkError
     body <- expression mkError
     return (Src.Let bindings body)
 
@@ -311,7 +312,7 @@ letBinding mkError = do
     params <- lambdaParams_ mkError
     spaces
     char mkError '='
-    spaces
+    freshLine mkError
     body <- expression mkError
     return (Src.Def name params body Nothing)
 

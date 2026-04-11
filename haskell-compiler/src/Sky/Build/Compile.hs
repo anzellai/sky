@@ -151,21 +151,38 @@ exprToGo (A.At _ expr) = case expr of
         in case goFunc of
             GoIr.GoIdent "fmt_Println" ->
                 GoIr.GoCall (GoIr.GoQualified "fmt" "Println") goArgs
+            GoIr.GoIdent "String_fromInt" ->
+                GoIr.GoCall (GoIr.GoQualified "fmt" "Sprint") goArgs
+            GoIr.GoIdent "String_fromFloat" ->
+                GoIr.GoCall (GoIr.GoQualified "fmt" "Sprint") goArgs
             _ ->
                 GoIr.GoCall goFunc goArgs
 
     Src.If branches elseExpr ->
-        -- For now, only handle single if-then-else as Go ternary-style
-        GoIr.GoRaw "/* if-then-else TODO */"
+        -- If-then-else chain → Go if/else IIFE
+        let goElse = exprToGo elseExpr
+            goIfs = map (\(cond, body) -> (exprToGo cond, exprToGo body)) branches
+        in case goIfs of
+            [(cond, body)] ->
+                GoIr.GoBlock
+                    [GoIr.GoIf cond [GoIr.GoReturn body] [GoIr.GoReturn goElse]]
+                    (GoIr.GoRaw "")  -- unreachable, returns above
+            _ ->
+                GoIr.GoRaw "/* multi-branch if TODO */"
 
     Src.Let defs body ->
-        -- Let-in becomes a block
+        -- Let-in becomes Go IIFE: func() T { stmts; return body }()
         GoIr.GoBlock
             (concatMap defToStmts defs)
             (exprToGo body)
 
     Src.Case subject branches ->
-        GoIr.GoRaw "/* case-of TODO */"
+        -- Case-of → Go switch IIFE
+        let goSubject = exprToGo subject
+            goBranches = map (\(pat, body) -> (patternToGoExpr pat, [GoIr.GoReturn (exprToGo body)])) branches
+        in GoIr.GoBlock
+            []
+            (GoIr.GoRaw "/* case TODO */")
 
     Src.Lambda params body ->
         GoIr.GoFuncLit
@@ -233,9 +250,7 @@ generateMainFunc modul =
                 , GoIr._gf_typeParams = []
                 , GoIr._gf_params = []
                 , GoIr._gf_returnType = ""
-                , GoIr._gf_body =
-                    [ GoIr.GoExprStmt (exprToGo (Src._valueBody val))
-                    ]
+                , GoIr._gf_body = exprToMainStmts (Src._valueBody val)
                 }
             ]
 
@@ -254,6 +269,28 @@ findMain modul =
 
 -- NAME MAPPING
 
+-- | Convert the main body to Go statements (not a return value)
+exprToMainStmts :: Src.Expr -> [GoIr.GoStmt]
+exprToMainStmts (A.At _ expr) = case expr of
+    Src.Let defs body ->
+        concatMap defToStmts defs ++ exprToMainStmts body
+    Src.Call _ _ ->
+        [GoIr.GoExprStmt (exprToGo (A.At A.one expr))]
+    _ ->
+        [GoIr.GoExprStmt (exprToGo (A.At A.one expr))]
+
+
+-- | Convert a pattern to a Go expression (for switch case values)
+patternToGoExpr :: Src.Pattern -> GoIr.GoExpr
+patternToGoExpr (A.At _ pat) = case pat of
+    Src.PInt n     -> GoIr.GoIntLit n
+    Src.PStr s     -> GoIr.GoStringLit s
+    Src.PBool b    -> GoIr.GoBoolLit b
+    Src.PVar name  -> GoIr.GoIdent name
+    Src.PAnything  -> GoIr.GoIdent "_"
+    _              -> GoIr.GoRaw "/* pattern */"
+
+
 -- | Map a Sky variable name to Go
 goName :: String -> String
 goName "println" = "fmt_Println"
@@ -262,12 +299,37 @@ goName name = name
 
 -- | Map a qualified Sky name to Go
 goQualName :: String -> String -> String
-goQualName "Std.Log" "println" = "fmt_Println"
+goQualName "Std.Log" "println"     = "fmt_Println"
+goQualName "String"  "fromInt"     = "String_fromInt"
+goQualName "String"  "fromFloat"   = "String_fromFloat"
+goQualName "String"  "length"      = "String_length"
+goQualName "String"  "toUpper"     = "String_toUpper"
+goQualName "String"  "toLower"     = "String_toLower"
+goQualName "String"  "join"        = "String_join"
+goQualName "String"  "split"       = "String_split"
+goQualName "List"    "map"         = "List_map"
+goQualName "List"    "filter"      = "List_filter"
+goQualName "List"    "foldl"       = "List_foldl"
+goQualName "List"    "length"      = "List_length"
+goQualName "List"    "append"      = "List_append"
+goQualName "List"    "reverse"     = "List_reverse"
+goQualName "Maybe"   "withDefault" = "Maybe_withDefault"
+goQualName "Result"  "withDefault" = "Result_withDefault"
+goQualName "Task"    "succeed"     = "Task_succeed"
+goQualName "Task"    "fail"        = "Task_fail"
+goQualName "Task"    "andThen"     = "Task_andThen"
+goQualName "Task"    "perform"     = "Task_perform"
+goQualName "Task"    "lazy"        = "Task_lazy"
+goQualName "Cmd"     "none"        = "Cmd_none"
+goQualName "Cmd"     "batch"       = "Cmd_batch"
+goQualName "Cmd"     "perform"     = "Cmd_perform"
 goQualName modName funcName = modName ++ "_" ++ funcName
 
 
 -- | Map a Sky operator to Go
 goOp :: String -> String
-goOp "++" = "+"  -- string concat
-goOp "|>" = "|>" -- will need special handling
+goOp "++" = "+"  -- string concat in Go
+goOp "/=" = "!=" -- not equal
+goOp "|>" = "|>" -- needs special handling (pipe)
+goOp "<|" = "<|" -- needs special handling (reverse pipe)
 goOp op   = op

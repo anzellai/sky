@@ -247,8 +247,8 @@ renderExpr expr = case expr of
         renderExpr expr ++ ".(" ++ typ ++ ")"
 
     GoBlock stmts result ->
-        "func() " ++ "any" ++ " { "
-        ++ concatMap (\s -> head (renderStmt s) ++ "; ") stmts
+        "func() any { "
+        ++ concatMap (\s -> unlines' (renderStmt s) ++ "; ") stmts
         ++ "return " ++ renderExpr result ++ " }()"
 
     GoRaw code -> code
@@ -262,6 +262,12 @@ renderStructField (name, val) = name ++ ": " ++ renderExpr val
 
 
 -- HELPERS
+
+unlines' :: [String] -> String
+unlines' [] = ""
+unlines' [x] = x
+unlines' (x:xs) = x ++ "; " ++ unlines' xs
+
 
 escapeGo :: String -> String
 escapeGo = concatMap escapeChar
