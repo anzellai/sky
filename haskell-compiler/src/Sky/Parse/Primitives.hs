@@ -3,7 +3,7 @@
 -- Inspired by Elm's Parse.Primitives but using Text for safety.
 -- CPS-based for performance with explicit position tracking.
 module Sky.Parse.Primitives
-    ( Parser
+    ( Parser(..)
     , State(..)
     , Row, Col
     -- Entry
@@ -24,6 +24,7 @@ module Sky.Parse.Primitives
     , string
     , keyword
     , peek
+    , peekSrc
     , end
     )
     where
@@ -262,6 +263,12 @@ keyword mkError kw = Parser $ \s cok _eok _cerr eerr ->
 peek :: Parser x (Maybe Char)
 peek = Parser $ \s _ eok _ _ ->
     eok (fmap fst (T.uncons (_src s))) s
+
+
+-- | Peek at remaining source text
+peekSrc :: Parser x T.Text
+peekSrc = Parser $ \s _ eok _ _ ->
+    eok (_src s) s
 
 
 -- | Succeed only at end of input

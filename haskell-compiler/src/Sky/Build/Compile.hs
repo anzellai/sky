@@ -7,6 +7,7 @@ import qualified Data.Text.IO as TIO
 import qualified Data.Map.Strict as Map
 
 import qualified Sky.AST.Source as Src
+import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Parse.Module as Parse
 import qualified Sky.Generate.Go.Ir as GoIr
 import qualified Sky.Generate.Go.Builder as GoBuilder
@@ -33,7 +34,7 @@ compileFile config filePath = do
         Left err -> return (CompileError $ "Parse error: " ++ show err)
         Right modul -> do
             let modName = case Src._name modul of
-                    Just (At _ names) -> concatMap id names
+                    Just (A.At _ names) -> concatMap id names
                     Nothing -> "Main"
                 declCount = length (Src._values modul) + length (Src._unions modul) + length (Src._aliases modul)
             putStrLn $ "   Module: " ++ modName
@@ -54,7 +55,6 @@ compileFile config filePath = do
             return (CompileOk goCode)
   where
     -- Workaround for Located pattern
-    At = undefined  -- TODO: use proper Located accessor
 
 
 -- | Generate a stub Go program from a parsed module.

@@ -14,7 +14,7 @@ import qualified Sky.Reporting.Annotation as A
 
 
 -- | Parse a top-level declaration
-declaration :: (Row -> Col -> x) -> Parser x (Src.DeclType, A.Located Src.DeclPayload)
+declaration :: (Row -> Col -> x) -> Parser x (DeclType, A.Located DeclPayload)
 declaration mkError =
     oneOf mkError
         [ -- type declaration
@@ -94,7 +94,7 @@ functionParams :: (Row -> Col -> x) -> Parser x [Src.Pattern]
 functionParams mkError =
     oneOfWithFallback
         [ do
-            p <- addLocation (pattern_ mkError)
+            p <- pattern_ mkError
             spaces
             rest <- functionParams mkError
             return (p : rest)
@@ -104,7 +104,7 @@ functionParams mkError =
 
 -- TYPE ALIAS
 
-parseTypeAlias :: (Row -> Col -> x) -> Parser x (Src.DeclType, A.Located Src.DeclPayload)
+parseTypeAlias :: (Row -> Col -> x) -> Parser x (DeclType, A.Located DeclPayload)
 parseTypeAlias mkError = do
     name <- addLocation (upper mkError)
     spaces
@@ -118,7 +118,7 @@ parseTypeAlias mkError = do
 
 -- UNION TYPE
 
-parseUnionType :: (Row -> Col -> x) -> Parser x (Src.DeclType, A.Located Src.DeclPayload)
+parseUnionType :: (Row -> Col -> x) -> Parser x (DeclType, A.Located DeclPayload)
 parseUnionType mkError = do
     name <- addLocation (upper mkError)
     spaces
@@ -214,7 +214,7 @@ typeAtomForCtor mkError =
 
 -- FOREIGN IMPORT
 
-parseForeignImport :: (Row -> Col -> x) -> Parser x (Src.DeclType, A.Located Src.DeclPayload)
+parseForeignImport :: (Row -> Col -> x) -> Parser x (DeclType, A.Located DeclPayload)
 parseForeignImport mkError = do
     -- foreign import "go/package" exposing (func1, func2)
     pkg <- stringLiteralSimple mkError

@@ -51,46 +51,21 @@ qualifiedVar mkError = do
     first <- upper mkError
     rest <- dotParts mkError
     case rest of
-        [] -> return ([], first)  -- Just a constructor name
-        _  -> let parts = first : init rest
-                   name = last rest
-               in return (parts, name)
+        [] -> return ([], first)
+        _  ->
+            let parts = first : init rest
+                name  = last rest
+            in return (parts, name)
 
 
 -- | Parse zero or more .Name segments
 dotParts :: (Row -> Col -> x) -> Parser x [String]
-dotParts mkError = Parser $ \s _ eok _ _ ->
-    go s []
-  where
-    go s acc =
-        case T.uncons (_src s) of
-            Just ('.', rest1) ->
-                case T.uncons rest1 of
-                    Just (c, _)
-                        | isAlpha c ->
-                            let (name, rest2) = T.span isIdentChar rest1
-                                nameStr = T.unpack name
-                                len = 1 + T.length name  -- dot + name
-                            in go (s { _src = rest2, _offset = _offset s + len, _col = _col s + len }) (acc ++ [nameStr])
-                    _ -> eok (reverse acc) s  -- dot not followed by alpha
-            _ -> eok (reverse acc) s  -- no more dots
-      where
-        eok result state = result `seq` state `seq` (result, state)  -- force evaluation
-        -- Actually we need the Parser continuation, let me restructure
-
--- Simpler version: just collect dot-separated names
-dotSeparated :: (Row -> Col -> x) -> Parser x [String]
-dotSeparated mkError = do
-    first <- lower mkError
-    moreNames mkError [first]
-
-
-moreNames :: (Row -> Col -> x) -> [String] -> Parser x [String]
-moreNames mkError acc =
+dotParts mkError =
     oneOfWithFallback
         [ do
             char mkError '.'
             name <- oneOf mkError [upper mkError, lower mkError]
-            moreNames mkError (acc ++ [name])
+            rest <- dotParts mkError
+            return (name : rest)
         ]
-        acc
+        []

@@ -286,24 +286,22 @@ letBindings mkError bindingCol = do
 
 
 moreLetBindings :: (Row -> Col -> x) -> Col -> Parser x [A.Located Src.Def]
-moreLetBindings mkError bindingCol = Parser $ \s _ eok _ _ ->
-    -- Only continue if we're at the binding column (not past it or before it)
-    if _col s == bindingCol && not (isInKeyword s)
-        then
-            let (Parser p) = do
-                    b <- addLocation (letBinding mkError)
-                    spaces
-                    rest <- moreLetBindings mkError bindingCol
-                    return (b : rest)
-            in p s (\a s' -> a) (\a s' -> a) (\_ _ _ -> []) (\_ _ _ -> [])
-              -- Use the result directly since we're in a nested parser
-        else eok [] s
+moreLetBindings mkError bindingCol = do
+    col <- getCol
+    src <- peekSrc
+    if col == bindingCol && not (isInKeyword src)
+        then do
+            b <- addLocation (letBinding mkError)
+            spaces
+            rest <- moreLetBindings mkError bindingCol
+            return (b : rest)
+        else return []
   where
-    isInKeyword s =
-        T.isPrefixOf (T.pack "in") (_src s)
-            && not (isIdentContinue (T.index (_src s) 2))
-      where
-        isIdentContinue c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+    isInKeyword src =
+        T.length src >= 2
+            && T.take 2 src == T.pack "in"
+            && (T.length src < 3 || not (isIdentContinue (T.index src 2)))
+    isIdentContinue c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 
 
 letBinding :: (Row -> Col -> x) -> Parser x Src.Def
@@ -321,7 +319,7 @@ letBinding mkError = do
 -- | Parse zero or more lambda/function parameters
 lambdaParams :: (Row -> Col -> x) -> Parser x [Src.Pattern]
 lambdaParams mkError = do
-    first <- addLocation (pattern_ mkError)
+    first <- pattern_ mkError
     rest <- lambdaParams_ mkError
     return (first : rest)
 
@@ -330,7 +328,7 @@ lambdaParams_ :: (Row -> Col -> x) -> Parser x [Src.Pattern]
 lambdaParams_ mkError =
     oneOfWithFallback
         [ do
-            p <- addLocation (pattern_ mkError)
+            p <- pattern_ mkError
             spaces
             rest <- lambdaParams_ mkError
             return (p : rest)
@@ -362,17 +360,18 @@ caseBranches mkError branchCol = do
 
 
 moreCaseBranches :: (Row -> Col -> x) -> Col -> Parser x [(Src.Pattern, Src.Expr)]
-moreCaseBranches mkError branchCol = Parser $ \s _ eok _ _ ->
-    -- Continue only if we're at the branch column
-    if _col s == branchCol
-        then
-            let (Parser p) = do
-                    b <- caseBranch mkError
-                    spaces
-                    rest <- moreCaseBranches mkError branchCol
-                    return (b : rest)
-            in p s (\a s' -> a) (\a s' -> a) (\_ _ _ -> []) (\_ _ _ -> [])
-        else eok [] s
+moreCaseBranches mkError branchCol = do
+    col <- getCol
+    if col == branchCol
+        then oneOfWithFallback
+            [ do
+                b <- caseBranch mkError
+                spaces
+                rest <- moreCaseBranches mkError branchCol
+                return (b : rest)
+            ]
+            []
+        else return []
 
 
 caseBranch :: (Row -> Col -> x) -> Parser x (Src.Pattern, Src.Expr)
