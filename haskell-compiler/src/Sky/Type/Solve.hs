@@ -12,100 +12,102 @@ import qualified Sky.Type.Type as T
 import qualified Sky.Type.UnionFind as UF
 import qualified Sky.Type.Unify as Unify
 import qualified Sky.Type.Instantiate as Instantiate
+import qualified Sky.Sky.ModuleName as ModuleName
 
 
 -- | Result of solving constraints
 data SolveResult
-    = SolveOk
+    = SolveOk !SolvedTypes
     | SolveError String  -- error message
     deriving (Show)
+
+
+-- | Solved type environment: maps variable names to their resolved types
+type SolvedTypes = Map.Map String T.Type
 
 
 -- | Solver state: maps variable names to their UF variables
 type SolverEnv = Map.Map String T.Variable
 
 
--- | Solve a constraint tree. Returns Ok or an error.
+-- | Solve a constraint tree. Returns Ok with solved types, or an error.
 solve :: T.Constraint -> IO SolveResult
 solve constraint = do
-    result <- solveHelp Map.empty 0 constraint
-    return result
+    (result, env) <- solveHelp Map.empty 0 constraint
+    case result of
+        Nothing -> do
+            -- Read solved types from UF variables
+            solvedTypes <- readSolvedTypes env
+            return (SolveOk solvedTypes)
+        Just err -> return (SolveError err)
 
 
--- | Solve a constraint in the given environment
-solveHelp :: SolverEnv -> Int -> T.Constraint -> IO SolveResult
+-- | Solve a constraint in the given environment.
+-- Returns (Nothing, env) on success or (Just error, env) on failure.
+solveHelp :: SolverEnv -> Int -> T.Constraint -> IO (Maybe String, SolverEnv)
 solveHelp env rank constraint = case constraint of
 
     T.CTrue ->
-        return SolveOk
+        return (Nothing, env)
 
     T.CSaveTheEnvironment ->
-        return SolveOk
+        return (Nothing, env)
 
     T.CAnd constraints ->
         solveAll env rank constraints
 
     T.CEqual _region _category actualType expected -> do
-        -- Convert both types to variables and unify
         actualVar <- Instantiate.fromCanType rank actualType
         expectedVar <- expectedToVar env rank expected
         ok <- Unify.unify actualVar expectedVar
         if ok
-            then return SolveOk
-            else return $ SolveError $ "Type mismatch: " ++ showType actualType ++ " vs " ++ showExpected expected
+            then return (Nothing, env)
+            else return (Just $ "Type mismatch: " ++ showType actualType ++ " vs " ++ showExpected expected, env)
 
     T.CLocal _region name expected -> do
-        -- Look up the variable in the environment
         case Map.lookup name env of
             Just var -> do
-                -- Copy the variable (instantiate if polymorphic)
                 expectedVar <- expectedToVar env rank expected
                 ok <- Unify.unify var expectedVar
                 if ok
-                    then return SolveOk
-                    else return $ SolveError $ "Variable '" ++ name ++ "' type mismatch"
+                    then return (Nothing, env)
+                    else return (Just $ "Variable '" ++ name ++ "' type mismatch", env)
             Nothing ->
-                -- Unknown variable — create a fresh flex var
-                -- This allows forward references and unresolved names to proceed
-                return SolveOk
+                -- Unknown variable — create a fresh flex var and add to env
+                do  freshVar <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) rank T.noMark Nothing)
+                    return (Nothing, Map.insert name freshVar env)
 
     T.CForeign _region name annot expected -> do
-        -- Instantiate the annotation (creates fresh vars for quantified names)
         (instVar, _freshVars) <- Instantiate.fromAnnotation rank annot
         expectedVar <- expectedToVar env rank expected
         ok <- Unify.unify instVar expectedVar
         if ok
-            then return SolveOk
-            else return $ SolveError $ "Foreign '" ++ name ++ "' type mismatch"
+            then return (Nothing, env)
+            else return (Just $ "Foreign '" ++ name ++ "' type mismatch", env)
 
     T.CPattern _region _category _actualType _expected ->
-        -- Pattern constraints: simplified for now
-        return SolveOk
+        return (Nothing, env)
 
     T.CLet rigids flexVars header headerCon bodyCon -> do
-        -- Simplified let solving (no generalization yet)
-        -- 1. Solve header constraint
-        headerResult <- solveHelp env rank headerCon
-        case headerResult of
-            SolveError _ -> return headerResult
-            SolveOk -> do
-                -- 2. Add header bindings to environment
+        (headerErr, env1) <- solveHelp env rank headerCon
+        case headerErr of
+            Just _ -> return (headerErr, env1)
+            Nothing -> do
                 headerVars <- mapM (\(_, (_, ty)) -> Instantiate.fromCanType rank ty) (Map.toList header)
                 let headerEntries = zipWith (\(name, _) var -> (name, var))
                         (Map.toList header) headerVars
-                    env' = foldr (\(name, var) e -> Map.insert name var e) env headerEntries
-                -- 3. Solve body constraint with extended environment
+                    env' = foldr (\(name, var) e -> Map.insert name var e) env1 headerEntries
                 solveHelp env' rank bodyCon
 
 
 -- | Solve a list of constraints sequentially
-solveAll :: SolverEnv -> Int -> [T.Constraint] -> IO SolveResult
-solveAll _env _rank [] = return SolveOk
+solveAll :: SolverEnv -> Int -> [T.Constraint] -> IO (Maybe String, SolverEnv)
+solveAll env _rank [] = return (Nothing, env)
 solveAll env rank (c:cs) = do
-    result <- solveHelp env rank c
-    case result of
-        SolveError _ -> return result
-        SolveOk -> solveAll env rank cs
+    (err, env') <- solveHelp env rank c
+    case err of
+        Just _ -> return (err, env')
+        Nothing -> solveAll env' rank cs
 
 
 -- | Convert an Expected type to a UF variable
@@ -147,3 +149,59 @@ showExpected :: T.Expected T.Type -> String
 showExpected (T.NoExpectation ty) = showType ty
 showExpected (T.FromContext _ _ ty) = showType ty
 showExpected (T.FromAnnotation _ _ _ ty) = showType ty
+
+
+-- ═══════════════════════════════════════════════════════════
+-- READ SOLVED TYPES
+-- ═══════════════════════════════════════════════════════════
+
+-- | Read solved types from UF variables back to canonical types
+readSolvedTypes :: SolverEnv -> IO SolvedTypes
+readSolvedTypes env =
+    Map.traverseWithKey (\_ var -> variableToType var) env
+
+
+-- | Convert a UF variable back to a canonical type (reading its resolved content)
+variableToType :: T.Variable -> IO T.Type
+variableToType var = do
+    desc <- UF.get var
+    case T._content desc of
+        T.FlexVar (Just name) -> return (T.TVar name)
+        T.FlexVar Nothing -> return (T.TVar "_")
+        T.FlexSuper T.Number _ -> return (T.TType (ModuleName.Canonical "Sky.Core.Basics") "Int" [])
+        T.FlexSuper _ _ -> return (T.TVar "_super")
+        T.RigidVar name -> return (T.TVar name)
+        T.RigidSuper _ name -> return (T.TVar name)
+        T.Structure flat -> flatTypeToType flat
+        T.Alias home name _ realVar -> do
+            inner <- variableToType realVar
+            return (T.TAlias home name [] (T.Filled inner))
+        T.Error -> return (T.TVar "_error")
+
+
+-- | Convert a FlatType back to a canonical type
+flatTypeToType :: T.FlatType -> IO T.Type
+flatTypeToType flat = case flat of
+    T.App1 home name argVars -> do
+        argTypes <- mapM variableToType argVars
+        return (T.TType home name argTypes)
+    T.Fun1 argVar resVar -> do
+        argType <- variableToType argVar
+        resType <- variableToType resVar
+        return (T.TLambda argType resType)
+    T.EmptyRecord1 ->
+        return (T.TRecord Map.empty Nothing)
+    T.Record1 fieldVars extVar -> do
+        fieldTypes <- Map.traverseWithKey (\name fVar -> do
+            ty <- variableToType fVar
+            return (T.FieldType 0 ty)) fieldVars
+        return (T.TRecord fieldTypes Nothing)
+    T.Unit1 ->
+        return T.TUnit
+    T.Tuple1 aVar bVar mcVar -> do
+        aType <- variableToType aVar
+        bType <- variableToType bVar
+        mcType <- case mcVar of
+            Nothing -> return Nothing
+            Just cVar -> Just <$> variableToType cVar
+        return (T.TTuple aType bType mcType)

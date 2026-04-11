@@ -164,9 +164,25 @@ tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
         Nothing -> False
 
 
--- | Parse an atomic expression (no application or operators)
+-- | Parse an atomic expression, including postfix .field access
 exprAtom :: (Row -> Col -> x) -> Parser x Src.Expr
-exprAtom mkError = addLocation (exprAtom_ mkError)
+exprAtom mkError = do
+    base <- addLocation (exprAtom_ mkError)
+    -- Check for .field postfix access chain
+    dotAccess mkError base
+
+
+-- | Parse zero or more .field postfix accesses
+dotAccess :: (Row -> Col -> x) -> Src.Expr -> Parser x Src.Expr
+dotAccess mkError base =
+    oneOfWithFallback
+        [ do
+            char mkError '.'
+            field <- addLocation (lower mkError)
+            let access = A.At (A.merge (A.toRegion base) (A.toRegion field)) (Src.Access base field)
+            dotAccess mkError access
+        ]
+        base
 
 
 exprAtom_ :: (Row -> Col -> x) -> Parser x Src.Expr_

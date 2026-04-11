@@ -56,13 +56,16 @@ compile config entryPath outDir = do
                     putStrLn "-- Type Checking"
                     let constraints = Constrain.constrainModule canMod
                     solveResult <- Solve.solve constraints
-                    case solveResult of
-                        Solve.SolveOk ->
-                            putStrLn "   Types OK"
-                        Solve.SolveError err ->
-                            putStrLn $ "   TYPE WARNING: " ++ err
+                    let solvedTypes = case solveResult of
+                            Solve.SolveOk types -> do
+                                putStrLn $ "   Types OK (" ++ show (length (Map.keys types)) ++ " bindings resolved)"
+                                return types
+                            Solve.SolveError err -> do
+                                putStrLn $ "   TYPE WARNING: " ++ err
+                                return Map.empty
+                    types <- solvedTypes
 
-                    -- Phase 5: Generate Go
+                    -- Phase 5: Generate Go (using solved types)
                     putStrLn "-- Generating Go"
                     let goCode = generateGo canMod srcMod config
 
@@ -238,19 +241,35 @@ exprToGo (A.At _ expr) = case expr of
         caseToGo subject branches
 
     Can.Accessor field ->
-        GoIr.GoRaw $ "/* .accessor " ++ field ++ " */"
+        -- Record accessor function: .field → func(r any) any { return r.(map[string]any)["field"] }
+        GoIr.GoFuncLit [GoIr.GoParam "__r" "any"] "any"
+            [GoIr.GoReturn (GoIr.GoRaw ("__r.(map[string]any)[\"" ++ field ++ "\"]"))]
 
     Can.Access target (A.At _ field) ->
-        GoIr.GoSelector (exprToGo target) field
+        -- Record field access: use runtime helper that handles both map and any types
+        GoIr.GoCall (GoIr.GoQualified "rt" "RecordGet") [exprToGo target, GoIr.GoStringLit field]
 
     Can.Update _name baseExpr fields ->
-        GoIr.GoRaw "/* record update TODO */"
+        -- Record update: copy base record, override fields
+        let baseGo = exprToGo baseExpr
+            fieldUpdates = Map.toList fields
+            updateCalls = map (\(name, Can.FieldUpdate _ expr) ->
+                GoIr.GoRaw ("\"" ++ name ++ "\": " ++ GoBuilder.renderExpr (exprToGo expr)))
+                fieldUpdates
+        in GoIr.GoCall (GoIr.GoQualified "rt" "RecordUpdate")
+            [baseGo, GoIr.GoRaw ("map[string]any{" ++ intercalate_ ", " (map (\(n, Can.FieldUpdate _ e) -> "\"" ++ n ++ "\": " ++ GoBuilder.renderExpr (exprToGo e)) fieldUpdates) ++ "}")]
 
     Can.Record fields ->
-        GoIr.GoRaw "/* record TODO */"
+        -- Record literal: { name = "Alice", age = 30 }
+        let entries = Map.toList fields
+            goEntries = map (\(name, expr) ->
+                (GoIr.GoStringLit name, exprToGo expr)) entries
+        in GoIr.GoMapLit "string" "any" goEntries
 
     Can.Tuple a b mC ->
-        GoIr.GoRaw "/* tuple TODO */"
+        case mC of
+            Nothing -> GoIr.GoStructLit "rt.SkyTuple2" [("V0", exprToGo a), ("V1", exprToGo b)]
+            Just c -> GoIr.GoStructLit "rt.SkyTuple3" [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo c)]
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -929,6 +948,30 @@ runtimeGoSource = unlines
     , "func String_reverse(s any) any { runes := []rune(fmt.Sprintf(\"%v\", s)); for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 { runes[i], runes[j] = runes[j], runes[i] }; return string(runes) }"
     , ""
     , "// ═══════════════════════════════════════════════════════════"
+    , "// Record operations"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func RecordGet(record any, field string) any {"
+    , "\tif m, ok := record.(map[string]any); ok { return m[field] }"
+    , "\treturn nil"
+    , "}"
+    , ""
+    , "func RecordUpdate(base any, updates map[string]any) any {"
+    , "\toriginal := base.(map[string]any)"
+    , "\tresult := make(map[string]any, len(original))"
+    , "\tfor k, v := range original { result[k] = v }"
+    , "\tfor k, v := range updates { result[k] = v }"
+    , "\treturn result"
+    , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Tuple types"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "type SkyTuple2 struct { V0, V1 any }"
+    , "type SkyTuple3 struct { V0, V1, V2 any }"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
     , "// Any-typed Task wrappers (until type checker provides types)"
     , "// ═══════════════════════════════════════════════════════════"
     , ""
@@ -957,3 +1000,10 @@ runtimeGoSource = unlines
     , "\treturn t()"
     , "}"
     ]
+
+
+-- | String intercalation helper
+intercalate_ :: String -> [String] -> String
+intercalate_ _ [] = ""
+intercalate_ _ [x] = x
+intercalate_ sep (x:xs) = x ++ sep ++ intercalate_ sep xs
