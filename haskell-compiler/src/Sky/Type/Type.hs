@@ -55,7 +55,10 @@ data FlatType
     | Record1 !(Map.Map String Variable) !Variable      -- record with extension var
     | Unit1                                             -- unit type ()
     | Tuple1 !Variable !Variable !(Maybe Variable)      -- 2 or 3 element tuple
-    deriving (Show)
+
+
+instance Show FlatType where
+    show _ = "<FlatType>"
 
 
 -- ═══════════════════════════════════════════════════════════

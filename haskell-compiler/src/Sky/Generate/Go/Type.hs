@@ -116,7 +116,7 @@ goNamedType home name args = case (ModuleName.toString home, name) of
 goRecordType :: Map.Map String T.FieldType -> String
 goRecordType fields =
     let fieldStrs = map goFieldStr (Map.toList fields)
-    in "struct{ " ++ unwords fieldStrs ++ " }"
+    in "struct{ " ++ joinWords fieldStrs ++ " }"
   where
     goFieldStr (name, T.FieldType _ ty) =
         capitalize name ++ " " ++ typeToGo ty ++ ";"
@@ -139,7 +139,7 @@ commaJoin [x] = x
 commaJoin (x:xs) = x ++ ", " ++ commaJoin xs
 
 
-unwords :: [String] -> String
-unwords [] = ""
-unwords [x] = x
-unwords (x:xs) = x ++ " " ++ unwords xs
+joinWords :: [String] -> String
+joinWords [] = ""
+joinWords [x] = x
+joinWords (x:xs) = x ++ " " ++ joinWords xs

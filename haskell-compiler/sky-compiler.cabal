@@ -12,7 +12,8 @@ executable sky
   default-language: Haskell2010
   ghc-options:
     -O2 -rtsopts -threaded
-    -Wall -Wno-name-shadowing
+    -Wall -Wno-name-shadowing -Wno-unused-matches -Wno-unused-imports
+    -Wno-missing-signatures -Wno-incomplete-patterns
 
   build-depends:
     base >= 4.14 && < 5,
