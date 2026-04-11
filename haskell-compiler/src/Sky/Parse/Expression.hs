@@ -79,17 +79,19 @@ tryNextLineOp mkError left = Parser $ \s cok eok cerr eerr ->
 
 
 -- | Parse function application: f a b c
+-- Arguments can be on continuation lines if indented past the function column
 exprApp :: (Row -> Col -> x) -> Parser x Src.Expr_
 exprApp mkError = do
+    funcCol <- getCol
     func <- exprAtom mkError
     spaces
-    args <- appArgs mkError
+    args <- appArgsMultiline mkError funcCol
     case args of
         [] -> return (A.toValue func)
         _  -> return (Src.Call func args)
 
 
--- | Parse zero or more application arguments
+-- | Parse zero or more application arguments (same line only)
 appArgs :: (Row -> Col -> x) -> Parser x [Src.Expr]
 appArgs mkError =
     oneOfWithFallback
@@ -105,6 +107,53 @@ appArgs mkError =
                 else return []
         ]
         []
+
+
+-- | Parse application arguments, allowing continuation on next line
+-- if indented past funcCol. Uses tryNextLine to peek without consuming.
+appArgsMultiline :: (Row -> Col -> x) -> Col -> Parser x [Src.Expr]
+appArgsMultiline mkError funcCol = do
+    -- First try same-line args
+    sameLineArgs <- appArgs mkError
+    case sameLineArgs of
+        [] -> do
+            -- No same-line args — try next line
+            tryNextLineArgs mkError funcCol
+        _ -> do
+            -- Got some args — try for more on next line
+            moreArgs <- tryNextLineArgs mkError funcCol
+            return (sameLineArgs ++ moreArgs)
+
+
+-- | Try to find function arguments on the next line
+tryNextLineArgs :: (Row -> Col -> x) -> Col -> Parser x [Src.Expr]
+tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
+    let
+        s' = skipWhitespace s
+    in
+    -- Only advance if next line is indented past the function column
+    -- AND the next token looks like a valid expression start (not a keyword or operator)
+    if _col s' > funcCol && _row s' > _row s && isExprStart (_src s')
+        then
+            let (Parser p) = do
+                    freshLine mkError
+                    arg <- addLocation (exprAtom_ mkError)
+                    spaces
+                    rest <- appArgsMultiline mkError funcCol
+                    return (arg : rest)
+            in p s cok eok cerr eerr
+        else
+            eok [] s
+  where
+    isExprStart txt = case T.uncons txt of
+        Just (c, _) ->
+            (c >= 'a' && c <= 'z') ||  -- variable
+            (c >= 'A' && c <= 'Z') ||  -- constructor
+            (c >= '0' && c <= '9') ||  -- number
+            c == '(' || c == '[' || c == '{' ||  -- delimited
+            c == '\\' || c == '"' || c == '\'' || -- lambda, string, char
+            c == '-'  -- negative or negate
+        Nothing -> False
 
 
 -- | Parse an atomic expression (no application or operators)
