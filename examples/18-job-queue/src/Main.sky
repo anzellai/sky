@@ -1,0 +1,216 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Core.Time as Time
+import Sky.Core.Random as Random
+import Std.Live as Live exposing (app, route)
+import Std.Html exposing (..)
+import Std.Live.Events exposing (onClick)
+import Std.Cmd as Cmd
+import Std.Sub as Sub
+
+type Page
+    = DashboardPage
+
+
+type Msg
+    = Navigate Page
+    | RunFast
+    | RunSlow
+    | RunFail
+    | RunBatch
+    | JobDone Int (Result String String)
+    | ClearDone
+
+
+init _ =
+    ( { page = DashboardPage , jobs = [] , nextId = 1 , ok = 0 , fail = 0 }
+    , Cmd.none
+    )
+
+
+mkJob id name = { id = id , name = name , running = True , result = "" }
+
+
+addJob model name task =
+    let
+        jid = model.nextId
+        job = mkJob jid name
+        cmd = Cmd.perform task (JobDone jid)
+    in
+        ( { model | jobs = List.append model.jobs [ job ] , nextId = jid + 1 }
+        , cmd
+        )
+
+
+sleepThen ms value =
+    Time.sleep ms
+        |> Task.andThen (\_ -> Task.succeed value)
+
+
+sleepThenRandom ms lo hi =
+    Time.sleep ms
+        |> Task.andThen (\_ -> Random.int lo hi)
+        |> Task.andThen
+            (\n -> Task.succeed ("Processed " ++ String.fromInt n ++ " records"))
+
+
+sleepThenFail ms msg =
+    Time.sleep ms
+        |> Task.andThen (\_ -> Task.fail msg)
+
+
+doBatch model =
+    let
+        i1 = model.nextId
+        i2 = i1 + 1
+        i3 = i2 + 1
+        jobs =
+            [ mkJob i1 "Batch: resize images"
+            , mkJob i2 "Batch: send emails"
+            , mkJob i3 "Batch: generate report"
+            ]
+        cmd =
+            Cmd.batch
+                [ Cmd.perform (sleepThen 1500 "3 images resised") (JobDone i1)
+                , Cmd.perform (sleepThen 2500 "12 emails sent") (JobDone i2)
+                , Cmd.perform (sleepThen 4000 "Report: 42 pages") (JobDone i3)
+                ]
+    in
+        ( { model | jobs = List.append model.jobs jobs , nextId = i3 + 1 }
+        , cmd
+        )
+
+
+resolveResult result =
+    case result of
+        
+        Ok v ->
+            v
+        
+        Err e ->
+            "Error: " ++ e
+
+
+handleDone jid result model =
+    let
+        r = resolveResult result
+        newJobs =
+            List.map
+                (\j ->
+                    if j.id == jid then
+                        { j | running = False , result = r }
+                    
+                    else
+                        j)
+                model.jobs
+        addOk =
+            case result of
+                
+                Ok _ ->
+                    1
+                
+                Err _ ->
+                    0
+        addFail =
+            case result of
+                
+                Ok _ ->
+                    0
+                
+                Err _ ->
+                    1
+    in
+        ( { model
+            | jobs = newJobs
+            , ok = model.ok + addOk
+            , fail = model.fail + addFail
+        }
+        , Cmd.none
+        )
+
+
+update msg model =
+    case msg of
+        
+        Navigate p ->
+            ( { model | page = p } , Cmd.none )
+        
+        RunFast ->
+            addJob model "Fast computation" (sleepThen 500 "Result: 42")
+        
+        RunSlow ->
+            addJob model "Heavy processing" (sleepThenRandom 3000 100 9999)
+        
+        RunFail ->
+            addJob model "Unreliable API call"
+                (sleepThenFail 2000 "Connection timeout")
+        
+        RunBatch ->
+            doBatch model
+        
+        JobDone jid result ->
+            handleDone jid result model
+        
+        ClearDone ->
+            ( { model | jobs = List.filter (\j -> j.running) model.jobs }
+            , Cmd.none
+            )
+
+
+subscriptions model = Sub.none
+
+
+viewJob job =
+    let
+        status =
+            if job.running then
+                "[running]"
+            
+            else
+                job.result
+        jid = String.fromInt job.id
+        jname = job.name
+    in
+        div [] [ text ("""#{{jid}} {{jname}} - {{status}}""") ]
+
+
+view model =
+    let
+        running =
+            String.fromInt
+                (List.length (List.filter (\j -> j.running) model.jobs))
+        okCount = String.fromInt model.ok
+        failCount = String.fromInt model.fail
+        total = String.fromInt (List.length model.jobs)
+    in
+        div []
+            [ h1 [] [ text "Job Queue Dashboard" ]
+            , p [] [ text "Async Cmd.perform with Sky.Live" ]
+            , p []
+                [ text
+                    ("""Running: {{running}} | OK: {{okCount}} | Failed: {{failCount}} | Total: {{total}}""")
+                ]
+            , div []
+                [ button [ onClick RunFast ] [ text "Fast Job (0.5s)" ]
+                , button [ onClick RunSlow ] [ text "Slow Job (3s)" ]
+                , button [ onClick RunFail ] [ text "Failing Job (2s)" ]
+                , button [ onClick RunBatch ] [ text "Batch (3 jobs)" ]
+                , button [ onClick ClearDone ] [ text "Clear Finished" ]
+                ]
+            , div [] (List.map viewJob (List.reverse model.jobs))
+            ]
+
+
+main =
+    app
+        { init = init
+        , update = update
+        , view = view
+        , subscriptions = subscriptions
+        , routes = [ route "/" DashboardPage ]
+        , notFound = DashboardPage
+        }

@@ -1215,6 +1215,9 @@ buildStdlibEnv =
                             )
                         )
                 } )
+                , ( "Time.sleep", mono (TFun (TConst "Int") (TApp (TConst "Task") [ TConst "String" , TConst "Unit" ])) )
+                , ( "Random.int", mono (TFun (TConst "Int") (TFun (TConst "Int") (TApp (TConst "Task") [ TConst "String" , TConst "Int" ]))) )
+                , ( "Random.float", mono (TFun (TConst "Float") (TFun (TConst "Float") (TApp (TConst "Task") [ TConst "String" , TConst "Float" ]))) )
                 , ( "Task.perform", { quantified = [ 0 , 1 ]
                 , type_ =
                     TFun
@@ -1226,6 +1229,35 @@ buildStdlibEnv =
                         TApp (TConst "Result")
                             [ TVar 0 (Just "err") , TVar 1 (Just "a") ]
                         )
+                } )
+                , ( "Cmd.perform", { quantified = [ 0 , 1 , 2 ]
+                , type_ =
+                    TFun
+                        (
+                        TApp (TConst "Task")
+                            [ TVar 0 (Just "err") , TVar 1 (Just "a") ]
+                        )
+                        (
+                        TFun
+                            (
+                            TFun
+                                (
+                                TApp (TConst "Result")
+                                    [ TVar 0 (Just "err") , TVar 1 (Just "a") ]
+                                )
+                                (TVar 2 (Just "msg"))
+                            )
+                            (TApp (TConst "Cmd") [ TVar 2 (Just "msg") ])
+                        )
+                } )
+                , ( "Cmd.batch", { quantified = [ 0 ]
+                , type_ =
+                    TFun
+                        (TApp (TConst "List") [ TApp (TConst "Cmd") [ TVar 0 (Just "msg") ] ])
+                        (TApp (TConst "Cmd") [ TVar 0 (Just "msg") ])
+                } )
+                , ( "Cmd.none", { quantified = [ 0 ]
+                , type_ = TApp (TConst "Cmd") [ TVar 0 (Just "msg") ]
                 } )
                 , ( "Task.sequence", { quantified = [ 0 , 1 ]
                 , type_ =

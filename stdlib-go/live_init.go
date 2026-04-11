@@ -221,7 +221,11 @@ func sky_liveAppLive(config any) any {
 				result = initFn
 			}
 			if t, ok := result.(SkyTuple2); ok {
-				return t.V0, nil
+				var cmds []any
+				if c, ok := t.V1.([]any); ok {
+					cmds = c
+				}
+				return t.V0, cmds
 			}
 			return result, nil
 		},
@@ -235,7 +239,11 @@ func sky_liveAppLive(config any) any {
 				result = updateFn
 			}
 			if t, ok := result.(SkyTuple2); ok {
-				return t.V0, nil
+				var cmds []any
+				if c, ok := t.V1.([]any); ok {
+					cmds = c
+				}
+				return t.V0, cmds
 			}
 			// If update didn't return a (Model, Cmd) tuple (e.g. FFI panic
 			// produced a SkyResult), preserve the original model to avoid

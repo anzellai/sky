@@ -1256,6 +1256,7 @@ makeGoPackage decls =
         , { path = "encoding/base64" , alias_ = "base64" }
         , { path = "encoding/json" , alias_ = "encoding_json" }
         , { path = "time" , alias_ = "" }
+        , { path = "math/rand" , alias_ = "" }
         , { path = "context" , alias_ = "" }
         , { path = "path/filepath" , alias_ = "filepath" }
         , { path = "net/url" , alias_ = "url" }

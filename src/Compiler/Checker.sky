@@ -575,22 +575,15 @@ checkPatternCtors registry ctorNames patterns =
         Exhaustive.checkResultExhaustiveness patterns
 
     else
-        checkAdtPatternExhaustiveness registry ctorNames patterns
-
-
-checkAdtPatternExhaustiveness : AdtRegistry -> (Set.Set String) -> (List Pattern) -> Maybe String
-checkAdtPatternExhaustiveness registry ctorNames patterns =
-    if Set.isEmpty ctorNames then
-        Nothing
-
-    else
+        -- For user-defined ADTs, look up the ADT by constructor name
+        -- using lookupConstructorAdt (searches all registered ADTs).
         let
             firstCtor = Set.toList ctorNames
         in
             case firstCtor of
 
                 name :: _ ->
-                    case Dict.get name registry of
+                    case Adt.lookupConstructorAdt name registry of
 
                         Just adt ->
                             Exhaustive.checkAdtExhaustiveness adt patterns

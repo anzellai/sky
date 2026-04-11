@@ -41,7 +41,7 @@ getBool field row =
 -- ══════════════════════════════════════════════════════
 -- INIT (no schema needed for Firestore)
 -- ══════════════════════════════════════════════════════
-initDb =
+initDb _ =
     case getFirestoreClient () of
         
         Ok _ ->

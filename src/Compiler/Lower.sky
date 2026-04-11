@@ -121,6 +121,7 @@ lowerModule registry mod =
             , { path = "encoding/base64" , alias_ = "base64" }
             , { path = "encoding/json" , alias_ = "encoding_json" }
             , { path = "time" , alias_ = "" }
+            , { path = "math/rand" , alias_ = "" }
             ]
         helperDecls = generateHelperDecls
     in
@@ -302,6 +303,148 @@ lowerParam pat =
             { name = "_p" , type_ = "any" }
 
 
+-- Lower a multiline string by handling {{expr}} interpolation.
+-- Splits the content on {{ and }}, generating Go concat calls
+-- for interpolated expressions and raw string literals for text.
+lowerMultilineString : LowerCtx -> String -> SourceSpan -> GoExpr
+lowerMultilineString ctx content span =
+    if not (String.contains "{{" content) then
+        GoStringLit (escapeNewlines content)
+
+    else
+        let
+            parts = splitMultilineParts content 0 0 []
+            goExprs = List.map (lowerMultilinePart ctx span) parts
+        in
+            joinGoExprs goExprs
+
+
+splitMultilineParts : String -> Int -> Int -> (List String) -> List String
+splitMultilineParts content pos segStart acc =
+    if pos >= String.length content then
+        let
+            last = String.slice segStart pos content
+        in
+            if String.isEmpty last then
+                List.reverse acc
+
+            else
+                List.reverse (("R" ++ last) :: acc)
+
+    else
+        let
+            ch = String.slice pos (pos + 1) content
+            next = String.slice (pos + 1) (pos + 2) content
+        in
+            if ch == "{" && next == "{" then
+                let
+                    closePos = findCloseBrace content (pos + 2)
+                    exprStr = String.slice (pos + 2) closePos content
+                    rawBefore = String.slice segStart pos content
+                    accWithRaw =
+                        if String.isEmpty rawBefore then
+                            acc
+
+                        else
+                            ("R" ++ rawBefore) :: acc
+                in
+                    splitMultilineParts content (closePos + 2) (closePos + 2)
+                        (("E" ++ exprStr) :: accWithRaw)
+
+            else
+                splitMultilineParts content (pos + 1) segStart acc
+
+
+findCloseBrace : String -> Int -> Int
+findCloseBrace content pos =
+    if pos >= String.length content then
+        pos
+
+    else
+        let
+            ch = String.slice pos (pos + 1) content
+            next = String.slice (pos + 1) (pos + 2) content
+        in
+            if ch == "}" && next == "}" then
+                pos
+
+            else
+                findCloseBrace content (pos + 1)
+
+
+escapeNewlines : String -> String
+escapeNewlines s = String.replace "\n" "\\n" (String.replace "\r" "\\r" s)
+
+
+lowerMultilinePart : LowerCtx -> SourceSpan -> String -> GoExpr
+lowerMultilinePart ctx span part =
+    let
+        tag = String.slice 0 1 part
+        value = String.slice 1 (String.length part) part
+    in
+        if tag == "E" then
+            lowerInterpolationExpr ctx value span
+
+        else
+            GoStringLit (escapeNewlines value)
+
+
+lowerInterpolationExpr : LowerCtx -> String -> SourceSpan -> GoExpr
+lowerInterpolationExpr ctx src span =
+    let
+        trimmed = String.trim src
+    in
+        if String.contains " " trimmed then
+            let
+                parts = String.split " " trimmed
+            in
+                case parts of
+                    fn :: args ->
+                        let
+                            callee =
+                                if String.contains "." fn then
+                                    QualifiedExpr (String.split "." fn) span
+
+                                else
+                                    IdentifierExpr fn span
+                            argExprs =
+                                List.map
+                                    (\a ->
+                                        if String.contains "." a then
+                                            QualifiedExpr (String.split "." a) span
+
+                                        else
+                                            IdentifierExpr a span
+                                    )
+                                    args
+                        in
+                            lowerExpr ctx (CallExpr callee argExprs span)
+
+                    [] ->
+                        GoStringLit ""
+
+        else if String.contains "." trimmed then
+            GoCallExpr (GoIdent "sky_asString")
+                [ lowerExpr ctx (QualifiedExpr (String.split "." trimmed) span) ]
+
+        else
+            GoCallExpr (GoIdent "sky_asString")
+                [ lowerExpr ctx (IdentifierExpr trimmed span) ]
+
+
+joinGoExprs : (List GoExpr) -> GoExpr
+joinGoExprs exprs =
+    case exprs of
+        [] ->
+            GoStringLit ""
+
+        e :: [] ->
+            e
+
+        e :: rest ->
+            GoCallExpr (GoIdent "sky_concat") [ e, joinGoExprs rest ]
+
+
 lowerExpr : LowerCtx -> Expression -> GoExpr
 lowerExpr ctx expr =
     case expr of
@@ -314,7 +457,10 @@ lowerExpr ctx expr =
         
         StringLitExpr s _ ->
             GoStringLit s
-        
+
+        MultilineStringExpr content span ->
+            lowerMultilineString ctx content span
+
         CharLitExpr s _ ->
             GoCallExpr (GoIdent "string")
                 [ GoBasicLit
@@ -624,10 +770,13 @@ lowerStdlibExposed modPath name =
     else if modPath == "Std.Cmd" then
         if name == "none" then
             GoCallExpr (GoIdent "sky_cmdNone") []
-        
+
         else if name == "batch" then
             GoIdent "sky_cmdBatch"
-        
+
+        else if name == "perform" then
+            GoIdent "sky_cmdPerform"
+
         else
             GoIdent ("sky_cmd_" ++ name)
     
@@ -1440,7 +1589,25 @@ lowerQualified ctx parts =
         
         else if qualName == "Time.posixToMillis" then
             GoIdent "sky_timePosixToMillis"
-        
+
+        else if qualName == "Time.sleep" then
+            GoIdent "sky_timeSleep"
+
+        else if qualName == "Time.unixMillis" then
+            GoIdent "sky_timeNow"
+
+        else if qualName == "Random.int" then
+            GoIdent "sky_randomInt"
+
+        else if qualName == "Random.float" then
+            GoIdent "sky_randomFloat"
+
+        else if qualName == "Random.choice" then
+            GoIdent "sky_randomChoice"
+
+        else if qualName == "Random.shuffle" then
+            GoIdent "sky_randomShuffle"
+
         else if qualName == "Http.getString" then
             GoIdent "sky_httpGetString"
         
@@ -1539,9 +1706,12 @@ lowerQualified ctx parts =
         
         else if qualName == "Cmd.none" then
             GoCallExpr (GoIdent "sky_cmdNone") []
-        
+
         else if qualName == "Cmd.batch" then
             GoIdent "sky_cmdBatch"
+
+        else if qualName == "Cmd.perform" then
+            GoIdent "sky_cmdPerform"
         
         else if qualName == "Sub.none" then
             GoCallExpr (GoIdent "sky_subNone") []
@@ -2120,25 +2290,36 @@ checkPartialApplication ctx callee argCount =
 
 checkPartialIdent ctx name argCount =
     case Dict.get name ctx.localFunctionArity of
-        
+
         Just arity ->
             if argCount < arity then
                 let
                     goName =
                         if String.isEmpty ctx.modulePrefix then
                             sanitizeGoIdent name
-                        
+
                         else
                             ctx.modulePrefix
                                 ++ "_" ++ capitalizeFirst (sanitizeGoIdent name)
                 in
                     Just { goFuncName = goName , totalArity = arity }
-            
+
             else
                 Nothing
-        
+
         Nothing ->
-            Nothing
+            -- Also check ADT constructors for partial application
+            case Dict.get name ctx.importedConstructors of
+
+                Just info ->
+                    if argCount < info.arity then
+                        Just { goFuncName = sanitizeGoIdent name , totalArity = info.arity }
+
+                    else
+                        Nothing
+
+                Nothing ->
+                    Nothing
 
 
 generatePartialClosure : PartialApp -> (List GoExpr) -> Int -> GoExpr
@@ -3214,7 +3395,7 @@ generateHelperDecls =
           "func sky_asFloat32(v any) float32 { return float32(sky_asFloat(v)) }"
     , GoDeclRaw "func sky_asInt64(v any) int64 { return int64(sky_asInt(v)) }"
     , GoDeclRaw
-          "func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; return ai + bi }"
+          "func sky_numBinop(op string, a, b any) any { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"+\": return af + bf; case \"-\": return af - bf; case \"*\": return af * bf; case \"%\": return int(af) % int(bf) }; return af + bf }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"+\": return ai + bi; case \"-\": return ai - bi; case \"*\": return ai * bi; case \"%\": return ai % bi }; _ = rand.Intn; return ai + bi }"
     , GoDeclRaw
           "func sky_numCompare(op string, a, b any) bool { af, aIsF := a.(float64); bf, bIsF := b.(float64); if aIsF || bIsF { if !aIsF { af = sky_asFloat(a) }; if !bIsF { bf = sky_asFloat(b) }; switch op { case \"<\": return af < bf; case \"<=\": return af <= bf; case \">\": return af > bf; case \">=\": return af >= bf }; return false }; ai, bi := sky_asInt(a), sky_asInt(b); switch op { case \"<\": return ai < bi; case \"<=\": return ai <= bi; case \">\": return ai > bi; case \">=\": return ai >= bi }; return false }"
     , GoDeclRaw
@@ -3663,6 +3844,11 @@ generateHelperDecls =
           "func sky_encodingBase64Decode(s any) any { b, err := base64.StdEncoding.DecodeString(sky_asString(s)); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(b)) }"
     , GoDeclRaw "func sky_timeNow(u any) any { return time.Now().UnixMilli() }"
     , GoDeclRaw "func sky_timePosixToMillis(t any) any { return sky_asInt(t) }"
+    , GoDeclRaw "func sky_timeSleep(millis any) any { return func() any { time.Sleep(time.Duration(sky_asInt(millis)) * time.Millisecond); return SkyOk(struct{}{}) } }"
+    , GoDeclRaw "func sky_randomInt(lo any, hi any) any { return func() any { l := sky_asInt(lo); h := sky_asInt(hi); if h <= l { return SkyOk(l) }; return SkyOk(l + rand.Intn(h - l + 1)) } }"
+    , GoDeclRaw "func sky_randomFloat(lo any, hi any) any { return func() any { l := sky_asFloat(lo); h := sky_asFloat(hi); return SkyOk(l + rand.Float64() * (h - l)) } }"
+    , GoDeclRaw "func sky_randomChoice(items any) any { return func() any { list := sky_asList(items); if len(list) == 0 { return SkyErr(\"empty list\") }; return SkyOk(list[rand.Intn(len(list))]) } }"
+    , GoDeclRaw "func sky_randomShuffle(items any) any { return func() any { list := sky_asList(items); result := make([]any, len(list)); copy(result, list); rand.Shuffle(len(result), func(i, j int) { result[i], result[j] = result[j], result[i] }); return SkyOk(result) } }"
     , GoDeclRaw
           "func sky_httpGetString(url any) any { return func() any { resp, err := net_http.Get(sky_asString(url)); if err != nil { return SkyErr(err.Error()) }; defer resp.Body.Close(); body, err := io.ReadAll(resp.Body); if err != nil { return SkyErr(err.Error()) }; return SkyOk(string(body)) } }"
     , GoDeclRaw
@@ -3723,7 +3909,8 @@ generateHelperDecls =
     , GoDeclRaw
           "func sky_jsonPipeOptional(key any) any { return func(decoder any) any { return func(def any) any { return func(pipeline any) any { return func(v any) any { pr := sky_call(pipeline, v); pres := sky_asSkyResult(pr); if pres.Tag == 1 { return pr }; m, ok := v.(map[string]any); if !ok { return SkyOk(sky_call(pres.OkValue, def)) }; val, exists := m[sky_asString(key)]; if !exists { return SkyOk(sky_call(pres.OkValue, def)) }; fr := sky_call(decoder, val); fres := sky_asSkyResult(fr); if fres.Tag == 1 { return SkyOk(sky_call(pres.OkValue, def)) }; return SkyOk(sky_call(pres.OkValue, fres.OkValue)) } } } } }"
     , GoDeclRaw "func sky_cmdNone() any { return []any{} }"
-    , GoDeclRaw "func sky_cmdBatch(cmds any) any { return sky_asList(cmds) }"
+    , GoDeclRaw "func sky_cmdBatch(cmds any) any { items := sky_asList(cmds); var result []any; for _, item := range items { if sub, ok := item.([]any); ok { result = append(result, sub...) } }; if result == nil { return []any{} }; return result }"
+    , GoDeclRaw "func sky_cmdPerform(task any) any { return func(toMsg any) any { return []any{map[string]any{\"SkyName\": \"CmdPerform\", \"task\": task, \"toMsg\": toMsg}} } }"
     , GoDeclRaw
           "func sky_subNone() any { return map[string]any{\"SkyName\": \"SubNone\"} }"
     , GoDeclRaw
