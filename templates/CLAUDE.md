@@ -596,7 +596,33 @@ println : a -> a -> ()     -- println tag value (variadic, uses Go fmt.Println)
 type Cmd msg = Cmd Foreign
 
 none : Cmd msg
+perform : Task err a -> (Result err a -> msg) -> Cmd msg
 batch : List (Cmd msg) -> Cmd msg
+```
+
+`Cmd.perform` runs a Task in a background goroutine. When it completes, the result is dispatched as a Msg through the full update/view/diff/SSE cycle:
+
+```elm
+type Msg = FetchData | DataLoaded (Result String String)
+
+update msg model =
+    case msg of
+        FetchData ->
+            ( { model | loading = True }
+            , Cmd.perform (Http.get "/api/data") DataLoaded
+            )
+        DataLoaded result ->
+            ( { model | loading = False, data = Result.withDefault "" result }
+            , Cmd.none
+            )
+```
+
+Use `Cmd.batch` to run multiple commands concurrently:
+```elm
+Cmd.batch
+    [ Cmd.perform task1 Msg1
+    , Cmd.perform task2 Msg2
+    ]
 ```
 
 ### Std.Sub
@@ -612,6 +638,22 @@ batch : List (Sub msg) -> Sub msg
 
 ```elm
 every : Int -> msg -> Sub msg    -- timer subscription, fires msg every N milliseconds
+```
+
+### Sky.Core.Time
+
+```elm
+sleep : Int -> Task String ()    -- sleep for N milliseconds (use with Cmd.perform for async delays)
+now : () -> Task String Int      -- current Unix time in milliseconds
+```
+
+### Sky.Core.Random
+
+```elm
+int : Int -> Int -> Task String Int       -- random int in [lo, hi] range
+float : Float -> Float -> Task String Float
+choice : List a -> Task String a          -- random element from list
+shuffle : List a -> Task String (List a)  -- Fisher-Yates shuffle
 ```
 
 ### Std.Html

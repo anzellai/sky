@@ -226,6 +226,33 @@ main =
 ```
 HTTP-first (full HTML on load, patches on events), SSE subscriptions, session stores (memory/SQLite/Redis/PostgreSQL/Firestore), type-safe events, VNode diffing, security (cookies, rate limiting, CORS).
 
+### Async Commands (Cmd.perform)
+
+`update` returns `(Model, Cmd Msg)`. Use `Cmd.perform` to run long-running Tasks in background goroutines — results are dispatched back to `update` via SSE:
+
+```elm
+type Msg = FetchData | DataLoaded (Result String String)
+
+update msg model =
+    case msg of
+        FetchData ->
+            ( { model | loading = True }
+            , Cmd.perform (Http.get "/api/data") DataLoaded
+            )
+        DataLoaded result ->
+            ( { model | loading = False, data = Result.withDefault "" result }
+            , Cmd.none
+            )
+```
+
+| Function | Type | Description |
+|----------|------|-------------|
+| `Cmd.none` | `Cmd msg` | No-op (most update branches) |
+| `Cmd.perform` | `Task err a -> (Result err a -> msg) -> Cmd msg` | Run task async, dispatch result as Msg |
+| `Cmd.batch` | `List (Cmd msg) -> Cmd msg` | Run multiple commands concurrently |
+
+Concurrency: commands run in goroutines with session locking (same as subscriptions). Model is read fresh from the session store on completion — safe for multi-instance deployments.
+
 ### Sky.Http.Server
 ```elm
 main =
@@ -295,6 +322,7 @@ Single braces `{` are literal — safe for JavaScript, CSS, JSON, SQL. Interpola
 | 15 | http-server | Sky.Http.Server with routing + cookies |
 | 16 | skychess | Sky.Live chess game with AI, SQLite persistence |
 | 17 | skymon | Sky.Live monitoring dashboard with metrics, alerts |
+| 18 | job-queue | Async Cmd.perform demo with Time.sleep, Random.int, Cmd.batch |
 
 ## Compiler Optimisation Strategy (keep up to date)
 
@@ -342,6 +370,8 @@ These are current compiler limitations users must work around:
 6. **`Dict.toList` returns string keys** — Sky's `Dict` uses `map[string]any` internally, so `Dict.toList` returns string keys even for `Dict Int v`. Arithmetic on these keys silently produces 0. **Workaround**: iterate over known key ranges with `Dict.get` instead of using `Dict.toList`.
 7. **`sky check` does not fully model Go interface satisfaction** — Opaque FFI types unify with each other (v0.7.21 fix), but the checker still cannot verify that a concrete Go type (e.g. `Label`) satisfies a named Go interface (e.g. `CanvasObject`). Calls like `Fyne.windowSetContent window label` may fail `sky check` but compile and run correctly.
 8. **Zero-arg FFI functions require no `()` argument** — FFI bindings for zero-arg Go functions (e.g. `Uuid.newString`, `FyneApp.new`) declare the return type directly. Calling them with `()` causes a type error. **Use**: `Uuid.newString` not `Uuid.newString ()`.
+9. **Let bindings with parameters after multi-line case** — A let binding like `mark j = expr` after a `case ... of` in the same let block causes the parser to misinterpret it as a new top-level declaration. **Workaround**: use lambdas (`\j -> expr`) or extract to a top-level function.
+10. **Zero-arity functions reading env vars** — Zero-arity functions are memoised and their import aliases evaluate at Go init time (before `.env` is loaded). If a zero-arity function reads `Os.getenv`, the value is cached as empty. **Workaround**: add a dummy `_` parameter: `getConfig _ = Os.getenv "KEY"`.
 
 ### Recently Fixed (v0.7.x — listed for regression context)
 
@@ -366,6 +396,13 @@ These are current compiler limitations users must work around:
 - **Zero-arity declaration memoisation (Ref bug fix)** — FIXED in v0.7.30. The lowerer treated top-level zero-parameter declarations like `counter = Ref.new 0` as functions, re-evaluating the body on every reference. This broke `Ref.new`, `Dict.empty` singletons, and any other values that must be created once. Fix: zero-arity declarations now emit memoised functions (`var _memo_X; var _memoOk_X bool; func X() { if !_memoOk_X { _memo_X = <body>; _memoOk_X = true }; return _memo_X }`). The calling convention is unchanged — both same-module and cross-module references call the function, but the body evaluates only once. The runtime alias registry `Ref` in `Unify.sky` now works as a true singleton.
 - **`sky init` CLAUDE.md template embedded in binary** — FIXED in v0.7.30. The template is now in `bootstrap/runtime/templates/CLAUDE.md` and embedded via `//go:embed runtime/*`. Installed binaries no longer need a `templates/` directory on disk; `readEmbeddedTemplate` reads from the binary's embedded FS. Falls back to disk path lookup for repo dev builds.
 - **Task.perform returns Result uniformly** — FIXED in v0.7.29. The helper used to unwrap `Ok` values while keeping `Err` as `SkyResult`. Now returns `sky_runTask` result directly so `case Task.perform t of Ok x -> ... ; Err e -> ...` works for both branches.
+
+- **Async Cmd.perform for Sky.Live** — ADDED in v0.8.0. `update` returns `(Model, Cmd Msg)` where `Cmd.perform task toMsg` spawns a goroutine. On completion, the result is dispatched as a Msg through the full update/view/diff/SSE cycle with session locking. `Cmd.batch` runs multiple commands concurrently. Recursive: cmd-triggered updates can spawn more cmds.
+- **Time.sleep + Random.int lowerer mappings** — ADDED in v0.8.0. `Time.sleep : Int -> Task String ()` and `Random.int/float/choice/shuffle` now have Go implementations and lowerer mappings. Type signatures in Resolver for compile-time checking.
+- **Constructor partial application** — FIXED in v0.8.0. `checkPartialIdent` now checks `importedConstructors` for ADT constructor arities, not just `localFunctionArity`. Fixes `JobDone jid` (partial apply of 2-arg constructor) generating invalid Go.
+- **MultilineStringExpr AST node** — ADDED in v0.8.0. The parser creates `MultilineStringExpr` for `"""..."""` strings instead of desugaring at parse time. The formatter preserves triple-quoted strings. The lowerer desugars at codegen time with `{{expr}}` interpolation handling.
+- **Formatter elm-style improvements** — FIXED in v0.8.0. Tuples break vertically with leading commas. Function args indent 4 spaces (not aligned to callee column). Parenthesised expressions stay compact on one line.
+- **Skyshop env var race condition** — FIXED in v0.8.0. Zero-arity functions reading `Os.getenv` were memoised and evaluated at Go init time (before `.env` loaded). Fix: add `_` parameter to prevent memoisation.
 
 **Coding constraints**: none active. (The "no nested case" rule is no longer required as of v0.7.21.)
 
