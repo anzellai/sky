@@ -18,6 +18,8 @@ import qualified Sky.Generate.Go.Ir as GoIr
 import qualified Sky.Generate.Go.Builder as GoBuilder
 import qualified Sky.Generate.Go.Kernel as Kernel
 import qualified Sky.Sky.Toml as Toml
+import qualified Sky.Type.Constrain.Module as Constrain
+import qualified Sky.Type.Solve as Solve
 
 
 -- | Full compilation: parse → canonicalise → codegen → write Go
@@ -50,8 +52,15 @@ compile config entryPath outDir = do
                 Right canMod -> do
                     putStrLn "   Names resolved"
 
-                    -- Phase 4: Type Check (TODO — skip for now)
-                    putStrLn "-- Type Checking (skipped — not yet implemented)"
+                    -- Phase 4: Type Check
+                    putStrLn "-- Type Checking"
+                    let constraints = Constrain.constrainModule canMod
+                    solveResult <- Solve.solve constraints
+                    case solveResult of
+                        Solve.SolveOk ->
+                            putStrLn "   Types OK"
+                        Solve.SolveError err ->
+                            putStrLn $ "   TYPE WARNING: " ++ err
 
                     -- Phase 5: Generate Go
                     putStrLn "-- Generating Go"
