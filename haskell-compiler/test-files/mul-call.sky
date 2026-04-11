@@ -1,0 +1,12 @@
+module Main exposing (main)
+
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+double n = n + n
+
+main =
+    let
+        x = 3 * double (2 + 1)
+    in
+        println (String.fromInt x)

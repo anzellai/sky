@@ -1,0 +1,13 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+factorial n =
+    if n <= 1 then
+        1
+    else
+        n * factorial (n - 1)
+
+main = println (String.fromInt (factorial 5))

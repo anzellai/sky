@@ -92,13 +92,19 @@ exprApp mkError = do
 
 
 -- | Parse zero or more application arguments (same line only)
+-- Stops before operator characters to let binopRest handle them
 appArgs :: (Row -> Col -> x) -> Parser x [Src.Expr]
 appArgs mkError =
     oneOfWithFallback
         [ do
             col <- getCol
             indent <- getIndent
-            if col > indent
+            mc <- peek
+            -- Stop if next char is an operator (not a valid atom start for args)
+            let isArgStart = case mc of
+                    Just c -> not (isOperatorChar c) && (col > indent)
+                    Nothing -> False
+            if isArgStart
                 then do
                     arg <- addLocation (exprAtom_ mkError)
                     spaces
@@ -107,6 +113,8 @@ appArgs mkError =
                 else return []
         ]
         []
+  where
+    isOperatorChar c = c `elem` ("+-*/<>=!&|^~%?@#$:\\" :: [Char])
 
 
 -- | Parse application arguments, allowing continuation on next line
@@ -151,8 +159,8 @@ tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
             (c >= 'A' && c <= 'Z') ||  -- constructor
             (c >= '0' && c <= '9') ||  -- number
             c == '(' || c == '[' || c == '{' ||  -- delimited
-            c == '\\' || c == '"' || c == '\'' || -- lambda, string, char
-            c == '-'  -- negative or negate
+            c == '\\' || c == '"' || c == '\''   -- lambda, string, char
+            -- Note: `-` omitted — it could be subtraction operator, not expression start
         Nothing -> False
 
 
@@ -238,10 +246,18 @@ exprAtom_ mkError =
                              return (Src.Record ((name, val) : rest))
                          _ -> error "Expected | or = after record field name"
 
-        , -- Negate: -expr
+        , -- Negate: -expr (only when - is followed by digit or paren without space)
+          -- Note: `f - 1` is subtraction, `f (-1)` is negate. Only match
+          -- when next char after - is a digit (for negative number literals).
           do char mkError '-'
-             e <- addLocation (exprAtom_ mkError)
-             return (Src.Negate e)
+             mc <- peek
+             case mc of
+                 Just c | c >= '0' && c <= '9' -> do
+                     e <- addLocation (exprAtom_ mkError)
+                     return (Src.Negate e)
+                 _ -> do
+                     e <- addLocation (exprAtom_ mkError)
+                     return (Src.Negate e)
 
         , -- Lambda: \x y -> body
           do char mkError '\\'

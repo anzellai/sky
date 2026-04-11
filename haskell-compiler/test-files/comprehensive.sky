@@ -1,0 +1,50 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Std.Log exposing (println)
+
+factorial n =
+    if n <= 1 then
+        1
+    else
+        n * factorial (n - 1)
+
+fibonacci n =
+    if n <= 0 then
+        0
+    else if n == 1 then
+        1
+    else
+        fibonacci (n - 1) + fibonacci (n - 2)
+
+showResult label result =
+    case result of
+        Ok val ->
+            println (label ++ ": " ++ val)
+        Err e ->
+            println (label ++ " (error): " ++ e)
+
+greet name =
+    "Hello, " ++ name ++ "!"
+
+main =
+    let
+        fact5 = factorial 5
+        fib7 = fibonacci 7
+        _ = println ("factorial 5 = " ++ String.fromInt fact5)
+        _ = println ("fibonacci 7 = " ++ String.fromInt fib7)
+        _ = println (greet "Sky")
+        pipeline =
+            Task.succeed "world"
+                |> Task.andThen (\name -> Task.succeed (greet name))
+        result = Task.run pipeline
+        _ = showResult "Task" result
+        classify x =
+            if x > 100 then "big"
+            else if x > 10 then "medium"
+            else "small"
+        _ = println ("42 is " ++ classify 42)
+    in
+        println "All done!"
