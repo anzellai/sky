@@ -1,0 +1,156 @@
+cabal-version: 2.4
+name:          sky-compiler
+version:       1.0.0
+synopsis:      Sky language compiler — Elm-inspired, compiles to typed Go
+license:       MIT
+author:        Anzel Lai
+build-type:    Simple
+
+executable sky
+  main-is:          Main.hs
+  hs-source-dirs:   app, src
+  default-language: Haskell2010
+  ghc-options:
+    -O2 -rtsopts -threaded
+    -Wall -Wno-name-shadowing
+
+  build-depends:
+    base >= 4.14 && < 5,
+    bytestring >= 0.11,
+    containers >= 0.6,
+    directory >= 1.3,
+    filepath >= 1.4,
+    mtl >= 2.2,
+    process >= 1.6,
+    text >= 1.2,
+    time >= 1.9,
+    vector >= 0.12,
+    binary >= 0.8,
+    utf8-string >= 1.0,
+    optparse-applicative >= 0.17,
+    aeson >= 2.0,
+    cryptohash-sha256 >= 0.11,
+    ansi-terminal >= 0.11
+
+  other-modules:
+    -- Data (copied from Elm)
+    Sky.Data.Bag
+    Sky.Data.Index
+    Sky.Data.Name
+    Sky.Data.NonEmptyList
+    Sky.Data.OneOrMore
+    Sky.Data.Utf8
+    Sky.Data.Map.Utils
+
+    -- AST
+    Sky.AST.Source
+    Sky.AST.Canonical
+    Sky.AST.Optimised
+    Sky.AST.Utils.Binop
+
+    -- Parser
+    Sky.Parse.Primitives
+    Sky.Parse.Space
+    Sky.Parse.Keyword
+    Sky.Parse.Symbol
+    Sky.Parse.Variable
+    Sky.Parse.Number
+    Sky.Parse.String
+    Sky.Parse.Type
+    Sky.Parse.Pattern
+    Sky.Parse.Expression
+    Sky.Parse.Declaration
+    Sky.Parse.Module
+
+    -- Canonicalisation
+    Sky.Canonicalise.Module
+    Sky.Canonicalise.Environment
+    Sky.Canonicalise.Expression
+    Sky.Canonicalise.Pattern
+    Sky.Canonicalise.Type
+
+    -- Type system
+    Sky.Type.UnionFind
+    Sky.Type.Occurs
+    Sky.Type.Type
+    Sky.Type.Unify
+    Sky.Type.Solve
+    Sky.Type.Instantiate
+    Sky.Type.Error
+    Sky.Type.Constrain.Module
+    Sky.Type.Constrain.Expression
+    Sky.Type.Constrain.Pattern
+
+    -- Optimisation
+    Sky.Optimise.Module
+    Sky.Optimise.Expression
+    Sky.Optimise.DecisionTree
+    Sky.Optimise.Case
+    Sky.Optimise.Names
+
+    -- Exhaustiveness
+    Sky.Nitpick.PatternMatches
+
+    -- Go code generation
+    Sky.Generate.Go
+    Sky.Generate.Go.Ir
+    Sky.Generate.Go.Builder
+    Sky.Generate.Go.Expression
+    Sky.Generate.Go.Name
+    Sky.Generate.Go.Type
+    Sky.Generate.Go.Kernel
+    Sky.Generate.Go.Record
+    Sky.Generate.Go.Adt
+    Sky.Generate.TypeMap
+
+    -- FFI
+    Sky.Ffi.Inspector
+    Sky.Ffi.TypeMapper
+    Sky.Ffi.BindingGen
+    Sky.Ffi.WrapperGen
+
+    -- Formatter
+    Sky.Format.Format
+    Sky.Format.Pretty
+    Sky.Format.Comment
+
+    -- LSP
+    Sky.Lsp.Server
+    Sky.Lsp.Handlers
+    Sky.Lsp.Diagnostics
+    Sky.Lsp.Hover
+    Sky.Lsp.Completion
+    Sky.Lsp.GoToDef
+    Sky.Lsp.Rename
+
+    -- Build system
+    Sky.Build.Project
+    Sky.Build.ModuleGraph
+    Sky.Build.Compile
+    Sky.Build.Incremental
+    Sky.Build.GoIntegration
+
+    -- Reporting
+    Sky.Reporting.Annotation
+    Sky.Reporting.Error
+    Sky.Reporting.Error.Syntax
+    Sky.Reporting.Error.Canonicalise
+    Sky.Reporting.Error.Type
+    Sky.Reporting.Error.Pattern
+    Sky.Reporting.Error.Import
+    Sky.Reporting.Error.Main
+    Sky.Reporting.Doc
+    Sky.Reporting.Render.Code
+    Sky.Reporting.Render.Type
+    Sky.Reporting.Report
+    Sky.Reporting.Result
+    Sky.Reporting.Suggest
+    Sky.Reporting.Warning
+
+    -- Sky infrastructure
+    Sky.Sky.ModuleName
+    Sky.Sky.Version
+    Sky.Sky.Toml
+    Sky.Sky.ModuleMap
+    Sky.Sky.Interface
+    Sky.Sky.Compiler.Imports
