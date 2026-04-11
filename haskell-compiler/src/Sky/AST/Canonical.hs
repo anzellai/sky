@@ -139,6 +139,9 @@ data PatternCtorArg = PatternCtorArg
 -- TYPES
 -- ═══════════════════════════════════════════════════════════
 
+-- Note: these mirror the definitions in Sky.Type.Type.
+-- The constraint system uses T.Type; conversion is done in Constrain modules.
+
 data Type
     = TLambda !Type !Type
     | TVar !String
@@ -166,7 +169,6 @@ data AliasType
 -- | A type annotation with quantified variables
 data Annotation = Forall [String] Type
     deriving (Eq, Ord, Show)
-
 
 -- ═══════════════════════════════════════════════════════════
 -- UNION TYPES

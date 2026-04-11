@@ -3,11 +3,25 @@
 --
 -- Uses Union-Find variables for efficient unification.
 -- Two levels: Variable (mutable, for inference) and Type (immutable, canonical).
-module Sky.Type.Type where
+module Sky.Type.Type
+    ( -- Re-exported from Canonical
+      Type(..), FieldType(..), AliasType(..), Annotation(..)
+      -- Solver types
+    , Variable, Descriptor(..), Content(..), SuperType(..), FlatType(..)
+      -- Constraints
+    , Constraint(..), Expected(..), PExpected(..), Context(..), SubContext(..)
+    , PContext(..), Category(..), PCategory(..)
+      -- Constants
+    , Region, Located
+    , noMark, outermostRank
+    )
+    where
 
 import qualified Data.Map.Strict as Map
 import qualified Sky.Type.UnionFind as UF
 import qualified Sky.Sky.ModuleName as ModuleName
+import qualified Sky.Reporting.Annotation as A
+import Sky.AST.Canonical (Type(..), FieldType(..), AliasType(..), Annotation(..))
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -62,34 +76,10 @@ instance Show FlatType where
 
 
 -- ═══════════════════════════════════════════════════════════
--- CANONICAL-LEVEL TYPES (immutable, in interfaces)
+-- CANONICAL-LEVEL TYPES (imported from Sky.AST.Canonical)
 -- ═══════════════════════════════════════════════════════════
-
--- | A canonical type (used in annotations, interfaces)
-data Type
-    = TLambda !Type !Type                                   -- a -> b
-    | TVar !String                                          -- type variable
-    | TType !ModuleName.Canonical !String [Type]            -- type constructor
-    | TRecord !(Map.Map String FieldType) !(Maybe String)   -- record (fields + extension)
-    | TUnit                                                 -- ()
-    | TTuple !Type !Type !(Maybe Type)                      -- 2 or 3 tuple
-    | TAlias !ModuleName.Canonical !String [(String, Type)] !AliasType
-    deriving (Eq, Ord, Show)
-
-
--- | Record field with source position info
-data FieldType = FieldType
-    { _fieldIndex :: {-# UNPACK #-} !Int   -- field position in source
-    , _fieldType  :: !Type
-    }
-    deriving (Eq, Ord, Show)
-
-
--- | Whether a type alias is filled (resolved) or hollow (just a reference)
-data AliasType
-    = Hoisted !Type    -- fully resolved
-    | Filled !Type     -- from another module's interface
-    deriving (Eq, Ord, Show)
+-- Type, FieldType, AliasType, Annotation are defined in Sky.AST.Canonical
+-- and re-exported here for use by the constraint system and solver.
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -193,9 +183,7 @@ data PCategory
     deriving (Show)
 
 
--- | An annotated type scheme
-data Annotation = Forall [String] Type
-    deriving (Eq, Show)
+-- Annotation is imported from Sky.AST.Canonical
 
 
 -- | Sentinel mark values
@@ -206,6 +194,6 @@ outermostRank :: Int
 outermostRank = 0
 
 
--- Simplified region/located types (bridge to Annotation)
-type Region = (Int, Int)
+-- Use the same Region type as the annotation module
+type Region = A.Region
 type Located a = (Region, a)
