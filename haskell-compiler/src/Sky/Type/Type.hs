@@ -198,6 +198,14 @@ data Annotation = Forall [String] Type
     deriving (Eq, Show)
 
 
+-- | Sentinel mark values
+noMark :: Int
+noMark = 0
+
+outermostRank :: Int
+outermostRank = 0
+
+
 -- Simplified region/located types (bridge to Annotation)
 type Region = (Int, Int)
 type Located a = (Region, a)
