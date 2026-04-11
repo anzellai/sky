@@ -264,36 +264,56 @@ exprAtom_ mkError =
 exprIf :: (Row -> Col -> x) -> Parser x Src.Expr_
 exprIf mkError = do
     cond <- expression mkError
-    spaces
+    freshLine mkError
     keyword mkError (T.pack "then")
-    spaces
+    freshLine mkError
     thenBranch <- expression mkError
-    spaces
+    freshLine mkError
+    -- Parse else-if chain or final else
     elseIfs <- elseIfChain mkError
     keyword mkError (T.pack "else")
-    spaces
+    freshLine mkError
     elseBranch <- expression mkError
     return (Src.If ((cond, thenBranch) : elseIfs) elseBranch)
 
 
+-- | Parse zero or more "else if" branches.
+-- Uses peek to check for "else if" as a unit (avoids consuming "else" without "if")
 elseIfChain :: (Row -> Col -> x) -> Parser x [(Src.Expr, Src.Expr)]
-elseIfChain mkError =
-    oneOfWithFallback
-        [ do
-            keyword mkError (T.pack "else")
-            spaces
-            keyword mkError (T.pack "if")
-            spaces
-            cond <- expression mkError
-            spaces
-            keyword mkError (T.pack "then")
-            spaces
-            body <- expression mkError
-            spaces
-            rest <- elseIfChain mkError
-            return ((cond, body) : rest)
-        ]
-        []
+elseIfChain mkError = Parser $ \s cok eok cerr eerr ->
+    -- Peek ahead: check if next tokens are "else" followed by whitespace then "if"
+    let src = _src s
+        trimmed = T.dropWhile (\c -> c == ' ' || c == '\t' || c == '\n' || c == '\r') src
+    in
+    if T.isPrefixOf (T.pack "else") trimmed
+        then
+            let afterElse = T.drop 4 trimmed
+                afterSpace = T.dropWhile (\c -> c == ' ' || c == '\t' || c == '\n' || c == '\r') afterElse
+            in
+            if T.isPrefixOf (T.pack "if") afterSpace
+                then
+                    -- It IS "else if" — parse it
+                    let (Parser p) = do
+                            freshLine mkError
+                            keyword mkError (T.pack "else")
+                            freshLine mkError
+                            keyword mkError (T.pack "if")
+                            freshLine mkError
+                            cond2 <- expression mkError
+                            freshLine mkError
+                            keyword mkError (T.pack "then")
+                            freshLine mkError
+                            body2 <- expression mkError
+                            freshLine mkError
+                            rest <- elseIfChain mkError
+                            return ((cond2, body2) : rest)
+                    in p s cok eok cerr eerr
+                else
+                    -- Just "else" without "if" — return empty (fall through to final else)
+                    eok [] s
+        else
+            -- No "else" at all (shouldn't happen in well-formed if)
+            eok [] s
 
 
 -- LET-IN

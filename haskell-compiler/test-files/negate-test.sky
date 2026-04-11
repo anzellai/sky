@@ -1,0 +1,18 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+abs n =
+    if n < 0 then
+        -n
+    else
+        n
+
+main =
+    let
+        x = abs (-5)
+        y = abs 3
+    in
+        println (String.fromInt x ++ " " ++ String.fromInt y)

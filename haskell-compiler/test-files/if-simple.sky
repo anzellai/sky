@@ -1,0 +1,5 @@
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+main = if True then println "yes" else println "no"

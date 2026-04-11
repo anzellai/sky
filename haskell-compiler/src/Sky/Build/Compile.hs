@@ -205,7 +205,7 @@ exprToGo (A.At _ expr) = case expr of
         GoIr.GoSliceLit "any" (map exprToGo items)
 
     Can.Negate inner ->
-        GoIr.GoUnary "-" (exprToGo inner)
+        GoIr.GoCall (GoIr.GoQualified "rt" "Negate") [exprToGo inner]
 
     Can.Binop op opHome opName _annot left right ->
         binopToGo op left right
@@ -335,7 +335,24 @@ binopToGo op left right = case op of
     -- Not-equal
     "/=" -> GoIr.GoBinary "!=" (exprToGo left) (exprToGo right)
 
-    -- Standard arithmetic, comparison, logic
+    -- Arithmetic operators — use runtime helpers for any-typed values
+    "+"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Add") [exprToGo left, exprToGo right]
+    "-"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Sub") [exprToGo left, exprToGo right]
+    "*"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Mul") [exprToGo left, exprToGo right]
+    "/"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Div") [exprToGo left, exprToGo right]
+
+    -- Comparison operators
+    "==" -> GoIr.GoCall (GoIr.GoQualified "rt" "Eq") [exprToGo left, exprToGo right]
+    ">"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Gt") [exprToGo left, exprToGo right]
+    "<"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Lt") [exprToGo left, exprToGo right]
+    ">=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Gte") [exprToGo left, exprToGo right]
+    "<=" -> GoIr.GoCall (GoIr.GoQualified "rt" "Lte") [exprToGo left, exprToGo right]
+
+    -- Logic
+    "&&" -> GoIr.GoCall (GoIr.GoQualified "rt" "And") [exprToGo left, exprToGo right]
+    "||" -> GoIr.GoCall (GoIr.GoQualified "rt" "Or") [exprToGo left, exprToGo right]
+
+    -- Other operators
     _ -> GoIr.GoBinary op (exprToGo left) (exprToGo right)
 
 
@@ -357,15 +374,25 @@ pipeApply valueExpr funcExpr =
 -- IF-THEN-ELSE
 -- ═══════════════════════════════════════════════════════════
 
--- | Convert if-then-else to Go (IIFE with if chain)
+-- | Convert if-then-else to Go (IIFE with if-else chain)
 ifToGo :: [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
 ifToGo branches elseExpr =
     let
         buildIf [] = [GoIr.GoReturn (exprToGo elseExpr)]
         buildIf ((cond, body):rest) =
-            [GoIr.GoIf (exprToGo cond) [GoIr.GoReturn (exprToGo body)] (buildIf rest)]
+            [GoIr.GoIf (toBoolExpr (exprToGo cond)) [GoIr.GoReturn (exprToGo body)] (buildIf rest)]
     in
-    GoIr.GoBlock (buildIf branches) (GoIr.GoRaw "panic(\"unreachable\")")
+    GoIr.GoBlock (buildIf branches) (GoIr.GoRaw "nil")
+
+
+-- | Ensure an expression is a Go bool (cast from any if needed)
+toBoolExpr :: GoIr.GoExpr -> GoIr.GoExpr
+toBoolExpr expr = case expr of
+    GoIr.GoBoolLit _ -> expr  -- already bool
+    GoIr.GoCall (GoIr.GoQualified "rt" name) _
+        | name `elem` ["Eq", "Gt", "Lt", "Gte", "Lte", "And", "Or"] ->
+            GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [expr]
+    _ -> GoIr.GoCall (GoIr.GoQualified "rt" "AsBool") [expr]
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -736,8 +763,8 @@ runtimeGoSource = unlines
     , "// String"
     , "// ═══════════════════════════════════════════════════════════"
     , ""
-    , "func String_fromInt(n int) string {"
-    , "\treturn strconv.Itoa(n)"
+    , "func String_fromInt(n any) string {"
+    , "\treturn strconv.Itoa(AsInt(n))"
     , "}"
     , ""
     , "func String_fromFloat(f float64) string {"
@@ -779,6 +806,30 @@ runtimeGoSource = unlines
     , "func Concat(a, b any) any {"
     , "\treturn fmt.Sprintf(\"%v%v\", a, b)"
     , "}"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Arithmetic and comparison (any-typed, until type checker)"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func AsInt(v any) int { if n, ok := v.(int); ok { return n }; return 0 }"
+    , "func AsFloat(v any) float64 { if f, ok := v.(float64); ok { return f }; if n, ok := v.(int); ok { return float64(n) }; return 0 }"
+    , "func AsBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }"
+    , ""
+    , "func Add(a, b any) any { return AsInt(a) + AsInt(b) }"
+    , "func Sub(a, b any) any { return AsInt(a) - AsInt(b) }"
+    , "func Mul(a, b any) any { return AsInt(a) * AsInt(b) }"
+    , "func Div(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(b) }"
+    , ""
+    , "func Eq(a, b any) any { return a == b }"
+    , "func Gt(a, b any) any { return AsInt(a) > AsInt(b) }"
+    , "func Lt(a, b any) any { return AsInt(a) < AsInt(b) }"
+    , "func Gte(a, b any) any { return AsInt(a) >= AsInt(b) }"
+    , "func Lte(a, b any) any { return AsInt(a) <= AsInt(b) }"
+    , ""
+    , "func And(a, b any) any { return AsBool(a) && AsBool(b) }"
+    , "func Or(a, b any) any { return AsBool(a) || AsBool(b) }"
+    , ""
+    , "func Negate(a any) any { return -AsInt(a) }"
     , ""
     , "// ═══════════════════════════════════════════════════════════"
     , "// Any-typed Task wrappers (until type checker provides types)"
