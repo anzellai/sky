@@ -20,6 +20,8 @@ import qualified Sky.Generate.Go.Kernel as Kernel
 import qualified Sky.Sky.Toml as Toml
 import qualified Sky.Type.Constrain.Module as Constrain
 import qualified Sky.Type.Solve as Solve
+import qualified Sky.Type.Type as T
+import qualified Sky.Generate.Go.Type as GoType
 
 
 -- | Full compilation: parse → canonicalise → codegen → write Go
@@ -67,7 +69,7 @@ compile config entryPath outDir = do
 
                     -- Phase 5: Generate Go (using solved types)
                     putStrLn "-- Generating Go"
-                    let goCode = generateGo canMod srcMod config
+                    let goCode = generateGo canMod srcMod config types
 
                     -- Phase 6: Write output
                     createDirectoryIfMissing True outDir
@@ -103,12 +105,12 @@ copyRuntime outDir = do
 -- GO CODE GENERATION (from Canonical AST)
 -- ═══════════════════════════════════════════════════════════
 
--- | Generate Go source from a canonical module
-generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> String
-generateGo canMod srcMod config =
+-- | Generate Go source from a canonical module with solved types
+generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
+generateGo canMod srcMod config solvedTypes =
     let
         imports = collectGoImports canMod srcMod
-        decls = generateDecls canMod
+        decls = generateDecls canMod solvedTypes
         mainDecl = generateMainFunc canMod srcMod
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
@@ -138,23 +140,29 @@ isTaskImport imp =
 -- ═══════════════════════════════════════════════════════════
 
 -- | Generate Go declarations from canonical decls
-generateDecls :: Can.Module -> [GoIr.GoDecl]
-generateDecls canMod = declsToList (Can._decls canMod) []
+generateDecls :: Can.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDecls canMod solvedTypes = declsToList (Can._decls canMod) []
   where
     declsToList Can.SaveTheEnvironment acc = acc
     declsToList (Can.Declare def rest) acc =
-        declsToList rest (acc ++ generateDef def)
+        declsToList rest (acc ++ generateDef def solvedTypes)
     declsToList (Can.DeclareRec def defs rest) acc =
-        declsToList rest (acc ++ generateDef def ++ concatMap generateDef defs)
+        declsToList rest (acc ++ generateDef def solvedTypes ++ concatMap (\d -> generateDef d solvedTypes) defs)
 
 
--- | Generate Go for a single definition
-generateDef :: Can.Def -> [GoIr.GoDecl]
-generateDef def =
+-- | Generate Go for a single definition, using solved types for signatures
+generateDef :: Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDef def solvedTypes =
     let (name, params, body) = case def of
             Can.Def (A.At _ n) pats expr -> (n, pats, expr)
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)
+
+        -- TODO: use solved types for typed Go output once solver resolves all sub-expressions
+        -- For now, use any-typed params. The solved types infrastructure is ready
+        -- and will be enabled when the solver produces complete function types.
+        goParams = map patternToParam params
+        goRetType = "any"
     in
     -- Skip "main" — handled separately
     if name == "main" then []
@@ -162,11 +170,30 @@ generateDef def =
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
             { GoIr._gf_name = name
             , GoIr._gf_typeParams = []
-            , GoIr._gf_params = map patternToParam params
-            , GoIr._gf_returnType = "any"
+            , GoIr._gf_params = goParams
+            , GoIr._gf_returnType = goRetType
             , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
             }
         ]
+
+
+-- | Generate typed function parameters and return type from a solved type
+typedFuncSig :: [Can.Pattern] -> T.Type -> ([GoIr.GoParam], String)
+typedFuncSig params funcType =
+    let (argTypes, retType) = splitFuncType (length params) funcType
+        goParams = zipWith (\pat ty ->
+            GoIr.GoParam (patternName pat) (GoType.typeToGo ty))
+            params argTypes
+    in (goParams, GoType.typeToGo retType)
+
+
+-- | Split a function type into argument types and return type
+splitFuncType :: Int -> T.Type -> ([T.Type], T.Type)
+splitFuncType 0 ty = ([], ty)
+splitFuncType n (T.TLambda from to) =
+    let (rest, ret) = splitFuncType (n - 1) to
+    in (from : rest, ret)
+splitFuncType _ ty = ([], ty)  -- not enough arrows, return as-is
 
 
 -- ═══════════════════════════════════════════════════════════

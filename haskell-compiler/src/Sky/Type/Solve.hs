@@ -4,6 +4,8 @@
 module Sky.Type.Solve
     ( solve
     , SolveResult(..)
+    , SolvedTypes
+    , showType
     )
     where
 
