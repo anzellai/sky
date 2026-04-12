@@ -46,11 +46,12 @@ type Param struct {
 }
 
 type Function struct {
-	Name     string   `json:"name"`
-	Params   []Param  `json:"params"`
-	Results  []Param  `json:"results"`
-	Effect   string   `json:"effect"`
-	Exported bool     `json:"exported"`
+	Name     string  `json:"name"`
+	Params   []Param `json:"params"`
+	Results  []Param `json:"results"`
+	Variadic bool    `json:"variadic"`
+	Effect   string  `json:"effect"`
+	Exported bool    `json:"exported"`
 }
 
 type PackageInfo struct {
@@ -138,6 +139,7 @@ func describe(fn *types.Func, sig *types.Signature) Function {
 		Name:     fn.Name(),
 		Params:   params,
 		Results:  results,
+		Variadic: sig.Variadic(),
 		Effect:   classifyEffect(results),
 		Exported: true,
 	}
