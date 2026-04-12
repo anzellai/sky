@@ -4,6 +4,7 @@
 module Sky.Build.ModuleGraph
     ( ModuleInfo(..)
     , discoverModules
+    , discoverModulesMulti
     , compilationOrder
     )
     where
@@ -33,15 +34,25 @@ data ModuleInfo = ModuleInfo
 -- | Discover all modules starting from the entry file.
 -- Recursively follows local imports to build the full module graph.
 discoverModules :: String -> FilePath -> IO (Map.Map String ModuleInfo)
-discoverModules sourceRoot entryPath = do
+discoverModules sourceRoot = discoverModulesMulti [sourceRoot]
+
+
+-- | Discover modules given multiple candidate source roots. The entry file
+-- determines the primary module name via the first root it is relative to;
+-- imports are resolved by probing each root in order (first match wins).
+discoverModulesMulti :: [String] -> FilePath -> IO (Map.Map String ModuleInfo)
+discoverModulesMulti roots entryPath = do
     go Map.empty [entryPath]
   where
+    primaryRoot = case roots of
+        (r:_) -> r
+        []    -> "."
+
     go visited [] = return visited
     go visited (path:rest) = do
         exists <- doesFileExist path
-        -- Check if this path is already processed (by path OR module name)
         let alreadyByPath = any (\v -> _mi_path v == path) (Map.elems visited)
-            modNameGuess = pathToModuleName sourceRoot path
+            modNameGuess = pathToModuleName (rootFor path) path
             alreadyByName = Map.member modNameGuess visited
         if not exists || alreadyByPath || alreadyByName
             then go visited rest
@@ -57,14 +68,36 @@ discoverModules sourceRoot entryPath = do
                                 Nothing -> modNameGuess
                             importNames = map getImportName (Src._imports srcMod)
                             localImports = filter isLocalImport importNames
-                            localPaths = map (moduleNameToPath sourceRoot) localImports
-                            info = ModuleInfo
+                        localPaths <- mapM resolveImport localImports
+                        let info = ModuleInfo
                                 { _mi_name = declaredName
                                 , _mi_path = path
                                 , _mi_imports = importNames
                                 , _mi_isLocal = True
                                 }
-                        go (Map.insert declaredName info visited) (localPaths ++ rest)
+                        go (Map.insert declaredName info visited)
+                           (catMaybe localPaths ++ rest)
+
+    -- Choose the best root for naming a given file path.
+    rootFor path =
+        case filter (\r -> take (length r) path == r) roots of
+            (r:_) -> r
+            []    -> primaryRoot
+
+    -- Probe each root in order; return the first existing candidate path,
+    -- falling back to the primary root (so a missing-module error still
+    -- reports a sensible path).
+    resolveImport :: String -> IO (Maybe FilePath)
+    resolveImport modName = do
+        let candidates = map (\r -> moduleNameToPath r modName) roots
+        firstExisting candidates
+
+    firstExisting [] = return Nothing
+    firstExisting (p:ps) = do
+        ok <- doesFileExist p
+        if ok then return (Just p) else firstExisting ps
+
+    catMaybe = foldr (\m acc -> case m of Just x -> x:acc; Nothing -> acc) []
 
 
 -- | Return modules in compilation order (dependencies first).

@@ -15,6 +15,7 @@ data SkyConfig = SkyConfig
     , _sourceRoot  :: !String           -- source root (src)
     , _binName     :: !String           -- output binary name (app)
     , _goDeps      :: [(String, String)]-- Go dependencies [(pkg, version)]
+    , _skyDeps     :: [(String, String)]-- Sky-source dependencies [(repo, version)]
     , _livePort    :: !Int              -- Sky.Live port (8000)
     , _liveStore   :: !String           -- session store (memory/sqlite/redis)
     , _dbDriver    :: !String           -- database driver (sqlite/postgres)
@@ -32,6 +33,7 @@ defaultConfig = SkyConfig
     , _sourceRoot = "src"
     , _binName    = "app"
     , _goDeps     = []
+    , _skyDeps    = []
     , _livePort   = 8000
     , _liveStore  = "memory"
     , _dbDriver   = ""
@@ -70,6 +72,8 @@ applyKeyValue :: String -> SkyConfig -> String -> String -> SkyConfig
 applyKeyValue section config key value = case section of
     "go.dependencies" ->
         config { _goDeps = _goDeps config ++ [(stripQuotes key, value)] }
+    "dependencies" ->
+        config { _skyDeps = _skyDeps config ++ [(stripQuotes key, value)] }
     _ -> case key of
         "name"    -> config { _name = value }
         "version" -> config { _version = value }

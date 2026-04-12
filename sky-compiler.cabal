@@ -132,6 +132,7 @@ executable sky
     Sky.Build.Dce
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
+    Sky.Build.SkyDeps
     Sky.Build.Incremental
     Sky.Build.GoIntegration
 

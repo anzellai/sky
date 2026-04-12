@@ -13,6 +13,7 @@ import qualified Sky.Parse.Module as ParseMod
 import qualified Sky.Format.Format as Format
 import qualified Sky.Lsp.Server as Lsp
 import qualified Sky.Build.FfiGen as FfiGen
+import qualified Sky.Build.SkyDeps as SkyDeps
 
 
 -- | Sky compiler CLI
@@ -232,8 +233,14 @@ runCommand cmd = case cmd of
         return (Right ())
 
     Install -> do
-        putStrLn "Installing dependencies..."
-        putStrLn "Install not yet implemented"
+        hasToml <- doesFileExist "sky.toml"
+        config <- if hasToml
+            then Toml.parseSkyToml <$> readFile "sky.toml"
+            else return Toml.defaultConfig
+        _ <- SkyDeps.installDeps (Toml._skyDeps config)
+        case Toml._skyDeps config of
+            [] -> putStrLn "No [dependencies] entries in sky.toml."
+            _  -> putStrLn "Sky dependencies installed."
         return (Right ())
 
     Lsp -> do

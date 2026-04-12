@@ -36,6 +36,7 @@ import qualified Sky.Generate.Go.Record as Rec
 import qualified Sky.Build.ModuleGraph as Graph
 import qualified Sky.Build.Dce as Dce
 import qualified Sky.Build.FfiRegistry as FfiReg
+import qualified Sky.Build.SkyDeps as SkyDeps
 import qualified Sky.Canonicalise.Environment as Env
 import qualified System.Environment
 
@@ -85,9 +86,14 @@ compile config entryPath outDir = do
     -- module/function IORefs so FFI packages resolve as first-class kernels.
     loadAndSeedFfiRegistry
 
+    -- Phase 0b: Install Sky-source dependencies declared in [dependencies].
+    -- Each dep contributes an extra source root that discovery will probe
+    -- in order after the primary project source root.
+    depRoots <- SkyDeps.installDeps (Toml._skyDeps config)
+
     -- Phase 1: Discover all modules
     putStrLn "-- Discovering modules"
-    modules <- Graph.discoverModules sourceRoot entryPath
+    modules <- Graph.discoverModulesMulti (sourceRoot : depRoots) entryPath
     let moduleOrder = Graph.compilationOrder modules
     putStrLn $ "   Found " ++ show (length moduleOrder) ++ " module(s)"
 
