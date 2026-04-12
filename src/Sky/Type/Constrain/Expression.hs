@@ -309,8 +309,18 @@ constrainDefWithType counter env def = case def of
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
         return (bodyCon, name, funcType)
 
+    -- Destructure binding — collect type-vars from the pattern so the body
+    -- sees each bound name. We synthesise a placeholder "name" matching the
+    -- _defName sentinel so downstream diagnostics stay intact.
+    Can.DestructDef pat body -> do
+        resultName <- freshName counter "_destruct_res"
+        let resultType = T.TVar resultName
+        bodyCon <- constrain counter env body (T.NoExpectation resultType)
+        return (bodyCon, "__destruct__", resultType)
+
 
 -- | Constrain a def with a pre-generated function type (for recursive defs)
+-- ignored: type-check path for DestructDef — handled in constrainDefWithType.
 constrainDefWithKnownType :: Counter -> Env -> Can.Def -> T.Type -> IO T.Constraint
 constrainDefWithKnownType counter env def knownType = case def of
     Can.Def (A.At _region _name) params body -> do
@@ -323,6 +333,10 @@ constrainDefWithKnownType counter env def knownType = case def of
         let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
         constrain counter bodyEnv body (T.NoExpectation retType)
+
+    -- Destructure binding: constrain the value's body with no expectation.
+    Can.DestructDef _ body ->
+        constrain counter env body (T.NoExpectation knownType)
 
 
 -- | Split a function type into N argument types and the result type
@@ -399,6 +413,9 @@ defTypeInfoIO counter (Can.Def (A.At _ name) params _body) = do
 defTypeInfoIO _counter (Can.TypedDef (A.At _ name) _freeVars typedPats _body retType) =
     let funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType typedPats
     in return (name, funcType)
+defTypeInfoIO counter (Can.DestructDef _ _) = do
+    resultName <- freshName counter "_destruct_res"
+    return ("__destruct__", T.TVar resultName)
 
 
 zipWithM :: Monad m => (a -> b -> m c) -> [a] -> [b] -> m [c]

@@ -115,6 +115,21 @@ exposedItems mkError = do
     return (first : rest)
 
 
+-- | Parse remaining ctor names in `Type(A, B, C)` — called AFTER the first name.
+exposedCtorRest :: (Row -> Col -> ModuleError) -> Parser ModuleError [String]
+exposedCtorRest mkError =
+    oneOfWithFallback
+        [ do
+            spaces
+            char mkError ','
+            spaces
+            c <- upper mkError
+            rest <- exposedCtorRest mkError
+            return (c : rest)
+        ]
+        []
+
+
 moreExposedItems :: (Row -> Col -> ModuleError) -> Parser ModuleError [A.Located Src.Exposed]
 moreExposedItems mkError =
     oneOfWithFallback
@@ -132,15 +147,28 @@ moreExposedItems mkError =
 exposedItem :: (Row -> Col -> ModuleError) -> Parser ModuleError Src.Exposed
 exposedItem mkError =
     oneOf mkError
-        [ -- Type with constructors: Type(..)
+        [ -- Type with constructors: Type(..) | Type(CtorA, CtorB) | Type
           do name <- upper mkError
              mc <- peek
              case mc of
                  Just '(' -> do
                      char mkError '('
-                     string mkError (T.pack "..")
-                     char mkError ')'
-                     return (Src.ExposedType name Src.Public)
+                     spaces
+                     -- Either `..)` (all) or comma-separated ctor names.
+                     mc2 <- peek
+                     privacy <- case mc2 of
+                         Just '.' -> do
+                             string mkError (T.pack "..")
+                             spaces
+                             char mkError ')'
+                             return Src.Public
+                         _ -> do
+                             c0 <- upper mkError
+                             rest <- exposedCtorRest mkError
+                             spaces
+                             char mkError ')'
+                             return (Src.PublicCtors (c0 : rest))
+                     return (Src.ExposedType name privacy)
                  _ -> return (Src.ExposedType name Src.Private)
 
         , -- Operator: (+)

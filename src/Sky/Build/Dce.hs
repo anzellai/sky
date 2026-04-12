@@ -41,6 +41,7 @@ buildCallGraph canMod =
     defPair d = case d of
         Can.Def (A.At _ n) _ body      -> (n, collectRefs body)
         Can.TypedDef (A.At _ n) _ _ body _ -> (n, collectRefs body)
+        Can.DestructDef _ body         -> ("__destruct__", collectRefs body)
 
 
 -- | All top-level names referenced in an expression.
@@ -87,6 +88,7 @@ collectRefs (A.At _ e) = case e of
 defRefs :: Can.Def -> Set.Set String
 defRefs (Can.Def _ _ body)          = collectRefs body
 defRefs (Can.TypedDef _ _ _ body _) = collectRefs body
+defRefs (Can.DestructDef _ body)    = collectRefs body
 
 
 unionMap :: (a -> Set.Set String) -> [a] -> Set.Set String

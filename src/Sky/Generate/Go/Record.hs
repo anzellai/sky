@@ -87,6 +87,7 @@ collectFuncArities = go Map.empty
     addDef acc d = case d of
         Can.Def (A.At _ n) ps _          -> Map.insert n (length ps) acc
         Can.TypedDef (A.At _ n) _ ps _ _ -> Map.insert n (length ps) acc
+        Can.DestructDef _ _              -> acc
 
 
 -- | Build a fresh CodegenEnv but with the record-alias set extended.
@@ -125,6 +126,7 @@ collectZeroArgs = go Set.empty
     addDef acc d = case d of
         Can.Def locName [] _          -> Set.insert (A.toValue locName) acc
         Can.TypedDef locName _ [] _ _ -> Set.insert (A.toValue locName) acc
+        Can.DestructDef _ _           -> acc
         _                             -> acc
 
 

@@ -463,12 +463,15 @@ generateDeclsForDep canMod modPrefix =
     go (Can.Declare def rest) = mkDef def ++ go rest
     go (Can.DeclareRec def defs rest) = mkDef def ++ concatMap mkDef defs ++ go rest
 
-    mkDef def =
-        let (name, params, body) = case def of
+    mkDef def = case def of
+        Can.DestructDef _ _ -> []  -- destructure lets: only appear inside bodies
+        _ ->
+          let (name, params, body) = case def of
                 Can.Def (A.At _ n) pats expr -> (n, pats, expr)
                 Can.TypedDef (A.At _ n) _ typedPats expr _ -> (n, map fst typedPats, expr)
-            goName = modPrefix ++ "_" ++ name
-        in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
+                Can.DestructDef{} -> error "unreachable: filtered above"
+              goName = modPrefix ++ "_" ++ name
+          in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = goName
                 , GoIr._gf_typeParams = []
                 , GoIr._gf_params = map patternToParam params
@@ -489,6 +492,7 @@ collectDeclNames = goNames Set.empty
     addName acc d = case d of
         Can.Def (A.At _ n) _ _ -> Set.insert n acc
         Can.TypedDef (A.At _ n) _ _ _ _ -> Set.insert n acc
+        Can.DestructDef _ _ -> acc  -- destructure let-binding — no top-level name
 
 
 -- | Emit a dep module's union type declaration + constructor value/func.
@@ -747,13 +751,16 @@ generateDecls canMod solvedTypes =
 
 -- | Emit def only if reachable (or DCE disabled).
 generateDefMaybe :: Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDefMaybe reachable dceEnabled def solvedTypes =
-    let name = case def of
-            Can.Def (A.At _ n) _ _           -> n
-            Can.TypedDef (A.At _ n) _ _ _ _  -> n
-    in if not dceEnabled || Set.member name reachable || name == "main"
-        then generateDef def solvedTypes
-        else []
+generateDefMaybe reachable dceEnabled def solvedTypes = case def of
+    Can.DestructDef{} -> []  -- destructure lets only live inside bodies
+    _ ->
+        let name = case def of
+                Can.Def (A.At _ n) _ _           -> n
+                Can.TypedDef (A.At _ n) _ _ _ _  -> n
+                Can.DestructDef{} -> error "unreachable: filtered above"
+        in if not dceEnabled || Set.member name reachable || name == "main"
+            then generateDef def solvedTypes
+            else []
 
 
 -- | Read SKY_DCE env var once. Default: enabled.
@@ -770,6 +777,7 @@ generateDef def solvedTypes =
             Can.Def (A.At _ n) pats expr -> (n, pats, expr)
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)
+            Can.DestructDef _ _ -> ("__destruct__", [], error "unreachable: destructdef has no toplevel codegen")
 
         -- All functions use any params and any return for Go compatibility.
         -- Typed codegen uses type assertions internally for direct operators.
@@ -953,9 +961,15 @@ exprToGo (A.At _ expr) = case expr of
         in GoIr.GoBlock stmts (exprToGo body)
 
     Can.LetDestruct pat valExpr body ->
-        GoIr.GoBlock
-            [GoIr.GoShortDecl (patternName pat) (exprToGo valExpr)]
-            (exprToGo body)
+        -- Bind the value to a fresh temp, then run the standard pattern-
+        -- bindings machinery (same code used by case arms) so tuple/record/
+        -- constructor destructuring produces real bindings for each field.
+        let tmp = "__destruct__"
+            (A.At _ p) = pat
+            valStmt = GoIr.GoShortDecl tmp (exprToGo valExpr)
+            sink    = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
+            bindStmts = patternBindings tmp p
+        in GoIr.GoBlock (valStmt : sink : bindStmts) (exprToGo body)
 
     Can.Case subject branches ->
         caseToGo subject branches
@@ -1238,6 +1252,14 @@ letToGo def body =
 -- | Convert a definition to Go statements
 defToStmts :: Can.Def -> [GoIr.GoStmt]
 defToStmts def = case def of
+    Can.DestructDef pat valExpr ->
+        let tmp = "__destruct__"
+            (A.At _ p) = pat
+            valStmt   = GoIr.GoShortDecl tmp (exprToGo valExpr)
+            sink      = GoIr.GoAssign "_" (GoIr.GoIdent tmp)
+            bindStmts = patternBindings tmp p
+        in valStmt : sink : bindStmts
+
     Can.Def (A.At _ name) [] body ->
         if name == "_"
         then [GoIr.GoAssign "_" (exprToGo body)]
@@ -1573,12 +1595,14 @@ findMain canMod = findMainInDecls (Can._decls canMod)
 defName :: Can.Def -> String
 defName (Can.Def (A.At _ n) _ _) = n
 defName (Can.TypedDef (A.At _ n) _ _ _ _) = n
+defName (Can.DestructDef _ _) = "__destruct__"
 
 
 -- | Get the body expression from a definition
 defBody :: Can.Def -> Can.Expr
 defBody (Can.Def _ _ body) = body
 defBody (Can.TypedDef _ _ _ body _) = body
+defBody (Can.DestructDef _ body) = body
 
 
 -- | Convert the main body to Go statements, using typed codegen where possible

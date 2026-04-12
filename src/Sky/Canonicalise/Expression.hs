@@ -249,9 +249,12 @@ operatorAnnotation _ = Can.Forall [] Can.TUnit  -- placeholder
 canonicaliseLet :: Env.Env -> [A.Located Src.Def] -> Src.Expr -> Can.Expr_
 canonicaliseLet env defs body =
     let
-        -- Collect all binding names first (for mutual visibility)
-        allNames = concatMap (\(A.At _ d) ->
-            case Src._defName d of A.At _ n -> [n]) defs
+        -- Collect all binding names first (for mutual visibility).
+        -- Destructure bindings contribute the names embedded in the pattern.
+        nameFromDef (A.At _ d) = case d of
+            Src.Destruct pat _ -> CanPat.patternNames pat
+            Src.Define{}       -> case Src._defName d of A.At _ n -> [n]
+        allNames = concatMap nameFromDef defs
         letEnv = Env.addLocals allNames env
 
         -- Canonicalise each definition
@@ -263,26 +266,33 @@ canonicaliseLet env defs body =
     in A.toValue (foldr wrapLet canBody canDefs)
 
 
--- | Canonicalise a let binding
+-- | Canonicalise a let binding. Destructure bindings (`let (a, b) = e`)
+-- take a distinct Can.Def variant so the lowerer can emit real field
+-- bindings for a/b rather than just a single __destruct__ name.
 canonicaliseDef :: Env.Env -> A.Located Src.Def -> Can.Def
-canonicaliseDef env (A.At _ def) =
-    let
-        name = Src._defName def
-        params = Src._defPatterns def
-        paramNames = concatMap CanPat.patternNames params
-        bodyEnv = Env.addLocals paramNames env
-        canParams = map (CanPat.canonicalisePattern env) params
-        canBody = canonicaliseExpr bodyEnv (Src._defBody def)
-    in
-    case Src._defType def of
-        Nothing ->
-            Can.Def name canParams canBody
-        Just (A.At _ srcType) ->
-            let home = Env._home env
-                canType = CanType.canonicaliseTypeAnnotation home srcType
-                freeVars = CanType.freeTypeVars srcType
-                typedPatterns = zip canParams (arrowArgs canType)
-            in Can.TypedDef name freeVars typedPatterns canBody (arrowResult canType)
+canonicaliseDef env (A.At _ def) = case def of
+    Src.Destruct srcPat srcBody ->
+        let canPat = CanPat.canonicalisePattern env srcPat
+            canBody = canonicaliseExpr env srcBody
+        in Can.DestructDef canPat canBody
+    Src.Define{} ->
+        let
+            name = Src._defName def
+            params = Src._defPatterns def
+            paramNames = concatMap CanPat.patternNames params
+            bodyEnv = Env.addLocals paramNames env
+            canParams = map (CanPat.canonicalisePattern env) params
+            canBody = canonicaliseExpr bodyEnv (Src._defBody def)
+        in
+        case Src._defType def of
+            Nothing ->
+                Can.Def name canParams canBody
+            Just (A.At _ srcType) ->
+                let home = Env._home env
+                    canType = CanType.canonicaliseTypeAnnotation home srcType
+                    freeVars = CanType.freeTypeVars srcType
+                    typedPatterns = zip canParams (arrowArgs canType)
+                in Can.TypedDef name freeVars typedPatterns canBody (arrowResult canType)
   where
     arrowArgs (Can.TLambda from to) = from : arrowArgs to
     arrowArgs _ = []

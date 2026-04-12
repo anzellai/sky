@@ -40,7 +40,14 @@ fmtExposed :: Src.Exposed -> String
 fmtExposed (Src.ExposedValue n) = n
 fmtExposed (Src.ExposedType n Src.Public) = n ++ "(..)"
 fmtExposed (Src.ExposedType n Src.Private) = n
+fmtExposed (Src.ExposedType n (Src.PublicCtors cs)) =
+    n ++ "(" ++ fmtIntercalate ", " cs ++ ")"
 fmtExposed (Src.ExposedOperator n) = "(" ++ n ++ ")"
+
+fmtIntercalate :: String -> [String] -> String
+fmtIntercalate _   []     = ""
+fmtIntercalate _   [x]    = x
+fmtIntercalate sep (x:xs) = x ++ sep ++ fmtIntercalate sep xs
 
 
 fmtImport :: Src.Import -> String

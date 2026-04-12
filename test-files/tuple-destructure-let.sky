@@ -1,0 +1,13 @@
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+
+splitPair x = ( x, x + 1 )
+
+
+main =
+    let
+        ( a, b ) = splitPair 10
+    in
+        println (String.fromInt a ++ "," ++ String.fromInt b)

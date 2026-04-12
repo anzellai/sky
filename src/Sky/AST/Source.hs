@@ -38,8 +38,9 @@ data Exposed
 
 
 data Privacy
-    = Public
-    | Private
+    = Public                -- Type(..) — all constructors exposed
+    | Private               -- Type     — opaque type alias only
+    | PublicCtors [String]  -- Type(CtorA, CtorB) — selective expose
     deriving (Show)
 
 

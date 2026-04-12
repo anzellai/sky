@@ -225,16 +225,19 @@ resolveAliasCtor depVarList (A.At _ exposed) = case exposed of
     _ -> []
 
 
--- | Pick ctors matching `exposing (TypeName(..))`.
+-- | Pick ctors matching `exposing (TypeName(..))` or `(Type(Ctor1, Ctor2))`.
 resolveDepCtors :: [(String, Env.CtorHome)] -> A.Located Src.Exposed -> [(String, Env.CtorHome)]
 resolveDepCtors allDepCtors (A.At _ exposed) = case exposed of
     Src.ExposedType typeName Src.Public ->
-        -- Dep ctors are already keyed by ctor name; filter those whose
-        -- home type matches. We tagged them with the type name during
-        -- construction via CtorHome._ch_typeName.
         [ (cname, ch)
         | (cname, ch) <- allDepCtors
         , Env._ch_type ch == typeName
+        ]
+    Src.ExposedType typeName (Src.PublicCtors wanted) ->
+        [ (cname, ch)
+        | (cname, ch) <- allDepCtors
+        , Env._ch_type ch == typeName
+        , cname `elem` wanted
         ]
     _ -> []
 

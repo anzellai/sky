@@ -43,6 +43,10 @@ data Decls
 data Def
     = Def !(A.Located String) [Pattern] !Expr
     | TypedDef !(A.Located String) !FreeVars [TypedPattern] !Expr !Type
+    -- | Pattern destructure at let-binding position — `let (a,b) = e in …`.
+    -- Carries the pattern so the lowerer can emit actual field bindings
+    -- (tuple / record / constructor destructure), not just a single name.
+    | DestructDef !Pattern !Expr
     deriving (Show)
 
 
