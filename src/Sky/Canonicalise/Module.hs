@@ -2,6 +2,8 @@
 -- Source AST → Canonical AST
 module Sky.Canonicalise.Module
     ( canonicalise
+    , canonicaliseWithDeps
+    , DepInfo(..)
     )
     where
 
@@ -16,9 +18,26 @@ import qualified Sky.Canonicalise.Pattern as CanPat
 import qualified Sky.Canonicalise.Type as CanType
 
 
--- | Canonicalise a source module into a canonical module
+-- | Information about a dependency module extracted by a prior canonicalisation
+-- pass. We only need the union-constructor info to resolve cross-module ADT
+-- constructors when another module imports this one with `exposing (..)`.
+data DepInfo = DepInfo
+    { _dep_name  :: !ModuleName.Canonical
+    , _dep_unions :: ![(String, [Can.Ctor])]   -- (type name, constructors)
+    }
+
+
+-- | Back-compat: canonicalise with no cross-module info.
 canonicalise :: Src.Module -> Either String Can.Module
-canonicalise srcMod =
+canonicalise = canonicaliseWithDeps Map.empty
+
+
+-- | Canonicalise a source module given a map of known dependency modules
+-- (by module path string). The deps contribute their exported constructors
+-- to the importer's environment when the importer uses `exposing (..)` or
+-- `exposing (Type(..))`.
+canonicaliseWithDeps :: Map.Map String DepInfo -> Src.Module -> Either String Can.Module
+canonicaliseWithDeps deps srcMod =
     let
         modName = case Src._name srcMod of
             Just (A.At _ segs) -> ModuleName.fromRaw segs
@@ -26,7 +45,7 @@ canonicalise srcMod =
 
         -- Build environment from imports
         env0 = Env.initialEnv modName
-        env1 = foldl (processImport modName) env0 (Src._imports srcMod)
+        env1 = foldl (processImportWith deps modName) env0 (Src._imports srcMod)
 
         -- Register top-level declarations in env
         env2 = registerTopLevelNames env1 (Src._values srcMod)
@@ -62,45 +81,102 @@ canonicalise srcMod =
 -- IMPORTS
 -- ═══════════════════════════════════════════════════════════
 
--- | Process a single import declaration into the environment
+-- | Back-compat wrapper.
 processImport :: ModuleName.Canonical -> Env.Env -> Src.Import -> Env.Env
-processImport _home env imp =
+processImport = processImportWith Map.empty
+
+
+-- | Process a single import. When the import is a user module (not a
+-- kernel) and we have its DepInfo, we contribute its union constructors
+-- to the environment according to the exposing clause.
+processImportWith :: Map.Map String DepInfo -> ModuleName.Canonical -> Env.Env -> Src.Import -> Env.Env
+processImportWith deps _home env imp =
     let
         importSegs = case Src._importName imp of A.At _ segs -> segs
         importPath = ModuleName.joinWith "." importSegs
         importMod = ModuleName.Canonical importPath
 
-        -- Determine the qualifier (alias or last segment)
         qualifier = case Src._importAlias imp of
             Just alias -> alias
             Nothing -> last importSegs
 
-        -- Check if this is a kernel (stdlib) module
         isKernel = Map.member importPath Env.kernelModules
         kernelName = Map.findWithDefault "" importPath Env.kernelModules
 
-        -- Build qualified ctor maps for this import
         qualCtors = kernelCtorsFor kernelName
 
-        -- Add qualified access: Task.succeed, String.fromInt, etc.
+        -- For non-kernel imports we look up the dep's unions to build
+        -- cross-module constructor entries.
+        depCtors = case Map.lookup importPath deps of
+            Just dep ->
+                [ (ctorName, Env.CtorHome importMod typeName ctorName
+                    (fromIntegral idx) (fromIntegral nArgs) union annot)
+                | (typeName, ctors) <- _dep_unions dep
+                , let union = makeUnionFor typeName ctors
+                , (idx, ctor) <- zip [0::Int ..] ctors
+                , let Can.Ctor ctorName _ nArgs argTys = ctor
+                      annot = makeCtorAnnot importMod typeName ctorName argTys
+                ]
+            Nothing -> []
+
+        -- Dep values (top-level bindings) — a fuller pass; for now we just
+        -- forward the top-level names if the dep exposes them. The current
+        -- registerTopLevelNames elsewhere already handles values at the
+        -- module-merging step in Compile.hs, so we deliberately leave
+        -- dep-value import as a no-op here.
+        depVars :: [(String, Env.VarHome)]
+        depVars = []
+
         envWithQual = Env.addQualifiedImport qualifier importMod
-            (if isKernel then kernelVarsFor kernelName else [])
-            qualCtors
+            (if isKernel then kernelVarsFor kernelName else depVars)
+            (qualCtors ++ depCtors)
             env
 
-        -- Handle exposing
         envWithExposed = case Src._importExposing imp of
             A.At _ Src.ExposingAll ->
                 if isKernel
                 then Env.addExposed (kernelVarsFor kernelName) qualCtors envWithQual
-                else envWithQual
+                else Env.addExposed depVars depCtors envWithQual
             A.At _ (Src.ExposingList exposed) ->
                 let
                     exposedVars = concatMap (resolveExposedVar isKernel kernelName importMod) exposed
-                    exposedCtors = concatMap (resolveExposedCtor isKernel kernelName) exposed
-                in Env.addExposed exposedVars exposedCtors envWithQual
+                    exposedCtorsFromKernel = concatMap (resolveExposedCtor isKernel kernelName) exposed
+                    -- Also allow `exposing (Type(..))` to pull in user-module ctors
+                    exposedDepCtors = concatMap (resolveDepCtors depCtors) exposed
+                in Env.addExposed exposedVars (exposedCtorsFromKernel ++ exposedDepCtors) envWithQual
     in
     envWithExposed
+
+
+-- | Build a synthetic Union record for use in CtorHome. We need this to
+-- represent "I know about this constructor from another module" — the real
+-- Can.Union lives in the other module's canonicalised output.
+makeUnionFor :: String -> [Can.Ctor] -> Can.Union
+makeUnionFor typeName ctors =
+    Can.Union [] ctors (length ctors)
+        (if all (\(Can.Ctor _ _ n _) -> n == 0) ctors then Can.Enum else Can.Normal)
+
+
+-- | Build an annotation for a constructor (T1 -> T2 -> … -> TypeName).
+makeCtorAnnot :: ModuleName.Canonical -> String -> String -> [Can.Type] -> Can.Annotation
+makeCtorAnnot home typeName _ctorName argTys =
+    let result = Can.TType home typeName []
+        ty = foldr Can.TLambda result argTys
+    in Can.Forall [] ty
+
+
+-- | Pick ctors matching `exposing (TypeName(..))`.
+resolveDepCtors :: [(String, Env.CtorHome)] -> A.Located Src.Exposed -> [(String, Env.CtorHome)]
+resolveDepCtors allDepCtors (A.At _ exposed) = case exposed of
+    Src.ExposedType typeName Src.Public ->
+        -- Dep ctors are already keyed by ctor name; filter those whose
+        -- home type matches. We tagged them with the type name during
+        -- construction via CtorHome._ch_typeName.
+        [ (cname, ch)
+        | (cname, ch) <- allDepCtors
+        , Env._ch_type ch == typeName
+        ]
+    _ -> []
 
 
 -- | Resolve an exposed value to a VarHome

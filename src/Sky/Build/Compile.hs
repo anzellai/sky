@@ -129,18 +129,42 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
         -- Phase 3: Canonicalise (entry module + merge deps)
         putStrLn "-- Canonicalising"
         let entrySrcMod = snd (last parsed)
-        case Canonicalise.canonicalise entrySrcMod of
+            -- Dependency modules are all parsed modules except the entry.
+            depModules = if length parsed > 1 then init parsed else []
+
+        -- Two-pass canonicalisation so dep modules can reference each
+        -- other's ADT constructors:
+        --   1. Canonicalise each dep in isolation (only its own ADTs visible)
+        --      to build a depInfoMap with every module's union constructors.
+        --   2. Re-canonicalise every dep AND the entry with the full map.
+        firstPassDeps <- Async.forConcurrently depModules $ \(n, srcMod) ->
+            case Canonicalise.canonicalise srcMod of
+                Right cm -> return (Just (n, cm))
+                Left _   -> return Nothing
+        let firstValid = [x | Just x <- firstPassDeps]
+            depInfoMap = Map.fromList
+                [ (modName, Canonicalise.DepInfo
+                    { Canonicalise._dep_name = Can._name depMod
+                    , Canonicalise._dep_unions =
+                        [ (typeName, Can._u_alts union)
+                        | (typeName, union) <- Map.toList (Can._unions depMod)
+                        ]
+                    })
+                | (modName, depMod) <- firstValid
+                ]
+
+        -- Pass 2: re-canonicalise deps with full cross-module info.
+        depCanMods <- Async.forConcurrently depModules $ \(n, srcMod) ->
+            case Canonicalise.canonicaliseWithDeps depInfoMap srcMod of
+                Right cm -> return (Just (n, cm))
+                Left _   -> return Nothing
+        let validDeps = [x | Just x <- depCanMods]
+
+        case Canonicalise.canonicaliseWithDeps depInfoMap entrySrcMod of
           Left err -> return (Left $ "Canonicalise error: " ++ err)
           Right canMod -> do
             putStrLn "   Names resolved"
-            -- Canonicalise dependency modules in parallel — each is independent.
-            let depModules = if length parsed > 1 then init parsed else []
-            depCanMods <- Async.forConcurrently depModules $ \(n, srcMod) ->
-                case Canonicalise.canonicalise srcMod of
-                    Right cm -> return (Just (n, cm))
-                    Left _   -> return Nothing
-            let validDeps = [x | Just x <- depCanMods]
-                depDecls = concatMap (\(modName, depMod) ->
+            let depDecls = concatMap (\(modName, depMod) ->
                     let prefix = map (\c -> if c == '.' then '_' else c) modName
                     in generateDeclsForDep depMod prefix) validDeps
             putStrLn "-- Type Checking"
@@ -352,7 +376,10 @@ locateRuntimeDir = do
 
 -- | Generate Go declarations for a dependency module's functions
 generateDeclsForDep :: Can.Module -> String -> [GoIr.GoDecl]
-generateDeclsForDep canMod modPrefix = go (Can._decls canMod)
+generateDeclsForDep canMod modPrefix =
+    concatMap (generateUnionForDep modPrefix) (Map.toList (Can._unions canMod))
+    ++ concatMap (generateAliasForDep modPrefix) (Map.toList (Can._aliases canMod))
+    ++ go (Can._decls canMod)
   where
     go Can.SaveTheEnvironment = []
     go (Can.Declare def rest) = mkDef def ++ go rest
@@ -371,6 +398,58 @@ generateDeclsForDep canMod modPrefix = go (Can._decls canMod)
                 , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
                 }
            ]
+
+
+-- | Emit a dep module's union type declaration + constructor value/func.
+-- Type becomes `<ModPrefix>_<TypeName>` and each ctor becomes
+-- `<ModPrefix>_<TypeName>_<CtorName>`.
+generateUnionForDep :: String -> (String, Can.Union) -> [GoIr.GoDecl]
+generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
+    let qualType = modPrefix ++ "_" ++ typeName
+    in case opts of
+        Can.Enum ->
+            [ GoIr.GoDeclType qualType (GoIr.GoEnumDef
+                [ qualType ++ "_" ++ cname
+                | Can.Ctor cname _ _ _ <- ctors
+                ])
+            ]
+        _ ->
+            GoIr.GoDeclRaw ("type " ++ qualType ++ " struct { Tag int; Fields []any }")
+            : [ if arity == 0
+                  then GoIr.GoDeclVar (qualType ++ "_" ++ cname) qualType
+                        (Just (GoIr.GoStructLit qualType [("Tag", GoIr.GoIntLit idx)]))
+                  else GoIr.GoDeclFunc GoIr.GoFuncDecl
+                        { GoIr._gf_name = qualType ++ "_" ++ cname
+                        , GoIr._gf_typeParams = []
+                        , GoIr._gf_params = zipWith (\i _ -> GoIr.GoParam ("v" ++ show i) "any")
+                                                [0::Int ..] [1..arity]
+                        , GoIr._gf_returnType = qualType
+                        , GoIr._gf_body = [GoIr.GoReturn (GoIr.GoStructLit qualType
+                            ([("Tag", GoIr.GoIntLit idx)]
+                            ++ [("Fields", GoIr.GoSliceLit "any"
+                                    (map (\i -> GoIr.GoIdent ("v" ++ show i)) [0..arity-1]))]))]
+                        }
+              | Can.Ctor cname idx arity _ <- ctors
+              ]
+
+
+-- | Emit a dep module's type alias. Record aliases become Go named structs
+-- so cross-module records type-check. Non-record aliases become Go type aliases.
+generateAliasForDep :: String -> (String, Can.Alias) -> [GoIr.GoDecl]
+generateAliasForDep modPrefix (aliasName, Can.Alias _vars body) =
+    let qualName = modPrefix ++ "_" ++ aliasName
+    in case body of
+        T.TRecord fields _ ->
+            [ GoIr.GoDeclRaw $ "type " ++ qualName ++ " struct { "
+                ++ intercalate_ "; "
+                    [ capitalise_ fn ++ " any"
+                    | (fn, _) <- Map.toList fields
+                    ]
+                ++ " }"
+            ]
+        _ ->
+            -- non-record alias: emit a Go type alias
+            [ GoIr.GoDeclRaw ("type " ++ qualName ++ " = any") ]
 
 
 -- | Generate Go with merged dependency declarations
@@ -848,15 +927,23 @@ emitPartialCtor func suppliedArgs missing =
 
 
 ctorToGo :: Can.CtorOpts -> ModuleName.Canonical -> String -> String -> Can.Annotation -> GoIr.GoExpr
-ctorToGo opts home typeName ctorName _annot = case ctorName of
+ctorToGo _opts home typeName ctorName _annot = case ctorName of
     "Ok"      -> GoIr.GoIdent "rt.Ok[any, any]"
     "Err"     -> GoIr.GoIdent "rt.Err[any, any]"
     "Just"    -> GoIr.GoIdent "rt.Just[any]"
     "Nothing" -> GoIr.GoCall (GoIr.GoIdent "rt.Nothing[any]") []
     "True"    -> GoIr.GoBoolLit True
     "False"   -> GoIr.GoBoolLit False
-    -- User-defined constructor: TypeName_CtorName
-    _         -> GoIr.GoIdent (typeName ++ "_" ++ ctorName)
+    -- User-defined constructor: prefix with module path for cross-module
+    -- references. `generateDeclsForDep` emits ctors as `<ModPath>_<Type>_<Ctor>`
+    -- so a constructor from State.sky for type Page becomes State_Page_BoardPage.
+    _ ->
+        let modStr = ModuleName.toString home
+        in if null modStr || modStr == "Main"
+            then GoIr.GoIdent (typeName ++ "_" ++ ctorName)
+            else
+                let modPrefix = map (\c -> if c == '.' then '_' else c) modStr
+                in GoIr.GoIdent (modPrefix ++ "_" ++ typeName ++ "_" ++ ctorName)
 
 
 -- ═══════════════════════════════════════════════════════════
