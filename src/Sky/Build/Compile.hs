@@ -14,7 +14,7 @@ import qualified System.Process
 import qualified System.Exit
 import Control.Monad (when)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
-import System.IO (hFlush, stdout)
+import System.IO (hFlush, stdout, readFile')
 import System.IO.Unsafe (unsafePerformIO)
 import System.FilePath (takeDirectory, (</>))
 
@@ -107,7 +107,11 @@ compile config entryPath outDir = do
         hasMain <- doesFileExist existingMain
         if hasHash && hasMain
             then do
-                cached <- readFile hashFile
+                -- Strict read so the handle closes before the later
+                -- writeFile (line 259) tries to re-open the same file.
+                -- Lazy readFile left the handle open, breaking `sky check`
+                -- on CI runners where the next step invoked sky again.
+                cached <- readFile' hashFile
                 return (cached == srcHash)
             else return False
     if cacheHit

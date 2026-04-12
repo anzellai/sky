@@ -14,7 +14,10 @@
         # Pin the toolchain versions Sky is tested against.
         ghc     = pkgs.haskell.compiler.ghc948;
         cabal   = pkgs.cabal-install;
-        goToolchain = pkgs.go_1_23;  # nixpkgs stable lags latest; 1.23+ works
+        # Go 1.26 — matches local dev + CI. nixpkgs 24.11's default `go`
+        # attribute tracks the channel's latest; if it trails, bump to the
+        # unstable branch or override with an FOD.
+        goToolchain = pkgs.go;
 
         # Haskell package set with our pinned GHC.
         hsPkgs = pkgs.haskell.packages.ghc948;
