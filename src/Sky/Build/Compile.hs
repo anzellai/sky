@@ -10,6 +10,9 @@ import qualified Data.Text.IO as TIO
 import Data.IORef
 import qualified System.Directory
 import qualified System.FilePath
+import qualified System.Process
+import qualified System.Exit
+import Control.Monad (when)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
 import System.IO (hFlush, stdout)
 import System.IO.Unsafe (unsafePerformIO)
@@ -233,6 +236,9 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             if not hasOutMod
                 then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
                 else return ()
+            -- Pull in Go deps declared in sky.toml so generated ffi/*_bindings.go
+            -- can resolve imports.
+            seedGoDependencies outDir (Toml._goDeps config)
             -- Write cache hash to enable incremental rebuild skip
             let cacheDir = ".skycache"
             createDirectoryIfMissing True cacheDir
@@ -311,6 +317,35 @@ parseSingle config entryPath outDir = do
 -- | Copy user FFI files from ./ffi/*.go into sky-out/rt/ so they compile into
 -- the same Go package as the runtime. Users call `rt.Register` from init() in
 -- these files to expose Go functions to Sky via Ffi.call "name" args.
+-- | Run `go get <pkg>[@<ver>]` for each Go dependency declared in sky.toml.
+-- Runs after runtime + ffi copy so imports in generated ffi/*_bindings.go
+-- resolve before the final `go build`. Skipped stdlib pkgs (no slash).
+seedGoDependencies :: FilePath -> [(String, String)] -> IO ()
+seedGoDependencies outDir deps = do
+    hasMod <- doesFileExist (outDir </> "go.mod")
+    if not hasMod || null deps
+        then return ()
+        else do
+            let external = filter (\(p, _) -> '/' `elem` p || '.' `elem` p) deps
+            when (not (null external)) $
+                putStrLn $ "   resolving " ++ show (length external) ++ " Go dep(s)"
+            mapM_ (goGet outDir) external
+            _ <- System.Process.readProcessWithExitCode
+                    "sh" ["-c", "cd " ++ outDir ++ " && go mod tidy 2>&1"] ""
+            return ()
+  where
+    goGet dir (pkg, ver) =
+        let target = if ver == "" || ver == "latest"
+                        then pkg
+                        else pkg ++ "@" ++ ver
+            cmd = "cd " ++ dir ++ " && go get " ++ target ++ " 2>&1"
+        in do
+            (ec, out, _) <- System.Process.readProcessWithExitCode "sh" ["-c", cmd] ""
+            case ec of
+                System.Exit.ExitSuccess -> return ()
+                _ -> putStrLn $ "      go get " ++ target ++ " FAILED: " ++ out
+
+
 copyFfiDir :: FilePath -> IO ()
 copyFfiDir outDir = do
     let ffiDir = "ffi"

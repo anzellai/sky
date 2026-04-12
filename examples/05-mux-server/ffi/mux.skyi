@@ -1,0 +1,76 @@
+-- Auto-generated FFI binding catalogue for github.com/gorilla/mux
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   pkg "github.com/gorilla/mux"
+--   http "net/http"
+--   url "net/url"
+
+package mux
+-- [pure] CORSMethodMiddleware : Router -> MiddlewareFunc   -- runtime wrap: Task String
+-- [pure] CurrentRoute : Request -> Route   -- runtime wrap: Task String
+-- [pure] MatcherFuncMatch : MatcherFunc -> Request -> RouteMatch -> Bool   -- runtime wrap: Task String
+-- [pure] MiddlewareFuncMiddleware : MiddlewareFunc -> Handler -> Handler   -- runtime wrap: Task String
+-- [pure] NewRouter : () -> Router   -- runtime wrap: Task String
+-- [pure] RouteSkipClean : Route -> Bool   -- runtime wrap: Task String
+-- [pure] RouteMatch : Route -> Request -> RouteMatch -> Bool   -- runtime wrap: Task String
+-- [fallible] RouteGetError : Route -> String   -- runtime wrap: Task String
+-- [pure] RouteBuildOnly : Route -> Route   -- runtime wrap: Task String
+-- [pure] RouteHandler : Route -> Handler -> Route   -- runtime wrap: Task String
+-- [pure] RouteHandlerFunc : Route -> Request) -> Route   -- runtime wrap: Task String
+-- [pure] RouteGetHandler : Route -> Handler   -- runtime wrap: Task String
+-- [pure] RouteName : Route -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouteGetName : Route -> String   -- runtime wrap: Task String
+-- [pure] RouteHeaders : Route -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouteHeadersRegexp : Route -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouteHost : Route -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouteMatcherFunc : Route -> MatcherFunc -> Route   -- runtime wrap: Task String
+-- [pure] RouteMethods : Route -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RoutePath : Route -> String -> Route   -- runtime wrap: Task String
+-- [pure] RoutePathPrefix : Route -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouteQueries : Route -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouteSchemes : Route -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouteBuildVarsFunc : Route -> BuildVarsFunc -> Route   -- runtime wrap: Task String
+-- [pure] RouteSubrouter : Route -> Router   -- runtime wrap: Task String
+-- [fallible] RouteURL : Route -> []string -> (URL, String)   -- runtime wrap: Task String
+-- [fallible] RouteURLHost : Route -> []string -> (URL, String)   -- runtime wrap: Task String
+-- [fallible] RouteURLPath : Route -> []string -> (URL, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetPathTemplate : Route -> (String, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetPathRegexp : Route -> (String, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetQueriesRegexp : Route -> ([]string, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetQueriesTemplates : Route -> ([]string, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetMethods : Route -> ([]string, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetHostTemplate : Route -> (String, String)   -- runtime wrap: Task String
+-- [fallible] RouteGetVarNames : Route -> ([]string, String)   -- runtime wrap: Task String
+-- [pure] RouterUse : Router -> MiddlewareFunc -> ()   -- runtime wrap: Task String
+-- [pure] RouterMatch : Router -> Request -> RouteMatch -> Bool   -- runtime wrap: Task String
+-- [pure] RouterServeHTTP : Router -> ResponseWriter -> Request -> ()   -- runtime wrap: Task String
+-- [pure] RouterGet : Router -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouterGetRoute : Router -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouterStrictSlash : Router -> Bool -> Router   -- runtime wrap: Task String
+-- [pure] RouterSkipClean : Router -> Bool -> Router   -- runtime wrap: Task String
+-- [pure] RouterUseEncodedPath : Router -> Router   -- runtime wrap: Task String
+-- [pure] RouterNewRoute : Router -> Route   -- runtime wrap: Task String
+-- [pure] RouterName : Router -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouterHandle : Router -> String -> Handler -> Route   -- runtime wrap: Task String
+-- [pure] RouterHandleFunc : Router -> String -> Request) -> Route   -- runtime wrap: Task String
+-- [pure] RouterHeaders : Router -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouterHost : Router -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouterMatcherFunc : Router -> MatcherFunc -> Route   -- runtime wrap: Task String
+-- [pure] RouterMethods : Router -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouterPath : Router -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouterPathPrefix : Router -> String -> Route   -- runtime wrap: Task String
+-- [pure] RouterQueries : Router -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouterSchemes : Router -> []string -> Route   -- runtime wrap: Task String
+-- [pure] RouterBuildVarsFunc : Router -> BuildVarsFunc -> Route   -- runtime wrap: Task String
+-- [fallible] RouterWalk : Router -> WalkFunc -> String   -- runtime wrap: Task String
+-- [pure] SetURLVars : Request -> map[string]string -> Request   -- runtime wrap: Task String
+-- [pure] Vars : Request -> map[string]string   -- runtime wrap: Task String

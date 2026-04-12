@@ -1814,11 +1814,25 @@ func List_isEmpty(list any) any {
 	return ok && len(items) == 0 || list == nil
 }
 
-func Io_writeString(s any) any {
-	return func() any {
-		fmt.Print(fmt.Sprintf("%v", s))
+// Io_writeString — accepts (text) to stdout OR (writer, text) to the
+// supplied io.Writer. Matches both Sky.Core.Io.writeString signatures
+// historically used.
+func Io_writeString(args ...any) any {
+	switch len(args) {
+	case 1:
+		return func() any {
+			fmt.Print(fmt.Sprintf("%v", args[0]))
+			return Ok[any, any](struct{}{})
+		}
+	case 2:
+		if w, ok := args[0].(io.Writer); ok {
+			_, _ = w.Write([]byte(fmt.Sprintf("%v", args[1])))
+			return Ok[any, any](struct{}{})
+		}
+		fmt.Print(fmt.Sprintf("%v", args[1]))
 		return Ok[any, any](struct{}{})
 	}
+	return Ok[any, any](struct{}{})
 }
 
 func List_sort(list any) any {

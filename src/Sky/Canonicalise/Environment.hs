@@ -294,6 +294,7 @@ staticKernelModules = Map.fromList
     , ("Std.Db",           "Db")
     , ("Std.Auth",         "Auth")
     , ("Sky.Core.Io",      "Io")
+    , ("Io",               "Io")
     , ("Sky.Core.File",    "File")
     , ("Sky.Core.Process", "Process")
     , ("Sky.Core.Time",    "Time")

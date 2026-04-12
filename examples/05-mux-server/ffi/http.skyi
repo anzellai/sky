@@ -1,0 +1,159 @@
+-- Auto-generated FFI binding catalogue for net/http
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   bufio "bufio"
+--   context "context"
+--   io "io"
+--   fs "io/fs"
+--   multipart "mime/multipart"
+--   net "net"
+--   pkg "net/http"
+--   url "net/url"
+--   time "time"
+
+package http
+-- [pure] AllowQuerySemicolons : Handler -> Handler   -- runtime wrap: Task String
+-- [pure] CanonicalHeaderKey : String -> String   -- runtime wrap: Task String
+-- [fallible] ClientGet : Client -> String -> (Response, String)   -- runtime wrap: Task String
+-- [fallible] ClientDo : Client -> Request -> (Response, String)   -- runtime wrap: Task String
+-- [fallible] ClientPost : Client -> String -> String -> Reader -> (Response, String)   -- runtime wrap: Task String
+-- [fallible] ClientPostForm : Client -> String -> Values -> (Response, String)   -- runtime wrap: Task String
+-- [fallible] ClientHead : Client -> String -> (Response, String)   -- runtime wrap: Task String
+-- [pure] ClientCloseIdleConnections : Client -> ()   -- runtime wrap: Task String
+-- [fallible] ClientConnClose : ClientConn -> String   -- runtime wrap: Task String
+-- [fallible] ClientConnErr : ClientConn -> String   -- runtime wrap: Task String
+-- [fallible] ClientConnRoundTrip : ClientConn -> Request -> (Response, String)   -- runtime wrap: Task String
+-- [pure] ClientConnAvailable : ClientConn -> Int   -- runtime wrap: Task String
+-- [pure] ClientConnInFlight : ClientConn -> Int   -- runtime wrap: Task String
+-- [fallible] ClientConnReserve : ClientConn -> String   -- runtime wrap: Task String
+-- [pure] ClientConnRelease : ClientConn -> ()   -- runtime wrap: Task String
+-- [pure] ClientConnSetStateHook : ClientConn -> ClientConn) -> ()   -- runtime wrap: Task String
+-- [pure] ConnStateString : ConnState -> String   -- runtime wrap: Task String
+-- [pure] CookieString : Cookie -> String   -- runtime wrap: Task String
+-- [fallible] CookieValid : Cookie -> String   -- runtime wrap: Task String
+-- [fallible] CrossOriginProtectionAddTrustedOrigin : CrossOriginProtection -> String -> String   -- runtime wrap: Task String
+-- [pure] CrossOriginProtectionAddInsecureBypassPattern : CrossOriginProtection -> String -> ()   -- runtime wrap: Task String
+-- [pure] CrossOriginProtectionSetDenyHandler : CrossOriginProtection -> Handler -> ()   -- runtime wrap: Task String
+-- [fallible] CrossOriginProtectionCheck : CrossOriginProtection -> Request -> String   -- runtime wrap: Task String
+-- [pure] CrossOriginProtectionHandler : CrossOriginProtection -> Handler -> Handler   -- runtime wrap: Task String
+-- [pure] DetectContentType : []byte -> String   -- runtime wrap: Task String
+-- [fallible] DirOpen : Dir -> String -> (File, String)   -- runtime wrap: Task String
+-- [pure] Error : ResponseWriter -> String -> Int -> ()   -- runtime wrap: Task String
+-- [pure] FS : FS -> FileSystem   -- runtime wrap: Task String
+-- [pure] FileServer : FileSystem -> Handler   -- runtime wrap: Task String
+-- [pure] FileServerFS : FS -> Handler   -- runtime wrap: Task String
+-- [fallible] Get : String -> (Response, String)   -- runtime wrap: Task String
+-- [pure] Handle : String -> Handler -> ()   -- runtime wrap: Task String
+-- [pure] HandleFunc : String -> Request) -> ()   -- runtime wrap: Task String
+-- [pure] HandlerFuncServeHTTP : HandlerFunc -> ResponseWriter -> Request -> ()   -- runtime wrap: Task String
+-- [fallible] Head : String -> (Response, String)   -- runtime wrap: Task String
+-- [pure] HeaderAdd : Header -> String -> String -> ()   -- runtime wrap: Task String
+-- [pure] HeaderSet : Header -> String -> String -> ()   -- runtime wrap: Task String
+-- [pure] HeaderGet : Header -> String -> String   -- runtime wrap: Task String
+-- [pure] HeaderValues : Header -> String -> []string   -- runtime wrap: Task String
+-- [pure] HeaderDel : Header -> String -> ()   -- runtime wrap: Task String
+-- [fallible] HeaderWrite : Header -> Writer -> String   -- runtime wrap: Task String
+-- [pure] HeaderClone : Header -> Header   -- runtime wrap: Task String
+-- [fallible] HeaderWriteSubset : Header -> Writer -> map[string]bool -> String   -- runtime wrap: Task String
+-- [fallible] ListenAndServe : String -> Handler -> String   -- runtime wrap: Task String
+-- [fallible] ListenAndServeTLS : String -> String -> String -> Handler -> String   -- runtime wrap: Task String
+-- [pure] MaxBytesErrorError : MaxBytesError -> String   -- runtime wrap: Task String
+-- [pure] MaxBytesHandler : Handler -> Int -> Handler   -- runtime wrap: Task String
+-- [pure] MaxBytesReader : ResponseWriter -> ReadCloser -> Int -> ReadCloser   -- runtime wrap: Task String
+-- [pure] NewCrossOriginProtection : () -> CrossOriginProtection   -- runtime wrap: Task String
+-- [pure] NewFileTransport : FileSystem -> RoundTripper   -- runtime wrap: Task String
+-- [pure] NewFileTransportFS : FS -> RoundTripper   -- runtime wrap: Task String
+-- [fallible] NewRequest : String -> String -> Reader -> (Request, String)   -- runtime wrap: Task String
+-- [fallible] NewRequestWithContext : Context -> String -> String -> Reader -> (Request, String)   -- runtime wrap: Task String
+-- [pure] NewResponseController : ResponseWriter -> ResponseController   -- runtime wrap: Task String
+-- [pure] NewServeMux : () -> ServeMux   -- runtime wrap: Task String
+-- [pure] NotFound : ResponseWriter -> Request -> ()   -- runtime wrap: Task String
+-- [pure] NotFoundHandler : () -> Handler   -- runtime wrap: Task String
+-- [fallible] ParseCookie : String -> (Cookie, String)   -- runtime wrap: Task String
+-- [pure] ParseHTTPVersion : String -> (Int, Int, Bool)   -- runtime wrap: Task String
+-- [fallible] ParseSetCookie : String -> (Cookie, String)   -- runtime wrap: Task String
+-- [fallible] ParseTime : String -> (Time, String)   -- runtime wrap: Task String
+-- [fallible] Post : String -> String -> Reader -> (Response, String)   -- runtime wrap: Task String
+-- [fallible] PostForm : String -> Values -> (Response, String)   -- runtime wrap: Task String
+-- [pure] ProtocolErrorError : ProtocolError -> String   -- runtime wrap: Task String
+-- [pure] ProtocolErrorIs : ProtocolError -> String -> Bool   -- runtime wrap: Task String
+-- [pure] ProtocolsHTTP1 : Protocols -> Bool   -- runtime wrap: Task String
+-- [pure] ProtocolsSetHTTP1 : Protocols -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] ProtocolsHTTP2 : Protocols -> Bool   -- runtime wrap: Task String
+-- [pure] ProtocolsSetHTTP2 : Protocols -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] ProtocolsUnencryptedHTTP2 : Protocols -> Bool   -- runtime wrap: Task String
+-- [pure] ProtocolsSetUnencryptedHTTP2 : Protocols -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] ProtocolsString : Protocols -> String   -- runtime wrap: Task String
+-- [fallible] ProxyFromEnvironment : Request -> (URL, String)   -- runtime wrap: Task String
+-- [effectful] ProxyURL : URL -> URL, error)   -- runtime wrap: Task String
+-- [fallible] ReadRequest : Reader -> (Request, String)   -- runtime wrap: Task String
+-- [fallible] ReadResponse : Reader -> Request -> (Response, String)   -- runtime wrap: Task String
+-- [pure] Redirect : ResponseWriter -> Request -> String -> Int -> ()   -- runtime wrap: Task String
+-- [pure] RedirectHandler : String -> Int -> Handler   -- runtime wrap: Task String
+-- [pure] RequestContext : Request -> Context   -- runtime wrap: Task String
+-- [pure] RequestWithContext : Request -> Context -> Request   -- runtime wrap: Task String
+-- [pure] RequestClone : Request -> Context -> Request   -- runtime wrap: Task String
+-- [pure] RequestProtoAtLeast : Request -> Int -> Int -> Bool   -- runtime wrap: Task String
+-- [pure] RequestUserAgent : Request -> String   -- runtime wrap: Task String
+-- [pure] RequestCookies : Request -> Cookie   -- runtime wrap: Task String
+-- [pure] RequestCookiesNamed : Request -> String -> Cookie   -- runtime wrap: Task String
+-- [fallible] RequestCookie : Request -> String -> (Cookie, String)   -- runtime wrap: Task String
+-- [pure] RequestAddCookie : Request -> Cookie -> ()   -- runtime wrap: Task String
+-- [pure] RequestReferer : Request -> String   -- runtime wrap: Task String
+-- [fallible] RequestMultipartReader : Request -> (Reader, String)   -- runtime wrap: Task String
+-- [fallible] RequestWrite : Request -> Writer -> String   -- runtime wrap: Task String
+-- [fallible] RequestWriteProxy : Request -> Writer -> String   -- runtime wrap: Task String
+-- [pure] RequestBasicAuth : Request -> (String, String, Bool)   -- runtime wrap: Task String
+-- [pure] RequestSetBasicAuth : Request -> String -> String -> ()   -- runtime wrap: Task String
+-- [fallible] RequestParseForm : Request -> String   -- runtime wrap: Task String
+-- [fallible] RequestParseMultipartForm : Request -> Int -> String   -- runtime wrap: Task String
+-- [pure] RequestFormValue : Request -> String -> String   -- runtime wrap: Task String
+-- [pure] RequestPostFormValue : Request -> String -> String   -- runtime wrap: Task String
+-- [fallible] RequestFormFile : Request -> String -> (File, FileHeader, String)   -- runtime wrap: Task String
+-- [pure] RequestPathValue : Request -> String -> String   -- runtime wrap: Task String
+-- [pure] RequestSetPathValue : Request -> String -> String -> ()   -- runtime wrap: Task String
+-- [pure] ResponseCookies : Response -> Cookie   -- runtime wrap: Task String
+-- [fallible] ResponseLocation : Response -> (URL, String)   -- runtime wrap: Task String
+-- [pure] ResponseProtoAtLeast : Response -> Int -> Int -> Bool   -- runtime wrap: Task String
+-- [fallible] ResponseWrite : Response -> Writer -> String   -- runtime wrap: Task String
+-- [fallible] ResponseControllerFlush : ResponseController -> String   -- runtime wrap: Task String
+-- [fallible] ResponseControllerHijack : ResponseController -> (Conn, ReadWriter, String)   -- runtime wrap: Task String
+-- [fallible] ResponseControllerSetReadDeadline : ResponseController -> Time -> String   -- runtime wrap: Task String
+-- [fallible] ResponseControllerSetWriteDeadline : ResponseController -> Time -> String   -- runtime wrap: Task String
+-- [fallible] ResponseControllerEnableFullDuplex : ResponseController -> String   -- runtime wrap: Task String
+-- [fallible] Serve : Listener -> Handler -> String   -- runtime wrap: Task String
+-- [pure] ServeContent : ResponseWriter -> Request -> String -> Time -> ReadSeeker -> ()   -- runtime wrap: Task String
+-- [pure] ServeFile : ResponseWriter -> Request -> String -> ()   -- runtime wrap: Task String
+-- [pure] ServeFileFS : ResponseWriter -> Request -> FS -> String -> ()   -- runtime wrap: Task String
+-- [pure] ServeMuxHandler : ServeMux -> Request -> (Handler, String)   -- runtime wrap: Task String
+-- [pure] ServeMuxServeHTTP : ServeMux -> ResponseWriter -> Request -> ()   -- runtime wrap: Task String
+-- [pure] ServeMuxHandle : ServeMux -> String -> Handler -> ()   -- runtime wrap: Task String
+-- [pure] ServeMuxHandleFunc : ServeMux -> String -> Request) -> ()   -- runtime wrap: Task String
+-- [fallible] ServeTLS : Listener -> Handler -> String -> String -> String   -- runtime wrap: Task String
+-- [fallible] ServerClose : Server -> String   -- runtime wrap: Task String
+-- [fallible] ServerShutdown : Server -> Context -> String   -- runtime wrap: Task String
+-- [pure] ServerRegisterOnShutdown : Server -> func() -> ()   -- runtime wrap: Task String
+-- [fallible] ServerListenAndServe : Server -> String   -- runtime wrap: Task String
+-- [fallible] ServerServe : Server -> Listener -> String   -- runtime wrap: Task String
+-- [fallible] ServerServeTLS : Server -> Listener -> String -> String -> String   -- runtime wrap: Task String
+-- [pure] ServerSetKeepAlivesEnabled : Server -> Bool -> ()   -- runtime wrap: Task String
+-- [fallible] ServerListenAndServeTLS : Server -> String -> String -> String   -- runtime wrap: Task String
+-- [pure] SetCookie : ResponseWriter -> Cookie -> ()   -- runtime wrap: Task String
+-- [pure] StatusText : Int -> String   -- runtime wrap: Task String
+-- [pure] StripPrefix : String -> Handler -> Handler   -- runtime wrap: Task String
+-- [pure] TimeoutHandler : Handler -> Duration -> String -> Handler   -- runtime wrap: Task String
+-- [fallible] TransportNewClientConn : Transport -> Context -> String -> String -> (ClientConn, String)   -- runtime wrap: Task String
+-- [fallible] TransportRoundTrip : Transport -> Request -> (Response, String)   -- runtime wrap: Task String
+-- [pure] TransportClone : Transport -> Transport   -- runtime wrap: Task String
+-- [pure] TransportRegisterProtocol : Transport -> String -> RoundTripper -> ()   -- runtime wrap: Task String
+-- [pure] TransportCloseIdleConnections : Transport -> ()   -- runtime wrap: Task String
+-- [pure] TransportCancelRequest : Transport -> Request -> ()   -- runtime wrap: Task String

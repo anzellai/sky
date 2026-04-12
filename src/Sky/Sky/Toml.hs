@@ -39,35 +39,48 @@ defaultConfig = SkyConfig
     }
 
 
--- | Parse sky.toml content
+-- | Parse sky.toml content. Section-aware so [go.dependencies] entries
+-- are routed into _goDeps instead of being lost.
 parseSkyToml :: String -> SkyConfig
 parseSkyToml content =
-    foldl applyLine defaultConfig (lines content)
+    let (_, cfg) = foldl applyLine ("", defaultConfig) (lines content)
+    in cfg
 
 
-applyLine :: SkyConfig -> String -> SkyConfig
-applyLine config line =
+-- | Track the current TOML section alongside the config being built.
+applyLine :: (String, SkyConfig) -> String -> (String, SkyConfig)
+applyLine (section, config) line =
     let trimmed = dropWhile isSpace line
-    in case break (== '=') trimmed of
-        (key, '=' : value) ->
-            let k = trim key
-                v = trim (stripQuotes (trim value))
-            in applyKeyValue config k v
-        _ -> config
+    in case trimmed of
+        []       -> (section, config)
+        ('#':_)  -> (section, config)
+        ('[':_)  ->
+            let raw = takeWhile (/= ']') (drop 1 trimmed)
+                name = stripQuotes (trim raw)
+            in (name, config)
+        _ -> case break (== '=') trimmed of
+            (key, '=' : value) ->
+                let k = trim key
+                    v = trim (stripQuotes (trim value))
+                in (section, applyKeyValue section config k v)
+            _ -> (section, config)
 
 
-applyKeyValue :: SkyConfig -> String -> String -> SkyConfig
-applyKeyValue config key value = case key of
-    "name"    -> config { _name = value }
-    "version" -> config { _version = value }
-    "entry"   -> config { _entry = value }
-    "root"    -> config { _sourceRoot = value }
-    "bin"     -> config { _binName = value }
-    "port"    -> config { _livePort = read value }
-    "store"   -> config { _liveStore = value }
-    "driver"  -> config { _dbDriver = value }
-    "path"    -> config { _dbPath = value }
-    _         -> config
+applyKeyValue :: String -> SkyConfig -> String -> String -> SkyConfig
+applyKeyValue section config key value = case section of
+    "go.dependencies" ->
+        config { _goDeps = _goDeps config ++ [(stripQuotes key, value)] }
+    _ -> case key of
+        "name"    -> config { _name = value }
+        "version" -> config { _version = value }
+        "entry"   -> config { _entry = value }
+        "root"    -> config { _sourceRoot = value }
+        "bin"     -> config { _binName = value }
+        "port"    -> config { _livePort = read value }
+        "store"   -> config { _liveStore = value }
+        "driver"  -> config { _dbDriver = value }
+        "path"    -> config { _dbPath = value }
+        _         -> config
 
 
 -- Helpers
