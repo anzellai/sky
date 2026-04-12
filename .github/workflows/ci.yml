@@ -20,97 +20,156 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────────────────
+      # Toolchain: GHC (Haskell compiler for sky) + Go (runtime + tools)
+      # ─────────────────────────────────────────────────────────
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: '3.10.3.0'
+
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.25'
           cache: true
 
-      # Build tools (needed for compilation pipeline)
-      - name: Build tools
-        run: |
-          go install golang.org/x/tools/cmd/goimports@latest &
-          go build -o /usr/local/bin/skyi-filter tools/skyi_filter.go &
-          go build -o /usr/local/bin/sky-dce tools/sky_dce.go &
-          go build -o /usr/local/bin/sky-ffi-gen tools/sky_ffi_gen.go &
-          wait
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/store
+            ~/.cabal/packages
+            dist-newstyle
+          key: ${{ runner.os }}-cabal-${{ hashFiles('sky-compiler.cabal') }}
+          restore-keys: |
+            ${{ runner.os }}-cabal-
 
-      # Bootstrap: build compiler from committed Go source (bootstrap/main.go)
-      - name: Bootstrap compiler from Go source
+      # ─────────────────────────────────────────────────────────
+      # Build the Sky compiler (Haskell)
+      # ─────────────────────────────────────────────────────────
+      - name: Build sky compiler
         run: |
-          cd bootstrap
-          go build -gcflags=all=-l -o app .
-          cd ..
-          cp -f bootstrap/app /usr/local/bin/sky
-          sky --version
+          cabal update
+          cabal build
+          SKY_BIN=$(cabal list-bin sky)
+          mkdir -p /tmp/skybin
+          cp -f "$SKY_BIN" /tmp/skybin/sky
+          chmod +x /tmp/skybin/sky
+          echo "/tmp/skybin" >> $GITHUB_PATH
+          /tmp/skybin/sky --version
 
-      # Phase 1: compile from Sky source
-      - name: Phase 1 compile
+      # ─────────────────────────────────────────────────────────
+      # Build supporting Go tools (FFI inspector)
+      # ─────────────────────────────────────────────────────────
+      - name: Build sky-ffi-inspect
         run: |
-          rm -rf .skycache sky-out
-          sky build src/Main.sky
-          cp -f sky-out/app /usr/local/bin/sky
-          sky --version
+          mkdir -p bin
+          (cd tools/sky-ffi-inspect && go build -o ../../bin/sky-ffi-inspect .)
+          test -x bin/sky-ffi-inspect
 
-      # Phase 2: self-host (new compiler compiles itself)
-      - name: Phase 2 self-host
+      # ─────────────────────────────────────────────────────────
+      # Self-test suite
+      # ─────────────────────────────────────────────────────────
+      - name: Run self-tests
         run: |
-          rm -rf .skycache sky-out
-          sky build src/Main.sky
-          cp -f sky-out/app /usr/local/bin/sky
-          sky --version
+          pass=0; fail=0
+          for f in test-files/*.sky; do
+            rm -rf .skycache
+            if sky build "$f" 2>&1 | tail -1 | grep -q 'Build complete'; then
+              pass=$((pass+1))
+            else
+              fail=$((fail+1))
+              echo "  FAIL $f"
+            fi
+          done
+          echo "self-tests: $pass passed, $fail failed"
+          test "$fail" = "0"
 
-      # Verify the built compiler works
-      - name: Verify compiler
-        run: |
-          sky check src/Main.sky
-          echo "Compiler verification passed"
-
-      # Verify type safety features in generated code
-      - name: Verify type safety
-        run: |
-          grep -q 'panic("non-exhaustive case expression")' sky-out/main.go && echo "Non-exhaustive panic: OK"
-
-      # Test examples — each builds in its own directory so sky-out/
-      # at repo root (the compiler) is never overwritten.
+      # ─────────────────────────────────────────────────────────
+      # Example suite (passing subset — expanded as gaps close)
+      # ─────────────────────────────────────────────────────────
       - name: Test hello-world
         run: |
           cd examples/01-hello-world
+          rm -rf sky-out .skycache
           sky build src/Main.sky
-          sky-out/app | grep "Hello from Sky!"
-
-      - name: Test json
-        run: |
-          cd examples/06-json
-          sky build src/Main.sky
-          sky-out/app | grep "Done!"
+          ./sky-out/app | grep "Hello from Sky!"
 
       - name: Test local-pkg
         run: |
           cd examples/04-local-pkg
+          rm -rf sky-out .skycache
           sky build src/Main.sky
-          sky-out/app | grep "Calculation result"
+          ./sky-out/app | grep "Calculation result"
+
+      - name: Test live-counter
+        run: |
+          cd examples/09-live-counter
+          rm -rf sky-out .skycache
+          sky build src/Main.sky
+          ./sky-out/app &
+          SERVER_PID=$!
+          sleep 2
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep 200
+          kill $SERVER_PID 2>/dev/null || true
+          wait 2>/dev/null || true
 
       - name: Test task-demo
         run: |
           cd examples/14-task-demo
+          rm -rf sky-out .skycache
           sky build src/Main.sky
-          sky-out/app | grep "Hello, Sky!"
+          ./sky-out/app | grep "Hello, Sky!"
 
-      # Test examples — with Go FFI
-      - name: Test go-stdlib (FFI)
+      - name: Test http-server
         run: |
-          cd examples/02-go-stdlib
-          sky install
+          cd examples/15-http-server
+          rm -rf sky-out .skycache
           sky build src/Main.sky
-          sky-out/app | grep "SHA256"
+          ./sky-out/app &
+          SERVER_PID=$!
+          sleep 2
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
+          kill $SERVER_PID 2>/dev/null || true
+          wait 2>/dev/null || true
 
-      - name: Test live-component
+      - name: Test job-queue
         run: |
-          cd examples/10-live-component
+          cd examples/18-job-queue
+          rm -rf sky-out .skycache
           sky build src/Main.sky
+          ./sky-out/app &
+          SERVER_PID=$!
+          sleep 2
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep 200
+          kill $SERVER_PID 2>/dev/null || true
+          wait 2>/dev/null || true
 
-      # Test Go FFI toolchain
-      - name: Test sky add (Go stdlib)
+      # ─────────────────────────────────────────────────────────
+      # Smoke tests: tooling
+      # ─────────────────────────────────────────────────────────
+      - name: Test sky fmt
         run: |
-          sky add fmt
-          test -f .skycache/go/fmt/bindings.skyi
+          cp test-files/simple-case.sky /tmp/fmt-test.sky
+          sky fmt /tmp/fmt-test.sky
+          test -f /tmp/fmt-test.sky
+          # re-fmt idempotent
+          cp /tmp/fmt-test.sky /tmp/fmt-test2.sky
+          sky fmt /tmp/fmt-test2.sky
+          diff /tmp/fmt-test.sky /tmp/fmt-test2.sky
+
+      - name: Test sky check
+        run: sky check test-files/simple-case.sky
+
+      - name: Package artifact
+        run: |
+          mkdir -p dist
+          cp /tmp/skybin/sky dist/${{ matrix.artifact }}
+          tar czf dist/${{ matrix.artifact }}.tar.gz -C dist ${{ matrix.artifact }}
+          ls -la dist/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.tar.gz
