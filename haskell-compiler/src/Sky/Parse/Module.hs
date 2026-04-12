@@ -3,7 +3,6 @@
 module Sky.Parse.Module where
 
 import qualified Data.Text as T
-import Debug.Trace (trace)
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine)
 import Sky.Parse.Variable (lower, upper)

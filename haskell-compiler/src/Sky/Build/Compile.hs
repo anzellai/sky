@@ -6,6 +6,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, copyFile)
+import System.IO (hFlush, stdout)
 import System.FilePath (takeDirectory, (</>))
 
 import qualified Sky.AST.Source as Src
@@ -113,12 +114,13 @@ generateGo canMod srcMod config solvedTypes =
     let
         imports = collectGoImports canMod srcMod
         unionDecls = generateUnionTypes canMod
+        aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
         mainDecl = generateMainFunc canMod srcMod solvedTypes
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
-            , GoIr._pkg_decls = unionDecls ++ decls ++ mainDecl
+            , GoIr._pkg_decls = unionDecls ++ aliasDecls ++ decls ++ mainDecl
             }
     in GoBuilder.renderPackage pkg
 
@@ -167,6 +169,54 @@ generateUnionTypes canMod = concatMap generateUnion (Map.toList (Can._unions can
             , GoIr._gf_body = [GoIr.GoReturn (GoIr.GoStructLit typeName
                 ([("Tag", GoIr.GoIntLit idx)] ++ [("Fields", GoIr.GoSliceLit "any" (map (\i -> GoIr.GoIdent ("v" ++ show i)) [0..arity-1]))]))]
             }
+
+
+-- | Generate Go type declarations for record type aliases.
+-- Record aliases become Go structs; records with function fields become Go interfaces.
+generateAliasTypes :: Can.Module -> [GoIr.GoDecl]
+generateAliasTypes canMod = concatMap generateAlias (Map.toList (Can._aliases canMod))
+  where
+    generateAlias (name, Can.Alias vars body) = case body of
+        T.TRecord fields _ ->
+            let fieldList = Map.toList fields
+                -- Check if any field is a function type → interface
+                hasMethods = any (\(_, T.FieldType _ ty) -> isFuncType ty) fieldList
+            in if hasMethods
+                then generateInterface name fieldList
+                else generateStruct name fieldList
+        _ ->
+            -- Non-record alias: type alias in Go
+            [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGo body ]
+
+    generateStruct name fields =
+        let goFields = map (\(fname, T.FieldType _ ftype) ->
+                (capitalise fname, solvedTypeToGo ftype)) fields
+        in [ GoIr.GoDeclType name (GoIr.GoStructDef goFields) ]
+
+    generateInterface name fields =
+        let goMethods = map (\(fname, T.FieldType _ ftype) ->
+                case ftype of
+                    T.TLambda from to ->
+                        let (params, ret) = collectFuncParams ftype
+                            goParams = zipWith (\i p -> GoIr.GoParam ("p" ++ show i) (solvedTypeToGo p)) [0::Int ..] params
+                        in (capitalise fname, goParams, solvedTypeToGo ret)
+                    _ ->
+                        -- Getter method
+                        (capitalise fname, [], solvedTypeToGo ftype)
+                ) fields
+        in [ GoIr.GoDeclInterface name goMethods ]
+
+    collectFuncParams (T.TLambda from to) =
+        let (rest, ret) = collectFuncParams to
+        in (from : rest, ret)
+    collectFuncParams ty = ([], ty)
+
+    isFuncType (T.TLambda _ _) = True
+    isFuncType _ = False
+
+    capitalise [] = []
+    capitalise (c:cs) = toUpper c : cs
+    toUpper c = if c >= 'a' && c <= 'z' then toEnum (fromEnum c - 32) else c
 
 
 -- | Generate Go declarations from canonical decls
@@ -319,25 +369,26 @@ exprToGo (A.At _ expr) = case expr of
             [GoIr.GoReturn (GoIr.GoRaw ("__r.(map[string]any)[\"" ++ field ++ "\"]"))]
 
     Can.Access target (A.At _ field) ->
-        -- Record field access: use runtime helper that handles both map and any types
-        GoIr.GoCall (GoIr.GoQualified "rt" "RecordGet") [exprToGo target, GoIr.GoStringLit field]
+        -- Record field access: expr.Field (Go struct field access)
+        GoIr.GoSelector (exprToGo target) (capitalise_ field)
 
     Can.Update _name baseExpr fields ->
-        -- Record update: copy base record, override fields
-        let baseGo = exprToGo baseExpr
+        -- Record update: create new struct with updated fields
+        -- For now, generate a raw Go block that copies and overrides
+        let baseGo = GoBuilder.renderExpr (exprToGo baseExpr)
             fieldUpdates = Map.toList fields
-            updateCalls = map (\(name, Can.FieldUpdate _ expr) ->
-                GoIr.GoRaw ("\"" ++ name ++ "\": " ++ GoBuilder.renderExpr (exprToGo expr)))
+            updates = map (\(fname, Can.FieldUpdate _ fexpr) ->
+                "r." ++ capitalise_ fname ++ " = " ++ GoBuilder.renderExpr (exprToGo fexpr))
                 fieldUpdates
-        in GoIr.GoCall (GoIr.GoQualified "rt" "RecordUpdate")
-            [baseGo, GoIr.GoRaw ("map[string]any{" ++ intercalate_ ", " (map (\(n, Can.FieldUpdate _ e) -> "\"" ++ n ++ "\": " ++ GoBuilder.renderExpr (exprToGo e)) fieldUpdates) ++ "}")]
+        in GoIr.GoRaw $ "func() any { r := " ++ baseGo ++ "; " ++
+            intercalate_ "; " updates ++ "; return r }()"
 
     Can.Record fields ->
-        -- Record literal: { name = "Alice", age = 30 }
+        -- Record literal: { name = "Alice", age = 30 } → Go struct literal
         let entries = Map.toList fields
-            goEntries = map (\(name, expr) ->
-                (GoIr.GoStringLit name, exprToGo expr)) entries
-        in GoIr.GoMapLit "string" "any" goEntries
+            goFields = map (\(fname, fexpr) ->
+                (capitalise_ fname, exprToGo fexpr)) entries
+        in GoIr.GoStructLit "" goFields  -- empty struct name = anonymous
 
     Can.Tuple a b mC ->
         case mC of
@@ -1232,6 +1283,12 @@ runtimeGoSource = unlines
     , "\treturn t()"
     , "}"
     ]
+
+
+-- | Capitalise a string (for Go export)
+capitalise_ :: String -> String
+capitalise_ [] = []
+capitalise_ (c:cs) = (if c >= 'a' && c <= 'z' then toEnum (fromEnum c - 32) else c) : cs
 
 
 -- | String intercalation helper

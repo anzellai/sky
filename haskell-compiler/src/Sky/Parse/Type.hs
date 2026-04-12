@@ -4,7 +4,7 @@ module Sky.Parse.Type where
 
 import qualified Data.Text as T
 import Sky.Parse.Primitives
-import Sky.Parse.Space (spaces)
+import Sky.Parse.Space (spaces, freshLine, skipWhitespace)
 import Sky.Parse.Variable (lower, upper)
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
@@ -90,7 +90,7 @@ typeAtom mkError =
 
         , -- Record type: { field : Type, ... }
           do char mkError '{'
-             spaces
+             freshLine mkError  -- field may be on next line
              mc <- peek
              case mc of
                  Just '}' -> do
@@ -98,18 +98,13 @@ typeAtom mkError =
                      return (Src.TRecord [] Nothing)
                  _ -> do
                      fields <- typeRecordFields mkError
-                     spaces
+                     freshLine mkError
                      char mkError '}'
                      return (Src.TRecord fields Nothing)
 
         , -- Type constructor: Maybe, List, MyType
           do name <- upper mkError
              return (Src.TType "" [name] [])
-
-        , -- Qualified type: Module.Type
-          do -- Peek for Module.Name pattern
-             -- For now, parse as upper and handle qualification in canonicalisation
-             return =<< return (error "qualified types handled in canonicalisation")
 
         , -- Type variable: a, b, comparable
           do name <- lower mkError
@@ -150,15 +145,19 @@ typeRecordField mkError = do
     return (name, t)
 
 
+-- | Parse more record fields. Uses peek to check for , safely.
 typeRecordFieldsRest :: (Row -> Col -> x) -> Parser x [(A.Located String, Src.TypeAnnotation)]
-typeRecordFieldsRest mkError =
-    oneOfWithFallback
-        [ do
-            spaces
-            char mkError ','
-            spaces
-            field <- typeRecordField mkError
-            rest <- typeRecordFieldsRest mkError
-            return (field : rest)
-        ]
-        []
+typeRecordFieldsRest mkError = Parser $ \s _ eok _ _ ->
+    let s' = skipWhitespace s
+    in case T.uncons (_src s') of
+        Just (',', _) ->
+            let (Parser p) = do
+                    freshLine mkError
+                    char mkError ','
+                    freshLine mkError
+                    field <- typeRecordField mkError
+                    rest <- typeRecordFieldsRest mkError
+                    return (field : rest)
+            in p s (\a s2 -> eok a s2) eok (\r c m -> eok [] s) (\r c m -> eok [] s)
+        _ ->
+            eok [] s

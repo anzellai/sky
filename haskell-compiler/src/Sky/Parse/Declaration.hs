@@ -17,19 +17,16 @@ import qualified Sky.Reporting.Annotation as A
 declaration :: (Row -> Col -> x) -> Parser x (DeclType, A.Located DeclPayload)
 declaration mkError =
     oneOf mkError
-        [ -- type declaration
+        [ -- type declaration (alias or union)
           do keyword mkError (T.pack "type")
              spaces
-             mc <- peek
-             case mc of
-                 Just 'a' ->
-                     oneOfWithFallback
-                         [ do keyword mkError (T.pack "alias")
-                              spaces
-                              parseTypeAlias mkError
-                         ]
-                         =<< parseUnionType mkError
-                 _ -> parseUnionType mkError
+             -- Peek for "alias" keyword without consuming
+             oneOf mkError
+                 [ do keyword mkError (T.pack "alias")
+                      spaces
+                      parseTypeAlias mkError
+                 , parseUnionType mkError
+                 ]
 
         , -- foreign import
           do keyword mkError (T.pack "foreign")
@@ -113,7 +110,7 @@ parseTypeAlias mkError = do
     vars <- typeVars mkError
     spaces
     char mkError '='
-    spaces
+    freshLine mkError  -- type body may be on next line
     body <- addLocation (typeAnnotation mkError)
     return (DeclAlias, A.At (A.toRegion name) (AliasPayload (A.toValue name) vars body))
 
@@ -155,18 +152,24 @@ unionConstructors mkError = do
         _ -> return []
 
 
+-- | Parse more union constructors. Uses peek to check for | safely.
 moreUnionConstructors :: (Row -> Col -> x) -> Parser x [A.Located (String, [Src.TypeAnnotation])]
-moreUnionConstructors mkError =
-    oneOfWithFallback
-        [ do
-            freshLine mkError  -- | may be on next line
-            char mkError '|'
-            freshLine mkError
-            ctor <- addLocation (unionConstructor mkError)
-            rest <- moreUnionConstructors mkError
-            return (ctor : rest)
-        ]
-        []
+moreUnionConstructors mkError = Parser $ \s cok eok cerr eerr ->
+    let s' = skipWhitespace s
+    in case T.uncons (_src s') of
+        Just ('|', _) ->
+            -- Found |, parse the constructor
+            let (Parser p) = do
+                    freshLine mkError
+                    char mkError '|'
+                    freshLine mkError
+                    ctor <- addLocation (unionConstructor mkError)
+                    rest <- moreUnionConstructors mkError
+                    return (ctor : rest)
+            in p s cok eok cerr eerr
+        _ ->
+            -- No more constructors
+            eok [] s
 
 
 unionConstructor :: (Row -> Col -> x) -> Parser x (String, [Src.TypeAnnotation])
