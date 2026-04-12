@@ -8,6 +8,8 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
+import qualified System.Directory
+import qualified System.FilePath
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
 import System.IO (hFlush, stdout)
 import System.IO.Unsafe (unsafePerformIO)
@@ -157,13 +159,14 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             let mainGoPath = outDir </> "main.go"
             writeFile mainGoPath goCode
             putStrLn $ "   Wrote " ++ mainGoPath
+            -- copyRuntime also copies runtime-go/go.mod + go.sum into outDir
+            -- when it can locate the runtime. Only fall back to a minimal
+            -- go.mod here if copyRuntime didn't write one (no runtime found).
             copyRuntime outDir
-            -- Prefer runtime-go/go.mod (has deps) over minimal fallback
-            let srcMod = "runtime-go/go.mod"
-            hasMod <- doesFileExist srcMod
-            if hasMod
-                then copyFile srcMod (outDir </> "go.mod")
-                else writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+            hasOutMod <- doesFileExist (outDir </> "go.mod")
+            if not hasOutMod
+                then writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+                else return ()
             -- Write cache hash to enable incremental rebuild skip
             let cacheDir = ".skycache"
             createDirectoryIfMissing True cacheDir
@@ -263,31 +266,90 @@ listDirectoryHs :: FilePath -> IO [FilePath]
 listDirectoryHs = listDirectory
 
 
--- | Copy the Go runtime package into the output directory
+-- | Copy the Go runtime package into the output directory.
+-- Locates runtime-go/ via (in order):
+--   1. SKY_RUNTIME_DIR env var (explicit override)
+--   2. ./runtime-go (cwd-relative — for compiler dev)
+--   3. <binary-dir>/../runtime-go (installed layout, binary in bin/)
+--   4. <binary-dir>/../../runtime-go (cabal dist-newstyle layout)
+--   5. Walk up from cwd looking for a haskell-compiler/runtime-go sibling
+--   6. Fall back to inline runtimeGoSource string (hello-world only — misses
+--      Live, DB, Auth, FFI, stdlib extras — most programs will fail at link)
 copyRuntime :: FilePath -> IO ()
 copyRuntime outDir = do
     let rtDir = outDir </> "rt"
     createDirectoryIfMissing True rtDir
-    -- Try to copy runtime from runtime-go/ directory (proper Go file)
-    -- Fall back to inline string if runtime-go/ doesn't exist
-    let runtimeSrc = "runtime-go/rt/rt.go"
-    hasRuntimeFile <- doesFileExist runtimeSrc
-    if hasRuntimeFile
-        then copyFile runtimeSrc (rtDir </> "rt.go")
-        else writeFile (rtDir </> "rt.go") runtimeGoSource
-    -- Copy auxiliary runtime files: live.go, stdlib_extra.go, db_auth.go, etc.
-    let auxFiles = ["live.go", "stdlib_extra.go", "db_auth.go", "validate.go"]
-    mapM_ (\name -> do
-        let src = "runtime-go/rt" </> name
-        exists <- doesFileExist src
-        if exists then copyFile src (rtDir </> name) else return ()
-        ) auxFiles
-    -- Copy go.sum so the build knows the right module checksums
-    let srcSum = "runtime-go/go.sum"
-    hasSum <- doesFileExist srcSum
-    if hasSum then copyFile srcSum (outDir </> "go.sum") else return ()
-    -- User FFI: copy ./ffi/*.go into sky-out/rt/ so they compile into the rt package
+    mRuntime <- locateRuntimeDir
+    case mRuntime of
+        Nothing -> do
+            putStrLn "   Warning: runtime-go/ not found — using minimal fallback."
+            putStrLn "   Set SKY_RUNTIME_DIR to point at your haskell-compiler/runtime-go."
+            writeFile (rtDir </> "rt.go") runtimeGoSource
+        Just runtimeDir -> do
+            let mainRt = runtimeDir </> "rt" </> "rt.go"
+            mainExists <- doesFileExist mainRt
+            if mainExists
+                then copyFile mainRt (rtDir </> "rt.go")
+                else writeFile (rtDir </> "rt.go") runtimeGoSource
+            -- Copy every *.go file in runtime-go/rt/ so new runtime modules
+            -- are picked up automatically without hardcoding names.
+            let rtSourceDir = runtimeDir </> "rt"
+            hasRtDir <- doesDirectoryExist rtSourceDir
+            if hasRtDir
+                then do
+                    files <- System.Directory.listDirectory rtSourceDir
+                    let goFiles = filter (\f ->
+                            let ext = reverse (take 3 (reverse f))
+                            in ext == ".go" && f /= "rt.go"
+                            ) files
+                    mapM_ (\name -> copyFile (rtSourceDir </> name) (rtDir </> name)) goFiles
+                else return ()
+            -- Copy go.mod and go.sum to inherit runtime dep versions.
+            let srcMod = runtimeDir </> "go.mod"
+            hasSrcMod <- doesFileExist srcMod
+            if hasSrcMod then copyFile srcMod (outDir </> "go.mod") else return ()
+            let srcSum = runtimeDir </> "go.sum"
+            hasSum <- doesFileExist srcSum
+            if hasSum then copyFile srcSum (outDir </> "go.sum") else return ()
+    -- User FFI: copy ./ffi/*.go into sky-out/rt/ regardless of runtime-go location.
     copyFfiDir outDir
+
+
+-- | Locate the runtime-go directory by probing known locations.
+locateRuntimeDir :: IO (Maybe FilePath)
+locateRuntimeDir = do
+    envVar <- System.Environment.lookupEnv "SKY_RUNTIME_DIR"
+    case envVar of
+        Just p -> do
+            ok <- doesDirectoryExist p
+            if ok then return (Just p) else probeLocations
+        Nothing -> probeLocations
+  where
+    probeLocations = do
+        cands <- candidates
+        firstExisting cands
+
+    candidates = do
+        cwd <- System.Directory.getCurrentDirectory
+        exeDir <- fmap System.FilePath.takeDirectory System.Environment.getExecutablePath
+        return
+            [ "runtime-go"
+            , exeDir </> "runtime-go"
+            , exeDir </> ".." </> "runtime-go"
+            , exeDir </> ".." </> ".." </> "runtime-go"
+            , exeDir </> ".." </> ".." </> ".." </> "runtime-go"
+            , exeDir </> ".." </> ".." </> ".." </> ".." </> "runtime-go"
+            , exeDir </> ".." </> ".." </> ".." </> ".." </> ".." </> "runtime-go"
+            -- walk up a few levels from cwd
+            , cwd </> ".." </> "haskell-compiler" </> "runtime-go"
+            , cwd </> ".." </> ".." </> "haskell-compiler" </> "runtime-go"
+            , cwd </> ".." </> ".." </> ".." </> "haskell-compiler" </> "runtime-go"
+            ]
+
+    firstExisting [] = return Nothing
+    firstExisting (p:ps) = do
+        ok <- doesDirectoryExist (p </> "rt")
+        if ok then return (Just p) else firstExisting ps
 
 
 -- ═══════════════════════════════════════════════════════════

@@ -288,6 +288,12 @@ registry = Map.fromList
     , (("Server", "queryParam"),  KernelInfo "rt.Server_queryParam" 2 False)
     , (("Server", "header"),      KernelInfo "rt.Server_header" 2 False)
     , (("Server", "static"),      KernelInfo "rt.Server_static" 2 False)
+    , (("Server", "getCookie"),   KernelInfo "rt.Server_getCookie" 2 False)
+    , (("Server", "cookie"),      KernelInfo "rt.Server_cookie" 3 False)
+    , (("Server", "withHeader"),  KernelInfo "rt.Server_withHeader" 3 False)
+    , (("Server", "any"),         KernelInfo "rt.Server_any" 2 False)
+    , (("List", "isEmpty"),       KernelInfo "rt.List_isEmpty" 1 False)
+    , (("Io", "writeString"),     KernelInfo "rt.Io_writeString" 1 False)
 
     , (("Http", "get"),           KernelInfo "rt.Http_get" 1 False)
     , (("Http", "post"),          KernelInfo "rt.Http_post" 2 False)

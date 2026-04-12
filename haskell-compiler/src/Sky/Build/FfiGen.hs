@@ -436,21 +436,64 @@ emitRegister pkgName aliases fn =
         rewrittenParams = map (\(n, t) -> (n, rewriteType aliases t)) params
         rewrittenResults = map (\(n, t) -> (n, rewriteType aliases t)) results
 
-        -- The only remaining skip: generic type parameters.
+        -- Remaining skip class: generic type parameters.
         hasGeneric =
             any (isGenericType . snd) rewrittenParams ||
             any (isGenericType . snd) rewrittenResults
 
-    in if hasGeneric
-        then "\t// SKIPPED " ++ name ++ " — generic type parameter (not realisable at FFI boundary)\n"
-        else unlines
-            [ "\tRegister(" ++ quote name ++ ", func(args []any) any {"
-            , "\t\tif len(args) < " ++ show nArgs ++ " {"
-            , "\t\t\treturn fmt.Errorf(\"" ++ name ++ ": expected " ++ show nArgs ++ " args, got %d\", len(args))"
-            , "\t\t}"
-            , emitCall fn rewrittenParams rewrittenResults
-            , "\t}) // " ++ _fnEffect fn
-            ]
+        -- Special case: a generic "identity pointer" helper of the shape
+        --   Fn[T any](v T) *T
+        -- can still be realised at runtime via reflect (we build the pointer
+        -- of whatever concrete type the caller passed). The self-hosted
+        -- compiler handles this same pattern.
+        isIdentityPointer =
+            hasGeneric &&
+            length rewrittenParams == 1 &&
+            length rewrittenResults == 1 &&
+            isBareParam (snd (head rewrittenParams)) &&
+            isStarBareParam (snd (head rewrittenResults))
+
+    in if isIdentityPointer
+        then emitIdentityPointer name fn
+        else if hasGeneric
+            then "\t// SKIPPED " ++ name ++ " — generic type parameter (not realisable at FFI boundary)\n"
+            else unlines
+                [ "\tRegister(" ++ quote name ++ ", func(args []any) any {"
+                , "\t\tif len(args) < " ++ show nArgs ++ " {"
+                , "\t\t\treturn fmt.Errorf(\"" ++ name ++ ": expected " ++ show nArgs ++ " args, got %d\", len(args))"
+                , "\t\t}"
+                , emitCall fn rewrittenParams rewrittenResults
+                , "\t}) // " ++ _fnEffect fn
+                ]
+
+
+-- | Emit a reflect-based wrapper for a generic identity-pointer helper:
+-- builds a pointer to the caller's concrete value without needing T at
+-- compile time. Matches the shape `Fn[T any](v T) *T`.
+emitIdentityPointer :: String -> FnInfo -> String
+emitIdentityPointer name fn = unlines
+    [ "\tRegister(" ++ quote name ++ ", func(args []any) any {"
+    , "\t\tif len(args) < 1 {"
+    , "\t\t\treturn fmt.Errorf(\"" ++ name ++ ": expected 1 arg, got %d\", len(args))"
+    , "\t\t}"
+    , "\t\trv := reflectValueOfAny(args[0])"
+    , "\t\tpv := reflectNewOf(rv.Type())"
+    , "\t\tpv.Elem().Set(rv)"
+    , "\t\treturn pv.Interface()"
+    , "\t}) // " ++ _fnEffect fn ++ " (generic identity-pointer via reflect)"
+    ]
+
+
+-- | Bare generic type parameter — a single uppercase letter.
+isBareParam :: String -> Bool
+isBareParam [c] = c >= 'A' && c <= 'Z'
+isBareParam _ = False
+
+
+-- | Pointer to a bare generic type parameter: `*T`.
+isStarBareParam :: String -> Bool
+isStarBareParam ('*':rest) = isBareParam rest
+isStarBareParam _ = False
 
 
 -- | Emit the body of the binding function. Uses already-rewritten types.

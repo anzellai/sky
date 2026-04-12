@@ -540,6 +540,13 @@ var (
 
 // Register exposes a Go function with no purity claim.
 // Auto-generated bindings use this. Callable only via Ffi.callTask.
+// reflectValueOfAny / reflectNewOf: thin aliases over reflect package
+// primitives, exported so auto-generated binding files (in package rt) don't
+// need to import "reflect" themselves. Used by the identity-pointer
+// generic fallback (Stripe's String[T any](v T) *T and friends).
+func reflectValueOfAny(v any) reflect.Value { return reflect.ValueOf(v) }
+func reflectNewOf(t reflect.Type) reflect.Value { return reflect.New(t) }
+
 func Register(name string, fn func([]any) any) {
 	ffiRegistryMu.Lock()
 	defer ffiRegistryMu.Unlock()
@@ -1464,6 +1471,18 @@ func String_slice(start any, end any, s any) any {
 // Additional List functions
 // ═══════════════════════════════════════════════════════════
 
+func List_isEmpty(list any) any {
+	items, ok := list.([]any)
+	return ok && len(items) == 0 || list == nil
+}
+
+func Io_writeString(s any) any {
+	return func() any {
+		fmt.Print(fmt.Sprintf("%v", s))
+		return Ok[any, any](struct{}{})
+	}
+}
+
 func List_sort(list any) any {
 	items := list.([]any)
 	result := make([]any, len(items))
@@ -1594,6 +1613,7 @@ type SkyRequest struct {
 	Headers map[string]any
 	Params  map[string]any
 	Query   map[string]any
+	Cookies map[string]string
 }
 
 // SkyResponse wraps an HTTP response
@@ -1643,6 +1663,10 @@ func Server_listen(port any, routes any) any {
 				Headers: make(map[string]any),
 				Params:  make(map[string]any),
 				Query:   make(map[string]any),
+				Cookies: make(map[string]string),
+			}
+			for _, ck := range req.Cookies() {
+				skyReq.Cookies[ck.Name] = ck.Value
 			}
 			for k, v := range req.Header {
 				if len(v) > 0 {
@@ -1943,6 +1967,57 @@ func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler 
 			return task.(func() any)()
 		}
 	}
+}
+
+// Server.getCookie : String -> Request -> Maybe String
+func Server_getCookie(name any, req any) any {
+	r, ok := req.(SkyRequest)
+	if !ok {
+		return Nothing[any]()
+	}
+	if r.Cookies == nil {
+		return Nothing[any]()
+	}
+	v, has := r.Cookies[fmt.Sprintf("%v", name)]
+	if !has {
+		return Nothing[any]()
+	}
+	return Just[any](v)
+}
+
+// Server.cookie : String -> String -> Response -> Response
+// (name, value, response) — adds a Set-Cookie header.
+func Server_cookie(name any, value any, resp any) any {
+	r, ok := resp.(SkyResponse)
+	if !ok {
+		return resp
+	}
+	if r.Headers == nil {
+		r.Headers = map[string]string{}
+	}
+	// Defaults: HttpOnly, Path=/, SameSite=Lax, Secure hint when behind TLS.
+	r.Headers["Set-Cookie"] = fmt.Sprintf("%v=%v; Path=/; HttpOnly; SameSite=Lax",
+		fmt.Sprintf("%v", name), fmt.Sprintf("%v", value))
+	return r
+}
+
+// Server.withHeader : String -> String -> Response -> Response
+func Server_withHeader(name any, value any, resp any) any {
+	r, ok := resp.(SkyResponse)
+	if !ok {
+		return resp
+	}
+	if r.Headers == nil {
+		r.Headers = map[string]string{}
+	}
+	r.Headers[fmt.Sprintf("%v", name)] = fmt.Sprintf("%v", value)
+	return r
+}
+
+// Server.any : String -> Handler -> Route
+// Matches any HTTP method on the given path.
+func Server_any(path any, handler any) any {
+	return SkyRoute{Method: "*", Path: fmt.Sprintf("%v", path), Handler: handler}
 }
 
 func Server_static(path any, dir any) any {

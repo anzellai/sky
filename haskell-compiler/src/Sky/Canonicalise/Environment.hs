@@ -234,6 +234,7 @@ kernelModules = Map.fromList
     , ("Sky.Core.File",    "File")
     , ("Sky.Core.Process", "Process")
     , ("Sky.Core.Time",    "Time")
+    , ("Std.Time",         "Time")
     , ("Sky.Core.Random",  "Random")
     , ("Sky.Core.Http",    "Http")
     , ("Sky.Http.Server",  "Server")

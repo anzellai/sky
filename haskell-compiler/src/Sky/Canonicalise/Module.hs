@@ -151,7 +151,7 @@ kernelFunctions = Map.fromList
     , ("List",    ["map", "filter", "foldl", "foldr", "length", "head", "tail",
                     "take", "drop", "append", "concat", "concatMap", "reverse",
                     "sort", "member", "any", "all", "range", "zip", "filterMap",
-                    "parallelMap"])
+                    "parallelMap", "isEmpty"])
     , ("Dict",    ["empty", "insert", "get", "remove", "member", "keys", "values",
                     "toList", "fromList", "map", "foldl", "union"])
     , ("Set",     ["empty", "insert", "remove", "member", "union", "diff", "intersect", "fromList"])
@@ -167,12 +167,14 @@ kernelFunctions = Map.fromList
                     "parseISO8601", "parse", "addMillis", "diffMillis"])
     , ("Random",  ["int", "float", "choice", "shuffle"])
     , ("Math",    ["sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "tan", "pi", "e", "log", "min", "max"])
-    , ("Io",      ["readLine", "readBytes", "writeStdout", "writeStderr"])
+    , ("Io",      ["readLine", "readBytes", "writeStdout", "writeStderr", "writeString"])
     , ("File",    ["readFile", "readFileLimit", "readFileBytes",
                     "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir"])
     , ("Process", ["run", "exit", "getEnv", "getCwd", "loadEnv"])
     , ("Http",    ["get", "post", "request"])
-    , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html"])
+    , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html",
+                    "withStatus", "redirect", "param", "queryParam", "header",
+                    "getCookie", "cookie", "withHeader", "any"])
     , ("Crypto",  ["sha256", "sha512", "md5", "hmacSha256",
                     "constantTimeEqual", "randomBytes", "randomToken"])
     , ("Encoding",["base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode"])
