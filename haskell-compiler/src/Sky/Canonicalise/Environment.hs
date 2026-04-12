@@ -248,5 +248,6 @@ kernelModules = Map.fromList
     , ("Sky.Core.Uuid",        "Uuid")
     , ("Sky.Http.RateLimit",   "RateLimit")
     , ("Std.Env",              "Env")
+    , ("Sky.Http.Middleware",  "Middleware")
     , ("Sky.Core.Prelude", "Basics")  -- Prelude maps to Basics
     ]

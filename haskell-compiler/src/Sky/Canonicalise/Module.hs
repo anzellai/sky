@@ -182,6 +182,7 @@ kernelFunctions = Map.fromList
     , ("Uuid",    ["v4", "v7", "parse"])
     , ("RateLimit", ["allow"])
     , ("Env",     ["get", "getOrDefault", "require", "getInt", "getBool"])
+    , ("Middleware", ["withCors", "withLogging", "withBasicAuth", "withRateLimit"])
     , ("Html",    ["text", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
                     "a", "button", "input", "form", "label", "nav", "section",
                     "article", "header", "footer", "main", "ul", "ol", "li",

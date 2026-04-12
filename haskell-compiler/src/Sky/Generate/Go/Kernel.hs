@@ -102,6 +102,12 @@ registry = Map.fromList
     , (("Env", "getInt"),         KernelInfo "rt.Env_getInt" 2 False)
     , (("Env", "getBool"),        KernelInfo "rt.Env_getBool" 2 False)
 
+    -- Sky.Http.Middleware
+    , (("Middleware", "withCors"),        KernelInfo "rt.Middleware_withCors" 2 False)
+    , (("Middleware", "withLogging"),     KernelInfo "rt.Middleware_withLogging" 1 False)
+    , (("Middleware", "withBasicAuth"),   KernelInfo "rt.Middleware_withBasicAuth" 3 False)
+    , (("Middleware", "withRateLimit"),   KernelInfo "rt.Middleware_withRateLimit" 4 False)
+
     -- ═══════════════════════════════════════════════════════
     -- List
     -- ═══════════════════════════════════════════════════════

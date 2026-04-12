@@ -1636,6 +1636,177 @@ func Server_header(name any, req any) any {
 	return Nothing[any]()
 }
 
+// ═══════════════════════════════════════════════════════════
+// Sky.Http.Middleware — handler → handler transformations
+// ═══════════════════════════════════════════════════════════
+
+// Middleware.withCors : List String -> Handler -> Handler
+// Takes a list of allowed origins ("*" for all) and wraps a handler to
+// add Access-Control-Allow-Origin etc. and short-circuit preflights.
+func Middleware_withCors(origins any, handler any) any {
+	allowed := map[string]bool{}
+	allowAll := false
+	for _, o := range asList(origins) {
+		s := fmt.Sprintf("%v", o)
+		if s == "*" {
+			allowAll = true
+		}
+		allowed[s] = true
+	}
+	return func(req any) any {
+		return func() any {
+			r, _ := req.(SkyRequest)
+			origin := ""
+			if o, ok := r.Headers["Origin"]; ok {
+				origin = fmt.Sprintf("%v", o)
+			}
+			allow := ""
+			if allowAll {
+				allow = "*"
+			} else if allowed[origin] {
+				allow = origin
+			}
+			// Preflight
+			if r.Method == "OPTIONS" {
+				resp := SkyResponse{
+					Status:  204,
+					Headers: map[string]string{},
+				}
+				if allow != "" {
+					resp.Headers["Access-Control-Allow-Origin"] = allow
+					resp.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+					resp.Headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+					resp.Headers["Access-Control-Max-Age"] = "3600"
+				}
+				return Ok[any, any](resp)
+			}
+			// Delegate to inner handler, then add CORS headers to response.
+			task := handler.(func(any) any)(req)
+			res := task.(func() any)()
+			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
+				if resp, ok := sr.OkValue.(SkyResponse); ok {
+					if resp.Headers == nil {
+						resp.Headers = map[string]string{}
+					}
+					if allow != "" {
+						resp.Headers["Access-Control-Allow-Origin"] = allow
+					}
+					return Ok[any, any](resp)
+				}
+			}
+			return res
+		}
+	}
+}
+
+// Middleware.withLogging : Handler -> Handler
+// Logs method, path, status, duration for each request.
+func Middleware_withLogging(handler any) any {
+	return func(req any) any {
+		return func() any {
+			r, _ := req.(SkyRequest)
+			start := time.Now()
+			task := handler.(func(any) any)(req)
+			res := task.(func() any)()
+			status := 0
+			if sr, ok := res.(SkyResult[any, any]); ok && sr.Tag == 0 {
+				if resp, ok := sr.OkValue.(SkyResponse); ok {
+					status = resp.Status
+					if status == 0 {
+						status = 200
+					}
+				}
+			}
+			dur := time.Since(start).Milliseconds()
+			ctx := map[string]any{
+				"method":  r.Method,
+				"path":    r.Path,
+				"status":  status,
+				"ms":      dur,
+			}
+			logEmit(logLevelInfo, "info", "http request", ctx)
+			return res
+		}
+	}
+}
+
+// Middleware.withBasicAuth : String -> String -> Handler -> Handler
+// Wraps a handler with HTTP Basic authentication. user + pass are the
+// expected credentials; on mismatch returns 401 with WWW-Authenticate.
+// WARNING: requires HTTPS in production — Basic sends credentials in the clear.
+func Middleware_withBasicAuth(expectedUser any, expectedPass any, handler any) any {
+	eu := fmt.Sprintf("%v", expectedUser)
+	ep := fmt.Sprintf("%v", expectedPass)
+	return func(req any) any {
+		return func() any {
+			r, _ := req.(SkyRequest)
+			authHeader, _ := r.Headers["Authorization"].(string)
+			const prefix = "Basic "
+			if !strings.HasPrefix(authHeader, prefix) {
+				return Ok[any, any](SkyResponse{
+					Status:  401,
+					Body:    "authentication required",
+					Headers: map[string]string{"WWW-Authenticate": `Basic realm="Sky"`},
+				})
+			}
+			decoded, err := base64.StdEncoding.DecodeString(authHeader[len(prefix):])
+			if err != nil {
+				return Ok[any, any](SkyResponse{Status: 401, Body: "invalid auth"})
+			}
+			parts := strings.SplitN(string(decoded), ":", 2)
+			if len(parts) != 2 {
+				return Ok[any, any](SkyResponse{Status: 401, Body: "invalid auth"})
+			}
+			// Constant-time compare to avoid timing side channels.
+			userOk := subtle.ConstantTimeCompare([]byte(parts[0]), []byte(eu)) == 1
+			passOk := subtle.ConstantTimeCompare([]byte(parts[1]), []byte(ep)) == 1
+			if !(userOk && passOk) {
+				return Ok[any, any](SkyResponse{Status: 401, Body: "bad credentials"})
+			}
+			task := handler.(func(any) any)(req)
+			return task.(func() any)()
+		}
+	}
+}
+
+// Middleware.withRateLimit : String -> Int -> Int -> Handler -> Handler
+// (name, capacity, refillPerSec, handler) — applies a per-IP token bucket
+// limit using the named RateLimit bucket store. Clients over limit get 429.
+func Middleware_withRateLimit(name any, capacity any, refillPerSec any, handler any) any {
+	return func(req any) any {
+		return func() any {
+			r, _ := req.(SkyRequest)
+			ip := ""
+			// Try X-Forwarded-For first (behind reverse proxy), then Remote.
+			if v, ok := r.Headers["X-Forwarded-For"].(string); ok && v != "" {
+				if idx := strings.Index(v, ","); idx > 0 {
+					ip = strings.TrimSpace(v[:idx])
+				} else {
+					ip = strings.TrimSpace(v)
+				}
+			}
+			if ip == "" {
+				if v, ok := r.Headers["X-Real-Ip"].(string); ok {
+					ip = v
+				}
+			}
+			if ip == "" {
+				ip = "unknown"
+			}
+			allowed := RateLimit_allow(name, ip, capacity, refillPerSec).(bool)
+			if !allowed {
+				return Ok[any, any](SkyResponse{
+					Status:  429,
+					Body:    "rate limit exceeded",
+					Headers: map[string]string{"Retry-After": "1"},
+				})
+			}
+			task := handler.(func(any) any)(req)
+			return task.(func() any)()
+		}
+	}
+}
+
 func Server_static(path any, dir any) any {
 	return SkyRoute{
 		Method: "GET",
