@@ -1537,3 +1537,272 @@ userDecoder =
 
 result = Decode.decodeString userDecoder jsonString
 ```
+
+
+---
+
+## New Compiler Additions (Haskell-based Sky compiler)
+
+The following features are available in the new Haskell-based compiler.
+Everything in the sections above still applies — this appends new surface.
+
+### Safety Guarantees (on by default)
+
+Every Sky program gets these out of the box with zero configuration:
+
+| Attack vector | Defence |
+|---------------|---------|
+| SQL injection | `Std.Db` validates identifiers (Unicode-aware allow-list) and ANSI-quotes them; values always go through parameter placeholders |
+| XSS | `String.htmlEscape`, auto-escape in `Sky.Live` VNode renderer, `X-Content-Type-Options: nosniff`, `isUrl` rejects `javascript:` / `data:` |
+| CSRF / Clickjacking | `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin` sent by default |
+| Path traversal | `Path.safeJoin root rel` |
+| DoS (body size) | HTTP server caps request body at 32 MiB → 413; Live event body capped at 1 MiB; `File.readFile` caps at 100 MiB |
+| DoS (timeouts) | ReadHeaderTimeout 10s, ReadTimeout 30s, WriteTimeout 30s, IdleTimeout 120s; HTTP client 30s |
+| DoS (request rate) | `RateLimit.allow name key cap perSec` token-bucket |
+| Command injection | `Process.run` uses argv; never shell interpretation |
+| Timing attacks | `Crypto.constantTimeEqual` for comparing secrets; bcrypt is already constant-time |
+| Weak randomness | `Crypto.randomBytes`/`randomToken`, `Uuid.v4`/`v7`, Sky.Live session IDs all use `crypto/rand` |
+| Password brute force | bcrypt cost 12; `Auth.passwordStrength` validates ≥8 chars + letter + digit |
+| Panic cascading | Every HTTP/Live/FFI handler wraps in `recover()` — returns 500/Err, process never crashes |
+| Unicode correctness | `String.length/slice/left/right` are rune-based; `String.normalize` (NFC) + `graphemes` (UAX #29) available |
+
+### New Standard Library Modules
+
+#### `Std.Log` — structured logging
+
+```elm
+import Std.Log as Log
+
+Log.info "server started"              -- human format: <timestamp> INFO server started
+Log.warn "rate-limit hit"              -- goes to stderr
+Log.error "db connection lost"         -- goes to stderr
+Log.with "request completed"           -- with key-value context
+    (Dict.fromList [("method", "GET"), ("status", 200)])
+```
+
+Configure via env vars:
+- `SKY_LOG_LEVEL` = `debug|info|warn|error` (default info)
+- `SKY_LOG_FORMAT` = `json` to emit one-line JSON per record
+
+#### `Std.Env` — type-safe environment access
+
+```elm
+import Std.Env as Env
+
+Env.get "SECRET_KEY"                   -- Maybe String (distinguishes unset vs empty)
+Env.getOrDefault "PORT" "8080"         -- String with fallback
+Env.getInt "PORT" 8080                 -- Int with fallback (parses)
+Env.getBool "DEBUG" False              -- accepts true/yes/1/on vs false/no/0/off
+Env.require "DATABASE_URL"             -- Task String String — fail-fast at startup
+```
+
+#### `Sky.Core.Uuid`
+
+```elm
+import Sky.Core.Uuid as Uuid
+
+Uuid.v4        -- Task String String — RFC 4122 random (crypto/rand)
+Uuid.v7        -- Task String String — time-ordered (better for DB primary keys)
+Uuid.parse s   -- Result String String — canonicalise or reject
+```
+
+#### `Sky.Http.Middleware`
+
+```elm
+import Sky.Http.Server as Server
+import Sky.Http.Middleware as M
+
+main =
+    Server.listen 8080
+        [ Server.get "/" (M.withLogging (M.withCors ["*"] homeHandler))
+        , Server.get "/admin" (M.withBasicAuth "alice" "secret" adminHandler)
+        , Server.post "/api" (M.withRateLimit "api" 100 10 apiHandler)  -- 100 burst, 10/sec refill
+        ]
+```
+
+#### `Sky.Http.RateLimit`
+
+```elm
+import Sky.Http.RateLimit as RL
+RL.allow "login" userEmail 5 1   -- 5 attempts, 1/sec refill → Bool
+```
+
+#### `Std.Html` / `Std.Css` / `Std.Live` — web framework
+
+```elm
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Live exposing (app, route)
+import Std.Live.Events exposing (onClick)
+
+type Msg = Increment | Decrement
+type alias Model = { count : Int }
+
+init _ = ({ count = 0 }, Cmd.none)
+
+update msg model =
+    case msg of
+        Increment -> ({ model | count = model.count + 1 }, Cmd.none)
+        Decrement -> ({ model | count = model.count - 1 }, Cmd.none)
+
+view model =
+    div [ class "app" ]
+        [ h1 [] [ text (String.fromInt model.count) ]
+        , button [ onClick Decrement ] [ text "-" ]
+        , button [ onClick Increment ] [ text "+" ]
+        ]
+
+main =
+    app
+        { init = init, update = update, view = view
+        , subscriptions = \_ -> Sub.none
+        , routes = [ route "/" () ], notFound = ()
+        }
+```
+
+SSE subscriptions work out of the box:
+
+```elm
+subscriptions model =
+    case model.page of
+        CounterPage -> Sub.every 1000 Tick   -- tick every second via SSE
+        _ -> Sub.none
+```
+
+#### `Sky.Ffi` — safe FFI to arbitrary Go packages
+
+Sky's FFI has a strict effect boundary enforced at runtime:
+
+```elm
+import Sky.Ffi as Ffi
+import Sky.Core.Task as Task
+
+-- Effect-unknown (auto-generated): must use callTask
+Task.perform (Ffi.callTask "github.com/pkg.DoThing" [arg1, arg2])
+
+-- Hand-audited pure (only via rt.RegisterPure in hand-written ffi/*.go)
+Ffi.callPure "mypkg.reverse" [str]   -- Result String a
+```
+
+Workflow:
+```bash
+sky add github.com/stripe/stripe-go/v82     # auto-fetches + generates bindings
+```
+
+The generator:
+- Emits `ffi/<slug>_bindings.go` with `rt.Register` calls
+- Auto-discovers + imports all referenced Go packages (stdlib, parent packages)
+- Every binding wraps in panic-recover → Err; never crashes process
+- Generics (`Fetch[T]`) genuinely can't be realised — SKIPPED with clear comment
+
+### New String Functions (Unicode-correct)
+
+```elm
+String.length "世界"          -- 2 (runes, not bytes)
+String.graphemes "👨‍👩‍👧"    -- 1 (UAX #29 grapheme cluster, emoji family = 1 char)
+String.normalize s            -- NFC canonical form (web standard)
+String.normalizeNFD s         -- decomposed form (for diacritic-insensitive search)
+String.equalFold a b          -- case-insensitive Unicode equality
+String.casefold s             -- Unicode-aware lowercase for comparison
+String.isValid s              -- True iff valid UTF-8
+String.slugify s              -- URL-safe, Unicode-preserving
+String.htmlEscape s           -- & < > " ' → HTML entities
+String.truncate n s           -- cut at n graphemes (never mid-emoji)
+String.ellipsize n s          -- truncate + "…"
+String.isEmail s              -- RFC 5322 syntactic check
+String.isUrl s                -- rejects javascript:/data: (XSS-safe)
+String.trimStart / trimEnd    -- Unicode whitespace (NBSP, ideographic, etc.)
+```
+
+### New Time Functions
+
+```elm
+Time.formatISO8601 ms    -- "2026-04-12T14:30:00.000Z" (JSON-friendly)
+Time.formatRFC3339 ms    -- like ISO but with nanos
+Time.formatHTTP ms       -- HTTP-date header format
+Time.parseISO8601 str    -- Result String Int (unix millis)
+Time.addMillis delta ms
+Time.diffMillis later earlier
+```
+
+### New Crypto Functions
+
+```elm
+Crypto.sha256 "hello"                    -- hex digest
+Crypto.sha512 "hello"
+Crypto.hmacSha256 "secret" "message"     -- for signing cookies/tokens
+Crypto.constantTimeEqual a b             -- use for comparing secrets, NOT ==
+Crypto.randomBytes 16                    -- Task String String, hex
+Crypto.randomToken 32                    -- Task String String, URL-safe base64
+```
+
+### New Path Safety
+
+```elm
+Path.safeJoin "/var/www" "public/index.html"    -- Ok "/var/www/public/index.html"
+Path.safeJoin "/var/www" "../../etc/passwd"     -- Err "safeJoin: path escapes root"
+```
+
+### `Std.Db` — SQLite + PostgreSQL
+
+Auto-detects driver from connection string:
+
+```elm
+import Std.Db as Db
+
+-- SQLite
+db = Db.connect ":memory:"
+db = Db.connect "/tmp/app.db"
+
+-- PostgreSQL (pgx driver)
+db = Db.connect "postgres://user:pw@localhost:5432/mydb?sslmode=disable"
+
+-- All identifiers validated + ANSI-quoted; values parameterised
+Db.insertRow db "users" (Dict.fromList [("email", "alice@example.com")])
+Db.query db "SELECT * FROM users WHERE email = ?" ["alice@example.com"]
+Db.getById db "users" 42
+Db.updateById db "users" 42 (Dict.fromList [("role", "admin")])
+```
+
+### `Std.Auth`
+
+```elm
+import Std.Auth as Auth
+
+Auth.register db email password          -- bcrypt cost 12, creates users table
+Auth.login db email password             -- returns user row on success
+Auth.hashPassword pw                     -- Result String String (bcrypt, min 8, max 72 bytes)
+Auth.passwordStrength pw                 -- Result String () — validator
+Auth.signToken secret claims expirySeconds -- HS256 JWT
+Auth.verifyToken secret token            -- Result String (Dict String any)
+```
+
+### Editor Integration
+
+VS Code / Neovim / Emacs / Zed / Helix / Sublime all work via `sky lsp`.
+Configure your editor to run `sky lsp` for `.sky` files.
+The server provides:
+- Diagnostics on save (type errors, parse errors)
+- Hover with inferred types
+- Completion (top-level defs + stdlib)
+
+### Incremental Builds
+
+Build artifacts cached in `.skycache/`. Source-hash-based: if no source files
+have changed, Sky skips parse/canonicalise/type-check and reuses main.go.
+Set `SKY_DCE=0` to disable dead-code elimination for debugging.
+
+### FFI: How Generated Bindings Stay Safe
+
+The generator uses **two runtime registries**:
+- `rt.Register(name, fn)` — effect-unknown (default); only `Ffi.callTask`
+- `rt.RegisterPure(name, fn)` — hand-audited pure; allows `Ffi.callPure`
+
+Every auto-generated binding is effect-unknown. You get `Err "use callTask"`
+if you try `callPure` on it — the runtime itself enforces Sky's effect
+boundary. To promote an audited Go function to pure, write a hand-crafted
+`ffi/<pkg>_pure.go` that calls `rt.RegisterPure` — it shadows the
+auto-generated binding.
+
+All FFI calls go through `defer/recover`: any Go panic becomes a Sky `Err`,
+never a process crash.
