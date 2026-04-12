@@ -36,19 +36,10 @@ executable sky
 
   other-modules:
     -- Data (copied from Elm)
-    Sky.Data.Bag
-    Sky.Data.Index
-    Sky.Data.Name
-    Sky.Data.NonEmptyList
-    Sky.Data.OneOrMore
-    Sky.Data.Utf8
-    Sky.Data.Map.Utils
 
     -- AST
     Sky.AST.Source
     Sky.AST.Canonical
-    Sky.AST.Optimised
-    Sky.AST.Utils.Binop
 
     -- Parser
     Sky.Parse.Primitives
@@ -78,85 +69,40 @@ executable sky
     Sky.Type.Unify
     Sky.Type.Solve
     Sky.Type.Instantiate
-    Sky.Type.Error
     Sky.Type.Constrain.Module
     Sky.Type.Constrain.Expression
     Sky.Type.Constrain.Pattern
 
     -- Optimisation
-    Sky.Optimise.Module
-    Sky.Optimise.Expression
-    Sky.Optimise.DecisionTree
-    Sky.Optimise.Case
-    Sky.Optimise.Names
 
     -- Exhaustiveness
-    Sky.Nitpick.PatternMatches
 
     -- Go code generation
-    Sky.Generate.Go
     Sky.Generate.Go.Ir
     Sky.Generate.Go.Builder
-    Sky.Generate.Go.Expression
-    Sky.Generate.Go.Name
     Sky.Generate.Go.Type
     Sky.Generate.Go.Kernel
     Sky.Generate.Go.Record
-    Sky.Generate.Go.Adt
-    Sky.Generate.TypeMap
 
     -- FFI
-    Sky.Ffi.Inspector
-    Sky.Ffi.TypeMapper
-    Sky.Ffi.BindingGen
-    Sky.Ffi.WrapperGen
 
     -- Formatter
     Sky.Format.Format
-    Sky.Format.Pretty
-    Sky.Format.Comment
 
     -- LSP
     Sky.Lsp.Server
-    Sky.Lsp.Handlers
-    Sky.Lsp.Diagnostics
-    Sky.Lsp.Hover
-    Sky.Lsp.Completion
-    Sky.Lsp.GoToDef
-    Sky.Lsp.Rename
 
     -- Build system
-    Sky.Build.Project
     Sky.Build.ModuleGraph
     Sky.Build.Compile
     Sky.Build.Dce
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
     Sky.Build.SkyDeps
-    Sky.Build.Incremental
-    Sky.Build.GoIntegration
 
     -- Reporting
     Sky.Reporting.Annotation
-    Sky.Reporting.Error
-    Sky.Reporting.Error.Syntax
-    Sky.Reporting.Error.Canonicalise
-    Sky.Reporting.Error.Type
-    Sky.Reporting.Error.Pattern
-    Sky.Reporting.Error.Import
-    Sky.Reporting.Error.Main
-    Sky.Reporting.Doc
-    Sky.Reporting.Render.Code
-    Sky.Reporting.Render.Type
-    Sky.Reporting.Report
-    Sky.Reporting.Result
-    Sky.Reporting.Suggest
-    Sky.Reporting.Warning
 
     -- Sky infrastructure
     Sky.Sky.ModuleName
-    Sky.Sky.Version
     Sky.Sky.Toml
-    Sky.Sky.ModuleMap
-    Sky.Sky.Interface
-    Sky.Sky.Compiler.Imports

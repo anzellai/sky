@@ -30,8 +30,8 @@ firebaseadminsdk*.json
 # Logs
 *.log
 
-# Session data
-data/
+# Session data (repo-root only — don't shadow src/Sky/Data/)
+/data/
 
 # Test files
 test-*.js
