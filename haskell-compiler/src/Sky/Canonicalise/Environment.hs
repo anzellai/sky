@@ -242,5 +242,7 @@ kernelModules = Map.fromList
     , ("Std.Css",              "Css")
     , ("Std.Live",             "Live")
     , ("Std.Live.Events",      "Event")
+    , ("Sky.Core.Json.Encode", "JsonEnc")
+    , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Prelude", "Basics")  -- Prelude maps to Basics
     ]

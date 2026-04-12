@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Json.Encode as Encode
+import Sky.Core.Json.Decode as Decode
+import Std.Log exposing (println)
+
+main =
+    let
+        obj = Encode.object [ ("name", Encode.string "Sky"), ("year", Encode.int 2025) ]
+        encoded = Encode.encode 2 obj
+        _ = println encoded
+        decoded = Decode.decodeString Decode.string "\"hello\""
+    in
+        case decoded of
+            Ok s -> println s
+            Err e -> println e

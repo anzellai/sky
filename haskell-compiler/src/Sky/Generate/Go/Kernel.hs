@@ -366,4 +366,45 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     , (("Sub", "none"),           KernelInfo "rt.Sub_none" 0 False)
     , (("Sub", "every"),          KernelInfo "rt.Sub_every" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Set
+    -- ═══════════════════════════════════════════════════════
+    , (("Set", "empty"),          KernelInfo "rt.Set_empty" 0 False)
+    , (("Set", "fromList"),       KernelInfo "rt.Set_fromList" 1 False)
+    , (("Set", "insert"),         KernelInfo "rt.Set_insert" 2 False)
+    , (("Set", "remove"),         KernelInfo "rt.Set_remove" 2 False)
+    , (("Set", "member"),         KernelInfo "rt.Set_member" 2 False)
+    , (("Set", "toList"),         KernelInfo "rt.Set_toList" 1 False)
+    , (("Set", "size"),           KernelInfo "rt.Set_size" 1 False)
+    , (("Set", "union"),          KernelInfo "rt.Set_union" 2 False)
+    , (("Set", "intersect"),      KernelInfo "rt.Set_intersect" 2 False)
+    , (("Set", "diff"),           KernelInfo "rt.Set_diff" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Json.Encode
+    -- ═══════════════════════════════════════════════════════
+    , (("JsonEnc", "string"),     KernelInfo "rt.JsonEnc_string" 1 False)
+    , (("JsonEnc", "int"),        KernelInfo "rt.JsonEnc_int" 1 False)
+    , (("JsonEnc", "float"),      KernelInfo "rt.JsonEnc_float" 1 False)
+    , (("JsonEnc", "bool"),       KernelInfo "rt.JsonEnc_bool" 1 False)
+    , (("JsonEnc", "null"),       KernelInfo "rt.JsonEnc_null" 0 False)
+    , (("JsonEnc", "list"),       KernelInfo "rt.JsonEnc_list" 1 False)
+    , (("JsonEnc", "object"),     KernelInfo "rt.JsonEnc_object" 1 False)
+    , (("JsonEnc", "encode"),     KernelInfo "rt.JsonEnc_encode" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Json.Decode
+    -- ═══════════════════════════════════════════════════════
+    , (("JsonDec", "decodeString"), KernelInfo "rt.JsonDec_decodeString" 2 False)
+    , (("JsonDec", "string"),     KernelInfo "rt.JsonDec_string" 0 False)
+    , (("JsonDec", "int"),        KernelInfo "rt.JsonDec_int" 0 False)
+    , (("JsonDec", "float"),      KernelInfo "rt.JsonDec_float" 0 False)
+    , (("JsonDec", "bool"),       KernelInfo "rt.JsonDec_bool" 0 False)
+    , (("JsonDec", "field"),      KernelInfo "rt.JsonDec_field" 2 False)
+    , (("JsonDec", "list"),       KernelInfo "rt.JsonDec_list" 1 False)
+    , (("JsonDec", "map"),        KernelInfo "rt.JsonDec_map" 2 False)
+    , (("JsonDec", "andThen"),    KernelInfo "rt.JsonDec_andThen" 2 False)
+    , (("JsonDec", "succeed"),    KernelInfo "rt.JsonDec_succeed" 1 False)
+    , (("JsonDec", "fail"),       KernelInfo "rt.JsonDec_fail" 1 False)
     ]

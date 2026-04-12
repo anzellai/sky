@@ -1,0 +1,314 @@
+package rt
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.Set — backed by map[any]struct{}
+// ═══════════════════════════════════════════════════════════
+
+type SkySet struct {
+	items map[string]any
+}
+
+func Set_empty() any {
+	return SkySet{items: map[string]any{}}
+}
+
+func Set_fromList(list any) any {
+	s := SkySet{items: map[string]any{}}
+	for _, v := range asList(list) {
+		k := fmt.Sprintf("%v", v)
+		s.items[k] = v
+	}
+	return s
+}
+
+func Set_insert(v any, set any) any {
+	s := set.(SkySet)
+	out := SkySet{items: map[string]any{}}
+	for k, v2 := range s.items {
+		out.items[k] = v2
+	}
+	out.items[fmt.Sprintf("%v", v)] = v
+	return out
+}
+
+func Set_remove(v any, set any) any {
+	s := set.(SkySet)
+	out := SkySet{items: map[string]any{}}
+	k := fmt.Sprintf("%v", v)
+	for k2, v2 := range s.items {
+		if k2 != k {
+			out.items[k2] = v2
+		}
+	}
+	return out
+}
+
+func Set_member(v any, set any) any {
+	s := set.(SkySet)
+	_, ok := s.items[fmt.Sprintf("%v", v)]
+	return ok
+}
+
+func Set_toList(set any) any {
+	s := set.(SkySet)
+	out := make([]any, 0, len(s.items))
+	for _, v := range s.items {
+		out = append(out, v)
+	}
+	return out
+}
+
+func Set_size(set any) any {
+	return len(set.(SkySet).items)
+}
+
+func Set_union(a any, b any) any {
+	out := SkySet{items: map[string]any{}}
+	for k, v := range a.(SkySet).items {
+		out.items[k] = v
+	}
+	for k, v := range b.(SkySet).items {
+		out.items[k] = v
+	}
+	return out
+}
+
+func Set_intersect(a any, b any) any {
+	out := SkySet{items: map[string]any{}}
+	bi := b.(SkySet).items
+	for k, v := range a.(SkySet).items {
+		if _, ok := bi[k]; ok {
+			out.items[k] = v
+		}
+	}
+	return out
+}
+
+func Set_diff(a any, b any) any {
+	out := SkySet{items: map[string]any{}}
+	bi := b.(SkySet).items
+	for k, v := range a.(SkySet).items {
+		if _, ok := bi[k]; !ok {
+			out.items[k] = v
+		}
+	}
+	return out
+}
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.Json.Encode — build JSON values
+// ═══════════════════════════════════════════════════════════
+
+type JsonValue struct {
+	raw any // string | int | float64 | bool | nil | []any | map[string]any
+}
+
+func JsonEnc_string(s any) any  { return JsonValue{raw: fmt.Sprintf("%v", s)} }
+func JsonEnc_int(n any) any     { return JsonValue{raw: AsInt(n)} }
+func JsonEnc_float(n any) any   { return JsonValue{raw: AsFloat(n)} }
+func JsonEnc_bool(b any) any    { return JsonValue{raw: b} }
+func JsonEnc_null() any         { return JsonValue{raw: nil} }
+
+func JsonEnc_list(items any) any {
+	var out []any
+	for _, v := range asList(items) {
+		if jv, ok := v.(JsonValue); ok {
+			out = append(out, jv.raw)
+		} else {
+			out = append(out, v)
+		}
+	}
+	return JsonValue{raw: out}
+}
+
+// object: takes a list of tuples (key, JsonValue)
+func JsonEnc_object(pairs any) any {
+	m := map[string]any{}
+	for _, p := range asList(pairs) {
+		// Expect SkyTuple2 { V0: string, V1: JsonValue }
+		if t, ok := p.(SkyTuple2); ok {
+			key := fmt.Sprintf("%v", t.V0)
+			val := t.V1
+			if jv, ok := val.(JsonValue); ok {
+				m[key] = jv.raw
+			} else {
+				m[key] = val
+			}
+		}
+	}
+	return JsonValue{raw: m}
+}
+
+func JsonEnc_encode(indent any, v any) any {
+	var val any
+	if jv, ok := v.(JsonValue); ok {
+		val = jv.raw
+	} else {
+		val = v
+	}
+	n := AsInt(indent)
+	var b []byte
+	var err error
+	if n > 0 {
+		b, err = json.MarshalIndent(val, "", strings.Repeat(" ", n))
+	} else {
+		b, err = json.Marshal(val)
+	}
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.Json.Decode — parse JSON
+// ═══════════════════════════════════════════════════════════
+
+type JsonDecoder struct {
+	run func(any) any // takes a decoded Go value, returns Result String T
+}
+
+func JsonDec_decodeString(decoder any, input any) any {
+	s := fmt.Sprintf("%v", input)
+	var raw any
+	err := json.Unmarshal([]byte(s), &raw)
+	if err != nil {
+		return Err[any, any]("JSON parse error: " + err.Error())
+	}
+	d, ok := decoder.(JsonDecoder)
+	if !ok {
+		return Ok[any, any](raw)
+	}
+	return d.run(raw)
+}
+
+func JsonDec_string() any {
+	return JsonDecoder{run: func(v any) any {
+		if s, ok := v.(string); ok {
+			return Ok[any, any](s)
+		}
+		return Err[any, any]("expected string")
+	}}
+}
+
+func JsonDec_int() any {
+	return JsonDecoder{run: func(v any) any {
+		if f, ok := v.(float64); ok {
+			return Ok[any, any](int(f))
+		}
+		return Err[any, any]("expected int")
+	}}
+}
+
+func JsonDec_float() any {
+	return JsonDecoder{run: func(v any) any {
+		if f, ok := v.(float64); ok {
+			return Ok[any, any](f)
+		}
+		return Err[any, any]("expected float")
+	}}
+}
+
+func JsonDec_bool() any {
+	return JsonDecoder{run: func(v any) any {
+		if b, ok := v.(bool); ok {
+			return Ok[any, any](b)
+		}
+		return Err[any, any]("expected bool")
+	}}
+}
+
+func JsonDec_field(name any, inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		m, ok := v.(map[string]any)
+		if !ok {
+			return Err[any, any]("expected object")
+		}
+		fv, exists := m[fmt.Sprintf("%v", name)]
+		if !exists {
+			return Err[any, any]("missing field: " + fmt.Sprintf("%v", name))
+		}
+		if d, ok := inner.(JsonDecoder); ok {
+			return d.run(fv)
+		}
+		return Ok[any, any](fv)
+	}}
+}
+
+func JsonDec_list(inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		arr, ok := v.([]any)
+		if !ok {
+			return Err[any, any]("expected array")
+		}
+		out := make([]any, 0, len(arr))
+		for _, item := range arr {
+			if d, ok := inner.(JsonDecoder); ok {
+				r := d.run(item)
+				if sr, ok := r.(SkyResult[any, any]); ok {
+					if sr.Tag != 0 {
+						return r
+					}
+					out = append(out, sr.OkValue)
+				}
+			} else {
+				out = append(out, item)
+			}
+		}
+		return Ok[any, any](out)
+	}}
+}
+
+func JsonDec_map(fn any, inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		if d, ok := inner.(JsonDecoder); ok {
+			r := d.run(v)
+			if sr, ok := r.(SkyResult[any, any]); ok {
+				if sr.Tag != 0 {
+					return r
+				}
+				f := fn.(func(any) any)
+				return Ok[any, any](f(sr.OkValue))
+			}
+		}
+		return Err[any, any]("decode error")
+	}}
+}
+
+func JsonDec_andThen(fn any, inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		if d, ok := inner.(JsonDecoder); ok {
+			r := d.run(v)
+			if sr, ok := r.(SkyResult[any, any]); ok {
+				if sr.Tag != 0 {
+					return r
+				}
+				f := fn.(func(any) any)
+				nextDec := f(sr.OkValue)
+				if nd, ok := nextDec.(JsonDecoder); ok {
+					return nd.run(v)
+				}
+			}
+		}
+		return Err[any, any]("decode error")
+	}}
+}
+
+func JsonDec_succeed(v any) any {
+	return JsonDecoder{run: func(_ any) any {
+		return Ok[any, any](v)
+	}}
+}
+
+func JsonDec_fail(msg any) any {
+	m := fmt.Sprintf("%v", msg)
+	return JsonDecoder{run: func(_ any) any {
+		return Err[any, any](m)
+	}}
+}

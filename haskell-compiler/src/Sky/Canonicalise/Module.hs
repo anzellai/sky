@@ -191,6 +191,11 @@ kernelFunctions = Map.fromList
                     "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
                     "onFocus", "onBlur"])
     , ("Sub",     ["none", "every"])
+    , ("Set",     ["empty", "fromList", "insert", "remove", "member", "toList",
+                    "size", "union", "intersect", "diff"])
+    , ("JsonEnc", ["string", "int", "float", "bool", "null", "list", "object", "encode"])
+    , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field", "list",
+                    "map", "andThen", "succeed", "fail"])
     ]
 
 
