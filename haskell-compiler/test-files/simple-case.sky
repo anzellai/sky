@@ -1,10 +1,15 @@
-module Main exposing (main)
-
+module Main exposing (..)
 import Std.Log exposing (println)
+
 
 showResult result =
     case result of
-        Ok val -> println val
-        Err e -> println e
+        Ok val ->
+            println val
 
-main = showResult (Ok "works")
+        Err e ->
+            println e
+
+
+main =
+    showResult (Ok "works")

@@ -6,8 +6,11 @@ import System.IO (hPutStrLn, stderr)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Process (callProcess)
 
+import qualified Data.Text.IO as TIO
 import qualified Sky.Build.Compile as Compile
 import qualified Sky.Sky.Toml as Toml
+import qualified Sky.Parse.Module as ParseMod
+import qualified Sky.Format.Format as Format
 
 
 -- | Sky compiler CLI
@@ -138,10 +141,14 @@ runCommand cmd = case cmd of
                 return (Right ())
 
     Fmt path -> do
-        putStrLn $ "Formatting " ++ path ++ "..."
-        -- TODO: Format.Format.format
-        putStrLn "Format not yet implemented"
-        return (Right ())
+        src <- TIO.readFile path
+        case ParseMod.parseModule src of
+            Left err -> return (Left $ "Parse error: " ++ show err)
+            Right srcMod -> do
+                let formatted = Format.formatModule srcMod
+                writeFile path formatted
+                putStrLn $ "Formatted " ++ path
+                return (Right ())
 
     Init mName -> do
         let name = maybe "sky-project" id mName
