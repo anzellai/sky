@@ -12,7 +12,6 @@ import (
 	pkg "github.com/stripe/stripe-go/v84/checkout/session"
 	"fmt"
 	stripe_go "github.com/stripe/stripe-go/v84"
-	"reflect"
 )
 
 // [fallible] Go_Session.clientNew → pkg.ClientNew
@@ -69,149 +68,13 @@ func Go_Session_clientListLineItems(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Session.clientB → (Client).B (struct-field getter)
-func Go_Session_clientB(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	v := reflect.ValueOf(p0)
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
-		if v.IsNil() { out = Err[any, any]("B: nil receiver"); return }
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		out = Err[any, any]("B: receiver is not a struct")
-		return
-	}
-	f := v.FieldByName("B")
-	if !f.IsValid() {
-		out = Err[any, any]("B: no such field")
-		return
-	}
-	out = f.Interface()
-	return
-}
+func Go_Session_clientB(p0 any) any { return SkyFfiFieldGet(p0, "B") }
 
-// [pure] Go_Session.clientSetB → (Client).B = <value> (struct-field setter; value-first for |>)
-func Go_Session_clientSetB(value any, recv any) (out any) {
-	defer SkyFfiRecover(&out)()
-	rv := reflect.ValueOf(recv)
-	// Dereference a pointer so we can set a field.
-	var addrable reflect.Value
-	switch rv.Kind() {
-	case reflect.Ptr:
-		if rv.IsNil() {
-			out = Err[any, any]("B: nil receiver")
-			return
-		}
-		addrable = rv.Elem()
-	case reflect.Struct:
-		// Make an addressable copy so Go allows Set.
-		tmp := reflect.New(rv.Type())
-		tmp.Elem().Set(rv)
-		addrable = tmp.Elem()
-		rv = tmp  // return pointer to the copy
-	default:
-		out = Err[any, any]("B: receiver is not a struct or pointer")
-		return
-	}
-	if addrable.Kind() != reflect.Struct {
-		out = Err[any, any]("B: receiver is not a struct")
-		return
-	}
-	f := addrable.FieldByName("B")
-	if !f.IsValid() {
-		out = Err[any, any]("B: no such field")
-		return
-	}
-	if !f.CanSet() {
-		out = Err[any, any]("B: field is not settable (unexported or non-addressable)")
-		return
-	}
-	vv := reflect.ValueOf(value)
-	if !vv.IsValid() {
-		f.Set(reflect.Zero(f.Type()))
-	} else if vv.Type().AssignableTo(f.Type()) {
-		f.Set(vv)
-	} else if vv.Type().ConvertibleTo(f.Type()) {
-		f.Set(vv.Convert(f.Type()))
-	} else {
-		out = Err[any, any]("B: value type incompatible with field")
-		return
-	}
-	out = rv.Interface()
-	return
-}
+func Go_Session_clientSetB(value any, recv any) any { return SkyFfiFieldSet(value, recv, "B") }
 
-// [pure] Go_Session.clientKey → (Client).Key (struct-field getter)
-func Go_Session_clientKey(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	v := reflect.ValueOf(p0)
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
-		if v.IsNil() { out = Err[any, any]("Key: nil receiver"); return }
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		out = Err[any, any]("Key: receiver is not a struct")
-		return
-	}
-	f := v.FieldByName("Key")
-	if !f.IsValid() {
-		out = Err[any, any]("Key: no such field")
-		return
-	}
-	out = f.Interface()
-	return
-}
+func Go_Session_clientKey(p0 any) any { return SkyFfiFieldGet(p0, "Key") }
 
-// [pure] Go_Session.clientSetKey → (Client).Key = <value> (struct-field setter; value-first for |>)
-func Go_Session_clientSetKey(value any, recv any) (out any) {
-	defer SkyFfiRecover(&out)()
-	rv := reflect.ValueOf(recv)
-	// Dereference a pointer so we can set a field.
-	var addrable reflect.Value
-	switch rv.Kind() {
-	case reflect.Ptr:
-		if rv.IsNil() {
-			out = Err[any, any]("Key: nil receiver")
-			return
-		}
-		addrable = rv.Elem()
-	case reflect.Struct:
-		// Make an addressable copy so Go allows Set.
-		tmp := reflect.New(rv.Type())
-		tmp.Elem().Set(rv)
-		addrable = tmp.Elem()
-		rv = tmp  // return pointer to the copy
-	default:
-		out = Err[any, any]("Key: receiver is not a struct or pointer")
-		return
-	}
-	if addrable.Kind() != reflect.Struct {
-		out = Err[any, any]("Key: receiver is not a struct")
-		return
-	}
-	f := addrable.FieldByName("Key")
-	if !f.IsValid() {
-		out = Err[any, any]("Key: no such field")
-		return
-	}
-	if !f.CanSet() {
-		out = Err[any, any]("Key: field is not settable (unexported or non-addressable)")
-		return
-	}
-	vv := reflect.ValueOf(value)
-	if !vv.IsValid() {
-		f.Set(reflect.Zero(f.Type()))
-	} else if vv.Type().AssignableTo(f.Type()) {
-		f.Set(vv)
-	} else if vv.Type().ConvertibleTo(f.Type()) {
-		f.Set(vv.Convert(f.Type()))
-	} else {
-		out = Err[any, any]("Key: value type incompatible with field")
-		return
-	}
-	out = rv.Interface()
-	return
-}
+func Go_Session_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Key") }
 
 // [fallible] Go_Session.expire → pkg.Expire
 func Go_Session_expire(p0 any, p1 any) (out any) {
@@ -285,77 +148,9 @@ func Go_Session_iterNext(p0 any) (out any) {
 	return
 }
 
-// [pure] Go_Session.iterIter → (Iter).Iter (struct-field getter)
-func Go_Session_iterIter(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	v := reflect.ValueOf(p0)
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
-		if v.IsNil() { out = Err[any, any]("Iter: nil receiver"); return }
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		out = Err[any, any]("Iter: receiver is not a struct")
-		return
-	}
-	f := v.FieldByName("Iter")
-	if !f.IsValid() {
-		out = Err[any, any]("Iter: no such field")
-		return
-	}
-	out = f.Interface()
-	return
-}
+func Go_Session_iterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
 
-// [pure] Go_Session.iterSetIter → (Iter).Iter = <value> (struct-field setter; value-first for |>)
-func Go_Session_iterSetIter(value any, recv any) (out any) {
-	defer SkyFfiRecover(&out)()
-	rv := reflect.ValueOf(recv)
-	// Dereference a pointer so we can set a field.
-	var addrable reflect.Value
-	switch rv.Kind() {
-	case reflect.Ptr:
-		if rv.IsNil() {
-			out = Err[any, any]("Iter: nil receiver")
-			return
-		}
-		addrable = rv.Elem()
-	case reflect.Struct:
-		// Make an addressable copy so Go allows Set.
-		tmp := reflect.New(rv.Type())
-		tmp.Elem().Set(rv)
-		addrable = tmp.Elem()
-		rv = tmp  // return pointer to the copy
-	default:
-		out = Err[any, any]("Iter: receiver is not a struct or pointer")
-		return
-	}
-	if addrable.Kind() != reflect.Struct {
-		out = Err[any, any]("Iter: receiver is not a struct")
-		return
-	}
-	f := addrable.FieldByName("Iter")
-	if !f.IsValid() {
-		out = Err[any, any]("Iter: no such field")
-		return
-	}
-	if !f.CanSet() {
-		out = Err[any, any]("Iter: field is not settable (unexported or non-addressable)")
-		return
-	}
-	vv := reflect.ValueOf(value)
-	if !vv.IsValid() {
-		f.Set(reflect.Zero(f.Type()))
-	} else if vv.Type().AssignableTo(f.Type()) {
-		f.Set(vv)
-	} else if vv.Type().ConvertibleTo(f.Type()) {
-		f.Set(vv.Convert(f.Type()))
-	} else {
-		out = Err[any, any]("Iter: value type incompatible with field")
-		return
-	}
-	out = rv.Interface()
-	return
-}
+func Go_Session_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 
 // [pure] Go_Session.lineItemIterLineItem → pkg.LineItemIterLineItem
 func Go_Session_lineItemIterLineItem(p0 any) (out any) {
@@ -409,77 +204,9 @@ func Go_Session_lineItemIterNext(p0 any) (out any) {
 	return
 }
 
-// [pure] Go_Session.lineItemIterIter → (LineItemIter).Iter (struct-field getter)
-func Go_Session_lineItemIterIter(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	v := reflect.ValueOf(p0)
-	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
-		if v.IsNil() { out = Err[any, any]("Iter: nil receiver"); return }
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		out = Err[any, any]("Iter: receiver is not a struct")
-		return
-	}
-	f := v.FieldByName("Iter")
-	if !f.IsValid() {
-		out = Err[any, any]("Iter: no such field")
-		return
-	}
-	out = f.Interface()
-	return
-}
+func Go_Session_lineItemIterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
 
-// [pure] Go_Session.lineItemIterSetIter → (LineItemIter).Iter = <value> (struct-field setter; value-first for |>)
-func Go_Session_lineItemIterSetIter(value any, recv any) (out any) {
-	defer SkyFfiRecover(&out)()
-	rv := reflect.ValueOf(recv)
-	// Dereference a pointer so we can set a field.
-	var addrable reflect.Value
-	switch rv.Kind() {
-	case reflect.Ptr:
-		if rv.IsNil() {
-			out = Err[any, any]("Iter: nil receiver")
-			return
-		}
-		addrable = rv.Elem()
-	case reflect.Struct:
-		// Make an addressable copy so Go allows Set.
-		tmp := reflect.New(rv.Type())
-		tmp.Elem().Set(rv)
-		addrable = tmp.Elem()
-		rv = tmp  // return pointer to the copy
-	default:
-		out = Err[any, any]("Iter: receiver is not a struct or pointer")
-		return
-	}
-	if addrable.Kind() != reflect.Struct {
-		out = Err[any, any]("Iter: receiver is not a struct")
-		return
-	}
-	f := addrable.FieldByName("Iter")
-	if !f.IsValid() {
-		out = Err[any, any]("Iter: no such field")
-		return
-	}
-	if !f.CanSet() {
-		out = Err[any, any]("Iter: field is not settable (unexported or non-addressable)")
-		return
-	}
-	vv := reflect.ValueOf(value)
-	if !vv.IsValid() {
-		f.Set(reflect.Zero(f.Type()))
-	} else if vv.Type().AssignableTo(f.Type()) {
-		f.Set(vv)
-	} else if vv.Type().ConvertibleTo(f.Type()) {
-		f.Set(vv.Convert(f.Type()))
-	} else {
-		out = Err[any, any]("Iter: value type incompatible with field")
-		return
-	}
-	out = rv.Interface()
-	return
-}
+func Go_Session_lineItemIterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 
 // [pure] Go_Session.list → pkg.List
 func Go_Session_list(p0 any) (out any) {

@@ -2562,6 +2562,79 @@ func SkyFfiRet_maybeString(p *string) any {
 	return Just[any](*p)
 }
 
+// SkyFfiFieldGet — reflect-based struct-field read, shared by every
+// generated <TypeName><FieldName> getter wrapper so the per-field
+// emission stays a one-liner (keeps stripe_bindings.go & friends
+// manageable in size).
+func SkyFfiFieldGet(recv any, field string) any {
+	if recv == nil {
+		return Err[any, any](field + ": nil receiver")
+	}
+	v := reflect.ValueOf(recv)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return Err[any, any](field + ": nil receiver")
+		}
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		return Err[any, any](field + ": receiver is not a struct")
+	}
+	f := v.FieldByName(field)
+	if !f.IsValid() {
+		return Err[any, any](field + ": no such field")
+	}
+	return f.Interface()
+}
+
+// SkyFfiFieldSet — reflect-based struct-field write, returning the
+// (mutated or copied) receiver for pipeline-friendly |> composition.
+// value is Sky-any; assignable or convertible types coerce automatically.
+func SkyFfiFieldSet(value any, recv any, field string) any {
+	if recv == nil {
+		return Err[any, any](field + ": nil receiver")
+	}
+	rv := reflect.ValueOf(recv)
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			return Err[any, any](field + ": nil receiver")
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp
+	default:
+		return Err[any, any](field + ": receiver is not a struct or pointer")
+	}
+	if addrable.Kind() != reflect.Struct {
+		return Err[any, any](field + ": receiver is not a struct")
+	}
+	f := addrable.FieldByName(field)
+	if !f.IsValid() {
+		return Err[any, any](field + ": no such field")
+	}
+	if !f.CanSet() {
+		return Err[any, any](field + ": field is not settable")
+	}
+	if value == nil {
+		f.Set(reflect.Zero(f.Type()))
+	} else {
+		vv := reflect.ValueOf(value)
+		if vv.Type().AssignableTo(f.Type()) {
+			f.Set(vv)
+		} else if vv.Type().ConvertibleTo(f.Type()) {
+			f.Set(vv.Convert(f.Type()))
+		} else {
+			return Err[any, any](field + ": value type incompatible with field")
+		}
+	}
+	return rv.Interface()
+}
+
 // SkyFfiReflectCall invokes a reflect.Value of a function with Sky-side args.
 // Used by generated FFI wrappers when the Go signature contains types the
 // wrapper cannot spell (internal/vendor pkgs, bare generic T, or methods on

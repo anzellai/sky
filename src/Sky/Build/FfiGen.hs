@@ -680,100 +680,15 @@ emitTypedWrapper kernelName aliases fn =
         _ | isIdentityPointer -> emitIdentityPointerTyped wrapperName
 
         _ | _fnIsField fn ->
-            -- Struct-field getter: reflect on the receiver, read the field
-            -- by name. Handles both pointer and value receivers and avoids
-            -- naming the (possibly generic or internal) struct type.
-            unlines
-                [ "// [pure] " ++ kernelName ++ "." ++ skyName ++
-                  " → (" ++ (_fnRecvType fn) ++ ")." ++ (_fnMethodName fn) ++
-                  " (struct-field getter)"
-                , "func " ++ wrapperName ++ "(p0 any) (out any) {"
-                , "\tdefer SkyFfiRecover(&out)()"
-                , "\tv := reflect.ValueOf(p0)"
-                , "\tfor v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {"
-                , "\t\tif v.IsNil() { out = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": nil receiver") ++ "); return }"
-                , "\t\tv = v.Elem()"
-                , "\t}"
-                , "\tif v.Kind() != reflect.Struct {"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": receiver is not a struct") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tf := v.FieldByName(" ++ quote (_fnMethodName fn) ++ ")"
-                , "\tif !f.IsValid() {"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": no such field") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tout = f.Interface()"
-                , "\treturn"
-                , "}"
-                ]
+            -- One-line delegate to SkyFfiFieldGet. Emitting the reflect
+            -- dance here per-field blew stripe_bindings.go to 1.9M lines.
+            "func " ++ wrapperName ++ "(p0 any) any { return SkyFfiFieldGet(p0, " ++
+            quote (_fnMethodName fn) ++ ") }\n"
 
         _ | _fnIsFieldSet fn ->
-            -- Struct-field setter: value-first, receiver second, returns
-            -- the (mutated or freshly-copied) receiver so Sky can pipe.
-            --
-            -- Semantics:
-            --   * pointer receiver  → mutate in place, return same pointer.
-            --   * value receiver    → copy, set on copy, return pointer to
-            --                         the copy (pointer flow is consistent).
-            --
-            -- The field's Go type is erased to `any` on the Sky side; the
-            -- assignment uses `reflect.Value.Set` with Convert-if-assignable
-            -- to tolerate cross-type numeric / interface coercions.
-            unlines
-                [ "// [pure] " ++ kernelName ++ "." ++ skyName ++
-                  " → (" ++ (_fnRecvType fn) ++ ")." ++ (_fnMethodName fn) ++
-                  " = <value> (struct-field setter; value-first for |>)"
-                , "func " ++ wrapperName ++ "(value any, recv any) (out any) {"
-                , "\tdefer SkyFfiRecover(&out)()"
-                , "\trv := reflect.ValueOf(recv)"
-                , "\t// Dereference a pointer so we can set a field."
-                , "\tvar addrable reflect.Value"
-                , "\tswitch rv.Kind() {"
-                , "\tcase reflect.Ptr:"
-                , "\t\tif rv.IsNil() {"
-                , "\t\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": nil receiver") ++ ")"
-                , "\t\t\treturn"
-                , "\t\t}"
-                , "\t\taddrable = rv.Elem()"
-                , "\tcase reflect.Struct:"
-                , "\t\t// Make an addressable copy so Go allows Set."
-                , "\t\ttmp := reflect.New(rv.Type())"
-                , "\t\ttmp.Elem().Set(rv)"
-                , "\t\taddrable = tmp.Elem()"
-                , "\t\trv = tmp  // return pointer to the copy"
-                , "\tdefault:"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": receiver is not a struct or pointer") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tif addrable.Kind() != reflect.Struct {"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": receiver is not a struct") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tf := addrable.FieldByName(" ++ quote (_fnMethodName fn) ++ ")"
-                , "\tif !f.IsValid() {"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": no such field") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tif !f.CanSet() {"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": field is not settable (unexported or non-addressable)") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tvv := reflect.ValueOf(value)"
-                , "\tif !vv.IsValid() {"
-                , "\t\tf.Set(reflect.Zero(f.Type()))"
-                , "\t} else if vv.Type().AssignableTo(f.Type()) {"
-                , "\t\tf.Set(vv)"
-                , "\t} else if vv.Type().ConvertibleTo(f.Type()) {"
-                , "\t\tf.Set(vv.Convert(f.Type()))"
-                , "\t} else {"
-                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": value type incompatible with field") ++ ")"
-                , "\t\treturn"
-                , "\t}"
-                , "\tout = rv.Interface()"
-                , "\treturn"
-                , "}"
-                ]
+            -- One-line delegate to SkyFfiFieldSet — value-first for |>.
+            "func " ++ wrapperName ++ "(value any, recv any) any { return SkyFfiFieldSet(value, recv, " ++
+            quote (_fnMethodName fn) ++ ") }\n"
 
         DirectCall ->
             unlines
