@@ -552,11 +552,18 @@ moreCaseBranches mkError branchCol = do
 
 caseBranch :: (Row -> Col -> x) -> Parser x (Src.Pattern, Src.Expr)
 caseBranch mkError = do
+    patCol <- getCol
     pat <- pattern_ mkError
     spaces
     string mkError (T.pack "->")
-    freshLine mkError  -- body may be on next line
-    body <- expression mkError
+    freshLine mkError
+    bodyCol <- getCol
+    -- Bind the branch-body's indent so further lines only continue when
+    -- they are more indented than the branch pattern column. Without this,
+    -- a following case branch like "Err msg ->" at the OUTER case's
+    -- pattern column gets slurped into the previous body, producing
+    -- malformed Go output like `}()(rt.Err[any, any], msg) -> …`.
+    body <- withIndent (max patCol bodyCol) (expression mkError)
     return (pat, body)
 
 
