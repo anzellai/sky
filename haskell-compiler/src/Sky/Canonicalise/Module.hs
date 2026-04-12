@@ -174,7 +174,7 @@ kernelFunctions = Map.fromList
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html",
                     "withStatus", "redirect", "param", "queryParam", "header",
-                    "getCookie", "cookie", "withHeader", "any"])
+                    "getCookie", "cookie", "withCookie", "withHeader", "any"])
     , ("Crypto",  ["sha256", "sha512", "md5", "hmacSha256",
                     "constantTimeEqual", "randomBytes", "randomToken"])
     , ("Encoding",["base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode"])

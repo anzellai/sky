@@ -1994,19 +1994,33 @@ func Server_getCookie(name any, req any) any {
 	return Just[any](v)
 }
 
-// Server.cookie : String -> String -> Response -> Response
-// (name, value, response) — adds a Set-Cookie header.
-func Server_cookie(name any, value any, resp any) any {
+// SkyCookie — a named cookie value ready to be attached to a response.
+type SkyCookie struct {
+	Name  string
+	Value string
+}
+
+// Server.cookie : String -> String -> Cookie
+// Build an opaque cookie value (safe HttpOnly + SameSite=Lax defaults).
+func Server_cookie(name any, value any) any {
+	return SkyCookie{Name: fmt.Sprintf("%v", name), Value: fmt.Sprintf("%v", value)}
+}
+
+// Server.withCookie : Cookie -> Response -> Response
+// Attach a previously-built cookie to a response.
+func Server_withCookie(cookie any, resp any) any {
 	r, ok := resp.(SkyResponse)
 	if !ok {
+		return resp
+	}
+	c, cok := cookie.(SkyCookie)
+	if !cok {
 		return resp
 	}
 	if r.Headers == nil {
 		r.Headers = map[string]string{}
 	}
-	// Defaults: HttpOnly, Path=/, SameSite=Lax, Secure hint when behind TLS.
-	r.Headers["Set-Cookie"] = fmt.Sprintf("%v=%v; Path=/; HttpOnly; SameSite=Lax",
-		fmt.Sprintf("%v", name), fmt.Sprintf("%v", value))
+	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; Path=/; HttpOnly; SameSite=Lax", c.Name, c.Value)
 	return r
 }
 
