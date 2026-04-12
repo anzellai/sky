@@ -97,7 +97,8 @@ func Html_h5(a, c any) any     { return htmlElem("h5")(a, c) }
 func Html_h6(a, c any) any     { return htmlElem("h6")(a, c) }
 func Html_a(a, c any) any      { return htmlElem("a")(a, c) }
 func Html_button(a, c any) any { return htmlElem("button")(a, c) }
-func Html_input(a, c any) any  { return htmlElem("input")(a, c) }
+// input is void in HTML — no children. Sky API takes attrs only.
+func Html_input(a any) any { return htmlElem("input")(a, nil) }
 func Html_form(a, c any) any   { return htmlElem("form")(a, c) }
 func Html_label(a, c any) any  { return htmlElem("label")(a, c) }
 func Html_nav(a, c any) any    { return htmlElem("nav")(a, c) }
@@ -142,6 +143,26 @@ func Html_styleNode(attrs any, css any) any {
 	}
 }
 
+// node: generic element builder for tags that don't have a dedicated helper
+// (e.g. "svg", "polyline").
+func Html_node(tag any, attrs any, children any) any {
+	return velement(fmt.Sprintf("%v", tag), asList(attrs), asList(children))
+}
+
+// raw: insert unescaped HTML — used for trusted content like pre-rendered markdown
+func Html_raw(s any) any {
+	return VNode{
+		Kind: "raw",
+		Text: fmt.Sprintf("%v", s),
+	}
+}
+
+// headerNode: specialised header tag with attrs + children (same as Html_header,
+// kept as a distinct entry for legacy-stdlib compat).
+func Html_headerNode(attrs any, children any) any {
+	return htmlElem("header")(attrs, children)
+}
+
 // ═══════════════════════════════════════════════════════════
 // Attributes (Std.Html.Attributes)
 // ═══════════════════════════════════════════════════════════
@@ -184,6 +205,12 @@ func Event_onKeyDown(f any) any     { return eventPair{name: "keydown", msg: f} 
 func Event_onKeyUp(f any) any       { return eventPair{name: "keyup", msg: f} }
 func Event_onFocus(msg any) any     { return eventPair{name: "focus", msg: msg} }
 func Event_onBlur(msg any) any      { return eventPair{name: "blur", msg: msg} }
+
+// Attr_attribute: generic attribute builder for tags with non-standard attrs
+// (e.g. SVG viewBox).
+func Attr_attribute(k any, v any) any {
+	return attr(fmt.Sprintf("%v", k), fmt.Sprintf("%v", v))
+}
 
 // ═══════════════════════════════════════════════════════════
 // CSS (Std.Css)
@@ -316,6 +343,19 @@ var (
 	Css_gridRow      = cssP("grid-row")
 	Css_rowGap       = cssP("row-gap")
 	Css_columnGap   = cssP("column-gap")
+	Css_borderCollapse = cssP("border-collapse")
+	Css_borderSpacing  = cssP("border-spacing")
+	Css_marginTop     = cssP("margin-top")
+	Css_marginBottom  = cssP("margin-bottom")
+	Css_marginLeft    = cssP("margin-left")
+	Css_marginRight   = cssP("margin-right")
+	Css_paddingTop    = cssP("padding-top")
+	Css_paddingBottom = cssP("padding-bottom")
+	Css_paddingLeft   = cssP("padding-left")
+	Css_paddingRight  = cssP("padding-right")
+	Css_visibility    = cssP("visibility")
+	Css_content       = cssP("content")
+	Css_auto          = cssP("auto")
 	Css_boxSizing    = cssP("box-sizing")
 )
 

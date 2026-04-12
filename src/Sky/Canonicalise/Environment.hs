@@ -73,11 +73,51 @@ initialEnv home = Env
     , _types     = Map.fromList builtinTypes
     , _ctors     = Map.fromList builtinCtors
     , _aliases   = Map.empty
-    , _qualVars  = Map.empty
+    , _qualVars  = Map.fromList preludeQualVars
     , _qualTypes = Map.empty
     , _qualCtors = Map.empty
     , _importAliases = Map.empty
     }
+
+
+-- | Qualifier aliases auto-available without explicit import.
+-- Matches Elm/Sky convention where `String.join`, `List.map`, etc.
+-- work without writing `import String`. Kernel functions resolve the
+-- same way as if the user had written `import Sky.Core.<Mod> as <Mod>`.
+preludeQualVars :: [(String, Map.Map String VarHome)]
+preludeQualVars =
+    [ (qual, Map.fromList [(fn, VarKernel qual fn) | fn <- funcs])
+    | (qual, funcs) <- preludeQualifiers
+    ]
+
+
+-- | Auto-qualified kernel modules. Only names commonly used unqualified
+-- from the Sky convention.
+preludeQualifiers :: [(String, [String])]
+preludeQualifiers =
+    [ ("String", ["length", "reverse", "append", "split", "join", "contains",
+                    "startsWith", "endsWith", "toInt", "fromInt", "toFloat", "fromFloat",
+                    "toUpper", "toLower", "trim", "replace", "slice", "isEmpty",
+                    "toBytes", "fromBytes", "fromChar", "toChar",
+                    "left", "right", "padLeft", "padRight", "repeat", "lines", "words",
+                    "htmlEscape", "truncate", "ellipsize"])
+    , ("List",   ["map", "filter", "foldl", "foldr", "length", "head", "tail",
+                    "take", "drop", "append", "concat", "concatMap", "reverse",
+                    "sort", "member", "any", "all", "range", "zip", "filterMap",
+                    "parallelMap", "isEmpty", "cons"])
+    , ("Dict",   ["empty", "insert", "get", "remove", "member", "keys", "values",
+                    "toList", "fromList", "map", "foldl", "union"])
+    , ("Set",    ["empty", "insert", "remove", "member", "union", "diff", "intersect", "fromList"])
+    , ("Maybe",  ["withDefault", "map", "andThen"])
+    , ("Result", ["withDefault", "map", "andThen", "mapError",
+                    "map2", "map3", "map4", "map5", "andMap", "combine", "traverse"])
+    , ("Basics", ["identity", "always", "not", "toString", "modBy", "clamp",
+                    "fst", "snd", "compare", "negate", "abs", "sqrt", "min", "max"])
+    , ("Cmd",    ["none", "batch", "perform"])
+    , ("Sub",    ["none", "every"])
+    , ("Task",   ["succeed", "fail", "map", "andThen", "perform", "sequence",
+                    "parallel", "lazy", "run", "map2", "map3", "map4", "map5", "andMap"])
+    ]
 
 
 -- | Add a local variable binding
@@ -160,6 +200,7 @@ builtinVars =
     , ("fst",         VarKernel "Basics" "fst")
     , ("snd",         VarKernel "Basics" "snd")
     , ("errorToString", VarKernel "Basics" "errorToString")
+    , ("println",     VarKernel "Log" "println")
     ]
 
 

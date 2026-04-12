@@ -326,11 +326,11 @@ kernelFunctions = Map.fromList
                     "article", "header", "footer", "main", "ul", "ol", "li",
                     "img", "br", "hr", "table", "thead", "tbody", "tr", "th", "td",
                     "textarea", "select", "option", "pre", "code", "strong", "em",
-                    "small", "styleNode"])
+                    "small", "styleNode", "node", "raw", "headerNode"])
     , ("Attr",    ["class", "id", "style", "type", "type_", "value", "href", "src",
                     "alt", "name", "placeholder", "title", "for", "checked",
                     "disabled", "readonly", "required", "autofocus", "rel",
-                    "target", "method", "action"])
+                    "target", "method", "action", "attribute"])
     , ("Css",     ["stylesheet", "rule", "property", "px", "rem", "em", "pct", "hex", "rgba",
                     "color", "background", "backgroundColor", "padding", "padding2",
                     "margin", "margin2", "fontSize", "fontWeight", "fontFamily",
@@ -343,7 +343,11 @@ kernelFunctions = Map.fromList
                     "flex", "flexDirection", "flexWrap", "flexGrow", "flexShrink", "flexBasis",
                     "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow",
                     "gridGap", "gap", "rowGap", "columnGap", "boxShadow", "boxSizing",
-                    "media", "shadow", "zero", "borderBox", "systemFont"])
+                    "media", "shadow", "zero", "borderBox", "systemFont",
+                    "borderCollapse", "borderSpacing",
+                    "marginTop", "marginBottom", "marginLeft", "marginRight",
+                    "paddingTop", "paddingBottom", "paddingLeft", "paddingRight",
+                    "visibility", "content", "auto"])
     , ("Live",    ["app", "route"])
     , ("Event",   ["onClick", "onInput", "onChange", "onSubmit", "onDblClick",
                     "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
