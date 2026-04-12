@@ -158,22 +158,19 @@ generateDef def solvedTypes =
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)
 
-        -- Params stay any (for compatibility with any-typed callers).
-        -- Return type is typed when resolved. Body uses typed codegen with
-        -- type assertions on parameter variable accesses.
+        -- All functions use any params and any return for Go compatibility.
+        -- Typed codegen uses type assertions internally for direct operators.
+        -- The solved types drive the INTERNAL codegen, not the function signature.
         mSolvedType = Map.lookup name solvedTypes
-        (goParams, goRetType, isTyped) = case mSolvedType of
+        goParams = map patternToParam params
+        goRetType = "any"
+        isTyped = case mSolvedType of
             Just funcType ->
                 let (argTypes, retType) = splitFuncType (length params) funcType
-                    typedRet = solvedTypeToGo retType
-                    allResolved = length argTypes == length params
-                        && typedRet /= "any"
-                        && all (\t -> solvedTypeToGo t /= "any") argTypes
-                in if allResolved
-                   then (map patternToParam params, typedRet, True)
-                   else (map patternToParam params, "any", False)
-            Nothing ->
-                (map patternToParam params, "any", False)
+                in length argTypes == length params
+                    && solvedTypeToGo retType /= "any"
+                    && all (\t -> solvedTypeToGo t /= "any") argTypes
+            Nothing -> False
     in
     -- Skip "main" — handled separately
     if name == "main" then []
@@ -757,7 +754,30 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
     Can.If branches elseExpr -> typedIf types retType branches elseExpr
 
     Can.Call func args ->
-        GoIr.GoCall (exprToGoTyped types retType func) (map (exprToGoTyped types retType) args)
+        let goFunc = exprToGoTyped types retType func
+            goArgs = map (exprToGoTyped types retType) args
+            callExpr = case func of
+                A.At _ (Can.VarLocal name) ->
+                    case Map.lookup name types of
+                        Just (T.TLambda _ _) ->
+                            GoIr.GoCall (GoIr.GoRaw (name ++ ".(func(any) any)")) goArgs
+                        _ -> GoIr.GoCall goFunc goArgs
+                _ -> GoIr.GoCall goFunc goArgs
+            -- If the called function has a known return type and we need a primitive,
+            -- assert the result. This handles: n * factorial(n-1) where factorial returns any
+            funcRetType = case func of
+                A.At _ (Can.VarLocal name) ->
+                    case Map.lookup name types of
+                        Just ft -> let (_, rt) = splitFuncType (length args) ft in Just rt
+                        Nothing -> Nothing
+                A.At _ (Can.VarTopLevel _ name) ->
+                    case Map.lookup name types of
+                        Just ft -> let (_, rt) = splitFuncType (length args) ft in Just rt
+                        Nothing -> Nothing
+                _ -> Nothing
+        in case funcRetType of
+            Just rt | isConcreteType rt -> GoIr.GoTypeAssert callExpr (solvedTypeToGo rt)
+            _ -> callExpr
 
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
 
@@ -792,15 +812,15 @@ typedIf types retType branches elseExpr =
     GoIr.GoRaw $ "func() " ++ retType ++ " { " ++ go branches ++ " }()"
 
 
--- | Check if a type is a primitive concrete type (not a container or unresolved variable).
--- Primitive types (Int, String, Bool, Float) can be type-asserted from any.
--- Container types (List, Dict, Result, Maybe, Task) stay as any at runtime.
+-- | Check if a type is assertable from any (has a known Go representation).
+-- Only PRIMITIVE types can be safely asserted — function types can't because
+-- the runtime representation is func(any) any, not func(int) int.
 isConcreteType :: T.Type -> Bool
 isConcreteType ty = case ty of
     T.TVar _ -> False
     T.TType _ name _ -> name `elem` ["Int", "Float", "Bool", "String", "Char"]
     T.TUnit -> True
-    _ -> False
+    _ -> False  -- Functions, containers, etc. stay as any
 
 
 -- | Convert a solved type to a Go type string.
