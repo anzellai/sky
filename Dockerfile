@@ -31,13 +31,13 @@ RUN cabal update \
  && cp "$(cabal list-bin sky)" /out/sky
 
 # ───── Stage 2: build supporting Go tool (FFI inspector) ─────
-FROM golang:1.25-bookworm AS tools-builder
+FROM golang:1.26-bookworm AS tools-builder
 WORKDIR /t
 COPY tools/sky-ffi-inspect ./sky-ffi-inspect
 RUN cd sky-ffi-inspect && go build -ldflags="-s -w" -o /out/sky-ffi-inspect .
 
 # ───── Stage 3: runtime image ─────
-FROM golang:1.25-bookworm
+FROM golang:1.26-bookworm
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
