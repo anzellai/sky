@@ -1,0 +1,13 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Log exposing (println)
+
+main =
+    let
+        _ = println "Hello, 世界! 🌏"
+        _ = println "Line1\nLine2\tTabbed"
+        _ = println "Quote: \"ok\", emoji via escape: \u{1F600}"
+        _ = println "Hex: \x41\x42\x43 = ABC"
+    in
+        println "unicode ok"

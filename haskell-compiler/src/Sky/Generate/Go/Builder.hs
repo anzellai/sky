@@ -269,6 +269,10 @@ unlines' [x] = x
 unlines' (x:xs) = x ++ "; " ++ unlines' xs
 
 
+-- | Escape a Haskell String for emission as a Go double-quoted string literal.
+-- Go strings are UTF-8; printable Unicode characters can be emitted as-is.
+-- Control characters and bytes that would terminate the literal are escaped.
+-- Non-ASCII characters are emitted as their UTF-8 bytes (Go's default).
 escapeGo :: String -> String
 escapeGo = concatMap escapeChar
   where
@@ -277,7 +281,15 @@ escapeGo = concatMap escapeChar
     escapeChar '\n' = "\\n"
     escapeChar '\t' = "\\t"
     escapeChar '\r' = "\\r"
-    escapeChar c    = [c]
+    escapeChar '\0' = "\\x00"
+    escapeChar c
+        | fromEnum c < 0x20 =
+            -- Other C0 control characters: hex-escape
+            let n = fromEnum c
+                h hi = "0123456789abcdef" !! hi
+            in ['\\', 'x', h (n `div` 16), h (n `mod` 16)]
+        | fromEnum c > 0x10FFFF = [c]  -- invalid, leave as-is
+        | otherwise = [c]  -- printable ASCII or Unicode; Go handles UTF-8 natively
 
 
 intercalate :: String -> [String] -> String

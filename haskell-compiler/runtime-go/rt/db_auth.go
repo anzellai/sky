@@ -8,7 +8,10 @@ import (
 	"sync"
 	"time"
 
+	"unicode"
+
 	"github.com/golang-jwt/jwt/v5"
+	_ "github.com/jackc/pgx/v5/stdlib" // Postgres driver registered as "pgx"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
 )
@@ -19,8 +22,67 @@ import (
 
 // SkyDb is an opaque handle over a *sql.DB.
 type SkyDb struct {
-	conn *sql.DB
-	name string
+	conn   *sql.DB
+	name   string
+	driver string // "sqlite" or "pgx"
+}
+
+// placeholder returns "?" for SQLite, "$N" for Postgres.
+func (d *SkyDb) placeholder(i int) string {
+	if d.driver == "pgx" {
+		return fmt.Sprintf("$%d", i)
+	}
+	return "?"
+}
+
+// placeholders produces a joined list of placeholders "$1,$2,$3" or "?,?,?"
+func (d *SkyDb) placeholders(n int) string {
+	out := make([]string, n)
+	for i := 0; i < n; i++ {
+		out[i] = d.placeholder(i + 1)
+	}
+	return strings.Join(out, ",")
+}
+
+// quoteIdent returns a safely-quoted SQL identifier (table or column name).
+// Rejects anything that isn't a plain ASCII identifier to prevent SQL injection
+// via table/column name strings. Returns "" if invalid — callers should
+// short-circuit with an Err in that case.
+// Both SQLite and Postgres support ANSI-standard double-quoted identifiers.
+func quoteIdent(s string) string {
+	if !isSafeIdent(s) {
+		return ""
+	}
+	return "\"" + s + "\""
+}
+
+// isSafeIdent: first rune must be a Unicode letter or '_'; remainder must be
+// letters, digits, or '_'. Bounded to 63 bytes (Postgres identifier limit).
+// Rejects whitespace, quotes, semicolons, control chars, punctuation — anything
+// that could break out of the identifier context when quoted. Embedded double
+// quotes are also rejected (we do not try to escape them; reject instead).
+func isSafeIdent(s string) bool {
+	if s == "" || len(s) > 63 {
+		return false
+	}
+	for i, c := range s {
+		switch {
+		case c == '_':
+			// always OK
+		case unicode.IsLetter(c):
+			// Unicode letter OK (pL)
+		case i > 0 && unicode.IsDigit(c):
+			// Unicode digit OK after first rune
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// safeTable wraps a table identifier after validation; returns "" if invalid.
+func safeTable(v any) string {
+	return quoteIdent(fmt.Sprintf("%v", v))
 }
 
 var (
@@ -29,7 +91,12 @@ var (
 )
 
 // Db.connect : String -> Result String Db
-// path may be ":memory:" or a file path.
+// Accepts:
+//   ":memory:"             — in-memory SQLite
+//   "/path/file.db"        — file-backed SQLite
+//   "postgres://user:pw@host:5432/dbname?sslmode=disable"
+//   "postgresql://..."     — equivalent
+//   "host=... user=... ..." — libpq-style keyword connection string
 func Db_connect(path any) any {
 	p := fmt.Sprintf("%v", path)
 	dbRegistryMu.Lock()
@@ -37,16 +104,33 @@ func Db_connect(path any) any {
 	if existing, ok := dbRegistry[p]; ok {
 		return Ok[any, any](existing)
 	}
-	conn, err := sql.Open("sqlite", p)
+	driver, dsn := detectDriver(p)
+	conn, err := sql.Open(driver, dsn)
 	if err != nil {
 		return Err[any, any]("db connect: " + err.Error())
 	}
 	if err := conn.Ping(); err != nil {
 		return Err[any, any]("db ping: " + err.Error())
 	}
-	db := &SkyDb{conn: conn, name: p}
+	db := &SkyDb{conn: conn, name: p, driver: driver}
 	dbRegistry[p] = db
 	return Ok[any, any](db)
+}
+
+// detectDriver returns the (driverName, dsn) pair for a connection string.
+func detectDriver(s string) (string, string) {
+	ss := strings.TrimSpace(s)
+	low := strings.ToLower(ss)
+	switch {
+	case strings.HasPrefix(low, "postgres://"),
+		strings.HasPrefix(low, "postgresql://"):
+		return "pgx", ss
+	case strings.Contains(low, "host=") && strings.Contains(low, "user="):
+		// libpq keyword form — treat as Postgres
+		return "pgx", ss
+	default:
+		return "sqlite", ss
+	}
 }
 
 // Db.open — alias of connect
@@ -155,6 +239,8 @@ func Db_queryDecode(db any, query any, args any, decoder any) any {
 
 // Db.insertRow : Db -> String -> Dict String any -> Result String Int
 // Returns the last-insert id.
+// Table and column names are validated as plain identifiers then quoted;
+// values go through parameter placeholders. No unvalidated string interpolation.
 func Db_insertRow(db any, table any, row any) any {
 	d, ok := db.(*SkyDb)
 	if !ok {
@@ -164,16 +250,31 @@ func Db_insertRow(db any, table any, row any) any {
 	if !ok {
 		return Err[any, any]("db.insertRow: row must be a Dict")
 	}
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any]("db.insertRow: invalid table name")
+	}
 	var cols []string
-	var placeholders []string
 	var vals []any
 	for k, v := range m {
-		cols = append(cols, k)
-		placeholders = append(placeholders, "?")
+		qc := quoteIdent(k)
+		if qc == "" {
+			return Err[any, any]("db.insertRow: invalid column name: " + k)
+		}
+		cols = append(cols, qc)
 		vals = append(vals, v)
 	}
-	q := fmt.Sprintf("INSERT INTO %v (%s) VALUES (%s)",
-		table, strings.Join(cols, ","), strings.Join(placeholders, ","))
+	q := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+		qTable, strings.Join(cols, ","), d.placeholders(len(cols)))
+	if d.driver == "pgx" {
+		// Postgres doesn't support LastInsertId — use RETURNING id
+		q += " RETURNING id"
+		var id int64
+		if err := d.conn.QueryRow(q, vals...).Scan(&id); err != nil {
+			return Err[any, any]("db.insertRow: " + err.Error())
+		}
+		return Ok[any, any](int(id))
+	}
 	res, err := d.conn.Exec(q, vals...)
 	if err != nil {
 		return Err[any, any]("db.insertRow: " + err.Error())
@@ -184,7 +285,15 @@ func Db_insertRow(db any, table any, row any) any {
 
 // Db.getById : Db -> String -> Int -> Result String (Dict String any)
 func Db_getById(db any, table any, id any) any {
-	q := fmt.Sprintf("SELECT * FROM %v WHERE id = ? LIMIT 1", table)
+	d, ok := db.(*SkyDb)
+	if !ok {
+		return Err[any, any]("db.getById: not a Db")
+	}
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any]("db.getById: invalid table name")
+	}
+	q := fmt.Sprintf("SELECT * FROM %s WHERE id = %s LIMIT 1", qTable, d.placeholder(1))
 	result := Db_query(db, q, []any{AsInt(id)})
 	r, ok := result.(SkyResult[any, any])
 	if !ok || r.Tag != 0 {
@@ -207,14 +316,24 @@ func Db_updateById(db any, table any, id any, row any) any {
 	if !ok {
 		return Err[any, any]("db.updateById: row must be a Dict")
 	}
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any]("db.updateById: invalid table name")
+	}
 	var sets []string
 	var vals []any
+	i := 1
 	for k, v := range m {
-		sets = append(sets, k+" = ?")
+		qc := quoteIdent(k)
+		if qc == "" {
+			return Err[any, any]("db.updateById: invalid column name: " + k)
+		}
+		sets = append(sets, qc+" = "+d.placeholder(i))
 		vals = append(vals, v)
+		i++
 	}
 	vals = append(vals, AsInt(id))
-	q := fmt.Sprintf("UPDATE %v SET %s WHERE id = ?", table, strings.Join(sets, ","))
+	q := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s", qTable, strings.Join(sets, ","), d.placeholder(i))
 	res, err := d.conn.Exec(q, vals...)
 	if err != nil {
 		return Err[any, any]("db.updateById: " + err.Error())
@@ -229,7 +348,11 @@ func Db_deleteById(db any, table any, id any) any {
 	if !ok {
 		return Err[any, any]("db.deleteById: not a Db")
 	}
-	q := fmt.Sprintf("DELETE FROM %v WHERE id = ?", table)
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any]("db.deleteById: invalid table name")
+	}
+	q := fmt.Sprintf("DELETE FROM %s WHERE id = %s", qTable, d.placeholder(1))
 	res, err := d.conn.Exec(q, AsInt(id))
 	if err != nil {
 		return Err[any, any]("db.deleteById: " + err.Error())
@@ -239,8 +362,17 @@ func Db_deleteById(db any, table any, id any) any {
 }
 
 // Db.findWhere : Db -> String -> String -> List any -> Result String (List (Dict String any))
+// NOTE: the WHERE clause is passed through as-is so callers can express complex
+// predicates. VALUES supplied in `args` go through parameter placeholders, but
+// the WHERE clause text itself is not escaped — never build it from untrusted
+// input; use parameter placeholders inside the clause instead (`name = $1`).
+// The table name is validated and quoted.
 func Db_findWhere(db any, table any, whereClause any, args any) any {
-	q := fmt.Sprintf("SELECT * FROM %v WHERE %v", table, whereClause)
+	qTable := safeTable(table)
+	if qTable == "" {
+		return Err[any, any]("db.findWhere: invalid table name")
+	}
+	q := fmt.Sprintf("SELECT * FROM %s WHERE %v", qTable, whereClause)
 	return Db_query(db, q, args)
 }
 
@@ -367,13 +499,16 @@ func Auth_register(db any, email any, password any) any {
 	if !ok {
 		return Err[any, any]("auth.register: not a Db")
 	}
-	if _, err := d.conn.Exec(`CREATE TABLE IF NOT EXISTS users (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
+	// Use portable schema — `SERIAL`/`AUTOINCREMENT` varies, so use lowest
+	// common denominator and let each DB handle sequence.
+	schema := `CREATE TABLE IF NOT EXISTS users (
+		id ` + autoIdColumn(d.driver) + `,
 		email TEXT UNIQUE NOT NULL,
 		password_hash TEXT NOT NULL,
 		role TEXT DEFAULT 'user',
-		created_at INTEGER NOT NULL
-	)`); err != nil {
+		created_at BIGINT NOT NULL
+	)`
+	if _, err := d.conn.Exec(schema); err != nil {
 		return Err[any, any]("auth.register create: " + err.Error())
 	}
 	hashResult := Auth_hashPassword(password)
@@ -381,8 +516,23 @@ func Auth_register(db any, email any, password any) any {
 	if !ok || hr.Tag != 0 {
 		return hashResult
 	}
-	res, err := d.conn.Exec(
-		"INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)",
+	q := fmt.Sprintf(
+		"INSERT INTO users (email, password_hash, created_at) VALUES (%s, %s, %s)",
+		d.placeholder(1), d.placeholder(2), d.placeholder(3),
+	)
+	if d.driver == "pgx" {
+		q += " RETURNING id"
+		var id int64
+		if err := d.conn.QueryRow(q,
+			fmt.Sprintf("%v", email),
+			hr.OkValue,
+			time.Now().Unix(),
+		).Scan(&id); err != nil {
+			return Err[any, any]("auth.register: " + err.Error())
+		}
+		return Ok[any, any](int(id))
+	}
+	res, err := d.conn.Exec(q,
 		fmt.Sprintf("%v", email),
 		hr.OkValue,
 		time.Now().Unix(),
@@ -394,6 +544,13 @@ func Auth_register(db any, email any, password any) any {
 	return Ok[any, any](int(id))
 }
 
+func autoIdColumn(driver string) string {
+	if driver == "pgx" {
+		return "SERIAL PRIMARY KEY"
+	}
+	return "INTEGER PRIMARY KEY AUTOINCREMENT"
+}
+
 // Auth.login : Db -> String -> String -> Result String (Dict String any)
 // Returns user row on success.
 func Auth_login(db any, email any, password any) any {
@@ -402,7 +559,7 @@ func Auth_login(db any, email any, password any) any {
 		return Err[any, any]("auth.login: not a Db")
 	}
 	row := d.conn.QueryRow(
-		"SELECT id, email, password_hash, role FROM users WHERE email = ?",
+		fmt.Sprintf("SELECT id, email, password_hash, role FROM users WHERE email = %s", d.placeholder(1)),
 		fmt.Sprintf("%v", email),
 	)
 	var id int

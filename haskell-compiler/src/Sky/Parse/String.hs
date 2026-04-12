@@ -50,8 +50,12 @@ stringLiteral mkError = Parser $ \s cok _eok _cerr eerr ->
 
 
 -- | Unescape a string's escape sequences so the parsed value is the actual
--- runtime string. The raw captured text still contains backslashes from
--- findSingleClose (which preserves them so \" doesn't terminate the string).
+-- runtime string. Supports: \n \t \r \\ \" \' \0 and Unicode escapes:
+--   \xHH       — two-digit hex byte (ASCII only)
+--   \uHHHH     — four-digit hex, BMP Unicode code point
+--   \u{H...}   — variable-length hex, full Unicode code point up to U+10FFFF
+-- Any unknown escape is left as-is (raw backslash + char) so the user can tell
+-- something is wrong at compile time rather than silently losing data.
 unescapeString :: String -> String
 unescapeString [] = []
 unescapeString ('\\':c:rest) =
@@ -63,8 +67,59 @@ unescapeString ('\\':c:rest) =
         '"'  -> '"'  : unescapeString rest
         '\'' -> '\'' : unescapeString rest
         '0'  -> '\0' : unescapeString rest
+        'a'  -> '\a' : unescapeString rest
+        'b'  -> '\b' : unescapeString rest
+        'f'  -> '\f' : unescapeString rest
+        'v'  -> '\v' : unescapeString rest
+        'x'  -> case parseHex 2 rest of
+            Just (n, r2) -> toEnum n : unescapeString r2
+            Nothing      -> '\\' : 'x' : unescapeString rest
+        'u'  -> case rest of
+            '{':r1 -> case parseHexBraced r1 of
+                Just (n, r2) | validCodepoint n -> toEnum n : unescapeString r2
+                _ -> '\\' : 'u' : unescapeString rest
+            _ -> case parseHex 4 rest of
+                Just (n, r2) | validCodepoint n -> toEnum n : unescapeString r2
+                _            -> '\\' : 'u' : unescapeString rest
         other -> '\\' : other : unescapeString rest
 unescapeString (c:rest) = c : unescapeString rest
+
+
+-- | Parse up to n hex digits (require exactly n)
+parseHex :: Int -> String -> Maybe (Int, String)
+parseHex n xs =
+    let (digs, rest) = splitAt n xs
+    in if length digs == n && all isHexDigit digs
+        then Just (foldl (\acc c -> acc * 16 + hexVal c) 0 digs, rest)
+        else Nothing
+
+
+-- | Parse hex digits until '}'
+parseHexBraced :: String -> Maybe (Int, String)
+parseHexBraced xs =
+    let (digs, rest) = span isHexDigit xs
+    in case rest of
+        '}':r2 | not (null digs) && length digs <= 8 ->
+            Just (foldl (\acc c -> acc * 16 + hexVal c) 0 digs, r2)
+        _ -> Nothing
+
+
+isHexDigit :: Char -> Bool
+isHexDigit c =
+    (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+
+
+hexVal :: Char -> Int
+hexVal c
+    | c >= '0' && c <= '9' = fromEnum c - fromEnum '0'
+    | c >= 'a' && c <= 'f' = 10 + fromEnum c - fromEnum 'a'
+    | c >= 'A' && c <= 'F' = 10 + fromEnum c - fromEnum 'A'
+    | otherwise = 0
+
+
+-- | A code point is valid if within Unicode range and not a surrogate.
+validCodepoint :: Int -> Bool
+validCodepoint n = n >= 0 && n <= 0x10FFFF && not (n >= 0xD800 && n <= 0xDFFF)
 
 
 -- | Parse a character literal: 'c'
