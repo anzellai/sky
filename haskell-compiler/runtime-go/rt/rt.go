@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -1007,3 +1008,164 @@ var _ = regexp.Compile
 var _ = unicode.IsUpper
 var _ = math.Pi
 var _ = sort.Slice
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Http.Server — HTTP server framework
+// ═══════════════════════════════════════════════════════════
+
+// Route represents a single HTTP route
+type SkyRoute struct {
+	Method  string
+	Path    string
+	Handler any // func(SkyRequest) any (Task that returns SkyResponse)
+}
+
+// SkyRequest wraps an HTTP request
+type SkyRequest struct {
+	Method  string
+	Path    string
+	Body    string
+	Headers map[string]any
+	Params  map[string]any
+	Query   map[string]any
+}
+
+// SkyResponse wraps an HTTP response
+type SkyResponse struct {
+	Status  int
+	Body    string
+	Headers map[string]string
+	ContentType string
+}
+
+func Server_listen(port any, routes any) any {
+	p := AsInt(port)
+	routeList := routes.([]any)
+	mux := http.NewServeMux()
+
+	for _, r := range routeList {
+		route := r.(SkyRoute)
+		handler := route.Handler
+		pattern := route.Path
+
+		mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
+			skyReq := SkyRequest{
+				Method:  req.Method,
+				Path:    req.URL.Path,
+				Headers: make(map[string]any),
+				Params:  make(map[string]any),
+				Query:   make(map[string]any),
+			}
+			if req.Body != nil {
+				bodyBytes, _ := io.ReadAll(req.Body)
+				skyReq.Body = string(bodyBytes)
+			}
+			for k, v := range req.URL.Query() {
+				if len(v) > 0 { skyReq.Query[k] = v[0] }
+			}
+
+			task := handler.(func(any) any)(skyReq)
+			result := task.(func() any)()
+
+			resp, ok := result.(SkyResult[any, any])
+			if ok && resp.Tag == 0 {
+				skyResp := resp.OkValue.(SkyResponse)
+				for k, v := range skyResp.Headers {
+					w.Header().Set(k, v)
+				}
+				if skyResp.ContentType != "" {
+					w.Header().Set("Content-Type", skyResp.ContentType)
+				}
+				if skyResp.Status > 0 {
+					w.WriteHeader(skyResp.Status)
+				}
+				fmt.Fprint(w, skyResp.Body)
+			} else {
+				w.WriteHeader(500)
+				fmt.Fprint(w, "Internal Server Error")
+			}
+		})
+	}
+
+	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
+	// Block — this is the main entry point for server apps
+	err := http.ListenAndServe(fmt.Sprintf(":%d", p), mux)
+	if err != nil {
+		return Err[any, any](err.Error())
+	}
+	return Ok[any, any](struct{}{})
+}
+
+func Server_get(path any, handler any) any {
+	return SkyRoute{Method: "GET", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_post(path any, handler any) any {
+	return SkyRoute{Method: "POST", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_put(path any, handler any) any {
+	return SkyRoute{Method: "PUT", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_delete(path any, handler any) any {
+	return SkyRoute{Method: "DELETE", Path: fmt.Sprintf("%v", path), Handler: handler}
+}
+
+func Server_text(body any) any {
+	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/plain"}
+}
+
+func Server_json(body any) any {
+	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "application/json"}
+}
+
+func Server_html(body any) any {
+	return SkyResponse{Status: 200, Body: fmt.Sprintf("%v", body), ContentType: "text/html"}
+}
+
+func Server_withStatus(status any, resp any) any {
+	r := resp.(SkyResponse)
+	r.Status = AsInt(status)
+	return r
+}
+
+func Server_redirect(url any) any {
+	return SkyResponse{
+		Status: 302,
+		Headers: map[string]string{"Location": fmt.Sprintf("%v", url)},
+	}
+}
+
+func Server_param(name any, req any) any {
+	r := req.(SkyRequest)
+	v, ok := r.Params[fmt.Sprintf("%v", name)]
+	if ok { return Just[any](v) }
+	return Nothing[any]()
+}
+
+func Server_queryParam(name any, req any) any {
+	r := req.(SkyRequest)
+	v, ok := r.Query[fmt.Sprintf("%v", name)]
+	if ok { return Just[any](v) }
+	return Nothing[any]()
+}
+
+func Server_header(name any, req any) any {
+	r := req.(SkyRequest)
+	v, ok := r.Headers[fmt.Sprintf("%v", name)]
+	if ok { return Just[any](v) }
+	return Nothing[any]()
+}
+
+func Server_static(path any, dir any) any {
+	return SkyRoute{
+		Method: "GET",
+		Path: fmt.Sprintf("%v", path),
+		Handler: func(req any) any {
+			return func() any {
+				return Ok[any, any](SkyResponse{Status: 200, Body: "static:" + fmt.Sprintf("%v", dir)})
+			}
+		},
+	}
+}
