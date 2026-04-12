@@ -415,12 +415,48 @@ func Live_app(cfg any) any {
 	if p := Field(cfg, "Port"); p != nil {
 		port = AsInt(p)
 	}
+
+	// Wrap the mux with panic recovery so one bad handler can't crash the process.
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				w.WriteHeader(500)
+				fmt.Fprint(w, "Internal Server Error")
+			}
+		}()
+		mux.ServeHTTP(w, r)
+	})
+
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           wrapped,
+		ReadHeaderTimeout: 10 * time.Second,
+		// IMPORTANT: do not set ReadTimeout or WriteTimeout here — the SSE
+		// endpoint needs to stream indefinitely. Per-handler deadlines can be
+		// enforced via r.Context() when needed.
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20,
+	}
 	fmt.Printf("Sky.Live listening on :%d\n", port)
-	err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
-	if err != nil {
+	err := srv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
 		return Err[any, any](err.Error())
 	}
 	return Ok[any, any](struct{}{})
+}
+
+// setSecurityHeaders applies safe-by-default security headers.
+// Callers can still override via SkyResponse.Headers where applicable.
+func setSecurityHeaders(h http.Header) {
+	if h.Get("X-Content-Type-Options") == "" {
+		h.Set("X-Content-Type-Options", "nosniff")
+	}
+	if h.Get("X-Frame-Options") == "" {
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+	}
+	if h.Get("Referrer-Policy") == "" {
+		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	}
 }
 
 func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
@@ -451,6 +487,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	vn := sky_call(app.view, model).(VNode)
 	body := renderVNode(vn, sess.handlers)
 
+	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", body, liveJS(sid))
 }
@@ -461,7 +498,13 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		HandlerID string `json:"handlerId"`
 		Value     string `json:"value"`
 	}
-	body, _ := io.ReadAll(r.Body)
+	// Bound event payload to 1 MiB — these are tiny JSON envelopes.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "payload too large", 413)
+		return
+	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		http.Error(w, err.Error(), 400)
 		return

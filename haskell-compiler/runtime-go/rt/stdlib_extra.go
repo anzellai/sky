@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -535,16 +536,50 @@ type HttpResponse struct {
 	Headers map[string]string
 }
 
+// HTTP client safety defaults. Each outbound request gets these limits so
+// a hostile or misconfigured server can't hang a Sky process forever.
+// Users can bring their own *http.Client via Http.request when they need
+// custom limits.
+var skyHttpClient = newSkyHttpClient()
+
+func newSkyHttpClient() *http.Client {
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		// Bound redirect chains.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return fmt.Errorf("stopped after 10 redirects")
+			}
+			return nil
+		},
+	}
+}
+
+// Maximum response body size (64 MiB). Beyond this we truncate + error.
+const clientMaxBodyBytes = 64 << 20
+
+func readBoundedBody(body io.ReadCloser) (string, error) {
+	defer body.Close()
+	limited := io.LimitReader(body, clientMaxBodyBytes+1)
+	buf, err := io.ReadAll(limited)
+	if err != nil {
+		return "", err
+	}
+	if int64(len(buf)) > clientMaxBodyBytes {
+		return "", fmt.Errorf("response body exceeds %d bytes", clientMaxBodyBytes)
+	}
+	return string(buf), nil
+}
+
 // Http.get : String -> Task String HttpResponse
 func Http_get(url any) any {
 	u := fmt.Sprintf("%v", url)
 	return func() any {
-		resp, err := http.Get(u)
+		resp, err := skyHttpClient.Get(u)
 		if err != nil {
 			return Err[any, any]("http.get: " + err.Error())
 		}
-		defer resp.Body.Close()
-		body, err := io.ReadAll(resp.Body)
+		body, err := readBoundedBody(resp.Body)
 		if err != nil {
 			return Err[any, any]("http.get read: " + err.Error())
 		}
@@ -556,7 +591,7 @@ func Http_get(url any) any {
 		}
 		return Ok[any, any](HttpResponse{
 			Status:  resp.StatusCode,
-			Body:    string(body),
+			Body:    body,
 			Headers: hdrs,
 		})
 	}
@@ -568,12 +603,11 @@ func Http_post(url any, body any) any {
 	u := fmt.Sprintf("%v", url)
 	b := fmt.Sprintf("%v", body)
 	return func() any {
-		resp, err := http.Post(u, "application/json", strings.NewReader(b))
+		resp, err := skyHttpClient.Post(u, "application/json", strings.NewReader(b))
 		if err != nil {
 			return Err[any, any]("http.post: " + err.Error())
 		}
-		defer resp.Body.Close()
-		rb, err := io.ReadAll(resp.Body)
+		rb, err := readBoundedBody(resp.Body)
 		if err != nil {
 			return Err[any, any]("http.post read: " + err.Error())
 		}
@@ -585,7 +619,7 @@ func Http_post(url any, body any) any {
 		}
 		return Ok[any, any](HttpResponse{
 			Status:  resp.StatusCode,
-			Body:    string(rb),
+			Body:    rb,
 			Headers: hdrs,
 		})
 	}
@@ -607,12 +641,11 @@ func Http_request(method any, url any, body any, headers any) any {
 				req.Header.Set(k, fmt.Sprintf("%v", v))
 			}
 		}
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := skyHttpClient.Do(req)
 		if err != nil {
 			return Err[any, any]("http.request do: " + err.Error())
 		}
-		defer resp.Body.Close()
-		rb, err := io.ReadAll(resp.Body)
+		rb, err := readBoundedBody(resp.Body)
 		if err != nil {
 			return Err[any, any]("http.request read: " + err.Error())
 		}
@@ -624,7 +657,7 @@ func Http_request(method any, url any, body any, headers any) any {
 		}
 		return Ok[any, any](HttpResponse{
 			Status:  resp.StatusCode,
-			Body:    string(rb),
+			Body:    rb,
 			Headers: hdrs,
 		})
 	}

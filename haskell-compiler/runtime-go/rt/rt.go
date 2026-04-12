@@ -1134,6 +1134,18 @@ type SkyResponse struct {
 	ContentType string
 }
 
+// HTTP server safety limits.
+// These apply to every Sky.Http.Server request. They exist to prevent
+// trivial resource-exhaustion DoS. Users can tune per-handler via extractors.
+const (
+	serverReadHeaderTimeout = 10 * time.Second
+	serverReadTimeout       = 30 * time.Second
+	serverWriteTimeout      = 30 * time.Second
+	serverIdleTimeout       = 120 * time.Second
+	serverMaxHeaderBytes    = 1 << 20 // 1 MiB
+	serverMaxBodyBytes      = 1 << 25 // 32 MiB; users can override per-handler
+)
+
 func Server_listen(port any, routes any) any {
 	p := AsInt(port)
 	routeList := routes.([]any)
@@ -1145,6 +1157,16 @@ func Server_listen(port any, routes any) any {
 		pattern := route.Path
 
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, req *http.Request) {
+			// Panic recovery — one bad handler mustn't kill the process.
+			defer func() {
+				if rec := recover(); rec != nil {
+					w.WriteHeader(500)
+					fmt.Fprint(w, "Internal Server Error")
+				}
+			}()
+			// Bound body read to prevent memory exhaustion.
+			req.Body = http.MaxBytesReader(w, req.Body, serverMaxBodyBytes)
+
 			skyReq := SkyRequest{
 				Method:  req.Method,
 				Path:    req.URL.Path,
@@ -1152,8 +1174,18 @@ func Server_listen(port any, routes any) any {
 				Params:  make(map[string]any),
 				Query:   make(map[string]any),
 			}
+			for k, v := range req.Header {
+				if len(v) > 0 {
+					skyReq.Headers[k] = v[0]
+				}
+			}
 			if req.Body != nil {
-				bodyBytes, _ := io.ReadAll(req.Body)
+				bodyBytes, err := io.ReadAll(req.Body)
+				if err != nil {
+					w.WriteHeader(413) // Payload Too Large
+					fmt.Fprint(w, "request body too large")
+					return
+				}
 				skyReq.Body = string(bodyBytes)
 			}
 			for k, v := range req.URL.Query() {
@@ -1172,6 +1204,16 @@ func Server_listen(port any, routes any) any {
 				if skyResp.ContentType != "" {
 					w.Header().Set("Content-Type", skyResp.ContentType)
 				}
+				// Safe-by-default security headers (callers can override).
+				if w.Header().Get("X-Content-Type-Options") == "" {
+					w.Header().Set("X-Content-Type-Options", "nosniff")
+				}
+				if w.Header().Get("X-Frame-Options") == "" {
+					w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+				}
+				if w.Header().Get("Referrer-Policy") == "" {
+					w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+				}
 				if skyResp.Status > 0 {
 					w.WriteHeader(skyResp.Status)
 				}
@@ -1183,10 +1225,18 @@ func Server_listen(port any, routes any) any {
 		})
 	}
 
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", p),
+		Handler:           mux,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
+		MaxHeaderBytes:    serverMaxHeaderBytes,
+	}
 	fmt.Printf("Sky server listening on http://localhost:%d\n", p)
-	// Block — this is the main entry point for server apps
-	err := http.ListenAndServe(fmt.Sprintf(":%d", p), mux)
-	if err != nil {
+	err := srv.ListenAndServe()
+	if err != nil && err != http.ErrServerClosed {
 		return Err[any, any](err.Error())
 	}
 	return Ok[any, any](struct{}{})
