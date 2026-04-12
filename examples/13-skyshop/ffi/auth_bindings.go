@@ -12,7 +12,6 @@ import (
 	pkg "firebase.google.com/go/v4/auth"
 	"fmt"
 	context "context"
-	internal "firebase.google.com/go/v4/internal"
 	_ "google.golang.org/api/iterator"  // aliased iterator; unused in emitted wrappers
 	time "time"
 )
@@ -559,15 +558,7 @@ func Go_Auth_isUserNotFound(p0 any) (out any) {
 	return
 }
 
-// [fallible] Go_Auth.newClient → pkg.NewClient
-func Go_Auth_newClient(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := pkg.NewClient(p0.(context.Context), p1.(*internal.AuthConfig))
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
+// SKIPPED Go_Auth_newClient — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Auth.oIDCProviderConfigIteratorPageInfo → pkg.OIDCProviderConfigIteratorPageInfo
 func Go_Auth_oIDCProviderConfigIteratorPageInfo(p0 any) (out any) {
@@ -1336,15 +1327,7 @@ func Go_Auth_tenantToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	return
 }
 
-// [fallible] Go_Auth.userImportHashConfig → pkg.UserImportHashConfig
-func Go_Auth_userImportHashConfig(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	r0, err := p0.(pkg.UserImportHash).Config()
-	if err != nil { out = Err[any, any](err.Error()); return }
-	out = Ok[any, any](r0)
-
-	return
-}
+// SKIPPED Go_Auth_userImportHashConfig — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Auth.userIteratorPageInfo → pkg.UserIteratorPageInfo
 func Go_Auth_userIteratorPageInfo(p0 any) (out any) {

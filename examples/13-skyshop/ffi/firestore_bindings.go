@@ -745,12 +745,7 @@ func Go_Firestore_arrayContainsAny(p0 any, p1 any) (out any) {
 	return
 }
 
-// [pure] Go_Firestore.arrayFromSlice → pkg.ArrayFromSlice
-func Go_Firestore_arrayFromSlice(p0 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	out = Ok[any, any](pkg.ArrayFromSlice(p0.([]T)))
-	return
-}
+// SKIPPED Go_Firestore_arrayFromSlice — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Firestore.arrayGet → pkg.ArrayGet
 func Go_Firestore_arrayGet(p0 any, p1 any) (out any) {
@@ -2976,7 +2971,7 @@ func Go_Firestore_fieldNotFoundErrorError(p0 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Firestore_fieldOf — generic type parameter (not realisable at FFI boundary)
+// SKIPPED Go_Firestore_fieldOf — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Firestore.fieldTransformIncrement → pkg.FieldTransformIncrement
 func Go_Firestore_fieldTransformIncrement(p0 any) (out any) {

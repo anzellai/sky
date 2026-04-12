@@ -236,12 +236,37 @@ shouldSkipFn :: FnInfo -> Bool
 shouldSkipFn fn =
     let hasGeneric = any (isGenericType . snd) (_fnParams fn)
                   || any (isGenericType . snd) (_fnResults fn)
-        -- Identity-pointer helpers stay (handled below via reflect).
+                  || any (genericHint . snd) (_fnParams fn)
+                  || any (genericHint . snd) (_fnResults fn)
         isIdPointer = length (_fnParams fn) == 1
                    && length (_fnResults fn) == 1
                    && isBareParam (snd (head (_fnParams fn)))
                    && isStarBareParam (snd (head (_fnResults fn)))
-    in hasGeneric && not isIdPointer
+        refsInternal = any (touchesInternal . snd) (_fnParams fn)
+                    || any (touchesInternal . snd) (_fnResults fn)
+    in (hasGeneric && not isIdPointer) || refsInternal
+  where
+    -- True when a type string mentions any `<path>/internal[/<more>].Name` or
+    -- `<path>/vendor[/<more>].Name` — Go forbids cross-module imports of those.
+    touchesInternal t = "/internal." `isSubstringOf` t
+                     || "/internal/" `isSubstringOf` t
+                     || "/vendor." `isSubstringOf` t
+                     || "/vendor/" `isSubstringOf` t
+    -- Coarse check for any `[T ...]` or `[T, U]` generic instantiation
+    -- anywhere in the type string — `isGenericType` only catches bracketed
+    -- params at the top-level position, but Stripe's receivers look like
+    -- `*pkg.V2List[T any]` where the generic lives inside a pointer.
+    genericHint t = "[T " `isSubstringOf` t
+                 || "[T]" `isSubstringOf` t
+                 || "[T," `isSubstringOf` t
+                 || "[K " `isSubstringOf` t
+                 || "[V " `isSubstringOf` t
+                 || "[]T" `isSubstringOf` t
+                 || endsT t
+      where
+        endsT s = s == "T" || "*T" `isSuffix` s
+        isSuffix suf s = length s >= length suf &&
+                        drop (length s - length suf) s == suf
 
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -318,9 +343,8 @@ discoverPackagePaths pkg =
         -- Go disallows importing `internal/` subtrees outside their home
         -- module; skip them instead of emitting a go build error. Same
         -- applies to `vendor/` subtrees.
-        ok p = not ("/internal/" `isSubstringOf` ('/':p))
-             && not ("/vendor/"   `isSubstringOf` ('/':p))
-             && not (p == "internal")
+        hasSeg seg p = any (== seg) (splitOnChar '/' p)
+        ok p = not (hasSeg "internal" p) && not (hasSeg "vendor" p)
     in nub (self : filter ok paths)
   where
     typesFromFn fn = map snd (_fnParams fn) ++ map snd (_fnResults fn)
@@ -629,9 +653,9 @@ emitTypedWrapper kernelName aliases fn =
 
     in if isIdentityPointer
         then emitIdentityPointerTyped wrapperName
-        else if hasGeneric
+        else if hasGeneric || shouldSkipFn fn
             then "// SKIPPED " ++ wrapperName ++
-                 " — generic type parameter (not realisable at FFI boundary)\n"
+                 " — generics or internal-package ref (not realisable at FFI boundary)\n"
             else unlines
                 [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
                   " → pkg." ++ goFnName

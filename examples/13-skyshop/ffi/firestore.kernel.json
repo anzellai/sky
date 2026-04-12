@@ -106,7 +106,6 @@
     {"name": "arrayContains", "arity": 2},
     {"name": "arrayContainsAll", "arity": 2},
     {"name": "arrayContainsAny", "arity": 2},
-    {"name": "arrayFromSlice", "arity": 1},
     {"name": "arrayGet", "arity": 2},
     {"name": "arrayLength", "arity": 1},
     {"name": "arrayMaximum", "arity": 1},

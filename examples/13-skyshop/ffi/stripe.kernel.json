@@ -6915,8 +6915,6 @@
     {"name": "v2CoreEventRetrieveParamsSetStripeContextFrom", "arity": 2},
     {"name": "v2CoreRawEventSetLastResponse", "arity": 2},
     {"name": "v2DeletedObjectSetLastResponse", "arity": 2},
-    {"name": "v2ListSetLastResponse", "arity": 2},
-    {"name": "v2PageSetLastResponse", "arity": 2},
     {"name": "v2RawErrorError", "arity": 1},
     {"name": "validatePayload", "arity": 4},
     {"name": "webhookEndpointSetLastResponse", "arity": 2},

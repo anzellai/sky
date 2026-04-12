@@ -3,7 +3,6 @@
   "kernelName": "Go_Option",
   "package": "google.golang.org/api/option",
   "functions": [
-    {"name": "clientOptionApply", "arity": 2},
     {"name": "impersonateCredentials", "arity": 2},
     {"name": "withAPIKey", "arity": 1},
     {"name": "withAudiences", "arity": 1},

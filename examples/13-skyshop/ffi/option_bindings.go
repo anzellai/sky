@@ -14,19 +14,12 @@ import (
 	auth "cloud.google.com/go/auth"
 	oauth2 "golang.org/x/oauth2"
 	google "golang.org/x/oauth2/google"
-	internal "google.golang.org/api/internal"
 	grpc "google.golang.org/grpc"
 	slog "log/slog"
 	http "net/http"
 )
 
-// [pure] Go_Option.clientOptionApply → pkg.ClientOptionApply
-func Go_Option_clientOptionApply(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(pkg.ClientOption).Apply(p1.(*internal.DialSettings))
-	out = Ok[any, any](struct{}{})
-	return
-}
+// SKIPPED Go_Option_clientOptionApply — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Option.impersonateCredentials → pkg.ImpersonateCredentials
 func Go_Option_impersonateCredentials(p0 any, p1 any) (out any) {

@@ -12,7 +12,6 @@
 -- Imports used in this package's wrapper:
 --   context "context"
 --   pkg "firebase.google.com/go/v4/auth"
---   internal "firebase.google.com/go/v4/internal"
 --   iterator "google.golang.org/api/iterator"
 --   time "time"
 

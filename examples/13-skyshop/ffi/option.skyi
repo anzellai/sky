@@ -13,7 +13,6 @@
 --   auth "cloud.google.com/go/auth"
 --   oauth2 "golang.org/x/oauth2"
 --   google "golang.org/x/oauth2/google"
---   internal "google.golang.org/api/internal"
 --   pkg "google.golang.org/api/option"
 --   grpc "google.golang.org/grpc"
 --   slog "log/slog"

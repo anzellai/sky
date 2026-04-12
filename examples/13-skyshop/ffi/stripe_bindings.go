@@ -23137,7 +23137,7 @@ func Go_Stripe_goV84_newStripeContext(p0 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Stripe_goV84_newV2List — generic type parameter (not realisable at FFI boundary)
+// SKIPPED Go_Stripe_goV84_newV2List — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Stripe_goV84.oAuthTokenSetLastResponse → pkg.OAuthTokenSetLastResponse
 func Go_Stripe_goV84_oAuthTokenSetLastResponse(p0 any, p1 any) (out any) {
@@ -36029,7 +36029,7 @@ func Go_Stripe_goV84_streamingLastResponseSetterSetLastResponse(p0 any, p1 any) 
 	return
 }
 
-// SKIPPED Go_Stripe_goV84_string — generic type parameter (not realisable at FFI boundary)
+// SKIPPED Go_Stripe_goV84_string — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Stripe_goV84.stringSlice → pkg.StringSlice
 func Go_Stripe_goV84_stringSlice(p0 any) (out any) {
@@ -54522,23 +54522,11 @@ func Go_Stripe_goV84_v2DeletedObjectSetLastResponse(p0 any, p1 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Stripe_goV84_v2ListAll — generic type parameter (not realisable at FFI boundary)
+// SKIPPED Go_Stripe_goV84_v2ListAll — generics or internal-package ref (not realisable at FFI boundary)
 
-// [pure] Go_Stripe_goV84.v2ListSetLastResponse → pkg.V2ListSetLastResponse
-func Go_Stripe_goV84_v2ListSetLastResponse(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.V2List[T any]).SetLastResponse(p1.(*pkg.APIResponse))
-	out = Ok[any, any](struct{}{})
-	return
-}
+// SKIPPED Go_Stripe_goV84_v2ListSetLastResponse — generics or internal-package ref (not realisable at FFI boundary)
 
-// [pure] Go_Stripe_goV84.v2PageSetLastResponse → pkg.V2PageSetLastResponse
-func Go_Stripe_goV84_v2PageSetLastResponse(p0 any, p1 any) (out any) {
-	defer SkyFfiRecover(&out)()
-	p0.(*pkg.V2Page[T any]).SetLastResponse(p1.(*pkg.APIResponse))
-	out = Ok[any, any](struct{}{})
-	return
-}
+// SKIPPED Go_Stripe_goV84_v2PageSetLastResponse — generics or internal-package ref (not realisable at FFI boundary)
 
 // [pure] Go_Stripe_goV84.v2RawErrorError → pkg.V2RawErrorError
 func Go_Stripe_goV84_v2RawErrorError(p0 any) (out any) {
