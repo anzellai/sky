@@ -160,11 +160,18 @@ generateDef def solvedTypes =
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)
 
-        -- TODO: use solved types for typed Go output once solver resolves all sub-expressions
-        -- For now, use any-typed params. The solved types infrastructure is ready
-        -- and will be enabled when the solver produces complete function types.
-        goParams = map patternToParam params
-        goRetType = "any"
+        -- Use solved types for function signature when available
+        mSolvedType = Map.lookup name solvedTypes
+        (goParams, goRetType) = case mSolvedType of
+            Just funcType ->
+                let (argTypes, retType) = splitFuncType (length params) funcType
+                    typedParams = zipWith (\pat ty ->
+                        GoIr.GoParam (patternName pat) (solvedTypeToGo ty))
+                        params argTypes
+                    typedRet = solvedTypeToGo retType
+                in (typedParams, typedRet)
+            Nothing ->
+                (map patternToParam params, "any")
     in
     -- Skip "main" — handled separately
     if name == "main" then []
@@ -685,6 +692,30 @@ exprToMainStmts (A.At _ expr) = case expr of
 -- ═══════════════════════════════════════════════════════════
 -- HELPERS
 -- ═══════════════════════════════════════════════════════════
+
+-- | Convert a solved type to a Go type string.
+-- Falls back to "any" for unresolved type variables.
+solvedTypeToGo :: T.Type -> String
+solvedTypeToGo ty = case ty of
+    T.TVar name
+        | head name == '_' -> "any"  -- unresolved internal variable
+        | otherwise -> "any"         -- unresolved user variable (TODO: Go type param)
+    T.TUnit -> "struct{}"
+    T.TType _ "Int" [] -> "int"
+    T.TType _ "Float" [] -> "float64"
+    T.TType _ "Bool" [] -> "bool"
+    T.TType _ "String" [] -> "string"
+    T.TType _ "Char" [] -> "rune"
+    T.TType _ "List" [elem] -> "[]" ++ solvedTypeToGo elem
+    T.TType _ "Maybe" [inner] -> "rt.SkyMaybe[" ++ solvedTypeToGo inner ++ "]"
+    T.TType _ "Result" [err, ok] -> "rt.SkyResult[" ++ solvedTypeToGo err ++ ", " ++ solvedTypeToGo ok ++ "]"
+    T.TType _ "Task" [err, ok] -> "rt.SkyTask[" ++ solvedTypeToGo err ++ ", " ++ solvedTypeToGo ok ++ "]"
+    T.TType _ name _ -> name  -- user-defined type
+    T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
+    T.TRecord _ _ -> "any"  -- TODO: struct type
+    T.TTuple _ _ _ -> "any"  -- TODO: tuple type
+    T.TAlias _ _ _ _ -> "any"
+
 
 -- | Generate a curried lambda: \a b -> body → func(a) { return func(b) { return body } }
 curryLambda :: [GoIr.GoParam] -> GoIr.GoExpr -> GoIr.GoExpr
