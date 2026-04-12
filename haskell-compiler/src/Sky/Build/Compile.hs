@@ -160,7 +160,7 @@ generateDef def solvedTypes =
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)
 
-        -- Use solved types for function signature when available
+        -- Use solved types for function signature when available and fully resolved
         mSolvedType = Map.lookup name solvedTypes
         (goParams, goRetType) = case mSolvedType of
             Just funcType ->
@@ -169,19 +169,30 @@ generateDef def solvedTypes =
                         GoIr.GoParam (patternName pat) (solvedTypeToGo ty))
                         params argTypes
                     typedRet = solvedTypeToGo retType
-                in (typedParams, typedRet)
+                    -- Check if all types are resolved (no "any" from unresolved vars)
+                    allResolved = length argTypes == length params
+                        && typedRet /= "any"
+                        && all (\(GoIr.GoParam _ t) -> t /= "any") typedParams
+                in if allResolved
+                   then (typedParams, typedRet)
+                   else (map patternToParam params, "any")
             Nothing ->
                 (map patternToParam params, "any")
     in
     -- Skip "main" — handled separately
     if name == "main" then []
     else
+        let isFullyTyped = goRetType /= "any" && all (\(GoIr.GoParam _ t) -> t /= "any") goParams
+            bodyExpr = if isFullyTyped
+                then exprToGoTypedWithRet solvedTypes goRetType body
+                else exprToGo body
+        in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
             { GoIr._gf_name = name
             , GoIr._gf_typeParams = []
             , GoIr._gf_params = goParams
             , GoIr._gf_returnType = goRetType
-            , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
+            , GoIr._gf_body = [GoIr.GoReturn bodyExpr]
             }
         ]
 
@@ -692,6 +703,64 @@ exprToMainStmts (A.At _ expr) = case expr of
 -- ═══════════════════════════════════════════════════════════
 -- HELPERS
 -- ═══════════════════════════════════════════════════════════
+
+-- ═══════════════════════════════════════════════════════════
+-- TYPED EXPRESSION CODEGEN
+-- ═══════════════════════════════════════════════════════════
+
+-- | Generate Go expression in typed context with known return type.
+exprToGoTypedWithRet :: Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
+exprToGoTypedWithRet types retType expr = exprToGoTyped types retType expr
+
+
+-- | Generate Go expression in typed context — uses direct Go operators
+-- instead of any-typed runtime wrappers.
+exprToGoTyped :: Solve.SolvedTypes -> String -> Can.Expr -> GoIr.GoExpr
+exprToGoTyped types retType (A.At _ expr) = case expr of
+    Can.Int n -> GoIr.GoIntLit n
+    Can.Float f -> GoIr.GoFloatLit f
+    Can.Str s -> GoIr.GoStringLit s
+    Can.Chr c -> GoIr.GoRuneLit c
+    Can.Unit -> GoIr.GoRaw "struct{}{}"
+
+    Can.VarLocal name -> GoIr.GoIdent name
+    Can.VarTopLevel _ name -> GoIr.GoIdent name
+    Can.VarKernel modName funcName -> kernelToGo modName funcName
+
+    Can.Binop op _ _ _ left right -> typedBinop types retType op left right
+    Can.If branches elseExpr -> typedIf types retType branches elseExpr
+
+    Can.Call func args ->
+        GoIr.GoCall (exprToGoTyped types retType func) (map (exprToGoTyped types retType) args)
+
+    Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
+
+    Can.Lambda params body ->
+        curryLambda (map patternToParam params) (exprToGoTyped types retType body)
+
+    _ -> exprToGo (A.At A.one expr)
+
+
+typedBinop :: Solve.SolvedTypes -> String -> String -> Can.Expr -> Can.Expr -> GoIr.GoExpr
+typedBinop types retType op left right = case op of
+    "|>" -> pipeApply left right
+    "<|" -> pipeApply right left
+    "++" -> GoIr.GoBinary "+" (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+    "/=" -> GoIr.GoBinary "!=" (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+    _ -> GoIr.GoBinary op (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+
+
+typedIf :: Solve.SolvedTypes -> String -> [(Can.Expr, Can.Expr)] -> Can.Expr -> GoIr.GoExpr
+typedIf types retType branches elseExpr =
+    let
+        go [] = "return " ++ GoBuilder.renderExpr (exprToGoTyped types retType elseExpr)
+        go ((cond, body):rest) =
+            "if " ++ GoBuilder.renderExpr (exprToGoTyped types retType cond)
+            ++ " { return " ++ GoBuilder.renderExpr (exprToGoTyped types retType body) ++ " }; "
+            ++ go rest
+    in
+    GoIr.GoRaw $ "func() " ++ retType ++ " { " ++ go branches ++ " }()"
+
 
 -- | Convert a solved type to a Go type string.
 -- Falls back to "any" for unresolved type variables.
