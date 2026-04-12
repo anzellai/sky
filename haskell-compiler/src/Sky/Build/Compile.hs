@@ -5,8 +5,10 @@ module Sky.Build.Compile where
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
+import Data.IORef
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, copyFile)
 import System.IO (hFlush, stdout)
+import System.IO.Unsafe (unsafePerformIO)
 import System.FilePath (takeDirectory, (</>))
 
 import qualified Sky.AST.Source as Src
@@ -23,6 +25,17 @@ import qualified Sky.Type.Constrain.Module as Constrain
 import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
 import qualified Sky.Generate.Go.Type as GoType
+import qualified Sky.Generate.Go.Record as Rec
+
+
+-- | Global codegen environment (set once per compilation, read during codegen)
+{-# NOINLINE globalCgEnv #-}
+globalCgEnv :: IORef Rec.CodegenEnv
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty)
+
+-- | Read the global codegen env (for use in pure codegen functions)
+getCgEnv :: Rec.CodegenEnv
+getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 
 
 -- | Full compilation: parse → canonicalise → codegen → write Go
@@ -112,7 +125,10 @@ copyRuntime outDir = do
 generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
 generateGo canMod srcMod config solvedTypes =
     let
-        imports = collectGoImports canMod srcMod
+        imports = unsafePerformIO $ do
+            let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
+            writeIORef globalCgEnv cgEnv
+            return $ collectGoImports canMod srcMod
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
@@ -364,17 +380,16 @@ exprToGo (A.At _ expr) = case expr of
         caseToGo subject branches
 
     Can.Accessor field ->
-        -- Record accessor function: .field → func(r any) any { return r.(map[string]any)["field"] }
+        -- Record accessor function: .field → func(r any) any { return rt.Field(r, "Field") }
         GoIr.GoFuncLit [GoIr.GoParam "__r" "any"] "any"
-            [GoIr.GoReturn (GoIr.GoRaw ("__r.(map[string]any)[\"" ++ field ++ "\"]"))]
+            [GoIr.GoReturn (GoIr.GoCall (GoIr.GoQualified "rt" "Field") [GoIr.GoIdent "__r", GoIr.GoStringLit (capitalise_ field)])]
 
     Can.Access target (A.At _ field) ->
-        -- Record field access: expr.Field (Go struct field access)
-        GoIr.GoSelector (exprToGo target) (capitalise_ field)
+        -- Record field access via reflect-based runtime helper
+        GoIr.GoCall (GoIr.GoQualified "rt" "Field") [exprToGo target, GoIr.GoStringLit (capitalise_ field)]
 
     Can.Update _name baseExpr fields ->
-        -- Record update: create new struct with updated fields
-        -- For now, generate a raw Go block that copies and overrides
+        -- Record update: copy struct with field overrides
         let baseGo = GoBuilder.renderExpr (exprToGo baseExpr)
             fieldUpdates = Map.toList fields
             updates = map (\(fname, Can.FieldUpdate _ fexpr) ->
@@ -384,11 +399,19 @@ exprToGo (A.At _ expr) = case expr of
             intercalate_ "; " updates ++ "; return r }()"
 
     Can.Record fields ->
-        -- Record literal: { name = "Alice", age = 30 } → Go struct literal
+        -- Record literal: look up matching type alias → named struct, or anonymous
         let entries = Map.toList fields
-            goFields = map (\(fname, fexpr) ->
-                (capitalise_ fname, exprToGo fexpr)) entries
-        in GoIr.GoStructLit "" goFields  -- empty struct name = anonymous
+            fieldNames = map fst entries
+            env = getCgEnv
+        in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
+            Just structName ->
+                -- Named struct: Person{Name: "Alice", Age: 30}
+                GoIr.GoStructLit structName (map (\(fn, fe) -> (capitalise_ fn, exprToGo fe)) entries)
+            Nothing ->
+                -- Anonymous struct
+                let fieldDecls = intercalate_ "; " (map (\(fn, _) -> capitalise_ fn ++ " any") entries)
+                    fieldInits = intercalate_ ", " (map (\(fn, fe) -> capitalise_ fn ++ ": " ++ GoBuilder.renderExpr (exprToGo fe)) entries)
+                in GoIr.GoRaw $ "struct{ " ++ fieldDecls ++ " }{" ++ fieldInits ++ "}"
 
     Can.Tuple a b mC ->
         case mC of
@@ -973,6 +996,7 @@ runtimeGoSource = unlines
     , ""
     , "import ("
     , "\t\"fmt\""
+    , "\t\"reflect\""
     , "\t\"strconv\""
     , "\t\"strings\""
     , ")"
@@ -1253,6 +1277,20 @@ runtimeGoSource = unlines
     , ""
     , "type SkyTuple2 struct { V0, V1 any }"
     , "type SkyTuple3 struct { V0, V1, V2 any }"
+    , ""
+    , "// ═══════════════════════════════════════════════════════════"
+    , "// Record field access (reflect-based for any-typed params)"
+    , "// ═══════════════════════════════════════════════════════════"
+    , ""
+    , "func Field(record any, field string) any {"
+    , "\tv := reflect.ValueOf(record)"
+    , "\tif v.Kind() == reflect.Ptr { v = v.Elem() }"
+    , "\tif v.Kind() == reflect.Struct {"
+    , "\t\tf := v.FieldByName(field)"
+    , "\t\tif f.IsValid() { return f.Interface() }"
+    , "\t}"
+    , "\treturn nil"
+    , "}"
     , ""
     , "// ═══════════════════════════════════════════════════════════"
     , "// Any-typed Task wrappers (until type checker provides types)"

@@ -106,7 +106,7 @@ appArgs mkError =
                     Nothing -> False
             if isArgStart
                 then do
-                    arg <- addLocation (exprAtom_ mkError)
+                    arg <- exprAtom mkError  -- exprAtom includes dotAccess for .field
                     spaces
                     rest <- appArgs mkError
                     return (arg : rest)
@@ -145,7 +145,7 @@ tryNextLineArgs mkError funcCol = Parser $ \s cok eok cerr eerr ->
         then
             let (Parser p) = do
                     freshLine mkError
-                    arg <- addLocation (exprAtom_ mkError)
+                    arg <- exprAtom mkError  -- includes dotAccess
                     spaces
                     rest <- appArgsMultiline mkError funcCol
                     return (arg : rest)
