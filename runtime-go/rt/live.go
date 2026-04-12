@@ -393,6 +393,28 @@ var (
 	Css_visibility    = cssP("visibility")
 	Css_content       = cssP("content")
 	Css_auto          = cssP("auto")
+	Css_none          = func(_ any) any { return "none" }
+	Css_transparent   = func(_ any) any { return "transparent" }
+	Css_inherit       = func(_ any) any { return "inherit" }
+	Css_initial       = func(_ any) any { return "initial" }
+	Css_monoFont      = func(_ any) any { return "ui-monospace, 'SF Mono', Monaco, 'Cascadia Code', monospace" }
+	Css_transitionProp = cssP("transition-property")
+	Css_transitionDuration = cssP("transition-duration")
+	Css_transitionTimingFunction = cssP("transition-timing-function")
+	Css_outlineOffset = cssP("outline-offset")
+	Css_filter        = cssP("filter")
+	Css_backdropFilter = cssP("backdrop-filter")
+	Css_pointerEvents = cssP("pointer-events")
+	Css_userSelectNone = func(_ any) any { return "none" }
+	Css_objectFit     = cssP("object-fit")
+	Css_objectPosition = cssP("object-position")
+	Css_backgroundSize = cssP("background-size")
+	Css_backgroundPosition = cssP("background-position")
+	Css_backgroundRepeat = cssP("background-repeat")
+	Css_listStyle     = cssP("list-style")
+	Css_listStyleType = cssP("list-style-type")
+	Css_listStylePosition = cssP("list-style-position")
+	Css_verticalAlign = cssP("vertical-align")
 	Css_boxSizing    = cssP("box-sizing")
 )
 

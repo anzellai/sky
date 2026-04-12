@@ -354,7 +354,14 @@ kernelFunctions = Map.fromList
                     "borderCollapse", "borderSpacing",
                     "marginTop", "marginBottom", "marginLeft", "marginRight",
                     "paddingTop", "paddingBottom", "paddingLeft", "paddingRight",
-                    "visibility", "content", "auto"])
+                    "visibility", "content", "auto", "none", "transparent",
+                    "inherit", "initial", "monoFont",
+                    "transitionProp", "transitionDuration", "transitionTimingFunction",
+                    "outline", "outlineOffset", "filter", "backdropFilter",
+                    "pointerEvents", "objectFit", "objectPosition",
+                    "backgroundSize", "backgroundPosition", "backgroundRepeat",
+                    "listStyle", "listStyleType", "listStylePosition",
+                    "verticalAlign"])
     , ("Live",    ["app", "route"])
     , ("Event",   ["onClick", "onInput", "onChange", "onSubmit", "onDblClick",
                     "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
