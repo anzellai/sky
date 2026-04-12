@@ -1,0 +1,11 @@
+{
+  "moduleName": "Fyne.Io.Fyne.V2.App",
+  "kernelName": "Go_App",
+  "package": "fyne.io/fyne/v2/app",
+  "functions": [
+    {"name": "new", "arity": 1},
+    {"name": "newWithID", "arity": 1},
+    {"name": "setMetadata", "arity": 1},
+    {"name": "settingsSchemaStoragePath", "arity": 1}
+  ]
+}

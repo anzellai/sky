@@ -1,0 +1,362 @@
+-- Auto-generated FFI binding catalogue for fyne.io/fyne/v2
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   pkg "fyne.io/fyne/v2"
+--   color "image/color"
+--   url "net/url"
+--   time "time"
+
+package fyne
+-- [pure] AnimationStart : Animation -> ()   -- runtime wrap: Task String
+-- [pure] AnimationStop : Animation -> ()   -- runtime wrap: Task String
+-- [pure] AppClipboard : App -> Clipboard   -- runtime wrap: Task String
+-- [pure] AppCloudProvider : App -> CloudProvider   -- runtime wrap: Task String
+-- [pure] AppDriver : App -> Driver   -- runtime wrap: Task String
+-- [pure] AppIcon : App -> Resource   -- runtime wrap: Task String
+-- [pure] AppLifecycle : App -> Lifecycle   -- runtime wrap: Task String
+-- [pure] AppMetadata : App -> AppMetadata   -- runtime wrap: Task String
+-- [pure] AppNewWindow : App -> String -> Window   -- runtime wrap: Task String
+-- [fallible] AppOpenURL : App -> URL -> String   -- runtime wrap: Task String
+-- [pure] AppPreferences : App -> Preferences   -- runtime wrap: Task String
+-- [pure] AppQuit : App -> ()   -- runtime wrap: Task String
+-- [pure] AppRun : App -> ()   -- runtime wrap: Task String
+-- [pure] AppSendNotification : App -> Notification -> ()   -- runtime wrap: Task String
+-- [pure] AppSetCloudProvider : App -> CloudProvider -> ()   -- runtime wrap: Task String
+-- [pure] AppSetIcon : App -> Resource -> ()   -- runtime wrap: Task String
+-- [pure] AppSettings : App -> Settings   -- runtime wrap: Task String
+-- [pure] AppStorage : App -> Storage   -- runtime wrap: Task String
+-- [pure] AppUniqueID : App -> String   -- runtime wrap: Task String
+-- [pure] CanvasAddShortcut : Canvas -> Shortcut -> Shortcut) -> ()   -- runtime wrap: Task String
+-- [pure] CanvasCapture : Canvas -> Image   -- runtime wrap: Task String
+-- [pure] CanvasContent : Canvas -> CanvasObject   -- runtime wrap: Task String
+-- [pure] CanvasFocus : Canvas -> Focusable -> ()   -- runtime wrap: Task String
+-- [pure] CanvasFocusNext : Canvas -> ()   -- runtime wrap: Task String
+-- [pure] CanvasFocusPrevious : Canvas -> ()   -- runtime wrap: Task String
+-- [pure] CanvasFocused : Canvas -> Focusable   -- runtime wrap: Task String
+-- [pure] CanvasInteractiveArea : Canvas -> (Position, Size)   -- runtime wrap: Task String
+-- [effectful] CanvasOnTypedKey : Canvas -> KeyEvent)   -- runtime wrap: Task String
+-- [effectful] CanvasOnTypedRune : Canvas -> func(rune)   -- runtime wrap: Task String
+-- [pure] CanvasOverlays : Canvas -> OverlayStack   -- runtime wrap: Task String
+-- [pure] CanvasPixelCoordinateForPosition : Canvas -> Position -> (Int, Int)   -- runtime wrap: Task String
+-- [pure] CanvasRefresh : Canvas -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] CanvasRemoveShortcut : Canvas -> Shortcut -> ()   -- runtime wrap: Task String
+-- [pure] CanvasScale : Canvas -> Float   -- runtime wrap: Task String
+-- [pure] CanvasSetContent : Canvas -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] CanvasSetOnTypedKey : Canvas -> KeyEvent) -> ()   -- runtime wrap: Task String
+-- [pure] CanvasSetOnTypedRune : Canvas -> func(rune) -> ()   -- runtime wrap: Task String
+-- [pure] CanvasSize : Canvas -> Size   -- runtime wrap: Task String
+-- [pure] CanvasUnfocus : Canvas -> ()   -- runtime wrap: Task String
+-- [pure] CanvasObjectHide : CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] CanvasObjectMinSize : CanvasObject -> Size   -- runtime wrap: Task String
+-- [pure] CanvasObjectMove : CanvasObject -> Position -> ()   -- runtime wrap: Task String
+-- [pure] CanvasObjectPosition : CanvasObject -> Position   -- runtime wrap: Task String
+-- [pure] CanvasObjectRefresh : CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] CanvasObjectResize : CanvasObject -> Size -> ()   -- runtime wrap: Task String
+-- [pure] CanvasObjectShow : CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] CanvasObjectSize : CanvasObject -> Size   -- runtime wrap: Task String
+-- [pure] CanvasObjectVisible : CanvasObject -> Bool   -- runtime wrap: Task String
+-- [pure] ClipboardContent : Clipboard -> String   -- runtime wrap: Task String
+-- [pure] ClipboardSetContent : Clipboard -> String -> ()   -- runtime wrap: Task String
+-- [pure] CloudProviderCleanup : CloudProvider -> App -> ()   -- runtime wrap: Task String
+-- [pure] CloudProviderProviderDescription : CloudProvider -> String   -- runtime wrap: Task String
+-- [pure] CloudProviderProviderIcon : CloudProvider -> Resource   -- runtime wrap: Task String
+-- [pure] CloudProviderProviderName : CloudProvider -> String   -- runtime wrap: Task String
+-- [fallible] CloudProviderSetup : CloudProvider -> App -> String   -- runtime wrap: Task String
+-- [pure] CloudProviderPreferencesCloudPreferences : CloudProviderPreferences -> App -> Preferences   -- runtime wrap: Task String
+-- [pure] CloudProviderStorageCloudStorage : CloudProviderStorage -> App -> Storage   -- runtime wrap: Task String
+-- [pure] ContainerAdd : Container -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] ContainerAddObject : Container -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] ContainerHide : Container -> ()   -- runtime wrap: Task String
+-- [pure] ContainerMinSize : Container -> Size   -- runtime wrap: Task String
+-- [pure] ContainerMove : Container -> Position -> ()   -- runtime wrap: Task String
+-- [pure] ContainerPosition : Container -> Position   -- runtime wrap: Task String
+-- [pure] ContainerRefresh : Container -> ()   -- runtime wrap: Task String
+-- [pure] ContainerRemove : Container -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] ContainerRemoveAll : Container -> ()   -- runtime wrap: Task String
+-- [pure] ContainerResize : Container -> Size -> ()   -- runtime wrap: Task String
+-- [pure] ContainerShow : Container -> ()   -- runtime wrap: Task String
+-- [pure] ContainerSize : Container -> Size   -- runtime wrap: Task String
+-- [pure] ContainerVisible : Container -> Bool   -- runtime wrap: Task String
+-- [pure] CurrentApp : () -> App   -- runtime wrap: Task String
+-- [pure] CurrentDevice : () -> Device   -- runtime wrap: Task String
+-- [pure] DeltaComponents : Delta -> (Float, Float)   -- runtime wrap: Task String
+-- [pure] DeltaIsZero : Delta -> Bool   -- runtime wrap: Task String
+-- [pure] DeviceHasKeyboard : Device -> Bool   -- runtime wrap: Task String
+-- [pure] DeviceIsBrowser : Device -> Bool   -- runtime wrap: Task String
+-- [pure] DeviceIsMobile : Device -> Bool   -- runtime wrap: Task String
+-- [pure] DeviceLocale : Device -> Locale   -- runtime wrap: Task String
+-- [pure] DeviceOrientation : Device -> DeviceOrientation   -- runtime wrap: Task String
+-- [pure] DeviceSystemScaleForWindow : Device -> Window -> Float   -- runtime wrap: Task String
+-- [pure] DisableableDisable : Disableable -> ()   -- runtime wrap: Task String
+-- [pure] DisableableDisabled : Disableable -> Bool   -- runtime wrap: Task String
+-- [pure] DisableableEnable : Disableable -> ()   -- runtime wrap: Task String
+-- [pure] Do : func() -> ()   -- runtime wrap: Task String
+-- [pure] DoAndWait : func() -> ()   -- runtime wrap: Task String
+-- [pure] DoubleTappableDoubleTapped : DoubleTappable -> PointEvent -> ()   -- runtime wrap: Task String
+-- [pure] DraggableDragEnd : Draggable -> ()   -- runtime wrap: Task String
+-- [pure] DraggableDragged : Draggable -> DragEvent -> ()   -- runtime wrap: Task String
+-- [pure] DriverAbsolutePositionForObject : Driver -> CanvasObject -> Position   -- runtime wrap: Task String
+-- [pure] DriverAllWindows : Driver -> Window   -- runtime wrap: Task String
+-- [pure] DriverCanvasForObject : Driver -> CanvasObject -> Canvas   -- runtime wrap: Task String
+-- [pure] DriverCreateWindow : Driver -> String -> Window   -- runtime wrap: Task String
+-- [pure] DriverDevice : Driver -> Device   -- runtime wrap: Task String
+-- [pure] DriverDoFromGoroutine : Driver -> func() -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] DriverDoubleTapDelay : Driver -> Duration   -- runtime wrap: Task String
+-- [pure] DriverQuit : Driver -> ()   -- runtime wrap: Task String
+-- [pure] DriverRenderedTextSize : Driver -> String -> Float -> TextStyle -> Resource -> (Size, Float)   -- runtime wrap: Task String
+-- [pure] DriverRun : Driver -> ()   -- runtime wrap: Task String
+-- [pure] DriverSetDisableScreenBlanking : Driver -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] DriverStartAnimation : Driver -> Animation -> ()   -- runtime wrap: Task String
+-- [pure] DriverStopAnimation : Driver -> Animation -> ()   -- runtime wrap: Task String
+-- [pure] FocusableFocusGained : Focusable -> ()   -- runtime wrap: Task String
+-- [pure] FocusableFocusLost : Focusable -> ()   -- runtime wrap: Task String
+-- [pure] FocusableTypedKey : Focusable -> KeyEvent -> ()   -- runtime wrap: Task String
+-- [pure] FocusableTypedRune : Focusable -> rune -> ()   -- runtime wrap: Task String
+-- [pure] IsHorizontal : DeviceOrientation -> Bool   -- runtime wrap: Task String
+-- [pure] IsVertical : DeviceOrientation -> Bool   -- runtime wrap: Task String
+-- [pure] KeyboardShortcutKey : KeyboardShortcut -> KeyName   -- runtime wrap: Task String
+-- [pure] KeyboardShortcutMod : KeyboardShortcut -> KeyModifier   -- runtime wrap: Task String
+-- [pure] KeyboardShortcutShortcutName : KeyboardShortcut -> String   -- runtime wrap: Task String
+-- [pure] LayoutLayout : Layout -> CanvasObject -> Size -> ()   -- runtime wrap: Task String
+-- [pure] LayoutMinSize : Layout -> CanvasObject -> Size   -- runtime wrap: Task String
+-- [pure] LegacyThemeBackgroundColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeButtonColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeDisabledButtonColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeDisabledTextColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeFocusColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeHoverColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeIconInlineSize : LegacyTheme -> Int   -- runtime wrap: Task String
+-- [pure] LegacyThemePadding : LegacyTheme -> Int   -- runtime wrap: Task String
+-- [pure] LegacyThemePlaceHolderColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemePrimaryColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeScrollBarColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeScrollBarSize : LegacyTheme -> Int   -- runtime wrap: Task String
+-- [pure] LegacyThemeScrollBarSmallSize : LegacyTheme -> Int   -- runtime wrap: Task String
+-- [pure] LegacyThemeShadowColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextBoldFont : LegacyTheme -> Resource   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextBoldItalicFont : LegacyTheme -> Resource   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextColor : LegacyTheme -> Color   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextFont : LegacyTheme -> Resource   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextItalicFont : LegacyTheme -> Resource   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextMonospaceFont : LegacyTheme -> Resource   -- runtime wrap: Task String
+-- [pure] LegacyThemeTextSize : LegacyTheme -> Int   -- runtime wrap: Task String
+-- [pure] LifecycleSetOnEnteredForeground : Lifecycle -> func() -> ()   -- runtime wrap: Task String
+-- [pure] LifecycleSetOnExitedForeground : Lifecycle -> func() -> ()   -- runtime wrap: Task String
+-- [pure] LifecycleSetOnStarted : Lifecycle -> func() -> ()   -- runtime wrap: Task String
+-- [pure] LifecycleSetOnStopped : Lifecycle -> func() -> ()   -- runtime wrap: Task String
+-- [pure] ListableURIAuthority : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIExtension : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIFragment : ListableURI -> String   -- runtime wrap: Task String
+-- [fallible] ListableURIList : ListableURI -> (URI, String)   -- runtime wrap: Task String
+-- [pure] ListableURIMimeType : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIName : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIPath : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIQuery : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIScheme : ListableURI -> String   -- runtime wrap: Task String
+-- [pure] ListableURIString : ListableURI -> String   -- runtime wrap: Task String
+-- [fallible] LoadResourceFromPath : String -> (Resource, String)   -- runtime wrap: Task String
+-- [fallible] LoadResourceFromURLString : String -> (Resource, String)   -- runtime wrap: Task String
+-- [pure] LocaleLanguageString : Locale -> String   -- runtime wrap: Task String
+-- [pure] LocaleString : Locale -> String   -- runtime wrap: Task String
+-- [pure] LogError : String -> String -> ()   -- runtime wrap: Task String
+-- [pure] MainMenuRefresh : MainMenu -> ()   -- runtime wrap: Task String
+-- [pure] Max : Float -> Float -> Float   -- runtime wrap: Task String
+-- [pure] MeasureText : String -> Float -> TextStyle -> Size   -- runtime wrap: Task String
+-- [pure] MenuRefresh : Menu -> ()   -- runtime wrap: Task String
+-- [pure] Min : Float -> Float -> Float   -- runtime wrap: Task String
+-- [pure] NewAnimation : Duration -> func(float32) -> Animation   -- runtime wrap: Task String
+-- [pure] NewContainer : CanvasObject -> Container   -- runtime wrap: Task String
+-- [pure] NewContainerWithLayout : Layout -> CanvasObject -> Container   -- runtime wrap: Task String
+-- [pure] NewContainerWithoutLayout : CanvasObject -> Container   -- runtime wrap: Task String
+-- [pure] NewDelta : Float -> Float -> Delta   -- runtime wrap: Task String
+-- [pure] NewMainMenu : Menu -> MainMenu   -- runtime wrap: Task String
+-- [pure] NewMenu : String -> MenuItem -> Menu   -- runtime wrap: Task String
+-- [pure] NewMenuItem : String -> func() -> MenuItem   -- runtime wrap: Task String
+-- [pure] NewMenuItemSeparator : () -> MenuItem   -- runtime wrap: Task String
+-- [pure] NewMenuItemWithIcon : String -> Resource -> func() -> MenuItem   -- runtime wrap: Task String
+-- [pure] NewNotification : String -> String -> Notification   -- runtime wrap: Task String
+-- [pure] NewPos : Float -> Float -> Position   -- runtime wrap: Task String
+-- [pure] NewSize : Float -> Float -> Size   -- runtime wrap: Task String
+-- [pure] NewSquareOffsetPos : Float -> Position   -- runtime wrap: Task String
+-- [pure] NewSquareSize : Float -> Size   -- runtime wrap: Task String
+-- [pure] NewStaticResource : String -> []byte -> StaticResource   -- runtime wrap: Task String
+-- [pure] OverlayStackAdd : OverlayStack -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] OverlayStackList : OverlayStack -> CanvasObject   -- runtime wrap: Task String
+-- [pure] OverlayStackRemove : OverlayStack -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] OverlayStackTop : OverlayStack -> CanvasObject   -- runtime wrap: Task String
+-- [pure] PositionAdd : Position -> Vector2 -> Position   -- runtime wrap: Task String
+-- [pure] PositionAddXY : Position -> Float -> Float -> Position   -- runtime wrap: Task String
+-- [pure] PositionComponents : Position -> (Float, Float)   -- runtime wrap: Task String
+-- [pure] PositionIsZero : Position -> Bool   -- runtime wrap: Task String
+-- [pure] PositionSubtract : Position -> Vector2 -> Position   -- runtime wrap: Task String
+-- [pure] PositionSubtractXY : Position -> Float -> Float -> Position   -- runtime wrap: Task String
+-- [pure] PreferencesAddChangeListener : Preferences -> func() -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesBool : Preferences -> String -> Bool   -- runtime wrap: Task String
+-- [pure] PreferencesBoolList : Preferences -> String -> []bool   -- runtime wrap: Task String
+-- [pure] PreferencesBoolListWithFallback : Preferences -> String -> []bool -> []bool   -- runtime wrap: Task String
+-- [pure] PreferencesBoolWithFallback : Preferences -> String -> Bool -> Bool   -- runtime wrap: Task String
+-- [pure] PreferencesChangeListeners : Preferences -> []func()   -- runtime wrap: Task String
+-- [pure] PreferencesFloat : Preferences -> String -> Float   -- runtime wrap: Task String
+-- [pure] PreferencesFloatList : Preferences -> String -> []float64   -- runtime wrap: Task String
+-- [pure] PreferencesFloatListWithFallback : Preferences -> String -> []float64 -> []float64   -- runtime wrap: Task String
+-- [pure] PreferencesFloatWithFallback : Preferences -> String -> Float -> Float   -- runtime wrap: Task String
+-- [pure] PreferencesInt : Preferences -> String -> Int   -- runtime wrap: Task String
+-- [pure] PreferencesIntList : Preferences -> String -> []int   -- runtime wrap: Task String
+-- [pure] PreferencesIntListWithFallback : Preferences -> String -> []int -> []int   -- runtime wrap: Task String
+-- [pure] PreferencesIntWithFallback : Preferences -> String -> Int -> Int   -- runtime wrap: Task String
+-- [pure] PreferencesRemoveValue : Preferences -> String -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetBool : Preferences -> String -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetBoolList : Preferences -> String -> []bool -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetFloat : Preferences -> String -> Float -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetFloatList : Preferences -> String -> []float64 -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetInt : Preferences -> String -> Int -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetIntList : Preferences -> String -> []int -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetString : Preferences -> String -> String -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesSetStringList : Preferences -> String -> []string -> ()   -- runtime wrap: Task String
+-- [pure] PreferencesString : Preferences -> String -> String   -- runtime wrap: Task String
+-- [pure] PreferencesStringList : Preferences -> String -> []string   -- runtime wrap: Task String
+-- [pure] PreferencesStringListWithFallback : Preferences -> String -> []string -> []string   -- runtime wrap: Task String
+-- [pure] PreferencesStringWithFallback : Preferences -> String -> String -> String   -- runtime wrap: Task String
+-- [pure] ResourceContent : Resource -> []byte   -- runtime wrap: Task String
+-- [pure] ResourceName : Resource -> String   -- runtime wrap: Task String
+-- [pure] ScrollableScrolled : Scrollable -> ScrollEvent -> ()   -- runtime wrap: Task String
+-- [pure] SecondaryTappableTappedSecondary : SecondaryTappable -> PointEvent -> ()   -- runtime wrap: Task String
+-- [pure] SetCurrentApp : App -> ()   -- runtime wrap: Task String
+-- [pure] SettingsAddChangeListener : Settings -> Settings -> ()   -- runtime wrap: Task String
+-- [pure] SettingsAddListener : Settings -> Settings) -> ()   -- runtime wrap: Task String
+-- [pure] SettingsBuildType : Settings -> BuildType   -- runtime wrap: Task String
+-- [pure] SettingsPrimaryColor : Settings -> String   -- runtime wrap: Task String
+-- [pure] SettingsScale : Settings -> Float   -- runtime wrap: Task String
+-- [pure] SettingsSetTheme : Settings -> Theme -> ()   -- runtime wrap: Task String
+-- [pure] SettingsShowAnimations : Settings -> Bool   -- runtime wrap: Task String
+-- [pure] SettingsTheme : Settings -> Theme   -- runtime wrap: Task String
+-- [pure] SettingsThemeVariant : Settings -> ThemeVariant   -- runtime wrap: Task String
+-- [pure] ShortcutShortcutName : Shortcut -> String   -- runtime wrap: Task String
+-- [pure] ShortcutCopyKey : ShortcutCopy -> KeyName   -- runtime wrap: Task String
+-- [pure] ShortcutCopyMod : ShortcutCopy -> KeyModifier   -- runtime wrap: Task String
+-- [pure] ShortcutCopyShortcutName : ShortcutCopy -> String   -- runtime wrap: Task String
+-- [pure] ShortcutCutKey : ShortcutCut -> KeyName   -- runtime wrap: Task String
+-- [pure] ShortcutCutMod : ShortcutCut -> KeyModifier   -- runtime wrap: Task String
+-- [pure] ShortcutCutShortcutName : ShortcutCut -> String   -- runtime wrap: Task String
+-- [pure] ShortcutHandlerTypedShortcut : ShortcutHandler -> Shortcut -> ()   -- runtime wrap: Task String
+-- [pure] ShortcutHandlerAddShortcut : ShortcutHandler -> Shortcut -> Shortcut) -> ()   -- runtime wrap: Task String
+-- [pure] ShortcutHandlerRemoveShortcut : ShortcutHandler -> Shortcut -> ()   -- runtime wrap: Task String
+-- [pure] ShortcutPasteKey : ShortcutPaste -> KeyName   -- runtime wrap: Task String
+-- [pure] ShortcutPasteMod : ShortcutPaste -> KeyModifier   -- runtime wrap: Task String
+-- [pure] ShortcutPasteShortcutName : ShortcutPaste -> String   -- runtime wrap: Task String
+-- [pure] ShortcutRedoKey : ShortcutRedo -> KeyName   -- runtime wrap: Task String
+-- [pure] ShortcutRedoMod : ShortcutRedo -> KeyModifier   -- runtime wrap: Task String
+-- [pure] ShortcutRedoShortcutName : ShortcutRedo -> String   -- runtime wrap: Task String
+-- [pure] ShortcutSelectAllKey : ShortcutSelectAll -> KeyName   -- runtime wrap: Task String
+-- [pure] ShortcutSelectAllMod : ShortcutSelectAll -> KeyModifier   -- runtime wrap: Task String
+-- [pure] ShortcutSelectAllShortcutName : ShortcutSelectAll -> String   -- runtime wrap: Task String
+-- [pure] ShortcutUndoKey : ShortcutUndo -> KeyName   -- runtime wrap: Task String
+-- [pure] ShortcutUndoMod : ShortcutUndo -> KeyModifier   -- runtime wrap: Task String
+-- [pure] ShortcutUndoShortcutName : ShortcutUndo -> String   -- runtime wrap: Task String
+-- [pure] ShortcutableTypedShortcut : Shortcutable -> Shortcut -> ()   -- runtime wrap: Task String
+-- [pure] SizeAdd : Size -> Vector2 -> Size   -- runtime wrap: Task String
+-- [pure] SizeAddWidthHeight : Size -> Float -> Float -> Size   -- runtime wrap: Task String
+-- [pure] SizeIsZero : Size -> Bool   -- runtime wrap: Task String
+-- [pure] SizeMax : Size -> Vector2 -> Size   -- runtime wrap: Task String
+-- [pure] SizeMin : Size -> Vector2 -> Size   -- runtime wrap: Task String
+-- [pure] SizeComponents : Size -> (Float, Float)   -- runtime wrap: Task String
+-- [pure] SizeSubtract : Size -> Vector2 -> Size   -- runtime wrap: Task String
+-- [pure] SizeSubtractWidthHeight : Size -> Float -> Float -> Size   -- runtime wrap: Task String
+-- [pure] StaticResourceName : StaticResource -> String   -- runtime wrap: Task String
+-- [pure] StaticResourceContent : StaticResource -> []byte   -- runtime wrap: Task String
+-- [pure] StaticResourceGoString : StaticResource -> String   -- runtime wrap: Task String
+-- [fallible] StorageCreate : Storage -> String -> (URIWriteCloser, String)   -- runtime wrap: Task String
+-- [pure] StorageList : Storage -> []string   -- runtime wrap: Task String
+-- [fallible] StorageOpen : Storage -> String -> (URIReadCloser, String)   -- runtime wrap: Task String
+-- [fallible] StorageRemove : Storage -> String -> String   -- runtime wrap: Task String
+-- [pure] StorageRootURI : Storage -> URI   -- runtime wrap: Task String
+-- [fallible] StorageSave : Storage -> String -> (URIWriteCloser, String)   -- runtime wrap: Task String
+-- [pure] TabbableAcceptsTab : Tabbable -> Bool   -- runtime wrap: Task String
+-- [pure] TappableTapped : Tappable -> PointEvent -> ()   -- runtime wrap: Task String
+-- [pure] ThemeColor : Theme -> ThemeColorName -> ThemeVariant -> Color   -- runtime wrap: Task String
+-- [pure] ThemeFont : Theme -> TextStyle -> Resource   -- runtime wrap: Task String
+-- [pure] ThemeIcon : Theme -> ThemeIconName -> Resource   -- runtime wrap: Task String
+-- [pure] ThemeSize : Theme -> ThemeSizeName -> Float   -- runtime wrap: Task String
+-- [pure] ThemedResourceContent : ThemedResource -> []byte   -- runtime wrap: Task String
+-- [pure] ThemedResourceName : ThemedResource -> String   -- runtime wrap: Task String
+-- [pure] ThemedResourceThemeColorName : ThemedResource -> ThemeColorName   -- runtime wrap: Task String
+-- [pure] URIAuthority : URI -> String   -- runtime wrap: Task String
+-- [pure] URIExtension : URI -> String   -- runtime wrap: Task String
+-- [pure] URIFragment : URI -> String   -- runtime wrap: Task String
+-- [pure] URIMimeType : URI -> String   -- runtime wrap: Task String
+-- [pure] URIName : URI -> String   -- runtime wrap: Task String
+-- [pure] URIPath : URI -> String   -- runtime wrap: Task String
+-- [pure] URIQuery : URI -> String   -- runtime wrap: Task String
+-- [pure] URIScheme : URI -> String   -- runtime wrap: Task String
+-- [pure] URIString : URI -> String   -- runtime wrap: Task String
+-- [fallible] URIReadCloserClose : URIReadCloser -> String   -- runtime wrap: Task String
+-- [fallible] URIReadCloserRead : URIReadCloser -> []byte -> (Int, String)   -- runtime wrap: Task String
+-- [pure] URIReadCloserURI : URIReadCloser -> URI   -- runtime wrap: Task String
+-- [pure] URIWithIconAuthority : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconExtension : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconFragment : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconIcon : URIWithIcon -> Resource   -- runtime wrap: Task String
+-- [pure] URIWithIconMimeType : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconName : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconPath : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconQuery : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconScheme : URIWithIcon -> String   -- runtime wrap: Task String
+-- [pure] URIWithIconString : URIWithIcon -> String   -- runtime wrap: Task String
+-- [fallible] URIWriteCloserClose : URIWriteCloser -> String   -- runtime wrap: Task String
+-- [pure] URIWriteCloserURI : URIWriteCloser -> URI   -- runtime wrap: Task String
+-- [fallible] URIWriteCloserWrite : URIWriteCloser -> []byte -> (Int, String)   -- runtime wrap: Task String
+-- [pure] ValidatableSetOnValidationChanged : Validatable -> func(error) -> ()   -- runtime wrap: Task String
+-- [fallible] ValidatableValidate : Validatable -> String   -- runtime wrap: Task String
+-- [pure] Vector2Components : Vector2 -> (Float, Float)   -- runtime wrap: Task String
+-- [pure] Vector2IsZero : Vector2 -> Bool   -- runtime wrap: Task String
+-- [pure] WidgetCreateRenderer : Widget -> WidgetRenderer   -- runtime wrap: Task String
+-- [pure] WidgetHide : Widget -> ()   -- runtime wrap: Task String
+-- [pure] WidgetMinSize : Widget -> Size   -- runtime wrap: Task String
+-- [pure] WidgetMove : Widget -> Position -> ()   -- runtime wrap: Task String
+-- [pure] WidgetPosition : Widget -> Position   -- runtime wrap: Task String
+-- [pure] WidgetRefresh : Widget -> ()   -- runtime wrap: Task String
+-- [pure] WidgetResize : Widget -> Size -> ()   -- runtime wrap: Task String
+-- [pure] WidgetShow : Widget -> ()   -- runtime wrap: Task String
+-- [pure] WidgetSize : Widget -> Size   -- runtime wrap: Task String
+-- [pure] WidgetVisible : Widget -> Bool   -- runtime wrap: Task String
+-- [pure] WidgetRendererDestroy : WidgetRenderer -> ()   -- runtime wrap: Task String
+-- [pure] WidgetRendererLayout : WidgetRenderer -> Size -> ()   -- runtime wrap: Task String
+-- [pure] WidgetRendererMinSize : WidgetRenderer -> Size   -- runtime wrap: Task String
+-- [pure] WidgetRendererObjects : WidgetRenderer -> CanvasObject   -- runtime wrap: Task String
+-- [pure] WidgetRendererRefresh : WidgetRenderer -> ()   -- runtime wrap: Task String
+-- [pure] WindowCanvas : Window -> Canvas   -- runtime wrap: Task String
+-- [pure] WindowCenterOnScreen : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowClipboard : Window -> Clipboard   -- runtime wrap: Task String
+-- [pure] WindowClose : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowContent : Window -> CanvasObject   -- runtime wrap: Task String
+-- [pure] WindowFixedSize : Window -> Bool   -- runtime wrap: Task String
+-- [pure] WindowFullScreen : Window -> Bool   -- runtime wrap: Task String
+-- [pure] WindowHide : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowIcon : Window -> Resource   -- runtime wrap: Task String
+-- [pure] WindowMainMenu : Window -> MainMenu   -- runtime wrap: Task String
+-- [pure] WindowPadded : Window -> Bool   -- runtime wrap: Task String
+-- [pure] WindowRequestFocus : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowResize : Window -> Size -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetCloseIntercept : Window -> func() -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetContent : Window -> CanvasObject -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetFixedSize : Window -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetFullScreen : Window -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetIcon : Window -> Resource -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetMainMenu : Window -> MainMenu -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetMaster : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetOnClosed : Window -> func() -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetOnDropped : Window -> URI) -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetPadded : Window -> Bool -> ()   -- runtime wrap: Task String
+-- [pure] WindowSetTitle : Window -> String -> ()   -- runtime wrap: Task String
+-- [pure] WindowShow : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowShowAndRun : Window -> ()   -- runtime wrap: Task String
+-- [pure] WindowTitle : Window -> String   -- runtime wrap: Task String

@@ -268,6 +268,7 @@ ffiKernelFunctionsRef = unsafePerformIO (newIORef Map.empty)
 -- | Kernel module mappings: Sky import path → kernel module name.
 -- Merged on every read so FFI-registered modules resolve the same way as
 -- stdlib kernel modules (Sky.Core.String etc.).
+{-# NOINLINE kernelModules #-}
 kernelModules :: Map.Map String String
 kernelModules = Map.union staticKernelModules (unsafePerformIO (readIORef ffiKernelModulesRef))
 

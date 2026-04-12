@@ -137,6 +137,11 @@ func main() {
 			ptr := types.NewPointer(named)
 			msetP := types.NewMethodSet(ptr)
 			addPointerMethods(&info, msetP, name, named)
+			// Interface method sets — emit each method as a free function
+			// taking the interface value as receiver.
+			if iface, ok := named.Underlying().(*types.Interface); ok {
+				addInterfaceMethods(&info, iface, name, named)
+			}
 		}
 	}
 
@@ -241,6 +246,43 @@ func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvT
 		MethodName: fn.Name(),
 	}
 }
+
+// addInterfaceMethods emits methods from an interface's explicit method set
+// as synthetic free functions. Receiver is the named interface type itself
+// (no pointer — interface values are already reference-typed).
+func addInterfaceMethods(info *PackageInfo, iface *types.Interface, typeName string, named *types.Named) {
+	seen := map[string]bool{}
+	for _, f := range info.Functions {
+		seen[f.Name] = true
+	}
+	n := iface.NumMethods()
+	for i := 0; i < n; i++ {
+		m := iface.Method(i)
+		if !m.Exported() {
+			continue
+		}
+		sig, ok := m.Type().(*types.Signature)
+		if !ok {
+			continue
+		}
+		name := typeName + m.Name()
+		if seen[name] {
+			continue
+		}
+		info.Functions = append(info.Functions, Function{
+			Name:       name,
+			Params:     append([]Param{{Name: "recv", Type: named.Obj().Type().String()}}, paramsOf(sig)...),
+			Results:    resultsOf(sig),
+			Variadic:   sig.Variadic(),
+			Effect:     classifyEffect(resultsOf(sig)),
+			Exported:   true,
+			RecvType:   typeName,
+			MethodName: m.Name(),
+		})
+		seen[name] = true
+	}
+}
+
 
 func lowerFirstByte(s string) string {
 	if len(s) == 0 {

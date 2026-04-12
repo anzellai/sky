@@ -46,7 +46,7 @@ showWindow window =
 
 
 main =
-    case FyneApp.new of
+    case FyneApp.new () of
         
         Ok myApp ->
             setupWindow myApp

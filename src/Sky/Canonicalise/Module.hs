@@ -274,6 +274,7 @@ kernelCtorsFor _ = []
 -- This drives what names are available via qualified access.
 -- Merged with FFI registry entries populated by Sky.Build.Compile
 -- before canonicalisation — see Env.ffiKernelFunctionsRef.
+{-# NOINLINE kernelFunctions #-}
 kernelFunctions :: Map.Map String [String]
 kernelFunctions =
     Map.unionWith (++) staticKernelFunctions

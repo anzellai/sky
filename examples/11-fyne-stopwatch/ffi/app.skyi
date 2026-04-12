@@ -1,0 +1,20 @@
+-- Auto-generated FFI binding catalogue for fyne.io/fyne/v2/app
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   fyne "fyne.io/fyne/v2"
+--   pkg "fyne.io/fyne/v2/app"
+
+package app
+-- [pure] New : () -> App   -- runtime wrap: Task String
+-- [pure] NewWithID : String -> App   -- runtime wrap: Task String
+-- [pure] SetMetadata : AppMetadata -> ()   -- runtime wrap: Task String
+-- [pure] SettingsSchemaStoragePath : SettingsSchema -> String   -- runtime wrap: Task String
