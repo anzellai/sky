@@ -54,6 +54,39 @@ compile config entryPath outDir = do
     let moduleOrder = Graph.compilationOrder modules
     putStrLn $ "   Found " ++ show (length moduleOrder) ++ " module(s)"
 
+    -- Incremental build: if source hash matches cached, reuse output
+    srcHash <- computeSourceHash (map Graph._mi_path moduleOrder)
+    let cacheDir = ".skycache"
+        hashFile = cacheDir </> "source.hash"
+        existingMain = outDir </> "main.go"
+    cacheHit <- do
+        hasHash <- doesFileExist hashFile
+        hasMain <- doesFileExist existingMain
+        if hasHash && hasMain
+            then do
+                cached <- readFile hashFile
+                return (cached == srcHash)
+            else return False
+    if cacheHit
+        then do
+            putStrLn "-- Incremental: source unchanged, reusing cached output"
+            copyRuntime outDir
+            return (Right existingMain)
+        else continueCompile config entryPath outDir moduleOrder srcHash
+
+
+-- | Compute a stable hash of all source file contents
+computeSourceHash :: [FilePath] -> IO String
+computeSourceHash paths = do
+    contents <- mapM readFile paths
+    -- Simple, not cryptographic: sum of SDBM-ish hashes keyed by path
+    let combined = concat (zipWith (\p c -> p ++ ":" ++ c ++ "\n") paths contents)
+    return (show (length combined) ++ "-" ++ show (foldl (\acc c -> acc * 31 + fromEnum c) (0 :: Int) combined))
+
+
+continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
+continueCompile config _entryPath outDir moduleOrder srcHash = do
+
     -- Phase 2: Parse all modules
     putStrLn "-- Parsing"
     parseResults <- mapM (\modInfo -> do
@@ -107,6 +140,10 @@ compile config entryPath outDir = do
             putStrLn $ "   Wrote " ++ mainGoPath
             copyRuntime outDir
             writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+            -- Write cache hash to enable incremental rebuild skip
+            let cacheDir = ".skycache"
+            createDirectoryIfMissing True cacheDir
+            writeFile (cacheDir </> "source.hash") srcHash
             putStrLn "Compilation successful"
             return (Right mainGoPath)
 
