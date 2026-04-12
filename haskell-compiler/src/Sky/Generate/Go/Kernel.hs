@@ -110,17 +110,17 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     -- Maybe
     -- ═══════════════════════════════════════════════════════
-    , (("Maybe", "withDefault"),  KernelInfo "rt.Maybe_withDefault" 2 True)
-    , (("Maybe", "map"),          KernelInfo "rt.Maybe_map" 2 True)
-    , (("Maybe", "andThen"),      KernelInfo "rt.Maybe_andThen" 2 True)
+    , (("Maybe", "withDefault"),  KernelInfo "rt.Maybe_withDefault" 2 False)
+    , (("Maybe", "map"),          KernelInfo "rt.Maybe_map" 2 False)
+    , (("Maybe", "andThen"),      KernelInfo "rt.Maybe_andThen" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Result
     -- ═══════════════════════════════════════════════════════
-    , (("Result", "withDefault"), KernelInfo "rt.Result_withDefault" 2 True)
-    , (("Result", "map"),         KernelInfo "rt.Result_map" 2 True)
-    , (("Result", "andThen"),     KernelInfo "rt.Result_andThen" 2 True)
-    , (("Result", "mapError"),    KernelInfo "rt.Result_mapError" 2 True)
+    , (("Result", "withDefault"), KernelInfo "rt.Result_withDefault" 2 False)
+    , (("Result", "map"),         KernelInfo "rt.Result_map" 2 False)
+    , (("Result", "andThen"),     KernelInfo "rt.Result_andThen" 2 False)
+    , (("Result", "mapError"),    KernelInfo "rt.Result_mapError" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Task

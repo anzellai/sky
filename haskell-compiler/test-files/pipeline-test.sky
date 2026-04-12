@@ -1,0 +1,27 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.List as List
+import Sky.Core.Result as Result
+import Std.Log exposing (println)
+
+parseAndDouble s =
+    case String.toInt s of
+        Just n -> Ok (n * 2)
+        Nothing -> Err ("Invalid: " ++ s)
+
+main =
+    let
+        inputs = [ "10", "abc", "20", "xyz", "30" ]
+        results = List.map parseAndDouble inputs
+        showResult r =
+            case r of
+                Ok n -> String.fromInt n
+                Err e -> e
+        output = List.map showResult results
+        _ = println ("Results: " ++ String.join ", " output)
+        numbers = List.range 1 5
+        squared = List.map (\n -> n * n) numbers
+    in
+        println ("Squares: " ++ String.join ", " (List.map String.fromInt squared))

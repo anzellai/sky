@@ -449,7 +449,8 @@ letBinding mkError = do
     spaces
     char mkError '='
     freshLine mkError
-    body <- expression mkError
+    bodyCol <- getCol
+    body <- withIndent bodyCol (expression mkError)
     return (Src.Def name params body Nothing)
 
 
