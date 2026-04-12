@@ -155,12 +155,60 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     , (("Random", "int"),         KernelInfo "rt.Random_int" 2 False)
     , (("Random", "float"),       KernelInfo "rt.Random_float" 2 False)
-    , (("Random", "choice"),      KernelInfo "rt.Random_choice" 1 True)
-    , (("Random", "shuffle"),     KernelInfo "rt.Random_shuffle" 1 True)
+    , (("Random", "choice"),      KernelInfo "rt.Random_choice" 1 False)
+    , (("Random", "shuffle"),     KernelInfo "rt.Random_shuffle" 1 False)
 
-    -- ═══════════════════════════════════════════════════════
-    -- Debug / Log
-    -- ═══════════════════════════════════════════════════════
+    , (("Process", "run"),        KernelInfo "rt.Process_run" 2 False)
+    , (("Process", "exit"),       KernelInfo "rt.Process_exit" 1 False)
+    , (("Process", "getEnv"),     KernelInfo "rt.Process_getEnv" 1 False)
+    , (("Process", "getCwd"),     KernelInfo "rt.Process_getCwd" 0 False)
+
+    , (("File", "readFile"),      KernelInfo "rt.File_readFile" 1 False)
+    , (("File", "writeFile"),     KernelInfo "rt.File_writeFile" 2 False)
+    , (("File", "append"),        KernelInfo "rt.File_append" 2 False)
+    , (("File", "exists"),        KernelInfo "rt.File_exists" 1 False)
+    , (("File", "remove"),        KernelInfo "rt.File_remove" 1 False)
+    , (("File", "mkdirAll"),      KernelInfo "rt.File_mkdirAll" 1 False)
+    , (("File", "readDir"),       KernelInfo "rt.File_readDir" 1 False)
+    , (("File", "isDir"),         KernelInfo "rt.File_isDir" 1 False)
+
+    , (("Io", "readLine"),        KernelInfo "rt.Io_readLine" 0 False)
+    , (("Io", "writeStdout"),     KernelInfo "rt.Io_writeStdout" 1 False)
+    , (("Io", "writeStderr"),     KernelInfo "rt.Io_writeStderr" 1 False)
+
+    , (("Crypto", "sha256"),      KernelInfo "rt.Crypto_sha256" 1 False)
+    , (("Crypto", "md5"),         KernelInfo "rt.Crypto_md5" 1 False)
+
+    , (("Encoding", "base64Encode"), KernelInfo "rt.Encoding_base64Encode" 1 False)
+    , (("Encoding", "base64Decode"), KernelInfo "rt.Encoding_base64Decode" 1 False)
+    , (("Encoding", "urlEncode"),    KernelInfo "rt.Encoding_urlEncode" 1 False)
+    , (("Encoding", "urlDecode"),    KernelInfo "rt.Encoding_urlDecode" 1 False)
+    , (("Encoding", "hexEncode"),    KernelInfo "rt.Encoding_hexEncode" 1 False)
+    , (("Encoding", "hexDecode"),    KernelInfo "rt.Encoding_hexDecode" 1 False)
+
+    , (("Regex", "match"),        KernelInfo "rt.Regex_match" 2 False)
+    , (("Regex", "find"),         KernelInfo "rt.Regex_find" 2 False)
+    , (("Regex", "findAll"),      KernelInfo "rt.Regex_findAll" 2 False)
+    , (("Regex", "replace"),      KernelInfo "rt.Regex_replace" 3 False)
+    , (("Regex", "split"),        KernelInfo "rt.Regex_split" 2 False)
+
+    , (("Char", "isUpper"),       KernelInfo "rt.Char_isUpper" 1 False)
+    , (("Char", "isLower"),       KernelInfo "rt.Char_isLower" 1 False)
+    , (("Char", "isDigit"),       KernelInfo "rt.Char_isDigit" 1 False)
+    , (("Char", "isAlpha"),       KernelInfo "rt.Char_isAlpha" 1 False)
+    , (("Char", "toUpper"),       KernelInfo "rt.Char_toUpper" 1 False)
+    , (("Char", "toLower"),       KernelInfo "rt.Char_toLower" 1 False)
+
+    , (("Math", "sqrt"),          KernelInfo "rt.Math_sqrt" 1 False)
+    , (("Math", "pow"),           KernelInfo "rt.Math_pow" 2 False)
+    , (("Math", "floor"),         KernelInfo "rt.Math_floor" 1 False)
+    , (("Math", "ceil"),          KernelInfo "rt.Math_ceil" 1 False)
+    , (("Math", "round"),         KernelInfo "rt.Math_round" 1 False)
+    , (("Math", "sin"),           KernelInfo "rt.Math_sin" 1 False)
+    , (("Math", "cos"),           KernelInfo "rt.Math_cos" 1 False)
+    , (("Math", "pi"),            KernelInfo "rt.Math_pi" 0 False)
+    , (("Math", "log"),           KernelInfo "rt.Math_log" 1 False)
+
     , (("Debug", "log"),          KernelInfo "rt.Debug_log" 2 True)
     , (("Debug", "toString"),     KernelInfo "rt.Debug_toString" 1 True)
     , (("Log", "println"),        KernelInfo "rt.Log_println" 1 False)

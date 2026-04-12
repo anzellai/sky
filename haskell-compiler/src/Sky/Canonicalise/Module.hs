@@ -157,14 +157,19 @@ kernelFunctions = Map.fromList
                     "lazy", "run", "map2", "map3", "map4", "map5", "andMap"])
     , ("Log",     ["println"])
     , ("Cmd",     ["none", "batch", "perform"])
-    , ("Time",    ["now", "sleep", "every"])
+    , ("Time",    ["now", "sleep", "every", "unixMillis"])
     , ("Random",  ["int", "float", "choice", "shuffle"])
-    , ("Math",    ["sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "pi", "min", "max"])
+    , ("Math",    ["sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "tan", "pi", "e", "log", "min", "max"])
     , ("Io",      ["readLine", "readBytes", "writeStdout", "writeStderr"])
-    , ("File",    ["readFile", "writeFile", "append", "mkdirAll", "readDir", "exists", "remove"])
+    , ("File",    ["readFile", "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir"])
     , ("Process", ["run", "exit", "getEnv", "getCwd", "loadEnv"])
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html"])
+    , ("Crypto",  ["sha256", "sha512", "md5", "hmacSha256"])
+    , ("Encoding",["base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode"])
+    , ("Regex",   ["match", "find", "findAll", "replace", "split"])
+    , ("Char",    ["isUpper", "isLower", "isDigit", "isAlpha", "toUpper", "toLower"])
+    , ("Path",    ["join", "dir", "base", "ext", "isAbsolute"])
     ]
 
 

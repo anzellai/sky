@@ -6,7 +6,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, copyFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile)
 import System.IO (hFlush, stdout)
 import System.IO.Unsafe (unsafePerformIO)
 import System.FilePath (takeDirectory, (</>))
@@ -183,8 +183,13 @@ copyRuntime :: FilePath -> IO ()
 copyRuntime outDir = do
     let rtDir = outDir </> "rt"
     createDirectoryIfMissing True rtDir
-    -- Write rt package inline (for now, until we have a separate runtime-go dir)
-    writeFile (rtDir </> "rt.go") runtimeGoSource
+    -- Try to copy runtime from runtime-go/ directory (proper Go file)
+    -- Fall back to inline string if runtime-go/ doesn't exist
+    let runtimeSrc = "runtime-go/rt/rt.go"
+    hasRuntimeFile <- doesFileExist runtimeSrc
+    if hasRuntimeFile
+        then copyFile runtimeSrc (rtDir </> "rt.go")
+        else writeFile (rtDir </> "rt.go") runtimeGoSource
 
 
 -- ═══════════════════════════════════════════════════════════
