@@ -107,10 +107,22 @@ runCommand cmd = case cmd of
                 return (Right ())
 
     Run path -> do
-        putStrLn $ "Running " ++ path ++ "..."
-        -- TODO: build then exec
-        putStrLn "Run not yet implemented"
-        return (Right ())
+        -- Build first, then exec
+        hasToml <- doesFileExist "sky.toml"
+        config <- if hasToml
+            then Toml.parseSkyToml <$> readFile "sky.toml"
+            else return Toml.defaultConfig
+        let outDir = "sky-out"
+        createDirectoryIfMissing True outDir
+        result <- Compile.compile config path outDir
+        case result of
+            Left err -> return (Left err)
+            Right goPath -> do
+                putStrLn "Running go build..."
+                callProcess "sh" ["-c", "cd " ++ outDir ++ " && go build -o " ++ Toml._binName config ++ " ."]
+                putStrLn $ "Build complete, running..."
+                callProcess (outDir ++ "/" ++ Toml._binName config) []
+                return (Right ())
 
     Check path -> do
         putStrLn $ "Checking " ++ path ++ "..."
