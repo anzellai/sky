@@ -47,17 +47,22 @@ constrainDecls counter env decls = case decls of
         return T.CTrue
 
     Can.Declare def rest -> do
-        defCon <- constrainDef counter env def
-        (name, defType) <- defTypeInfoIO counter def
+        (defCon, name, defType) <- constrainDefWithType counter env def
         let env' = Map.insert name (T.Forall [] defType) env
         restCon <- constrainDecls counter env' rest
         return $ T.CAnd [defCon, restCon]
 
     Can.DeclareRec def defs rest -> do
+        -- For recursive defs, we need the types first (for mutual references)
+        -- Use defTypeInfoIO to pre-register, then constrainDef uses the SAME names
         let allDefs = def : defs
+        -- Pre-generate type info and add to env
         defInfos <- mapM (defTypeInfoIO counter) allDefs
         let recEnv = foldr (\(n, t) e -> Map.insert n (T.Forall [] t) e) env defInfos
-        defCons <- mapM (constrainDef counter recEnv) allDefs
+        -- Now constrain each def — constrainDef will generate its OWN type vars
+        -- which are different from defInfos. We need them to share.
+        -- Fix: pass the pre-generated type vars into constrainDef
+        defCons <- zipWithM (\d (_, ty) -> constrainDefWithKnownType counter recEnv d ty) allDefs defInfos
         restCon <- constrainDecls counter recEnv rest
         return $ T.CAnd (defCons ++ [restCon])
 
@@ -247,18 +252,19 @@ constrainIf counter env region branches elseExpr expected = do
 
 constrainLet :: Counter -> Env -> Can.Def -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
 constrainLet counter env def body expected = do
-    (name, defType) <- defTypeInfoIO counter def
+    (defCon, name, defType) <- constrainDefWithType counter env def
     let bodyEnv = Map.insert name (T.Forall [] defType) env
-    defCon <- constrainDef counter env def
     bodyCon <- constrain counter bodyEnv body expected
     return $ T.CAnd [defCon, bodyCon]
 
 
 constrainLetRec :: Counter -> Env -> [Can.Def] -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
 constrainLetRec counter env defs body expected = do
+    -- Pre-generate type info and add to env (for mutual references)
     defInfos <- mapM (defTypeInfoIO counter) defs
     let recEnv = foldr (\(n, t) e -> Map.insert n (T.Forall [] t) e) env defInfos
-    defCons <- mapM (constrainDef counter recEnv) defs
+    -- Constrain each def using its pre-generated type
+    defCons <- zipWithM (\d (_, ty) -> constrainDefWithKnownType counter recEnv d ty) defs defInfos
     bodyCon <- constrain counter recEnv body expected
     return $ T.CAnd (defCons ++ [bodyCon])
 
@@ -274,9 +280,9 @@ constrainLetDestruct counter env pat valExpr body expected = do
     return $ T.CAnd [valCon, bodyCon]
 
 
--- | Generate constraints for a definition
-constrainDef :: Counter -> Env -> Can.Def -> IO T.Constraint
-constrainDef counter env def = case def of
+-- | Generate constraints for a definition, returning (constraint, name, funcType)
+constrainDefWithType :: Counter -> Env -> Can.Def -> IO (T.Constraint, String, T.Type)
+constrainDefWithType counter env def = case def of
     Can.Def (A.At region name) params body -> do
         paramNames <- mapM (\_ -> freshName counter ("_" ++ name ++ "_arg")) params
         resultName <- freshName counter ("_" ++ name ++ "_res")
@@ -286,13 +292,44 @@ constrainDef counter env def = case def of
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
             funcType = foldr T.TLambda resultType paramTypes
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
-        return $ T.CAnd [bodyCon, T.CEqual region T.CApp funcType (T.NoExpectation funcType)]
+        -- Wrap body in CLet that introduces parameter bindings into solver env
+        -- CLet header maps param names to their type variables
+        -- headerCon = CTrue (no extra constraint), bodyCon = the actual body constraint
+        let paramHeader = Map.fromList $
+                map (\(pname, T.Forall _ ptype) -> (pname, (A.one, ptype))) paramBindings
+            wrappedCon = T.CLet [] [] paramHeader T.CTrue bodyCon
+        return (wrappedCon, name, funcType)
 
     Can.TypedDef (A.At region name) _freeVars typedPats body retType -> do
         let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+            funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType typedPats
         bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
-        return bodyCon
+        return (bodyCon, name, funcType)
+
+
+-- | Constrain a def with a pre-generated function type (for recursive defs)
+constrainDefWithKnownType :: Counter -> Env -> Can.Def -> T.Type -> IO T.Constraint
+constrainDefWithKnownType counter env def knownType = case def of
+    Can.Def (A.At _region _name) params body -> do
+        let (paramTypes, resultType) = splitFuncTypeN (length params) knownType
+            paramBindings = concatMap patternBindings (zip params paramTypes)
+            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+        constrain counter bodyEnv body (T.NoExpectation resultType)
+
+    Can.TypedDef (A.At _region _name) _freeVars typedPats body retType -> do
+        let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
+            bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
+        constrain counter bodyEnv body (T.NoExpectation retType)
+
+
+-- | Split a function type into N argument types and the result type
+splitFuncTypeN :: Int -> T.Type -> ([T.Type], T.Type)
+splitFuncTypeN 0 ty = ([], ty)
+splitFuncTypeN n (T.TLambda from to) =
+    let (rest, ret) = splitFuncTypeN (n - 1) to
+    in (from : rest, ret)
+splitFuncTypeN _ ty = ([], ty)
 
 
 -- ═══════════════════════════════════════════════════════════

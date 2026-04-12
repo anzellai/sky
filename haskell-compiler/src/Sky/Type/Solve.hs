@@ -111,16 +111,17 @@ expectedToVar state (T.FromAnnotation _ _ _ ty) = typeToVar state ty
 
 -- | Instantiate an Annotation into a UF Variable (fresh vars for quantified names)
 instantiateAnnotation :: SolverState -> T.Annotation -> IO T.Variable
-instantiateAnnotation state (T.Forall freeVars canType) = do
-    -- Create a FRESH cache scope for instantiation (don't pollute the shared cache)
-    -- Each quantified var gets a new fresh variable
-    localCache <- newIORef Map.empty
-    freshVars <- mapM (\name -> do
-        var <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) (_rank state) T.noMark Nothing)
-        modifyIORef' localCache (Map.insert name var)
-        return var) freeVars
-    let instState = state { _varCache = localCache }
-    typeToVar instState canType
+instantiateAnnotation state (T.Forall freeVars canType)
+    -- No quantification: use the GLOBAL cache for sharing
+    | null freeVars = typeToVar state canType
+    -- With quantification: create a LOCAL cache so each use gets fresh vars
+    | otherwise = do
+        localCache <- newIORef Map.empty
+        mapM_ (\name -> do
+            var <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) (_rank state) T.noMark Nothing)
+            modifyIORef' localCache (Map.insert name var)) freeVars
+        let instState = state { _varCache = localCache }
+        typeToVar instState canType
 
 
 -- ═══════════════════════════════════════════════════════════
