@@ -1,0 +1,11 @@
+{
+  "moduleName": "Google.Golang.Org.Api.Iterator",
+  "kernelName": "Go_Iterator",
+  "package": "google.golang.org/api/iterator",
+  "functions": [
+    {"name": "newPager", "arity": 3},
+    {"name": "pageInfoRemaining", "arity": 1},
+    {"name": "pageablePageInfo", "arity": 1},
+    {"name": "pagerNextPage", "arity": 2}
+  ]
+}

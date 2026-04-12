@@ -1,0 +1,57 @@
+-- Auto-generated FFI binding catalogue for github.com/stripe/stripe-go/v84/customer
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   stripe_go "github.com/stripe/stripe-go/v84"
+--   pkg "github.com/stripe/stripe-go/v84/customer"
+
+package customer
+-- [fallible] ClientNew : Client -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] ClientGet : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] ClientUpdate : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] ClientDel : Client -> String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] ClientCreateFundingInstructions : Client -> String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task String
+-- [fallible] ClientDeleteDiscount : Client -> String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] ClientRetrievePaymentMethod : Client -> String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task String
+-- [pure] ClientList : Client -> CustomerListParams -> Iter   -- runtime wrap: Task String
+-- [pure] ClientListPaymentMethods : Client -> CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
+-- [pure] ClientSearch : Client -> CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
+-- [fallible] CreateFundingInstructions : String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task String
+-- [fallible] Del : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] DeleteDiscount : String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task String
+-- [fallible] Get : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [pure] IterCustomer : Iter -> Customer   -- runtime wrap: Task String
+-- [pure] IterCustomerList : Iter -> CustomerList   -- runtime wrap: Task String
+-- [pure] IterCurrent : Iter -> interface{}   -- runtime wrap: Task String
+-- [fallible] IterErr : Iter -> String   -- runtime wrap: Task String
+-- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task String
+-- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task String
+-- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
+-- [pure] List : CustomerListParams -> Iter   -- runtime wrap: Task String
+-- [pure] ListPaymentMethods : CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
+-- [fallible] New : CustomerParams -> (Customer, String)   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterPaymentMethod : PaymentMethodIter -> PaymentMethod   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterPaymentMethodList : PaymentMethodIter -> PaymentMethodList   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterCurrent : PaymentMethodIter -> interface{}   -- runtime wrap: Task String
+-- [fallible] PaymentMethodIterErr : PaymentMethodIter -> String   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterList : PaymentMethodIter -> ListContainer   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterMeta : PaymentMethodIter -> ListMeta   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterNext : PaymentMethodIter -> Bool   -- runtime wrap: Task String
+-- [fallible] RetrievePaymentMethod : String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task String
+-- [pure] Search : CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
+-- [pure] SearchIterCustomer : SearchIter -> Customer   -- runtime wrap: Task String
+-- [pure] SearchIterCustomerSearchResult : SearchIter -> CustomerSearchResult   -- runtime wrap: Task String
+-- [pure] SearchIterCurrent : SearchIter -> interface{}   -- runtime wrap: Task String
+-- [fallible] SearchIterErr : SearchIter -> String   -- runtime wrap: Task String
+-- [pure] SearchIterMeta : SearchIter -> SearchMeta   -- runtime wrap: Task String
+-- [pure] SearchIterNext : SearchIter -> Bool   -- runtime wrap: Task String
+-- [pure] SearchIterSearchResult : SearchIter -> SearchContainer   -- runtime wrap: Task String
+-- [fallible] Update : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String

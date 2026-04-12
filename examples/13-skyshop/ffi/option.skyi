@@ -1,0 +1,48 @@
+-- Auto-generated FFI binding catalogue for google.golang.org/api/option
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   auth "cloud.google.com/go/auth"
+--   oauth2 "golang.org/x/oauth2"
+--   google "golang.org/x/oauth2/google"
+--   internal "google.golang.org/api/internal"
+--   pkg "google.golang.org/api/option"
+--   grpc "google.golang.org/grpc"
+--   slog "log/slog"
+--   http "net/http"
+
+package option
+-- [pure] ClientOptionApply : ClientOption -> DialSettings -> ()   -- runtime wrap: Task String
+-- [pure] ImpersonateCredentials : String -> []string -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithAPIKey : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithAudiences : []string -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithAuthCredentials : Credentials -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithAuthCredentialsFile : CredentialsType -> String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithAuthCredentialsJSON : CredentialsType -> []byte -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithClientCertSource : ClientCertSource -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithCredentials : Credentials -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithCredentialsFile : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithCredentialsJSON : []byte -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithEndpoint : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithGRPCConn : ClientConn -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithGRPCConnectionPool : Int -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithGRPCDialOption : DialOption -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithHTTPClient : Client -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithLogger : Logger -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithQuotaProject : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithRequestReason : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithScopes : []string -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithServiceAccountFile : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithTelemetryDisabled : () -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithTokenSource : TokenSource -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithUniverseDomain : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithUserAgent : String -> ClientOption   -- runtime wrap: Task String
+-- [pure] WithoutAuthentication : () -> ClientOption   -- runtime wrap: Task String

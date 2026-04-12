@@ -67,31 +67,34 @@ patternAtom mkError =
                      return (Src.PVar name)
                  _ -> return Src.PAnything
 
-        , -- Unit: ()
+        , -- Unit () | Parenthesised (pat) | Tuple (p1, p2, ...).
+          -- Single `(` consume then branch on the next non-space char to
+          -- avoid the cerr-commit bug where alternative branches each
+          -- re-attempt to consume `(` and fail mid-stream.
           do char mkError '('
              spaces
-             char mkError ')'
-             return Src.PUnit
-
-        , -- Tuple or parenthesised: (pat, pat, ...)
-          do char mkError '('
-             spaces
-             p1 <- pattern_ mkError
-             spaces
-             mc <- peek
-             case mc of
-                 Just ',' -> do
-                     char mkError ','
-                     spaces
-                     p2 <- pattern_ mkError
-                     more <- patternTupleRest mkError
-                     spaces
-                     char mkError ')'
-                     return (Src.PTuple p1 p2 more)
+             mc0 <- peek
+             case mc0 of
                  Just ')' -> do
                      char mkError ')'
-                     return (A.toValue p1)
-                 _ -> error "Expected , or )"
+                     return Src.PUnit
+                 _ -> do
+                     p1 <- pattern_ mkError
+                     spaces
+                     mc <- peek
+                     case mc of
+                         Just ',' -> do
+                             char mkError ','
+                             spaces
+                             p2 <- pattern_ mkError
+                             more <- patternTupleRest mkError
+                             spaces
+                             char mkError ')'
+                             return (Src.PTuple p1 p2 more)
+                         Just ')' -> do
+                             char mkError ')'
+                             return (A.toValue p1)
+                         _ -> error "Expected , or )"
 
         , -- List: [pat, pat, ...]
           do char mkError '['
@@ -121,6 +124,20 @@ patternAtom mkError =
              spaces
              args <- patternCtorArgs mkError
              return (Src.PCtor name [] args)
+
+        , -- Negative number literal: `-3`, `-3.14`. Peek two chars so we
+          -- don't consume `-` unless the next char is a digit — otherwise
+          -- the pattern parser commits on `-` and breaks when the `-` was
+          -- actually a separator (e.g. `->` after a ctor pattern).
+          do ok <- peekNextIsNegativeDigit
+             if not ok
+                 then Parser $ \s _ _ _ eerr -> eerr (_row s) (_col s) mkError
+                 else do
+                     char mkError '-'
+                     n <- number mkError
+                     return $ case n of
+                         IntNum i   -> Src.PInt (negate i)
+                         FloatNum f -> Src.PFloat (negate f)
 
         , -- Number literal
           do n <- number mkError
@@ -223,6 +240,17 @@ patternRecordFieldsRest mkError =
 
 
 -- Helpers
+
+-- | Peek two chars without consuming; return True iff the next char is `-`
+-- and the one after is an ASCII digit. Used to gate the negative-number
+-- branch in patternAtom so `-` inside `->` doesn't get misconsumed.
+peekNextIsNegativeDigit :: Parser x Bool
+peekNextIsNegativeDigit = Parser $ \s _ eok _ _ ->
+    let src = _src s
+    in case T.unpack (T.take 2 src) of
+           ('-' : c : _) -> eok (c >= '0' && c <= '9') s
+           _             -> eok False s
+
 
 -- | Accepts any Unicode letter, digit, or underscore. Matches Variable.isIdentChar
 -- so identifiers use the same alphabet in value, type, and pattern positions.

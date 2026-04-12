@@ -1,0 +1,673 @@
+-- Auto-generated FFI binding catalogue for cloud.google.com/go/firestore
+--
+-- All auto-generated bindings are registered effect-unknown and are
+-- callable via Sky.Ffi.callTask. Every call returns Task String a
+-- with panic recovery — any Go panic is caught and surfaced as Err.
+--
+-- Opaque Go struct values flow through Sky as Any; use the bindings
+-- to construct, read and update them. Sky records-with-methods can
+-- bridge this gap idiomatically — define a record type whose methods
+-- are the relevant callTask invocations.
+--
+-- Imports used in this package's wrapper:
+--   pkg "cloud.google.com/go/firestore"
+--   context "context"
+--   iterator "google.golang.org/api/iterator"
+--   option "google.golang.org/api/option"
+--   anypb "google.golang.org/protobuf/types/known/anypb"
+--   time "time"
+
+package firestore
+-- [pure] Abs : any -> Expression   -- runtime wrap: Task String
+-- [pure] Add : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AggregateFunctionAs : AggregateFunction -> String -> AliasedAggregate   -- runtime wrap: Task String
+-- [pure] AggregateSpecWithGroups : AggregateSpec -> []any -> AggregateSpec   -- runtime wrap: Task String
+-- [pure] AggregationQueryTransaction : AggregationQuery -> Transaction -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] AggregationQueryWithCount : AggregationQuery -> String -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] AggregationQueryWithSumPath : AggregationQuery -> FieldPath -> String -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] AggregationQueryWithSum : AggregationQuery -> String -> String -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] AggregationQueryWithAvgPath : AggregationQuery -> FieldPath -> String -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] AggregationQueryWithAvg : AggregationQuery -> String -> String -> AggregationQuery   -- runtime wrap: Task String
+-- [fallible] AggregationQueryGet : AggregationQuery -> Context -> (AggregationResult, String)   -- runtime wrap: Task String
+-- [fallible] AggregationQueryGetResponse : AggregationQuery -> Context -> (AggregationResponse, String)   -- runtime wrap: Task String
+-- [pure] AggregationQueryPipeline : AggregationQuery -> Pipeline   -- runtime wrap: Task String
+-- [pure] AliasedAggregateAs : AliasedAggregate -> String -> AliasedAggregate   -- runtime wrap: Task String
+-- [pure] AliasedExpressionAbs : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionAdd : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayConcat : AliasedExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayContains : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayContainsAll : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayContainsAny : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayGet : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayLength : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayMaximum : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayMinimum : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArrayReverse : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionArraySum : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionAs : AliasedExpression -> String -> Selectable   -- runtime wrap: Task String
+-- [pure] AliasedExpressionAscending : AliasedExpression -> Ordering   -- runtime wrap: Task String
+-- [pure] AliasedExpressionAverage : AliasedExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] AliasedExpressionByteLength : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionCeil : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionCharLength : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionConcat : AliasedExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionCosineDistance : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionCount : AliasedExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] AliasedExpressionCountDistinct : AliasedExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] AliasedExpressionDescending : AliasedExpression -> Ordering   -- runtime wrap: Task String
+-- [pure] AliasedExpressionDivide : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionDotProduct : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionEndsWith : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionEqual : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionEqualAny : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionEuclideanDistance : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionExp : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionFloor : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionGetCollectionID : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionGetDocumentID : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionGreaterThan : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionGreaterThanOrEqual : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionIfAbsent : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionIfError : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionJoin : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLength : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLessThan : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLessThanOrEqual : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLike : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLn : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLog : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionLog10 : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMapGet : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMapMerge : AliasedExpression -> Expression -> Expression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMapRemove : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMaximum : AliasedExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMinimum : AliasedExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMod : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionMultiply : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionNotEqual : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionNotEqualAny : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionPow : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionRegexContains : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionRegexMatch : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionReverse : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionRound : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionSplit : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionSqrt : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionStartsWith : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionStringConcat : AliasedExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionStringContains : AliasedExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionStringReverse : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionSubstring : AliasedExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionSubtract : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionSum : AliasedExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampAdd : AliasedExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampSubtract : AliasedExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampToUnixMicros : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampToUnixMillis : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampToUnixSeconds : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampTruncate : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTimestampTruncateWithTimezone : AliasedExpression -> any -> String -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionToLower : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionToUpper : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionTrim : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionType : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionUnixMicrosToTimestamp : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionUnixMillisToTimestamp : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionUnixSecondsToTimestamp : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] AliasedExpressionVectorLength : AliasedExpression -> Expression   -- runtime wrap: Task String
+-- [pure] And : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Array : []any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayConcat : any -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayContains : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ArrayContainsAll : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ArrayContainsAny : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ArrayFromSlice : []T -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayGet : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayLength : any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayMaximum : any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayMinimum : any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayRemove : []interface{} -> arrayRemove   -- runtime wrap: Task String
+-- [pure] ArrayReverse : any -> Expression   -- runtime wrap: Task String
+-- [pure] ArraySum : any -> Expression   -- runtime wrap: Task String
+-- [pure] ArrayUnion : []interface{} -> arrayUnion   -- runtime wrap: Task String
+-- [pure] Ascending : Expression -> Ordering   -- runtime wrap: Task String
+-- [pure] Average : any -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] BooleanExpressionAbs : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionAdd : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayConcat : BooleanExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayContains : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayContainsAll : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayContainsAny : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayGet : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayLength : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayMaximum : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayMinimum : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArrayReverse : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionArraySum : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionAs : BooleanExpression -> String -> Selectable   -- runtime wrap: Task String
+-- [pure] BooleanExpressionAscending : BooleanExpression -> Ordering   -- runtime wrap: Task String
+-- [pure] BooleanExpressionAverage : BooleanExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] BooleanExpressionByteLength : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionCeil : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionCharLength : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionConcat : BooleanExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionConditional : BooleanExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionCosineDistance : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionCount : BooleanExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] BooleanExpressionCountIf : BooleanExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] BooleanExpressionDescending : BooleanExpression -> Ordering   -- runtime wrap: Task String
+-- [pure] BooleanExpressionDivide : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionDotProduct : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionEndsWith : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionEqual : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionEqualAny : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionEuclideanDistance : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionExp : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionFloor : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionGetCollectionID : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionGetDocumentID : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionGreaterThan : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionGreaterThanOrEqual : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionIfAbsent : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionIfError : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionIfErrorBoolean : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionJoin : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLength : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLessThan : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLessThanOrEqual : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLike : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLn : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLog : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionLog10 : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionMapGet : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionMapMerge : BooleanExpression -> Expression -> Expression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionMapRemove : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionMod : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionMultiply : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionNot : BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionNotEqual : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionNotEqualAny : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionPow : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionRegexContains : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionRegexMatch : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionReverse : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionRound : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionSplit : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionSqrt : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionStartsWith : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionStringConcat : BooleanExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionStringContains : BooleanExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionStringReverse : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionSubstring : BooleanExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionSubtract : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionSum : BooleanExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampAdd : BooleanExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampSubtract : BooleanExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampToUnixMicros : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampToUnixMillis : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampToUnixSeconds : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampTruncate : BooleanExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTimestampTruncateWithTimezone : BooleanExpression -> any -> String -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionToLower : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionToUpper : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionTrim : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionType : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionUnixMicrosToTimestamp : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionUnixMillisToTimestamp : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionUnixSecondsToTimestamp : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BooleanExpressionVectorLength : BooleanExpression -> Expression   -- runtime wrap: Task String
+-- [pure] BulkWriterEnd : BulkWriter -> ()   -- runtime wrap: Task String
+-- [pure] BulkWriterFlush : BulkWriter -> ()   -- runtime wrap: Task String
+-- [fallible] BulkWriterCreate : BulkWriter -> DocumentRef -> interface{} -> (BulkWriterJob, String)   -- runtime wrap: Task String
+-- [fallible] BulkWriterDelete : BulkWriter -> DocumentRef -> Precondition -> (BulkWriterJob, String)   -- runtime wrap: Task String
+-- [fallible] BulkWriterSet : BulkWriter -> DocumentRef -> interface{} -> SetOption -> (BulkWriterJob, String)   -- runtime wrap: Task String
+-- [fallible] BulkWriterUpdate : BulkWriter -> DocumentRef -> Update -> Precondition -> (BulkWriterJob, String)   -- runtime wrap: Task String
+-- [fallible] BulkWriterJobResults : BulkWriterJob -> (WriteResult, String)   -- runtime wrap: Task String
+-- [pure] ByteLength : any -> Expression   -- runtime wrap: Task String
+-- [pure] Ceil : any -> Expression   -- runtime wrap: Task String
+-- [pure] CharLength : any -> Expression   -- runtime wrap: Task String
+-- [fallible] ClientClose : Client -> String   -- runtime wrap: Task String
+-- [pure] ClientPipeline : Client -> PipelineSource   -- runtime wrap: Task String
+-- [pure] ClientCollection : Client -> String -> CollectionRef   -- runtime wrap: Task String
+-- [pure] ClientDoc : Client -> String -> DocumentRef   -- runtime wrap: Task String
+-- [pure] ClientDocFromFullPath : Client -> String -> DocumentRef   -- runtime wrap: Task String
+-- [pure] ClientCollectionGroup : Client -> String -> CollectionGroupRef   -- runtime wrap: Task String
+-- [fallible] ClientGetAll : Client -> Context -> DocumentRef -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [pure] ClientCollections : Client -> Context -> CollectionIterator   -- runtime wrap: Task String
+-- [pure] ClientBatch : Client -> WriteBatch   -- runtime wrap: Task String
+-- [pure] ClientBulkWriter : Client -> Context -> BulkWriter   -- runtime wrap: Task String
+-- [pure] ClientWithReadOptions : Client -> ReadOption -> Client   -- runtime wrap: Task String
+-- [fallible] ClientRunTransaction : Client -> Context -> Transaction) error -> TransactionOption -> String   -- runtime wrap: Task String
+-- [fallible] CollectionGroupRefGetPartitionedQueries : CollectionGroupRef -> Context -> Int -> (Query, String)   -- runtime wrap: Task String
+-- [fallible] CollectionGroupRefDeserialize : CollectionGroupRef -> []byte -> (Query, String)   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefDocuments : CollectionGroupRef -> Context -> DocumentIterator   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefEndAt : CollectionGroupRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefEndBefore : CollectionGroupRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefFindNearest : CollectionGroupRef -> String -> any -> Int -> DistanceMeasure -> FindNearestOptions -> VectorQuery   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefFindNearestPath : CollectionGroupRef -> FieldPath -> any -> Int -> DistanceMeasure -> FindNearestOptions -> VectorQuery   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefLimit : CollectionGroupRef -> Int -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefLimitToLast : CollectionGroupRef -> Int -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefNewAggregationQuery : CollectionGroupRef -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefOffset : CollectionGroupRef -> Int -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefOrderBy : CollectionGroupRef -> String -> Direction -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefOrderByPath : CollectionGroupRef -> FieldPath -> Direction -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefPipeline : CollectionGroupRef -> Pipeline   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefSelect : CollectionGroupRef -> []string -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefSelectPaths : CollectionGroupRef -> FieldPath -> Query   -- runtime wrap: Task String
+-- [fallible] CollectionGroupRefSerialize : CollectionGroupRef -> ([]byte, String)   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefSnapshots : CollectionGroupRef -> Context -> QuerySnapshotIterator   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefStartAfter : CollectionGroupRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefStartAt : CollectionGroupRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefWhere : CollectionGroupRef -> String -> String -> interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefWhereEntity : CollectionGroupRef -> EntityFilter -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefWherePath : CollectionGroupRef -> FieldPath -> String -> interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefWithReadOptions : CollectionGroupRef -> ReadOption -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefWithRunOptions : CollectionGroupRef -> RunOption -> Query   -- runtime wrap: Task String
+-- [pure] CollectionHintsWithForceIndex : CollectionHints -> String -> CollectionHints   -- runtime wrap: Task String
+-- [pure] CollectionHintsWithIgnoreIndexFields : CollectionHints -> []string -> CollectionHints   -- runtime wrap: Task String
+-- [pure] CollectionIteratorPageInfo : CollectionIterator -> PageInfo   -- runtime wrap: Task String
+-- [fallible] CollectionIteratorNext : CollectionIterator -> (CollectionRef, String)   -- runtime wrap: Task String
+-- [fallible] CollectionIteratorGetAll : CollectionIterator -> (CollectionRef, String)   -- runtime wrap: Task String
+-- [pure] CollectionRefDoc : CollectionRef -> String -> DocumentRef   -- runtime wrap: Task String
+-- [pure] CollectionRefNewDoc : CollectionRef -> DocumentRef   -- runtime wrap: Task String
+-- [fallible] CollectionRefAdd : CollectionRef -> Context -> interface{} -> (DocumentRef, WriteResult, String)   -- runtime wrap: Task String
+-- [pure] CollectionRefDocumentRefs : CollectionRef -> Context -> DocumentRefIterator   -- runtime wrap: Task String
+-- [pure] CollectionRefWithReadOptions : CollectionRef -> ReadOption -> CollectionRef   -- runtime wrap: Task String
+-- [fallible] CollectionRefDeserialize : CollectionRef -> []byte -> (Query, String)   -- runtime wrap: Task String
+-- [pure] CollectionRefDocuments : CollectionRef -> Context -> DocumentIterator   -- runtime wrap: Task String
+-- [pure] CollectionRefEndAt : CollectionRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefEndBefore : CollectionRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefFindNearest : CollectionRef -> String -> any -> Int -> DistanceMeasure -> FindNearestOptions -> VectorQuery   -- runtime wrap: Task String
+-- [pure] CollectionRefFindNearestPath : CollectionRef -> FieldPath -> any -> Int -> DistanceMeasure -> FindNearestOptions -> VectorQuery   -- runtime wrap: Task String
+-- [pure] CollectionRefLimit : CollectionRef -> Int -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefLimitToLast : CollectionRef -> Int -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefNewAggregationQuery : CollectionRef -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] CollectionRefOffset : CollectionRef -> Int -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefOrderBy : CollectionRef -> String -> Direction -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefOrderByPath : CollectionRef -> FieldPath -> Direction -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefPipeline : CollectionRef -> Pipeline   -- runtime wrap: Task String
+-- [pure] CollectionRefSelect : CollectionRef -> []string -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefSelectPaths : CollectionRef -> FieldPath -> Query   -- runtime wrap: Task String
+-- [fallible] CollectionRefSerialize : CollectionRef -> ([]byte, String)   -- runtime wrap: Task String
+-- [pure] CollectionRefSnapshots : CollectionRef -> Context -> QuerySnapshotIterator   -- runtime wrap: Task String
+-- [pure] CollectionRefStartAfter : CollectionRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefStartAt : CollectionRef -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefWhere : CollectionRef -> String -> String -> interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefWhereEntity : CollectionRef -> EntityFilter -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefWherePath : CollectionRef -> FieldPath -> String -> interface{} -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefWithRunOptions : CollectionRef -> RunOption -> Query   -- runtime wrap: Task String
+-- [pure] CommitResponseCommitTime : CommitResponse -> Time   -- runtime wrap: Task String
+-- [pure] Concat : any -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] Conditional : BooleanExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ConstantOf : any -> Expression   -- runtime wrap: Task String
+-- [pure] ConstantOfNull : () -> Expression   -- runtime wrap: Task String
+-- [pure] ConstantOfVector32 : []float32 -> Expression   -- runtime wrap: Task String
+-- [pure] ConstantOfVector64 : []float64 -> Expression   -- runtime wrap: Task String
+-- [pure] CosineDistance : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Count : any -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] CountAll : () -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] CountDistinct : any -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] CountIf : BooleanExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] CurrentTimestamp : () -> Expression   -- runtime wrap: Task String
+-- [pure] Descending : Expression -> Ordering   -- runtime wrap: Task String
+-- [pure] Divide : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] DocumentChangeKindString : DocumentChangeKind -> String   -- runtime wrap: Task String
+-- [fallible] DocumentIteratorExplainMetrics : DocumentIterator -> (ExplainMetrics, String)   -- runtime wrap: Task String
+-- [fallible] DocumentIteratorNext : DocumentIterator -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [pure] DocumentIteratorStop : DocumentIterator -> ()   -- runtime wrap: Task String
+-- [fallible] DocumentIteratorGetAll : DocumentIterator -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [pure] DocumentRefCollection : DocumentRef -> String -> CollectionRef   -- runtime wrap: Task String
+-- [fallible] DocumentRefGet : DocumentRef -> Context -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [fallible] DocumentRefCreate : DocumentRef -> Context -> interface{} -> (WriteResult, String)   -- runtime wrap: Task String
+-- [fallible] DocumentRefSet : DocumentRef -> Context -> interface{} -> SetOption -> (WriteResult, String)   -- runtime wrap: Task String
+-- [fallible] DocumentRefDelete : DocumentRef -> Context -> Precondition -> (WriteResult, String)   -- runtime wrap: Task String
+-- [fallible] DocumentRefUpdate : DocumentRef -> Context -> Update -> Precondition -> (WriteResult, String)   -- runtime wrap: Task String
+-- [pure] DocumentRefCollections : DocumentRef -> Context -> CollectionIterator   -- runtime wrap: Task String
+-- [pure] DocumentRefSnapshots : DocumentRef -> Context -> DocumentSnapshotIterator   -- runtime wrap: Task String
+-- [pure] DocumentRefWithReadOptions : DocumentRef -> ReadOption -> DocumentRef   -- runtime wrap: Task String
+-- [pure] DocumentRefIteratorPageInfo : DocumentRefIterator -> PageInfo   -- runtime wrap: Task String
+-- [fallible] DocumentRefIteratorNext : DocumentRefIterator -> (DocumentRef, String)   -- runtime wrap: Task String
+-- [fallible] DocumentRefIteratorGetAll : DocumentRefIterator -> (DocumentRef, String)   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotExists : DocumentSnapshot -> Bool   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotData : DocumentSnapshot -> map[string]interface{}   -- runtime wrap: Task String
+-- [fallible] DocumentSnapshotDataTo : DocumentSnapshot -> interface{} -> String   -- runtime wrap: Task String
+-- [fallible] DocumentSnapshotDataAt : DocumentSnapshot -> String -> (interface{}, String)   -- runtime wrap: Task String
+-- [fallible] DocumentSnapshotDataAtPath : DocumentSnapshot -> FieldPath -> (interface{}, String)   -- runtime wrap: Task String
+-- [fallible] DocumentSnapshotIteratorNext : DocumentSnapshotIterator -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotIteratorStop : DocumentSnapshotIterator -> ()   -- runtime wrap: Task String
+-- [pure] DotProduct : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] EndsWith : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Equal : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] EqualAny : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] EuclideanDistance : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Exp : any -> Expression   -- runtime wrap: Task String
+-- [fallible] ExplainStatsRawData : ExplainStats -> (Any, String)   -- runtime wrap: Task String
+-- [fallible] ExplainStatsText : ExplainStats -> (String, String)   -- runtime wrap: Task String
+-- [pure] ExpressionAbs : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionAdd : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayConcat : Expression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayContains : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayContainsAll : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayContainsAny : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayGet : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayLength : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayMaximum : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayMinimum : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArrayReverse : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionArraySum : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionAs : Expression -> String -> Selectable   -- runtime wrap: Task String
+-- [pure] ExpressionAscending : Expression -> Ordering   -- runtime wrap: Task String
+-- [pure] ExpressionAverage : Expression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] ExpressionByteLength : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionCeil : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionCharLength : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionConcat : Expression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionCosineDistance : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionCount : Expression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] ExpressionDescending : Expression -> Ordering   -- runtime wrap: Task String
+-- [pure] ExpressionDivide : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionDotProduct : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionEndsWith : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionEqual : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionEqualAny : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionEuclideanDistance : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionExp : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionFloor : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionGetCollectionID : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionGetDocumentID : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionGreaterThan : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionGreaterThanOrEqual : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionIfAbsent : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionIfError : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionJoin : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionLength : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionLessThan : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionLessThanOrEqual : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionLike : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionLn : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionLog : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionLog10 : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionMapGet : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionMapMerge : Expression -> Expression -> Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionMapRemove : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionMod : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionMultiply : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionNotEqual : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionNotEqualAny : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionPow : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionRegexContains : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionRegexMatch : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionReverse : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionRound : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionSplit : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionSqrt : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionStartsWith : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionStringConcat : Expression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionStringContains : Expression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] ExpressionStringReverse : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionSubstring : Expression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionSubtract : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionSum : Expression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampAdd : Expression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampSubtract : Expression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampToUnixMicros : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampToUnixMillis : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampToUnixSeconds : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampTruncate : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTimestampTruncateWithTimezone : Expression -> any -> String -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionToLower : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionToUpper : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionTrim : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionType : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionUnixMicrosToTimestamp : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionUnixMillisToTimestamp : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionUnixSecondsToTimestamp : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] ExpressionVectorLength : Expression -> Expression   -- runtime wrap: Task String
+-- [pure] FieldExists : any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FieldNotFoundErrorError : FieldNotFoundError -> String   -- runtime wrap: Task String
+-- [pure] FieldOf : T -> Expression   -- runtime wrap: Task String
+-- [pure] FieldTransformIncrement : interface{} -> transform   -- runtime wrap: Task String
+-- [pure] FieldTransformMaximum : interface{} -> transform   -- runtime wrap: Task String
+-- [pure] FieldTransformMinimum : interface{} -> transform   -- runtime wrap: Task String
+-- [pure] Floor : any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionAbs : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionAdd : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayConcat : FunctionExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayContains : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayContainsAll : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayContainsAny : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayGet : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayLength : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayMaximum : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayMinimum : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArrayReverse : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionArraySum : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionAs : FunctionExpression -> String -> Selectable   -- runtime wrap: Task String
+-- [pure] FunctionExpressionAscending : FunctionExpression -> Ordering   -- runtime wrap: Task String
+-- [pure] FunctionExpressionAverage : FunctionExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] FunctionExpressionByteLength : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionCeil : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionCharLength : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionConcat : FunctionExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionCosineDistance : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionCount : FunctionExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] FunctionExpressionDescending : FunctionExpression -> Ordering   -- runtime wrap: Task String
+-- [pure] FunctionExpressionDivide : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionDotProduct : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionEndsWith : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionEqual : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionEqualAny : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionEuclideanDistance : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionExp : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionFloor : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionGetCollectionID : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionGetDocumentID : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionGreaterThan : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionGreaterThanOrEqual : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionIfAbsent : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionIfError : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionJoin : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLength : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLessThan : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLessThanOrEqual : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLike : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLn : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLog : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionLog10 : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionMapGet : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionMapMerge : FunctionExpression -> Expression -> Expression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionMapRemove : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionMod : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionMultiply : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionNotEqual : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionNotEqualAny : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionPow : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionRegexContains : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionRegexMatch : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionReverse : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionRound : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionSplit : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionSqrt : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionStartsWith : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionStringConcat : FunctionExpression -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionStringContains : FunctionExpression -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionStringReverse : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionSubstring : FunctionExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionSubtract : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionSum : FunctionExpression -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampAdd : FunctionExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampSubtract : FunctionExpression -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampToUnixMicros : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampToUnixMillis : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampToUnixSeconds : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampTruncate : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTimestampTruncateWithTimezone : FunctionExpression -> any -> String -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionToLower : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionToUpper : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionTrim : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionType : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionUnixMicrosToTimestamp : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionUnixMillisToTimestamp : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionUnixSecondsToTimestamp : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] FunctionExpressionVectorLength : FunctionExpression -> Expression   -- runtime wrap: Task String
+-- [pure] GetCollectionID : any -> Expression   -- runtime wrap: Task String
+-- [pure] GetDocumentID : any -> Expression   -- runtime wrap: Task String
+-- [pure] GreaterThan : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] GreaterThanOrEqual : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] IfAbsent : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] IfError : Expression -> any -> Expression   -- runtime wrap: Task String
+-- [pure] IfErrorBoolean : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Increment : interface{} -> transform   -- runtime wrap: Task String
+-- [pure] IsAbsent : any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] IsError : Expression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Join : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] LastUpdateTime : Time -> Precondition   -- runtime wrap: Task String
+-- [pure] Length : any -> Expression   -- runtime wrap: Task String
+-- [pure] LessThan : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] LessThanOrEqual : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Like : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Ln : any -> Expression   -- runtime wrap: Task String
+-- [pure] Log : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Log10 : any -> Expression   -- runtime wrap: Task String
+-- [pure] LogicalMaximum : any -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] LogicalMinimum : any -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] Map : map[string]any -> Expression   -- runtime wrap: Task String
+-- [pure] MapGet : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] MapMerge : any -> Expression -> Expression -> Expression   -- runtime wrap: Task String
+-- [pure] MapRemove : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] MaxAttempts : Int -> maxAttempts   -- runtime wrap: Task String
+-- [pure] Maximum : any -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] Merge : FieldPath -> SetOption   -- runtime wrap: Task String
+-- [pure] Minimum : any -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] Mod : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Multiply : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] NewAggregateSpec : AliasedAggregate -> AggregateSpec   -- runtime wrap: Task String
+-- [fallible] NewClient : Context -> String -> ClientOption -> (Client, String)   -- runtime wrap: Task String
+-- [fallible] NewClientWithDatabase : Context -> String -> String -> ClientOption -> (Client, String)   -- runtime wrap: Task String
+-- [fallible] NewRESTClient : Context -> String -> ClientOption -> (Client, String)   -- runtime wrap: Task String
+-- [pure] NewRawStage : String -> RawStage   -- runtime wrap: Task String
+-- [pure] Not : BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] NotEqual : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] NotEqualAny : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Or : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] PipelineExecute : Pipeline -> Context -> PipelineSnapshot   -- runtime wrap: Task String
+-- [pure] PipelineWithReadOptions : Pipeline -> ReadOption -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineWithExecuteOptions : Pipeline -> ExecuteOption -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineLimit : Pipeline -> Int -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSort : Pipeline -> Ordering -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineOffset : Pipeline -> Int -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSelect : Pipeline -> []any -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineDistinct : Pipeline -> []any -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineAddFields : Pipeline -> Selectable -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineRemoveFields : Pipeline -> []any -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineWhere : Pipeline -> BooleanExpression -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineAggregate : Pipeline -> AliasedAggregate -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineAggregateWithSpec : Pipeline -> AggregateSpec -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineUnnest : Pipeline -> Selectable -> UnnestOptions -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineUnnestWithAlias : Pipeline -> any -> String -> UnnestOptions -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineUnion : Pipeline -> Pipeline -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSample : Pipeline -> SampleSpec -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineReplaceWith : Pipeline -> any -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineFindNearest : Pipeline -> any -> any -> PipelineDistanceMeasure -> PipelineFindNearestOptions -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineRawStage : Pipeline -> RawStage -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineResultRef : PipelineResult -> DocumentRef   -- runtime wrap: Task String
+-- [pure] PipelineResultCreateTime : PipelineResult -> Time   -- runtime wrap: Task String
+-- [pure] PipelineResultUpdateTime : PipelineResult -> Time   -- runtime wrap: Task String
+-- [pure] PipelineResultExecutionTime : PipelineResult -> Time   -- runtime wrap: Task String
+-- [pure] PipelineResultExists : PipelineResult -> Bool   -- runtime wrap: Task String
+-- [pure] PipelineResultData : PipelineResult -> map[string]any   -- runtime wrap: Task String
+-- [fallible] PipelineResultDataTo : PipelineResult -> any -> String   -- runtime wrap: Task String
+-- [fallible] PipelineResultIteratorNext : PipelineResultIterator -> (PipelineResult, String)   -- runtime wrap: Task String
+-- [pure] PipelineResultIteratorStop : PipelineResultIterator -> ()   -- runtime wrap: Task String
+-- [fallible] PipelineResultIteratorGetAll : PipelineResultIterator -> (PipelineResult, String)   -- runtime wrap: Task String
+-- [pure] PipelineSnapshotResults : PipelineSnapshot -> PipelineResultIterator   -- runtime wrap: Task String
+-- [fallible] PipelineSnapshotExecutionTime : PipelineSnapshot -> (Time, String)   -- runtime wrap: Task String
+-- [pure] PipelineSnapshotExplainStats : PipelineSnapshot -> ExplainStats   -- runtime wrap: Task String
+-- [pure] PipelineSourceCollection : PipelineSource -> String -> CollectionOption -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSourceCollectionGroup : PipelineSource -> String -> CollectionGroupOption -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSourceDatabase : PipelineSource -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSourceDocuments : PipelineSource -> DocumentRef -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSourceCreateFromQuery : PipelineSource -> Queryer -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineSourceCreateFromAggregationQuery : PipelineSource -> AggregationQuery -> Pipeline   -- runtime wrap: Task String
+-- [pure] Pow : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Ptr : T -> *T   -- runtime wrap: Task String
+-- [pure] QuerySelect : Query -> []string -> Query   -- runtime wrap: Task String
+-- [pure] QuerySelectPaths : Query -> FieldPath -> Query   -- runtime wrap: Task String
+-- [pure] QueryWhere : Query -> String -> String -> interface{} -> Query   -- runtime wrap: Task String
+-- [pure] QueryWherePath : Query -> FieldPath -> String -> interface{} -> Query   -- runtime wrap: Task String
+-- [pure] QueryWhereEntity : Query -> EntityFilter -> Query   -- runtime wrap: Task String
+-- [pure] QueryOrderBy : Query -> String -> Direction -> Query   -- runtime wrap: Task String
+-- [pure] QueryOrderByPath : Query -> FieldPath -> Direction -> Query   -- runtime wrap: Task String
+-- [pure] QueryOffset : Query -> Int -> Query   -- runtime wrap: Task String
+-- [pure] QueryLimit : Query -> Int -> Query   -- runtime wrap: Task String
+-- [pure] QueryLimitToLast : Query -> Int -> Query   -- runtime wrap: Task String
+-- [pure] QueryStartAt : Query -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] QueryStartAfter : Query -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] QueryEndAt : Query -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] QueryEndBefore : Query -> []interface{} -> Query   -- runtime wrap: Task String
+-- [pure] QueryWithRunOptions : Query -> RunOption -> Query   -- runtime wrap: Task String
+-- [fallible] QuerySerialize : Query -> ([]byte, String)   -- runtime wrap: Task String
+-- [fallible] QueryDeserialize : Query -> []byte -> (Query, String)   -- runtime wrap: Task String
+-- [pure] QueryFindNearest : Query -> String -> any -> Int -> DistanceMeasure -> FindNearestOptions -> VectorQuery   -- runtime wrap: Task String
+-- [pure] QueryFindNearestPath : Query -> FieldPath -> any -> Int -> DistanceMeasure -> FindNearestOptions -> VectorQuery   -- runtime wrap: Task String
+-- [pure] QueryNewAggregationQuery : Query -> AggregationQuery   -- runtime wrap: Task String
+-- [pure] QueryDocuments : Query -> Context -> DocumentIterator   -- runtime wrap: Task String
+-- [pure] QuerySnapshots : Query -> Context -> QuerySnapshotIterator   -- runtime wrap: Task String
+-- [pure] QueryWithReadOptions : Query -> ReadOption -> Query   -- runtime wrap: Task String
+-- [pure] QueryPipeline : Query -> Pipeline   -- runtime wrap: Task String
+-- [fallible] QuerySnapshotIteratorNext : QuerySnapshotIterator -> (QuerySnapshot, String)   -- runtime wrap: Task String
+-- [pure] QuerySnapshotIteratorStop : QuerySnapshotIterator -> ()   -- runtime wrap: Task String
+-- [pure] RawStageWithArguments : RawStage -> []any -> RawStage   -- runtime wrap: Task String
+-- [pure] RawStageWithOptions : RawStage -> RawStageOptions -> RawStage   -- runtime wrap: Task String
+-- [pure] ReadTime : Time -> ReadOption   -- runtime wrap: Task String
+-- [pure] RegexContains : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] RegexMatch : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] Reverse : any -> Expression   -- runtime wrap: Task String
+-- [pure] Round : any -> Expression   -- runtime wrap: Task String
+-- [pure] SampleByDocuments : Int -> SampleSpec   -- runtime wrap: Task String
+-- [pure] Split : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Sqrt : any -> Expression   -- runtime wrap: Task String
+-- [pure] StartsWith : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] StringConcat : any -> []any -> Expression   -- runtime wrap: Task String
+-- [pure] StringContains : any -> any -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] StringReverse : any -> Expression   -- runtime wrap: Task String
+-- [pure] Substring : any -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Subtract : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] Sum : any -> AggregateFunction   -- runtime wrap: Task String
+-- [pure] TimestampAdd : any -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] TimestampSubtract : any -> any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] TimestampToUnixMicros : any -> Expression   -- runtime wrap: Task String
+-- [pure] TimestampToUnixMillis : any -> Expression   -- runtime wrap: Task String
+-- [pure] TimestampToUnixSeconds : any -> Expression   -- runtime wrap: Task String
+-- [pure] TimestampTruncate : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] TimestampTruncateWithTimezone : any -> any -> String -> Expression   -- runtime wrap: Task String
+-- [pure] ToLower : any -> Expression   -- runtime wrap: Task String
+-- [pure] ToUpper : any -> Expression   -- runtime wrap: Task String
+-- [fallible] TransactionGet : Transaction -> DocumentRef -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [fallible] TransactionGetAll : Transaction -> DocumentRef -> (DocumentSnapshot, String)   -- runtime wrap: Task String
+-- [pure] TransactionDocuments : Transaction -> Queryer -> DocumentIterator   -- runtime wrap: Task String
+-- [pure] TransactionDocumentRefs : Transaction -> CollectionRef -> DocumentRefIterator   -- runtime wrap: Task String
+-- [fallible] TransactionCreate : Transaction -> DocumentRef -> interface{} -> String   -- runtime wrap: Task String
+-- [fallible] TransactionSet : Transaction -> DocumentRef -> interface{} -> SetOption -> String   -- runtime wrap: Task String
+-- [fallible] TransactionDelete : Transaction -> DocumentRef -> Precondition -> String   -- runtime wrap: Task String
+-- [fallible] TransactionUpdate : Transaction -> DocumentRef -> Update -> Precondition -> String   -- runtime wrap: Task String
+-- [pure] TransactionWithReadOptions : Transaction -> ReadOption -> Transaction   -- runtime wrap: Task String
+-- [pure] TransactionExecute : Transaction -> Pipeline -> PipelineSnapshot   -- runtime wrap: Task String
+-- [pure] Trim : any -> Expression   -- runtime wrap: Task String
+-- [pure] Type : any -> Expression   -- runtime wrap: Task String
+-- [pure] UnixMicrosToTimestamp : any -> Expression   -- runtime wrap: Task String
+-- [pure] UnixMillisToTimestamp : any -> Expression   -- runtime wrap: Task String
+-- [pure] UnixSecondsToTimestamp : any -> Expression   -- runtime wrap: Task String
+-- [pure] UpdateString : Update -> String   -- runtime wrap: Task String
+-- [pure] VectorLength : any -> Expression   -- runtime wrap: Task String
+-- [pure] VectorQueryDocuments : VectorQuery -> Context -> DocumentIterator   -- runtime wrap: Task String
+-- [pure] WithCollectionGroupHints : CollectionHints -> CollectionGroupOption   -- runtime wrap: Task String
+-- [pure] WithCollectionHints : CollectionHints -> CollectionOption   -- runtime wrap: Task String
+-- [pure] WithCommitResponseTo : CommitResponse -> commitResponse   -- runtime wrap: Task String
+-- [pure] WithExplainMode : ExplainMode -> ExecuteOption   -- runtime wrap: Task String
+-- [pure] WriteBatchCreate : WriteBatch -> DocumentRef -> interface{} -> WriteBatch   -- runtime wrap: Task String
+-- [pure] WriteBatchSet : WriteBatch -> DocumentRef -> interface{} -> SetOption -> WriteBatch   -- runtime wrap: Task String
+-- [pure] WriteBatchDelete : WriteBatch -> DocumentRef -> Precondition -> WriteBatch   -- runtime wrap: Task String
+-- [pure] WriteBatchUpdate : WriteBatch -> DocumentRef -> Update -> Precondition -> WriteBatch   -- runtime wrap: Task String
+-- [fallible] WriteBatchCommit : WriteBatch -> Context -> (WriteResult, String)   -- runtime wrap: Task String
+-- [pure] Xor : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String

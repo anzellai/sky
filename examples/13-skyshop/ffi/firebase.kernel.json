@@ -1,0 +1,18 @@
+{
+  "moduleName": "Firebase.Google.Com.Go.V4",
+  "kernelName": "Go_GoV4",
+  "package": "firebase.google.com/go/v4",
+  "functions": [
+    {"name": "appAuth", "arity": 2},
+    {"name": "appDatabase", "arity": 2},
+    {"name": "appDatabaseWithURL", "arity": 3},
+    {"name": "appStorage", "arity": 2},
+    {"name": "appFirestore", "arity": 2},
+    {"name": "appFirestoreWithDatabaseID", "arity": 3},
+    {"name": "appInstanceID", "arity": 2},
+    {"name": "appMessaging", "arity": 2},
+    {"name": "appAppCheck", "arity": 2},
+    {"name": "appRemoteConfig", "arity": 2},
+    {"name": "newApp", "arity": 3}
+  ]
+}

@@ -315,7 +315,13 @@ discoverPackagePaths pkg =
     let self = _pkgPath pkg
         allTypes = concatMap typesFromFn (_pkgFns pkg)
         paths = concatMap extractPackagePaths allTypes
-    in nub (self : paths)
+        -- Go disallows importing `internal/` subtrees outside their home
+        -- module; skip them instead of emitting a go build error. Same
+        -- applies to `vendor/` subtrees.
+        ok p = not ("/internal/" `isSubstringOf` ('/':p))
+             && not ("/vendor/"   `isSubstringOf` ('/':p))
+             && not (p == "internal")
+    in nub (self : filter ok paths)
   where
     typesFromFn fn = map snd (_fnParams fn) ++ map snd (_fnResults fn)
 
