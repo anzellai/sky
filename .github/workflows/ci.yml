@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/**']
   pull_request:
     branches: [main]
 
@@ -10,6 +10,7 @@ jobs:
   build-and-test:
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -20,9 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ─────────────────────────────────────────────────────────
-      # Toolchain: GHC (Haskell compiler for sky) + Go (runtime + tools)
-      # ─────────────────────────────────────────────────────────
       - uses: haskell-actions/setup@v2
         with:
           ghc-version: '9.4.8'
@@ -30,7 +28,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
+          go-version: '1.23'
           cache: true
 
       - name: Cache cabal store
@@ -44,49 +42,17 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cabal-
 
-      # ─────────────────────────────────────────────────────────
-      # Build the Sky compiler (Haskell)
-      # ─────────────────────────────────────────────────────────
-      - name: Build sky compiler
+      # Single-command local/CI parity: scripts/build.sh does everything
+      # the manual steps below used to — compile sky, build sky-ffi-inspect,
+      # install to sky-out/ + bin/. Adds self-test + example sweep when flagged.
+      - name: Build compiler + tooling
         run: |
-          cabal update
-          cabal build
-          SKY_BIN=$(cabal list-bin sky)
-          mkdir -p /tmp/skybin
-          cp -f "$SKY_BIN" /tmp/skybin/sky
-          chmod +x /tmp/skybin/sky
-          echo "/tmp/skybin" >> $GITHUB_PATH
-          /tmp/skybin/sky --version
+          ./scripts/build.sh --self-tests
+          echo "$PWD/sky-out" >> $GITHUB_PATH
+          echo "$PWD/bin"      >> $GITHUB_PATH
 
       # ─────────────────────────────────────────────────────────
-      # Build supporting Go tools (FFI inspector)
-      # ─────────────────────────────────────────────────────────
-      - name: Build sky-ffi-inspect
-        run: |
-          mkdir -p bin
-          (cd tools/sky-ffi-inspect && go build -o ../../bin/sky-ffi-inspect .)
-          test -x bin/sky-ffi-inspect
-
-      # ─────────────────────────────────────────────────────────
-      # Self-test suite
-      # ─────────────────────────────────────────────────────────
-      - name: Run self-tests
-        run: |
-          pass=0; fail=0
-          for f in test-files/*.sky; do
-            rm -rf .skycache
-            if sky build "$f" 2>&1 | tail -1 | grep -q 'Build complete'; then
-              pass=$((pass+1))
-            else
-              fail=$((fail+1))
-              echo "  FAIL $f"
-            fi
-          done
-          echo "self-tests: $pass passed, $fail failed"
-          test "$fail" = "0"
-
-      # ─────────────────────────────────────────────────────────
-      # Example suite (passing subset — expanded as gaps close)
+      # Example suite — representative subset. Keep fast so every PR runs.
       # ─────────────────────────────────────────────────────────
       - name: Test hello-world
         run: |
@@ -102,6 +68,13 @@ jobs:
           sky build src/Main.sky
           ./sky-out/app | grep "Calculation result"
 
+      - name: Test task-demo
+        run: |
+          cd examples/14-task-demo
+          rm -rf sky-out .skycache
+          sky build src/Main.sky
+          ./sky-out/app | grep "Hello, Sky!"
+
       - name: Test live-counter
         run: |
           cd examples/09-live-counter
@@ -109,17 +82,10 @@ jobs:
           sky build src/Main.sky
           ./sky-out/app &
           SERVER_PID=$!
-          sleep 2
+          sleep 3
           curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep 200
           kill $SERVER_PID 2>/dev/null || true
           wait 2>/dev/null || true
-
-      - name: Test task-demo
-        run: |
-          cd examples/14-task-demo
-          rm -rf sky-out .skycache
-          sky build src/Main.sky
-          ./sky-out/app | grep "Hello, Sky!"
 
       - name: Test http-server
         run: |
@@ -128,7 +94,7 @@ jobs:
           sky build src/Main.sky
           ./sky-out/app &
           SERVER_PID=$!
-          sleep 2
+          sleep 3
           curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
           kill $SERVER_PID 2>/dev/null || true
           wait 2>/dev/null || true
@@ -140,20 +106,18 @@ jobs:
           sky build src/Main.sky
           ./sky-out/app &
           SERVER_PID=$!
-          sleep 2
+          sleep 3
           curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep 200
           kill $SERVER_PID 2>/dev/null || true
           wait 2>/dev/null || true
 
       # ─────────────────────────────────────────────────────────
-      # Smoke tests: tooling
+      # Tooling smoke tests
       # ─────────────────────────────────────────────────────────
-      - name: Test sky fmt
+      - name: Test sky fmt (idempotent)
         run: |
           cp test-files/simple-case.sky /tmp/fmt-test.sky
           sky fmt /tmp/fmt-test.sky
-          test -f /tmp/fmt-test.sky
-          # re-fmt idempotent
           cp /tmp/fmt-test.sky /tmp/fmt-test2.sky
           sky fmt /tmp/fmt-test2.sky
           diff /tmp/fmt-test.sky /tmp/fmt-test2.sky
@@ -161,15 +125,17 @@ jobs:
       - name: Test sky check
         run: sky check test-files/simple-case.sky
 
+      # ─────────────────────────────────────────────────────────
+      # Artifact
+      # ─────────────────────────────────────────────────────────
       - name: Package artifact
         run: |
           mkdir -p dist
-          cp /tmp/skybin/sky dist/${{ matrix.artifact }}
+          cp sky-out/sky dist/${{ matrix.artifact }}
           tar czf dist/${{ matrix.artifact }}.tar.gz -C dist ${{ matrix.artifact }}
           ls -la dist/
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.tar.gz
