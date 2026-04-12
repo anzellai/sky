@@ -993,6 +993,7 @@ binopToGo op left right = case op of
     "-"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Sub") [exprToGo left, exprToGo right]
     "*"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Mul") [exprToGo left, exprToGo right]
     "/"  -> GoIr.GoCall (GoIr.GoQualified "rt" "Div") [exprToGo left, exprToGo right]
+    "//" -> GoIr.GoCall (GoIr.GoQualified "rt" "IntDiv") [exprToGo left, exprToGo right]
 
     -- Comparison operators
     "==" -> GoIr.GoCall (GoIr.GoQualified "rt" "Eq") [exprToGo left, exprToGo right]
@@ -1180,7 +1181,28 @@ patternCondition subject pat = case pat of
 
     Can.PUnit -> Nothing  -- always matches
 
-    _ -> Nothing  -- fallback: always match (TODO: handle more patterns)
+    -- Cons: match non-empty list, len(subject.([]any)) >= 1
+    Can.PCons _ _ ->
+        Just $ GoIr.GoBinary ">="
+            (GoIr.GoCall (GoIr.GoIdent "len")
+                [ GoIr.GoTypeAssert (GoIr.GoIdent subject) "[]any" ])
+            (GoIr.GoIntLit 1)
+
+    -- Fixed-length list: match exact length; element conditions handled in
+    -- bindings below (codegen over-matches conservatively — strict element
+    -- matching would need nested if-cascades we don't model in a single cond).
+    Can.PList xs ->
+        Just $ GoIr.GoBinary "=="
+            (GoIr.GoCall (GoIr.GoIdent "len")
+                [ GoIr.GoTypeAssert (GoIr.GoIdent subject) "[]any" ])
+            (GoIr.GoIntLit (length xs))
+
+    -- Tuples, records, aliases: structure is guaranteed by HM — bindings carry the work.
+    Can.PTuple _ _ _ -> Nothing
+    Can.PRecord _    -> Nothing
+    Can.PAlias inner _ ->
+        let (A.At _ innerPat) = inner
+        in patternCondition subject innerPat
 
 
 -- | Generate Go variable bindings from a pattern
@@ -1202,27 +1224,105 @@ patternBindings subject pat = case pat of
         -- Bind constructor arguments
         concatMap (bindCtorArg subject ctorName) args
 
-    _ -> []
+    -- head :: tail  →  h := subject.([]any)[0]; t := subject.([]any)[1:]
+    Can.PCons h t ->
+        let asSlice = GoIr.GoTypeAssert (GoIr.GoIdent subject) "[]any"
+            (A.At _ hPat) = h
+            (A.At _ tPat) = t
+            headExpr = GoIr.GoIndex asSlice (GoIr.GoIntLit 0)
+            tailExpr = GoIr.GoRaw (subject ++ ".([]any)[1:]")
+            headName = "__sky_h_" ++ subject
+            tailName = "__sky_t_" ++ subject
+            headStmts = case hPat of
+                Can.PVar name ->
+                    if isDiscardName name
+                        then [ GoIr.GoAssign "_" headExpr ]
+                        else [ GoIr.GoShortDecl name headExpr ]
+                Can.PAnything -> []
+                _ -> GoIr.GoShortDecl headName headExpr : patternBindings headName hPat
+            tailStmts = case tPat of
+                Can.PVar name ->
+                    if isDiscardName name
+                        then [ GoIr.GoAssign "_" tailExpr ]
+                        else [ GoIr.GoShortDecl name tailExpr ]
+                Can.PAnything -> []
+                _ -> GoIr.GoShortDecl tailName tailExpr : patternBindings tailName tPat
+        in headStmts ++ tailStmts
+
+    -- [a, b, c]  →  bind each element by index
+    Can.PList xs ->
+        let asSlice suf = GoIr.GoRaw (subject ++ ".([]any)[" ++ show suf ++ "]")
+            bindEl i (A.At _ p) = case p of
+                Can.PVar name ->
+                    if isDiscardName name
+                        then [ GoIr.GoAssign "_" (asSlice i) ]
+                        else [ GoIr.GoShortDecl name (asSlice i) ]
+                Can.PAnything -> []
+                _ ->
+                    let sub = "__sky_li_" ++ show i ++ "_" ++ subject
+                    in GoIr.GoShortDecl sub (asSlice i) : patternBindings sub p
+        in concat (zipWith bindEl [0::Int ..] xs)
+
+    -- (a, b) or (a, b, c)  →  bind V0, V1[, V2] off SkyTuple2/3
+    Can.PTuple aPat bPat mcPat ->
+        let tupleKind = case mcPat of Just _ -> "SkyTuple3"; Nothing -> "SkyTuple2"
+            asTup = GoIr.GoTypeAssert (GoIr.GoIdent subject) ("rt." ++ tupleKind)
+            bindField fld (A.At _ p) = case p of
+                Can.PVar name ->
+                    if isDiscardName name
+                        then [ GoIr.GoAssign "_" (GoIr.GoSelector asTup fld) ]
+                        else [ GoIr.GoShortDecl name (GoIr.GoSelector asTup fld) ]
+                Can.PAnything -> []
+                _ ->
+                    let sub = "__sky_t_" ++ fld ++ "_" ++ subject
+                    in GoIr.GoShortDecl sub (GoIr.GoSelector asTup fld)
+                       : patternBindings sub p
+            pieces = bindField "V0" aPat ++ bindField "V1" bPat
+            extra = case mcPat of
+                Just c -> bindField "V2" c
+                Nothing -> []
+        in pieces ++ extra
+
+    -- { name }  →  name := rt.Field(subject, "Name")
+    Can.PRecord fields ->
+        [ GoIr.GoShortDecl f
+            (GoIr.GoCall (GoIr.GoQualified "rt" "Field")
+                [ GoIr.GoIdent subject
+                , GoIr.GoStringLit (capitalise_ f)
+                ])
+        | f <- fields
+        ]
+
+    -- `(PCons h t) as whole`  →  bind whole := subject, then recurse into inner
+    Can.PAlias inner name ->
+        let (A.At _ innerPat) = inner
+            aliasStmt = if isDiscardName name
+                then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
+                else [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
+        in aliasStmt ++ patternBindings subject innerPat
 
 
 -- | Bind a constructor argument to a local variable
 bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
 bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
     let (A.At _ innerPat) = pat
+        fieldAccess = case ctorName of
+            "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
+            "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
+            "Just" -> GoIr.GoSelector (GoIr.GoIdent subject) "JustValue"
+            _      -> GoIr.GoIndex
+                        (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
+                        (GoIr.GoIntLit idx)
     in case innerPat of
         Can.PVar name ->
-            let fieldAccess = case ctorName of
-                    "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
-                    "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
-                    "Just" -> GoIr.GoSelector (GoIr.GoIdent subject) "JustValue"
-                    _      -> GoIr.GoIndex
-                                (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
-                                (GoIr.GoIntLit idx)
-            in if isDiscardName name
+            if isDiscardName name
                 then [ GoIr.GoAssign "_" fieldAccess ]
                 else [ GoIr.GoShortDecl name fieldAccess ]
         Can.PAnything -> []
-        _ -> []  -- TODO: nested pattern matching
+        _ ->
+            -- Nested pattern: bind to a fresh temp, then recurse via patternBindings
+            let tmp = "__sky_cf_" ++ show idx ++ "_" ++ subject
+            in GoIr.GoShortDecl tmp fieldAccess : patternBindings tmp innerPat
 
 
 -- ═══════════════════════════════════════════════════════════

@@ -338,6 +338,8 @@ func Add(a, b any) any { return AsInt(a) + AsInt(b) }
 func Sub(a, b any) any { return AsInt(a) - AsInt(b) }
 func Mul(a, b any) any { return AsInt(a) * AsInt(b) }
 func Div(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(b) }
+func IntDiv(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) / AsInt(b) }
+func Rem(a, b any) any { if AsInt(b) == 0 { return 0 }; return AsInt(a) % AsInt(b) }
 
 func Eq(a, b any) any { return a == b }
 func Gt(a, b any) any { return AsInt(a) > AsInt(b) }
