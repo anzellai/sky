@@ -227,6 +227,13 @@ registry = Map.fromList
 
     , (("Http", "get"),           KernelInfo "rt.Http_get" 1 False)
     , (("Http", "post"),          KernelInfo "rt.Http_post" 2 False)
+    , (("Http", "request"),       KernelInfo "rt.Http_request" 4 False)
+
+    , (("Path", "join"),          KernelInfo "rt.Path_join" 1 False)
+    , (("Path", "dir"),           KernelInfo "rt.Path_dir" 1 False)
+    , (("Path", "base"),          KernelInfo "rt.Path_base" 1 False)
+    , (("Path", "ext"),           KernelInfo "rt.Path_ext" 1 False)
+    , (("Path", "isAbsolute"),    KernelInfo "rt.Path_isAbsolute" 1 False)
 
     , (("Debug", "log"),          KernelInfo "rt.Debug_log" 2 True)
     , (("Debug", "toString"),     KernelInfo "rt.Debug_toString" 1 True)

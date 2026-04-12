@@ -1,0 +1,15 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Path as Path
+import Std.Log exposing (println)
+
+main =
+    let
+        p = Path.join ["foo", "bar", "baz.sky"]
+        _ = println p
+        _ = println (Path.dir "/a/b/c.txt")
+        _ = println (Path.base "/a/b/c.txt")
+        _ = println (Path.ext "c.sky")
+    in
+        println "path ok"

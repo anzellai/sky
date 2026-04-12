@@ -3,6 +3,9 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"path/filepath"
 	"reflect"
 	"strings"
 )
@@ -500,3 +503,132 @@ func pipelineApply(acc any, arg any) any {
 	}
 	return build(applied)
 }
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.Path
+// ═══════════════════════════════════════════════════════════
+
+func Path_join(parts any) any {
+	ps := asList(parts)
+	segs := make([]string, len(ps))
+	for i, p := range ps {
+		segs[i] = fmt.Sprintf("%v", p)
+	}
+	return filepath.Join(segs...)
+}
+
+func Path_dir(p any) any  { return filepath.Dir(fmt.Sprintf("%v", p)) }
+func Path_base(p any) any { return filepath.Base(fmt.Sprintf("%v", p)) }
+func Path_ext(p any) any  { return filepath.Ext(fmt.Sprintf("%v", p)) }
+func Path_isAbsolute(p any) any {
+	return filepath.IsAbs(fmt.Sprintf("%v", p))
+}
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.Http — client
+// ═══════════════════════════════════════════════════════════
+
+// HttpResponse is a record-style struct for returning results
+type HttpResponse struct {
+	Status  int
+	Body    string
+	Headers map[string]string
+}
+
+// Http.get : String -> Task String HttpResponse
+func Http_get(url any) any {
+	u := fmt.Sprintf("%v", url)
+	return func() any {
+		resp, err := http.Get(u)
+		if err != nil {
+			return Err[any, any]("http.get: " + err.Error())
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return Err[any, any]("http.get read: " + err.Error())
+		}
+		hdrs := map[string]string{}
+		for k, v := range resp.Header {
+			if len(v) > 0 {
+				hdrs[k] = v[0]
+			}
+		}
+		return Ok[any, any](HttpResponse{
+			Status:  resp.StatusCode,
+			Body:    string(body),
+			Headers: hdrs,
+		})
+	}
+}
+
+// Http.post : String -> String -> Task String HttpResponse
+// (url, body)
+func Http_post(url any, body any) any {
+	u := fmt.Sprintf("%v", url)
+	b := fmt.Sprintf("%v", body)
+	return func() any {
+		resp, err := http.Post(u, "application/json", strings.NewReader(b))
+		if err != nil {
+			return Err[any, any]("http.post: " + err.Error())
+		}
+		defer resp.Body.Close()
+		rb, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return Err[any, any]("http.post read: " + err.Error())
+		}
+		hdrs := map[string]string{}
+		for k, v := range resp.Header {
+			if len(v) > 0 {
+				hdrs[k] = v[0]
+			}
+		}
+		return Ok[any, any](HttpResponse{
+			Status:  resp.StatusCode,
+			Body:    string(rb),
+			Headers: hdrs,
+		})
+	}
+}
+
+// Http.request : String -> String -> String -> Dict String String -> Task String HttpResponse
+// (method, url, body, headers)
+func Http_request(method any, url any, body any, headers any) any {
+	m := fmt.Sprintf("%v", method)
+	u := fmt.Sprintf("%v", url)
+	b := fmt.Sprintf("%v", body)
+	return func() any {
+		req, err := http.NewRequest(m, u, strings.NewReader(b))
+		if err != nil {
+			return Err[any, any]("http.request: " + err.Error())
+		}
+		if hm, ok := headers.(map[string]any); ok {
+			for k, v := range hm {
+				req.Header.Set(k, fmt.Sprintf("%v", v))
+			}
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return Err[any, any]("http.request do: " + err.Error())
+		}
+		defer resp.Body.Close()
+		rb, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return Err[any, any]("http.request read: " + err.Error())
+		}
+		hdrs := map[string]string{}
+		for k, v := range resp.Header {
+			if len(v) > 0 {
+				hdrs[k] = v[0]
+			}
+		}
+		return Ok[any, any](HttpResponse{
+			Status:  resp.StatusCode,
+			Body:    string(rb),
+			Headers: hdrs,
+		})
+	}
+}
+
+// Keep encoding/json referenced
+var _ = json.Marshal
