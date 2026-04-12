@@ -112,8 +112,10 @@ resolveCtorPattern env _segments ctorName args =
                 (Env._ch_index ctor)
                 ctorArgs
         Nothing ->
-            -- Unknown constructor — treat as unresolved
-            error $ "Unknown constructor in pattern: " ++ ctorName
+            -- Unknown constructor — proceed as an anonymous variable
+            -- binding so downstream stages can at least produce a type
+            -- error rather than crashing the whole compiler.
+            Can.PVar ctorName
 
 
 -- | Resolve a qualified constructor pattern (e.g., Maybe.Just)

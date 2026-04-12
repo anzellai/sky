@@ -455,7 +455,15 @@ moreLetBindings mkError bindingCol = do
 
 
 letBinding :: (Row -> Col -> x) -> Parser x Src.Def
-letBinding mkError = do
+letBinding mkError = oneOf mkError
+    [ letBindingDefine mkError
+    , letBindingDestruct mkError
+    ]
+
+
+-- | A named `x = …` / `f a b = …` binding.
+letBindingDefine :: (Row -> Col -> x) -> Parser x Src.Def
+letBindingDefine mkError = do
     name <- addLocation (lower mkError)
     spaces
     params <- lambdaParams_ mkError
@@ -464,7 +472,24 @@ letBinding mkError = do
     freshLine mkError
     bodyCol <- getCol
     body <- withIndent bodyCol (expression mkError)
-    return (Src.Def name params body Nothing)
+    return (Src.Define name params body Nothing)
+
+
+-- | A destructure binding, as in Elm:
+--     (a, b) = expr
+--     { name, age } = record
+--     Just x = maybe       -- ctor pattern allowed
+-- Uses Pattern.pattern_ which parses a single pattern term (no top-level
+-- cons) so `x :: rest = list` stays in the define path.
+letBindingDestruct :: (Row -> Col -> x) -> Parser x Src.Def
+letBindingDestruct mkError = do
+    pat <- pattern_ mkError
+    spaces
+    char mkError '='
+    freshLine mkError
+    bodyCol <- getCol
+    body <- withIndent bodyCol (expression mkError)
+    return (Src.Destruct pat body)
 
 
 -- | Parse zero or more lambda/function parameters
@@ -580,7 +605,10 @@ recordField mkError = do
     name <- addLocation (lower mkError)
     spaces
     char mkError '='
-    spaces
+    -- Allow the value to start on a new line:
+    --   , routes =
+    --       [ route "/" Home ]
+    freshLine mkError
     val <- expression mkError
     return (name, val)
 

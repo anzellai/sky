@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 -- | Source AST — the raw parse tree before name resolution.
 -- Adapted from Elm's AST.Source with Sky extensions:
 -- - MultilineStr for """...""" strings
@@ -130,14 +131,38 @@ data Expr_
 type Expr = A.Located Expr_
 
 
--- | Local definition (in let-in)
-data Def = Def
-    { _defName     :: A.Located String
-    , _defPatterns :: [Pattern]
-    , _defBody     :: Expr
-    , _defType     :: Maybe (A.Located TypeAnnotation)
-    }
+-- | Local definition (in let-in). Two forms (Elm-compatible):
+--   Define    — a named value/function  (x = …   or   f a b = …)
+--   Destruct  — pattern-based destructure  ((a, b) = …   or   { x, y } = …)
+data Def
+    = Define !(A.Located String) [Pattern] !Expr !(Maybe (A.Located TypeAnnotation))
+    | Destruct !Pattern !Expr
     deriving (Show)
+
+
+-- | Back-compat constructor name so existing code keeps compiling during
+-- the migration. Matches the original `Def` field order.
+pattern Def :: A.Located String -> [Pattern] -> Expr -> Maybe (A.Located TypeAnnotation) -> Def
+pattern Def n ps b ty = Define n ps b ty
+
+-- | Back-compat accessors that match the original record field names.
+-- They return sensible defaults for Destruct defs so existing callers
+-- degrade gracefully until they learn to pattern-match on both variants.
+_defName :: Def -> A.Located String
+_defName (Define n _ _ _) = n
+_defName (Destruct _ _)   = A.At A.one "__destruct__"
+
+_defPatterns :: Def -> [Pattern]
+_defPatterns (Define _ ps _ _) = ps
+_defPatterns (Destruct _ _)    = []
+
+_defBody :: Def -> Expr
+_defBody (Define _ _ b _) = b
+_defBody (Destruct _ b)   = b
+
+_defType :: Def -> Maybe (A.Located TypeAnnotation)
+_defType (Define _ _ _ t) = t
+_defType (Destruct _ _)   = Nothing
 
 
 -- | Patterns
