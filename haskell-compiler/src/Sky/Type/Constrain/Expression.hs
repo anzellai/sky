@@ -50,7 +50,9 @@ constrainDecls counter env decls = case decls of
         (defCon, name, defType) <- constrainDefWithType counter env def
         let env' = Map.insert name (T.Forall [] defType) env
         restCon <- constrainDecls counter env' rest
-        return $ T.CAnd [defCon, restCon]
+        -- Use CLet to introduce the def binding into the solver env for rest
+        let defHeader = Map.singleton name (A.one, defType)
+        return $ T.CLet [] [] defHeader defCon restCon
 
     Can.DeclareRec def defs rest -> do
         -- For recursive defs, we need the types first (for mutual references)

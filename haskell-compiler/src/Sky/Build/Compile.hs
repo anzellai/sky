@@ -113,7 +113,7 @@ generateGo canMod srcMod config solvedTypes =
     let
         imports = collectGoImports canMod srcMod
         decls = generateDecls canMod solvedTypes
-        mainDecl = generateMainFunc canMod srcMod
+        mainDecl = generateMainFunc canMod srcMod solvedTypes
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
@@ -160,30 +160,27 @@ generateDef def solvedTypes =
             Can.TypedDef (A.At _ n) _ typedPats expr _ ->
                 (n, map fst typedPats, expr)
 
-        -- Use solved types for function signature when available and fully resolved
+        -- Params stay any (for compatibility with any-typed callers).
+        -- Return type is typed when resolved. Body uses typed codegen with
+        -- type assertions on parameter variable accesses.
         mSolvedType = Map.lookup name solvedTypes
-        (goParams, goRetType) = case mSolvedType of
+        (goParams, goRetType, isTyped) = case mSolvedType of
             Just funcType ->
                 let (argTypes, retType) = splitFuncType (length params) funcType
-                    typedParams = zipWith (\pat ty ->
-                        GoIr.GoParam (patternName pat) (solvedTypeToGo ty))
-                        params argTypes
                     typedRet = solvedTypeToGo retType
-                    -- Check if all types are resolved (no "any" from unresolved vars)
                     allResolved = length argTypes == length params
                         && typedRet /= "any"
-                        && all (\(GoIr.GoParam _ t) -> t /= "any") typedParams
+                        && all (\t -> solvedTypeToGo t /= "any") argTypes
                 in if allResolved
-                   then (typedParams, typedRet)
-                   else (map patternToParam params, "any")
+                   then (map patternToParam params, typedRet, True)
+                   else (map patternToParam params, "any", False)
             Nothing ->
-                (map patternToParam params, "any")
+                (map patternToParam params, "any", False)
     in
     -- Skip "main" — handled separately
     if name == "main" then []
     else
-        let isFullyTyped = goRetType /= "any" && all (\(GoIr.GoParam _ t) -> t /= "any") goParams
-            bodyExpr = if isFullyTyped
+        let bodyExpr = if isTyped
                 then exprToGoTypedWithRet solvedTypes goRetType body
                 else exprToGo body
         in
@@ -255,7 +252,11 @@ exprToGo (A.At _ expr) = case expr of
         GoIr.GoSliceLit "any" (map exprToGo items)
 
     Can.Negate inner ->
-        GoIr.GoCall (GoIr.GoQualified "rt" "Negate") [exprToGo inner]
+        -- For literal negation, use direct Go negative literal
+        case inner of
+            A.At _ (Can.Int n) -> GoIr.GoIntLit (-n)
+            A.At _ (Can.Float f) -> GoIr.GoFloatLit (-f)
+            _ -> GoIr.GoCall (GoIr.GoQualified "rt" "Negate") [exprToGo inner]
 
     Can.Binop op opHome opName _annot left right ->
         binopToGo op left right
@@ -624,9 +625,9 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
 -- MAIN FUNCTION
 -- ═══════════════════════════════════════════════════════════
 
--- | Generate the main() function
-generateMainFunc :: Can.Module -> Src.Module -> [GoIr.GoDecl]
-generateMainFunc canMod srcMod =
+-- | Generate the main() function (uses solved types for typed codegen)
+generateMainFunc :: Can.Module -> Src.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateMainFunc canMod srcMod solvedTypes =
     case findMain canMod of
         Nothing ->
             [ GoIr.GoDeclFunc GoIr.GoFuncDecl
@@ -640,7 +641,7 @@ generateMainFunc canMod srcMod =
         Just def ->
             let body = defBody def
                 hasTask = any isTaskImport (Src._imports srcMod)
-                stmts = exprToMainStmts body
+                stmts = exprToMainStmtsTyped solvedTypes body
                 wrappedStmts = if hasTask
                     then stmts  -- TODO: wrap in rt.RunMainTask
                     else stmts
@@ -681,23 +682,47 @@ defBody (Can.Def _ _ body) = body
 defBody (Can.TypedDef _ _ _ body _) = body
 
 
--- | Convert the main body to Go statements (not a return value)
-exprToMainStmts :: Can.Expr -> [GoIr.GoStmt]
-exprToMainStmts (A.At _ expr) = case expr of
+-- | Convert the main body to Go statements, using typed codegen where possible
+exprToMainStmtsTyped :: Solve.SolvedTypes -> Can.Expr -> [GoIr.GoStmt]
+exprToMainStmtsTyped types (A.At _ expr) = case expr of
     Can.Let def body ->
-        defToStmts def ++ exprToMainStmts body
+        defToStmts def ++ exprToMainStmtsTyped types body
 
     Can.LetRec defs body ->
-        concatMap defToStmts defs ++ exprToMainStmts body
+        concatMap defToStmts defs ++ exprToMainStmtsTyped types body
 
     Can.LetDestruct _pat valExpr body ->
-        [GoIr.GoExprStmt (exprToGo valExpr)] ++ exprToMainStmts body
-
-    Can.Call _ _ ->
-        [GoIr.GoExprStmt (exprToGo (A.At A.one expr))]
+        [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body
 
     _ ->
-        [GoIr.GoExprStmt (exprToGo (A.At A.one expr))]
+        [GoIr.GoExprStmt (exprToGoMain types (A.At A.one expr))]
+
+
+-- | Generate Go for main body expressions — uses typed path for function calls
+-- that target typed functions, any-typed for everything else
+exprToGoMain :: Solve.SolvedTypes -> Can.Expr -> GoIr.GoExpr
+exprToGoMain types expr@(A.At _ inner) = case inner of
+    -- For function calls: if the target function is fully typed,
+    -- generate typed arguments
+    Can.Call func args ->
+        let goFunc = exprToGoMain types func
+            goArgs = map (exprToGoMain types) args
+        in GoIr.GoCall goFunc goArgs
+
+    -- Negate: use direct Go negate if we can determine the type
+    Can.Negate e -> GoIr.GoUnary "-" (exprToGoMain types e)
+
+    -- Binop: use direct Go operators when possible
+    Can.Binop op _ _ _ left right ->
+        binopToGo op left right  -- reuse existing binop (still any-typed for main)
+
+    -- Fall back to any-typed for everything else
+    _ -> exprToGo expr
+
+
+-- | Legacy untyped main stmts (kept for reference)
+exprToMainStmts :: Can.Expr -> [GoIr.GoStmt]
+exprToMainStmts = exprToMainStmtsTyped Map.empty
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -723,7 +748,11 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
     Can.Chr c -> GoIr.GoRuneLit c
     Can.Unit -> GoIr.GoRaw "struct{}{}"
 
-    Can.VarLocal name -> GoIr.GoIdent name
+    Can.VarLocal name ->
+        -- If we have a solved type for this var and it's concrete, use type assertion
+        case Map.lookup name types of
+            Just ty | isConcreteType ty -> GoIr.GoTypeAssert (GoIr.GoIdent name) (solvedTypeToGo ty)
+            _ -> GoIr.GoIdent name
     Can.VarTopLevel _ name -> GoIr.GoIdent name
     Can.VarKernel modName funcName -> kernelToGo modName funcName
 
@@ -760,6 +789,14 @@ typedIf types retType branches elseExpr =
             ++ go rest
     in
     GoIr.GoRaw $ "func() " ++ retType ++ " { " ++ go branches ++ " }()"
+
+
+-- | Check if a type is concrete (not an unresolved variable)
+isConcreteType :: T.Type -> Bool
+isConcreteType (T.TVar _) = False
+isConcreteType (T.TType _ _ _) = True
+isConcreteType T.TUnit = True
+isConcreteType _ = False
 
 
 -- | Convert a solved type to a Go type string.
