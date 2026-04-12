@@ -94,18 +94,18 @@ registry = Map.fromList
     -- ═══════════════════════════════════════════════════════
     -- Dict
     -- ═══════════════════════════════════════════════════════
-    , (("Dict", "empty"),         KernelInfo "rt.Dict_empty" 0 True)
-    , (("Dict", "insert"),        KernelInfo "rt.Dict_insert" 3 True)
-    , (("Dict", "get"),           KernelInfo "rt.Dict_get" 2 True)
-    , (("Dict", "remove"),        KernelInfo "rt.Dict_remove" 2 True)
-    , (("Dict", "member"),        KernelInfo "rt.Dict_member" 2 True)
-    , (("Dict", "keys"),          KernelInfo "rt.Dict_keys" 1 True)
-    , (("Dict", "values"),        KernelInfo "rt.Dict_values" 1 True)
-    , (("Dict", "toList"),        KernelInfo "rt.Dict_toList" 1 True)
-    , (("Dict", "fromList"),      KernelInfo "rt.Dict_fromList" 1 True)
-    , (("Dict", "map"),           KernelInfo "rt.Dict_map" 2 True)
-    , (("Dict", "foldl"),         KernelInfo "rt.Dict_foldl" 3 True)
-    , (("Dict", "union"),         KernelInfo "rt.Dict_union" 2 True)
+    , (("Dict", "empty"),         KernelInfo "rt.Dict_empty" 0 False)
+    , (("Dict", "insert"),        KernelInfo "rt.Dict_insert" 3 False)
+    , (("Dict", "get"),           KernelInfo "rt.Dict_get" 2 False)
+    , (("Dict", "remove"),        KernelInfo "rt.Dict_remove" 2 False)
+    , (("Dict", "member"),        KernelInfo "rt.Dict_member" 2 False)
+    , (("Dict", "keys"),          KernelInfo "rt.Dict_keys" 1 False)
+    , (("Dict", "values"),        KernelInfo "rt.Dict_values" 1 False)
+    , (("Dict", "toList"),        KernelInfo "rt.Dict_toList" 1 False)
+    , (("Dict", "fromList"),      KernelInfo "rt.Dict_fromList" 1 False)
+    , (("Dict", "map"),           KernelInfo "rt.Dict_map" 2 False)
+    , (("Dict", "foldl"),         KernelInfo "rt.Dict_foldl" 3 False)
+    , (("Dict", "union"),         KernelInfo "rt.Dict_union" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Maybe
