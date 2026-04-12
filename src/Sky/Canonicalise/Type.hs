@@ -1,6 +1,7 @@
 -- | Canonicalise type annotations — resolve type names.
 module Sky.Canonicalise.Type
     ( canonicaliseTypeAnnotation
+    , canonicaliseTypeAnnotationWith
     , freeTypeVars
     )
     where
@@ -13,28 +14,41 @@ import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Sky.ModuleName as ModuleName
 
 
--- | Canonicalise a source type annotation to a canonical type
+-- | Canonicalise a source type annotation to a canonical type.
+-- Back-compat shim: no cross-module type-name resolution context.
 canonicaliseTypeAnnotation :: ModuleName.Canonical -> Src.TypeAnnotation -> Can.Type
-canonicaliseTypeAnnotation home srcType = case srcType of
+canonicaliseTypeAnnotation = canonicaliseTypeAnnotationWith Map.empty
+
+
+-- | Canonicalise with a type-name → home map. The map lets unqualified
+-- type references (e.g. `MyCounter : Counter` where Counter is imported)
+-- resolve to the correct home module. Local type declarations should also
+-- appear in this map pointing to the current module.
+canonicaliseTypeAnnotationWith
+    :: Map.Map String ModuleName.Canonical
+    -> ModuleName.Canonical
+    -> Src.TypeAnnotation
+    -> Can.Type
+canonicaliseTypeAnnotationWith tmap home srcType = case srcType of
     Src.TLambda from to ->
         Can.TLambda
-            (canonicaliseTypeAnnotation home from)
-            (canonicaliseTypeAnnotation home to)
+            (canonicaliseTypeAnnotationWith tmap home from)
+            (canonicaliseTypeAnnotationWith tmap home to)
 
     Src.TVar name ->
         Can.TVar name
 
     Src.TType modStr segments args ->
         let
-            canArgs = map (canonicaliseTypeAnnotation home) args
+            canArgs = map (canonicaliseTypeAnnotationWith tmap home) args
             typeName = last segments
-            typeHome = resolveTypeName modStr segments
+            typeHome = resolveTypeName tmap modStr segments
         in
         Can.TType typeHome typeName canArgs
 
     Src.TTypeQual qualifier name args ->
         let
-            canArgs = map (canonicaliseTypeAnnotation home) args
+            canArgs = map (canonicaliseTypeAnnotationWith tmap home) args
             typeHome = resolveTypeQual qualifier
         in
         Can.TType typeHome name canArgs
@@ -42,7 +56,7 @@ canonicaliseTypeAnnotation home srcType = case srcType of
     Src.TRecord fields mExt ->
         let
             canFields = Map.fromList $ zipWith (\i (A.At _ name, ty) ->
-                (name, Can.FieldType i (canonicaliseTypeAnnotation home ty)))
+                (name, Can.FieldType i (canonicaliseTypeAnnotationWith tmap home ty)))
                 [0..] fields
         in
         Can.TRecord canFields mExt
@@ -52,17 +66,21 @@ canonicaliseTypeAnnotation home srcType = case srcType of
 
     Src.TTuple a b rest ->
         Can.TTuple
-            (canonicaliseTypeAnnotation home a)
-            (canonicaliseTypeAnnotation home b)
+            (canonicaliseTypeAnnotationWith tmap home a)
+            (canonicaliseTypeAnnotationWith tmap home b)
             (case rest of
                 [] -> Nothing
-                (r:_) -> Just (canonicaliseTypeAnnotation home r))
+                (r:_) -> Just (canonicaliseTypeAnnotationWith tmap home r))
 
 
--- | Resolve a type name to its home module
-resolveTypeName :: String -> [String] -> ModuleName.Canonical
-resolveTypeName modStr segments
-    -- If modStr is empty, the type is either a builtin or in the current scope
+-- | Resolve a type name to its home module.
+-- Priority: builtins → qualified module → type-name map → empty (local).
+resolveTypeName
+    :: Map.Map String ModuleName.Canonical
+    -> String
+    -> [String]
+    -> ModuleName.Canonical
+resolveTypeName tmap modStr segments
     | null modStr = case segments of
         ["Int"]    -> ModuleName.basics
         ["Float"]  -> ModuleName.basics
@@ -73,8 +91,8 @@ resolveTypeName modStr segments
         ["Maybe"]  -> ModuleName.maybe_
         ["Result"] -> ModuleName.result_
         ["Task"]   -> ModuleName.task
-        _          -> ModuleName.Canonical ""  -- local type
-    -- Otherwise the type has a module qualifier
+        [name]     -> Map.findWithDefault (ModuleName.Canonical "") name tmap
+        _          -> ModuleName.Canonical ""
     | otherwise = ModuleName.Canonical modStr
 
 
