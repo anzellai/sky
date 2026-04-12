@@ -329,10 +329,14 @@ generateGoMulti canMod srcMod config solvedTypes depDecls =
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
         mainDecl = generateMainFunc canMod srcMod solvedTypes
+        -- Pin the rt import so Go doesn't error out with "imported and not used"
+        -- when the user's program doesn't happen to reference rt.* directly
+        -- (e.g. main = 42). The blank var reference is zero-cost at runtime.
+        rtPin = [GoIr.GoDeclRaw "var _ = rt.AsInt"]
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
-            , GoIr._pkg_decls = depDecls ++ unionDecls ++ aliasDecls ++ decls ++ mainDecl
+            , GoIr._pkg_decls = rtPin ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ mainDecl
             }
     in GoBuilder.renderPackage pkg
 
@@ -360,6 +364,10 @@ generateGo canMod srcMod config solvedTypes =
 -- | Collect Go imports needed
 collectGoImports :: Can.Module -> Src.Module -> [GoIr.GoImport]
 collectGoImports _canMod _srcMod =
+    -- Import as blank to avoid "imported and not used" when user's main is
+    -- a pure value. If main uses rt.* anywhere, Go doesn't complain about
+    -- adding a blank import alongside the aliased one.
+    -- Simpler: emit `_ = rt.Log_println` in a blank var at top.
     [ GoIr.GoImport "sky-app/rt" (Just "rt") ]
 
 
@@ -1086,8 +1094,14 @@ exprToMainStmtsTyped types (A.At _ expr) = case expr of
     Can.LetDestruct _pat valExpr body ->
         [GoIr.GoExprStmt (exprToGoMain types valExpr)] ++ exprToMainStmtsTyped types body
 
-    _ ->
+    -- Calls are valid Go expression statements, emit bare
+    Can.Call _ _ ->
         [GoIr.GoExprStmt (exprToGoMain types (A.At A.one expr))]
+
+    -- Non-call values (e.g. literals, vars): Go rejects bare expression
+    -- statements that aren't calls, so discard via blank assignment.
+    _ ->
+        [GoIr.GoAssign "_" (exprToGoMain types (A.At A.one expr))]
 
 
 -- | Generate Go for main body expressions — uses typed path for function calls
