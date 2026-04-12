@@ -1,0 +1,605 @@
+package rt
+
+import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"html"
+	"io"
+	"net/http"
+	"reflect"
+	"strings"
+	"sync"
+	"time"
+)
+
+// ═══════════════════════════════════════════════════════════
+// VNode — virtual DOM
+// ═══════════════════════════════════════════════════════════
+
+type VNode struct {
+	Kind     string // "element" or "text"
+	Tag      string
+	Text     string
+	Attrs    map[string]string
+	Events   map[string]any // event name -> Sky Msg value
+	Children []VNode
+}
+
+func vtext(s string) VNode {
+	return VNode{Kind: "text", Text: s}
+}
+
+func velement(tag string, attrs []any, children []any) VNode {
+	node := VNode{
+		Kind:   "element",
+		Tag:    tag,
+		Attrs:  map[string]string{},
+		Events: map[string]any{},
+	}
+	for _, a := range attrs {
+		switch v := a.(type) {
+		case attrPair:
+			node.Attrs[v.key] = v.val
+		case eventPair:
+			node.Events[v.name] = v.msg
+		}
+	}
+	for _, c := range children {
+		switch v := c.(type) {
+		case VNode:
+			node.Children = append(node.Children, v)
+		case string:
+			node.Children = append(node.Children, vtext(v))
+		}
+	}
+	return node
+}
+
+type attrPair struct{ key, val string }
+type eventPair struct {
+	name string
+	msg  any
+}
+
+// ═══════════════════════════════════════════════════════════
+// HTML element builders (Std.Html)
+// ═══════════════════════════════════════════════════════════
+
+func htmlElem(tag string) func(any, any) any {
+	return func(attrs any, children any) any {
+		return velement(tag, asList(attrs), asList(children))
+	}
+}
+
+func asList(v any) []any {
+	if v == nil {
+		return nil
+	}
+	if l, ok := v.([]any); ok {
+		return l
+	}
+	return []any{v}
+}
+
+func Html_text(s any) any   { return vtext(fmt.Sprintf("%v", s)) }
+func Html_div(a, c any) any { return htmlElem("div")(a, c) }
+func Html_span(a, c any) any {
+	return htmlElem("span")(a, c)
+}
+func Html_p(a, c any) any      { return htmlElem("p")(a, c) }
+func Html_h1(a, c any) any     { return htmlElem("h1")(a, c) }
+func Html_h2(a, c any) any     { return htmlElem("h2")(a, c) }
+func Html_h3(a, c any) any     { return htmlElem("h3")(a, c) }
+func Html_h4(a, c any) any     { return htmlElem("h4")(a, c) }
+func Html_h5(a, c any) any     { return htmlElem("h5")(a, c) }
+func Html_h6(a, c any) any     { return htmlElem("h6")(a, c) }
+func Html_a(a, c any) any      { return htmlElem("a")(a, c) }
+func Html_button(a, c any) any { return htmlElem("button")(a, c) }
+func Html_input(a, c any) any  { return htmlElem("input")(a, c) }
+func Html_form(a, c any) any   { return htmlElem("form")(a, c) }
+func Html_label(a, c any) any  { return htmlElem("label")(a, c) }
+func Html_nav(a, c any) any    { return htmlElem("nav")(a, c) }
+func Html_section(a, c any) any {
+	return htmlElem("section")(a, c)
+}
+func Html_article(a, c any) any { return htmlElem("article")(a, c) }
+func Html_header(a, c any) any  { return htmlElem("header")(a, c) }
+func Html_footer(a, c any) any  { return htmlElem("footer")(a, c) }
+func Html_main(a, c any) any    { return htmlElem("main")(a, c) }
+func Html_ul(a, c any) any      { return htmlElem("ul")(a, c) }
+func Html_ol(a, c any) any      { return htmlElem("ol")(a, c) }
+func Html_li(a, c any) any      { return htmlElem("li")(a, c) }
+func Html_img(a, c any) any     { return htmlElem("img")(a, c) }
+func Html_br(a, c any) any      { return htmlElem("br")(a, c) }
+func Html_hr(a, c any) any      { return htmlElem("hr")(a, c) }
+func Html_table(a, c any) any   { return htmlElem("table")(a, c) }
+func Html_thead(a, c any) any   { return htmlElem("thead")(a, c) }
+func Html_tbody(a, c any) any   { return htmlElem("tbody")(a, c) }
+func Html_tr(a, c any) any      { return htmlElem("tr")(a, c) }
+func Html_th(a, c any) any      { return htmlElem("th")(a, c) }
+func Html_td(a, c any) any      { return htmlElem("td")(a, c) }
+func Html_textarea(a, c any) any {
+	return htmlElem("textarea")(a, c)
+}
+func Html_select(a, c any) any { return htmlElem("select")(a, c) }
+func Html_option(a, c any) any { return htmlElem("option")(a, c) }
+func Html_pre(a, c any) any    { return htmlElem("pre")(a, c) }
+func Html_code(a, c any) any   { return htmlElem("code")(a, c) }
+func Html_strong(a, c any) any { return htmlElem("strong")(a, c) }
+func Html_em(a, c any) any     { return htmlElem("em")(a, c) }
+func Html_small(a, c any) any  { return htmlElem("small")(a, c) }
+
+// styleNode: render CSS text inside a <style> tag
+func Html_styleNode(attrs any, css any) any {
+	txt := fmt.Sprintf("%v", css)
+	return VNode{
+		Kind:     "element",
+		Tag:      "style",
+		Attrs:    map[string]string{},
+		Children: []VNode{vtext(txt)},
+	}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Attributes (Std.Html.Attributes)
+// ═══════════════════════════════════════════════════════════
+
+func attr(k, v string) any          { return attrPair{key: k, val: v} }
+func Attr_class(v any) any          { return attr("class", fmt.Sprintf("%v", v)) }
+func Attr_id(v any) any             { return attr("id", fmt.Sprintf("%v", v)) }
+func Attr_style(v any) any          { return attr("style", fmt.Sprintf("%v", v)) }
+func Attr_type(v any) any           { return attr("type", fmt.Sprintf("%v", v)) }
+func Attr_value(v any) any          { return attr("value", fmt.Sprintf("%v", v)) }
+func Attr_href(v any) any           { return attr("href", fmt.Sprintf("%v", v)) }
+func Attr_src(v any) any            { return attr("src", fmt.Sprintf("%v", v)) }
+func Attr_alt(v any) any            { return attr("alt", fmt.Sprintf("%v", v)) }
+func Attr_name(v any) any           { return attr("name", fmt.Sprintf("%v", v)) }
+func Attr_placeholder(v any) any    { return attr("placeholder", fmt.Sprintf("%v", v)) }
+func Attr_title(v any) any          { return attr("title", fmt.Sprintf("%v", v)) }
+func Attr_for(v any) any            { return attr("for", fmt.Sprintf("%v", v)) }
+func Attr_checked(v any) any        { return attr("checked", "checked") }
+func Attr_disabled(v any) any       { return attr("disabled", "disabled") }
+func Attr_readonly(v any) any       { return attr("readonly", "readonly") }
+func Attr_required(v any) any       { return attr("required", "required") }
+func Attr_autofocus(v any) any      { return attr("autofocus", "autofocus") }
+func Attr_rel(v any) any            { return attr("rel", fmt.Sprintf("%v", v)) }
+func Attr_target(v any) any         { return attr("target", fmt.Sprintf("%v", v)) }
+func Attr_method(v any) any         { return attr("method", fmt.Sprintf("%v", v)) }
+func Attr_action(v any) any         { return attr("action", fmt.Sprintf("%v", v)) }
+
+// ═══════════════════════════════════════════════════════════
+// Events (Std.Live.Events)
+// ═══════════════════════════════════════════════════════════
+
+func Event_onClick(msg any) any  { return eventPair{name: "click", msg: msg} }
+func Event_onInput(f any) any    { return eventPair{name: "input", msg: f} }
+func Event_onChange(f any) any   { return eventPair{name: "change", msg: f} }
+func Event_onSubmit(msg any) any { return eventPair{name: "submit", msg: msg} }
+func Event_onDblClick(msg any) any { return eventPair{name: "dblclick", msg: msg} }
+func Event_onMouseOver(msg any) any { return eventPair{name: "mouseover", msg: msg} }
+func Event_onMouseOut(msg any) any  { return eventPair{name: "mouseout", msg: msg} }
+func Event_onKeyDown(f any) any     { return eventPair{name: "keydown", msg: f} }
+func Event_onKeyUp(f any) any       { return eventPair{name: "keyup", msg: f} }
+func Event_onFocus(msg any) any     { return eventPair{name: "focus", msg: msg} }
+func Event_onBlur(msg any) any      { return eventPair{name: "blur", msg: msg} }
+
+// ═══════════════════════════════════════════════════════════
+// CSS (Std.Css)
+// ═══════════════════════════════════════════════════════════
+
+type cssRule struct {
+	selector string
+	props    []cssProp
+}
+type cssProp struct {
+	k, v string
+}
+
+func Css_stylesheet(rules any) any {
+	rs := asList(rules)
+	var sb strings.Builder
+	for _, r := range rs {
+		if cr, ok := r.(cssRule); ok {
+			sb.WriteString(cr.selector)
+			sb.WriteString(" {\n")
+			for _, p := range cr.props {
+				sb.WriteString("  ")
+				sb.WriteString(p.k)
+				sb.WriteString(": ")
+				sb.WriteString(p.v)
+				sb.WriteString(";\n")
+			}
+			sb.WriteString("}\n")
+		}
+	}
+	return sb.String()
+}
+
+func Css_rule(selector any, props any) any {
+	ps := asList(props)
+	var out []cssProp
+	for _, p := range ps {
+		if cp, ok := p.(cssProp); ok {
+			out = append(out, cp)
+		}
+	}
+	return cssRule{selector: fmt.Sprintf("%v", selector), props: out}
+}
+
+func Css_property(k any, v any) any {
+	return cssProp{k: fmt.Sprintf("%v", k), v: fmt.Sprintf("%v", v)}
+}
+
+// Unit helpers
+func Css_px(n any) any  { return fmt.Sprintf("%vpx", n) }
+func Css_rem(n any) any { return fmt.Sprintf("%vrem", n) }
+func Css_em(n any) any  { return fmt.Sprintf("%vem", n) }
+func Css_pct(n any) any { return fmt.Sprintf("%v%%", n) }
+func Css_hex(s any) any { return fmt.Sprintf("#%v", s) }
+
+// Common property shortcuts (name in Sky = lowerCamel → Css_<name>)
+func cssP(k string) func(any) any {
+	return func(v any) any { return cssProp{k: k, v: fmt.Sprintf("%v", v)} }
+}
+func cssP2(k string) func(any, any) any {
+	return func(a, b any) any { return cssProp{k: k, v: fmt.Sprintf("%v %v", a, b)} }
+}
+
+var (
+	Css_color           = cssP("color")
+	Css_background      = cssP("background")
+	Css_backgroundColor = cssP("background-color")
+	Css_padding         = cssP("padding")
+	Css_padding2        = cssP2("padding")
+	Css_margin          = cssP("margin")
+	Css_margin2         = cssP2("margin")
+	Css_fontSize        = cssP("font-size")
+	Css_fontWeight      = cssP("font-weight")
+	Css_fontFamily      = cssP("font-family")
+	Css_lineHeight      = cssP("line-height")
+	Css_textAlign       = cssP("text-align")
+	Css_border          = cssP("border")
+	Css_borderRadius    = cssP("border-radius")
+	Css_borderBottom    = cssP("border-bottom")
+	Css_display         = cssP("display")
+	Css_cursor          = cssP("cursor")
+	Css_gap             = cssP("gap")
+	Css_justifyContent  = cssP("justify-content")
+	Css_alignItems      = cssP("align-items")
+	Css_width           = cssP("width")
+	Css_height          = cssP("height")
+	Css_maxWidth        = cssP("max-width")
+	Css_minWidth        = cssP("min-width")
+	Css_transform       = cssP("transform")
+)
+
+// ═══════════════════════════════════════════════════════════
+// VNode rendering
+// ═══════════════════════════════════════════════════════════
+
+func renderVNode(n VNode, handlers map[string]any) string {
+	if n.Kind == "text" {
+		return html.EscapeString(n.Text)
+	}
+	var sb strings.Builder
+	sb.WriteString("<")
+	sb.WriteString(n.Tag)
+	for k, v := range n.Attrs {
+		sb.WriteString(" ")
+		sb.WriteString(k)
+		sb.WriteString(`="`)
+		sb.WriteString(html.EscapeString(v))
+		sb.WriteString(`"`)
+	}
+	for ev, msg := range n.Events {
+		id := randID()
+		handlers[id] = msg
+		sb.WriteString(fmt.Sprintf(` on%s="skyEvent(event,'%s')"`, ev, id))
+	}
+	if isVoidTag(n.Tag) {
+		sb.WriteString(" />")
+		return sb.String()
+	}
+	sb.WriteString(">")
+	for _, c := range n.Children {
+		sb.WriteString(renderVNode(c, handlers))
+	}
+	sb.WriteString("</")
+	sb.WriteString(n.Tag)
+	sb.WriteString(">")
+	return sb.String()
+}
+
+func isVoidTag(t string) bool {
+	switch t {
+	case "area", "base", "br", "col", "embed", "hr", "img", "input",
+		"link", "meta", "param", "source", "track", "wbr":
+		return true
+	}
+	return false
+}
+
+func randID() string {
+	b := make([]byte, 8)
+	rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Std.Cmd / Std.Sub
+// ═══════════════════════════════════════════════════════════
+
+type cmdT struct {
+	kind string // "none", "perform", "batch"
+	task any
+	toMsg any
+	batch []any
+}
+
+type subT struct {
+	kind   string // "none", "every"
+	ms     int
+	toMsg  any
+}
+
+func Cmd_none() any             { return cmdT{kind: "none"} }
+func Cmd_batch(list any) any    { return cmdT{kind: "batch", batch: asList(list)} }
+func Cmd_perform(task, to any) any { return cmdT{kind: "perform", task: task, toMsg: to} }
+
+func Sub_none() any { return subT{kind: "none"} }
+func Sub_every(ms any, to any) any {
+	return subT{kind: "every", ms: AsInt(ms), toMsg: to}
+}
+
+// Time.every is an alias of Sub.every in Sky code
+func Time_every(ms any, to any) any { return Sub_every(ms, to) }
+
+// ═══════════════════════════════════════════════════════════
+// Std.Live — HTTP-first server-driven UI with TEA architecture
+// ═══════════════════════════════════════════════════════════
+
+type liveSession struct {
+	model    any
+	handlers map[string]any
+	mu       sync.Mutex
+}
+
+type liveApp struct {
+	init          any // req -> (Model, Cmd Msg)
+	update        any // Msg -> Model -> (Model, Cmd Msg)
+	view          any // Model -> VNode
+	subscriptions any // Model -> Sub Msg
+	routes        []liveRoute
+	notFound      any
+	sessions      sync.Map // sessionID -> *liveSession
+}
+
+type liveRoute struct {
+	path string
+	page any
+}
+
+// Route constructor
+func Live_route(path any, page any) any {
+	return liveRoute{path: fmt.Sprintf("%v", path), page: page}
+}
+
+// Live.app — reads a record-shaped config (init/update/view/subscriptions/routes/notFound)
+func Live_app(cfg any) any {
+	return func() any {
+		app := &liveApp{
+			init:          Field(cfg, "Init"),
+			update:        Field(cfg, "Update"),
+			view:          Field(cfg, "View"),
+			subscriptions: Field(cfg, "Subscriptions"),
+			notFound:      Field(cfg, "NotFound"),
+		}
+		for _, r := range asList(Field(cfg, "Routes")) {
+			if lr, ok := r.(liveRoute); ok {
+				app.routes = append(app.routes, lr)
+			}
+		}
+
+		mux := http.NewServeMux()
+		mux.HandleFunc("/_live/event", app.handleEvent)
+		mux.HandleFunc("/", app.handleInitial)
+
+		port := 8080
+		if p := Field(cfg, "Port"); p != nil {
+			port = AsInt(p)
+		}
+		fmt.Printf("Sky.Live listening on :%d\n", port)
+		err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		return Ok[any, any](struct{}{})
+	}
+}
+
+func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
+	// Build an initial request value for init
+	req := map[string]any{"path": r.URL.Path}
+
+	// Run init
+	res := sky_call(app.init, req)
+	model, _ := tupleFirst(res), tupleSecond(res)
+
+	// Get or create session
+	sid := sessionID(r, w)
+	sess := &liveSession{model: model, handlers: map[string]any{}}
+	app.sessions.Store(sid, sess)
+
+	// Render view
+	vn := sky_call(app.view, model).(VNode)
+	body := renderVNode(vn, sess.handlers)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>%s<script>%s</script></body></html>", body, liveJS(sid))
+}
+
+func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SessionID string `json:"sessionId"`
+		HandlerID string `json:"handlerId"`
+		Value     string `json:"value"`
+	}
+	body, _ := io.ReadAll(r.Body)
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	v, ok := app.sessions.Load(req.SessionID)
+	if !ok {
+		http.Error(w, "session not found", 404)
+		return
+	}
+	sess := v.(*liveSession)
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	msg, ok := sess.handlers[req.HandlerID]
+	if !ok {
+		http.Error(w, "handler not found", 404)
+		return
+	}
+	// If msg is a function (onInput), call with value
+	if isFunc(msg) {
+		msg = sky_call(msg, req.Value)
+	}
+	result := sky_call2(app.update, msg, sess.model)
+	sess.model = tupleFirst(result)
+	// Ignore Cmd for now
+	sess.handlers = map[string]any{}
+	vn := sky_call(app.view, sess.model).(VNode)
+	body2 := renderVNode(vn, sess.handlers)
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(body2))
+}
+
+func sessionID(r *http.Request, w http.ResponseWriter) string {
+	if c, err := r.Cookie("sky_sid"); err == nil {
+		return c.Value
+	}
+	b := make([]byte, 16)
+	rand.Read(b)
+	sid := hex.EncodeToString(b)
+	http.SetCookie(w, &http.Cookie{Name: "sky_sid", Value: sid, Path: "/", HttpOnly: true})
+	return sid
+}
+
+func liveJS(sid string) string {
+	return fmt.Sprintf(`
+function skyEvent(ev, id) {
+  ev.preventDefault();
+  var v = ev.target && ev.target.value ? ev.target.value : "";
+  fetch("/_live/event", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({sessionId: %q, handlerId: id, value: v})
+  }).then(function(r){ return r.text(); }).then(function(t){
+    document.body.innerHTML = t + '<script>' + skyLiveJSRestore() + '</' + 'script>';
+  });
+}
+function skyLiveJSRestore() { return document.querySelector("script").textContent; }
+`, sid)
+}
+
+// ═══════════════════════════════════════════════════════════
+// Helpers: tuple access, sky_call dispatch
+// ═══════════════════════════════════════════════════════════
+
+func tupleFirst(v any) any {
+	r := reflect.ValueOf(v)
+	if r.Kind() == reflect.Struct {
+		f := r.FieldByName("V0")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	if s, ok := v.([2]any); ok {
+		return s[0]
+	}
+	if s, ok := v.([]any); ok && len(s) >= 1 {
+		return s[0]
+	}
+	return v
+}
+
+func tupleSecond(v any) any {
+	r := reflect.ValueOf(v)
+	if r.Kind() == reflect.Struct {
+		f := r.FieldByName("V1")
+		if f.IsValid() {
+			return f.Interface()
+		}
+	}
+	if s, ok := v.([2]any); ok {
+		return s[1]
+	}
+	if s, ok := v.([]any); ok && len(s) >= 2 {
+		return s[1]
+	}
+	return nil
+}
+
+func isFunc(v any) bool {
+	if v == nil {
+		return false
+	}
+	return reflect.ValueOf(v).Kind() == reflect.Func
+}
+
+func sky_call(f any, arg any) any {
+	if f == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(f)
+	if rv.Kind() != reflect.Func {
+		return f
+	}
+	if rv.Type().NumIn() == 0 {
+		out := rv.Call(nil)
+		if len(out) > 0 {
+			return out[0].Interface()
+		}
+		return nil
+	}
+	av := reflect.ValueOf(arg)
+	if !av.IsValid() {
+		av = reflect.Zero(rv.Type().In(0))
+	}
+	out := rv.Call([]reflect.Value{av})
+	if len(out) > 0 {
+		return out[0].Interface()
+	}
+	return nil
+}
+
+func sky_call2(f any, a, b any) any {
+	rv := reflect.ValueOf(f)
+	if rv.Kind() != reflect.Func {
+		return f
+	}
+	if rv.Type().NumIn() == 2 {
+		av := reflect.ValueOf(a)
+		bv := reflect.ValueOf(b)
+		if !av.IsValid() {
+			av = reflect.Zero(rv.Type().In(0))
+		}
+		if !bv.IsValid() {
+			bv = reflect.Zero(rv.Type().In(1))
+		}
+		out := rv.Call([]reflect.Value{av, bv})
+		if len(out) > 0 {
+			return out[0].Interface()
+		}
+		return nil
+	}
+	// Curried: f(a)(b)
+	return sky_call(sky_call(f, a), b)
+}
+
+// avoid unused-import linter noise for time if not otherwise referenced
+var _ = time.Now

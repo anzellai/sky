@@ -186,10 +186,15 @@ copyRuntime outDir = do
     -- Try to copy runtime from runtime-go/ directory (proper Go file)
     -- Fall back to inline string if runtime-go/ doesn't exist
     let runtimeSrc = "runtime-go/rt/rt.go"
+    let liveSrc = "runtime-go/rt/live.go"
     hasRuntimeFile <- doesFileExist runtimeSrc
     if hasRuntimeFile
         then copyFile runtimeSrc (rtDir </> "rt.go")
         else writeFile (rtDir </> "rt.go") runtimeGoSource
+    hasLive <- doesFileExist liveSrc
+    if hasLive
+        then copyFile liveSrc (rtDir </> "live.go")
+        else return ()
 
 
 -- ═══════════════════════════════════════════════════════════

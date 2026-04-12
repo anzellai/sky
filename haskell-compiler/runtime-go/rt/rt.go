@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/rand"
+	mrand "math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -541,7 +541,7 @@ func Random_int(lo any, hi any) any {
 	return func() any {
 		l, h := AsInt(lo), AsInt(hi)
 		if h <= l { return Ok[any, any](l) }
-		return Ok[any, any](l + rand.Intn(h-l+1))
+		return Ok[any, any](l + mrand.Intn(h-l+1))
 	}
 }
 
@@ -549,7 +549,7 @@ func Random_float(lo any, hi any) any {
 	return func() any {
 		l := AsFloat(lo)
 		h := AsFloat(hi)
-		return Ok[any, any](l + rand.Float64()*(h-l))
+		return Ok[any, any](l + mrand.Float64()*(h-l))
 	}
 }
 
@@ -557,7 +557,7 @@ func Random_choice(list any) any {
 	return func() any {
 		items := list.([]any)
 		if len(items) == 0 { return Err[any, any]("empty list") }
-		return Ok[any, any](items[rand.Intn(len(items))])
+		return Ok[any, any](items[mrand.Intn(len(items))])
 	}
 }
 
@@ -566,7 +566,7 @@ func Random_shuffle(list any) any {
 		items := list.([]any)
 		result := make([]any, len(items))
 		copy(result, items)
-		rand.Shuffle(len(result), func(i, j int) { result[i], result[j] = result[j], result[i] })
+		mrand.Shuffle(len(result), func(i, j int) { result[i], result[j] = result[j], result[i] })
 		return Ok[any, any](result)
 	}
 }
@@ -998,7 +998,7 @@ var _ = io.EOF
 var _ = exec.Command
 var _ = os.Exit
 var _ = time.Now
-var _ = rand.Intn
+var _ = mrand.Intn
 var _ = sha256.Sum256
 var _ = md5.Sum
 var _ = base64.StdEncoding

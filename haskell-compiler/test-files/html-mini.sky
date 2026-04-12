@@ -1,0 +1,12 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Html exposing (..)
+import Std.Html.Attributes exposing (..)
+import Std.Log exposing (println)
+
+main =
+    let
+        _ = div [ class "app" ] [ text "Hello" ]
+    in
+        println "done"

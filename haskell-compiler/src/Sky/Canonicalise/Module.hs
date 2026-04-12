@@ -170,6 +170,27 @@ kernelFunctions = Map.fromList
     , ("Regex",   ["match", "find", "findAll", "replace", "split"])
     , ("Char",    ["isUpper", "isLower", "isDigit", "isAlpha", "toUpper", "toLower"])
     , ("Path",    ["join", "dir", "base", "ext", "isAbsolute"])
+    , ("Html",    ["text", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
+                    "a", "button", "input", "form", "label", "nav", "section",
+                    "article", "header", "footer", "main", "ul", "ol", "li",
+                    "img", "br", "hr", "table", "thead", "tbody", "tr", "th", "td",
+                    "textarea", "select", "option", "pre", "code", "strong", "em",
+                    "small", "styleNode"])
+    , ("Attr",    ["class", "id", "style", "type", "type_", "value", "href", "src",
+                    "alt", "name", "placeholder", "title", "for", "checked",
+                    "disabled", "readonly", "required", "autofocus", "rel",
+                    "target", "method", "action"])
+    , ("Css",     ["stylesheet", "rule", "property", "px", "rem", "em", "pct", "hex",
+                    "color", "background", "backgroundColor", "padding", "padding2",
+                    "margin", "margin2", "fontSize", "fontWeight", "fontFamily",
+                    "lineHeight", "textAlign", "border", "borderRadius",
+                    "borderBottom", "display", "cursor", "gap", "justifyContent",
+                    "alignItems", "width", "height", "maxWidth", "minWidth", "transform"])
+    , ("Live",    ["app", "route"])
+    , ("Event",   ["onClick", "onInput", "onChange", "onSubmit", "onDblClick",
+                    "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
+                    "onFocus", "onBlur"])
+    , ("Sub",     ["none", "every"])
     ]
 
 

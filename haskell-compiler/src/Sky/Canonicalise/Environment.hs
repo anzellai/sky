@@ -237,5 +237,10 @@ kernelModules = Map.fromList
     , ("Sky.Core.Random",  "Random")
     , ("Sky.Core.Http",    "Http")
     , ("Sky.Http.Server",  "Server")
+    , ("Std.Html",             "Html")
+    , ("Std.Html.Attributes",  "Attr")
+    , ("Std.Css",              "Css")
+    , ("Std.Live",             "Live")
+    , ("Std.Live.Events",      "Event")
     , ("Sky.Core.Prelude", "Basics")  -- Prelude maps to Basics
     ]
