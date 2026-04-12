@@ -493,6 +493,11 @@ registry = Map.fromList
     , (("JsonDec", "andThen"),    KernelInfo "rt.JsonDec_andThen" 2 False)
     , (("JsonDec", "succeed"),    KernelInfo "rt.JsonDec_succeed" 1 False)
     , (("JsonDec", "fail"),       KernelInfo "rt.JsonDec_fail" 1 False)
+    , (("JsonDec", "at"),         KernelInfo "rt.JsonDec_at" 2 False)
+    , (("JsonDec", "map2"),       KernelInfo "rt.JsonDec_map2" 3 False)
+    , (("JsonDec", "map3"),       KernelInfo "rt.JsonDec_map3" 4 False)
+    , (("JsonDec", "map4"),       KernelInfo "rt.JsonDec_map4" 5 False)
+    , (("JsonDec", "map5"),       KernelInfo "rt.JsonDec_map5" 6 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Db (SQLite via modernc.org/sqlite)

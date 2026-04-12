@@ -211,7 +211,8 @@ kernelFunctions = Map.fromList
                     "size", "union", "intersect", "diff"])
     , ("JsonEnc", ["string", "int", "float", "bool", "null", "list", "object", "encode"])
     , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field", "list",
-                    "map", "andThen", "succeed", "fail"])
+                    "map", "andThen", "succeed", "fail",
+                    "at", "map2", "map3", "map4", "map5"])
     , ("Db",      ["connect", "open", "close", "exec", "query", "queryDecode",
                     "insertRow", "getById", "updateById", "deleteById",
                     "findWhere", "withTransaction"])

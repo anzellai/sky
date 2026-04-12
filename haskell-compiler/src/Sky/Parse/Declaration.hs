@@ -57,16 +57,28 @@ declaration mkError =
                      body <- withIndent bodyCol (expression mkError)
                      return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
 
-        , -- Uppercase value (constructor used as function — from auto-generated record constructors)
+        , -- Uppercase name — can be either:
+          --   Profile : String -> Int -> Profile           (type annotation)
+          --   Profile name age = { name = name, age = age } (record constructor)
+          -- Both are legal: matches the Elm convention where a record's type
+          -- alias name doubles as its constructor.
           do name <- addLocation (upper mkError)
              spaces
-             params <- functionParams mkError
-             spaces
-             char mkError '='
-             freshLine mkError
-             bodyCol <- getCol
-             body <- withIndent bodyCol (expression mkError)
-             return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
+             mc <- peek
+             case mc of
+                 Just ':' -> do
+                     char mkError ':'
+                     spaces
+                     ann <- addLocation (typeAnnotation mkError)
+                     return (DeclAnnotation, A.At (A.toRegion name) (AnnotPayload (A.toValue name) ann))
+                 _ -> do
+                     params <- functionParams mkError
+                     spaces
+                     char mkError '='
+                     freshLine mkError
+                     bodyCol <- getCol
+                     body <- withIndent bodyCol (expression mkError)
+                     return (DeclValue, A.At (A.toRegion name) (ValuePayload (A.toValue name) params body Nothing))
         ]
 
 

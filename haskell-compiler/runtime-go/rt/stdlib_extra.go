@@ -124,16 +124,43 @@ func JsonEnc_float(n any) any   { return JsonValue{raw: AsFloat(n)} }
 func JsonEnc_bool(b any) any    { return JsonValue{raw: b} }
 func JsonEnc_null() any         { return JsonValue{raw: nil} }
 
-func JsonEnc_list(items any) any {
-	var out []any
-	for _, v := range asList(items) {
-		if jv, ok := v.(JsonValue); ok {
-			out = append(out, jv.raw)
-		} else {
-			out = append(out, v)
+// JsonEnc.list may be called as:
+//   Encode.list items                   -- 1-arg form (legacy)
+//   Encode.list Encode.string [...]     -- 2-arg (Elm style: map each item)
+// The variadic-args signature accommodates both.
+func JsonEnc_list(args ...any) any {
+	switch len(args) {
+	case 1:
+		var out []any
+		for _, v := range asList(args[0]) {
+			if jv, ok := v.(JsonValue); ok {
+				out = append(out, jv.raw)
+			} else {
+				out = append(out, v)
+			}
 		}
+		return JsonValue{raw: out}
+	case 2:
+		fn := args[0]
+		items := asList(args[1])
+		var out []any
+		for _, v := range items {
+			var mapped any
+			if f, ok := fn.(func(any) any); ok {
+				mapped = f(v)
+			} else {
+				mapped = v
+			}
+			if jv, ok := mapped.(JsonValue); ok {
+				out = append(out, jv.raw)
+			} else {
+				out = append(out, mapped)
+			}
+		}
+		return JsonValue{raw: out}
+	default:
+		return JsonValue{raw: []any{}}
 	}
-	return JsonValue{raw: out}
 }
 
 // object: takes a list of tuples (key, JsonValue)
@@ -320,6 +347,96 @@ func JsonDec_fail(msg any) any {
 	return JsonDecoder{run: func(_ any) any {
 		return Err[any, any](m)
 	}}
+}
+
+// JsonDec.at : List String -> JsonDecoder a -> JsonDecoder a
+// Drill into a nested path before applying the inner decoder.
+func JsonDec_at(path any, inner any) any {
+	return JsonDecoder{run: func(v any) any {
+		cur := v
+		for _, seg := range asList(path) {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return Err[any, any]("at: expected object at " + fmt.Sprintf("%v", seg))
+			}
+			fv, exists := m[fmt.Sprintf("%v", seg)]
+			if !exists {
+				return Err[any, any]("at: missing " + fmt.Sprintf("%v", seg))
+			}
+			cur = fv
+		}
+		if d, ok := inner.(JsonDecoder); ok {
+			return d.run(cur)
+		}
+		return Ok[any, any](cur)
+	}}
+}
+
+// JsonDec.map2..map5 — apply a function to N decoded results.
+func JsonDec_map2(fn, d1, d2 any) any {
+	return JsonDecoder{run: func(v any) any {
+		a := runDec(d1, v); if isErr(a) { return a }
+		b := runDec(d2, v); if isErr(b) { return b }
+		return Ok[any, any](apply2(fn, okVal(a), okVal(b)))
+	}}
+}
+
+func JsonDec_map3(fn, d1, d2, d3 any) any {
+	return JsonDecoder{run: func(v any) any {
+		a := runDec(d1, v); if isErr(a) { return a }
+		b := runDec(d2, v); if isErr(b) { return b }
+		c := runDec(d3, v); if isErr(c) { return c }
+		return Ok[any, any](apply3(fn, okVal(a), okVal(b), okVal(c)))
+	}}
+}
+
+func JsonDec_map4(fn, d1, d2, d3, d4 any) any {
+	return JsonDecoder{run: func(v any) any {
+		a := runDec(d1, v); if isErr(a) { return a }
+		b := runDec(d2, v); if isErr(b) { return b }
+		c := runDec(d3, v); if isErr(c) { return c }
+		d := runDec(d4, v); if isErr(d) { return d }
+		return Ok[any, any](apply4(fn, okVal(a), okVal(b), okVal(c), okVal(d)))
+	}}
+}
+
+func JsonDec_map5(fn, d1, d2, d3, d4, d5 any) any {
+	return JsonDecoder{run: func(v any) any {
+		a := runDec(d1, v); if isErr(a) { return a }
+		b := runDec(d2, v); if isErr(b) { return b }
+		c := runDec(d3, v); if isErr(c) { return c }
+		d := runDec(d4, v); if isErr(d) { return d }
+		e := runDec(d5, v); if isErr(e) { return e }
+		return Ok[any, any](apply5(fn, okVal(a), okVal(b), okVal(c), okVal(d), okVal(e)))
+	}}
+}
+
+// Helpers for decoder mapN.
+func runDec(d, v any) any {
+	dd, ok := d.(JsonDecoder)
+	if !ok {
+		return Err[any, any]("expected decoder")
+	}
+	return dd.run(v)
+}
+
+func isErr(r any) bool {
+	sr, ok := r.(SkyResult[any, any])
+	return ok && sr.Tag != 0
+}
+
+func okVal(r any) any {
+	sr, _ := r.(SkyResult[any, any])
+	return sr.OkValue
+}
+
+// applyN uses pipelineApply from validate.go to support both curried
+// func(any) any and uncurried multi-arg fn signatures.
+func apply2(f, a, b any) any       { return pipelineApply(pipelineApply(f, a), b) }
+func apply3(f, a, b, c any) any    { return pipelineApply(apply2(f, a, b), c) }
+func apply4(f, a, b, c, d any) any { return pipelineApply(apply3(f, a, b, c), d) }
+func apply5(f, a, b, c, d, e any) any {
+	return pipelineApply(apply4(f, a, b, c, d), e)
 }
 
 // ═══════════════════════════════════════════════════════════
