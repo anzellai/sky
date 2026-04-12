@@ -241,7 +241,13 @@ exprAtom_ mkError =
                  _ -> do
                      -- Could be record literal or record update
                      name <- addLocation (lower mkError)
-                     spaces
+                     -- Allow whitespace + newlines after the name so
+                     --   { model
+                     --     | jobs = ...
+                     --     , ok = ...
+                     --   }
+                     -- parses the same as the single-line form.
+                     freshLine mkError
                      mc2 <- peek
                      case mc2 of
                          Just '|' -> do
@@ -261,7 +267,12 @@ exprAtom_ mkError =
                              freshLine mkError
                              char mkError '}'
                              return (Src.Record ((name, val) : rest))
-                         _ -> error "Expected | or = after record field name"
+                         _ ->
+                             -- Not a record literal/update after all — raise
+                             -- a normal parser error so other alternatives
+                             -- can be tried instead of crashing the compiler.
+                             Parser $ \s _ _ _ eerr ->
+                                 eerr (_row s) (_col s) mkError
 
         , -- Negate: -expr (only when - is followed by digit or paren without space)
           -- Note: `f - 1` is subtraction, `f (-1)` is negate. Only match
