@@ -30,6 +30,7 @@ executable sky
     utf8-string >= 1.0,
     optparse-applicative >= 0.17,
     aeson >= 2.0,
+    async >= 2.2,
     cryptohash-sha256 >= 0.11,
     ansi-terminal >= 0.11
 
@@ -128,6 +129,7 @@ executable sky
     Sky.Build.Project
     Sky.Build.ModuleGraph
     Sky.Build.Compile
+    Sky.Build.Dce
     Sky.Build.Incremental
     Sky.Build.GoIntegration
 

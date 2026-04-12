@@ -2,6 +2,7 @@
 -- Source → Parse → Canonicalise → (TODO: Type Check) → Generate Go
 module Sky.Build.Compile where
 
+import qualified Control.Concurrent.Async as Async
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -28,6 +29,8 @@ import qualified Sky.Type.Type as T
 import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Generate.Go.Record as Rec
 import qualified Sky.Build.ModuleGraph as Graph
+import qualified Sky.Build.Dce as Dce
+import qualified System.Environment
 
 
 -- | Global codegen environment (set once per compilation, read during codegen)
@@ -88,22 +91,35 @@ computeSourceHash paths = do
 continueCompile :: Toml.SkyConfig -> FilePath -> FilePath -> [Graph.ModuleInfo] -> String -> IO (Either String FilePath)
 continueCompile config _entryPath outDir moduleOrder srcHash = do
 
-    -- Phase 2: Parse all modules
+    -- Phase 2: Parse all modules in parallel — parsing is pure text→AST
+    -- with no cross-module dependencies, so it parallelises trivially.
+    -- We preserve topo order in the result list so downstream phases see the
+    -- same ordering as a sequential build.
     putStrLn "-- Parsing"
-    parseResults <- mapM (\modInfo -> do
+    parseResults <- Async.forConcurrently moduleOrder $ \modInfo -> do
         src <- TIO.readFile (Graph._mi_path modInfo)
         case Parse.parseModule src of
-            Left err -> do
-                putStrLn $ "   PARSE FAILED: " ++ Graph._mi_name modInfo ++ " " ++ show err
-                return (Left $ "Parse error in " ++ Graph._mi_name modInfo)
-            Right srcMod -> do
-                let declCount = length (Src._values srcMod)
-                putStrLn $ "   " ++ Graph._mi_name modInfo ++ ": " ++ show declCount ++ " declarations"
-                return (Right (Graph._mi_name modInfo, srcMod))
-        ) moduleOrder
+            Left err ->
+                return (modInfo, Left err)
+            Right srcMod ->
+                return (modInfo, Right srcMod)
+    let formatted = flip map parseResults $ \(modInfo, r) -> case r of
+            Left err ->
+                Left $ "Parse error in " ++ Graph._mi_name modInfo ++ ": " ++ show err
+            Right srcMod ->
+                Right (Graph._mi_name modInfo, srcMod)
+    -- Print summaries in deterministic order
+    mapM_ (\(modInfo, r) -> case r of
+        Left err ->
+            putStrLn $ "   PARSE FAILED: " ++ Graph._mi_name modInfo ++ " " ++ show err
+        Right srcMod ->
+            let declCount = length (Src._values srcMod)
+            in putStrLn $ "   " ++ Graph._mi_name modInfo ++ ": " ++ show declCount ++ " declarations"
+        ) parseResults
+    let parseResults' = formatted
 
-    let errors = [e | Left e <- parseResults]
-        parsed = [(n, m) | Right (n, m) <- parseResults]
+    let errors = [e | Left e <- parseResults']
+        parsed = [(n, m) | Right (n, m) <- parseResults']
 
     if not (null errors) then return (Left $ head errors)
       else if null parsed then return (Left "No modules found")
@@ -115,11 +131,13 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
           Left err -> return (Left $ "Canonicalise error: " ++ err)
           Right canMod -> do
             putStrLn "   Names resolved"
-            let depCanMods = map (\(n, srcMod) ->
-                    case Canonicalise.canonicalise srcMod of
-                        Right cm -> Just (n, cm); Left _ -> Nothing)
-                    (if length parsed > 1 then init parsed else [])
-                validDeps = [x | Just x <- depCanMods]
+            -- Canonicalise dependency modules in parallel — each is independent.
+            let depModules = if length parsed > 1 then init parsed else []
+            depCanMods <- Async.forConcurrently depModules $ \(n, srcMod) ->
+                case Canonicalise.canonicalise srcMod of
+                    Right cm -> return (Just (n, cm))
+                    Left _   -> return Nothing
+            let validDeps = [x | Just x <- depCanMods]
                 depDecls = concatMap (\(modName, depMod) ->
                     let prefix = map (\c -> if c == '.' then '_' else c) modName
                     in generateDeclsForDep depMod prefix) validDeps
@@ -435,13 +453,39 @@ generateAliasTypes canMod = concatMap generateAlias (Map.toList (Can._aliases ca
 
 -- | Generate Go declarations from canonical decls
 generateDecls :: Can.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
-generateDecls canMod solvedTypes = declsToList (Can._decls canMod) []
+generateDecls canMod solvedTypes =
+    -- DCE: compute transitive closure from main and only emit reachable defs.
+    -- This shrinks binaries + speeds up `go build` for large projects.
+    -- Disable with SKY_DCE=0 env var (checked at codegen time).
+    let reachable = Dce.reachableTopLevel canMod
+        dceEnabled = unsafePerformIO (fmap (/= "0") (lookupDceFlag))
+    in declsToList reachable dceEnabled (Can._decls canMod) []
   where
-    declsToList Can.SaveTheEnvironment acc = acc
-    declsToList (Can.Declare def rest) acc =
-        declsToList rest (acc ++ generateDef def solvedTypes)
-    declsToList (Can.DeclareRec def defs rest) acc =
-        declsToList rest (acc ++ generateDef def solvedTypes ++ concatMap (\d -> generateDef d solvedTypes) defs)
+    declsToList _ _ Can.SaveTheEnvironment acc = acc
+    declsToList reachable dce (Can.Declare def rest) acc =
+        declsToList reachable dce rest (acc ++ generateDefMaybe reachable dce def solvedTypes)
+    declsToList reachable dce (Can.DeclareRec def defs rest) acc =
+        let these = generateDefMaybe reachable dce def solvedTypes
+                 ++ concatMap (\d -> generateDefMaybe reachable dce d solvedTypes) defs
+        in declsToList reachable dce rest (acc ++ these)
+
+
+-- | Emit def only if reachable (or DCE disabled).
+generateDefMaybe :: Set.Set String -> Bool -> Can.Def -> Solve.SolvedTypes -> [GoIr.GoDecl]
+generateDefMaybe reachable dceEnabled def solvedTypes =
+    let name = case def of
+            Can.Def (A.At _ n) _ _           -> n
+            Can.TypedDef (A.At _ n) _ _ _ _  -> n
+    in if not dceEnabled || Set.member name reachable || name == "main"
+        then generateDef def solvedTypes
+        else []
+
+
+-- | Read SKY_DCE env var once. Default: enabled.
+lookupDceFlag :: IO String
+lookupDceFlag = do
+    mv <- System.Environment.lookupEnv "SKY_DCE"
+    return (maybe "1" id mv)
 
 
 -- | Generate Go for a single definition, using solved types for signatures
