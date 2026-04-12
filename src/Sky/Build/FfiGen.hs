@@ -46,8 +46,9 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import System.Directory (createDirectoryIfMissing)
-import System.FilePath ((</>))
+import System.Directory (createDirectoryIfMissing, doesFileExist, getCurrentDirectory)
+import System.Environment (lookupEnv)
+import System.FilePath ((</>), takeDirectory)
 import System.Process (readProcessWithExitCode)
 
 
@@ -95,13 +96,43 @@ instance A.FromJSON PkgInfo where
 
 runInspector :: String -> IO (Either String PkgInfo)
 runInspector pkgPath = do
-    let cmd = "cd sky-out && ../bin/sky-ffi-inspect " ++ pkgPath
-    (_, out, err) <- readProcessWithExitCode "sh" ["-c", cmd] ""
-    if null out
-        then return (Left $ "sky-ffi-inspect: empty output; stderr: " ++ err)
-        else case A.eitherDecode (BL.fromStrict (TE.encodeUtf8 (T.pack out))) of
-            Left e  -> return (Left $ "sky-ffi-inspect: json: " ++ e)
-            Right p -> return (Right p)
+    inspectorPath <- findInspector
+    case inspectorPath of
+        Nothing -> return (Left "sky-ffi-inspect binary not found on disk. Build bin/sky-ffi-inspect or set SKY_FFI_INSPECTOR=/path.")
+        Just bin -> do
+            let cmd = "cd sky-out && " ++ bin ++ " " ++ pkgPath
+            (_, out, err) <- readProcessWithExitCode "sh" ["-c", cmd] ""
+            if null out
+                then return (Left $ "sky-ffi-inspect: empty output; stderr: " ++ err)
+                else case A.eitherDecode (BL.fromStrict (TE.encodeUtf8 (T.pack out))) of
+                    Left e  -> return (Left $ "sky-ffi-inspect: json: " ++ e)
+                    Right p -> return (Right p)
+
+
+-- | Probe common locations for the sky-ffi-inspect binary.
+-- Looks at: SKY_FFI_INSPECTOR env var, ./bin, ../bin … walking up ancestors.
+findInspector :: IO (Maybe FilePath)
+findInspector = do
+    envPath <- lookupEnv "SKY_FFI_INSPECTOR"
+    case envPath of
+        Just p | not (null p) -> do
+            ok <- doesFileExist p
+            if ok then return (Just p) else walkUp
+        _ -> walkUp
+  where
+    walkUp = do
+        cwd <- getCurrentDirectory
+        go cwd 12
+    go _   0 = return Nothing
+    go dir n = do
+        let candidate = dir </> "bin" </> "sky-ffi-inspect"
+        ok <- doesFileExist candidate
+        if ok
+            then return (Just candidate)
+            else let parent = takeDirectory dir
+                 in if parent == dir
+                        then return Nothing
+                        else go parent (n - 1)
 
 
 generateBindings :: PkgInfo -> IO [String]

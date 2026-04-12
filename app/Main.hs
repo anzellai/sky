@@ -203,9 +203,7 @@ runCommand cmd = case cmd of
         -- Fetch the package
         callProcess "sh" ["-c", "cd sky-out && go get " ++ pkg]
         -- Generate bindings via the Go inspector
-        hasInspector <- doesFileExist "bin/sky-ffi-inspect"
-        if hasInspector
-            then do
+        do
                 putStrLn $ "Inspecting " ++ pkg ++ "..."
                 r <- FfiGen.runInspector pkg
                 case r of
@@ -222,10 +220,6 @@ runCommand cmd = case cmd of
                             else return ()
                         putStrLn "Call from Sky via: Ffi.callPure \"<name>\" [args]  (or callTask for effectful)"
                         return (Right ())
-            else do
-                putStrLn $ "   (Build bin/sky-ffi-inspect to auto-generate bindings;"
-                putStrLn $ "    for now you can still write hand-written bindings in ffi/.)"
-                return (Right ())
 
     Remove pkg -> do
         putStrLn $ "Removing " ++ pkg ++ "..."
