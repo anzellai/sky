@@ -2,7 +2,9 @@ module Page.Static exposing (viewPrivacyPolicy, viewTerms, viewNotFound)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import State exposing (..)
 import Ui.Layout as Layout
 import Tailwind exposing (..)
@@ -14,7 +16,7 @@ viewPrivacyPolicy model =
     Layout.page model
         (
         div [ tw [ maxW3xl , mxAuto , py8 ] ]
-            [ h1 [ tw [ text3xl , fontBold , mb6 ] ] [ text "Privacy Policy" ]
+            [ Html.h1 [ tw [ text3xl , fontBold , mb6 ] ] [ text "Privacy Policy" ]
             , div [ tw [ textGray600 , leadingRelaxed ] ]
                   [ section_ "1. Information We Collect"
                         "We collect personal information you provide when creating an account, placing an order, or contacting us. This includes your name, email address, phone number, shipping address, and payment information (processed securely through Stripe)."
@@ -42,7 +44,7 @@ viewTerms model =
     Layout.page model
         (
         div [ tw [ maxW3xl , mxAuto , py8 ] ]
-            [ h1 [ tw [ text3xl , fontBold , mb6 ] ]
+            [ Html.h1 [ tw [ text3xl , fontBold , mb6 ] ]
                   [ text "Terms & Conditions" ]
             , div [ tw [ textGray600 , leadingRelaxed ] ]
                   [ section_ "1. General"
@@ -66,7 +68,7 @@ viewTerms model =
 
 section_ title body =
     div [ tw [ mb6 ] ]
-        [ h2 [ tw [ textLg , fontSemibold , mb2 ] ] [ text title ]
+        [ Html.h2 [ tw [ textLg , fontSemibold , mb2 ] ] [ text title ]
         , p [] [ text body ]
         ]
 
@@ -78,7 +80,7 @@ viewNotFound model =
     let
         content =
             div [ tw [ textCenter , py16 ] ]
-                [ h1 [ tw [ text6xl , fontBold , textGray300 , mb4 ] ]
+                [ Html.h1 [ tw [ text6xl , fontBold , textGray300 , mb4 ] ]
                       [ text "404" ]
                 , p [ tw [ textLg , textGray500 , mb6 ] ]
                       [ text "Page not found" ]

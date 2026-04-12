@@ -112,7 +112,8 @@ func Html_main(a, c any) any    { return htmlElem("main")(a, c) }
 func Html_ul(a, c any) any      { return htmlElem("ul")(a, c) }
 func Html_ol(a, c any) any      { return htmlElem("ol")(a, c) }
 func Html_li(a, c any) any      { return htmlElem("li")(a, c) }
-func Html_img(a, c any) any     { return htmlElem("img")(a, c) }
+// img is a void element — emit as self-closing, attrs only.
+func Html_img(a any) any        { return htmlElem("img")(a, nil) }
 func Html_br(a any) any         { return htmlElem("br")(a, nil) }
 func Html_hr(a any) any         { return htmlElem("hr")(a, nil) }
 func Html_table(a, c any) any   { return htmlElem("table")(a, c) }

@@ -2,7 +2,9 @@ module Page.AuthPage exposing (viewSignIn)
 
 import Sky.Core.Prelude exposing (..)
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import State exposing (..)
 import Ui.Layout as Layout
 import Lib.Translation as Tr
@@ -16,7 +18,7 @@ viewSignIn model =
             (
             div [ tw [ maxWSm , mxAuto , py12 ] ]
                 [ div [ tw [ bgWhite , roundedXl , shadow , p8 ] ]
-                      [ h1 [ tw [ text2xl , fontBold , mb6 , textCenter ] ]
+                      [ Html.h1 [ tw [ text2xl , fontBold , mb6 , textCenter ] ]
                             [ text (Tr.t lang "auth.welcome") ]
                       , div
                             [ id "auth-error"

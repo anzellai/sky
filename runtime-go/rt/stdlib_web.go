@@ -235,6 +235,16 @@ func Event_onResize(msg any) any      { return eventPair{name: "resize", msg: ms
 func Event_onScroll(msg any) any      { return eventPair{name: "scroll", msg: msg} }
 func Event_onSelect(msg any) any      { return eventPair{name: "select", msg: msg} }
 
+// File-input helpers used by Sky.Live JS driver. The runtime just captures
+// them as attribute pairs; the browser-side driver interprets `sky-on-image`
+// / `sky-file-max-width` / `sky-file-max-height` to run client-side image
+// resizing before dispatching the msg.
+func Event_onImage(msg any) any {
+	return eventPair{name: "sky-image", msg: msg}
+}
+func Event_fileMaxWidth(v any) any  { return attr("sky-file-max-width", fmt.Sprintf("%v", v)) }
+func Event_fileMaxHeight(v any) any { return attr("sky-file-max-height", fmt.Sprintf("%v", v)) }
+
 // ═══════════════════════════════════════════════════════════
 // HTML escaping helpers (shared)
 // ═══════════════════════════════════════════════════════════

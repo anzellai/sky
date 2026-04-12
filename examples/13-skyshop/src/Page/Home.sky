@@ -5,7 +5,9 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import Std.Live.Events exposing (onClick, onInput)
 import State exposing (..)
 import Ui.Layout as Layout
@@ -14,7 +16,7 @@ import Lib.Money as Money
 import Lib.Translation as Tr
 import Lib.Products as Products
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
+import Tailwind.Responsive as Responsive
 
 -- ══════════════════════════════════════════════════════
 -- HOME PAGE
@@ -40,7 +42,7 @@ viewHero model =
                   , textWhite
                   , roundedXl
                   , p6
-                  , md p12
+                  , Responsive.md p12
                   , mb10
                   , textCenter
                   ]
@@ -52,13 +54,13 @@ viewHero model =
                   , style "letter-spacing:.1em"
                   ]
                   [ text (Tr.t lang "hero.badge") ]
-            , h1
-                  [ tw [ text3xl , md text5xl , fontBold , textWhite , mb4 ]
+            , Html.h1
+                  [ tw [ text3xl , Responsive.md text5xl , fontBold , textWhite , mb4 ]
                   , style "line-height:1.1;letter-spacing:-.025em"
                   ]
                   [ text (Tr.t lang "app.name") ]
             , p
-                  [ tw [ textBase , md textLg , textGray400 , mb8 , mxAuto ]
+                  [ tw [ textBase , Responsive.md textLg , textGray400 , mb8 , mxAuto ]
                   , style "max-width:480px"
                   ]
                   [ text (Tr.t lang "hero.subtitle") ]
@@ -120,7 +122,7 @@ viewFeaturedProducts model =
     in
         div []
             [ div [ tw [ flex , justifyBetween , itemsCenter , mb6 ] ]
-                  [ h2 [ tw [ text2xl , fontBold , textGray900 ] ]
+                  [ Html.h2 [ tw [ text2xl , fontBold , textGray900 ] ]
                         [ text (Tr.t model.lang "home.featured") ]
                   , a
                         [ href "/products"
@@ -141,7 +143,7 @@ viewProducts model =
         (
         div []
             [ div [ tw [ mb8 ] ]
-                  [ h1 [ tw [ text3xl , fontBold , textGray900 ] ]
+                  [ Html.h1 [ tw [ text3xl , fontBold , textGray900 ] ]
                         [ text (Tr.t model.lang "nav.products") ]
                   , p [ tw [ textGray500 , mt1 ] ]
                         [ text (Tr.t model.lang "hero.browse") ]
@@ -338,7 +340,7 @@ viewProductCard model product =
                               [ text (Tr.tCategory model.lang category) ]
                         , viewStockDot stock
                         ]
-                  , h3 [ tw [ fontSemibold , textGray900 , mb2 ] ]
+                  , Html.h3 [ tw [ fontSemibold , textGray900 , mb2 ] ]
                         [ text title ]
                   , viewPrice pricing
                   ]

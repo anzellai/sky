@@ -5,7 +5,9 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import Std.Live.Events exposing (onClick)
 import State exposing (..)
 import Ui.Layout as Layout
@@ -13,7 +15,7 @@ import Lib.Db as Db
 import Lib.Money as Money
 import Lib.Translation as Tr
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
+import Tailwind.Responsive as Responsive
 
 -- ══════════════════════════════════════════════════════
 -- ORDER LIST
@@ -42,7 +44,7 @@ viewOrders model =
             
             Just _ ->
                 div []
-                    [ h1 [ tw [ text3xl , fontBold , mb6 ] ]
+                    [ Html.h1 [ tw [ text3xl , fontBold , mb6 ] ]
                           [ text (Tr.t model.lang "order.title") ]
                     , if List.isEmpty model.orders then
                         div [ tw [ textCenter , py16 , textGray500 ] ]
@@ -178,7 +180,7 @@ viewOrderDetail model order =
                   ]
             , div [ tw [ bgWhite , roundedXl , shadow , p6 , mb6 ] ]
                   [ div [ tw [ flex , justifyBetween , itemsCenter , mb6 ] ]
-                        [ h1 [ tw [ text2xl , fontBold ] ]
+                        [ Html.h1 [ tw [ text2xl , fontBold ] ]
                               [ text (Tr.t lang "order.detail") ]
                         , span
                               [ tw
@@ -192,7 +194,7 @@ viewOrderDetail model order =
                               ]
                               [ text (Tr.tCartState lang state) ]
                         ]
-                  , div [ tw [ grid , gridCols1 , sm gridCols2 , gap4 , mb6 ] ]
+                  , div [ tw [ grid , gridCols1 , Responsive.sm gridCols2 , gap4 , mb6 ] ]
                         [ div []
                               [ span [ tw [ textSm , textGray500 , block ] ]
                                     [ text (Tr.t lang "cart.total") ]
@@ -212,7 +214,7 @@ viewOrderDetail model order =
                         ]
                   , if shippingName != "" then
                       div [ tw [ borderT , borderGray200 , pt4 , mb4 ] ]
-                          [ h3 [ tw [ fontSemibold , mb2 ] ]
+                          [ Html.h3 [ tw [ fontSemibold , mb2 ] ]
                                 [ text (Tr.t lang "order.shipping") ]
                           , p [ tw [ textSm , textGray600 ] ]
                                 [ text shippingName ]
@@ -238,7 +240,7 @@ viewOrderDetail model order =
                       text ""
                   , if remarks != "" then
                       div [ tw [ borderT , borderGray200 , pt4 , mb4 ] ]
-                          [ h3 [ tw [ fontSemibold , mb2 ] ] [ text "Remarks" ]
+                          [ Html.h3 [ tw [ fontSemibold , mb2 ] ] [ text "Remarks" ]
                           , p [ tw [ textSm , textGray600 ] ] [ text remarks ]
                           ]
                   
@@ -246,7 +248,7 @@ viewOrderDetail model order =
                       text ""
                   ]
             , div [ tw [ bgWhite , roundedXl , shadow , p6 ] ]
-                  [ h2 [ tw [ fontSemibold , textLg , mb4 ] ]
+                  [ Html.h2 [ tw [ fontSemibold , textLg , mb4 ] ]
                         [ text (Tr.t lang "order.items") ]
                   , div [ tw [ flexCol , gap3 ] ]
                         (List.map viewOrderItem model.orderItems)
@@ -321,7 +323,7 @@ viewOrderSuccess model =
                                       [ span [ tw [ text2xl , textGreen600 ] ]
                                             [ text "✓" ]
                                       ]
-                                , h1 [ tw [ text2xl , fontBold , mb4 ] ]
+                                , Html.h1 [ tw [ text2xl , fontBold , mb4 ] ]
                                       [ text (Tr.t model.lang "order.success") ]
                                 , a
                                       [ href
@@ -344,7 +346,7 @@ viewOrderSuccess model =
                         
                         else
                             div []
-                                [ h1
+                                [ Html.h1
                                       [ tw
                                             [ text2xl
                                             , fontBold

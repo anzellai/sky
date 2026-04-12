@@ -384,7 +384,7 @@ registry = Map.fromList
     , (("Html", "ul"),            KernelInfo "rt.Html_ul" 2 False)
     , (("Html", "ol"),            KernelInfo "rt.Html_ol" 2 False)
     , (("Html", "li"),            KernelInfo "rt.Html_li" 2 False)
-    , (("Html", "img"),           KernelInfo "rt.Html_img" 2 False)
+    , (("Html", "img"),           KernelInfo "rt.Html_img" 1 False)
     , (("Html", "br"),            KernelInfo "rt.Html_br" 2 False)
     , (("Html", "hr"),            KernelInfo "rt.Html_hr" 2 False)
     , (("Html", "table"),         KernelInfo "rt.Html_table" 2 False)

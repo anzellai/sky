@@ -5,7 +5,9 @@ import Sky.Core.Maybe exposing (..)
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Html exposing (..)
+import Std.Html as Html
 import Std.Html.Attributes exposing (..)
+import Std.Html.Attributes as Attr
 import Std.Live.Events exposing (onClick, onInput)
 import State exposing (..)
 import Ui.Layout as Layout
@@ -14,7 +16,7 @@ import Lib.Money as Money
 import Lib.Products as Products
 import Lib.Translation as Tr
 import Tailwind exposing (..)
-import Tailwind.Responsive exposing (sm, md, lg)
+import Tailwind.Responsive as Responsive
 
 viewCart model =
     Layout.page model
@@ -32,7 +34,7 @@ viewCart model =
 viewSignInPrompt model =
     div [ tw [ textCenter , py20 ] ]
         [ div [ Layout.emptyIconSm ] [ text "Cart" ]
-        , h2 [ tw [ text2xl , fontBold , mb2 , textGray900 ] ]
+        , Html.h2 [ tw [ text2xl , fontBold , mb2 , textGray900 ] ]
               [ text (Tr.t model.lang "cart.signinTitle") ]
         , p [ tw [ textGray500 , mb6 ] ]
               [ text (Tr.t model.lang "cart.signinPrompt") ]
@@ -46,7 +48,7 @@ viewCartContent model =
         lang = model.lang
     in
         div []
-            [ h1 [ tw [ text3xl , fontBold , mb2 , textGray900 ] ]
+            [ Html.h1 [ tw [ text3xl , fontBold , mb2 , textGray900 ] ]
                   [ text (Tr.t lang "cart.title") ]
             , if model.checkoutUrl != "" then
                 viewCheckoutRedirect model
@@ -67,13 +69,13 @@ viewCartContent model =
                           [ tw
                                 [ flex
                                 , flexCol
-                                , lg flexRow
+                                , Responsive.lg flexRow
                                 , gap8
                                 , itemsStart
                                 ]
                           ]
                           [ div [ tw [ flex1 ] ] [ viewCartItems model ]
-                          , div [ tw [ wFull , lg w96 , lg shrink0 ] ]
+                          , div [ tw [ wFull , Responsive.lg w96 , Responsive.lg shrink0 ] ]
                                 [ viewCartSummary model ]
                           ]
                     ]
@@ -96,7 +98,7 @@ viewCheckoutRedirect model =
 viewEmptyCart model =
     div [ tw [ textCenter , py20 ] ]
         [ div [ Layout.emptyIcon ] [ text "~" ]
-        , h2 [ tw [ textXl , fontSemibold , mb2 , textGray900 ] ]
+        , Html.h2 [ tw [ textXl , fontSemibold , mb2 , textGray900 ] ]
               [ text (Tr.t model.lang "cart.empty") ]
         , p [ tw [ textGray500 , mb6 ] ]
               [ text (Tr.t model.lang "cart.startShopping") ]
@@ -143,7 +145,7 @@ viewCartItem model item =
             else
                 div [ Layout.cartThumbPlaceholder ] [ text "~" ]
             , div [ tw [ flex1 ] ]
-                  [ h3 [ tw [ fontMedium , textGray900 , textSm ] ]
+                  [ Html.h3 [ tw [ fontMedium , textGray900 , textSm ] ]
                         [ text title ]
                   , div [ tw [ textXs , textGray500 , mt1 ] ]
                         [ text (pricing.original ++ " each") ]
@@ -205,7 +207,7 @@ viewCartSummary model =
             [ tw [ bgWhite , roundedLg , border , borderGray200 , p6 , sticky ]
             , style "top:80px"
             ]
-            [ h3 [ tw [ fontSemibold , textGray900 , mb4 ] ]
+            [ Html.h3 [ tw [ fontSemibold , textGray900 , mb4 ] ]
                   [ text (Tr.t lang "cart.orderSummary") ]
             , div [ tw [ mb4 ] ]
                   [ label [ Layout.formLabel_ ]
