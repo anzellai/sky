@@ -706,9 +706,22 @@ exprToGo (A.At _ expr) = case expr of
         curryLambda (map patternToParam params) (exprToGo body)
 
     Can.Call func args ->
-        let goFunc = exprToGo func
-            goArgs = map exprToGo args
-        in GoIr.GoCall goFunc goArgs
+        -- Partial application of ADT constructors:
+        --   JobDone : Int -> Result String String -> Msg
+        --   JobDone jid  -- expects to yield `Result String String -> Msg`
+        -- Go generates `Msg_JobDone(jid, r)` so we must wrap missing args
+        -- in a lambda capturing the supplied ones.
+        case A.toValue func of
+            Can.VarCtor _opts _home _typeName _ctorName annot ->
+                let declared = ctorArity annot
+                    got = length args
+                in if got < declared
+                    then emitPartialCtor func args (declared - got)
+                    else GoIr.GoCall (exprToGo func) (map exprToGo args)
+            _ ->
+                let goFunc = exprToGo func
+                    goArgs = map exprToGo args
+                in GoIr.GoCall goFunc goArgs
 
     Can.If branches elseExpr ->
         ifToGo branches elseExpr
@@ -814,6 +827,32 @@ genericParams modName funcName = case (modName, funcName) of
 
 
 -- | Map a constructor to Go
+-- | Count the number of `->` arrows in a Forall-wrapped type — that's the
+-- arity of the constructor. For `Just : a -> Maybe a` this is 1. For
+-- `JobDone : Int -> Result String String -> Msg` this is 2.
+ctorArity :: Can.Annotation -> Int
+ctorArity (Can.Forall _ t) = countArrows t
+  where
+    countArrows (T.TLambda _ r) = 1 + countArrows r
+    countArrows _ = 0
+
+
+-- | Emit a lambda that supplies the already-collected args then takes the
+-- remaining `missing` args one at a time and calls the constructor.
+emitPartialCtor :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
+emitPartialCtor func suppliedArgs missing =
+    let suppliedGo = map exprToGo suppliedArgs
+        -- We need fresh parameter names for the missing args.
+        extraNames = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
+        extraIdents = map GoIr.GoIdent extraNames
+        finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
+    in foldr wrapLambda finalCall extraNames
+  where
+    wrapLambda name body =
+        GoIr.GoFuncLit [GoIr.GoParam name "any"] "any"
+            [GoIr.GoReturn body]
+
+
 ctorToGo :: Can.CtorOpts -> ModuleName.Canonical -> String -> String -> Can.Annotation -> GoIr.GoExpr
 ctorToGo opts home typeName ctorName _annot = case ctorName of
     "Ok"      -> GoIr.GoIdent "rt.Ok[any, any]"

@@ -115,6 +115,15 @@ func ComposeR[A any, B any, C any](g func(B) C, f func(A) B) func(A) C {
 // Log
 // ═══════════════════════════════════════════════════════════
 
+// Debug_toString: universal stringify for any Sky value. Used by the
+// multiline-string interpolation desugarer at canonicalise time.
+func Debug_toString(v any) any {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
 func Log_println(args ...any) any {
 	fmt.Println(args...)
 	return struct{}{}

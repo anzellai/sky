@@ -4,6 +4,7 @@ module Sky.Canonicalise.Expression
     )
     where
 
+import qualified Data.Char as Char
 import qualified Data.Map.Strict as Map
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
@@ -36,7 +37,11 @@ canonicaliseExpr_ env region expr = case expr of
         Can.Str s
 
     Src.MultilineStr s ->
-        Can.Str s  -- desugar multiline to plain string for now
+        -- Desugar `{{expr}}` interpolation at canonicalise time by splitting
+        -- the raw string into (literal, expr) chunks and emitting a left-
+        -- associated `++` chain. Expressions are parsed on the fly — we
+        -- re-invoke the expression parser against the {{…}} body text.
+        desugarMultiline env s
 
     Src.Int n ->
         Can.Int n
@@ -297,3 +302,101 @@ canonicaliseCaseBranch env (pat, body) =
         canPat = CanPat.canonicalisePattern env pat
         canBody = canonicaliseExpr branchEnv body
     in Can.CaseBranch canPat canBody
+
+
+-- ══════════════════════════════════════════════════════════════════════
+-- Multiline string interpolation desugaring
+--
+-- `"""hello {{name}}! you are {{age}} years old"""` becomes:
+--   "hello " ++ name ++ "! you are " ++ Debug.toString age ++ " years old"
+--
+-- Non-string interpolation arguments are wrapped in a stringify call at
+-- canonicalise time. We parse the interpolation expression by invoking the
+-- expression parser on the {{…}} body text; the parser is shared with the
+-- rest of the compiler so syntax works identically inside the braces.
+-- ══════════════════════════════════════════════════════════════════════
+
+desugarMultiline :: Env.Env -> String -> Can.Expr_
+desugarMultiline env raw =
+    let chunks = splitInterpolation raw
+        parts = map (chunkToExpr env) chunks
+    in case parts of
+        [] -> Can.Str ""
+        [p] -> A.toValue p
+        (p:rest) -> A.toValue (foldl concatAppend p rest)
+  where
+    concatAppend :: Can.Expr -> Can.Expr -> Can.Expr
+    concatAppend a b =
+        A.At A.one (Can.Binop "++" ModuleName.basics "append" appendAnnot a b)
+
+    appendAnnot =
+        Can.Forall ["a"] (Can.TLambda (Can.TVar "a") (Can.TLambda (Can.TVar "a") (Can.TVar "a")))
+
+
+-- A chunk is either a literal piece or an expression piece.
+data Chunk = Lit String | ExprChunk String deriving (Show)
+
+
+-- Split a raw multiline string into alternating Lit / ExprChunk parts.
+splitInterpolation :: String -> [Chunk]
+splitInterpolation = go ""
+  where
+    go acc [] = emit acc []
+    go acc ('{':'{':rest) =
+        let (inside, after) = span (/= '}') rest
+        in case after of
+            ('}':'}':after') ->
+                emit acc (ExprChunk inside : go "" after')
+            _ -> go (acc ++ "{{") rest  -- unclosed {{; treat as literal
+    go acc (c:rest) = go (acc ++ [c]) rest
+
+    emit "" rest = rest
+    emit lit rest = Lit lit : rest
+
+
+chunkToExpr :: Env.Env -> Chunk -> Can.Expr
+chunkToExpr _env (Lit s) = A.At A.one (Can.Str s)
+chunkToExpr env (ExprChunk body) =
+    -- Body is a single identifier, qualified name, or field access —
+    -- resolve as a variable reference, then wrap in a stringify call.
+    let trimmed = dropWhile (== ' ') (reverse (dropWhile (== ' ') (reverse body)))
+        resolved = resolveInterpolationRef env trimmed
+    in A.At A.one (Can.Call stringifyFn [resolved])
+  where
+    stringifyFn =
+        A.At A.one (Can.VarKernel "Debug" "toString")
+
+
+-- Parse a simple interpolation expression: one of
+--   foo            — bare lowercase identifier
+--   record.field   — field access
+--   Module.func    — qualified value
+-- Anything more complex: fall back to a string of the literal {{...}} so
+-- the developer sees their code in output (clear signal to simplify).
+resolveInterpolationRef :: Env.Env -> String -> Can.Expr
+resolveInterpolationRef env s =
+    case break (== '.') s of
+        (name, "") ->
+            -- bare identifier
+            case Env.lookupVar name env of
+                Just (Env.VarTopLevel home) ->
+                    A.At A.one (Can.VarTopLevel home name)
+                _ ->
+                    A.At A.one (Can.VarLocal name)
+        (first, '.':rest) ->
+            if not (null first) && Char.isUpper (head first)
+                then
+                    -- Module.name (qualified value or kernel)
+                    case Env.lookupImportAlias first env of
+                        Just canonical ->
+                            let kernelMod = ModuleName.toString canonical
+                            in A.At A.one (Can.VarKernel kernelMod rest)
+                        Nothing ->
+                            A.At A.one (Can.Str ("{{" ++ s ++ "}}"))
+                else
+                    -- record.field — field access on local binding
+                    A.At A.one
+                        (Can.Access
+                            (A.At A.one (Can.VarLocal first))
+                            (A.At A.one rest))
+        _ -> A.At A.one (Can.Str ("{{" ++ s ++ "}}"))
