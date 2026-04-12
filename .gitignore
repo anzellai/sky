@@ -73,3 +73,14 @@ legacy-sky-compiler/dist/
 legacy-sky-compiler/sky-out/
 legacy-sky-compiler/.skycache/
 legacy-ts-compiler/node_modules/
+
+# Runtime database files (from running examples at repo root)
+*.db
+*.db-shm
+*.db-wal
+
+# macOS
+.DS_Store
+
+# Legacy dist output (kept under legacy-ts-compiler/ if needed)
+/dist/

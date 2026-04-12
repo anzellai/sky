@@ -11,7 +11,7 @@
 # ─────────────────────────────────────────────────────────────
 
 # ───── Stage 1: build the Haskell compiler ─────
-FROM haskell:9.4.8-slim-bullseye AS builder
+FROM haskell:9.4.8 AS builder
 
 WORKDIR /src
 
