@@ -408,7 +408,19 @@ func List_cons(head, tail any) any {
 // Concat (temporary — will use + when types are known)
 // ═══════════════════════════════════════════════════════════
 
+// Concat is Sky's `++` at runtime. Sky's `++` works on Strings AND Lists, so
+// we dispatch on operand types: two `[]any` → list concat; otherwise stringify
+// and concat. Mixed or unknown operands default to string concat to keep the
+// historical behaviour.
 func Concat(a, b any) any {
+	if la, ok := a.([]any); ok {
+		if lb, ok := b.([]any); ok {
+			out := make([]any, 0, len(la)+len(lb))
+			out = append(out, la...)
+			out = append(out, lb...)
+			return out
+		}
+	}
 	return fmt.Sprintf("%v%v", a, b)
 }
 
@@ -1247,11 +1259,12 @@ func Os_args(_ any) any {
 }
 
 func Os_getenv(name any) any {
-	v := os.Getenv(fmt.Sprintf("%v", name))
-	if v == "" {
-		return Nothing[any]()
+	k := fmt.Sprintf("%v", name)
+	v, ok := os.LookupEnv(k)
+	if !ok {
+		return Err[any, any]("env var not set: " + k)
 	}
-	return Just[any](v)
+	return Ok[any, any](v)
 }
 
 func Os_cwd(_ any) any {

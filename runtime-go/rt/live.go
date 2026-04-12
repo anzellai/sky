@@ -8,7 +8,9 @@ import (
 	"html"
 	"io"
 	"net/http"
+	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -702,11 +704,22 @@ func Live_app(cfg any) any {
 	if p := Field(cfg, "Port"); p != nil {
 		port = AsInt(p)
 	}
+	// Allow SKY_LIVE_PORT env var to override (set in .env or shell).
+	if v := os.Getenv("SKY_LIVE_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			port = n
+		}
+	}
 
 	// Wrap the mux with panic recovery so one bad handler can't crash the process.
 	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if rec := recover(); rec != nil {
+				// Log to stderr so `go run` / tailing the server surfaces
+				// the actual cause. Client still gets a generic 500.
+				fmt.Fprintf(os.Stderr,
+					"[sky.live] panic handling %s %s: %v\n%s\n",
+					r.Method, r.URL.Path, rec, debugStack())
 				w.WriteHeader(500)
 				fmt.Fprint(w, "Internal Server Error")
 			}

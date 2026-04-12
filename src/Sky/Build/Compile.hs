@@ -926,7 +926,10 @@ exprToGo (A.At _ expr) = case expr of
                 then goSafeName name
                 else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name
             env = getCgEnv
+            -- Local module: check zeroArgs set. Cross-module: check funcArities
+            -- which is populated with qualified names from deps.
             isZeroArg = Set.member name (Rec._cg_zeroArgs env)
+                     || Map.lookup qualName (Rec._cg_funcArities env) == Just 0
         in if isZeroArg
             then GoIr.GoCall (GoIr.GoIdent qualName) []
             else GoIr.GoIdent qualName
