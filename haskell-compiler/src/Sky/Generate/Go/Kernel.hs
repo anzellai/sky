@@ -80,6 +80,17 @@ registry = Map.fromList
     , (("String", "graphemes"),   KernelInfo "rt.String_graphemes" 1 False)
     , (("String", "trimStart"),   KernelInfo "rt.String_trimStart" 1 False)
     , (("String", "trimEnd"),     KernelInfo "rt.String_trimEnd" 1 False)
+    , (("String", "isEmail"),     KernelInfo "rt.String_isEmail" 1 False)
+    , (("String", "isUrl"),       KernelInfo "rt.String_isUrl" 1 False)
+    , (("String", "slugify"),     KernelInfo "rt.String_slugify" 1 False)
+
+    -- Sky.Core.Uuid
+    , (("Uuid", "v4"),            KernelInfo "rt.Uuid_v4" 0 False)
+    , (("Uuid", "v7"),            KernelInfo "rt.Uuid_v7" 0 False)
+    , (("Uuid", "parse"),         KernelInfo "rt.Uuid_parse" 1 False)
+
+    -- Sky.Http.RateLimit
+    , (("RateLimit", "allow"),    KernelInfo "rt.RateLimit_allow" 4 False)
 
     -- ═══════════════════════════════════════════════════════
     -- List

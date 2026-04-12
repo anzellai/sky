@@ -234,7 +234,7 @@ copyRuntime outDir = do
         then copyFile runtimeSrc (rtDir </> "rt.go")
         else writeFile (rtDir </> "rt.go") runtimeGoSource
     -- Copy auxiliary runtime files: live.go, stdlib_extra.go, db_auth.go, etc.
-    let auxFiles = ["live.go", "stdlib_extra.go", "db_auth.go"]
+    let auxFiles = ["live.go", "stdlib_extra.go", "db_auth.go", "validate.go"]
     mapM_ (\name -> do
         let src = "runtime-go/rt" </> name
         exists <- doesFileExist src

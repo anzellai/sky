@@ -1,0 +1,31 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Uuid as Uuid
+import Sky.Core.Task as Task
+import Sky.Http.RateLimit as RateLimit
+import Std.Log exposing (println)
+
+showUuid label t =
+    case Task.perform t of
+        Ok v -> println (String.append label v)
+        Err e -> println (String.append "err: " e)
+
+main =
+    let
+        _ = if String.isEmail "alice@example.com" then println "email valid" else println "email invalid"
+        _ = if String.isEmail "not-an-email" then println "BAD" else println "not-email rejected"
+        _ = if String.isUrl "https://example.com/path" then println "url valid" else println "url invalid"
+        _ = if String.isUrl "javascript:alert(1)" then println "BAD" else println "js url rejected"
+        _ = if String.isUrl "/relative" then println "BAD" else println "relative rejected"
+        _ = println (String.slugify "Hello, World! Это тест  —  Sky")
+        _ = showUuid "v4: " Uuid.v4
+        _ = showUuid "v7: " Uuid.v7
+        -- Rate limit: capacity=3, refill=1/sec. Fire 5 times and show allowed count
+        _ = println (if RateLimit.allow "t1" "ip" 3 1 then "1: allow" else "1: deny")
+        _ = println (if RateLimit.allow "t1" "ip" 3 1 then "2: allow" else "2: deny")
+        _ = println (if RateLimit.allow "t1" "ip" 3 1 then "3: allow" else "3: deny")
+        _ = println (if RateLimit.allow "t1" "ip" 3 1 then "4: allow" else "4: deny")
+    in
+        println "validate ok"

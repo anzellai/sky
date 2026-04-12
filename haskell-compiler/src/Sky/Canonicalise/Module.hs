@@ -145,7 +145,8 @@ kernelFunctions = Map.fromList
                     "toUpper", "toLower", "trim", "replace", "slice", "isEmpty",
                     "left", "right", "padLeft", "padRight", "repeat", "lines", "words",
                     "isValid", "normalize", "normalizeNFD", "casefold", "equalFold",
-                    "graphemes", "trimStart", "trimEnd"])
+                    "graphemes", "trimStart", "trimEnd",
+                    "isEmail", "isUrl", "slugify"])
     , ("List",    ["map", "filter", "foldl", "foldr", "length", "head", "tail",
                     "take", "drop", "append", "concat", "concatMap", "reverse",
                     "sort", "member", "any", "all", "range", "zip", "filterMap",
@@ -175,6 +176,8 @@ kernelFunctions = Map.fromList
     , ("Regex",   ["match", "find", "findAll", "replace", "split"])
     , ("Char",    ["isUpper", "isLower", "isDigit", "isAlpha", "toUpper", "toLower"])
     , ("Path",    ["join", "dir", "base", "ext", "isAbsolute", "safeJoin"])
+    , ("Uuid",    ["v4", "v7", "parse"])
+    , ("RateLimit", ["allow"])
     , ("Html",    ["text", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
                     "a", "button", "input", "form", "label", "nav", "section",
                     "article", "header", "footer", "main", "ul", "ol", "li",
