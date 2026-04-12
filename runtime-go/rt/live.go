@@ -317,10 +317,12 @@ var (
 	Css_rowGap       = cssP("row-gap")
 	Css_columnGap   = cssP("column-gap")
 	Css_boxSizing    = cssP("box-sizing")
-	Css_borderBox    = func() any { return "border-box" }
-	Css_zero         = func() any { return "0" }
-	Css_systemFont   = func() any { return "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" }
 )
+
+// Zero-arg CSS values take a unit param to match Sky's `Css.zero ()` call form.
+func Css_borderBox(_ any) any  { return "border-box" }
+func Css_zero(_ any) any       { return "0" }
+func Css_systemFont(_ any) any { return "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" }
 
 // rgba(r,g,b,a) -> "rgba(r, g, b, a)"
 func Css_rgba(r, g, b, a any) any {

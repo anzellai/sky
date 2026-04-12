@@ -257,6 +257,8 @@ kernelModules = Map.fromList
     , ("Sky.Core.Slog",          "Slog")
     , ("Std.Slog",               "Slog")
     , ("Std.Log.Slog",           "Slog")
+    , ("Log.Slog",               "Slog")
+    , ("Slog",                   "Slog")
     , ("Time",                   "Time")
     , ("Crypto",                 "Crypto")
     , ("Encoding",               "Encoding")

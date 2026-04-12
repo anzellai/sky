@@ -1086,8 +1086,25 @@ func String_fromBytes(bytes any) any {
 	return ""
 }
 
-// Os — CLI args, environment, cwd, exit
-func Os_args() any {
+func String_fromChar(c any) any {
+	if r, ok := c.(rune); ok {
+		return string(r)
+	}
+	return fmt.Sprintf("%v", c)
+}
+
+func String_toChar(s any) any {
+	str := fmt.Sprintf("%v", s)
+	for _, r := range str {
+		return r
+	}
+	return rune(0)
+}
+
+// Os — CLI args, environment, cwd, exit.
+// Zero-arg Sky funcs take a unit param at runtime so the call-site form
+// `Os.args ()` emits `rt.Os_args(struct{}{})` and works uniformly with C2.
+func Os_args(_ any) any {
 	out := make([]any, 0, len(os.Args))
 	if len(os.Args) > 1 {
 		for _, a := range os.Args[1:] {
@@ -1105,7 +1122,7 @@ func Os_getenv(name any) any {
 	return Just[any](v)
 }
 
-func Os_cwd() any {
+func Os_cwd(_ any) any {
 	wd, err := os.Getwd()
 	if err != nil {
 		return Err[any, any](err.Error())

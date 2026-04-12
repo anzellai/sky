@@ -653,3 +653,51 @@ func Auth_login(db any, email any, password any) any {
 func Auth_setRole(db any, userId any, role any) any {
 	return Db_updateById(db, "users", userId, map[string]any{"role": fmt.Sprintf("%v", role)})
 }
+
+// Db.getField : map -> String -> Result String any (any-typed field extract)
+func Db_getField(row any, fname any) any {
+	if m, ok := row.(map[string]any); ok {
+		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
+			return Ok[any, any](v)
+		}
+		return Err[any, any]("getField: no field '" + fmt.Sprintf("%v", fname) + "'")
+	}
+	return Err[any, any]("getField: row is not a record")
+}
+
+// Db.getFieldOr : default -> row -> fieldName -> any
+func Db_getFieldOr(defaultVal any, row any, fname any) any {
+	if m, ok := row.(map[string]any); ok {
+		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+func Db_getString(row any, fname any) any {
+	if m, ok := row.(map[string]any); ok {
+		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
+			return Ok[any, any](fmt.Sprintf("%v", v))
+		}
+	}
+	return Err[any, any]("getString: no field '" + fmt.Sprintf("%v", fname) + "'")
+}
+
+func Db_getInt(row any, fname any) any {
+	if m, ok := row.(map[string]any); ok {
+		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
+			return Ok[any, any](AsInt(v))
+		}
+	}
+	return Err[any, any]("getInt: no field '" + fmt.Sprintf("%v", fname) + "'")
+}
+
+func Db_getBool(row any, fname any) any {
+	if m, ok := row.(map[string]any); ok {
+		if v, exists := m[fmt.Sprintf("%v", fname)]; exists {
+			return Ok[any, any](AsBool(v))
+		}
+	}
+	return Err[any, any]("getBool: no field '" + fmt.Sprintf("%v", fname) + "'")
+}

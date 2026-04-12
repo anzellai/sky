@@ -25,6 +25,7 @@ data DepInfo = DepInfo
     { _dep_name    :: !ModuleName.Canonical
     , _dep_unions  :: ![(String, [Can.Ctor])]   -- (type name, constructors)
     , _dep_aliases :: ![String]                 -- exported alias names
+    , _dep_values  :: ![String]                 -- exported top-level value names
     }
 
 
@@ -159,13 +160,16 @@ processImportWith deps _home env imp =
                 ]
             Nothing -> []
 
-        -- Dep values (top-level bindings) — a fuller pass; for now we just
-        -- forward the top-level names if the dep exposes them. The current
-        -- registerTopLevelNames elsewhere already handles values at the
-        -- module-merging step in Compile.hs, so we deliberately leave
-        -- dep-value import as a no-op here.
+        -- Dep values: forward record-alias auto-constructors so that
+        -- `import OtherMod exposing (..)` or `exposing (AliasName)` makes
+        -- `AliasName x y z` resolve to OtherMod.AliasName at use sites.
         depVars :: [(String, Env.VarHome)]
-        depVars = []
+        depVars = case Map.lookup importPath deps of
+            Just dep ->
+                [ (n, Env.VarTopLevel importMod)
+                | n <- _dep_aliases dep ++ _dep_values dep
+                ]
+            Nothing -> []
 
         envWithQual = Env.addQualifiedImport qualifier importMod
             (if isKernel then kernelVarsFor kernelName else depVars)
@@ -183,7 +187,9 @@ processImportWith deps _home env imp =
                     exposedCtorsFromKernel = concatMap (resolveExposedCtor isKernel kernelName) exposed
                     -- Also allow `exposing (Type(..))` to pull in user-module ctors
                     exposedDepCtors = concatMap (resolveDepCtors depCtors) exposed
-                in Env.addExposed exposedVars (exposedCtorsFromKernel ++ exposedDepCtors) envWithQual
+                    -- Record-alias auto-ctors exposed via `exposing (AliasName)`
+                    exposedAliasVars = concatMap (resolveAliasCtor depVars) exposed
+                in Env.addExposed (exposedVars ++ exposedAliasVars) (exposedCtorsFromKernel ++ exposedDepCtors) envWithQual
     in
     envWithExposed
 
@@ -203,6 +209,18 @@ makeCtorAnnot home typeName _ctorName argTys =
     let result = Can.TType home typeName []
         ty = foldr Can.TLambda result argTys
     in Can.Forall [] ty
+
+
+-- | Pick record-alias auto-constructors matching `exposing (AliasName)`.
+-- If the user wrote the alias name in an exposing list, expose its ctor
+-- so calls like `Piece kind colour` resolve without qualification.
+resolveAliasCtor :: [(String, Env.VarHome)] -> A.Located Src.Exposed -> [(String, Env.VarHome)]
+resolveAliasCtor depVarList (A.At _ exposed) = case exposed of
+    Src.ExposedType typeName _ ->
+        [ (typeName, vh) | (vn, vh) <- depVarList, vn == typeName ]
+    Src.ExposedValue name ->
+        [ (name, vh) | (vn, vh) <- depVarList, vn == name ]
+    _ -> []
 
 
 -- | Pick ctors matching `exposing (TypeName(..))`.
@@ -259,7 +277,7 @@ kernelFunctions = Map.fromList
     , ("String",  ["length", "reverse", "append", "split", "join", "contains",
                     "startsWith", "endsWith", "toInt", "fromInt", "toFloat", "fromFloat",
                     "toUpper", "toLower", "trim", "replace", "slice", "isEmpty",
-                    "toBytes", "fromBytes",
+                    "toBytes", "fromBytes", "fromChar", "toChar",
                     "left", "right", "padLeft", "padRight", "repeat", "lines", "words",
                     "isValid", "normalize", "normalizeNFD", "casefold", "equalFold",
                     "graphemes", "trimStart", "trimEnd",
@@ -341,9 +359,10 @@ kernelFunctions = Map.fromList
     , ("Hex",     ["encode", "encodeToString", "decode"])
     , ("Os",      ["args", "getenv", "cwd", "exit"])
     , ("Slog",    ["info", "warn", "error", "debug"])
-    , ("Db",      ["connect", "open", "close", "exec", "query", "queryDecode",
+    , ("Db",      ["connect", "open", "close", "exec", "execRaw", "query", "queryDecode",
                     "insertRow", "getById", "updateById", "deleteById",
-                    "findWhere", "withTransaction"])
+                    "findWhere", "withTransaction",
+                    "getField", "getFieldOr", "getString", "getInt", "getBool"])
     , ("Auth",    ["hashPassword", "verifyPassword", "signToken", "verifyToken",
                     "register", "login", "setRole",
                     "hashPasswordCost", "passwordStrength"])

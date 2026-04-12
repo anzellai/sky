@@ -150,6 +150,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                         | (typeName, union) <- Map.toList (Can._unions depMod)
                         ]
                     , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
+                    , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
                     })
                 | (modName, depMod) <- firstValid
                 ]
