@@ -1,0 +1,22 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+-- Unicode identifiers
+café = "latte"
+αβγ = 42
+北京 = "Beijing"
+
+main =
+    let
+        δ = 10
+    in
+        let
+            _ = println café
+            _ = println (String.fromInt αβγ)
+            _ = println 北京
+            _ = println (String.fromInt δ)
+        in
+            println "unicode idents ok"

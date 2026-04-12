@@ -126,12 +126,19 @@ func String_fromFloat(f any) any {
 	return strconv.FormatFloat(AsFloat(f), 'f', -1, 64)
 }
 
+// String.length returns the number of Unicode *code points* (runes), not bytes.
+// So "世界" has length 2, not 6.
 func String_length(s any) any {
-	return len(fmt.Sprintf("%v", s))
+	str := fmt.Sprintf("%v", s)
+	n := 0
+	for range str {
+		n++
+	}
+	return n
 }
 
 func String_isEmpty(s any) any {
-	return len(fmt.Sprintf("%v", s)) == 0
+	return fmt.Sprintf("%v", s) == ""
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -844,12 +851,25 @@ func Regex_split(pattern any, s any) any {
 // Char
 // ═══════════════════════════════════════════════════════════
 
-func Char_isUpper(c any) any { return unicode.IsUpper(rune(fmt.Sprintf("%v", c)[0])) }
-func Char_isLower(c any) any { return unicode.IsLower(rune(fmt.Sprintf("%v", c)[0])) }
-func Char_isDigit(c any) any { return unicode.IsDigit(rune(fmt.Sprintf("%v", c)[0])) }
-func Char_isAlpha(c any) any { return unicode.IsLetter(rune(fmt.Sprintf("%v", c)[0])) }
-func Char_toUpper(c any) any { return string(unicode.ToUpper(rune(fmt.Sprintf("%v", c)[0]))) }
-func Char_toLower(c any) any { return string(unicode.ToLower(rune(fmt.Sprintf("%v", c)[0]))) }
+// firstRune extracts the first Unicode code point from its input.
+// Works for both Sky Char (runtime-typed as single-rune string) and Sky String.
+func firstRune(c any) rune {
+	if r, ok := c.(rune); ok {
+		return r
+	}
+	s := fmt.Sprintf("%v", c)
+	for _, r := range s {
+		return r
+	}
+	return 0
+}
+
+func Char_isUpper(c any) any { return unicode.IsUpper(firstRune(c)) }
+func Char_isLower(c any) any { return unicode.IsLower(firstRune(c)) }
+func Char_isDigit(c any) any { return unicode.IsDigit(firstRune(c)) }
+func Char_isAlpha(c any) any { return unicode.IsLetter(firstRune(c)) }
+func Char_toUpper(c any) any { return string(unicode.ToUpper(firstRune(c))) }
+func Char_toLower(c any) any { return string(unicode.ToLower(firstRune(c))) }
 
 // ═══════════════════════════════════════════════════════════
 // Math (extended)
@@ -889,48 +909,85 @@ func String_repeat(n any, s any) any {
 	return strings.Repeat(fmt.Sprintf("%v", s), AsInt(n))
 }
 
+// runeCount returns the number of Unicode code points in s.
+func runeCount(s string) int {
+	n := 0
+	for range s {
+		n++
+	}
+	return n
+}
+
 func String_padLeft(n any, ch any, s any) any {
 	str := fmt.Sprintf("%v", s)
 	pad := fmt.Sprintf("%v", ch)
-	for len(str) < AsInt(n) { str = pad + str }
+	target := AsInt(n)
+	for runeCount(str) < target {
+		str = pad + str
+	}
 	return str
 }
 
 func String_padRight(n any, ch any, s any) any {
 	str := fmt.Sprintf("%v", s)
 	pad := fmt.Sprintf("%v", ch)
-	for len(str) < AsInt(n) { str = str + pad }
+	target := AsInt(n)
+	for runeCount(str) < target {
+		str = str + pad
+	}
 	return str
 }
 
 func String_left(n any, s any) any {
-	str := fmt.Sprintf("%v", s)
+	runes := []rune(fmt.Sprintf("%v", s))
 	nn := AsInt(n)
-	if nn > len(str) { nn = len(str) }
-	return str[:nn]
+	if nn > len(runes) {
+		nn = len(runes)
+	}
+	if nn < 0 {
+		nn = 0
+	}
+	return string(runes[:nn])
 }
 
 func String_right(n any, s any) any {
-	str := fmt.Sprintf("%v", s)
+	runes := []rune(fmt.Sprintf("%v", s))
 	nn := AsInt(n)
-	if nn > len(str) { nn = len(str) }
-	return str[len(str)-nn:]
+	if nn > len(runes) {
+		nn = len(runes)
+	}
+	if nn < 0 {
+		nn = 0
+	}
+	return string(runes[len(runes)-nn:])
 }
 
 func String_replace(old any, new_ any, s any) any {
 	return strings.ReplaceAll(fmt.Sprintf("%v", s), fmt.Sprintf("%v", old), fmt.Sprintf("%v", new_))
 }
 
+// String.slice is rune-based. Negative indices count from the end.
 func String_slice(start any, end any, s any) any {
-	str := fmt.Sprintf("%v", s)
+	runes := []rune(fmt.Sprintf("%v", s))
+	total := len(runes)
 	st := AsInt(start)
 	en := AsInt(end)
-	if st < 0 { st = len(str) + st }
-	if en < 0 { en = len(str) + en }
-	if st < 0 { st = 0 }
-	if en > len(str) { en = len(str) }
-	if st > en { return "" }
-	return str[st:en]
+	if st < 0 {
+		st = total + st
+	}
+	if en < 0 {
+		en = total + en
+	}
+	if st < 0 {
+		st = 0
+	}
+	if en > total {
+		en = total
+	}
+	if st > en {
+		return ""
+	}
+	return string(runes[st:en])
 }
 
 // ═══════════════════════════════════════════════════════════

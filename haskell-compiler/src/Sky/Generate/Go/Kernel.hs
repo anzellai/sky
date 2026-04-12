@@ -65,6 +65,13 @@ registry = Map.fromList
     , (("String", "isEmpty"),     KernelInfo "rt.String_isEmpty" 1 False)
     , (("String", "replace"),     KernelInfo "rt.String_replace" 3 False)
     , (("String", "slice"),       KernelInfo "rt.String_slice" 3 False)
+    , (("String", "left"),        KernelInfo "rt.String_left" 2 False)
+    , (("String", "right"),       KernelInfo "rt.String_right" 2 False)
+    , (("String", "padLeft"),     KernelInfo "rt.String_padLeft" 3 False)
+    , (("String", "padRight"),    KernelInfo "rt.String_padRight" 3 False)
+    , (("String", "repeat"),      KernelInfo "rt.String_repeat" 2 False)
+    , (("String", "lines"),       KernelInfo "rt.String_lines" 1 False)
+    , (("String", "words"),       KernelInfo "rt.String_words" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- List

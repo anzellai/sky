@@ -2,18 +2,23 @@
 -- lowercase = value names, uppercase = type/constructor names
 module Sky.Parse.Variable where
 
-import Data.Char (isAlpha, isAlphaNum, isUpper, isLower)
+import Data.Char (isAlpha, isAlphaNum, isUpper, isLower, isLetter)
 import qualified Data.Text as T
 import Sky.Parse.Primitives
 import Sky.Parse.Keyword (isKeyword)
 
 
--- | Parse a lowercase identifier (value or function name)
+-- | Parse a lowercase identifier (value or function name).
+-- Accepts: ASCII lowercase letters, Unicode lowercase letters, `_`, and
+-- caseless letters (CJK ideographs, Arabic, Hebrew, etc.) which have neither
+-- an upper nor a lower form. Caseless letters are treated as value-level names
+-- so Chinese/Japanese/Korean identifiers work for values; user-defined types
+-- must still start with an ASCII (or explicitly uppercase Unicode) letter.
 lower :: (Row -> Col -> x) -> Parser x String
 lower mkError = Parser $ \s cok _eok _cerr eerr ->
     case T.uncons (_src s) of
         Just (c, _)
-            | isLower c || c == '_' ->
+            | isLowerLike c ->
                 let (name, rest) = T.span isIdentChar (_src s)
                     nameStr = T.unpack name
                     len = T.length name
@@ -23,6 +28,11 @@ lower mkError = Parser $ \s cok _eok _cerr eerr ->
                         else cok nameStr (s { _src = rest, _offset = _offset s + len, _col = _col s + len })
 
         _ -> eerr (_row s) (_col s) mkError
+
+
+-- | Matches lowercase letters, `_`, or letters with no case distinction.
+isLowerLike :: Char -> Bool
+isLowerLike c = c == '_' || isLower c || (isLetter c && not (isUpper c))
 
 
 -- | Parse an uppercase identifier (type or constructor name)

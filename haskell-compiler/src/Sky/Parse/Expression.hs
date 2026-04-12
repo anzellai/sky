@@ -3,6 +3,7 @@
 -- let-in, case-of, if-then-else, lambdas, operators, function application.
 module Sky.Parse.Expression where
 
+import qualified Data.Char
 import qualified Data.Text as T
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine, checkIndent, skipWhitespace)
@@ -438,7 +439,8 @@ moreLetBindings mkError bindingCol = do
         T.length src >= 2
             && T.take 2 src == T.pack "in"
             && (T.length src < 3 || not (isIdentContinue (T.index src 2)))
-    isIdentContinue c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+    -- Keep in sync with Pattern.isIdentContinue / Variable.isIdentChar.
+    isIdentContinue c = Data.Char.isAlphaNum c || c == '_'
 
 
 letBinding :: (Row -> Col -> x) -> Parser x Src.Def

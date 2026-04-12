@@ -2,6 +2,7 @@
 -- Patterns appear in: case branches, function parameters, let destructuring
 module Sky.Parse.Pattern where
 
+import qualified Data.Char
 import qualified Data.Text as T
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine)
@@ -223,8 +224,10 @@ patternRecordFieldsRest mkError =
 
 -- Helpers
 
+-- | Accepts any Unicode letter, digit, or underscore. Matches Variable.isIdentChar
+-- so identifiers use the same alphabet in value, type, and pattern positions.
 isIdentContinue :: Char -> Bool
-isIdentContinue c = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+isIdentContinue c = Data.Char.isAlphaNum c || c == '_'
 
 collectIdent :: String -> Parser x String
 collectIdent prefix = Parser $ \s _ eok _ _ ->
