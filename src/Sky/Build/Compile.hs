@@ -32,6 +32,8 @@ import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Generate.Go.Record as Rec
 import qualified Sky.Build.ModuleGraph as Graph
 import qualified Sky.Build.Dce as Dce
+import qualified Sky.Build.FfiRegistry as FfiReg
+import qualified Sky.Canonicalise.Environment as Env
 import qualified System.Environment
 
 
@@ -45,6 +47,28 @@ getCgEnv :: Rec.CodegenEnv
 getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 
 
+-- | Read ffi/*.kernel.json and write the resulting module/function maps into
+-- Env.ffiKernelModulesRef and Env.ffiKernelFunctionsRef. After this call the
+-- pure kernelModules / kernelFunctions lookups include FFI entries.
+loadAndSeedFfiRegistry :: IO ()
+loadAndSeedFfiRegistry = do
+    reg <- FfiReg.loadRegistry
+    let mods = FfiReg._fr_modules reg
+        moduleMap =
+            Map.fromList [ (FfiReg._fm_moduleName m, FfiReg._fm_kernelName m) | m <- mods ]
+        functionMap =
+            Map.fromListWith (++)
+                [ (FfiReg._fm_kernelName m,
+                   map FfiReg._ffn_name (FfiReg._fm_functions m))
+                | m <- mods
+                ]
+    writeIORef Env.ffiKernelModulesRef moduleMap
+    writeIORef Env.ffiKernelFunctionsRef functionMap
+    if null mods
+        then return ()
+        else putStrLn $ "-- Loaded " ++ show (length mods) ++ " FFI module(s)"
+
+
 -- | Full compilation: parse → canonicalise → codegen → write Go
 compile :: Toml.SkyConfig -> FilePath -> FilePath -> IO (Either String FilePath)
 compile config entryPath outDir = do
@@ -53,6 +77,10 @@ compile config entryPath outDir = do
         sourceRoot = if Toml._sourceRoot config == "src"
             then entryDir  -- entry IS in the source root
             else Toml._sourceRoot config
+
+    -- Phase 0: Load FFI registry (ffi/*.kernel.json) and seed the kernel
+    -- module/function IORefs so FFI packages resolve as first-class kernels.
+    loadAndSeedFfiRegistry
 
     -- Phase 1: Discover all modules
     putStrLn "-- Discovering modules"

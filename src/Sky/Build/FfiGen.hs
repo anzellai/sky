@@ -40,7 +40,7 @@ module Sky.Build.FfiGen
 
 import qualified Data.Aeson as A
 import qualified Data.ByteString.Lazy as BL
-import Data.Char (isAlphaNum, isLower, isUpper)
+import Data.Char (isAlphaNum, isLower, isUpper, toUpper, toLower)
 import Data.List (foldl', intercalate, nub, sortOn)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -139,12 +139,105 @@ generateBindings :: PkgInfo -> IO [String]
 generateBindings pkg = do
     createDirectoryIfMissing True "ffi"
     let slug = slugify (_pkgName pkg)
-        goFile = "ffi" </> (slug ++ "_bindings.go")
+        kname = kernelNameFromPkg pkg
+        mname = pkgToModuleName (_pkgPath pkg)
+        goFile  = "ffi" </> (slug ++ "_bindings.go")
         skyiFile = "ffi" </> (slug ++ ".skyi")
-        names = map (\fn -> _pkgName pkg ++ "." ++ _fnName fn) (_pkgFns pkg)
-    writeFile goFile (emitGoFile pkg)
+        jsonFile = "ffi" </> (slug ++ ".kernel.json")
+        names = map (\fn -> mname ++ "." ++ lowerFirst (_fnName fn)) (_pkgFns pkg)
+    writeFile goFile (emitGoFile kname pkg)
     writeFile skyiFile (emitSkyi pkg)
+    writeFile jsonFile (emitKernelJson mname kname pkg)
     return names
+
+
+-- | Convert a Go package path to the Sky-side module name using the
+-- path-segment → dotted-camel transform Sky users expect.
+-- "github.com/google/uuid"  → "Github.Com.Google.Uuid"
+-- "fyne.io/fyne/v2/app"     → "Fyne.Io.Fyne.V2.App"
+-- "net/http"                → "Net.Http"
+pkgToModuleName :: String -> String
+pkgToModuleName path =
+    let slashed = splitOnChar '/' path
+        dotted  = concatMap (splitOnChar '.') slashed
+        cleaned = map (map (\c -> if isAlphaNum c then c else '_')) dotted
+        cap     = map capitaliseFirst (filter (not . null) cleaned)
+    in  intercalate "." cap
+
+
+-- | Pick the Sky-kernel-name (the prefix used for Go wrapper fns).
+-- Always prefixed with "Go_" so FFI-generated wrappers can't collide with
+-- hand-written stdlib kernel functions (e.g. the stdlib exposes Uuid_v4 /
+-- Uuid_parse from Sky.Core.Uuid — an FFI binding to github.com/google/uuid
+-- becomes Go_Uuid_newString etc., never clashing).
+kernelNameFromPkg :: PkgInfo -> String
+kernelNameFromPkg pkg =
+    let segs = filter (not . null) (splitOnChar '/' (_pkgPath pkg))
+        capOf s = capitaliseFirst (map (\c -> if isAlphaNum c then c else '_') s)
+        baseName = case reverse segs of
+            (last1 : prev : _) | isVersion last1 ->
+                capOf prev ++ capOf last1
+            (last1 : _) -> capOf last1
+            []          -> "Ffi"
+    in  "Go_" ++ baseName
+  where
+    isVersion ('v':rest) = all (`elem` ("0123456789" :: String)) rest && not (null rest)
+    isVersion _ = False
+
+
+splitOnChar :: Char -> String -> [String]
+splitOnChar _ [] = [""]
+splitOnChar sep (x:xs)
+    | x == sep = "" : splitOnChar sep xs
+    | otherwise = case splitOnChar sep xs of
+        (h:t) -> (x:h) : t
+        []    -> [[x]]
+
+
+capitaliseFirst :: String -> String
+capitaliseFirst [] = []
+capitaliseFirst (c:cs) = toUpper c : cs
+
+
+lowerFirst :: String -> String
+lowerFirst [] = []
+lowerFirst (c:cs) = toLower c : cs
+
+
+-- ══════════════════════════════════════════════════════════════════════════
+-- kernel.json emission — consumed by Sky.Build.FfiRegistry at sky build time
+-- ══════════════════════════════════════════════════════════════════════════
+
+emitKernelJson :: String -> String -> PkgInfo -> String
+emitKernelJson moduleName kernelName pkg =
+    let fns = filter (not . shouldSkipFn) (_pkgFns pkg)
+        fnEntries = intercalate ",\n" (map emitFnEntry fns)
+        emitFnEntry fn =
+            "    {\"name\": " ++ quote (lowerFirst (_fnName fn)) ++
+            ", \"arity\": " ++ show (max 1 (length (_fnParams fn))) ++ "}"
+    in unlines
+        [ "{"
+        , "  \"moduleName\": " ++ quote moduleName ++ ","
+        , "  \"kernelName\": " ++ quote kernelName ++ ","
+        , "  \"package\": " ++ quote (_pkgPath pkg) ++ ","
+        , "  \"functions\": ["
+        , fnEntries
+        , "  ]"
+        , "}"
+        ]
+
+
+-- | Skip functions that can't be realised at the FFI boundary.
+shouldSkipFn :: FnInfo -> Bool
+shouldSkipFn fn =
+    let hasGeneric = any (isGenericType . snd) (_fnParams fn)
+                  || any (isGenericType . snd) (_fnResults fn)
+        -- Identity-pointer helpers stay (handled below via reflect).
+        isIdPointer = length (_fnParams fn) == 1
+                   && length (_fnResults fn) == 1
+                   && isBareParam (snd (head (_fnParams fn)))
+                   && isStarBareParam (snd (head (_fnResults fn)))
+    in hasGeneric && not isIdPointer
 
 
 -- ══════════════════════════════════════════════════════════════════════════
@@ -280,6 +373,7 @@ extractPackagePaths s = go True s
         [ "time", "io", "os", "fmt", "sync", "errors", "bytes"
         , "strings", "strconv", "unicode", "math", "sort", "regexp"
         , "reflect", "encoding", "bufio", "log", "context"
+        , "hash", "crypto", "net", "mime", "path"
         ]
 
 
@@ -400,20 +494,21 @@ goArgCast i t = case t of
 -- Emission
 -- ══════════════════════════════════════════════════════════════════════════
 
-emitGoFile :: PkgInfo -> String
-emitGoFile pkg =
+emitGoFile :: String -> PkgInfo -> String
+emitGoFile kernelName pkg =
     let aliases = buildAliasTable pkg
-        entries = map (emitRegister (_pkgName pkg) aliases) (_pkgFns pkg)
+        entries = map (emitTypedWrapper kernelName aliases) (_pkgFns pkg)
         anyEmitted = any (not . isSkippedEntry) entries
         importLines = buildImportLines pkg aliases anyEmitted
     in unlines $
         [ "// Code generated by sky-ffi-inspect from " ++ _pkgPath pkg ++ ". DO NOT EDIT."
         , "// Re-run `sky add " ++ _pkgPath pkg ++ "` to regenerate."
         , "//"
-        , "// SAFETY: every binding here is registered as effect-unknown."
-        , "// Call via Sky.Ffi.callTask from Sky code — callPure will refuse."
-        , "// To override a specific function as pure, audit the Go source"
-        , "// then add a hand-written ffi/<pkg>_pure.go with rt.RegisterPure."
+        , "// Wrapper functions are in `package rt` with names <Kernel>_<lowerFn>."
+        , "// Sky source resolves `import " ++ pkgToModuleName (_pkgPath pkg) ++
+          " as X` and calls `X.<lowerFn>` — the canonicaliser routes it via"
+        , "// the FFI registry to these typed Go functions. Every wrapper wraps"
+        , "// panics in Err[any, any] via SkyFfiRecover."
         , ""
         , "package rt"
         , ""
@@ -423,12 +518,10 @@ emitGoFile pkg =
         ++
         [ ")"
         , ""
-        , "func init() {"
         ]
         ++ entries
         ++
-        [ "}"
-        , ""
+        [ ""
         , "// Pin imports against \"imported and not used\" when many funcs were skipped."
         , "var _ = fmt.Sprintf"
         ]
@@ -456,27 +549,29 @@ buildImportLines pkg aliases anyEmitted =
     in pkgLine : "\t\"fmt\"" : others
 
 
-emitRegister :: String -> AliasTable -> FnInfo -> String
-emitRegister pkgName aliases fn =
-    let name = pkgName ++ "." ++ _fnName fn
+-- | Emit a typed Go wrapper function for a single Go-package binding.
+-- The function is named `<Kernel>_<lowerFn>` and takes one `any` param per
+-- Sky-level arg (zero-Go-arg becomes one unit param). The body:
+--   1. installs SkyFfiRecover so panics → Err
+--   2. coerces each Sky-side any to the expected Go type
+--   3. calls pkg.<GoFn>(...)
+--   4. wraps the result in Ok/Err per (T, error)/pure conventions
+emitTypedWrapper :: String -> AliasTable -> FnInfo -> String
+emitTypedWrapper kernelName aliases fn =
+    let goFnName = _fnName fn
+        skyName = lowerFirst goFnName
         params = _fnParams fn
         results = _fnResults fn
-        nArgs = length params
+        wrapperName = kernelName ++ "_" ++ skyName
+        nArgs = max 1 (length params)
 
-        -- Rewrite every param and result type to use the alias table.
         rewrittenParams = map (\(n, t) -> (n, rewriteType aliases t)) params
         rewrittenResults = map (\(n, t) -> (n, rewriteType aliases t)) results
 
-        -- Remaining skip class: generic type parameters.
         hasGeneric =
             any (isGenericType . snd) rewrittenParams ||
             any (isGenericType . snd) rewrittenResults
 
-        -- Special case: a generic "identity pointer" helper of the shape
-        --   Fn[T any](v T) *T
-        -- can still be realised at runtime via reflect (we build the pointer
-        -- of whatever concrete type the caller passed). The self-hosted
-        -- compiler handles this same pattern.
         isIdentityPointer =
             hasGeneric &&
             length rewrittenParams == 1 &&
@@ -484,34 +579,40 @@ emitRegister pkgName aliases fn =
             isBareParam (snd (head rewrittenParams)) &&
             isStarBareParam (snd (head rewrittenResults))
 
+        paramList = intercalate ", " [ "p" ++ show i ++ " any" | i <- [0 .. nArgs - 1] ]
+        -- When the Go function takes 0 args but Sky passes 1 (unit), silence
+        -- the unused-variable warning for the unit param.
+        unitSink = if null params
+                    then "\t_ = p0\n"
+                    else ""
+
     in if isIdentityPointer
-        then emitIdentityPointer name fn
+        then emitIdentityPointerTyped wrapperName
         else if hasGeneric
-            then "\t// SKIPPED " ++ name ++ " — generic type parameter (not realisable at FFI boundary)\n"
+            then "// SKIPPED " ++ wrapperName ++
+                 " — generic type parameter (not realisable at FFI boundary)\n"
             else unlines
-                [ "\tRegister(" ++ quote name ++ ", func(args []any) any {"
-                , "\t\tif len(args) < " ++ show nArgs ++ " {"
-                , "\t\t\treturn fmt.Errorf(\"" ++ name ++ ": expected " ++ show nArgs ++ " args, got %d\", len(args))"
-                , "\t\t}"
-                , emitCall fn rewrittenParams rewrittenResults
-                , "\t}) // " ++ _fnEffect fn
+                [ "// [" ++ _fnEffect fn ++ "] " ++ kernelName ++ "." ++ skyName ++
+                  " → pkg." ++ goFnName
+                , "func " ++ wrapperName ++ "(" ++ paramList ++ ") (out any) {"
+                , "\tdefer SkyFfiRecover(&out)()"
+                , unitSink ++ emitTypedCall fn rewrittenParams rewrittenResults
+                , "\treturn"
+                , "}"
                 ]
 
 
--- | Emit a reflect-based wrapper for a generic identity-pointer helper:
--- builds a pointer to the caller's concrete value without needing T at
--- compile time. Matches the shape `Fn[T any](v T) *T`.
-emitIdentityPointer :: String -> FnInfo -> String
-emitIdentityPointer name fn = unlines
-    [ "\tRegister(" ++ quote name ++ ", func(args []any) any {"
-    , "\t\tif len(args) < 1 {"
-    , "\t\t\treturn fmt.Errorf(\"" ++ name ++ ": expected 1 arg, got %d\", len(args))"
-    , "\t\t}"
-    , "\t\trv := reflectValueOfAny(args[0])"
-    , "\t\tpv := reflectNewOf(rv.Type())"
-    , "\t\tpv.Elem().Set(rv)"
-    , "\t\treturn pv.Interface()"
-    , "\t}) // " ++ _fnEffect fn ++ " (generic identity-pointer via reflect)"
+emitIdentityPointerTyped :: String -> String
+emitIdentityPointerTyped wrapperName = unlines
+    [ "// Generic identity-pointer helper via reflect."
+    , "func " ++ wrapperName ++ "(p0 any) (out any) {"
+    , "\tdefer SkyFfiRecover(&out)()"
+    , "\trv := reflectValueOfAny(p0)"
+    , "\tpv := reflectNewOf(rv.Type())"
+    , "\tpv.Elem().Set(rv)"
+    , "\tout = pv.Interface()"
+    , "\treturn"
+    , "}"
     ]
 
 
@@ -527,38 +628,72 @@ isStarBareParam ('*':rest) = isBareParam rest
 isStarBareParam _ = False
 
 
--- | Emit the body of the binding function. Uses already-rewritten types.
-emitCall :: FnInfo -> [(String, String)] -> [(String, String)] -> String
-emitCall fn params results =
+-- | Emit the body of the typed wrapper. Uses `pN` params (not args[i]) and
+-- always assigns to `out` so SkyFfiRecover's deferred closure can intercept.
+emitTypedCall :: FnInfo -> [(String, String)] -> [(String, String)] -> String
+emitTypedCall fn params results =
     let name = _fnName fn
         nParams = length params
         argExprs = zipWith (\i (_, t) ->
-                let cast = goArgCast i t
+                let cast = typedArgCast i t
                     isVariadicLast = _fnVariadic fn && i == nParams - 1
                 in if isVariadicLast then cast ++ "..." else cast
-            ) [0..] params
+            ) [0::Int ..] params
         call = "pkg." ++ name ++ "(" ++ intercalate ", " argExprs ++ ")"
     in case results of
-        []  -> "\t\t" ++ call ++ "\n\t\treturn struct{}{}"
-        [_] -> "\t\treturn " ++ call
+        []  -> "\t" ++ call ++ "\n\tout = Ok[any, any](struct{}{})"
+        [(_, t)]
+            | t == "error" -> unlines
+                [ "\terr := " ++ call
+                , "\tif err != nil { out = Err[any, any](err.Error()); return }"
+                , "\tout = Ok[any, any](struct{}{})"
+                ]
+            | otherwise -> "\tout = Ok[any, any](" ++ call ++ ")"
         _   ->
             let lastTy = snd (last results)
                 others = init results
                 bindVars = zipWith (\i _ -> "r" ++ show i) [0::Int ..] others
-                allVars = bindVars ++ (if lastTy == "error" then ["err"] else ["r" ++ show (length bindVars)])
-                assignLine = "\t\t" ++ intercalate ", " allVars ++ " := " ++ call
+                allVars = bindVars ++
+                    (if lastTy == "error"
+                        then ["err"]
+                        else ["r" ++ show (length bindVars)])
+                assignLine = "\t" ++ intercalate ", " allVars ++ " := " ++ call
             in if lastTy == "error"
                 then unlines
                     [ assignLine
-                    , "\t\tif err != nil {"
-                    , "\t\t\treturn Err[any, any](err.Error())"
-                    , "\t\t}"
-                    , "\t\treturn Ok[any, any](" ++ packResults bindVars ++ ")"
+                    , "\tif err != nil { out = Err[any, any](err.Error()); return }"
+                    , "\tout = Ok[any, any](" ++ packResults bindVars ++ ")"
                     ]
                 else unlines
                     [ assignLine
-                    , "\t\treturn []any{" ++ intercalate ", " allVars ++ "}"
+                    , "\tout = Ok[any, any]([]any{" ++ intercalate ", " allVars ++ "})"
                     ]
+
+
+-- | Typed-param arg coercion — pN instead of args[i].
+typedArgCast :: Int -> String -> String
+typedArgCast i t =
+    let p = "p" ++ show i
+    in case t of
+        "string"   -> "fmt.Sprintf(\"%v\", " ++ p ++ ")"
+        "int"      -> "AsInt(" ++ p ++ ")"
+        "int8"     -> "int8(AsInt(" ++ p ++ "))"
+        "int16"    -> "int16(AsInt(" ++ p ++ "))"
+        "int32"    -> "int32(AsInt(" ++ p ++ "))"
+        "int64"    -> "int64(AsInt(" ++ p ++ "))"
+        "uint"     -> "uint(AsInt(" ++ p ++ "))"
+        "uint8"    -> "uint8(AsInt(" ++ p ++ "))"
+        "uint16"   -> "uint16(AsInt(" ++ p ++ "))"
+        "uint32"   -> "uint32(AsInt(" ++ p ++ "))"
+        "uint64"   -> "uint64(AsInt(" ++ p ++ "))"
+        "float64"  -> "AsFloat(" ++ p ++ ")"
+        "float32"  -> "float32(AsFloat(" ++ p ++ "))"
+        "bool"     -> "AsBool(" ++ p ++ ")"
+        "byte"     -> "byte(AsInt(" ++ p ++ "))"
+        "rune"     -> "rune(AsInt(" ++ p ++ "))"
+        "[]byte"   -> "SkyFfiArg_bytes(" ++ p ++ ")"
+        "error"    -> p ++ ".(error)"
+        _          -> p ++ ".(" ++ t ++ ")"
 
 
 packResults :: [String] -> String
@@ -568,7 +703,7 @@ packResults vs  = "[]any{" ++ intercalate ", " vs ++ "}"
 
 
 isSkippedEntry :: String -> Bool
-isSkippedEntry s = not ("Register(" `isSubstringOf` s)
+isSkippedEntry s = not ("func " `isSubstringOf` s)
 
 
 isSubstringOf :: String -> String -> Bool

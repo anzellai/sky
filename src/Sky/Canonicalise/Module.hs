@@ -8,6 +8,8 @@ module Sky.Canonicalise.Module
     where
 
 import qualified Data.Map.Strict as Map
+import Data.IORef (readIORef)
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Source as Src
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
@@ -269,9 +271,17 @@ kernelCtorsFor _ = []
 
 
 -- | Known functions for each kernel module
--- This drives what names are available via qualified access
+-- This drives what names are available via qualified access.
+-- Merged with FFI registry entries populated by Sky.Build.Compile
+-- before canonicalisation — see Env.ffiKernelFunctionsRef.
 kernelFunctions :: Map.Map String [String]
-kernelFunctions = Map.fromList
+kernelFunctions =
+    Map.unionWith (++) staticKernelFunctions
+        (unsafePerformIO (readIORef Env.ffiKernelFunctionsRef))
+
+
+staticKernelFunctions :: Map.Map String [String]
+staticKernelFunctions = Map.fromList
     [ ("Basics",  ["identity", "always", "not", "toString", "modBy", "clamp", "fst", "snd",
                     "compare", "negate", "abs", "sqrt", "min", "max"])
     , ("String",  ["length", "reverse", "append", "split", "join", "contains",

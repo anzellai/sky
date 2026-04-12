@@ -2385,6 +2385,80 @@ func Server_static(path any, dir any) any {
 }
 
 // ═══════════════════════════════════════════════════════════
+// FFI support — panic recovery + argument coercion helpers
+// ═══════════════════════════════════════════════════════════
+
+// SkyFfiRecover installs a deferred recover that converts any Go panic raised
+// inside an FFI call into an Err[any,any] written to *out. Generated FFI
+// wrappers wire it in as:
+//
+//     func <K>_foo(args ...) (out any) {
+//         defer SkyFfiRecover(&out)()
+//         ... actual FFI call ...
+//         return Ok[any, any](result)
+//     }
+//
+// `out` is a named return so the deferred closure can reassign it.
+func SkyFfiRecover(out *any) func() {
+	return func() {
+		if r := recover(); r != nil {
+			*out = Err[any, any](fmt.Sprintf("panic: %v", r))
+		}
+	}
+}
+
+// SkyFfiArg_string coerces a Sky-side any to a Go string without allocating
+// when the value is already a string. Used by generated FFI wrappers.
+func SkyFfiArg_string(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// SkyFfiArg_int coerces a Sky-side any to a Go int. Handles the common
+// numeric types produced by Sky literals (int, int64, float64).
+func SkyFfiArg_int(v any) int {
+	return AsInt(v)
+}
+
+// SkyFfiArg_bytes coerces a Sky-side any to a Go []byte. Accepts []byte,
+// []any (as list of ints), or a string.
+func SkyFfiArg_bytes(v any) []byte {
+	switch x := v.(type) {
+	case []byte:
+		return x
+	case string:
+		return []byte(x)
+	case []any:
+		out := make([]byte, len(x))
+		for i, e := range x {
+			out[i] = byte(AsInt(e))
+		}
+		return out
+	}
+	return []byte(fmt.Sprintf("%v", v))
+}
+
+// SkyFfiRet_bytes wraps a Go []byte as a Sky []any of int codepoints so
+// downstream Sky code can inspect it via List operations.
+func SkyFfiRet_bytes(b []byte) any {
+	out := make([]any, len(b))
+	for i, c := range b {
+		out[i] = int(c)
+	}
+	return out
+}
+
+// SkyFfiRet_maybeString wraps a *string as Maybe String.
+func SkyFfiRet_maybeString(p *string) any {
+	if p == nil {
+		return Nothing[any]()
+	}
+	return Just[any](*p)
+}
+
+// ═══════════════════════════════════════════════════════════
 // SkyCall — reflect-based dispatch for any-typed callees
 // ═══════════════════════════════════════════════════════════
 

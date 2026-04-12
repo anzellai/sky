@@ -6,7 +6,7 @@ import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 
 main =
-    case Uuid.newString of
+    case Uuid.newString () of
         
         Ok uuid ->
             println ("Generated UUID: " ++ uuid)

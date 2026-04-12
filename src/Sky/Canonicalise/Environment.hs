@@ -3,6 +3,8 @@
 module Sky.Canonicalise.Environment where
 
 import qualified Data.Map.Strict as Map
+import Data.IORef (IORef, newIORef, readIORef)
+import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Sky.ModuleName as ModuleName
 
@@ -249,9 +251,29 @@ builtinCtors =
     ]
 
 
--- | Kernel module mappings: Sky import path → kernel module name
+-- | Dynamic kernel-module extensions (populated from ffi/*.kernel.json by
+-- Sky.Build.Compile before canonicalisation begins). Looked up via
+-- unsafePerformIO so downstream callers see a merged static ∪ dynamic map
+-- with no threading churn.
+{-# NOINLINE ffiKernelModulesRef #-}
+ffiKernelModulesRef :: IORef (Map.Map String String)
+ffiKernelModulesRef = unsafePerformIO (newIORef Map.empty)
+
+
+{-# NOINLINE ffiKernelFunctionsRef #-}
+ffiKernelFunctionsRef :: IORef (Map.Map String [String])
+ffiKernelFunctionsRef = unsafePerformIO (newIORef Map.empty)
+
+
+-- | Kernel module mappings: Sky import path → kernel module name.
+-- Merged on every read so FFI-registered modules resolve the same way as
+-- stdlib kernel modules (Sky.Core.String etc.).
 kernelModules :: Map.Map String String
-kernelModules = Map.fromList
+kernelModules = Map.union staticKernelModules (unsafePerformIO (readIORef ffiKernelModulesRef))
+
+
+staticKernelModules :: Map.Map String String
+staticKernelModules = Map.fromList
     [ ("Sky.Core.Basics",  "Basics")
     , ("Sky.Core.String",  "String")
     , ("Sky.Core.List",    "List")
