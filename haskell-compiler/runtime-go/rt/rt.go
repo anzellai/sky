@@ -348,6 +348,15 @@ func RecordUpdate(base any, updates map[string]any) any {
 type SkyTuple2 struct { V0, V1 any }
 type SkyTuple3 struct { V0, V1, V2 any }
 
+// SkyADT: runtime type for ADT case-match dispatch.
+// Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)
+// can be pattern-matched via integer Tag comparison.
+type SkyADT struct {
+	Tag     int
+	Fields  []any
+	SkyName string
+}
+
 // ═══════════════════════════════════════════════════════════
 // Result operations
 // ═══════════════════════════════════════════════════════════

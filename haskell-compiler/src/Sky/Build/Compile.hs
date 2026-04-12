@@ -837,11 +837,11 @@ detectSubjectType branches =
         (Can.CaseBranch (A.At _ pat) _ : _) -> patternGoType pat
         _ -> Nothing
   where
-    patternGoType (Can.PCtor home typeName union ctorName _ _)
+    patternGoType (Can.PCtor _home typeName union ctorName _ _)
         | ctorName == "Ok" || ctorName == "Err" = Just "rt.SkyResult[any, any]"
         | ctorName == "Just" || ctorName == "Nothing" = Just "rt.SkyMaybe[any]"
         | Can._u_opts union == Can.Enum = Nothing  -- Enum: compare int directly
-        | otherwise = Just "rt.SkyADT"
+        | otherwise = Just typeName  -- cast to the locally declared struct type (which has Tag + Fields)
     patternGoType (Can.PBool _) = Nothing  -- bool doesn't need assertion
     patternGoType (Can.PInt _) = Nothing
     patternGoType (Can.PStr _) = Nothing

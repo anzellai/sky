@@ -364,6 +364,10 @@ type liveSession struct {
 	model    any
 	handlers map[string]any
 	mu       sync.Mutex
+	// SSE outbound channel: any writer goroutine may push an HTML patch
+	sseCh chan string
+	// Cancel function for any active subscription ticker
+	cancelSub chan struct{}
 }
 
 type liveApp struct {
@@ -404,6 +408,7 @@ func Live_app(cfg any) any {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/_live/event", app.handleEvent)
+	mux.HandleFunc("/_live/sse", app.handleSSE)
 	mux.HandleFunc("/", app.handleInitial)
 
 	port := 8080
@@ -422,21 +427,32 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// Build an initial request value for init
 	req := map[string]any{"path": r.URL.Path}
 
-	// Run init
+	// Run init — returns (Model, Cmd Msg)
 	res := sky_call(app.init, req)
-	model, _ := tupleFirst(res), tupleSecond(res)
+	model := tupleFirst(res)
+	cmd := tupleSecond(res)
 
 	// Get or create session
 	sid := sessionID(r, w)
-	sess := &liveSession{model: model, handlers: map[string]any{}}
+	sess := &liveSession{
+		model:     model,
+		handlers:  map[string]any{},
+		sseCh:     make(chan string, 16),
+		cancelSub: make(chan struct{}),
+	}
 	app.sessions.Store(sid, sess)
+
+	// Process any initial Cmd from init
+	app.runCmd(sess, cmd)
+	// Set up subscriptions
+	app.setupSubscriptions(sess)
 
 	// Render view
 	vn := sky_call(app.view, model).(VNode)
 	body := renderVNode(vn, sess.handlers)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>%s<script>%s</script></body></html>", body, liveJS(sid))
+	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", body, liveJS(sid))
 }
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
@@ -457,9 +473,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	sess := v.(*liveSession)
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
 	msg, ok := sess.handlers[req.HandlerID]
 	if !ok {
+		sess.mu.Unlock()
 		http.Error(w, "handler not found", 404)
 		return
 	}
@@ -467,14 +483,151 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if isFunc(msg) {
 		msg = sky_call(msg, req.Value)
 	}
-	result := sky_call2(app.update, msg, sess.model)
-	sess.model = tupleFirst(result)
-	// Ignore Cmd for now
-	sess.handlers = map[string]any{}
-	vn := sky_call(app.view, sess.model).(VNode)
-	body2 := renderVNode(vn, sess.handlers)
+	body2 := app.dispatch(sess, msg)
+	sess.mu.Unlock()
+
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte(body2))
+}
+
+// dispatch: run update with msg, process cmd, reset subs, re-render view.
+// MUST be called with sess.mu held.
+func (app *liveApp) dispatch(sess *liveSession, msg any) string {
+	result := sky_call2(app.update, msg, sess.model)
+	sess.model = tupleFirst(result)
+	cmd := tupleSecond(result)
+	sess.handlers = map[string]any{}
+	vn := sky_call(app.view, sess.model).(VNode)
+	body := renderVNode(vn, sess.handlers)
+	// Process Cmds (may spawn goroutines)
+	app.runCmd(sess, cmd)
+	// Re-evaluate subscriptions based on new model
+	app.setupSubscriptions(sess)
+	return body
+}
+
+// runCmd processes a Cmd value, spawning goroutines for Cmd.perform.
+// Goroutines dispatch their result back through dispatch via SSE.
+func (app *liveApp) runCmd(sess *liveSession, cmd any) {
+	c, ok := cmd.(cmdT)
+	if !ok {
+		return
+	}
+	switch c.kind {
+	case "none":
+		return
+	case "batch":
+		for _, sub := range c.batch {
+			app.runCmd(sess, sub)
+		}
+	case "perform":
+		go app.runPerform(sess, c.task, c.toMsg)
+	}
+}
+
+func (app *liveApp) runPerform(sess *liveSession, task any, toMsg any) {
+	// task is a Sky Task — a zero-arg func() any returning SkyResult
+	result := sky_call(task, nil)
+	// toMsg : Result err a -> Msg — convert result to Msg
+	msg := sky_call(toMsg, result)
+	// Push update through locked dispatch
+	sess.mu.Lock()
+	body := app.dispatch(sess, msg)
+	sess.mu.Unlock()
+	// Notify SSE listeners
+	select {
+	case sess.sseCh <- body:
+	default:
+		// channel full, drop
+	}
+}
+
+// setupSubscriptions: cancel any prior ticker, then re-evaluate subscriptions for new model.
+func (app *liveApp) setupSubscriptions(sess *liveSession) {
+	// Cancel existing ticker
+	close(sess.cancelSub)
+	sess.cancelSub = make(chan struct{})
+
+	if app.subscriptions == nil {
+		return
+	}
+	subResult := sky_call(app.subscriptions, sess.model)
+	sub, ok := subResult.(subT)
+	if !ok || sub.kind != "every" {
+		return
+	}
+	interval := time.Duration(sub.ms) * time.Millisecond
+	if interval <= 0 {
+		return
+	}
+	cancel := sess.cancelSub
+	toMsg := sub.toMsg
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-cancel:
+				return
+			case t := <-ticker.C:
+				sess.mu.Lock()
+				msg := toMsg
+				// If toMsg is a function, call it with current time millis
+				if isFunc(msg) {
+					msg = sky_call(toMsg, t.UnixMilli())
+				}
+				body := app.dispatch(sess, msg)
+				sess.mu.Unlock()
+				select {
+				case sess.sseCh <- body:
+				default:
+				}
+			}
+		}
+	}()
+}
+
+// handleSSE: Server-Sent Events endpoint. Pushes view patches as they arrive.
+func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
+	sid := ""
+	if c, err := r.Cookie("sky_sid"); err == nil {
+		sid = c.Value
+	}
+	if sid == "" {
+		http.Error(w, "no session", 400)
+		return
+	}
+	v, ok := app.sessions.Load(sid)
+	if !ok {
+		http.Error(w, "session not found", 404)
+		return
+	}
+	sess := v.(*liveSession)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+
+	// Send an initial ping
+	fmt.Fprintf(w, ": connected\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case body := <-sess.sseCh:
+			// Escape newlines for SSE data lines
+			escaped := strings.ReplaceAll(body, "\n", "\\n")
+			fmt.Fprintf(w, "event: patch\ndata: %s\n\n", escaped)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
 }
 
 func sessionID(r *http.Request, w http.ResponseWriter) string {
@@ -490,18 +643,24 @@ func sessionID(r *http.Request, w http.ResponseWriter) string {
 
 func liveJS(sid string) string {
 	return fmt.Sprintf(`
+var __skySid = %q;
 function skyEvent(ev, id) {
   ev.preventDefault();
   var v = ev.target && ev.target.value ? ev.target.value : "";
   fetch("/_live/event", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({sessionId: %q, handlerId: id, value: v})
+    body: JSON.stringify({sessionId: __skySid, handlerId: id, value: v})
   }).then(function(r){ return r.text(); }).then(function(t){
-    document.body.innerHTML = t + '<script>' + skyLiveJSRestore() + '</' + 'script>';
+    document.getElementById("sky-root").innerHTML = t;
   });
 }
-function skyLiveJSRestore() { return document.querySelector("script").textContent; }
+// Server-Sent Events: push updates from server (subscriptions, Cmd.perform results)
+var __skySSE = new EventSource("/_live/sse");
+__skySSE.addEventListener("patch", function(e) {
+  var html = e.data.replace(/\\n/g, "\n");
+  document.getElementById("sky-root").innerHTML = html;
+});
 `, sid)
 }
 
