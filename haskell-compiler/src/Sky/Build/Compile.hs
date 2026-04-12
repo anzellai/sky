@@ -472,9 +472,8 @@ letToGo def body =
 defToStmts :: Can.Def -> [GoIr.GoStmt]
 defToStmts def = case def of
     Can.Def (A.At _ name) [] body ->
-        -- Simple binding: name := expr (use = for _, := for named)
         if name == "_"
-        then [GoIr.GoExprStmt (exprToGo body)]
+        then [GoIr.GoAssign "_" (exprToGo body)]  -- _ = expr (discard)
         else [GoIr.GoShortDecl name (exprToGo body)]
 
     Can.Def (A.At _ name) params body ->

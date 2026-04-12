@@ -1,0 +1,12 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+main =
+    let
+        _ = ( "hello", 42 )
+        _ = ( 1, 2, 3 )
+    in
+        println "tuples created"
