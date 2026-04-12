@@ -795,7 +795,10 @@ exprToGo (A.At _ expr) = case expr of
             _ ->
                 let goFunc = exprToGo func
                     goArgs = map exprToGo args
-                in GoIr.GoCall goFunc goArgs
+                in if isDirectCallable func
+                    then GoIr.GoCall goFunc goArgs
+                    else GoIr.GoCall (GoIr.GoQualified "rt" "SkyCall")
+                                    (goFunc : goArgs)
 
     Can.If branches elseExpr ->
         ifToGo branches elseExpr
@@ -904,6 +907,19 @@ genericParams modName funcName = case (modName, funcName) of
 -- | Count the number of `->` arrows in a Forall-wrapped type — that's the
 -- arity of the constructor. For `Just : a -> Maybe a` this is 1. For
 -- `JobDone : Int -> Result String String -> Msg` this is 2.
+-- | Can we emit a direct Go call for this callee expression?
+-- Direct: kernel funcs, ADT constructors, top-level funcs (all are real Go funcs).
+-- Indirect (wrap with rt.SkyCall): local vars, field accesses, expression results —
+-- these are any-typed at runtime and Go forbids calling them directly.
+isDirectCallable :: Can.Expr -> Bool
+isDirectCallable (A.At _ e) = case e of
+    Can.VarKernel _ _      -> True
+    Can.VarCtor{}          -> True
+    Can.VarTopLevel _ _    -> True
+    Can.Lambda _ _         -> True
+    _                      -> False
+
+
 ctorArity :: Can.Annotation -> Int
 ctorArity (Can.Forall _ t) = countArrows t
   where

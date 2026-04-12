@@ -2149,3 +2149,99 @@ func Server_static(path any, dir any) any {
 		},
 	}
 }
+
+// ═══════════════════════════════════════════════════════════
+// SkyCall — reflect-based dispatch for any-typed callees
+// ═══════════════════════════════════════════════════════════
+
+// SkyCall invokes f with args, where f is any-typed. Used when the codegen
+// cannot statically prove the callee is a direct Go func (e.g. lambda params,
+// record-field-of-func-type, let-bound closures).
+func SkyCall(f any, args ...any) any {
+	if f == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(f)
+	if rv.Kind() != reflect.Func {
+		if len(args) == 0 {
+			return f
+		}
+		return nil
+	}
+	nin := rv.Type().NumIn()
+	if nin == len(args) && !rv.Type().IsVariadic() {
+		return skyCallDirect(rv, args)
+	}
+	if nin == 0 {
+		out := rv.Call(nil)
+		if len(out) == 0 {
+			return nil
+		}
+		res := out[0].Interface()
+		if len(args) == 0 {
+			return res
+		}
+		return SkyCall(res, args...)
+	}
+	result := f
+	for _, a := range args {
+		result = skyCallOne(result, a)
+	}
+	return result
+}
+
+func skyCallDirect(rv reflect.Value, args []any) any {
+	vals := make([]reflect.Value, len(args))
+	for i, a := range args {
+		pt := rv.Type().In(i)
+		if a == nil {
+			vals[i] = reflect.Zero(pt)
+			continue
+		}
+		av := reflect.ValueOf(a)
+		if av.Type() == pt {
+			vals[i] = av
+		} else if av.Type().ConvertibleTo(pt) {
+			vals[i] = av.Convert(pt)
+		} else {
+			vals[i] = av
+		}
+	}
+	out := rv.Call(vals)
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Interface()
+}
+
+func skyCallOne(f any, arg any) any {
+	if f == nil {
+		return nil
+	}
+	rv := reflect.ValueOf(f)
+	if rv.Kind() != reflect.Func {
+		return f
+	}
+	if rv.Type().NumIn() == 0 {
+		out := rv.Call(nil)
+		if len(out) == 0 {
+			return nil
+		}
+		return out[0].Interface()
+	}
+	pt := rv.Type().In(0)
+	var av reflect.Value
+	if arg == nil {
+		av = reflect.Zero(pt)
+	} else {
+		av = reflect.ValueOf(arg)
+		if av.Type() != pt && av.Type().ConvertibleTo(pt) {
+			av = av.Convert(pt)
+		}
+	}
+	out := rv.Call([]reflect.Value{av})
+	if len(out) == 0 {
+		return nil
+	}
+	return out[0].Interface()
+}
