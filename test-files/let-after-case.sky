@@ -1,0 +1,21 @@
+module Main exposing (main)
+
+import Std.Log exposing (println)
+
+
+processList xs =
+    let
+        categorised =
+            case xs of
+                [] ->
+                    "empty"
+                _ ->
+                    "non-empty"
+        mark j =
+            "mark-" ++ String.fromInt j
+    in
+        categorised ++ " " ++ mark 7
+
+
+main =
+    println (processList [ 1, 2 ])
