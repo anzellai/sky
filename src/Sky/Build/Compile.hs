@@ -845,7 +845,16 @@ exprToGo (A.At _ expr) = case expr of
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
             Just structName ->
                 -- Named struct: Person{Name: "Alice", Age: 30}
-                GoIr.GoStructLit structName (map (\(fn, fe) -> (capitalise_ fn, exprToGo fe)) entries)
+                -- For concrete-typed fields we emit `any(expr).(T)` so that
+                -- any-typed runtime values land in typed struct fields.
+                let fieldTypeMap = case Map.lookup structName (Rec._cg_aliases env) of
+                        Just (Can.Alias _ (T.TRecord m _)) ->
+                            Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
+                        _ -> Map.empty
+                in GoIr.GoStructLit structName
+                    [ (capitalise_ fn, coerceToFieldType (Map.findWithDefault "any" fn fieldTypeMap) (exprToGo fe))
+                    | (fn, fe) <- entries
+                    ]
             Nothing ->
                 -- Anonymous struct
                 let fieldDecls = intercalate_ "; " (map (\(fn, _) -> capitalise_ fn ++ " any") entries)
@@ -907,6 +916,16 @@ genericParams modName funcName = case (modName, funcName) of
 -- | Count the number of `->` arrows in a Forall-wrapped type — that's the
 -- arity of the constructor. For `Just : a -> Maybe a` this is 1. For
 -- `JobDone : Int -> Result String String -> Msg` this is 2.
+-- | Coerce an expression to a target Go type for struct-field assignment.
+-- When the target is `any` (or unknown), pass through. Otherwise wrap as
+-- `any(expr).(TargetType)` which is safe across concrete and any-typed sources.
+coerceToFieldType :: String -> GoIr.GoExpr -> GoIr.GoExpr
+coerceToFieldType targetTy e
+    | targetTy == "any" || null targetTy = e
+    | otherwise =
+        GoIr.GoTypeAssert (GoIr.GoCall (GoIr.GoIdent "any") [e]) targetTy
+
+
 -- | Can we emit a direct Go call for this callee expression?
 -- Direct: kernel funcs, ADT constructors, top-level funcs (all are real Go funcs).
 -- Indirect (wrap with rt.SkyCall): local vars, field accesses, expression results —
