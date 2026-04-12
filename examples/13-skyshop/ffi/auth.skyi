@@ -32,6 +32,8 @@ package auth
 -- [pure] ActionCodeSettingsSetLinkDomain : String -> ActionCodeSettings -> ActionCodeSettings   -- runtime wrap: Task String
 -- [pure] ActionCodeSettingsDynamicLinkDomain : ActionCodeSettings -> String   -- runtime wrap: Task String
 -- [pure] ActionCodeSettingsSetDynamicLinkDomain : String -> ActionCodeSettings -> ActionCodeSettings   -- runtime wrap: Task String
+-- [pure] NewActionCodeSettings : struct{} -> ActionCodeSettings   -- runtime wrap: Task String
+-- [pure] Asc : struct{} -> Order   -- runtime wrap: Task String
 -- [fallible] ClientSessionCookie : Client -> Context -> String -> Duration -> (String, String)   -- runtime wrap: Task String
 -- [fallible] ClientVerifySessionCookie : Client -> Context -> String -> (Token, String)   -- runtime wrap: Task String
 -- [fallible] ClientVerifySessionCookieAndCheckRevoked : Client -> Context -> String -> (Token, String)   -- runtime wrap: Task String
@@ -73,44 +75,56 @@ package auth
 -- [fallible] ClientVerifyIDTokenAndCheckRevoked : Client -> Context -> String -> (Token, String)   -- runtime wrap: Task String
 -- [pure] ClientTenantManager : Client -> TenantManager   -- runtime wrap: Task String
 -- [pure] ClientSetTenantManager : TenantManager -> Client -> Client   -- runtime wrap: Task String
+-- [pure] CreatedAt : struct{} -> SortBy   -- runtime wrap: Task String
 -- [pure] DeleteUsersErrorInfoIndex : DeleteUsersErrorInfo -> Int   -- runtime wrap: Task String
 -- [pure] DeleteUsersErrorInfoSetIndex : Int -> DeleteUsersErrorInfo -> DeleteUsersErrorInfo   -- runtime wrap: Task String
 -- [pure] DeleteUsersErrorInfoReason : DeleteUsersErrorInfo -> String   -- runtime wrap: Task String
 -- [pure] DeleteUsersErrorInfoSetReason : String -> DeleteUsersErrorInfo -> DeleteUsersErrorInfo   -- runtime wrap: Task String
+-- [pure] NewDeleteUsersErrorInfo : struct{} -> DeleteUsersErrorInfo   -- runtime wrap: Task String
 -- [pure] DeleteUsersResultSuccessCount : DeleteUsersResult -> Int   -- runtime wrap: Task String
 -- [pure] DeleteUsersResultSetSuccessCount : Int -> DeleteUsersResult -> DeleteUsersResult   -- runtime wrap: Task String
 -- [pure] DeleteUsersResultFailureCount : DeleteUsersResult -> Int   -- runtime wrap: Task String
 -- [pure] DeleteUsersResultSetFailureCount : Int -> DeleteUsersResult -> DeleteUsersResult   -- runtime wrap: Task String
 -- [pure] DeleteUsersResultErrors : DeleteUsersResult -> DeleteUsersErrorInfo   -- runtime wrap: Task String
 -- [pure] DeleteUsersResultSetErrors : DeleteUsersErrorInfo -> DeleteUsersResult -> DeleteUsersResult   -- runtime wrap: Task String
+-- [pure] NewDeleteUsersResult : struct{} -> DeleteUsersResult   -- runtime wrap: Task String
+-- [pure] Desc : struct{} -> Order   -- runtime wrap: Task String
+-- [pure] Disabled : struct{} -> MultiFactorConfigState   -- runtime wrap: Task String
 -- [pure] EmailIdentifierEmail : EmailIdentifier -> String   -- runtime wrap: Task String
 -- [pure] EmailIdentifierSetEmail : String -> EmailIdentifier -> EmailIdentifier   -- runtime wrap: Task String
+-- [pure] NewEmailIdentifier : struct{} -> EmailIdentifier   -- runtime wrap: Task String
+-- [pure] Enabled : struct{} -> MultiFactorConfigState   -- runtime wrap: Task String
 -- [pure] ErrorInfoIndex : ErrorInfo -> Int   -- runtime wrap: Task String
 -- [pure] ErrorInfoSetIndex : Int -> ErrorInfo -> ErrorInfo   -- runtime wrap: Task String
 -- [pure] ErrorInfoReason : ErrorInfo -> String   -- runtime wrap: Task String
 -- [pure] ErrorInfoSetReason : String -> ErrorInfo -> ErrorInfo   -- runtime wrap: Task String
+-- [pure] NewErrorInfo : struct{} -> ErrorInfo   -- runtime wrap: Task String
 -- [pure] ExportedUserRecordUserRecord : ExportedUserRecord -> UserRecord   -- runtime wrap: Task String
 -- [pure] ExportedUserRecordSetUserRecord : UserRecord -> ExportedUserRecord -> ExportedUserRecord   -- runtime wrap: Task String
 -- [pure] ExportedUserRecordPasswordHash : ExportedUserRecord -> String   -- runtime wrap: Task String
 -- [pure] ExportedUserRecordSetPasswordHash : String -> ExportedUserRecord -> ExportedUserRecord   -- runtime wrap: Task String
 -- [pure] ExportedUserRecordPasswordSalt : ExportedUserRecord -> String   -- runtime wrap: Task String
 -- [pure] ExportedUserRecordSetPasswordSalt : String -> ExportedUserRecord -> ExportedUserRecord   -- runtime wrap: Task String
+-- [pure] NewExportedUserRecord : struct{} -> ExportedUserRecord   -- runtime wrap: Task String
 -- [pure] ExpressionEmail : Expression -> String   -- runtime wrap: Task String
 -- [pure] ExpressionSetEmail : String -> Expression -> Expression   -- runtime wrap: Task String
 -- [pure] ExpressionPhoneNumber : Expression -> String   -- runtime wrap: Task String
 -- [pure] ExpressionSetPhoneNumber : String -> Expression -> Expression   -- runtime wrap: Task String
 -- [pure] ExpressionUID : Expression -> String   -- runtime wrap: Task String
 -- [pure] ExpressionSetUID : String -> Expression -> Expression   -- runtime wrap: Task String
+-- [pure] NewExpression : struct{} -> Expression   -- runtime wrap: Task String
 -- [pure] FirebaseInfoSignInProvider : FirebaseInfo -> String   -- runtime wrap: Task String
 -- [pure] FirebaseInfoSetSignInProvider : String -> FirebaseInfo -> FirebaseInfo   -- runtime wrap: Task String
 -- [pure] FirebaseInfoTenant : FirebaseInfo -> String   -- runtime wrap: Task String
 -- [pure] FirebaseInfoSetTenant : String -> FirebaseInfo -> FirebaseInfo   -- runtime wrap: Task String
 -- [pure] FirebaseInfoIdentities : FirebaseInfo -> map[string]interface{}   -- runtime wrap: Task String
 -- [pure] FirebaseInfoSetIdentities : map[string]interface{} -> FirebaseInfo -> FirebaseInfo   -- runtime wrap: Task String
+-- [pure] NewFirebaseInfo : struct{} -> FirebaseInfo   -- runtime wrap: Task String
 -- [pure] GetUsersResultUsers : GetUsersResult -> UserRecord   -- runtime wrap: Task String
 -- [pure] GetUsersResultSetUsers : UserRecord -> GetUsersResult -> GetUsersResult   -- runtime wrap: Task String
 -- [pure] GetUsersResultNotFound : GetUsersResult -> UserIdentifier   -- runtime wrap: Task String
 -- [pure] GetUsersResultSetNotFound : UserIdentifier -> GetUsersResult -> GetUsersResult   -- runtime wrap: Task String
+-- [pure] NewGetUsersResult : struct{} -> GetUsersResult   -- runtime wrap: Task String
 -- [pure] IsCertificateFetchFailed : String -> Bool   -- runtime wrap: Task String
 -- [pure] IsConfigurationNotFound : String -> Bool   -- runtime wrap: Task String
 -- [pure] IsEmailAlreadyExists : String -> Bool   -- runtime wrap: Task String
@@ -134,8 +148,10 @@ package auth
 -- [pure] IsUnknown : String -> Bool   -- runtime wrap: Task String
 -- [pure] IsUserDisabled : String -> Bool   -- runtime wrap: Task String
 -- [pure] IsUserNotFound : String -> Bool   -- runtime wrap: Task String
+-- [pure] LastLoginAt : struct{} -> SortBy   -- runtime wrap: Task String
 -- [pure] MultiFactorConfigProviderConfigs : MultiFactorConfig -> ProviderConfig   -- runtime wrap: Task String
 -- [pure] MultiFactorConfigSetProviderConfigs : ProviderConfig -> MultiFactorConfig -> MultiFactorConfig   -- runtime wrap: Task String
+-- [pure] NewMultiFactorConfig : struct{} -> MultiFactorConfig   -- runtime wrap: Task String
 -- [pure] MultiFactorInfoUID : MultiFactorInfo -> String   -- runtime wrap: Task String
 -- [pure] MultiFactorInfoSetUID : String -> MultiFactorInfo -> MultiFactorInfo   -- runtime wrap: Task String
 -- [pure] MultiFactorInfoDisplayName : MultiFactorInfo -> String   -- runtime wrap: Task String
@@ -150,8 +166,11 @@ package auth
 -- [pure] MultiFactorInfoSetPhone : PhoneMultiFactorInfo -> MultiFactorInfo -> MultiFactorInfo   -- runtime wrap: Task String
 -- [pure] MultiFactorInfoTOTP : MultiFactorInfo -> TOTPMultiFactorInfo   -- runtime wrap: Task String
 -- [pure] MultiFactorInfoSetTOTP : TOTPMultiFactorInfo -> MultiFactorInfo -> MultiFactorInfo   -- runtime wrap: Task String
+-- [pure] NewMultiFactorInfo : struct{} -> MultiFactorInfo   -- runtime wrap: Task String
 -- [pure] MultiFactorSettingsEnrolledFactors : MultiFactorSettings -> MultiFactorInfo   -- runtime wrap: Task String
 -- [pure] MultiFactorSettingsSetEnrolledFactors : MultiFactorInfo -> MultiFactorSettings -> MultiFactorSettings   -- runtime wrap: Task String
+-- [pure] NewMultiFactorSettings : struct{} -> MultiFactorSettings   -- runtime wrap: Task String
+-- [pure] Name : struct{} -> SortBy   -- runtime wrap: Task String
 -- [fallible] NewClient : Context -> AuthConfig -> (Client, String)   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigID : OIDCProviderConfig -> String   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigSetID : String -> OIDCProviderConfig -> OIDCProviderConfig   -- runtime wrap: Task String
@@ -169,8 +188,10 @@ package auth
 -- [pure] OIDCProviderConfigSetCodeResponseType : Bool -> OIDCProviderConfig -> OIDCProviderConfig   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigIDTokenResponseType : OIDCProviderConfig -> Bool   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigSetIDTokenResponseType : Bool -> OIDCProviderConfig -> OIDCProviderConfig   -- runtime wrap: Task String
+-- [pure] NewOIDCProviderConfig : struct{} -> OIDCProviderConfig   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigIteratorPageInfo : OIDCProviderConfigIterator -> PageInfo   -- runtime wrap: Task String
 -- [fallible] OIDCProviderConfigIteratorNext : OIDCProviderConfigIterator -> (OIDCProviderConfig, String)   -- runtime wrap: Task String
+-- [pure] NewOIDCProviderConfigIterator : struct{} -> OIDCProviderConfigIterator   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToCreateID : OIDCProviderConfigToCreate -> String -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToCreateClientID : OIDCProviderConfigToCreate -> String -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToCreateIssuer : OIDCProviderConfigToCreate -> String -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
@@ -179,6 +200,7 @@ package auth
 -- [pure] OIDCProviderConfigToCreateClientSecret : OIDCProviderConfigToCreate -> String -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToCreateIDTokenResponseType : OIDCProviderConfigToCreate -> Bool -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToCreateCodeResponseType : OIDCProviderConfigToCreate -> Bool -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
+-- [pure] NewOIDCProviderConfigToCreate : struct{} -> OIDCProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToUpdateClientID : OIDCProviderConfigToUpdate -> String -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToUpdateIssuer : OIDCProviderConfigToUpdate -> String -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToUpdateDisplayName : OIDCProviderConfigToUpdate -> String -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
@@ -186,25 +208,33 @@ package auth
 -- [pure] OIDCProviderConfigToUpdateClientSecret : OIDCProviderConfigToUpdate -> String -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToUpdateIDTokenResponseType : OIDCProviderConfigToUpdate -> Bool -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] OIDCProviderConfigToUpdateCodeResponseType : OIDCProviderConfigToUpdate -> Bool -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
+-- [pure] NewOIDCProviderConfigToUpdate : struct{} -> OIDCProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] PhoneIdentifierPhoneNumber : PhoneIdentifier -> String   -- runtime wrap: Task String
 -- [pure] PhoneIdentifierSetPhoneNumber : String -> PhoneIdentifier -> PhoneIdentifier   -- runtime wrap: Task String
+-- [pure] NewPhoneIdentifier : struct{} -> PhoneIdentifier   -- runtime wrap: Task String
 -- [pure] PhoneMultiFactorInfoPhoneNumber : PhoneMultiFactorInfo -> String   -- runtime wrap: Task String
 -- [pure] PhoneMultiFactorInfoSetPhoneNumber : String -> PhoneMultiFactorInfo -> PhoneMultiFactorInfo   -- runtime wrap: Task String
+-- [pure] NewPhoneMultiFactorInfo : struct{} -> PhoneMultiFactorInfo   -- runtime wrap: Task String
 -- [pure] ProjectConfigMultiFactorConfig : ProjectConfig -> MultiFactorConfig   -- runtime wrap: Task String
 -- [pure] ProjectConfigSetMultiFactorConfig : MultiFactorConfig -> ProjectConfig -> ProjectConfig   -- runtime wrap: Task String
+-- [pure] NewProjectConfig : struct{} -> ProjectConfig   -- runtime wrap: Task String
 -- [pure] ProjectConfigToUpdateMultiFactorConfig : ProjectConfigToUpdate -> MultiFactorConfig -> ProjectConfigToUpdate   -- runtime wrap: Task String
+-- [pure] NewProjectConfigToUpdate : struct{} -> ProjectConfigToUpdate   -- runtime wrap: Task String
 -- [pure] ProviderConfigState : ProviderConfig -> MultiFactorConfigState   -- runtime wrap: Task String
 -- [pure] ProviderConfigSetState : MultiFactorConfigState -> ProviderConfig -> ProviderConfig   -- runtime wrap: Task String
 -- [pure] ProviderConfigTOTPProviderConfig : ProviderConfig -> TOTPProviderConfig   -- runtime wrap: Task String
 -- [pure] ProviderConfigSetTOTPProviderConfig : TOTPProviderConfig -> ProviderConfig -> ProviderConfig   -- runtime wrap: Task String
+-- [pure] NewProviderConfig : struct{} -> ProviderConfig   -- runtime wrap: Task String
 -- [pure] ProviderIdentifierProviderID : ProviderIdentifier -> String   -- runtime wrap: Task String
 -- [pure] ProviderIdentifierSetProviderID : String -> ProviderIdentifier -> ProviderIdentifier   -- runtime wrap: Task String
 -- [pure] ProviderIdentifierProviderUID : ProviderIdentifier -> String   -- runtime wrap: Task String
 -- [pure] ProviderIdentifierSetProviderUID : String -> ProviderIdentifier -> ProviderIdentifier   -- runtime wrap: Task String
+-- [pure] NewProviderIdentifier : struct{} -> ProviderIdentifier   -- runtime wrap: Task String
 -- [pure] QueryUserInfoResponseUsers : QueryUserInfoResponse -> UserRecord   -- runtime wrap: Task String
 -- [pure] QueryUserInfoResponseSetUsers : UserRecord -> QueryUserInfoResponse -> QueryUserInfoResponse   -- runtime wrap: Task String
 -- [pure] QueryUserInfoResponseCount : QueryUserInfoResponse -> Int   -- runtime wrap: Task String
 -- [pure] QueryUserInfoResponseSetCount : Int -> QueryUserInfoResponse -> QueryUserInfoResponse   -- runtime wrap: Task String
+-- [pure] NewQueryUserInfoResponse : struct{} -> QueryUserInfoResponse   -- runtime wrap: Task String
 -- [pure] QueryUsersRequestReturnUserInfo : QueryUsersRequest -> *bool   -- runtime wrap: Task String
 -- [pure] QueryUsersRequestSetReturnUserInfo : *bool -> QueryUsersRequest -> QueryUsersRequest   -- runtime wrap: Task String
 -- [pure] QueryUsersRequestLimit : QueryUsersRequest -> Int   -- runtime wrap: Task String
@@ -219,6 +249,7 @@ package auth
 -- [pure] QueryUsersRequestSetTenantID : String -> QueryUsersRequest -> QueryUsersRequest   -- runtime wrap: Task String
 -- [pure] QueryUsersRequestExpression : QueryUsersRequest -> Expression   -- runtime wrap: Task String
 -- [pure] QueryUsersRequestSetExpression : Expression -> QueryUsersRequest -> QueryUsersRequest   -- runtime wrap: Task String
+-- [pure] NewQueryUsersRequest : struct{} -> QueryUsersRequest   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigID : SAMLProviderConfig -> String   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigSetID : String -> SAMLProviderConfig -> SAMLProviderConfig   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigDisplayName : SAMLProviderConfig -> String   -- runtime wrap: Task String
@@ -237,8 +268,10 @@ package auth
 -- [pure] SAMLProviderConfigSetRPEntityID : String -> SAMLProviderConfig -> SAMLProviderConfig   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigCallbackURL : SAMLProviderConfig -> String   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigSetCallbackURL : String -> SAMLProviderConfig -> SAMLProviderConfig   -- runtime wrap: Task String
+-- [pure] NewSAMLProviderConfig : struct{} -> SAMLProviderConfig   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigIteratorPageInfo : SAMLProviderConfigIterator -> PageInfo   -- runtime wrap: Task String
 -- [fallible] SAMLProviderConfigIteratorNext : SAMLProviderConfigIterator -> (SAMLProviderConfig, String)   -- runtime wrap: Task String
+-- [pure] NewSAMLProviderConfigIterator : struct{} -> SAMLProviderConfigIterator   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToCreateID : SAMLProviderConfigToCreate -> String -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToCreateIDPEntityID : SAMLProviderConfigToCreate -> String -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToCreateSSOURL : SAMLProviderConfigToCreate -> String -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
@@ -248,6 +281,7 @@ package auth
 -- [pure] SAMLProviderConfigToCreateCallbackURL : SAMLProviderConfigToCreate -> String -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToCreateDisplayName : SAMLProviderConfigToCreate -> String -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToCreateEnabled : SAMLProviderConfigToCreate -> Bool -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
+-- [pure] NewSAMLProviderConfigToCreate : struct{} -> SAMLProviderConfigToCreate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToUpdateIDPEntityID : SAMLProviderConfigToUpdate -> String -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToUpdateSSOURL : SAMLProviderConfigToUpdate -> String -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToUpdateRequestSigningEnabled : SAMLProviderConfigToUpdate -> Bool -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
@@ -256,8 +290,12 @@ package auth
 -- [pure] SAMLProviderConfigToUpdateCallbackURL : SAMLProviderConfigToUpdate -> String -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToUpdateDisplayName : SAMLProviderConfigToUpdate -> String -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
 -- [pure] SAMLProviderConfigToUpdateEnabled : SAMLProviderConfigToUpdate -> Bool -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
+-- [pure] NewSAMLProviderConfigToUpdate : struct{} -> SAMLProviderConfigToUpdate   -- runtime wrap: Task String
+-- [pure] NewTOTPInfo : struct{} -> TOTPInfo   -- runtime wrap: Task String
+-- [pure] NewTOTPMultiFactorInfo : struct{} -> TOTPMultiFactorInfo   -- runtime wrap: Task String
 -- [pure] TOTPProviderConfigAdjacentIntervals : TOTPProviderConfig -> Int   -- runtime wrap: Task String
 -- [pure] TOTPProviderConfigSetAdjacentIntervals : Int -> TOTPProviderConfig -> TOTPProviderConfig   -- runtime wrap: Task String
+-- [pure] NewTOTPProviderConfig : struct{} -> TOTPProviderConfig   -- runtime wrap: Task String
 -- [pure] TenantID : Tenant -> String   -- runtime wrap: Task String
 -- [pure] TenantSetID : String -> Tenant -> Tenant   -- runtime wrap: Task String
 -- [pure] TenantDisplayName : Tenant -> String   -- runtime wrap: Task String
@@ -270,6 +308,7 @@ package auth
 -- [pure] TenantSetEnableAnonymousUsers : Bool -> Tenant -> Tenant   -- runtime wrap: Task String
 -- [pure] TenantMultiFactorConfig : Tenant -> MultiFactorConfig   -- runtime wrap: Task String
 -- [pure] TenantSetMultiFactorConfig : MultiFactorConfig -> Tenant -> Tenant   -- runtime wrap: Task String
+-- [pure] NewTenant : struct{} -> Tenant   -- runtime wrap: Task String
 -- [pure] TenantClientTenantID : TenantClient -> String   -- runtime wrap: Task String
 -- [fallible] TenantClientCreateOIDCProviderConfig : TenantClient -> Context -> OIDCProviderConfigToCreate -> (OIDCProviderConfig, String)   -- runtime wrap: Task String
 -- [fallible] TenantClientCreateSAMLProviderConfig : TenantClient -> Context -> SAMLProviderConfigToCreate -> (SAMLProviderConfig, String)   -- runtime wrap: Task String
@@ -307,24 +346,29 @@ package auth
 -- [pure] TenantClientUsers : TenantClient -> Context -> String -> UserIterator   -- runtime wrap: Task String
 -- [fallible] TenantClientVerifyIDToken : TenantClient -> Context -> String -> (Token, String)   -- runtime wrap: Task String
 -- [fallible] TenantClientVerifyIDTokenAndCheckRevoked : TenantClient -> Context -> String -> (Token, String)   -- runtime wrap: Task String
+-- [pure] NewTenantClient : struct{} -> TenantClient   -- runtime wrap: Task String
 -- [pure] TenantIteratorPageInfo : TenantIterator -> PageInfo   -- runtime wrap: Task String
 -- [fallible] TenantIteratorNext : TenantIterator -> (Tenant, String)   -- runtime wrap: Task String
+-- [pure] NewTenantIterator : struct{} -> TenantIterator   -- runtime wrap: Task String
 -- [fallible] TenantManagerAuthForTenant : TenantManager -> String -> (TenantClient, String)   -- runtime wrap: Task String
 -- [fallible] TenantManagerTenant : TenantManager -> Context -> String -> (Tenant, String)   -- runtime wrap: Task String
 -- [fallible] TenantManagerCreateTenant : TenantManager -> Context -> TenantToCreate -> (Tenant, String)   -- runtime wrap: Task String
 -- [fallible] TenantManagerUpdateTenant : TenantManager -> Context -> String -> TenantToUpdate -> (Tenant, String)   -- runtime wrap: Task String
 -- [fallible] TenantManagerDeleteTenant : TenantManager -> Context -> String -> String   -- runtime wrap: Task String
 -- [pure] TenantManagerTenants : TenantManager -> Context -> String -> TenantIterator   -- runtime wrap: Task String
+-- [pure] NewTenantManager : struct{} -> TenantManager   -- runtime wrap: Task String
 -- [pure] TenantToCreateDisplayName : TenantToCreate -> String -> TenantToCreate   -- runtime wrap: Task String
 -- [pure] TenantToCreateAllowPasswordSignUp : TenantToCreate -> Bool -> TenantToCreate   -- runtime wrap: Task String
 -- [pure] TenantToCreateEnableEmailLinkSignIn : TenantToCreate -> Bool -> TenantToCreate   -- runtime wrap: Task String
 -- [pure] TenantToCreateEnableAnonymousUsers : TenantToCreate -> Bool -> TenantToCreate   -- runtime wrap: Task String
 -- [pure] TenantToCreateMultiFactorConfig : TenantToCreate -> MultiFactorConfig -> TenantToCreate   -- runtime wrap: Task String
+-- [pure] NewTenantToCreate : struct{} -> TenantToCreate   -- runtime wrap: Task String
 -- [pure] TenantToUpdateDisplayName : TenantToUpdate -> String -> TenantToUpdate   -- runtime wrap: Task String
 -- [pure] TenantToUpdateAllowPasswordSignUp : TenantToUpdate -> Bool -> TenantToUpdate   -- runtime wrap: Task String
 -- [pure] TenantToUpdateEnableEmailLinkSignIn : TenantToUpdate -> Bool -> TenantToUpdate   -- runtime wrap: Task String
 -- [pure] TenantToUpdateEnableAnonymousUsers : TenantToUpdate -> Bool -> TenantToUpdate   -- runtime wrap: Task String
 -- [pure] TenantToUpdateMultiFactorConfig : TenantToUpdate -> MultiFactorConfig -> TenantToUpdate   -- runtime wrap: Task String
+-- [pure] NewTenantToUpdate : struct{} -> TenantToUpdate   -- runtime wrap: Task String
 -- [pure] TokenAuthTime : Token -> Int   -- runtime wrap: Task String
 -- [pure] TokenSetAuthTime : Int -> Token -> Token   -- runtime wrap: Task String
 -- [pure] TokenIssuer : Token -> String   -- runtime wrap: Task String
@@ -343,8 +387,12 @@ package auth
 -- [pure] TokenSetFirebase : FirebaseInfo -> Token -> Token   -- runtime wrap: Task String
 -- [pure] TokenClaims : Token -> map[string]interface{}   -- runtime wrap: Task String
 -- [pure] TokenSetClaims : map[string]interface{} -> Token -> Token   -- runtime wrap: Task String
+-- [pure] NewToken : struct{} -> Token   -- runtime wrap: Task String
+-- [pure] UID : struct{} -> SortBy   -- runtime wrap: Task String
 -- [pure] UIDIdentifierUID : UIDIdentifier -> String   -- runtime wrap: Task String
 -- [pure] UIDIdentifierSetUID : String -> UIDIdentifier -> UIDIdentifier   -- runtime wrap: Task String
+-- [pure] NewUIDIdentifier : struct{} -> UIDIdentifier   -- runtime wrap: Task String
+-- [pure] UserEmail : struct{} -> SortBy   -- runtime wrap: Task String
 -- [fallible] UserImportHashConfig : UserImportHash -> (HashConfig, String)   -- runtime wrap: Task String
 -- [pure] UserImportResultSuccessCount : UserImportResult -> Int   -- runtime wrap: Task String
 -- [pure] UserImportResultSetSuccessCount : Int -> UserImportResult -> UserImportResult   -- runtime wrap: Task String
@@ -352,6 +400,7 @@ package auth
 -- [pure] UserImportResultSetFailureCount : Int -> UserImportResult -> UserImportResult   -- runtime wrap: Task String
 -- [pure] UserImportResultErrors : UserImportResult -> ErrorInfo   -- runtime wrap: Task String
 -- [pure] UserImportResultSetErrors : ErrorInfo -> UserImportResult -> UserImportResult   -- runtime wrap: Task String
+-- [pure] NewUserImportResult : struct{} -> UserImportResult   -- runtime wrap: Task String
 -- [pure] UserInfoDisplayName : UserInfo -> String   -- runtime wrap: Task String
 -- [pure] UserInfoSetDisplayName : String -> UserInfo -> UserInfo   -- runtime wrap: Task String
 -- [pure] UserInfoEmail : UserInfo -> String   -- runtime wrap: Task String
@@ -364,14 +413,17 @@ package auth
 -- [pure] UserInfoSetProviderID : String -> UserInfo -> UserInfo   -- runtime wrap: Task String
 -- [pure] UserInfoUID : UserInfo -> String   -- runtime wrap: Task String
 -- [pure] UserInfoSetUID : String -> UserInfo -> UserInfo   -- runtime wrap: Task String
+-- [pure] NewUserInfo : struct{} -> UserInfo   -- runtime wrap: Task String
 -- [pure] UserIteratorPageInfo : UserIterator -> PageInfo   -- runtime wrap: Task String
 -- [fallible] UserIteratorNext : UserIterator -> (ExportedUserRecord, String)   -- runtime wrap: Task String
+-- [pure] NewUserIterator : struct{} -> UserIterator   -- runtime wrap: Task String
 -- [pure] UserMetadataCreationTimestamp : UserMetadata -> Int   -- runtime wrap: Task String
 -- [pure] UserMetadataSetCreationTimestamp : Int -> UserMetadata -> UserMetadata   -- runtime wrap: Task String
 -- [pure] UserMetadataLastLogInTimestamp : UserMetadata -> Int   -- runtime wrap: Task String
 -- [pure] UserMetadataSetLastLogInTimestamp : Int -> UserMetadata -> UserMetadata   -- runtime wrap: Task String
 -- [pure] UserMetadataLastRefreshTimestamp : UserMetadata -> Int   -- runtime wrap: Task String
 -- [pure] UserMetadataSetLastRefreshTimestamp : Int -> UserMetadata -> UserMetadata   -- runtime wrap: Task String
+-- [pure] NewUserMetadata : struct{} -> UserMetadata   -- runtime wrap: Task String
 -- [pure] UserProviderUID : UserProvider -> String   -- runtime wrap: Task String
 -- [pure] UserProviderSetUID : String -> UserProvider -> UserProvider   -- runtime wrap: Task String
 -- [pure] UserProviderProviderID : UserProvider -> String   -- runtime wrap: Task String
@@ -382,6 +434,7 @@ package auth
 -- [pure] UserProviderSetDisplayName : String -> UserProvider -> UserProvider   -- runtime wrap: Task String
 -- [pure] UserProviderPhotoURL : UserProvider -> String   -- runtime wrap: Task String
 -- [pure] UserProviderSetPhotoURL : String -> UserProvider -> UserProvider   -- runtime wrap: Task String
+-- [pure] NewUserProvider : struct{} -> UserProvider   -- runtime wrap: Task String
 -- [pure] UserRecordUserInfo : UserRecord -> UserInfo   -- runtime wrap: Task String
 -- [pure] UserRecordSetUserInfo : UserInfo -> UserRecord -> UserRecord   -- runtime wrap: Task String
 -- [pure] UserRecordCustomClaims : UserRecord -> map[string]interface{}   -- runtime wrap: Task String
@@ -400,6 +453,7 @@ package auth
 -- [pure] UserRecordSetTenantID : String -> UserRecord -> UserRecord   -- runtime wrap: Task String
 -- [pure] UserRecordMultiFactor : UserRecord -> MultiFactorSettings   -- runtime wrap: Task String
 -- [pure] UserRecordSetMultiFactor : MultiFactorSettings -> UserRecord -> UserRecord   -- runtime wrap: Task String
+-- [pure] NewUserRecord : struct{} -> UserRecord   -- runtime wrap: Task String
 -- [pure] UserToCreateDisabled : UserToCreate -> Bool -> UserToCreate   -- runtime wrap: Task String
 -- [pure] UserToCreateDisplayName : UserToCreate -> String -> UserToCreate   -- runtime wrap: Task String
 -- [pure] UserToCreateEmail : UserToCreate -> String -> UserToCreate   -- runtime wrap: Task String
@@ -409,6 +463,7 @@ package auth
 -- [pure] UserToCreatePhotoURL : UserToCreate -> String -> UserToCreate   -- runtime wrap: Task String
 -- [pure] UserToCreateUID : UserToCreate -> String -> UserToCreate   -- runtime wrap: Task String
 -- [pure] UserToCreateMFASettings : UserToCreate -> MultiFactorSettings -> UserToCreate   -- runtime wrap: Task String
+-- [pure] NewUserToCreate : struct{} -> UserToCreate   -- runtime wrap: Task String
 -- [pure] UserToImportUID : UserToImport -> String -> UserToImport   -- runtime wrap: Task String
 -- [pure] UserToImportEmail : UserToImport -> String -> UserToImport   -- runtime wrap: Task String
 -- [pure] UserToImportDisplayName : UserToImport -> String -> UserToImport   -- runtime wrap: Task String
@@ -421,6 +476,7 @@ package auth
 -- [pure] UserToImportPasswordHash : UserToImport -> []byte -> UserToImport   -- runtime wrap: Task String
 -- [pure] UserToImportPasswordSalt : UserToImport -> []byte -> UserToImport   -- runtime wrap: Task String
 -- [pure] UserToImportProviderData : UserToImport -> UserProvider -> UserToImport   -- runtime wrap: Task String
+-- [pure] NewUserToImport : struct{} -> UserToImport   -- runtime wrap: Task String
 -- [pure] UserToUpdateCustomClaims : UserToUpdate -> map[string]interface{} -> UserToUpdate   -- runtime wrap: Task String
 -- [pure] UserToUpdateDisabled : UserToUpdate -> Bool -> UserToUpdate   -- runtime wrap: Task String
 -- [pure] UserToUpdateDisplayName : UserToUpdate -> String -> UserToUpdate   -- runtime wrap: Task String
@@ -432,4 +488,5 @@ package auth
 -- [pure] UserToUpdateMFASettings : UserToUpdate -> MultiFactorSettings -> UserToUpdate   -- runtime wrap: Task String
 -- [pure] UserToUpdateProviderToLink : UserToUpdate -> UserProvider -> UserToUpdate   -- runtime wrap: Task String
 -- [pure] UserToUpdateProvidersToDelete : UserToUpdate -> []string -> UserToUpdate   -- runtime wrap: Task String
+-- [pure] NewUserToUpdate : struct{} -> UserToUpdate   -- runtime wrap: Task String
 -- [pure] WithHash : UserImportHash -> UserImportOption   -- runtime wrap: Task String

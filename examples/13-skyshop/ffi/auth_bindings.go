@@ -49,6 +49,10 @@ func Go_Auth_actionCodeSettingsDynamicLinkDomain(p0 any) any { return SkyFfiFiel
 
 func Go_Auth_actionCodeSettingsSetDynamicLinkDomain(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DynamicLinkDomain") }
 
+func Go_Auth_newActionCodeSettings(_ any) any { return new(pkg.ActionCodeSettings) }
+
+func Go_Auth_asc(_ any) any { return pkg.Asc }
+
 // [fallible] Go_Auth.clientSessionCookie → pkg.ClientSessionCookie
 func Go_Auth_clientSessionCookie(p0 any, p1 any, p2 any, p3 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -434,6 +438,8 @@ func Go_Auth_clientTenantManager(p0 any) any { return SkyFfiFieldGet(p0, "Tenant
 
 func Go_Auth_clientSetTenantManager(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TenantManager") }
 
+func Go_Auth_createdAt(_ any) any { return pkg.CreatedAt }
+
 func Go_Auth_deleteUsersErrorInfoIndex(p0 any) any { return SkyFfiFieldGet(p0, "Index") }
 
 func Go_Auth_deleteUsersErrorInfoSetIndex(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Index") }
@@ -441,6 +447,8 @@ func Go_Auth_deleteUsersErrorInfoSetIndex(value any, recv any) any { return SkyF
 func Go_Auth_deleteUsersErrorInfoReason(p0 any) any { return SkyFfiFieldGet(p0, "Reason") }
 
 func Go_Auth_deleteUsersErrorInfoSetReason(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Reason") }
+
+func Go_Auth_newDeleteUsersErrorInfo(_ any) any { return new(pkg.DeleteUsersErrorInfo) }
 
 func Go_Auth_deleteUsersResultSuccessCount(p0 any) any { return SkyFfiFieldGet(p0, "SuccessCount") }
 
@@ -454,9 +462,19 @@ func Go_Auth_deleteUsersResultErrors(p0 any) any { return SkyFfiFieldGet(p0, "Er
 
 func Go_Auth_deleteUsersResultSetErrors(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Errors") }
 
+func Go_Auth_newDeleteUsersResult(_ any) any { return new(pkg.DeleteUsersResult) }
+
+func Go_Auth_desc(_ any) any { return pkg.Desc }
+
+func Go_Auth_disabled(_ any) any { return pkg.Disabled }
+
 func Go_Auth_emailIdentifierEmail(p0 any) any { return SkyFfiFieldGet(p0, "Email") }
 
 func Go_Auth_emailIdentifierSetEmail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Email") }
+
+func Go_Auth_newEmailIdentifier(_ any) any { return new(pkg.EmailIdentifier) }
+
+func Go_Auth_enabled(_ any) any { return pkg.Enabled }
 
 func Go_Auth_errorInfoIndex(p0 any) any { return SkyFfiFieldGet(p0, "Index") }
 
@@ -465,6 +483,8 @@ func Go_Auth_errorInfoSetIndex(value any, recv any) any { return SkyFfiFieldSet(
 func Go_Auth_errorInfoReason(p0 any) any { return SkyFfiFieldGet(p0, "Reason") }
 
 func Go_Auth_errorInfoSetReason(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Reason") }
+
+func Go_Auth_newErrorInfo(_ any) any { return new(pkg.ErrorInfo) }
 
 func Go_Auth_exportedUserRecordUserRecord(p0 any) any { return SkyFfiFieldGet(p0, "UserRecord") }
 
@@ -478,6 +498,8 @@ func Go_Auth_exportedUserRecordPasswordSalt(p0 any) any { return SkyFfiFieldGet(
 
 func Go_Auth_exportedUserRecordSetPasswordSalt(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PasswordSalt") }
 
+func Go_Auth_newExportedUserRecord(_ any) any { return new(pkg.ExportedUserRecord) }
+
 func Go_Auth_expressionEmail(p0 any) any { return SkyFfiFieldGet(p0, "Email") }
 
 func Go_Auth_expressionSetEmail(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Email") }
@@ -489,6 +511,8 @@ func Go_Auth_expressionSetPhoneNumber(value any, recv any) any { return SkyFfiFi
 func Go_Auth_expressionUID(p0 any) any { return SkyFfiFieldGet(p0, "UID") }
 
 func Go_Auth_expressionSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+
+func Go_Auth_newExpression(_ any) any { return new(pkg.Expression) }
 
 func Go_Auth_firebaseInfoSignInProvider(p0 any) any { return SkyFfiFieldGet(p0, "SignInProvider") }
 
@@ -502,6 +526,8 @@ func Go_Auth_firebaseInfoIdentities(p0 any) any { return SkyFfiFieldGet(p0, "Ide
 
 func Go_Auth_firebaseInfoSetIdentities(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Identities") }
 
+func Go_Auth_newFirebaseInfo(_ any) any { return new(pkg.FirebaseInfo) }
+
 func Go_Auth_getUsersResultUsers(p0 any) any { return SkyFfiFieldGet(p0, "Users") }
 
 func Go_Auth_getUsersResultSetUsers(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Users") }
@@ -509,6 +535,8 @@ func Go_Auth_getUsersResultSetUsers(value any, recv any) any { return SkyFfiFiel
 func Go_Auth_getUsersResultNotFound(p0 any) any { return SkyFfiFieldGet(p0, "NotFound") }
 
 func Go_Auth_getUsersResultSetNotFound(value any, recv any) any { return SkyFfiFieldSet(value, recv, "NotFound") }
+
+func Go_Auth_newGetUsersResult(_ any) any { return new(pkg.GetUsersResult) }
 
 // [pure] Go_Auth.isCertificateFetchFailed → pkg.IsCertificateFetchFailed
 func Go_Auth_isCertificateFetchFailed(p0 any) (out any) {
@@ -671,9 +699,13 @@ func Go_Auth_isUserNotFound(p0 any) (out any) {
 	return
 }
 
+func Go_Auth_lastLoginAt(_ any) any { return pkg.LastLoginAt }
+
 func Go_Auth_multiFactorConfigProviderConfigs(p0 any) any { return SkyFfiFieldGet(p0, "ProviderConfigs") }
 
 func Go_Auth_multiFactorConfigSetProviderConfigs(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderConfigs") }
+
+func Go_Auth_newMultiFactorConfig(_ any) any { return new(pkg.MultiFactorConfig) }
 
 func Go_Auth_multiFactorInfoUID(p0 any) any { return SkyFfiFieldGet(p0, "UID") }
 
@@ -703,9 +735,15 @@ func Go_Auth_multiFactorInfoTOTP(p0 any) any { return SkyFfiFieldGet(p0, "TOTP")
 
 func Go_Auth_multiFactorInfoSetTOTP(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TOTP") }
 
+func Go_Auth_newMultiFactorInfo(_ any) any { return new(pkg.MultiFactorInfo) }
+
 func Go_Auth_multiFactorSettingsEnrolledFactors(p0 any) any { return SkyFfiFieldGet(p0, "EnrolledFactors") }
 
 func Go_Auth_multiFactorSettingsSetEnrolledFactors(value any, recv any) any { return SkyFfiFieldSet(value, recv, "EnrolledFactors") }
+
+func Go_Auth_newMultiFactorSettings(_ any) any { return new(pkg.MultiFactorSettings) }
+
+func Go_Auth_name(_ any) any { return pkg.Name }
 
 // [fallible] Go_Auth.newClient → reflect.ValueOf(pkg.NewClient) (via SkyFfiReflectCall)
 func Go_Auth_newClient(p0 any, p1 any) (out any) {
@@ -746,6 +784,8 @@ func Go_Auth_oIDCProviderConfigIDTokenResponseType(p0 any) any { return SkyFfiFi
 
 func Go_Auth_oIDCProviderConfigSetIDTokenResponseType(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IDTokenResponseType") }
 
+func Go_Auth_newOIDCProviderConfig(_ any) any { return new(pkg.OIDCProviderConfig) }
+
 // [pure] Go_Auth.oIDCProviderConfigIteratorPageInfo → pkg.OIDCProviderConfigIteratorPageInfo
 func Go_Auth_oIDCProviderConfigIteratorPageInfo(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -762,6 +802,8 @@ func Go_Auth_oIDCProviderConfigIteratorNext(p0 any) (out any) {
 
 	return
 }
+
+func Go_Auth_newOIDCProviderConfigIterator(_ any) any { return new(pkg.OIDCProviderConfigIterator) }
 
 // [pure] Go_Auth.oIDCProviderConfigToCreateID → pkg.OIDCProviderConfigToCreateID
 func Go_Auth_oIDCProviderConfigToCreateID(p0 any, p1 any) (out any) {
@@ -819,6 +861,8 @@ func Go_Auth_oIDCProviderConfigToCreateCodeResponseType(p0 any, p1 any) (out any
 	return
 }
 
+func Go_Auth_newOIDCProviderConfigToCreate(_ any) any { return new(pkg.OIDCProviderConfigToCreate) }
+
 // [pure] Go_Auth.oIDCProviderConfigToUpdateClientID → pkg.OIDCProviderConfigToUpdateClientID
 func Go_Auth_oIDCProviderConfigToUpdateClientID(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -868,17 +912,25 @@ func Go_Auth_oIDCProviderConfigToUpdateCodeResponseType(p0 any, p1 any) (out any
 	return
 }
 
+func Go_Auth_newOIDCProviderConfigToUpdate(_ any) any { return new(pkg.OIDCProviderConfigToUpdate) }
+
 func Go_Auth_phoneIdentifierPhoneNumber(p0 any) any { return SkyFfiFieldGet(p0, "PhoneNumber") }
 
 func Go_Auth_phoneIdentifierSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
+
+func Go_Auth_newPhoneIdentifier(_ any) any { return new(pkg.PhoneIdentifier) }
 
 func Go_Auth_phoneMultiFactorInfoPhoneNumber(p0 any) any { return SkyFfiFieldGet(p0, "PhoneNumber") }
 
 func Go_Auth_phoneMultiFactorInfoSetPhoneNumber(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhoneNumber") }
 
+func Go_Auth_newPhoneMultiFactorInfo(_ any) any { return new(pkg.PhoneMultiFactorInfo) }
+
 func Go_Auth_projectConfigMultiFactorConfig(p0 any) any { return SkyFfiFieldGet(p0, "MultiFactorConfig") }
 
 func Go_Auth_projectConfigSetMultiFactorConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiFactorConfig") }
+
+func Go_Auth_newProjectConfig(_ any) any { return new(pkg.ProjectConfig) }
 
 // [pure] Go_Auth.projectConfigToUpdateMultiFactorConfig → pkg.ProjectConfigToUpdateMultiFactorConfig
 func Go_Auth_projectConfigToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
@@ -886,6 +938,8 @@ func Go_Auth_projectConfigToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.ProjectConfigToUpdate).MultiFactorConfig(p1.(pkg.MultiFactorConfig)))
 	return
 }
+
+func Go_Auth_newProjectConfigToUpdate(_ any) any { return new(pkg.ProjectConfigToUpdate) }
 
 func Go_Auth_providerConfigState(p0 any) any { return SkyFfiFieldGet(p0, "State") }
 
@@ -895,6 +949,8 @@ func Go_Auth_providerConfigTOTPProviderConfig(p0 any) any { return SkyFfiFieldGe
 
 func Go_Auth_providerConfigSetTOTPProviderConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "TOTPProviderConfig") }
 
+func Go_Auth_newProviderConfig(_ any) any { return new(pkg.ProviderConfig) }
+
 func Go_Auth_providerIdentifierProviderID(p0 any) any { return SkyFfiFieldGet(p0, "ProviderID") }
 
 func Go_Auth_providerIdentifierSetProviderID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderID") }
@@ -903,6 +959,8 @@ func Go_Auth_providerIdentifierProviderUID(p0 any) any { return SkyFfiFieldGet(p
 
 func Go_Auth_providerIdentifierSetProviderUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ProviderUID") }
 
+func Go_Auth_newProviderIdentifier(_ any) any { return new(pkg.ProviderIdentifier) }
+
 func Go_Auth_queryUserInfoResponseUsers(p0 any) any { return SkyFfiFieldGet(p0, "Users") }
 
 func Go_Auth_queryUserInfoResponseSetUsers(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Users") }
@@ -910,6 +968,8 @@ func Go_Auth_queryUserInfoResponseSetUsers(value any, recv any) any { return Sky
 func Go_Auth_queryUserInfoResponseCount(p0 any) any { return SkyFfiFieldGet(p0, "Count") }
 
 func Go_Auth_queryUserInfoResponseSetCount(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Count") }
+
+func Go_Auth_newQueryUserInfoResponse(_ any) any { return new(pkg.QueryUserInfoResponse) }
 
 func Go_Auth_queryUsersRequestReturnUserInfo(p0 any) any { return SkyFfiFieldGet(p0, "ReturnUserInfo") }
 
@@ -938,6 +998,8 @@ func Go_Auth_queryUsersRequestSetTenantID(value any, recv any) any { return SkyF
 func Go_Auth_queryUsersRequestExpression(p0 any) any { return SkyFfiFieldGet(p0, "Expression") }
 
 func Go_Auth_queryUsersRequestSetExpression(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Expression") }
+
+func Go_Auth_newQueryUsersRequest(_ any) any { return new(pkg.QueryUsersRequest) }
 
 func Go_Auth_sAMLProviderConfigID(p0 any) any { return SkyFfiFieldGet(p0, "ID") }
 
@@ -975,6 +1037,8 @@ func Go_Auth_sAMLProviderConfigCallbackURL(p0 any) any { return SkyFfiFieldGet(p
 
 func Go_Auth_sAMLProviderConfigSetCallbackURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CallbackURL") }
 
+func Go_Auth_newSAMLProviderConfig(_ any) any { return new(pkg.SAMLProviderConfig) }
+
 // [pure] Go_Auth.sAMLProviderConfigIteratorPageInfo → pkg.SAMLProviderConfigIteratorPageInfo
 func Go_Auth_sAMLProviderConfigIteratorPageInfo(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -991,6 +1055,8 @@ func Go_Auth_sAMLProviderConfigIteratorNext(p0 any) (out any) {
 
 	return
 }
+
+func Go_Auth_newSAMLProviderConfigIterator(_ any) any { return new(pkg.SAMLProviderConfigIterator) }
 
 // [pure] Go_Auth.sAMLProviderConfigToCreateID → pkg.SAMLProviderConfigToCreateID
 func Go_Auth_sAMLProviderConfigToCreateID(p0 any, p1 any) (out any) {
@@ -1055,6 +1121,8 @@ func Go_Auth_sAMLProviderConfigToCreateEnabled(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Auth_newSAMLProviderConfigToCreate(_ any) any { return new(pkg.SAMLProviderConfigToCreate) }
+
 // [pure] Go_Auth.sAMLProviderConfigToUpdateIDPEntityID → pkg.SAMLProviderConfigToUpdateIDPEntityID
 func Go_Auth_sAMLProviderConfigToUpdateIDPEntityID(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1111,9 +1179,17 @@ func Go_Auth_sAMLProviderConfigToUpdateEnabled(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Auth_newSAMLProviderConfigToUpdate(_ any) any { return new(pkg.SAMLProviderConfigToUpdate) }
+
+func Go_Auth_newTOTPInfo(_ any) any { return new(pkg.TOTPInfo) }
+
+func Go_Auth_newTOTPMultiFactorInfo(_ any) any { return new(pkg.TOTPMultiFactorInfo) }
+
 func Go_Auth_tOTPProviderConfigAdjacentIntervals(p0 any) any { return SkyFfiFieldGet(p0, "AdjacentIntervals") }
 
 func Go_Auth_tOTPProviderConfigSetAdjacentIntervals(value any, recv any) any { return SkyFfiFieldSet(value, recv, "AdjacentIntervals") }
+
+func Go_Auth_newTOTPProviderConfig(_ any) any { return new(pkg.TOTPProviderConfig) }
 
 func Go_Auth_tenantID(p0 any) any { return SkyFfiFieldGet(p0, "ID") }
 
@@ -1138,6 +1214,8 @@ func Go_Auth_tenantSetEnableAnonymousUsers(value any, recv any) any { return Sky
 func Go_Auth_tenantMultiFactorConfig(p0 any) any { return SkyFfiFieldGet(p0, "MultiFactorConfig") }
 
 func Go_Auth_tenantSetMultiFactorConfig(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiFactorConfig") }
+
+func Go_Auth_newTenant(_ any) any { return new(pkg.Tenant) }
 
 // [pure] Go_Auth.tenantClientTenantID → pkg.TenantClientTenantID
 func Go_Auth_tenantClientTenantID(p0 any) (out any) {
@@ -1497,6 +1575,8 @@ func Go_Auth_tenantClientVerifyIDTokenAndCheckRevoked(p0 any, p1 any, p2 any) (o
 	return
 }
 
+func Go_Auth_newTenantClient(_ any) any { return new(pkg.TenantClient) }
+
 // [pure] Go_Auth.tenantIteratorPageInfo → pkg.TenantIteratorPageInfo
 func Go_Auth_tenantIteratorPageInfo(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1513,6 +1593,8 @@ func Go_Auth_tenantIteratorNext(p0 any) (out any) {
 
 	return
 }
+
+func Go_Auth_newTenantIterator(_ any) any { return new(pkg.TenantIterator) }
 
 // [fallible] Go_Auth.tenantManagerAuthForTenant → pkg.TenantManagerAuthForTenant
 func Go_Auth_tenantManagerAuthForTenant(p0 any, p1 any) (out any) {
@@ -1571,6 +1653,8 @@ func Go_Auth_tenantManagerTenants(p0 any, p1 any, p2 any) (out any) {
 	return
 }
 
+func Go_Auth_newTenantManager(_ any) any { return new(pkg.TenantManager) }
+
 // [pure] Go_Auth.tenantToCreateDisplayName → pkg.TenantToCreateDisplayName
 func Go_Auth_tenantToCreateDisplayName(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1606,6 +1690,8 @@ func Go_Auth_tenantToCreateMultiFactorConfig(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Auth_newTenantToCreate(_ any) any { return new(pkg.TenantToCreate) }
+
 // [pure] Go_Auth.tenantToUpdateDisplayName → pkg.TenantToUpdateDisplayName
 func Go_Auth_tenantToUpdateDisplayName(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1640,6 +1726,8 @@ func Go_Auth_tenantToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.TenantToUpdate).MultiFactorConfig(p1.(pkg.MultiFactorConfig)))
 	return
 }
+
+func Go_Auth_newTenantToUpdate(_ any) any { return new(pkg.TenantToUpdate) }
 
 func Go_Auth_tokenAuthTime(p0 any) any { return SkyFfiFieldGet(p0, "AuthTime") }
 
@@ -1677,9 +1765,17 @@ func Go_Auth_tokenClaims(p0 any) any { return SkyFfiFieldGet(p0, "Claims") }
 
 func Go_Auth_tokenSetClaims(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Claims") }
 
+func Go_Auth_newToken(_ any) any { return new(pkg.Token) }
+
+func Go_Auth_uID(_ any) any { return pkg.UID }
+
 func Go_Auth_uIDIdentifierUID(p0 any) any { return SkyFfiFieldGet(p0, "UID") }
 
 func Go_Auth_uIDIdentifierSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
+
+func Go_Auth_newUIDIdentifier(_ any) any { return new(pkg.UIDIdentifier) }
+
+func Go_Auth_userEmail(_ any) any { return pkg.UserEmail }
 
 // [fallible] Go_Auth.userImportHashConfig → UserImportHash.Config (receiver-reflect)
 func Go_Auth_userImportHashConfig(p0 any) (out any) {
@@ -1706,6 +1802,8 @@ func Go_Auth_userImportResultErrors(p0 any) any { return SkyFfiFieldGet(p0, "Err
 
 func Go_Auth_userImportResultSetErrors(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Errors") }
 
+func Go_Auth_newUserImportResult(_ any) any { return new(pkg.UserImportResult) }
+
 func Go_Auth_userInfoDisplayName(p0 any) any { return SkyFfiFieldGet(p0, "DisplayName") }
 
 func Go_Auth_userInfoSetDisplayName(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DisplayName") }
@@ -1730,6 +1828,8 @@ func Go_Auth_userInfoUID(p0 any) any { return SkyFfiFieldGet(p0, "UID") }
 
 func Go_Auth_userInfoSetUID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UID") }
 
+func Go_Auth_newUserInfo(_ any) any { return new(pkg.UserInfo) }
+
 // [pure] Go_Auth.userIteratorPageInfo → pkg.UserIteratorPageInfo
 func Go_Auth_userIteratorPageInfo(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1747,6 +1847,8 @@ func Go_Auth_userIteratorNext(p0 any) (out any) {
 	return
 }
 
+func Go_Auth_newUserIterator(_ any) any { return new(pkg.UserIterator) }
+
 func Go_Auth_userMetadataCreationTimestamp(p0 any) any { return SkyFfiFieldGet(p0, "CreationTimestamp") }
 
 func Go_Auth_userMetadataSetCreationTimestamp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "CreationTimestamp") }
@@ -1758,6 +1860,8 @@ func Go_Auth_userMetadataSetLastLogInTimestamp(value any, recv any) any { return
 func Go_Auth_userMetadataLastRefreshTimestamp(p0 any) any { return SkyFfiFieldGet(p0, "LastRefreshTimestamp") }
 
 func Go_Auth_userMetadataSetLastRefreshTimestamp(value any, recv any) any { return SkyFfiFieldSet(value, recv, "LastRefreshTimestamp") }
+
+func Go_Auth_newUserMetadata(_ any) any { return new(pkg.UserMetadata) }
 
 func Go_Auth_userProviderUID(p0 any) any { return SkyFfiFieldGet(p0, "UID") }
 
@@ -1778,6 +1882,8 @@ func Go_Auth_userProviderSetDisplayName(value any, recv any) any { return SkyFfi
 func Go_Auth_userProviderPhotoURL(p0 any) any { return SkyFfiFieldGet(p0, "PhotoURL") }
 
 func Go_Auth_userProviderSetPhotoURL(value any, recv any) any { return SkyFfiFieldSet(value, recv, "PhotoURL") }
+
+func Go_Auth_newUserProvider(_ any) any { return new(pkg.UserProvider) }
 
 func Go_Auth_userRecordUserInfo(p0 any) any { return SkyFfiFieldGet(p0, "UserInfo") }
 
@@ -1814,6 +1920,8 @@ func Go_Auth_userRecordSetTenantID(value any, recv any) any { return SkyFfiField
 func Go_Auth_userRecordMultiFactor(p0 any) any { return SkyFfiFieldGet(p0, "MultiFactor") }
 
 func Go_Auth_userRecordSetMultiFactor(value any, recv any) any { return SkyFfiFieldSet(value, recv, "MultiFactor") }
+
+func Go_Auth_newUserRecord(_ any) any { return new(pkg.UserRecord) }
 
 // [pure] Go_Auth.userToCreateDisabled → pkg.UserToCreateDisabled
 func Go_Auth_userToCreateDisabled(p0 any, p1 any) (out any) {
@@ -1877,6 +1985,8 @@ func Go_Auth_userToCreateMFASettings(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToCreate).MFASettings(p1.(pkg.MultiFactorSettings)))
 	return
 }
+
+func Go_Auth_newUserToCreate(_ any) any { return new(pkg.UserToCreate) }
 
 // [pure] Go_Auth.userToImportUID → pkg.UserToImportUID
 func Go_Auth_userToImportUID(p0 any, p1 any) (out any) {
@@ -1962,6 +2072,8 @@ func Go_Auth_userToImportProviderData(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Auth_newUserToImport(_ any) any { return new(pkg.UserToImport) }
+
 // [pure] Go_Auth.userToUpdateCustomClaims → pkg.UserToUpdateCustomClaims
 func Go_Auth_userToUpdateCustomClaims(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2038,6 +2150,8 @@ func Go_Auth_userToUpdateProvidersToDelete(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.UserToUpdate).ProvidersToDelete(p1.([]string)))
 	return
 }
+
+func Go_Auth_newUserToUpdate(_ any) any { return new(pkg.UserToUpdate) }
 
 // [pure] Go_Auth.withHash → pkg.WithHash
 func Go_Auth_withHash(p0 any) (out any) {

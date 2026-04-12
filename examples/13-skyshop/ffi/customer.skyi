@@ -28,6 +28,7 @@ package customer
 -- [pure] ClientSetB : Backend -> Client -> Client   -- runtime wrap: Task String
 -- [pure] ClientKey : Client -> String   -- runtime wrap: Task String
 -- [pure] ClientSetKey : String -> Client -> Client   -- runtime wrap: Task String
+-- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task String
 -- [fallible] CreateFundingInstructions : String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task String
 -- [fallible] Del : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
 -- [fallible] DeleteDiscount : String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task String
@@ -41,6 +42,7 @@ package customer
 -- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
 -- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task String
 -- [pure] IterSetIter : Iter -> Iter -> Iter   -- runtime wrap: Task String
+-- [pure] NewIter : struct{} -> Iter   -- runtime wrap: Task String
 -- [pure] List : CustomerListParams -> Iter   -- runtime wrap: Task String
 -- [pure] ListPaymentMethods : CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
 -- [fallible] New : CustomerParams -> (Customer, String)   -- runtime wrap: Task String
@@ -53,6 +55,7 @@ package customer
 -- [pure] PaymentMethodIterNext : PaymentMethodIter -> Bool   -- runtime wrap: Task String
 -- [pure] PaymentMethodIterIter : PaymentMethodIter -> Iter   -- runtime wrap: Task String
 -- [pure] PaymentMethodIterSetIter : Iter -> PaymentMethodIter -> PaymentMethodIter   -- runtime wrap: Task String
+-- [pure] NewPaymentMethodIter : struct{} -> PaymentMethodIter   -- runtime wrap: Task String
 -- [fallible] RetrievePaymentMethod : String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task String
 -- [pure] Search : CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
 -- [pure] SearchIterCustomer : SearchIter -> Customer   -- runtime wrap: Task String
@@ -64,4 +67,5 @@ package customer
 -- [pure] SearchIterSearchResult : SearchIter -> SearchContainer   -- runtime wrap: Task String
 -- [pure] SearchIterSearchIter : SearchIter -> SearchIter   -- runtime wrap: Task String
 -- [pure] SearchIterSetSearchIter : SearchIter -> SearchIter -> SearchIter   -- runtime wrap: Task String
+-- [pure] NewSearchIter : struct{} -> SearchIter   -- runtime wrap: Task String
 -- [fallible] Update : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String

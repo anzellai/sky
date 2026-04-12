@@ -203,6 +203,7 @@ builtinVars =
     , ("snd",         VarKernel "Basics" "snd")
     , ("errorToString", VarKernel "Basics" "errorToString")
     , ("println",     VarKernel "Log" "println")
+    , ("js",          VarKernel "Basics" "js")
     ]
 
 
@@ -325,6 +326,8 @@ staticKernelModules = Map.fromList
     , ("Std.Log.Slog",           "Slog")
     , ("Log.Slog",               "Slog")
     , ("Slog",                   "Slog")
+    , ("Context",                "Context")
+    , ("Fmt",                    "Fmt")
     , ("Time",                   "Time")
     , ("Crypto",                 "Crypto")
     , ("Encoding",               "Encoding")

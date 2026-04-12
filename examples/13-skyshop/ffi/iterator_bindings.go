@@ -11,7 +11,16 @@ package rt
 import (
 	pkg "google.golang.org/api/iterator"
 	"fmt"
+	"reflect"
 )
+
+func Go_Iterator_done(_ any) any { return pkg.Done }
+
+func Go_Iterator_setDone(value any) any { reflect.ValueOf(&pkg.Done).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.Done))); return struct{}{} }
+
+func Go_Iterator_newPageInfo(_ any) any { return pkg.NewPageInfo }
+
+func Go_Iterator_setNewPageInfo(value any) any { reflect.ValueOf(&pkg.NewPageInfo).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NewPageInfo))); return struct{}{} }
 
 // [pure] Go_Iterator.newPager → pkg.NewPager
 func Go_Iterator_newPager(p0 any, p1 any, p2 any) (out any) {

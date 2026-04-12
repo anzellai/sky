@@ -19,8 +19,12 @@
 --   http "net/http"
 
 package option
+-- [pure] AuthorizedUser : struct{} -> CredType   -- runtime wrap: Task String
 -- [pure] ClientOptionApply : ClientOption -> DialSettings -> ()   -- runtime wrap: Task String
+-- [pure] ExternalAccount : struct{} -> CredType   -- runtime wrap: Task String
 -- [pure] ImpersonateCredentials : String -> []string -> ClientOption   -- runtime wrap: Task String
+-- [pure] ImpersonatedServiceAccount : struct{} -> CredType   -- runtime wrap: Task String
+-- [pure] ServiceAccount : struct{} -> CredType   -- runtime wrap: Task String
 -- [pure] WithAPIKey : String -> ClientOption   -- runtime wrap: Task String
 -- [pure] WithAudiences : []string -> ClientOption   -- runtime wrap: Task String
 -- [pure] WithAuthCredentials : Credentials -> ClientOption   -- runtime wrap: Task String

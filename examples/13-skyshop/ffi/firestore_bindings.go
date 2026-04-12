@@ -16,6 +16,7 @@ import (
 	option "google.golang.org/api/option"
 	_ "google.golang.org/protobuf/types/known/anypb"  // aliased anypb; unused in emitted wrappers
 	time "time"
+	"reflect"
 )
 
 // [pure] Go_Firestore.abs → pkg.Abs
@@ -115,6 +116,8 @@ func Go_Firestore_aggregationQueryPipeline(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_newAggregationQuery(_ any) any { return new(pkg.AggregationQuery) }
+
 func Go_Firestore_aggregationResponseResult(p0 any) any { return SkyFfiFieldGet(p0, "Result") }
 
 func Go_Firestore_aggregationResponseSetResult(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Result") }
@@ -123,12 +126,16 @@ func Go_Firestore_aggregationResponseExplainMetrics(p0 any) any { return SkyFfiF
 
 func Go_Firestore_aggregationResponseSetExplainMetrics(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ExplainMetrics") }
 
+func Go_Firestore_newAggregationResponse(_ any) any { return new(pkg.AggregationResponse) }
+
 // [pure] Go_Firestore.aliasedAggregateAs → pkg.AliasedAggregateAs
 func Go_Firestore_aliasedAggregateAs(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.AliasedAggregate).As(fmt.Sprintf("%v", p1)))
 	return
 }
+
+func Go_Firestore_newAliasedAggregate(_ any) any { return new(pkg.AliasedAggregate) }
 
 // [pure] Go_Firestore.aliasedExpressionAbs → pkg.AliasedExpressionAbs
 func Go_Firestore_aliasedExpressionAbs(p0 any) (out any) {
@@ -711,6 +718,8 @@ func Go_Firestore_aliasedExpressionVectorLength(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_newAliasedExpression(_ any) any { return new(pkg.AliasedExpression) }
+
 // [pure] Go_Firestore.and → pkg.And
 func Go_Firestore_and(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -721,6 +730,8 @@ func Go_Firestore_and(p0 any, p1 any) (out any) {
 func Go_Firestore_andFilterFilters(p0 any) any { return SkyFfiFieldGet(p0, "Filters") }
 
 func Go_Firestore_andFilterSetFilters(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Filters") }
+
+func Go_Firestore_newAndFilter(_ any) any { return new(pkg.AndFilter) }
 
 // [pure] Go_Firestore.array → pkg.Array
 func Go_Firestore_array(p0 any) (out any) {
@@ -819,6 +830,8 @@ func Go_Firestore_arrayUnion(p0 any) (out any) {
 	out = Ok[any, any](pkg.ArrayUnion(p0.([]interface{})...))
 	return
 }
+
+func Go_Firestore_asc(_ any) any { return pkg.Asc }
 
 // [pure] Go_Firestore.ascending → pkg.Ascending
 func Go_Firestore_ascending(p0 any) (out any) {
@@ -1478,6 +1491,8 @@ func Go_Firestore_bulkWriterUpdate(p0 any, p1 any, p2 any, p3 any) (out any) {
 	return
 }
 
+func Go_Firestore_newBulkWriter(_ any) any { return new(pkg.BulkWriter) }
+
 // [fallible] Go_Firestore.bulkWriterJobResults → pkg.BulkWriterJobResults
 func Go_Firestore_bulkWriterJobResults(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1487,6 +1502,8 @@ func Go_Firestore_bulkWriterJobResults(p0 any) (out any) {
 
 	return
 }
+
+func Go_Firestore_newBulkWriterJob(_ any) any { return new(pkg.BulkWriterJob) }
 
 // [pure] Go_Firestore.byteLength → pkg.ByteLength
 func Go_Firestore_byteLength(p0 any) (out any) {
@@ -1794,6 +1811,8 @@ func Go_Firestore_collectionGroupRefQuery(p0 any) any { return SkyFfiFieldGet(p0
 
 func Go_Firestore_collectionGroupRefSetQuery(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Query") }
 
+func Go_Firestore_newCollectionGroupRef(_ any) any { return new(pkg.CollectionGroupRef) }
+
 // [pure] Go_Firestore.collectionHintsWithForceIndex → pkg.CollectionHintsWithForceIndex
 func Go_Firestore_collectionHintsWithForceIndex(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1834,6 +1853,8 @@ func Go_Firestore_collectionIteratorGetAll(p0 any) (out any) {
 
 	return
 }
+
+func Go_Firestore_newCollectionIterator(_ any) any { return new(pkg.CollectionIterator) }
 
 // [pure] Go_Firestore.collectionRefDoc → pkg.CollectionRefDoc
 func Go_Firestore_collectionRefDoc(p0 any, p1 any) (out any) {
@@ -2056,12 +2077,16 @@ func Go_Firestore_collectionRefQuery(p0 any) any { return SkyFfiFieldGet(p0, "Qu
 
 func Go_Firestore_collectionRefSetQuery(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Query") }
 
+func Go_Firestore_newCollectionRef(_ any) any { return new(pkg.CollectionRef) }
+
 // [pure] Go_Firestore.commitResponseCommitTime → pkg.CommitResponseCommitTime
 func Go_Firestore_commitResponseCommitTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CommitResponse).CommitTime())
 	return
 }
+
+func Go_Firestore_newCommitResponse(_ any) any { return new(pkg.CommitResponse) }
 
 // [pure] Go_Firestore.concat → pkg.Concat
 func Go_Firestore_concat(p0 any, p1 any) (out any) {
@@ -2150,6 +2175,14 @@ func Go_Firestore_currentTimestamp(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_defaultDatabaseID(_ any) any { return pkg.DefaultDatabaseID }
+
+func Go_Firestore_defaultTransactionMaxAttempts(_ any) any { return pkg.DefaultTransactionMaxAttempts }
+
+func Go_Firestore_delete(_ any) any { return pkg.Delete }
+
+func Go_Firestore_desc(_ any) any { return pkg.Desc }
+
 // [pure] Go_Firestore.descending → pkg.Descending
 func Go_Firestore_descending(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2157,12 +2190,22 @@ func Go_Firestore_descending(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_detectProjectID(_ any) any { return pkg.DetectProjectID }
+
+func Go_Firestore_distanceMeasureCosine(_ any) any { return pkg.DistanceMeasureCosine }
+
+func Go_Firestore_distanceMeasureDotProduct(_ any) any { return pkg.DistanceMeasureDotProduct }
+
+func Go_Firestore_distanceMeasureEuclidean(_ any) any { return pkg.DistanceMeasureEuclidean }
+
 // [pure] Go_Firestore.divide → pkg.Divide
 func Go_Firestore_divide(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.Divide(p0.(any), p1.(any)))
 	return
 }
+
+func Go_Firestore_documentAdded(_ any) any { return pkg.DocumentAdded }
 
 func Go_Firestore_documentChangeKind(p0 any) any { return SkyFfiFieldGet(p0, "Kind") }
 
@@ -2184,12 +2227,16 @@ func Go_Firestore_documentChangeNewIndex(p0 any) any { return SkyFfiFieldGet(p0,
 
 func Go_Firestore_documentChangeSetNewIndex(value any, recv any) any { return SkyFfiFieldSet(value, recv, "NewIndex") }
 
+func Go_Firestore_newDocumentChange(_ any) any { return new(pkg.DocumentChange) }
+
 // [pure] Go_Firestore.documentChangeKindString → pkg.DocumentChangeKindString
 func Go_Firestore_documentChangeKindString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.DocumentChangeKind).String())
 	return
 }
+
+func Go_Firestore_documentID(_ any) any { return pkg.DocumentID }
 
 // [fallible] Go_Firestore.documentIteratorExplainMetrics → pkg.DocumentIteratorExplainMetrics
 func Go_Firestore_documentIteratorExplainMetrics(p0 any) (out any) {
@@ -2228,6 +2275,10 @@ func Go_Firestore_documentIteratorGetAll(p0 any) (out any) {
 
 	return
 }
+
+func Go_Firestore_newDocumentIterator(_ any) any { return new(pkg.DocumentIterator) }
+
+func Go_Firestore_documentModified(_ any) any { return pkg.DocumentModified }
 
 // [pure] Go_Firestore.documentRefCollection → pkg.DocumentRefCollection
 func Go_Firestore_documentRefCollection(p0 any, p1 any) (out any) {
@@ -2319,6 +2370,8 @@ func Go_Firestore_documentRefID(p0 any) any { return SkyFfiFieldGet(p0, "ID") }
 
 func Go_Firestore_documentRefSetID(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ID") }
 
+func Go_Firestore_newDocumentRef(_ any) any { return new(pkg.DocumentRef) }
+
 // [pure] Go_Firestore.documentRefIteratorPageInfo → pkg.DocumentRefIteratorPageInfo
 func Go_Firestore_documentRefIteratorPageInfo(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2345,6 +2398,10 @@ func Go_Firestore_documentRefIteratorGetAll(p0 any) (out any) {
 
 	return
 }
+
+func Go_Firestore_newDocumentRefIterator(_ any) any { return new(pkg.DocumentRefIterator) }
+
+func Go_Firestore_documentRemoved(_ any) any { return pkg.DocumentRemoved }
 
 // [pure] Go_Firestore.documentSnapshotExists → pkg.DocumentSnapshotExists
 func Go_Firestore_documentSnapshotExists(p0 any) (out any) {
@@ -2406,6 +2463,8 @@ func Go_Firestore_documentSnapshotReadTime(p0 any) any { return SkyFfiFieldGet(p
 
 func Go_Firestore_documentSnapshotSetReadTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadTime") }
 
+func Go_Firestore_newDocumentSnapshot(_ any) any { return new(pkg.DocumentSnapshot) }
+
 // [fallible] Go_Firestore.documentSnapshotIteratorNext → pkg.DocumentSnapshotIteratorNext
 func Go_Firestore_documentSnapshotIteratorNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2423,6 +2482,8 @@ func Go_Firestore_documentSnapshotIteratorStop(p0 any) (out any) {
 	out = Ok[any, any](struct{}{})
 	return
 }
+
+func Go_Firestore_newDocumentSnapshotIterator(_ any) any { return new(pkg.DocumentSnapshotIterator) }
 
 // [pure] Go_Firestore.dotProduct → pkg.DotProduct
 func Go_Firestore_dotProduct(p0 any, p1 any) (out any) {
@@ -2475,6 +2536,12 @@ func Go_Firestore_executionStatsDebugStats(p0 any) any { return SkyFfiFieldGet(p
 
 func Go_Firestore_executionStatsSetDebugStats(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DebugStats") }
 
+func Go_Firestore_newExecutionStats(_ any) any { return new(pkg.ExecutionStats) }
+
+func Go_Firestore_exists(_ any) any { return pkg.Exists }
+
+func Go_Firestore_setExists(value any) any { reflect.ValueOf(&pkg.Exists).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.Exists))); return struct{}{} }
+
 // [pure] Go_Firestore.exp → pkg.Exp
 func Go_Firestore_exp(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2490,9 +2557,15 @@ func Go_Firestore_explainMetricsExecutionStats(p0 any) any { return SkyFfiFieldG
 
 func Go_Firestore_explainMetricsSetExecutionStats(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ExecutionStats") }
 
+func Go_Firestore_newExplainMetrics(_ any) any { return new(pkg.ExplainMetrics) }
+
+func Go_Firestore_explainModeAnalyze(_ any) any { return pkg.ExplainModeAnalyze }
+
 func Go_Firestore_explainOptionsAnalyze(p0 any) any { return SkyFfiFieldGet(p0, "Analyze") }
 
 func Go_Firestore_explainOptionsSetAnalyze(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Analyze") }
+
+func Go_Firestore_newExplainOptions(_ any) any { return new(pkg.ExplainOptions) }
 
 // [fallible] Go_Firestore.explainStatsRawData → pkg.ExplainStatsRawData
 func Go_Firestore_explainStatsRawData(p0 any) (out any) {
@@ -2513,6 +2586,8 @@ func Go_Firestore_explainStatsText(p0 any) (out any) {
 
 	return
 }
+
+func Go_Firestore_newExplainStats(_ any) any { return new(pkg.ExplainStats) }
 
 // [pure] Go_Firestore.expressionAbs → pkg.ExpressionAbs
 func Go_Firestore_expressionAbs(p0 any) (out any) {
@@ -3092,6 +3167,8 @@ func Go_Firestore_fieldNotFoundErrorPath(p0 any) any { return SkyFfiFieldGet(p0,
 
 func Go_Firestore_fieldNotFoundErrorSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
 
+func Go_Firestore_newFieldNotFoundError(_ any) any { return new(pkg.FieldNotFoundError) }
+
 // [pure] Go_Firestore.fieldOf → pkg.FieldOf — generic function (stub; instantiate manually if needed)
 func Go_Firestore_fieldOf(p0 any) (out any) {
 	_ = p0
@@ -3127,6 +3204,8 @@ func Go_Firestore_findNearestOptionsSetDistanceThreshold(value any, recv any) an
 func Go_Firestore_findNearestOptionsDistanceResultField(p0 any) any { return SkyFfiFieldGet(p0, "DistanceResultField") }
 
 func Go_Firestore_findNearestOptionsSetDistanceResultField(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DistanceResultField") }
+
+func Go_Firestore_newFindNearestOptions(_ any) any { return new(pkg.FindNearestOptions) }
 
 // [pure] Go_Firestore.floor → pkg.Floor
 func Go_Firestore_floor(p0 any) (out any) {
@@ -3828,6 +3907,10 @@ func Go_Firestore_log10(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_logWatchStreams(_ any) any { return pkg.LogWatchStreams }
+
+func Go_Firestore_setLogWatchStreams(value any) any { reflect.ValueOf(&pkg.LogWatchStreams).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.LogWatchStreams))); return struct{}{} }
+
 // [pure] Go_Firestore.logicalMaximum → pkg.LogicalMaximum
 func Go_Firestore_logicalMaximum(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -3890,6 +3973,10 @@ func Go_Firestore_merge(p0 any) (out any) {
 	out = Ok[any, any](pkg.Merge(p0.([]pkg.FieldPath)...))
 	return
 }
+
+func Go_Firestore_mergeAll(_ any) any { return pkg.MergeAll }
+
+func Go_Firestore_setMergeAll(value any) any { reflect.ValueOf(&pkg.MergeAll).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.MergeAll))); return struct{}{} }
 
 // [pure] Go_Firestore.minimum → pkg.Minimum
 func Go_Firestore_minimum(p0 any) (out any) {
@@ -3988,6 +4075,8 @@ func Go_Firestore_orFilterFilters(p0 any) any { return SkyFfiFieldGet(p0, "Filte
 
 func Go_Firestore_orFilterSetFilters(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Filters") }
 
+func Go_Firestore_newOrFilter(_ any) any { return new(pkg.OrFilter) }
+
 func Go_Firestore_orderingExpr(p0 any) any { return SkyFfiFieldGet(p0, "Expr") }
 
 func Go_Firestore_orderingSetExpr(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Expr") }
@@ -3995,6 +4084,12 @@ func Go_Firestore_orderingSetExpr(value any, recv any) any { return SkyFfiFieldS
 func Go_Firestore_orderingDirection(p0 any) any { return SkyFfiFieldGet(p0, "Direction") }
 
 func Go_Firestore_orderingSetDirection(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Direction") }
+
+func Go_Firestore_newOrdering(_ any) any { return new(pkg.Ordering) }
+
+func Go_Firestore_orderingAsc(_ any) any { return pkg.OrderingAsc }
+
+func Go_Firestore_orderingDesc(_ any) any { return pkg.OrderingDesc }
 
 // [pure] Go_Firestore.pipelineExecute → pkg.PipelineExecute
 func Go_Firestore_pipelineExecute(p0 any, p1 any) (out any) {
@@ -4136,6 +4231,14 @@ func Go_Firestore_pipelineRawStage(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Firestore_newPipeline(_ any) any { return new(pkg.Pipeline) }
+
+func Go_Firestore_pipelineDistanceMeasureCosine(_ any) any { return pkg.PipelineDistanceMeasureCosine }
+
+func Go_Firestore_pipelineDistanceMeasureDotProduct(_ any) any { return pkg.PipelineDistanceMeasureDotProduct }
+
+func Go_Firestore_pipelineDistanceMeasureEuclidean(_ any) any { return pkg.PipelineDistanceMeasureEuclidean }
+
 func Go_Firestore_pipelineFindNearestOptionsLimit(p0 any) any { return SkyFfiFieldGet(p0, "Limit") }
 
 func Go_Firestore_pipelineFindNearestOptionsSetLimit(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Limit") }
@@ -4143,6 +4246,8 @@ func Go_Firestore_pipelineFindNearestOptionsSetLimit(value any, recv any) any { 
 func Go_Firestore_pipelineFindNearestOptionsDistanceField(p0 any) any { return SkyFfiFieldGet(p0, "DistanceField") }
 
 func Go_Firestore_pipelineFindNearestOptionsSetDistanceField(value any, recv any) any { return SkyFfiFieldSet(value, recv, "DistanceField") }
+
+func Go_Firestore_newPipelineFindNearestOptions(_ any) any { return new(pkg.PipelineFindNearestOptions) }
 
 // [pure] Go_Firestore.pipelineResultRef → pkg.PipelineResultRef
 func Go_Firestore_pipelineResultRef(p0 any) (out any) {
@@ -4196,6 +4301,8 @@ func Go_Firestore_pipelineResultDataTo(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Firestore_newPipelineResult(_ any) any { return new(pkg.PipelineResult) }
+
 // [fallible] Go_Firestore.pipelineResultIteratorNext → pkg.PipelineResultIteratorNext
 func Go_Firestore_pipelineResultIteratorNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4224,6 +4331,8 @@ func Go_Firestore_pipelineResultIteratorGetAll(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_newPipelineResultIterator(_ any) any { return new(pkg.PipelineResultIterator) }
+
 // [pure] Go_Firestore.pipelineSnapshotResults → pkg.PipelineSnapshotResults
 func Go_Firestore_pipelineSnapshotResults(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4247,6 +4356,8 @@ func Go_Firestore_pipelineSnapshotExplainStats(p0 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.PipelineSnapshot).ExplainStats())
 	return
 }
+
+func Go_Firestore_newPipelineSnapshot(_ any) any { return new(pkg.PipelineSnapshot) }
 
 // [pure] Go_Firestore.pipelineSourceCollection → pkg.PipelineSourceCollection
 func Go_Firestore_pipelineSourceCollection(p0 any, p1 any, p2 any) (out any) {
@@ -4290,9 +4401,13 @@ func Go_Firestore_pipelineSourceCreateFromAggregationQuery(p0 any, p1 any) (out 
 	return
 }
 
+func Go_Firestore_newPipelineSource(_ any) any { return new(pkg.PipelineSource) }
+
 func Go_Firestore_planSummaryIndexesUsed(p0 any) any { return SkyFfiFieldGet(p0, "IndexesUsed") }
 
 func Go_Firestore_planSummarySetIndexesUsed(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IndexesUsed") }
+
+func Go_Firestore_newPlanSummary(_ any) any { return new(pkg.PlanSummary) }
 
 // [pure] Go_Firestore.pow → pkg.Pow
 func Go_Firestore_pow(p0 any, p1 any) (out any) {
@@ -4313,6 +4428,8 @@ func Go_Firestore_propertyFilterValue(p0 any) any { return SkyFfiFieldGet(p0, "V
 
 func Go_Firestore_propertyFilterSetValue(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Value") }
 
+func Go_Firestore_newPropertyFilter(_ any) any { return new(pkg.PropertyFilter) }
+
 func Go_Firestore_propertyPathFilterPath(p0 any) any { return SkyFfiFieldGet(p0, "Path") }
 
 func Go_Firestore_propertyPathFilterSetPath(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Path") }
@@ -4324,6 +4441,8 @@ func Go_Firestore_propertyPathFilterSetOperator(value any, recv any) any { retur
 func Go_Firestore_propertyPathFilterValue(p0 any) any { return SkyFfiFieldGet(p0, "Value") }
 
 func Go_Firestore_propertyPathFilterSetValue(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Value") }
+
+func Go_Firestore_newPropertyPathFilter(_ any) any { return new(pkg.PropertyPathFilter) }
 
 // Generic identity-pointer helper via reflect.
 func Go_Firestore_ptr(p0 any) (out any) {
@@ -4509,6 +4628,8 @@ func Go_Firestore_queryPipeline(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_newQuery(_ any) any { return new(pkg.Query) }
+
 func Go_Firestore_querySnapshotDocuments(p0 any) any { return SkyFfiFieldGet(p0, "Documents") }
 
 func Go_Firestore_querySnapshotSetDocuments(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Documents") }
@@ -4524,6 +4645,8 @@ func Go_Firestore_querySnapshotSetChanges(value any, recv any) any { return SkyF
 func Go_Firestore_querySnapshotReadTime(p0 any) any { return SkyFfiFieldGet(p0, "ReadTime") }
 
 func Go_Firestore_querySnapshotSetReadTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "ReadTime") }
+
+func Go_Firestore_newQuerySnapshot(_ any) any { return new(pkg.QuerySnapshot) }
 
 // [fallible] Go_Firestore.querySnapshotIteratorNext → pkg.QuerySnapshotIteratorNext
 func Go_Firestore_querySnapshotIteratorNext(p0 any) (out any) {
@@ -4547,6 +4670,8 @@ func Go_Firestore_querySnapshotIteratorQuery(p0 any) any { return SkyFfiFieldGet
 
 func Go_Firestore_querySnapshotIteratorSetQuery(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Query") }
 
+func Go_Firestore_newQuerySnapshotIterator(_ any) any { return new(pkg.QuerySnapshotIterator) }
+
 // [pure] Go_Firestore.rawStageWithArguments → pkg.RawStageWithArguments
 func Go_Firestore_rawStageWithArguments(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4560,6 +4685,10 @@ func Go_Firestore_rawStageWithOptions(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(*pkg.RawStage).WithOptions(p1.(pkg.RawStageOptions)))
 	return
 }
+
+func Go_Firestore_readOnly(_ any) any { return pkg.ReadOnly }
+
+func Go_Firestore_setReadOnly(value any) any { reflect.ValueOf(&pkg.ReadOnly).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.ReadOnly))); return struct{}{} }
 
 // [pure] Go_Firestore.readTime → pkg.ReadTime
 func Go_Firestore_readTime(p0 any) (out any) {
@@ -4603,6 +4732,10 @@ func Go_Firestore_sampleByDocuments(p0 any) (out any) {
 	return
 }
 
+func Go_Firestore_sampleModeDocuments(_ any) any { return pkg.SampleModeDocuments }
+
+func Go_Firestore_sampleModePercent(_ any) any { return pkg.SampleModePercent }
+
 func Go_Firestore_sampleSpecSize(p0 any) any { return SkyFfiFieldGet(p0, "Size") }
 
 func Go_Firestore_sampleSpecSetSize(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Size") }
@@ -4610,6 +4743,10 @@ func Go_Firestore_sampleSpecSetSize(value any, recv any) any { return SkyFfiFiel
 func Go_Firestore_sampleSpecMode(p0 any) any { return SkyFfiFieldGet(p0, "Mode") }
 
 func Go_Firestore_sampleSpecSetMode(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Mode") }
+
+func Go_Firestore_newSampleSpec(_ any) any { return new(pkg.SampleSpec) }
+
+func Go_Firestore_serverTimestamp(_ any) any { return pkg.ServerTimestamp }
 
 // [pure] Go_Firestore.split → pkg.Split
 func Go_Firestore_split(p0 any, p1 any) (out any) {
@@ -4825,6 +4962,8 @@ func Go_Firestore_transactionExecute(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Firestore_newTransaction(_ any) any { return new(pkg.Transaction) }
+
 // [pure] Go_Firestore.trim → pkg.Trim
 func Go_Firestore_trim(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4864,6 +5003,8 @@ func Go_Firestore_unnestOptionsIndexField(p0 any) any { return SkyFfiFieldGet(p0
 
 func Go_Firestore_unnestOptionsSetIndexField(value any, recv any) any { return SkyFfiFieldSet(value, recv, "IndexField") }
 
+func Go_Firestore_newUnnestOptions(_ any) any { return new(pkg.UnnestOptions) }
+
 // [pure] Go_Firestore.updateString → pkg.UpdateString
 func Go_Firestore_updateString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4883,6 +5024,8 @@ func Go_Firestore_updateValue(p0 any) any { return SkyFfiFieldGet(p0, "Value") }
 
 func Go_Firestore_updateSetValue(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Value") }
 
+func Go_Firestore_newUpdate(_ any) any { return new(pkg.Update) }
+
 // [pure] Go_Firestore.vectorLength → pkg.VectorLength
 func Go_Firestore_vectorLength(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4896,6 +5039,8 @@ func Go_Firestore_vectorQueryDocuments(p0 any, p1 any) (out any) {
 	out = Ok[any, any](p0.(pkg.VectorQuery).Documents(p1.(context.Context)))
 	return
 }
+
+func Go_Firestore_newVectorQuery(_ any) any { return new(pkg.VectorQuery) }
 
 // [pure] Go_Firestore.withCollectionGroupHints → pkg.WithCollectionGroupHints
 func Go_Firestore_withCollectionGroupHints(p0 any) (out any) {
@@ -4963,9 +5108,13 @@ func Go_Firestore_writeBatchCommit(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Firestore_newWriteBatch(_ any) any { return new(pkg.WriteBatch) }
+
 func Go_Firestore_writeResultUpdateTime(p0 any) any { return SkyFfiFieldGet(p0, "UpdateTime") }
 
 func Go_Firestore_writeResultSetUpdateTime(value any, recv any) any { return SkyFfiFieldSet(value, recv, "UpdateTime") }
+
+func Go_Firestore_newWriteResult(_ any) any { return new(pkg.WriteResult) }
 
 // [pure] Go_Firestore.xor → pkg.Xor
 func Go_Firestore_xor(p0 any, p1 any) (out any) {

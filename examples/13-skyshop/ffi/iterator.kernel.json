@@ -3,6 +3,10 @@
   "kernelName": "Go_Iterator",
   "package": "google.golang.org/api/iterator",
   "functions": [
+    {"name": "done", "arity": 1},
+    {"name": "setDone", "arity": 1},
+    {"name": "newPageInfo", "arity": 1},
+    {"name": "setNewPageInfo", "arity": 1},
     {"name": "newPager", "arity": 3},
     {"name": "pageInfoRemaining", "arity": 1},
     {"name": "pageInfoToken", "arity": 1},

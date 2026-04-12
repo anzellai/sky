@@ -23,6 +23,8 @@
     {"name": "configSetServiceAccountID", "arity": 2},
     {"name": "configStorageBucket", "arity": 1},
     {"name": "configSetStorageBucket", "arity": 2},
-    {"name": "newApp", "arity": 3}
+    {"name": "newConfig", "arity": 1},
+    {"name": "newApp", "arity": 3},
+    {"name": "version", "arity": 1}
   ]
 }

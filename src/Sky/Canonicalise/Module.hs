@@ -299,7 +299,7 @@ staticKernelFunctions = Map.fromList
                     "htmlEscape", "truncate", "ellipsize"])
     , ("List",    ["map", "filter", "foldl", "foldr", "length", "head", "tail",
                     "take", "drop", "append", "concat", "concatMap", "reverse",
-                    "sort", "member", "any", "all", "range", "zip", "filterMap",
+                    "sort", "sortBy", "member", "any", "all", "range", "zip", "filterMap",
                     "parallelMap", "isEmpty"])
     , ("Dict",    ["empty", "insert", "get", "remove", "member", "keys", "values",
                     "toList", "fromList", "map", "foldl", "union"])
@@ -398,6 +398,8 @@ staticKernelFunctions = Map.fromList
     , ("Hex",     ["encode", "encodeToString", "decode"])
     , ("Os",      ["args", "getenv", "cwd", "exit"])
     , ("Slog",    ["info", "warn", "error", "debug"])
+    , ("Context", ["background", "todo", "withValue", "withCancel"])
+    , ("Fmt",     ["sprint", "sprintf", "sprintln", "errorf"])
     , ("Db",      ["connect", "open", "close", "exec", "execRaw", "query", "queryDecode",
                     "insertRow", "getById", "updateById", "deleteById",
                     "findWhere", "withTransaction",

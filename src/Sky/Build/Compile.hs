@@ -1548,16 +1548,35 @@ patternBindings subject pat = case pat of
         in aliasStmt ++ patternBindings subject innerPat
 
 
--- | Bind a constructor argument to a local variable
+-- | Bind a constructor argument to a local variable.
+-- For Ok/Err/Just (our special generic types) we need a type-assertion on
+-- the subject first when the subject is any-typed (comes from an inner
+-- destructure temp) — otherwise `.OkValue` / `.JustValue` on `any` fails
+-- Go's type check. For user-defined Tag-based ADTs, the outer case already
+-- asserted the subject to the struct type so `.Fields[i]` works directly.
 bindCtorArg :: String -> String -> Can.PatternCtorArg -> [GoIr.GoStmt]
 bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
     let (A.At _ innerPat) = pat
+        -- Type-assert the subject for the special generic ctors. Wrap in
+        -- any(...) first so this works both when the subject is already
+        -- typed (outer case asserted it) and when it's a raw `any` from
+        -- a nested destructure temp.
+        --
+        -- Go accepts: any(x).(SkyResult[any, any]).OkValue
+        -- Works for x : any                → cast-then-assert
+        --       and x : rt.SkyResult[...]  → to-any-then-assert-back (identity)
+        anyWrap n = GoIr.GoCall (GoIr.GoIdent "any") [GoIr.GoIdent n]
+        subjectAsStruct = case ctorName of
+            "Ok"   -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyResult[any, any]"
+            "Err"  -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyResult[any, any]"
+            "Just" -> GoIr.GoTypeAssert (anyWrap subject) "rt.SkyMaybe[any]"
+            _      -> GoIr.GoIdent subject
         fieldAccess = case ctorName of
-            "Ok"   -> GoIr.GoSelector (GoIr.GoIdent subject) "OkValue"
-            "Err"  -> GoIr.GoSelector (GoIr.GoIdent subject) "ErrValue"
-            "Just" -> GoIr.GoSelector (GoIr.GoIdent subject) "JustValue"
+            "Ok"   -> GoIr.GoSelector subjectAsStruct "OkValue"
+            "Err"  -> GoIr.GoSelector subjectAsStruct "ErrValue"
+            "Just" -> GoIr.GoSelector subjectAsStruct "JustValue"
             _      -> GoIr.GoIndex
-                        (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
+                        (GoIr.GoSelector subjectAsStruct "Fields")
                         (GoIr.GoIntLit idx)
     in case innerPat of
         Can.PVar name ->
@@ -1569,10 +1588,12 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
                     [ GoIr.GoShortDecl name fieldAccess
                     , GoIr.GoAssign "_" (GoIr.GoIdent name)
                     ]
-        Can.PAnything -> []
+        Can.PAnything -> [ GoIr.GoAssign "_" fieldAccess ]
         _ ->
             let tmp = "__sky_cf_" ++ show idx ++ "_" ++ subject
-            in GoIr.GoShortDecl tmp fieldAccess : patternBindings tmp innerPat
+            in GoIr.GoShortDecl tmp fieldAccess
+               : GoIr.GoAssign "_" (GoIr.GoIdent tmp)
+               : patternBindings tmp innerPat
 
 
 -- ═══════════════════════════════════════════════════════════

@@ -61,6 +61,9 @@ type Function struct {
 	IsField    bool   `json:"isField,omitempty"`
 	// IsFieldSet: true for synthetic struct-field setters (value-first).
 	IsFieldSet bool   `json:"isFieldSet,omitempty"`
+	// IsPkgVar: true for synthetic accessors around package-level vars
+	// and consts (Firestore.Asc, Firestore.Desc, etc.).
+	IsPkgVar   bool   `json:"isPkgVar,omitempty"`
 }
 
 type PackageInfo struct {
@@ -127,6 +130,43 @@ func main() {
 			info.Functions = append(info.Functions, describe(fn, sig))
 			continue
 		}
+		// Package-level var (e.g. firestore.Asc, firestore.Desc — exported
+		// singleton values). Emit as a zero-arg Sky thunk that returns the
+		// value. Sky-side convention: takes a unit param `()`.
+		// Also emit a `Set<Name>` setter so Sky can mutate pkg-level
+		// configuration vars (e.g. stripe.Key).
+		if v, ok := obj.(*types.Var); ok && v.Exported() {
+			info.Functions = append(info.Functions, Function{
+				Name:     v.Name(),
+				Params:   []Param{{Name: "_", Type: "struct{}"}},
+				Results:  []Param{{Type: v.Type().String()}},
+				Effect:   "pure",
+				Exported: true,
+				IsPkgVar: true,
+			})
+			info.Functions = append(info.Functions, Function{
+				Name:       "Set" + v.Name(),
+				Params:     []Param{{Name: "value", Type: v.Type().String()}},
+				Results:    []Param{{Type: "struct{}"}},
+				Effect:     "effectful",
+				Exported:   true,
+				IsPkgVar:   true,
+				MethodName: v.Name(),  // store the real var name for emission
+			})
+			continue
+		}
+		// Package-level const — same shape as var.
+		if c, ok := obj.(*types.Const); ok && c.Exported() {
+			info.Functions = append(info.Functions, Function{
+				Name:     c.Name(),
+				Params:   []Param{{Name: "_", Type: "struct{}"}},
+				Results:  []Param{{Type: c.Type().String()}},
+				Effect:   "pure",
+				Exported: true,
+				IsPkgVar: true,
+			})
+			continue
+		}
 		// Named type — emit each of its exported methods as a synthetic
 		// free function whose first param is the receiver. Matches the
 		// legacy Sky convention where `*Router.HandleFunc` surfaces in
@@ -152,6 +192,11 @@ func main() {
 			// public surface includes fields (e.g., `ref.ID`).
 			if strct, ok := named.Underlying().(*types.Struct); ok {
 				addFieldGetters(&info, strct, name, named)
+				// Zero-value constructor `New<TypeName>() -> *<TypeName>`
+				// — matches the Opaque Struct Pattern documented in
+				// CLAUDE.md. User writes `Stripe.newCustomerParams ()`
+				// to get a fresh *CustomerParams, then pipes setters.
+				addZeroConstructor(&info, name, named)
 			}
 		}
 	}
@@ -257,6 +302,43 @@ func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvT
 		MethodName: fn.Name(),
 	}
 }
+
+// addZeroConstructor emits `New<TypeName>() -> *TypeName` — a zero-value
+// constructor helper so Sky code can write `Stripe.newCustomerParams ()`
+// without hand-writing a Go factory. Skipped when:
+//   * the package already exports a `New<TypeName>` function (avoid Go
+//     redeclaration — happens regardless of `scope.Names()` iteration
+//     order because we consult the pkg scope directly).
+//   * the type is generic — `new(pkg.Foo)` won't compile without
+//     instantiation, and we don't know the constraint here.
+func addZeroConstructor(info *PackageInfo, typeName string, named *types.Named) {
+	name := "New" + typeName
+	// Skip if a real factory with the same name exists anywhere in scope.
+	if pkg := named.Obj().Pkg(); pkg != nil {
+		if pkg.Scope().Lookup(name) != nil {
+			return
+		}
+	}
+	// Skip generics: named.TypeParams() is non-empty for parameterised types.
+	if named.TypeParams() != nil && named.TypeParams().Len() > 0 {
+		return
+	}
+	for _, f := range info.Functions {
+		if f.Name == name {
+			return
+		}
+	}
+	info.Functions = append(info.Functions, Function{
+		Name:       name,
+		Params:     []Param{{Name: "_", Type: "struct{}"}},
+		Results:    []Param{{Type: types.NewPointer(named.Obj().Type()).String()}},
+		Effect:     "pure",
+		Exported:   true,
+		RecvType:   typeName,
+		IsPkgVar:   true,  // reuse the "one-line wrapper" path
+	})
+}
+
 
 // addFieldGetters emits one synthetic unary function per exported struct
 // field (the getter) AND one binary setter per settable field. Name

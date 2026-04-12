@@ -13,6 +13,10 @@
 --   pkg "google.golang.org/api/iterator"
 
 package iterator
+-- [pure] Done : struct{} -> String   -- runtime wrap: Task String
+-- [effectful] SetDone : String -> struct{}   -- runtime wrap: Task String
+-- [pure] NewPageInfo : struct{} -> PageInfo, next func() error)   -- runtime wrap: Task String
+-- [effectful] SetNewPageInfo : PageInfo, next func() error) -> struct{}   -- runtime wrap: Task String
 -- [pure] NewPager : Pageable -> Int -> String -> Pager   -- runtime wrap: Task String
 -- [pure] PageInfoRemaining : PageInfo -> Int   -- runtime wrap: Task String
 -- [pure] PageInfoToken : PageInfo -> String   -- runtime wrap: Task String

@@ -14,6 +14,7 @@ import (
 	_ "database/sql/driver"  // aliased driver; unused in emitted wrappers
 	hash "hash"
 	io "io"
+	"reflect"
 )
 
 // [pure] Go_Uuid.clockSequence → pkg.ClockSequence
@@ -59,6 +60,8 @@ func Go_Uuid_fromBytes(p0 any) (out any) {
 	return
 }
 
+func Go_Uuid_future(_ any) any { return pkg.Future }
+
 // [fallible] Go_Uuid.getTime → pkg.GetTime
 func Go_Uuid_getTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -70,12 +73,22 @@ func Go_Uuid_getTime(p0 any) (out any) {
 	return
 }
 
+func Go_Uuid_group(_ any) any { return pkg.Group }
+
+func Go_Uuid_invalid(_ any) any { return pkg.Invalid }
+
 // [pure] Go_Uuid.isInvalidLengthError → pkg.IsInvalidLengthError
 func Go_Uuid_isInvalidLengthError(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.IsInvalidLengthError(p0.(error)))
 	return
 }
+
+func Go_Uuid_max(_ any) any { return pkg.Max }
+
+func Go_Uuid_setMax(value any) any { reflect.ValueOf(&pkg.Max).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.Max))); return struct{}{} }
+
+func Go_Uuid_microsoft(_ any) any { return pkg.Microsoft }
 
 // [pure] Go_Uuid.must → pkg.Must
 func Go_Uuid_must(p0 any, p1 any) (out any) {
@@ -90,6 +103,22 @@ func Go_Uuid_mustParse(p0 any) (out any) {
 	out = Ok[any, any](pkg.MustParse(fmt.Sprintf("%v", p0)))
 	return
 }
+
+func Go_Uuid_nameSpaceDNS(_ any) any { return pkg.NameSpaceDNS }
+
+func Go_Uuid_setNameSpaceDNS(value any) any { reflect.ValueOf(&pkg.NameSpaceDNS).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NameSpaceDNS))); return struct{}{} }
+
+func Go_Uuid_nameSpaceOID(_ any) any { return pkg.NameSpaceOID }
+
+func Go_Uuid_setNameSpaceOID(value any) any { reflect.ValueOf(&pkg.NameSpaceOID).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NameSpaceOID))); return struct{}{} }
+
+func Go_Uuid_nameSpaceURL(_ any) any { return pkg.NameSpaceURL }
+
+func Go_Uuid_setNameSpaceURL(value any) any { reflect.ValueOf(&pkg.NameSpaceURL).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NameSpaceURL))); return struct{}{} }
+
+func Go_Uuid_nameSpaceX500(_ any) any { return pkg.NameSpaceX500 }
+
+func Go_Uuid_setNameSpaceX500(value any) any { reflect.ValueOf(&pkg.NameSpaceX500).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.NameSpaceX500))); return struct{}{} }
 
 // [pure] Go_Uuid.new → pkg.New
 func Go_Uuid_new(p0 any) (out any) {
@@ -224,6 +253,10 @@ func Go_Uuid_newV7FromReader(p0 any) (out any) {
 	return
 }
 
+func Go_Uuid_nil(_ any) any { return pkg.Nil }
+
+func Go_Uuid_setNil(value any) any { reflect.ValueOf(&pkg.Nil).Elem().Set(reflect.ValueOf(value).Convert(reflect.TypeOf(pkg.Nil))); return struct{}{} }
+
 // [pure] Go_Uuid.nodeID → pkg.NodeID
 func Go_Uuid_nodeID(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -328,6 +361,10 @@ func Go_Uuid_nullUUIDValid(p0 any) any { return SkyFfiFieldGet(p0, "Valid") }
 
 func Go_Uuid_nullUUIDSetValid(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Valid") }
 
+func Go_Uuid_newNullUUID(_ any) any { return new(pkg.NullUUID) }
+
+func Go_Uuid_org(_ any) any { return pkg.Org }
+
 // [fallible] Go_Uuid.parse → pkg.Parse
 func Go_Uuid_parse(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -347,6 +384,12 @@ func Go_Uuid_parseBytes(p0 any) (out any) {
 
 	return
 }
+
+func Go_Uuid_person(_ any) any { return pkg.Person }
+
+func Go_Uuid_rFC4122(_ any) any { return pkg.RFC4122 }
+
+func Go_Uuid_reserved(_ any) any { return pkg.Reserved }
 
 // [pure] Go_Uuid.setClockSequence → pkg.SetClockSequence
 func Go_Uuid_setClockSequence(p0 any) (out any) {

@@ -1,5 +1,5 @@
 {
-  "moduleName": "Github.Com.Stripe.Stripe_go.V84.Checkout.Session",
+  "moduleName": "Github.Com.Stripe.StripeGo.V84.Checkout.Session",
   "kernelName": "Go_Session",
   "package": "github.com/stripe/stripe-go/v84/checkout/session",
   "functions": [
@@ -13,6 +13,7 @@
     {"name": "clientSetB", "arity": 2},
     {"name": "clientKey", "arity": 1},
     {"name": "clientSetKey", "arity": 2},
+    {"name": "newClient", "arity": 1},
     {"name": "expire", "arity": 2},
     {"name": "get", "arity": 2},
     {"name": "iterCheckoutSession", "arity": 1},
@@ -24,6 +25,7 @@
     {"name": "iterNext", "arity": 1},
     {"name": "iterIter", "arity": 1},
     {"name": "iterSetIter", "arity": 2},
+    {"name": "newIter", "arity": 1},
     {"name": "lineItemIterLineItem", "arity": 1},
     {"name": "lineItemIterLineItemList", "arity": 1},
     {"name": "lineItemIterCurrent", "arity": 1},
@@ -33,6 +35,7 @@
     {"name": "lineItemIterNext", "arity": 1},
     {"name": "lineItemIterIter", "arity": 1},
     {"name": "lineItemIterSetIter", "arity": 2},
+    {"name": "newLineItemIter", "arity": 1},
     {"name": "list", "arity": 1},
     {"name": "listLineItems", "arity": 1},
     {"name": "new", "arity": 1},

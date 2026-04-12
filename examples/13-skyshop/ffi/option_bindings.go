@@ -20,6 +20,8 @@ import (
 	"reflect"
 )
 
+func Go_Option_authorizedUser(_ any) any { return pkg.AuthorizedUser }
+
 // [pure] Go_Option.clientOptionApply → ClientOption.Apply (receiver-reflect)
 func Go_Option_clientOptionApply(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -33,12 +35,18 @@ func Go_Option_clientOptionApply(p0 any, p1 any) (out any) {
 	return
 }
 
+func Go_Option_externalAccount(_ any) any { return pkg.ExternalAccount }
+
 // [pure] Go_Option.impersonateCredentials → pkg.ImpersonateCredentials
 func Go_Option_impersonateCredentials(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.ImpersonateCredentials(fmt.Sprintf("%v", p0), p1.([]string)...))
 	return
 }
+
+func Go_Option_impersonatedServiceAccount(_ any) any { return pkg.ImpersonatedServiceAccount }
+
+func Go_Option_serviceAccount(_ any) any { return pkg.ServiceAccount }
 
 // [pure] Go_Option.withAPIKey → pkg.WithAPIKey
 func Go_Option_withAPIKey(p0 any) (out any) {

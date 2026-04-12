@@ -2,7 +2,7 @@
 // Re-run `sky add github.com/stripe/stripe-go/v84/checkout/session` to regenerate.
 //
 // Wrapper functions are in `package rt` with names <Kernel>_<lowerFn>.
-// Sky source resolves `import Github.Com.Stripe.Stripe_go.V84.Checkout.Session as X` and calls `X.<lowerFn>` — the canonicaliser routes it via
+// Sky source resolves `import Github.Com.Stripe.StripeGo.V84.Checkout.Session as X` and calls `X.<lowerFn>` — the canonicaliser routes it via
 // the FFI registry to these typed Go functions. Every wrapper wraps
 // panics in Err[any, any] via SkyFfiRecover.
 
@@ -75,6 +75,8 @@ func Go_Session_clientSetB(value any, recv any) any { return SkyFfiFieldSet(valu
 func Go_Session_clientKey(p0 any) any { return SkyFfiFieldGet(p0, "Key") }
 
 func Go_Session_clientSetKey(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Key") }
+
+func Go_Session_newClient(_ any) any { return new(pkg.Client) }
 
 // [fallible] Go_Session.expire → pkg.Expire
 func Go_Session_expire(p0 any, p1 any) (out any) {
@@ -152,6 +154,8 @@ func Go_Session_iterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
 
 func Go_Session_iterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
 
+func Go_Session_newIter(_ any) any { return new(pkg.Iter) }
+
 // [pure] Go_Session.lineItemIterLineItem → pkg.LineItemIterLineItem
 func Go_Session_lineItemIterLineItem(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -207,6 +211,8 @@ func Go_Session_lineItemIterNext(p0 any) (out any) {
 func Go_Session_lineItemIterIter(p0 any) any { return SkyFfiFieldGet(p0, "Iter") }
 
 func Go_Session_lineItemIterSetIter(value any, recv any) any { return SkyFfiFieldSet(value, recv, "Iter") }
+
+func Go_Session_newLineItemIter(_ any) any { return new(pkg.LineItemIter) }
 
 // [pure] Go_Session.list → pkg.List
 func Go_Session_list(p0 any) (out any) {

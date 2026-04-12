@@ -63,6 +63,7 @@ data FnInfo = FnInfo
     , _fnMethodName :: String            -- "" for free func, else method
     , _fnIsField  :: Bool                -- synthetic struct-field getter
     , _fnIsFieldSet :: Bool              -- synthetic struct-field setter
+    , _fnIsPkgVar :: Bool                -- synthetic pkg-level var/const getter
     }
     deriving (Show)
 
@@ -87,6 +88,7 @@ instance A.FromJSON FnInfo where
         <*> o A..:? "methodName" A..!= ""
         <*> o A..:? "isField" A..!= False
         <*> o A..:? "isFieldSet" A..!= False
+        <*> o A..:? "isPkgVar" A..!= False
       where
         parseParam = A.withObject "param" $ \o -> do
             n <- o A..:? "name" A..!= ""
@@ -161,16 +163,31 @@ generateBindings pkg = do
 
 -- | Convert a Go package path to the Sky-side module name using the
 -- path-segment → dotted-camel transform Sky users expect.
--- "github.com/google/uuid"  → "Github.Com.Google.Uuid"
--- "fyne.io/fyne/v2/app"     → "Fyne.Io.Fyne.V2.App"
--- "net/http"                → "Net.Http"
+-- "github.com/google/uuid"           → "Github.Com.Google.Uuid"
+-- "github.com/stripe/stripe-go/v84"  → "Github.Com.Stripe.StripeGo.V84"
+-- "fyne.io/fyne/v2/app"              → "Fyne.Io.Fyne.V2.App"
+-- "net/http"                         → "Net.Http"
+--
+-- Hyphen handling: drop the hyphen, upper-case the next char — matches
+-- the legacy Sky convention and what Sky users write in real code
+-- (e.g., `import Github.Com.Stripe.StripeGo.V84 as Stripe`).
 pkgToModuleName :: String -> String
 pkgToModuleName path =
     let slashed = splitOnChar '/' path
         dotted  = concatMap (splitOnChar '.') slashed
-        cleaned = map (map (\c -> if isAlphaNum c then c else '_')) dotted
+        cleaned = map camelHyphen dotted
         cap     = map capitaliseFirst (filter (not . null) cleaned)
     in  intercalate "." cap
+  where
+    -- "stripe-go" -> "stripeGo"; non-alphanum (other than '-') -> '_'.
+    camelHyphen s = go False s
+      where
+        go _  []          = []
+        go _  ('-':cs)    = go True cs
+        go True (c:cs)    = toUpper c : go False cs
+        go False (c:cs)
+          | isAlphaNum c = c : go False cs
+          | otherwise    = '_' : go False cs
 
 
 -- | Pick the Sky-kernel-name (the prefix used for Go wrapper fns).
@@ -689,6 +706,25 @@ emitTypedWrapper kernelName aliases fn =
             -- One-line delegate to SkyFfiFieldSet — value-first for |>.
             "func " ++ wrapperName ++ "(value any, recv any) any { return SkyFfiFieldSet(value, recv, " ++
             quote (_fnMethodName fn) ++ ") }\n"
+
+        _ | _fnIsPkgVar fn ->
+            case (_fnRecvType fn, _fnMethodName fn) of
+                -- Zero-value struct constructor: New<TypeName>() -> *TypeName.
+                (typeName, "") | not (null typeName) ->
+                    "func " ++ wrapperName ++ "(_ any) any { return new(pkg." ++
+                    typeName ++ ") }\n"
+                -- Setter for a pkg-level var: SetName(value) → pkg.Name = value.
+                -- Use reflect to assign through any — no compile-time type
+                -- reference needed, handles any Sky-any value generically.
+                ("", varName) | not (null varName) ->
+                    "func " ++ wrapperName ++ "(value any) any { " ++
+                    "reflect.ValueOf(&pkg." ++ varName ++ ").Elem().Set(" ++
+                    "reflect.ValueOf(value).Convert(reflect.TypeOf(pkg." ++ varName ++ "))); " ++
+                    "return struct{}{} }\n"
+                -- Plain pkg-level var/const read: return pkg.Name.
+                _ ->
+                    "func " ++ wrapperName ++ "(_ any) any { return pkg." ++
+                    _fnName fn ++ " }\n"
 
         DirectCall ->
             unlines

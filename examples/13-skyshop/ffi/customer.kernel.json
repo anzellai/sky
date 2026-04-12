@@ -1,5 +1,5 @@
 {
-  "moduleName": "Github.Com.Stripe.Stripe_go.V84.Customer",
+  "moduleName": "Github.Com.Stripe.StripeGo.V84.Customer",
   "kernelName": "Go_Customer",
   "package": "github.com/stripe/stripe-go/v84/customer",
   "functions": [
@@ -17,6 +17,7 @@
     {"name": "clientSetB", "arity": 2},
     {"name": "clientKey", "arity": 1},
     {"name": "clientSetKey", "arity": 2},
+    {"name": "newClient", "arity": 1},
     {"name": "createFundingInstructions", "arity": 2},
     {"name": "del", "arity": 2},
     {"name": "deleteDiscount", "arity": 2},
@@ -30,6 +31,7 @@
     {"name": "iterNext", "arity": 1},
     {"name": "iterIter", "arity": 1},
     {"name": "iterSetIter", "arity": 2},
+    {"name": "newIter", "arity": 1},
     {"name": "list", "arity": 1},
     {"name": "listPaymentMethods", "arity": 1},
     {"name": "new", "arity": 1},
@@ -42,6 +44,7 @@
     {"name": "paymentMethodIterNext", "arity": 1},
     {"name": "paymentMethodIterIter", "arity": 1},
     {"name": "paymentMethodIterSetIter", "arity": 2},
+    {"name": "newPaymentMethodIter", "arity": 1},
     {"name": "retrievePaymentMethod", "arity": 2},
     {"name": "search", "arity": 1},
     {"name": "searchIterCustomer", "arity": 1},
@@ -53,6 +56,7 @@
     {"name": "searchIterSearchResult", "arity": 1},
     {"name": "searchIterSearchIter", "arity": 1},
     {"name": "searchIterSetSearchIter", "arity": 2},
+    {"name": "newSearchIter", "arity": 1},
     {"name": "update", "arity": 2}
   ]
 }

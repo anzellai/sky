@@ -2,6 +2,7 @@ package rt
 
 import (
 	"bufio"
+	"context"
 	"crypto/hmac"
 	"crypto/md5"
 	cryptorand "crypto/rand"
@@ -292,6 +293,70 @@ func Basics_not(b any) any {
 
 func Basics_toString(v any) string {
 	return fmt.Sprintf("%v", v)
+}
+
+// Basics_errorToString — Elm-compat extractor for Result errors. Preserves
+// String/error values verbatim, stringifies anything else. Registered as a
+// Prelude builtin (`errorToString`) so Sky programs can write:
+//   Result.mapError errorToString someResult
+func Basics_errorToString(v any) any {
+	switch x := v.(type) {
+	case string:
+		return x
+	case error:
+		return x.Error()
+	}
+	return fmt.Sprintf("%v", v)
+}
+
+// Basics_js — legacy FFI pass-through. Legacy Sky code used `js "nil"` to
+// inject a raw Go nil into an FFI call; here we mirror that so ex13 and
+// similar programs compile without a user-visible change.
+// Everything else flows through identity-style.
+func Basics_js(v any) any {
+	if s, ok := v.(string); ok && s == "nil" {
+		return nil
+	}
+	return v
+}
+
+// ═══════════════════════════════════════════════════════════
+// Context — Go's context pkg, surfaced for FFI boundary
+// ═══════════════════════════════════════════════════════════
+
+// Context_background : () -> context.Context — opaque, flows through FFI.
+func Context_background(_ any) any { return context.Background() }
+func Context_todo(_ any) any       { return context.TODO() }
+
+func Context_withValue(parent any, key any, val any) any {
+	ctx, _ := parent.(context.Context)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, key, val)
+}
+
+func Context_withCancel(parent any) any {
+	ctx, _ := parent.(context.Context)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	c, cancel := context.WithCancel(ctx)
+	_ = cancel  // Sky can't easily thread the cancel fn; discard for now.
+	return c
+}
+
+// ═══════════════════════════════════════════════════════════
+// Fmt — subset of Go's fmt pkg for string-building interop
+// ═══════════════════════════════════════════════════════════
+
+func Fmt_sprint(args ...any) any    { return fmt.Sprint(args...) }
+func Fmt_sprintf(format any, args ...any) any {
+	return fmt.Sprintf(fmt.Sprintf("%v", format), args...)
+}
+func Fmt_sprintln(args ...any) any  { return fmt.Sprintln(args...) }
+func Fmt_errorf(format any, args ...any) any {
+	return fmt.Errorf(fmt.Sprintf("%v", format), args...)
 }
 
 // Basics_modBy, Basics_fst, Basics_snd — any-typed to match the codegen's
@@ -1847,6 +1912,36 @@ func List_sort(list any) any {
 		return fmt.Sprintf("%v", result[i]) < fmt.Sprintf("%v", result[j])
 	})
 	return result
+}
+
+// List_sortBy(keyFn, xs) — stable sort by the `keyFn elem` projection.
+// Keys may be Int, Float, String, or anything fmt.Sprintf can format.
+func List_sortBy(keyFn any, list any) any {
+	items, _ := list.([]any)
+	result := make([]any, len(items))
+	copy(result, items)
+	sort.SliceStable(result, func(i, j int) bool {
+		a := SkyCall(keyFn, result[i])
+		b := SkyCall(keyFn, result[j])
+		return skyLessThan(a, b)
+	})
+	return result
+}
+
+// skyLessThan — generic ordering used by List_sortBy. Treats numeric types
+// specially; falls back to lexicographic string compare for everything else.
+func skyLessThan(a, b any) bool {
+	switch x := a.(type) {
+	case int:
+		if y, ok := b.(int); ok { return x < y }
+	case int64:
+		if y, ok := b.(int64); ok { return x < y }
+	case float64:
+		if y, ok := b.(float64); ok { return x < y }
+	case string:
+		if y, ok := b.(string); ok { return x < y }
+	}
+	return fmt.Sprintf("%v", a) < fmt.Sprintf("%v", b)
 }
 
 func List_member(item any, list any) any {

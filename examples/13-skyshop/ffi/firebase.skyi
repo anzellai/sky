@@ -43,4 +43,6 @@ package firebase
 -- [pure] ConfigSetServiceAccountID : String -> Config -> Config   -- runtime wrap: Task String
 -- [pure] ConfigStorageBucket : Config -> String   -- runtime wrap: Task String
 -- [pure] ConfigSetStorageBucket : String -> Config -> Config   -- runtime wrap: Task String
+-- [pure] NewConfig : struct{} -> Config   -- runtime wrap: Task String
 -- [fallible] NewApp : Context -> Config -> ClientOption -> (App, String)   -- runtime wrap: Task String
+-- [pure] Version : struct{} -> untyped string   -- runtime wrap: Task String

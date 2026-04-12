@@ -24,6 +24,7 @@ package session
 -- [pure] ClientSetB : Backend -> Client -> Client   -- runtime wrap: Task String
 -- [pure] ClientKey : Client -> String   -- runtime wrap: Task String
 -- [pure] ClientSetKey : String -> Client -> Client   -- runtime wrap: Task String
+-- [pure] NewClient : struct{} -> Client   -- runtime wrap: Task String
 -- [fallible] Expire : String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task String
 -- [fallible] Get : String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
 -- [pure] IterCheckoutSession : Iter -> CheckoutSession   -- runtime wrap: Task String
@@ -35,6 +36,7 @@ package session
 -- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
 -- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task String
 -- [pure] IterSetIter : Iter -> Iter -> Iter   -- runtime wrap: Task String
+-- [pure] NewIter : struct{} -> Iter   -- runtime wrap: Task String
 -- [pure] LineItemIterLineItem : LineItemIter -> LineItem   -- runtime wrap: Task String
 -- [pure] LineItemIterLineItemList : LineItemIter -> LineItemList   -- runtime wrap: Task String
 -- [pure] LineItemIterCurrent : LineItemIter -> interface{}   -- runtime wrap: Task String
@@ -44,6 +46,7 @@ package session
 -- [pure] LineItemIterNext : LineItemIter -> Bool   -- runtime wrap: Task String
 -- [pure] LineItemIterIter : LineItemIter -> Iter   -- runtime wrap: Task String
 -- [pure] LineItemIterSetIter : Iter -> LineItemIter -> LineItemIter   -- runtime wrap: Task String
+-- [pure] NewLineItemIter : struct{} -> LineItemIter   -- runtime wrap: Task String
 -- [pure] List : CheckoutSessionListParams -> Iter   -- runtime wrap: Task String
 -- [pure] ListLineItems : CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task String
 -- [fallible] New : CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String

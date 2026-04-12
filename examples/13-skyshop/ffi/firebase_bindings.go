@@ -143,6 +143,8 @@ func Go_GoV4_configStorageBucket(p0 any) any { return SkyFfiFieldGet(p0, "Storag
 
 func Go_GoV4_configSetStorageBucket(value any, recv any) any { return SkyFfiFieldSet(value, recv, "StorageBucket") }
 
+func Go_GoV4_newConfig(_ any) any { return new(pkg.Config) }
+
 // [fallible] Go_GoV4.newApp → pkg.NewApp
 func Go_GoV4_newApp(p0 any, p1 any, p2 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -152,6 +154,8 @@ func Go_GoV4_newApp(p0 any, p1 any, p2 any) (out any) {
 
 	return
 }
+
+func Go_GoV4_version(_ any) any { return pkg.Version }
 
 
 // Pin fmt against "imported and not used" across partial files.
