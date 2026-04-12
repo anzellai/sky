@@ -12,6 +12,10 @@
 --   * textDocument/documentSymbol        (outline: values, unions, aliases)
 --   * textDocument/completion            (prefix- and context-aware)
 --   * textDocument/formatting            (run sky fmt, return TextEdits)
+--   * textDocument/references            (all use-sites of a local name)
+--   * textDocument/rename                (prepareRename + full WorkspaceEdit)
+--   * textDocument/prepareRename         (validate rename target)
+--   * textDocument/signatureHelp         (parameter info while typing a call)
 --
 -- Editors supported: VS Code, Neovim, Emacs, Zed, Helix, Sublime LSP.
 --
@@ -32,6 +36,7 @@ import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.IORef as IORef
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Maybe (fromMaybe, mapMaybe)
 import qualified Data.Text as T
 
@@ -156,6 +161,10 @@ dispatch docs req = do
         "textDocument/declaration"    -> handleDefinition docs req reqId
         "textDocument/documentSymbol" -> handleDocumentSymbol docs req reqId
         "textDocument/formatting"     -> handleFormatting docs req reqId
+        "textDocument/references"     -> handleReferences docs req reqId
+        "textDocument/rename"         -> handleRename docs req reqId
+        "textDocument/prepareRename"  -> handlePrepareRename docs req reqId
+        "textDocument/signatureHelp"  -> handleSignatureHelp docs req reqId
         _ -> case reqId of
             Just _  -> sendReply reqId A.Null
             Nothing -> return ()
@@ -176,6 +185,12 @@ initializeResult = A.object
         , "declarationProvider"      A..= True
         , "documentSymbolProvider"   A..= True
         , "documentFormattingProvider" A..= True
+        , "referencesProvider"       A..= True
+        , "renameProvider" A..= A.object [ "prepareProvider" A..= True ]
+        , "signatureHelpProvider" A..= A.object
+            [ "triggerCharacters"   A..= (["(", " "] :: [T.Text])
+            , "retriggerCharacters" A..= ([","]      :: [T.Text])
+            ]
         , "completionProvider" A..= A.object
             [ "triggerCharacters" A..= (["."] :: [T.Text])
             ]
@@ -252,6 +267,11 @@ computeDiagnostics src = do
 
 -- | Run the compile pipeline on a string and translate every failure into
 -- an LSP diagnostic with the best source position we can extract.
+--
+-- Parse errors: position comes from `ModuleError`'s (Row, Col).
+-- Canonicalise + solver errors: the downstream phases emit messages with
+-- a leading `LINE:COL: ` prefix when they know the location; stripMsgPos
+-- extracts it and we fall back to (0,0) otherwise.
 runPipeline :: T.Text -> IO [A.Value]
 runPipeline src = case Parse.parseModule src of
     Left err ->
@@ -259,16 +279,48 @@ runPipeline src = case Parse.parseModule src of
     Right srcMod ->
         case Canonicalise.canonicalise srcMod of
             Left err ->
-                -- Canonicalise errors are plain strings — place on line 1 for
-                -- now; when canonicaliser learns to return ranges, plumb them.
-                return [mkDiagnostic 0 0 0 80 ("Canonicalise: " ++ err) 1]
+                return [diagnosticFromMessage ("Canonicalise: " ++ err)]
             Right canMod -> do
                 cs <- Constrain.constrainModule canMod
                 r  <- Solve.solve cs
                 case r of
                     Solve.SolveOk _ -> return []
                     Solve.SolveError err ->
-                        return [mkDiagnostic 0 0 0 80 ("Type error: " ++ err) 1]
+                        return [diagnosticFromMessage ("Type error: " ++ err)]
+
+
+-- | Extract `LINE:COL:` prefix if present; otherwise return no position.
+stripMsgPos :: String -> (Maybe (Int, Int), String)
+stripMsgPos s =
+    case reads s :: [(Int, String)] of
+        [(r, ':':rest1)] -> case reads rest1 :: [(Int, String)] of
+            [(c, ':':' ':rest2)] -> (Just (r, c), rest2)
+            [(c, ':':rest2)]     -> (Just (r, c), dropWhile (== ' ') rest2)
+            _                    -> (Nothing, s)
+        _ -> (Nothing, s)
+
+
+-- | Turn a plain-text error (possibly prefixed with `LINE:COL:`) into a
+-- diagnostic that points at the right place when the prefix is present.
+diagnosticFromMessage :: String -> A.Value
+diagnosticFromMessage fullMsg =
+    -- The prefix may sit after a leading "Canonicalise: " or "Type error: "
+    -- label we added in runPipeline. Strip the label first, then the pos.
+    let (label, rest) = span (/= ':') fullMsg
+        msg = case rest of
+            ':':' ':after -> case stripMsgPos after of
+                (Just (r, c), clean) -> Just (r, c, label ++ ": " ++ clean)
+                _ -> Nothing
+            _ -> Nothing
+        (pos, displayMsg) = case msg of
+            Just (r, c, m) -> (Just (r, c), m)
+            Nothing        -> (Nothing, fullMsg)
+    in case pos of
+        Just (r, c) ->
+            let line = max 0 (r - 1)
+                col  = max 0 (c - 1)
+            in mkDiagnostic line col line (col + 1) displayMsg 1
+        Nothing -> mkDiagnostic 0 0 0 80 displayMsg 1
 
 
 -- | Parse errors carry (Row, Col); LSP positions are 0-based.
@@ -465,6 +517,311 @@ findDefinition srcMod name = firstJust
         in if n == name then Just reg else Nothing
 
     firstJust = foldr (\m acc -> case m of Just r -> Just r; Nothing -> acc) Nothing
+
+
+-- ─── References / Rename ─────────────────────────────────────────────
+
+handleReferences :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
+handleReferences docs req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+    m <- IORef.readIORef docs
+    case Map.lookup uri m of
+        Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+        Just (_, text) -> case Parse.parseModule text of
+            Left _       -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+            Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+                Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+                Just name ->
+                    let regions = collectReferences srcMod (simpleName name)
+                        locations = [ A.object
+                                        [ "uri"   A..= uri
+                                        , "range" A..= regionToLspRange r
+                                        ]
+                                    | r <- regions
+                                    ]
+                    in sendReply reqId (A.toJSON locations)
+
+
+handlePrepareRename :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
+handlePrepareRename docs req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+    m <- IORef.readIORef docs
+    case Map.lookup uri m of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> case Parse.parseModule text of
+            Left _       -> sendReply reqId A.Null
+            Right srcMod -> case identAtRegion srcMod (line + 1) (col + 1) of
+                Nothing -> sendReply reqId A.Null
+                Just (n, reg) -> sendReply reqId $ A.object
+                    [ "range"       A..= regionToLspRange reg
+                    , "placeholder" A..= n
+                    ]
+
+
+handleRename :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
+handleRename docs req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+        newName = jsonStrAt ["params", "newName"] req
+    m <- IORef.readIORef docs
+    case Map.lookup uri m of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> case Parse.parseModule text of
+            Left _       -> sendReply reqId A.Null
+            Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+                Nothing -> sendReply reqId A.Null
+                Just name -> do
+                    let short = simpleName name
+                        refs  = collectReferences srcMod short
+                        edits =
+                            [ A.object
+                                [ "range"   A..= regionToLspRange r
+                                , "newText" A..= newName
+                                ]
+                            | r <- refs
+                            ]
+                    sendReply reqId $ A.object
+                        [ "changes" A..= A.object [ AK.fromText uri A..= edits ] ]
+
+
+-- | Every occurrence of `name` (unqualified) anywhere in the module —
+-- declaration, value references, and qualified refs whose rightmost
+-- segment matches. Shadowing (lambda params, let bindings) is respected.
+collectReferences :: Src.Module -> String -> [A.Region]
+collectReferences srcMod name =
+    let declRefs =
+            [ reg
+            | A.At _ v <- Src._values srcMod
+            , let A.At reg n = Src._valueName v, n == name
+            ]
+        bodyRefs = concatMap
+            (\(A.At _ v) ->
+                let pats = Src._valuePatterns v
+                    body = Src._valueBody v
+                    shadowed = Set.fromList (concatMap patternNames pats)
+                in refsInExpr name shadowed body)
+            (Src._values srcMod)
+    in declRefs ++ bodyRefs
+
+
+refsInExpr :: String -> Set.Set String -> Src.Expr -> [A.Region]
+refsInExpr target shadowed (A.At reg e) = case e of
+    Src.Var n
+        | n == target && not (Set.member n shadowed) -> [reg]
+        | otherwise -> []
+    Src.VarQual _ n
+        | n == target -> [reg]
+        | otherwise   -> []
+    Src.Call f xs -> refsInExpr target shadowed f ++ concatMap (refsInExpr target shadowed) xs
+    Src.Binops pairs final ->
+        concat [refsInExpr target shadowed e' | (e', _) <- pairs]
+        ++ refsInExpr target shadowed final
+    Src.Lambda pats body ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in refsInExpr target shadowed' body
+    Src.If branches elseE ->
+        concat [refsInExpr target shadowed a ++ refsInExpr target shadowed b | (a, b) <- branches]
+        ++ refsInExpr target shadowed elseE
+    Src.Let defs body ->
+        let defNames = Set.fromList (concatMap letDefNames defs)
+            shadowed' = Set.union shadowed defNames
+        in concatMap (letDefRefs target shadowed') defs
+        ++ refsInExpr target shadowed' body
+    Src.Case scrut arms ->
+        refsInExpr target shadowed scrut
+        ++ concatMap (\(p, rhs) ->
+            let shadowed' = Set.union shadowed (Set.fromList (patternNames p))
+            in refsInExpr target shadowed' rhs) arms
+    Src.Access target' _ -> refsInExpr target shadowed target'
+    Src.Update _ fields  -> concat [refsInExpr target shadowed v | (_, v) <- fields]
+    Src.Record fields    -> concat [refsInExpr target shadowed v | (_, v) <- fields]
+    Src.Tuple a b cs ->
+        refsInExpr target shadowed a ++ refsInExpr target shadowed b
+        ++ concatMap (refsInExpr target shadowed) cs
+    Src.List xs       -> concatMap (refsInExpr target shadowed) xs
+    Src.Negate inner  -> refsInExpr target shadowed inner
+    _ -> []
+  where
+    letDefNames (A.At _ d) = case d of
+        Src.Define (A.At _ n) _ _ _ -> [n]
+        Src.Destruct pat _          -> patternNames pat
+
+    letDefRefs t sh (A.At _ d) = case d of
+        Src.Define _ pats body _ ->
+            let sh' = Set.union sh (Set.fromList (concatMap patternNames pats))
+            in refsInExpr t sh' body
+        Src.Destruct _ body -> refsInExpr t sh body
+
+
+-- | The local names bound by a pattern.
+patternNames :: Src.Pattern -> [String]
+patternNames (A.At _ p) = case p of
+    Src.PVar n        -> [n]
+    Src.PCtor _ _ xs  -> concatMap patternNames xs
+    Src.PCtorQual _ _ xs -> concatMap patternNames xs
+    Src.PCons h t     -> patternNames h ++ patternNames t
+    Src.PList xs      -> concatMap patternNames xs
+    Src.PTuple a b cs -> patternNames a ++ patternNames b ++ concatMap patternNames cs
+    Src.PRecord ns    -> map (\(A.At _ n) -> n) ns
+    Src.PAlias inner (A.At _ n) -> n : patternNames inner
+    _                 -> []
+
+
+-- | Like identAtPosition but also returns the exact Region of the word.
+identAtRegion :: Src.Module -> Int -> Int -> Maybe (String, A.Region)
+identAtRegion srcMod line col =
+    let matches = [ (reg, n) | (reg, n) <- collectIdents srcMod
+                             , regionContains reg line col ]
+    in case sortBy (comparing (regionWidth . fst)) matches of
+        ((reg, n):_) -> Just (n, reg)
+        []           -> Nothing
+
+
+-- | Strip a qualifier: `String.length` → `length`; `foo` → `foo`.
+simpleName :: String -> String
+simpleName n = case break (== '.') n of
+    (_, '.':rest) -> rest
+    _             -> n
+
+
+-- ─── Signature Help ───────────────────────────────────────────────────
+
+handleSignatureHelp :: IORef.IORef Docs -> A.Value -> Maybe A.Value -> IO ()
+handleSignatureHelp docs req reqId = do
+    let uri = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+    m <- IORef.readIORef docs
+    case Map.lookup uri m of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> do
+            r <- try (computeSignatureHelp text line col)
+                :: IO (Either SomeException (Maybe A.Value))
+            case r of
+                Right (Just v) -> sendReply reqId v
+                _              -> sendReply reqId A.Null
+
+
+-- | Find the innermost `Call` expression whose region contains the cursor
+-- and whose function-head region ends before it. Emit the function's type
+-- and the 0-based index of the argument the cursor is currently in.
+--
+-- This supports Sky's paren-less call style (`greet "World"`) as well as
+-- parenthesised calls (`greet ("World")`).
+computeSignatureHelp :: T.Text -> Int -> Int -> IO (Maybe A.Value)
+computeSignatureHelp text line col = case Parse.parseModule text of
+    Left _       -> return Nothing
+    Right srcMod -> case enclosingCall srcMod (line + 1) (col + 1) of
+        Nothing                    -> return Nothing
+        Just (funcName, paramIdx) ->
+            case Canonicalise.canonicalise srcMod of
+                Left _ -> return (Just (mkSignature funcName "" paramIdx))
+                Right canMod -> do
+                    cs <- Constrain.constrainModule canMod
+                    r  <- Solve.solve cs
+                    case r of
+                        Solve.SolveOk types ->
+                            case Map.lookup (simpleName funcName) types of
+                                Just t  -> return (Just (mkSignature funcName (Solve.showType t) paramIdx))
+                                Nothing -> return (Just (mkSignature funcName "" paramIdx))
+                        _ -> return (Just (mkSignature funcName "" paramIdx))
+
+
+-- | Walk every value body looking for a `Call` whose region contains the
+-- cursor but whose function-head region does NOT (so we're past the head
+-- in argument territory). Pick the innermost such call.
+enclosingCall :: Src.Module -> Int -> Int -> Maybe (String, Int)
+enclosingCall srcMod line col =
+    let calls =
+            [ (reg, funcName, argIdx)
+            | A.At _ v <- Src._values srcMod
+            , (reg, funcName, argIdx) <- findCalls line col (Src._valueBody v)
+            ]
+    in case sortBy (comparing (regionWidth . fstOf3)) calls of
+        ((_, f, i):_) -> Just (f, i)
+        []            -> Nothing
+  where
+    fstOf3 (a, _, _) = a
+
+
+-- | Recurse into an expression collecting every Call whose outer region
+-- contains (line, col) and whose function-head region does not — plus the
+-- argument index the cursor falls into.
+findCalls :: Int -> Int -> Src.Expr -> [(A.Region, String, Int)]
+findCalls line col (A.At reg e) = here ++ recurse
+  where
+    here = case e of
+        Src.Call f args
+          | regionContains reg line col
+          , not (regionContains (A.toRegion f) line col)
+          , Just funcName <- exprHeadName f ->
+                let idx = argIndexAtPos line col args
+                in [(reg, funcName, idx)]
+        _ -> []
+
+    recurse = case e of
+        Src.Call f args           -> findCalls line col f ++ concatMap (findCalls line col) args
+        Src.Binops pairs final    -> concat [findCalls line col e' | (e', _) <- pairs] ++ findCalls line col final
+        Src.Lambda _ body         -> findCalls line col body
+        Src.If branches elseE     -> concat [findCalls line col a ++ findCalls line col b | (a, b) <- branches] ++ findCalls line col elseE
+        Src.Let defs body         -> concatMap letInner defs ++ findCalls line col body
+        Src.Case scrut arms       -> findCalls line col scrut ++ concatMap (\(_, b) -> findCalls line col b) arms
+        Src.Access t _            -> findCalls line col t
+        Src.Update _ fields       -> concat [findCalls line col v | (_, v) <- fields]
+        Src.Record fields         -> concat [findCalls line col v | (_, v) <- fields]
+        Src.Tuple a b cs          -> findCalls line col a ++ findCalls line col b ++ concatMap (findCalls line col) cs
+        Src.List xs               -> concatMap (findCalls line col) xs
+        Src.Negate inner          -> findCalls line col inner
+        _                         -> []
+
+    letInner (A.At _ d) = case d of
+        Src.Define _ _ body _ -> findCalls line col body
+        Src.Destruct _ body   -> findCalls line col body
+
+
+-- | The function head of `Var f`, `VarQual m f`, or a parenthesised call.
+exprHeadName :: Src.Expr -> Maybe String
+exprHeadName (A.At _ e) = case e of
+    Src.Var n       -> Just n
+    Src.VarQual q n -> Just (q ++ "." ++ n)
+    _               -> Nothing
+
+
+-- | Index of the first argument whose region starts past the cursor
+-- (i.e. the one we're currently typing). When cursor is past all args
+-- we return `length args` so signatureHelp highlights the next param.
+argIndexAtPos :: Int -> Int -> [Src.Expr] -> Int
+argIndexAtPos line col = go 0
+  where
+    go !i []     = i
+    go !i (a:as) =
+        let A.Region s _ = A.toRegion a
+            startLine = A._line s
+            startCol  = A._col  s
+            pastArg   = (startLine < line) || (startLine == line && startCol <= col)
+        in if regionContains (A.toRegion a) line col || pastArg
+               then go (i + 1) as
+               else i
+
+
+mkSignature :: String -> String -> Int -> A.Value
+mkSignature funcName typeStr paramIdx =
+    let label = funcName ++ (if null typeStr then "" else " : " ++ typeStr)
+    in A.object
+        [ "signatures" A..= A.toJSON
+            [ A.object
+                [ "label"       A..= label
+                , "documentation" A..= ("" :: T.Text)
+                ]
+            ]
+        , "activeSignature" A..= (0 :: Int)
+        , "activeParameter" A..= paramIdx
+        ]
 
 
 -- ─── Document Symbols ─────────────────────────────────────────────────

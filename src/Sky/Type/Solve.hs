@@ -16,6 +16,16 @@ import qualified Sky.Type.Type as T
 import qualified Sky.Type.UnionFind as UF
 import qualified Sky.Type.Unify as Unify
 import qualified Sky.Sky.ModuleName as ModuleName
+import qualified Sky.Reporting.Annotation as A
+
+
+-- | Emit a "LINE:COL:" prefix for error messages so downstream consumers
+-- (LSP, CLI) can parse a source location out of the plain-text payload.
+-- An all-zero region (synthetic) prints nothing.
+posPrefix :: A.Region -> String
+posPrefix (A.Region (A.Position r c) _)
+    | r <= 0 || c <= 0 = ""
+    | otherwise        = show r ++ ":" ++ show c ++ ": "
 
 
 -- | Result of solving constraints
@@ -144,7 +154,7 @@ solveHelp state constraint = case constraint of
     T.CAnd constraints ->
         solveAll state constraints
 
-    T.CEqual _region _category actualType expected -> do
+    T.CEqual region _category actualType expected -> do
         actualVar <- typeToVar state actualType
         expectedVar <- expectedToVar state expected
         ok <- Unify.unify actualVar expectedVar
@@ -154,16 +164,16 @@ solveHelp state constraint = case constraint of
                 -- Debug: read back actual resolved types
                 at <- variableToType actualVar
                 et <- variableToType expectedVar
-                return (Just $ "Type mismatch: " ++ showType at ++ " vs " ++ showType et ++ " (from: " ++ showType actualType ++ " vs " ++ showExpected expected ++ ")", state)
+                return (Just $ posPrefix region ++ "Type mismatch: " ++ showType at ++ " vs " ++ showType et ++ " (from: " ++ showType actualType ++ " vs " ++ showExpected expected ++ ")", state)
 
-    T.CLocal _region name expected -> do
+    T.CLocal region name expected -> do
         case Map.lookup name (_env state) of
             Just var -> do
                 expectedVar <- expectedToVar state expected
                 ok <- Unify.unify var expectedVar
                 if ok
                     then return (Nothing, state)
-                    else return (Just $ "Variable '" ++ name ++ "' type mismatch", state)
+                    else return (Just $ posPrefix region ++ "Variable '" ++ name ++ "' type mismatch", state)
             Nothing -> do
                 -- Unknown variable — create a fresh flex var and add to env
                 freshVar <- UF.fresh (T.Descriptor (T.FlexVar (Just name)) (_rank state) T.noMark Nothing)

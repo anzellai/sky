@@ -361,40 +361,70 @@ checkAmbiguousUses
 checkAmbiguousUses ambiguous localNames srcMod
     | Map.null ambiguous = Nothing
     | otherwise =
-        let usedAmbiguous :: Map.Map String [String]  -- name → sources
-            usedAmbiguous = Map.filterWithKey
-                (\n _ -> not (Set.member n localNames)
-                         && Set.member n referencedUnqualNames)
-                ambiguous
-
-            referencedUnqualNames :: Set.Set String
-            referencedUnqualNames = Set.fromList $ concatMap
+        let -- Every unqualified reference site with its region.
+            allRefs :: [(String, A.Region)]
+            allRefs = concatMap
                 (\(A.At _ v) ->
                     let pats  = Src._valuePatterns v
                         body  = Src._valueBody v
                         shadowed = Set.union localNames
                             (Set.fromList (concatMap patternNames pats))
-                    in collectUnqualExpr shadowed body)
+                    in collectUnqualExprRegions shadowed body)
                 (Src._values srcMod)
+
+            -- name → first region it was referenced at (not locally shadowed).
+            firstUse :: Map.Map String A.Region
+            firstUse = Map.fromListWith (\_ b -> b) (reverse allRefs)
+
+            usedAmbiguous :: Map.Map String [String]
+            usedAmbiguous = Map.filterWithKey
+                (\n _ -> not (Set.member n localNames)
+                         && Map.member n firstUse)
+                ambiguous
+
             clashes = Map.toList usedAmbiguous
         in case clashes of
             [] -> Nothing
-            _  -> Just (formatCollisionError clashes)
+            _  -> Just (formatCollisionError firstUse clashes)
   where
-    formatCollisionError :: [(String, [String])] -> String
-    formatCollisionError clashes =
+    formatCollisionError :: Map.Map String A.Region -> [(String, [String])] -> String
+    formatCollisionError firstUse clashes =
         let header = "Ambiguous imports: " ++ show (length clashes)
                   ++ " name(s) are exposed by more than one import AND used "
                   ++ "unqualified."
             body = concat
-                [ "\n  - `" ++ n ++ "` could be from: "
+                [ "\n  - " ++ posTag n ++ "`" ++ n ++ "` could be from: "
                    ++ joinWithComma srcs
                    ++ "\n      Fix: add `as <Alias>` to one import and call it qualified, e.g. `import "
                    ++ head srcs ++ " as " ++ suggestAlias (head srcs)
                    ++ "` then `" ++ suggestAlias (head srcs) ++ "." ++ n ++ "`."
                 | (n, srcs) <- clashes
                 ]
-        in header ++ body
+            -- Embed the first use's position at the head of the message so
+            -- LSP can place the diagnostic at a real location.
+            leader = case clashes of
+                ((n, _):_) -> case Map.lookup n firstUse of
+                    Just (A.Region (A.Position r c) _) -> show r ++ ":" ++ show c ++ ": "
+                    Nothing -> ""
+                [] -> ""
+        in leader ++ header ++ body
+
+    posTag n = case Map.lookup n firstUseRef of
+        Just (A.Region (A.Position r c) _) -> "(at " ++ show r ++ ":" ++ show c ++ ") "
+        Nothing -> ""
+
+    firstUseRef :: Map.Map String A.Region
+    firstUseRef = Map.fromListWith (\_ b -> b) (reverse allRefsRef)
+
+    allRefsRef :: [(String, A.Region)]
+    allRefsRef = concatMap
+        (\(A.At _ v) ->
+            let pats  = Src._valuePatterns v
+                body  = Src._valueBody v
+                shadowed = Set.union localNames
+                    (Set.fromList (concatMap patternNames pats))
+            in collectUnqualExprRegions shadowed body)
+        (Src._values srcMod)
 
     joinWithComma = foldr1 (\a b -> a ++ ", " ++ b)
 
@@ -410,6 +440,52 @@ checkAmbiguousUses ambiguous localNames srcMod
     splitDots s = case break (== '.') s of
         (a, "") -> [a]
         (a, _:rest) -> a : splitDots rest
+
+
+-- | Same as collectUnqualExpr but also records each reference's source region.
+collectUnqualExprRegions :: Set.Set String -> Src.Expr -> [(String, A.Region)]
+collectUnqualExprRegions shadowed (A.At reg e) = case e of
+    Src.Var n
+        | Set.member n shadowed -> []
+        | otherwise             -> [(n, reg)]
+    Src.VarQual _ _ -> []
+    Src.Call f xs -> collectUnqualExprRegions shadowed f ++ concatMap (collectUnqualExprRegions shadowed) xs
+    Src.Binops pairs final ->
+        concat [collectUnqualExprRegions shadowed e' | (e', _) <- pairs]
+        ++ collectUnqualExprRegions shadowed final
+    Src.Lambda pats body ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in collectUnqualExprRegions shadowed' body
+    Src.If branches elseE ->
+        concat [collectUnqualExprRegions shadowed a ++ collectUnqualExprRegions shadowed b | (a, b) <- branches]
+        ++ collectUnqualExprRegions shadowed elseE
+    Src.Let defs body ->
+        let defNames = Set.fromList (concatMap defBoundNames defs)
+            shadowed' = Set.union shadowed defNames
+        in concatMap (defBodyExprRegions shadowed') defs
+        ++ collectUnqualExprRegions shadowed' body
+    Src.Case scrut arms ->
+        collectUnqualExprRegions shadowed scrut
+        ++ concatMap (\(p, rhs) ->
+            let shadowed' = Set.union shadowed (Set.fromList (patternNames p))
+            in collectUnqualExprRegions shadowed' rhs) arms
+    Src.Access target _ -> collectUnqualExprRegions shadowed target
+    Src.Update _ fields -> concat [collectUnqualExprRegions shadowed v | (_, v) <- fields]
+    Src.Record fields   -> concat [collectUnqualExprRegions shadowed v | (_, v) <- fields]
+    Src.Tuple a b cs ->
+        collectUnqualExprRegions shadowed a ++ collectUnqualExprRegions shadowed b
+        ++ concatMap (collectUnqualExprRegions shadowed) cs
+    Src.List xs -> concatMap (collectUnqualExprRegions shadowed) xs
+    Src.Negate inner -> collectUnqualExprRegions shadowed inner
+    _ -> []
+
+
+defBodyExprRegions :: Set.Set String -> A.Located Src.Def -> [(String, A.Region)]
+defBodyExprRegions shadowed (A.At _ d) = case d of
+    Src.Define _ pats body _ ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in collectUnqualExprRegions shadowed' body
+    Src.Destruct _ body -> collectUnqualExprRegions shadowed body
 
 
 -- | Collect every unqualified `Var name` reference inside an expression tree.

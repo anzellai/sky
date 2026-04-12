@@ -192,21 +192,26 @@ resolveOperator _env op = case op of
 -- ═══════════════════════════════════════════════════════════
 
 -- | Canonicalise a binary operator chain.
--- `Binops [(e1, op1), (e2, op2)] final` → nested Binop nodes
+-- `Binops [(e1, op1), (e2, op2)] final` → nested Binop nodes.
+--
+-- We thread a fully-Located accumulator so each intermediate Binop
+-- retains the correct source region (needed by downstream diagnostics).
+-- The returned Expr_ is unwrapped at the call site by canonicaliseExpr_.
 canonicaliseBinops :: Env.Env -> [(Src.Expr, A.Located String)] -> Src.Expr -> Can.Expr_
 canonicaliseBinops env pairs final =
     let canFinal = canonicaliseExpr env final
-    in foldl (applyBinop env) (A.toValue canFinal) pairs
+        folded   = foldl (applyBinop env) canFinal pairs
+    in A.toValue folded
   where
-    applyBinop e acc (leftExpr, A.At _ op) =
+    applyBinop e (A.At accReg accVal) (leftExpr, A.At _ op) =
         let
-            canLeft = canonicaliseExpr e leftExpr
-            -- Wrap accumulated result in a Located for the Binop
-            accExpr = A.At A.one acc
+            canLeft@(A.At leftReg _) = canonicaliseExpr e leftExpr
             (opHome, opName) = resolveOpName op
             opAnnot = operatorAnnotation op
+            mergedReg = A.merge leftReg accReg
         in
-        Can.Binop op opHome opName opAnnot canLeft accExpr
+        A.At mergedReg $
+            Can.Binop op opHome opName opAnnot canLeft (A.At accReg accVal)
 
 
 -- | Resolve operator to its home module and canonical name
