@@ -23,7 +23,7 @@ main =
 
 Sky compiles to Go. You get a single binary that runs your fullstack app -- API server, database access, and server-rendered interactive UI -- all from one codebase, one language, one deployment artifact.
 
-The compiler, CLI, formatter, and LSP are all **self-hosted** -- written in Sky itself, compiled to a ~6MB native Go binary. Zero Node.js/TypeScript/npm dependencies. The compiler bootstraps through 3+ generations of self-compilation.
+The current compiler is written in **Haskell** (GHC 9.4+). It handles parsing, Hindley-Milner type inference, canonicalisation, formatting, LSP, and codegen to Go. Earlier self-hosted (Sky-in-Sky) and TypeScript bootstrap implementations are preserved under `legacy-sky-compiler/` and `legacy-ts-compiler/` for historical reference. The Haskell compiler ships with auto-FFI generation for arbitrary Go packages and a safety-first runtime (panic recovery, Task effect boundary, SQL-injection-safe DB, Unicode-correct strings).
 
 ### Why Sky exists
 
