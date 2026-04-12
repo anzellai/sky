@@ -1443,23 +1443,35 @@ patternBindings subject pat = case pat of
             (A.At _ hPat) = h
             (A.At _ tPat) = t
             headExpr = GoIr.GoIndex asSlice (GoIr.GoIntLit 0)
-            tailExpr = GoIr.GoRaw (subject ++ ".([]any)[1:]")
+            -- Wrap in any() so nested patternBindings can re-assert `.([]any)`.
+            -- Without this, the recursive case `1 :: 2 :: _` tries
+            -- `__tail.([]any)[0]` on something already typed `[]any`, failing
+            -- Go's "is not an interface" check.
+            tailExpr = GoIr.GoRaw ("any(" ++ subject ++ ".([]any)[1:])")
             headName = "__sky_h_" ++ subject
             tailName = "__sky_t_" ++ subject
             headStmts = case hPat of
                 Can.PVar name ->
                     if isDiscardName name
                         then [ GoIr.GoAssign "_" headExpr ]
-                        else [ GoIr.GoShortDecl name headExpr ]
-                Can.PAnything -> []
-                _ -> GoIr.GoShortDecl headName headExpr : patternBindings headName hPat
+                        else [ GoIr.GoShortDecl name headExpr
+                             , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                             ]
+                Can.PAnything -> [ GoIr.GoAssign "_" headExpr ]
+                _ -> GoIr.GoShortDecl headName headExpr
+                    : GoIr.GoAssign "_" (GoIr.GoIdent headName)
+                    : patternBindings headName hPat
             tailStmts = case tPat of
                 Can.PVar name ->
                     if isDiscardName name
                         then [ GoIr.GoAssign "_" tailExpr ]
-                        else [ GoIr.GoShortDecl name tailExpr ]
-                Can.PAnything -> []
-                _ -> GoIr.GoShortDecl tailName tailExpr : patternBindings tailName tPat
+                        else [ GoIr.GoShortDecl name tailExpr
+                             , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                             ]
+                Can.PAnything -> [ GoIr.GoAssign "_" tailExpr ]
+                _ -> GoIr.GoShortDecl tailName tailExpr
+                    : GoIr.GoAssign "_" (GoIr.GoIdent tailName)
+                    : patternBindings tailName tPat
         in headStmts ++ tailStmts
 
     -- [a, b, c]  →  bind each element by index
@@ -1469,11 +1481,15 @@ patternBindings subject pat = case pat of
                 Can.PVar name ->
                     if isDiscardName name
                         then [ GoIr.GoAssign "_" (asSlice i) ]
-                        else [ GoIr.GoShortDecl name (asSlice i) ]
-                Can.PAnything -> []
+                        else [ GoIr.GoShortDecl name (asSlice i)
+                             , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                             ]
+                Can.PAnything -> [ GoIr.GoAssign "_" (asSlice i) ]
                 _ ->
                     let sub = "__sky_li_" ++ show i ++ "_" ++ subject
-                    in GoIr.GoShortDecl sub (asSlice i) : patternBindings sub p
+                    in GoIr.GoShortDecl sub (asSlice i)
+                        : GoIr.GoAssign "_" (GoIr.GoIdent sub)
+                        : patternBindings sub p
         in concat (zipWith bindEl [0::Int ..] xs)
 
     -- (a, b) or (a, b, c)  →  bind V0, V1[, V2] off SkyTuple2/3
@@ -1484,11 +1500,14 @@ patternBindings subject pat = case pat of
                 Can.PVar name ->
                     if isDiscardName name
                         then [ GoIr.GoAssign "_" (GoIr.GoSelector asTup fld) ]
-                        else [ GoIr.GoShortDecl name (GoIr.GoSelector asTup fld) ]
-                Can.PAnything -> []
+                        else [ GoIr.GoShortDecl name (GoIr.GoSelector asTup fld)
+                             , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                             ]
+                Can.PAnything -> [ GoIr.GoAssign "_" (GoIr.GoSelector asTup fld) ]
                 _ ->
                     let sub = "__sky_t_" ++ fld ++ "_" ++ subject
                     in GoIr.GoShortDecl sub (GoIr.GoSelector asTup fld)
+                       : GoIr.GoAssign "_" (GoIr.GoIdent sub)
                        : patternBindings sub p
             pieces = bindField "V0" aPat ++ bindField "V1" bPat
             extra = case mcPat of
@@ -1498,11 +1517,14 @@ patternBindings subject pat = case pat of
 
     -- { name }  →  name := rt.Field(subject, "Name")
     Can.PRecord fields ->
-        [ GoIr.GoShortDecl f
+        concat
+        [ [ GoIr.GoShortDecl f
             (GoIr.GoCall (GoIr.GoQualified "rt" "Field")
                 [ GoIr.GoIdent subject
                 , GoIr.GoStringLit (capitalise_ f)
                 ])
+          , GoIr.GoAssign "_" (GoIr.GoIdent f)
+          ]
         | f <- fields
         ]
 
