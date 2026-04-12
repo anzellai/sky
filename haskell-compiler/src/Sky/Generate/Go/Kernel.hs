@@ -149,6 +149,7 @@ registry = Map.fromList
     , (("Time", "now"),           KernelInfo "rt.Time_now" 0 False)
     , (("Time", "sleep"),         KernelInfo "rt.Time_sleep" 1 False)
     , (("Time", "every"),         KernelInfo "rt.Time_every" 2 True)
+    , (("Time", "unixMillis"),    KernelInfo "rt.Time_unixMillis" 0 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Random
