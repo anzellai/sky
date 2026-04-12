@@ -7,7 +7,7 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, copyFile, listDirectory)
 import System.IO (hFlush, stdout)
 import System.IO.Unsafe (unsafePerformIO)
 import System.FilePath (takeDirectory, (</>))
@@ -221,6 +221,30 @@ parseSingle config entryPath outDir = do
                     return (Right mainGoPath)
 
 
+-- | Copy user FFI files from ./ffi/*.go into sky-out/rt/ so they compile into
+-- the same Go package as the runtime. Users call `rt.Register` from init() in
+-- these files to expose Go functions to Sky via Ffi.call "name" args.
+copyFfiDir :: FilePath -> IO ()
+copyFfiDir outDir = do
+    let ffiDir = "ffi"
+        dstDir = outDir </> "rt"
+    exists <- doesDirectoryExist ffiDir
+    if not exists then return ()
+        else do
+            contents <- listDirectoryHs ffiDir
+            let goFiles = filter isGoFile contents
+            mapM_ (\f -> copyFile (ffiDir </> f) (dstDir </> f)) goFiles
+  where
+    isGoFile name = ".go" `isSuffixOfHs` name
+    isSuffixOfHs suffix name =
+        length name >= length suffix &&
+        drop (length name - length suffix) name == suffix
+
+
+listDirectoryHs :: FilePath -> IO [FilePath]
+listDirectoryHs = listDirectory
+
+
 -- | Copy the Go runtime package into the output directory
 copyRuntime :: FilePath -> IO ()
 copyRuntime outDir = do
@@ -244,6 +268,8 @@ copyRuntime outDir = do
     let srcSum = "runtime-go/go.sum"
     hasSum <- doesFileExist srcSum
     if hasSum then copyFile srcSum (outDir </> "go.sum") else return ()
+    -- User FFI: copy ./ffi/*.go into sky-out/rt/ so they compile into the rt package
+    copyFfiDir outDir
 
 
 -- ═══════════════════════════════════════════════════════════

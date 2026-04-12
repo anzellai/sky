@@ -24,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 )
@@ -501,6 +502,88 @@ func RecordUpdate(base any, updates map[string]any) any {
 
 type SkyTuple2 struct { V0, V1 any }
 type SkyTuple3 struct { V0, V1, V2 any }
+
+// ═══════════════════════════════════════════════════════════
+// FFI — name-based dispatch for user-supplied Go bindings
+// ═══════════════════════════════════════════════════════════
+//
+// Users add a `ffi/` directory to their project containing Go files that
+// call `rt.Register("name", fn)` in an init() to expose Go functions to Sky.
+// Sky code calls `Ffi.call "name" [args]` to invoke them. All exceptions
+// are caught and converted to Err.
+
+var (
+	ffiRegistryMu sync.RWMutex
+	ffiRegistry   = map[string]func([]any) any{}
+)
+
+// Register exposes a Go function under a string name. Call from init().
+// The function receives its args as []any and returns any Sky value.
+// Panics are caught and turned into Err results by Ffi.call.
+func Register(name string, fn func([]any) any) {
+	ffiRegistryMu.Lock()
+	defer ffiRegistryMu.Unlock()
+	ffiRegistry[name] = fn
+}
+
+// invokeFfi runs the registered function with panic recovery.
+// Returns SkyResult Ok on success, Err on missing name or panic.
+func invokeFfi(name string, args []any) any {
+	ffiRegistryMu.RLock()
+	fn, ok := ffiRegistry[name]
+	ffiRegistryMu.RUnlock()
+	if !ok {
+		return Err[any, any]("Ffi: not registered: " + name)
+	}
+	var result any
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				result = Err[any, any](fmt.Sprintf("Ffi %q panicked: %v", name, r))
+			}
+		}()
+		result = Ok[any, any](fn(args))
+	}()
+	return result
+}
+
+// Ffi.callPure : String -> List any -> Result String a
+// For pure Go functions (deterministic, no I/O, no clock, no randomness).
+// Invokes immediately and returns a Result. Misuse (calling an effectful
+// binding via callPure) loses referential transparency — use callTask for
+// anything with side effects.
+func Ffi_callPure(name any, args any) any {
+	return invokeFfi(fmt.Sprintf("%v", name), asList(args))
+}
+
+// Ffi.callTask : String -> List any -> Task String a
+// For effectful Go functions — I/O, time, randomness, network, filesystem,
+// database. Returns a deferred thunk (Sky's Task representation) that runs
+// only when sequenced via Task.perform / Task.andThen. Preserves Sky's
+// pure-functional effect boundary — no effect happens on the expression,
+// only when the Task is executed.
+func Ffi_callTask(name any, args any) any {
+	n := fmt.Sprintf("%v", name)
+	argList := asList(args)
+	return func() any {
+		return invokeFfi(n, argList)
+	}
+}
+
+// Ffi.call : deprecated alias for callPure. Retained for backwards-compat.
+// Prefer Ffi.callPure or Ffi.callTask — they express effect intent.
+func Ffi_call(name any, args any) any {
+	return Ffi_callPure(name, args)
+}
+
+// Ffi.has : String -> Bool — check whether a name is registered.
+func Ffi_has(name any) any {
+	n := fmt.Sprintf("%v", name)
+	ffiRegistryMu.RLock()
+	_, ok := ffiRegistry[n]
+	ffiRegistryMu.RUnlock()
+	return ok
+}
 
 // SkyADT: runtime type for ADT case-match dispatch.
 // Codegen emits `msg.(rt.SkyADT)` so any local ADT type (with matching Tag/Fields)

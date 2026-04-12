@@ -1,0 +1,28 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Task as Task
+import Sky.Ffi as Ffi
+import Std.Log exposing (println)
+
+main =
+    let
+        -- Pure: reverse a string
+        _ = case Ffi.callPure "myffi.reverse" ["hello 世界"] of
+                Ok v -> println (String.append "reversed: " v)
+                Err e -> println (String.append "err: " e)
+        -- Effectful: clock reading wrapped in Task, runs via Task.perform
+        _ = case Task.perform (Ffi.callTask "myffi.clock" []) of
+                Ok _ms -> println "clock ok"
+                Err e -> println (String.append "clock err: " e)
+        -- Panic recovery: a broken binding must not crash the process
+        _ = case Ffi.callPure "myffi.boom" [] of
+                Ok _ -> println "LEAK"
+                Err e -> println (String.append "panic recovered: " e)
+        -- Missing binding
+        _ = case Ffi.callPure "myffi.missing" [] of
+                Ok _ -> println "LEAK"
+                Err e -> println (String.append "missing: " e)
+    in
+        println "ffi ok"

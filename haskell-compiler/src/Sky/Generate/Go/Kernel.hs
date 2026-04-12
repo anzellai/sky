@@ -108,6 +108,12 @@ registry = Map.fromList
     , (("Middleware", "withBasicAuth"),   KernelInfo "rt.Middleware_withBasicAuth" 3 False)
     , (("Middleware", "withRateLimit"),   KernelInfo "rt.Middleware_withRateLimit" 4 False)
 
+    -- Sky.Ffi — name-based dispatch to user-supplied Go bindings
+    , (("Ffi", "call"),           KernelInfo "rt.Ffi_call" 2 False)
+    , (("Ffi", "callPure"),       KernelInfo "rt.Ffi_callPure" 2 False)
+    , (("Ffi", "callTask"),       KernelInfo "rt.Ffi_callTask" 2 False)
+    , (("Ffi", "has"),            KernelInfo "rt.Ffi_has" 1 False)
+
     -- ═══════════════════════════════════════════════════════
     -- List
     -- ═══════════════════════════════════════════════════════
