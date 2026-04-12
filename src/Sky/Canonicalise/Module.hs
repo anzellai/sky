@@ -8,6 +8,7 @@ module Sky.Canonicalise.Module
     where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.IORef (readIORef)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Sky.AST.Source as Src
@@ -52,6 +53,20 @@ canonicaliseWithDeps deps srcMod =
         -- Counter is imported from another module).
         tmap = buildTypeHomeMap modName deps srcMod
 
+        -- Detect name collisions between exposing-(..) or exposing-(name)
+        -- imports. We tolerate collisions as long as the ambiguous name is
+        -- never actually used unqualified in this module — that's exactly
+        -- what Elm does. If any use site references a colliding unqualified
+        -- name (and it isn't locally defined), we report it with a "qualify
+        -- one side" suggestion.
+        ambiguous = detectExposingCollisions deps (Src._imports srcMod)
+        localNames = Set.fromList
+            [ nm
+            | A.At _ v <- Src._values srcMod
+            , let A.At _ nm = Src._valueName v
+            ]
+        collisions = checkAmbiguousUses ambiguous localNames srcMod
+
         -- Build environment from imports
         env0 = Env.initialEnv modName
         env1 = foldl (processImportWith deps modName) env0 (Src._imports srcMod)
@@ -76,14 +91,15 @@ canonicaliseWithDeps deps srcMod =
 
         -- Exports
         exports = canonicaliseExports (Src._exports srcMod)
-    in
-    Right $ Can.Module
-        { Can._name    = modName
-        , Can._exports = exports
-        , Can._decls   = decls
-        , Can._unions  = unions
-        , Can._aliases = aliases
-        }
+    in case collisions of
+        Just err -> Left err
+        Nothing -> Right $ Can.Module
+            { Can._name    = modName
+            , Can._exports = exports
+            , Can._decls   = decls
+            , Can._unions  = unions
+            , Can._aliases = aliases
+            }
 
 
 -- | Build a map from type-name → home module. Combines:
@@ -282,6 +298,189 @@ kernelFunctions :: Map.Map String [String]
 kernelFunctions =
     Map.unionWith (++) staticKernelFunctions
         (unsafePerformIO (readIORef Env.ffiKernelFunctionsRef))
+
+
+-- | Map each unqualified name to the list of distinct canonical sources
+-- that contribute it via `exposing (..)` / `exposing (name)`. Only names
+-- with ≥2 distinct sources are retained — these are the ambiguous names
+-- that trigger an error if referenced unqualified.
+--
+-- Sources that normalise to the same kernel module (e.g. `Sky.Core.Prelude`
+-- re-exports `Basics` names) are treated as the same origin, so re-exports
+-- never count as collisions.
+detectExposingCollisions :: Map.Map String DepInfo -> [Src.Import] -> Map.Map String [String]
+detectExposingCollisions deps imps =
+    let contributions :: [(String, String)]
+        contributions = concatMap contributionsFor imps
+
+        byName :: Map.Map String [String]
+        byName = Map.fromListWith (++)
+            [(n, [src]) | (n, src) <- contributions]
+    in Map.filter (\srcs -> length (distinct srcs) > 1)
+       $ Map.map distinct byName
+  where
+    canonicalSource path = Map.findWithDefault path path Env.kernelModules
+
+    contributionsFor :: Src.Import -> [(String, String)]
+    contributionsFor imp =
+        let segs = case Src._importName imp of A.At _ s -> s
+            path = ModuleName.joinWith "." segs
+            src  = canonicalSource path
+        in case Src._importExposing imp of
+            A.At _ Src.ExposingAll ->
+                [(n, src) | n <- allExposedNames path]
+            A.At _ (Src.ExposingList xs) ->
+                [(n, src) | n <- concatMap exposedName xs]
+
+    exposedName (A.At _ e) = case e of
+        Src.ExposedValue n    -> [n]
+        Src.ExposedType n _   -> [n]
+        Src.ExposedOperator _ -> []
+
+    allExposedNames path =
+        let kernelName = Map.findWithDefault "" path Env.kernelModules
+            kernelFns  = Map.findWithDefault [] kernelName kernelFunctions
+            depFns = case Map.lookup path deps of
+                Just d  -> _dep_aliases d ++ _dep_values d
+                            ++ map fst (_dep_unions d)
+                Nothing -> []
+        in if null kernelName then depFns else kernelFns
+
+    distinct :: Ord a => [a] -> [a]
+    distinct = Map.keys . Map.fromList . map (\x -> (x, ()))
+
+
+-- | Walk every value declaration for unqualified uses of names that
+-- are ambiguous across imports. If any such use site exists AND the name
+-- isn't defined locally in this module, report an ambiguity error.
+checkAmbiguousUses
+    :: Map.Map String [String]   -- ambiguous-name → candidate source list
+    -> Set.Set String             -- local top-level names (shadow imports)
+    -> Src.Module
+    -> Maybe String
+checkAmbiguousUses ambiguous localNames srcMod
+    | Map.null ambiguous = Nothing
+    | otherwise =
+        let usedAmbiguous :: Map.Map String [String]  -- name → sources
+            usedAmbiguous = Map.filterWithKey
+                (\n _ -> not (Set.member n localNames)
+                         && Set.member n referencedUnqualNames)
+                ambiguous
+
+            referencedUnqualNames :: Set.Set String
+            referencedUnqualNames = Set.fromList $ concatMap
+                (\(A.At _ v) ->
+                    let pats  = Src._valuePatterns v
+                        body  = Src._valueBody v
+                        shadowed = Set.union localNames
+                            (Set.fromList (concatMap patternNames pats))
+                    in collectUnqualExpr shadowed body)
+                (Src._values srcMod)
+            clashes = Map.toList usedAmbiguous
+        in case clashes of
+            [] -> Nothing
+            _  -> Just (formatCollisionError clashes)
+  where
+    formatCollisionError :: [(String, [String])] -> String
+    formatCollisionError clashes =
+        let header = "Ambiguous imports: " ++ show (length clashes)
+                  ++ " name(s) are exposed by more than one import AND used "
+                  ++ "unqualified."
+            body = concat
+                [ "\n  - `" ++ n ++ "` could be from: "
+                   ++ joinWithComma srcs
+                   ++ "\n      Fix: add `as <Alias>` to one import and call it qualified, e.g. `import "
+                   ++ head srcs ++ " as " ++ suggestAlias (head srcs)
+                   ++ "` then `" ++ suggestAlias (head srcs) ++ "." ++ n ++ "`."
+                | (n, srcs) <- clashes
+                ]
+        in header ++ body
+
+    joinWithComma = foldr1 (\a b -> a ++ ", " ++ b)
+
+    suggestAlias s =
+        let segs = case break (== '.') s of
+                (a, "") -> [a]
+                (a, _:rest) -> a : splitDots rest
+            lastSeg = case segs of [] -> s; _ -> last segs
+        in case lastSeg of
+            "Tailwind" -> "Tw"
+            _          -> lastSeg
+
+    splitDots s = case break (== '.') s of
+        (a, "") -> [a]
+        (a, _:rest) -> a : splitDots rest
+
+
+-- | Collect every unqualified `Var name` reference inside an expression tree.
+-- Skips qualified references (those are not ambiguous — the alias is explicit).
+-- Also adds pattern-bound variables to a shadow set so a `\x -> x` shadowing
+-- doesn't count as a reference to the ambiguous `x`.
+collectUnqualExpr :: Set.Set String -> Src.Expr -> [String]
+collectUnqualExpr shadowed (A.At _ e) = case e of
+    Src.Var n
+        | Set.member n shadowed -> []
+        | otherwise             -> [n]
+    Src.VarQual _ _ -> []
+    Src.Call f xs -> collectUnqualExpr shadowed f ++ concatMap (collectUnqualExpr shadowed) xs
+    Src.Binops pairs final ->
+        concat [collectUnqualExpr shadowed e' | (e', _) <- pairs] ++ collectUnqualExpr shadowed final
+    Src.Lambda pats body ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in collectUnqualExpr shadowed' body
+    Src.If branches elseE ->
+        concat [collectUnqualExpr shadowed a ++ collectUnqualExpr shadowed b | (a, b) <- branches]
+        ++ collectUnqualExpr shadowed elseE
+    Src.Let defs body ->
+        let defNames = Set.fromList (concatMap defBoundNames defs)
+            shadowed' = Set.union shadowed defNames
+        in concatMap (defBodyExprs shadowed') defs ++ collectUnqualExpr shadowed' body
+    Src.Case scrut arms ->
+        collectUnqualExpr shadowed scrut
+        ++ concatMap (\(p, rhs) ->
+            let shadowed' = Set.union shadowed (Set.fromList (patternNames p))
+            in collectUnqualExpr shadowed' rhs) arms
+    Src.Access target _ -> collectUnqualExpr shadowed target
+    Src.Update _ fields -> concat [collectUnqualExpr shadowed v | (_, v) <- fields]
+    Src.Record fields   -> concat [collectUnqualExpr shadowed v | (_, v) <- fields]
+    Src.Tuple a b cs    ->
+        collectUnqualExpr shadowed a ++ collectUnqualExpr shadowed b
+        ++ concatMap (collectUnqualExpr shadowed) cs
+    Src.List xs         -> concatMap (collectUnqualExpr shadowed) xs
+    Src.Negate inner    -> collectUnqualExpr shadowed inner
+    _ -> []
+
+
+collectUnqualPattern :: Set.Set String -> Src.Pattern -> [String]
+collectUnqualPattern _ _ = []  -- patterns only BIND names; they don't reference
+
+
+defBoundNames :: A.Located Src.Def -> [String]
+defBoundNames (A.At _ d) = case d of
+    Src.Define (A.At _ n) _ _ _ -> [n]
+    Src.Destruct pat _          -> patternNames pat
+
+
+defBodyExprs :: Set.Set String -> A.Located Src.Def -> [String]
+defBodyExprs shadowed (A.At _ d) = case d of
+    Src.Define _ pats body _ ->
+        let shadowed' = Set.union shadowed (Set.fromList (concatMap patternNames pats))
+        in collectUnqualExpr shadowed' body
+    Src.Destruct _ body -> collectUnqualExpr shadowed body
+
+
+-- | Variable names bound by a pattern (recursively).
+patternNames :: Src.Pattern -> [String]
+patternNames (A.At _ p) = case p of
+    Src.PVar n        -> [n]
+    Src.PCtor _ _ xs  -> concatMap patternNames xs
+    Src.PCtorQual _ _ xs -> concatMap patternNames xs
+    Src.PCons h t     -> patternNames h ++ patternNames t
+    Src.PList xs      -> concatMap patternNames xs
+    Src.PTuple a b cs -> patternNames a ++ patternNames b ++ concatMap patternNames cs
+    Src.PRecord ns    -> map (\(A.At _ n) -> n) ns
+    Src.PAlias inner (A.At _ n) -> n : patternNames inner
+    _                 -> []
 
 
 staticKernelFunctions :: Map.Map String [String]

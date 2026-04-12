@@ -195,13 +195,21 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
         -- Pass 2: re-canonicalise deps with full cross-module info.
         depCanMods <- Async.forConcurrently depModules $ \(n, srcMod) ->
             case Canonicalise.canonicaliseWithDeps depInfoMap srcMod of
-                Right cm -> return (Just (n, cm))
-                Left _   -> return Nothing
-        let validDeps = [x | Just x <- depCanMods]
+                Right cm -> return (Right (n, cm))
+                Left err -> return (Left (n, err))
+        let validDeps = [x | Right x <- depCanMods]
+            depErrors = [(n, err) | Left (n, err) <- depCanMods]
 
-        case Canonicalise.canonicaliseWithDeps depInfoMap entrySrcMod of
-          Left err -> return (Left $ "Canonicalise error: " ++ err)
-          Right canMod -> do
+        -- If any dep failed to canonicalise, fail the build with the first
+        -- error so users see actionable messages (e.g. ambiguous imports)
+        -- rather than a downstream "undefined" Go error.
+        case depErrors of
+         ((n, err):_) ->
+            return (Left $ "Canonicalise error in " ++ n ++ ":\n" ++ err)
+         [] ->
+          case Canonicalise.canonicaliseWithDeps depInfoMap entrySrcMod of
+           Left err -> return (Left $ "Canonicalise error: " ++ err)
+           Right canMod -> do
             putStrLn "   Names resolved"
             let depDecls = concatMap (\(modName, depMod) ->
                     let prefix = map (\c -> if c == '.' then '_' else c) modName
