@@ -14,10 +14,15 @@
     {"name": "appAppCheck", "arity": 2},
     {"name": "appRemoteConfig", "arity": 2},
     {"name": "configAuthOverride", "arity": 1},
+    {"name": "configSetAuthOverride", "arity": 2},
     {"name": "configDatabaseURL", "arity": 1},
+    {"name": "configSetDatabaseURL", "arity": 2},
     {"name": "configProjectID", "arity": 1},
+    {"name": "configSetProjectID", "arity": 2},
     {"name": "configServiceAccountID", "arity": 1},
+    {"name": "configSetServiceAccountID", "arity": 2},
     {"name": "configStorageBucket", "arity": 1},
+    {"name": "configSetStorageBucket", "arity": 2},
     {"name": "newApp", "arity": 3}
   ]
 }

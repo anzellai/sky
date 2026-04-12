@@ -11,8 +11,10 @@ package rt
 import (
 	pkg "github.com/google/uuid"
 	"fmt"
+	_ "database/sql/driver"  // aliased driver; unused in emitted wrappers
 	hash "hash"
 	io "io"
+	"reflect"
 )
 
 // [pure] Go_Uuid.clockSequence → pkg.ClockSequence
@@ -29,6 +31,13 @@ func Go_Uuid_disableRandPool(p0 any) (out any) {
 	_ = p0
 	pkg.DisableRandPool()
 	out = Ok[any, any](struct{}{})
+	return
+}
+
+// [pure] Go_Uuid.domainString → pkg.DomainString
+func Go_Uuid_domainString(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.Domain).String())
 	return
 }
 
@@ -232,6 +241,230 @@ func Go_Uuid_nodeInterface(p0 any) (out any) {
 	return
 }
 
+// [fallible] Go_Uuid.nullUUIDScan → pkg.NullUUIDScan
+func Go_Uuid_nullUUIDScan(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.NullUUID).Scan(p1.(interface{}))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDValue → pkg.NullUUIDValue
+func Go_Uuid_nullUUIDValue(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.NullUUID).Value()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDMarshalBinary → pkg.NullUUIDMarshalBinary
+func Go_Uuid_nullUUIDMarshalBinary(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.NullUUID).MarshalBinary()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDUnmarshalBinary → pkg.NullUUIDUnmarshalBinary
+func Go_Uuid_nullUUIDUnmarshalBinary(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.NullUUID).UnmarshalBinary(SkyFfiArg_bytes(p1))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDMarshalText → pkg.NullUUIDMarshalText
+func Go_Uuid_nullUUIDMarshalText(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.NullUUID).MarshalText()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDUnmarshalText → pkg.NullUUIDUnmarshalText
+func Go_Uuid_nullUUIDUnmarshalText(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.NullUUID).UnmarshalText(SkyFfiArg_bytes(p1))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDMarshalJSON → pkg.NullUUIDMarshalJSON
+func Go_Uuid_nullUUIDMarshalJSON(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.NullUUID).MarshalJSON()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [fallible] Go_Uuid.nullUUIDUnmarshalJSON → pkg.NullUUIDUnmarshalJSON
+func Go_Uuid_nullUUIDUnmarshalJSON(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.NullUUID).UnmarshalJSON(SkyFfiArg_bytes(p1))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDUUID → (NullUUID).UUID (struct-field getter)
+func Go_Uuid_nullUUIDUUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UUID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UUID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UUID")
+	if !f.IsValid() {
+		out = Err[any, any]("UUID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDSetUUID → (NullUUID).UUID = <value> (struct-field setter; value-first for |>)
+func Go_Uuid_nullUUIDSetUUID(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("UUID: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("UUID: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("UUID: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("UUID")
+	if !f.IsValid() {
+		out = Err[any, any]("UUID: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("UUID: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("UUID: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDValid → (NullUUID).Valid (struct-field getter)
+func Go_Uuid_nullUUIDValid(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Valid: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Valid: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Valid")
+	if !f.IsValid() {
+		out = Err[any, any]("Valid: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDSetValid → (NullUUID).Valid = <value> (struct-field setter; value-first for |>)
+func Go_Uuid_nullUUIDSetValid(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Valid: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Valid: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Valid: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Valid")
+	if !f.IsValid() {
+		out = Err[any, any]("Valid: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Valid: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Valid: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [fallible] Go_Uuid.parse → pkg.Parse
 func Go_Uuid_parse(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -282,6 +515,145 @@ func Go_Uuid_setRand(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Uuid.timeUnixTime → pkg.TimeUnixTime
+func Go_Uuid_timeUnixTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, r1 := p0.(pkg.Time).UnixTime()
+	out = Ok[any, any]([]any{r0, r1})
+
+	return
+}
+
+// [pure] Go_Uuid.uUIDDomain → pkg.UUIDDomain
+func Go_Uuid_uUIDDomain(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).Domain())
+	return
+}
+
+// [pure] Go_Uuid.uUIDID → pkg.UUIDID
+func Go_Uuid_uUIDID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).ID())
+	return
+}
+
+// [fallible] Go_Uuid.uUIDMarshalText → pkg.UUIDMarshalText
+func Go_Uuid_uUIDMarshalText(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.UUID).MarshalText()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [fallible] Go_Uuid.uUIDUnmarshalText → pkg.UUIDUnmarshalText
+func Go_Uuid_uUIDUnmarshalText(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.UUID).UnmarshalText(SkyFfiArg_bytes(p1))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [fallible] Go_Uuid.uUIDMarshalBinary → pkg.UUIDMarshalBinary
+func Go_Uuid_uUIDMarshalBinary(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.UUID).MarshalBinary()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [fallible] Go_Uuid.uUIDUnmarshalBinary → pkg.UUIDUnmarshalBinary
+func Go_Uuid_uUIDUnmarshalBinary(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.UUID).UnmarshalBinary(SkyFfiArg_bytes(p1))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [pure] Go_Uuid.uUIDNodeID → pkg.UUIDNodeID
+func Go_Uuid_uUIDNodeID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).NodeID())
+	return
+}
+
+// [fallible] Go_Uuid.uUIDScan → pkg.UUIDScan
+func Go_Uuid_uUIDScan(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	err := p0.(*pkg.UUID).Scan(p1.(interface{}))
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](struct{}{})
+
+	return
+}
+
+// [fallible] Go_Uuid.uUIDValue → pkg.UUIDValue
+func Go_Uuid_uUIDValue(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	r0, err := p0.(pkg.UUID).Value()
+	if err != nil { out = Err[any, any](err.Error()); return }
+	out = Ok[any, any](r0)
+
+	return
+}
+
+// [pure] Go_Uuid.uUIDTime → pkg.UUIDTime
+func Go_Uuid_uUIDTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).Time())
+	return
+}
+
+// [pure] Go_Uuid.uUIDClockSequence → pkg.UUIDClockSequence
+func Go_Uuid_uUIDClockSequence(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).ClockSequence())
+	return
+}
+
+// [pure] Go_Uuid.uUIDString → pkg.UUIDString
+func Go_Uuid_uUIDString(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).String())
+	return
+}
+
+// [pure] Go_Uuid.uUIDURN → pkg.UUIDURN
+func Go_Uuid_uUIDURN(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).URN())
+	return
+}
+
+// [pure] Go_Uuid.uUIDVariant → pkg.UUIDVariant
+func Go_Uuid_uUIDVariant(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).Variant())
+	return
+}
+
+// [pure] Go_Uuid.uUIDVersion → pkg.UUIDVersion
+func Go_Uuid_uUIDVersion(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUID).Version())
+	return
+}
+
+// [pure] Go_Uuid.uUIDsStrings → pkg.UUIDsStrings
+func Go_Uuid_uUIDsStrings(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.UUIDs).Strings())
+	return
+}
+
 // [fallible] Go_Uuid.validate → pkg.Validate
 func Go_Uuid_validate(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -292,6 +664,20 @@ func Go_Uuid_validate(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Uuid.variantString → pkg.VariantString
+func Go_Uuid_variantString(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.Variant).String())
+	return
+}
 
-// Pin imports against "imported and not used" when many funcs were skipped.
+// [pure] Go_Uuid.versionString → pkg.VersionString
+func Go_Uuid_versionString(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = Ok[any, any](p0.(pkg.Version).String())
+	return
+}
+
+
+// Pin fmt against "imported and not used" across partial files.
 var _ = fmt.Sprintf

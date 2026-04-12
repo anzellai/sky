@@ -49,6 +49,57 @@ func Go_Iterator_pageInfoToken(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Iterator.pageInfoSetToken → (PageInfo).Token = <value> (struct-field setter; value-first for |>)
+func Go_Iterator_pageInfoSetToken(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Token: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Token: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Token: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Token")
+	if !f.IsValid() {
+		out = Err[any, any]("Token: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Token: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Token: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Iterator.pageInfoMaxSize → (PageInfo).MaxSize (struct-field getter)
 func Go_Iterator_pageInfoMaxSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -67,6 +118,57 @@ func Go_Iterator_pageInfoMaxSize(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Iterator.pageInfoSetMaxSize → (PageInfo).MaxSize = <value> (struct-field setter; value-first for |>)
+func Go_Iterator_pageInfoSetMaxSize(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("MaxSize: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("MaxSize: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("MaxSize: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("MaxSize")
+	if !f.IsValid() {
+		out = Err[any, any]("MaxSize: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("MaxSize: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("MaxSize: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 

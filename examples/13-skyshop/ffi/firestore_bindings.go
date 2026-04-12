@@ -137,6 +137,57 @@ func Go_Firestore_aggregationResponseResult(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.aggregationResponseSetResult → (AggregationResponse).Result = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_aggregationResponseSetResult(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Result: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Result: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Result: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Result")
+	if !f.IsValid() {
+		out = Err[any, any]("Result: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Result: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Result: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.aggregationResponseExplainMetrics → (AggregationResponse).ExplainMetrics (struct-field getter)
 func Go_Firestore_aggregationResponseExplainMetrics(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -155,6 +206,57 @@ func Go_Firestore_aggregationResponseExplainMetrics(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.aggregationResponseSetExplainMetrics → (AggregationResponse).ExplainMetrics = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_aggregationResponseSetExplainMetrics(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ExplainMetrics: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ExplainMetrics: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ExplainMetrics: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ExplainMetrics")
+	if !f.IsValid() {
+		out = Err[any, any]("ExplainMetrics: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ExplainMetrics: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ExplainMetrics: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -771,6 +873,57 @@ func Go_Firestore_andFilterFilters(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.andFilterSetFilters → (AndFilter).Filters = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_andFilterSetFilters(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Filters: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Filters: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Filters: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Filters")
+	if !f.IsValid() {
+		out = Err[any, any]("Filters: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Filters: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Filters: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -1675,6 +1828,57 @@ func Go_Firestore_clientUsesEmulator(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.clientSetUsesEmulator → (Client).UsesEmulator = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_clientSetUsesEmulator(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("UsesEmulator: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("UsesEmulator: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("UsesEmulator: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("UsesEmulator")
+	if !f.IsValid() {
+		out = Err[any, any]("UsesEmulator: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("UsesEmulator: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("UsesEmulator: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [fallible] Go_Firestore.collectionGroupRefGetPartitionedQueries → pkg.CollectionGroupRefGetPartitionedQueries
 func Go_Firestore_collectionGroupRefGetPartitionedQueries(p0 any, p1 any, p2 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1877,6 +2081,57 @@ func Go_Firestore_collectionGroupRefQuery(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.collectionGroupRefSetQuery → (CollectionGroupRef).Query = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_collectionGroupRefSetQuery(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Query: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Query: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Query: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Query")
+	if !f.IsValid() {
+		out = Err[any, any]("Query: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Query: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Query: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2147,6 +2402,57 @@ func Go_Firestore_collectionRefParent(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.collectionRefSetParent → (CollectionRef).Parent = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_collectionRefSetParent(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Parent: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Parent: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Parent: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Parent")
+	if !f.IsValid() {
+		out = Err[any, any]("Parent: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Parent: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Parent: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.collectionRefPath → (CollectionRef).Path (struct-field getter)
 func Go_Firestore_collectionRefPath(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2165,6 +2471,57 @@ func Go_Firestore_collectionRefPath(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.collectionRefSetPath → (CollectionRef).Path = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_collectionRefSetPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Path: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Path: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Path: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Path: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2189,6 +2546,57 @@ func Go_Firestore_collectionRefID(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.collectionRefSetID → (CollectionRef).ID = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_collectionRefSetID(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ID: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ID: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ID: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ID: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.collectionRefQuery → (CollectionRef).Query (struct-field getter)
 func Go_Firestore_collectionRefQuery(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2207,6 +2615,57 @@ func Go_Firestore_collectionRefQuery(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.collectionRefSetQuery → (CollectionRef).Query = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_collectionRefSetQuery(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Query: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Query: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Query: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Query")
+	if !f.IsValid() {
+		out = Err[any, any]("Query: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Query: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Query: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2339,6 +2798,57 @@ func Go_Firestore_documentChangeKind(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentChangeSetKind → (DocumentChange).Kind = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentChangeSetKind(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Kind: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Kind: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Kind: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Kind")
+	if !f.IsValid() {
+		out = Err[any, any]("Kind: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Kind: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Kind: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentChangeDoc → (DocumentChange).Doc (struct-field getter)
 func Go_Firestore_documentChangeDoc(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2357,6 +2867,57 @@ func Go_Firestore_documentChangeDoc(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentChangeSetDoc → (DocumentChange).Doc = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentChangeSetDoc(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Doc: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Doc: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Doc: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Doc")
+	if !f.IsValid() {
+		out = Err[any, any]("Doc: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Doc: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Doc: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2381,6 +2942,57 @@ func Go_Firestore_documentChangeOldDoc(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentChangeSetOldDoc → (DocumentChange).OldDoc = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentChangeSetOldDoc(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("OldDoc: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("OldDoc: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("OldDoc: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("OldDoc")
+	if !f.IsValid() {
+		out = Err[any, any]("OldDoc: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("OldDoc: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("OldDoc: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentChangeOldIndex → (DocumentChange).OldIndex (struct-field getter)
 func Go_Firestore_documentChangeOldIndex(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2402,6 +3014,57 @@ func Go_Firestore_documentChangeOldIndex(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentChangeSetOldIndex → (DocumentChange).OldIndex = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentChangeSetOldIndex(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("OldIndex: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("OldIndex: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("OldIndex: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("OldIndex")
+	if !f.IsValid() {
+		out = Err[any, any]("OldIndex: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("OldIndex: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("OldIndex: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentChangeNewIndex → (DocumentChange).NewIndex (struct-field getter)
 func Go_Firestore_documentChangeNewIndex(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2420,6 +3083,57 @@ func Go_Firestore_documentChangeNewIndex(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentChangeSetNewIndex → (DocumentChange).NewIndex = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentChangeSetNewIndex(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("NewIndex: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("NewIndex: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("NewIndex: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("NewIndex")
+	if !f.IsValid() {
+		out = Err[any, any]("NewIndex: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("NewIndex: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("NewIndex: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2567,6 +3281,57 @@ func Go_Firestore_documentRefParent(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentRefSetParent → (DocumentRef).Parent = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentRefSetParent(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Parent: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Parent: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Parent: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Parent")
+	if !f.IsValid() {
+		out = Err[any, any]("Parent: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Parent: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Parent: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentRefPath → (DocumentRef).Path (struct-field getter)
 func Go_Firestore_documentRefPath(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2588,6 +3353,57 @@ func Go_Firestore_documentRefPath(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentRefSetPath → (DocumentRef).Path = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentRefSetPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Path: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Path: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Path: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Path: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentRefID → (DocumentRef).ID (struct-field getter)
 func Go_Firestore_documentRefID(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2606,6 +3422,57 @@ func Go_Firestore_documentRefID(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentRefSetID → (DocumentRef).ID = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentRefSetID(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ID: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ID: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ID: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ID: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2701,6 +3568,57 @@ func Go_Firestore_documentSnapshotRef(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentSnapshotSetRef → (DocumentSnapshot).Ref = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentSnapshotSetRef(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Ref: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Ref: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Ref: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Ref")
+	if !f.IsValid() {
+		out = Err[any, any]("Ref: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Ref: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Ref: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentSnapshotCreateTime → (DocumentSnapshot).CreateTime (struct-field getter)
 func Go_Firestore_documentSnapshotCreateTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2719,6 +3637,57 @@ func Go_Firestore_documentSnapshotCreateTime(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentSnapshotSetCreateTime → (DocumentSnapshot).CreateTime = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentSnapshotSetCreateTime(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("CreateTime: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("CreateTime: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("CreateTime: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("CreateTime")
+	if !f.IsValid() {
+		out = Err[any, any]("CreateTime: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("CreateTime: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("CreateTime: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2743,6 +3712,57 @@ func Go_Firestore_documentSnapshotUpdateTime(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentSnapshotSetUpdateTime → (DocumentSnapshot).UpdateTime = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentSnapshotSetUpdateTime(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("UpdateTime: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("UpdateTime: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("UpdateTime: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("UpdateTime")
+	if !f.IsValid() {
+		out = Err[any, any]("UpdateTime: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("UpdateTime: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("UpdateTime: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentSnapshotReadTime → (DocumentSnapshot).ReadTime (struct-field getter)
 func Go_Firestore_documentSnapshotReadTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2761,6 +3781,57 @@ func Go_Firestore_documentSnapshotReadTime(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentSnapshotSetReadTime → (DocumentSnapshot).ReadTime = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_documentSnapshotSetReadTime(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ReadTime: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ReadTime: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ReadTime: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ReadTime")
+	if !f.IsValid() {
+		out = Err[any, any]("ReadTime: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ReadTime: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ReadTime: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2838,6 +3909,57 @@ func Go_Firestore_executionStatsResultsReturned(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.executionStatsSetResultsReturned → (ExecutionStats).ResultsReturned = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_executionStatsSetResultsReturned(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ResultsReturned: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ResultsReturned: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ResultsReturned: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ResultsReturned")
+	if !f.IsValid() {
+		out = Err[any, any]("ResultsReturned: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ResultsReturned: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ResultsReturned: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.executionStatsExecutionDuration → (ExecutionStats).ExecutionDuration (struct-field getter)
 func Go_Firestore_executionStatsExecutionDuration(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2856,6 +3978,57 @@ func Go_Firestore_executionStatsExecutionDuration(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.executionStatsSetExecutionDuration → (ExecutionStats).ExecutionDuration = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_executionStatsSetExecutionDuration(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ExecutionDuration: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ExecutionDuration: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ExecutionDuration: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ExecutionDuration")
+	if !f.IsValid() {
+		out = Err[any, any]("ExecutionDuration: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ExecutionDuration: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ExecutionDuration: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2880,6 +4053,57 @@ func Go_Firestore_executionStatsReadOperations(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.executionStatsSetReadOperations → (ExecutionStats).ReadOperations = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_executionStatsSetReadOperations(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ReadOperations: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ReadOperations: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ReadOperations: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ReadOperations")
+	if !f.IsValid() {
+		out = Err[any, any]("ReadOperations: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ReadOperations: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ReadOperations: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.executionStatsDebugStats → (ExecutionStats).DebugStats (struct-field getter)
 func Go_Firestore_executionStatsDebugStats(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2898,6 +4122,57 @@ func Go_Firestore_executionStatsDebugStats(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.executionStatsSetDebugStats → (ExecutionStats).DebugStats = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_executionStatsSetDebugStats(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("DebugStats: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("DebugStats: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("DebugStats: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("DebugStats")
+	if !f.IsValid() {
+		out = Err[any, any]("DebugStats: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("DebugStats: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("DebugStats: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -2929,6 +4204,57 @@ func Go_Firestore_explainMetricsPlanSummary(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.explainMetricsSetPlanSummary → (ExplainMetrics).PlanSummary = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_explainMetricsSetPlanSummary(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("PlanSummary: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("PlanSummary: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("PlanSummary: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("PlanSummary")
+	if !f.IsValid() {
+		out = Err[any, any]("PlanSummary: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("PlanSummary: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("PlanSummary: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.explainMetricsExecutionStats → (ExplainMetrics).ExecutionStats (struct-field getter)
 func Go_Firestore_explainMetricsExecutionStats(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2950,6 +4276,57 @@ func Go_Firestore_explainMetricsExecutionStats(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.explainMetricsSetExecutionStats → (ExplainMetrics).ExecutionStats = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_explainMetricsSetExecutionStats(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ExecutionStats: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ExecutionStats: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ExecutionStats: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ExecutionStats")
+	if !f.IsValid() {
+		out = Err[any, any]("ExecutionStats: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ExecutionStats: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ExecutionStats: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.explainOptionsAnalyze → (ExplainOptions).Analyze (struct-field getter)
 func Go_Firestore_explainOptionsAnalyze(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2968,6 +4345,57 @@ func Go_Firestore_explainOptionsAnalyze(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.explainOptionsSetAnalyze → (ExplainOptions).Analyze = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_explainOptionsSetAnalyze(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Analyze: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Analyze: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Analyze: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Analyze")
+	if !f.IsValid() {
+		out = Err[any, any]("Analyze: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Analyze: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Analyze: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -3586,6 +5014,57 @@ func Go_Firestore_fieldNotFoundErrorPath(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.fieldNotFoundErrorSetPath → (FieldNotFoundError).Path = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_fieldNotFoundErrorSetPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Path: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Path: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Path: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Path: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.fieldOf → pkg.FieldOf — generic function (stub; instantiate manually if needed)
 func Go_Firestore_fieldOf(p0 any) (out any) {
 	_ = p0
@@ -3635,6 +5114,57 @@ func Go_Firestore_findNearestOptionsDistanceThreshold(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.findNearestOptionsSetDistanceThreshold → (FindNearestOptions).DistanceThreshold = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_findNearestOptionsSetDistanceThreshold(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("DistanceThreshold: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("DistanceThreshold: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("DistanceThreshold: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("DistanceThreshold")
+	if !f.IsValid() {
+		out = Err[any, any]("DistanceThreshold: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("DistanceThreshold: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("DistanceThreshold: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.findNearestOptionsDistanceResultField → (FindNearestOptions).DistanceResultField (struct-field getter)
 func Go_Firestore_findNearestOptionsDistanceResultField(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -3653,6 +5183,57 @@ func Go_Firestore_findNearestOptionsDistanceResultField(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.findNearestOptionsSetDistanceResultField → (FindNearestOptions).DistanceResultField = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_findNearestOptionsSetDistanceResultField(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("DistanceResultField: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("DistanceResultField: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("DistanceResultField: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("DistanceResultField")
+	if !f.IsValid() {
+		out = Err[any, any]("DistanceResultField: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("DistanceResultField: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("DistanceResultField: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -4533,6 +6114,57 @@ func Go_Firestore_orFilterFilters(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.orFilterSetFilters → (OrFilter).Filters = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_orFilterSetFilters(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Filters: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Filters: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Filters: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Filters")
+	if !f.IsValid() {
+		out = Err[any, any]("Filters: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Filters: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Filters: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.orderingExpr → (Ordering).Expr (struct-field getter)
 func Go_Firestore_orderingExpr(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4554,6 +6186,57 @@ func Go_Firestore_orderingExpr(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.orderingSetExpr → (Ordering).Expr = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_orderingSetExpr(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Expr: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Expr: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Expr: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Expr")
+	if !f.IsValid() {
+		out = Err[any, any]("Expr: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Expr: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Expr: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.orderingDirection → (Ordering).Direction (struct-field getter)
 func Go_Firestore_orderingDirection(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4572,6 +6255,57 @@ func Go_Firestore_orderingDirection(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.orderingSetDirection → (Ordering).Direction = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_orderingSetDirection(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Direction: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Direction: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Direction: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Direction")
+	if !f.IsValid() {
+		out = Err[any, any]("Direction: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Direction: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Direction: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -4736,6 +6470,57 @@ func Go_Firestore_pipelineFindNearestOptionsLimit(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.pipelineFindNearestOptionsSetLimit → (PipelineFindNearestOptions).Limit = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_pipelineFindNearestOptionsSetLimit(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Limit: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Limit: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Limit: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Limit")
+	if !f.IsValid() {
+		out = Err[any, any]("Limit: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Limit: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Limit: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.pipelineFindNearestOptionsDistanceField → (PipelineFindNearestOptions).DistanceField (struct-field getter)
 func Go_Firestore_pipelineFindNearestOptionsDistanceField(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4754,6 +6539,57 @@ func Go_Firestore_pipelineFindNearestOptionsDistanceField(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.pipelineFindNearestOptionsSetDistanceField → (PipelineFindNearestOptions).DistanceField = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_pipelineFindNearestOptionsSetDistanceField(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("DistanceField: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("DistanceField: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("DistanceField: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("DistanceField")
+	if !f.IsValid() {
+		out = Err[any, any]("DistanceField: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("DistanceField: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("DistanceField: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -4924,6 +6760,57 @@ func Go_Firestore_planSummaryIndexesUsed(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.planSummarySetIndexesUsed → (PlanSummary).IndexesUsed = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_planSummarySetIndexesUsed(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("IndexesUsed: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("IndexesUsed: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("IndexesUsed: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("IndexesUsed")
+	if !f.IsValid() {
+		out = Err[any, any]("IndexesUsed: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("IndexesUsed: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("IndexesUsed: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.pow → pkg.Pow
 func Go_Firestore_pow(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4952,6 +6839,57 @@ func Go_Firestore_propertyFilterPath(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.propertyFilterSetPath → (PropertyFilter).Path = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_propertyFilterSetPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Path: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Path: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Path: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Path: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.propertyFilterOperator → (PropertyFilter).Operator (struct-field getter)
 func Go_Firestore_propertyFilterOperator(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4970,6 +6908,57 @@ func Go_Firestore_propertyFilterOperator(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyFilterSetOperator → (PropertyFilter).Operator = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_propertyFilterSetOperator(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Operator: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Operator: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Operator: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Operator")
+	if !f.IsValid() {
+		out = Err[any, any]("Operator: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Operator: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Operator: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -4994,6 +6983,57 @@ func Go_Firestore_propertyFilterValue(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.propertyFilterSetValue → (PropertyFilter).Value = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_propertyFilterSetValue(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Value: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Value: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Value: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Value")
+	if !f.IsValid() {
+		out = Err[any, any]("Value: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Value: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Value: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.propertyPathFilterPath → (PropertyPathFilter).Path (struct-field getter)
 func Go_Firestore_propertyPathFilterPath(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5012,6 +7052,57 @@ func Go_Firestore_propertyPathFilterPath(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyPathFilterSetPath → (PropertyPathFilter).Path = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_propertyPathFilterSetPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Path: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Path: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Path: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Path: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5036,6 +7127,57 @@ func Go_Firestore_propertyPathFilterOperator(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.propertyPathFilterSetOperator → (PropertyPathFilter).Operator = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_propertyPathFilterSetOperator(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Operator: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Operator: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Operator: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Operator")
+	if !f.IsValid() {
+		out = Err[any, any]("Operator: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Operator: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Operator: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.propertyPathFilterValue → (PropertyPathFilter).Value (struct-field getter)
 func Go_Firestore_propertyPathFilterValue(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5054,6 +7196,57 @@ func Go_Firestore_propertyPathFilterValue(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyPathFilterSetValue → (PropertyPathFilter).Value = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_propertyPathFilterSetValue(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Value: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Value: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Value: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Value")
+	if !f.IsValid() {
+		out = Err[any, any]("Value: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Value: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Value: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5262,6 +7455,57 @@ func Go_Firestore_querySnapshotDocuments(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.querySnapshotSetDocuments → (QuerySnapshot).Documents = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_querySnapshotSetDocuments(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Documents: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Documents: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Documents: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Documents")
+	if !f.IsValid() {
+		out = Err[any, any]("Documents: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Documents: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Documents: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.querySnapshotSize → (QuerySnapshot).Size (struct-field getter)
 func Go_Firestore_querySnapshotSize(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5280,6 +7524,57 @@ func Go_Firestore_querySnapshotSize(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotSetSize → (QuerySnapshot).Size = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_querySnapshotSetSize(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Size: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Size: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Size: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Size")
+	if !f.IsValid() {
+		out = Err[any, any]("Size: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Size: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Size: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5304,6 +7599,57 @@ func Go_Firestore_querySnapshotChanges(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.querySnapshotSetChanges → (QuerySnapshot).Changes = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_querySnapshotSetChanges(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Changes: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Changes: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Changes: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Changes")
+	if !f.IsValid() {
+		out = Err[any, any]("Changes: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Changes: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Changes: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.querySnapshotReadTime → (QuerySnapshot).ReadTime (struct-field getter)
 func Go_Firestore_querySnapshotReadTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5322,6 +7668,57 @@ func Go_Firestore_querySnapshotReadTime(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotSetReadTime → (QuerySnapshot).ReadTime = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_querySnapshotSetReadTime(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ReadTime: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ReadTime: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ReadTime: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ReadTime")
+	if !f.IsValid() {
+		out = Err[any, any]("ReadTime: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ReadTime: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ReadTime: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5361,6 +7758,57 @@ func Go_Firestore_querySnapshotIteratorQuery(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotIteratorSetQuery → (QuerySnapshotIterator).Query = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_querySnapshotIteratorSetQuery(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Query: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Query: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Query: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Query")
+	if !f.IsValid() {
+		out = Err[any, any]("Query: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Query: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Query: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5441,6 +7889,57 @@ func Go_Firestore_sampleSpecSize(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.sampleSpecSetSize → (SampleSpec).Size = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_sampleSpecSetSize(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Size: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Size: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Size: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Size")
+	if !f.IsValid() {
+		out = Err[any, any]("Size: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Size: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Size: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.sampleSpecMode → (SampleSpec).Mode (struct-field getter)
 func Go_Firestore_sampleSpecMode(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5459,6 +7958,57 @@ func Go_Firestore_sampleSpecMode(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.sampleSpecSetMode → (SampleSpec).Mode = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_sampleSpecSetMode(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Mode: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Mode: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Mode: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Mode")
+	if !f.IsValid() {
+		out = Err[any, any]("Mode: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Mode: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Mode: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5732,6 +8282,57 @@ func Go_Firestore_unnestOptionsIndexField(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.unnestOptionsSetIndexField → (UnnestOptions).IndexField = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_unnestOptionsSetIndexField(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("IndexField: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("IndexField: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("IndexField: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("IndexField")
+	if !f.IsValid() {
+		out = Err[any, any]("IndexField: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("IndexField: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("IndexField: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.updateString → pkg.UpdateString
 func Go_Firestore_updateString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5760,6 +8361,57 @@ func Go_Firestore_updatePath(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.updateSetPath → (Update).Path = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_updateSetPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Path: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Path: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Path: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Path: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.updateFieldPath → (Update).FieldPath (struct-field getter)
 func Go_Firestore_updateFieldPath(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5781,6 +8433,57 @@ func Go_Firestore_updateFieldPath(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.updateSetFieldPath → (Update).FieldPath = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_updateSetFieldPath(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("FieldPath: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("FieldPath: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("FieldPath: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("FieldPath")
+	if !f.IsValid() {
+		out = Err[any, any]("FieldPath: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("FieldPath: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("FieldPath: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Firestore.updateValue → (Update).Value (struct-field getter)
 func Go_Firestore_updateValue(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -5799,6 +8502,57 @@ func Go_Firestore_updateValue(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.updateSetValue → (Update).Value = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_updateSetValue(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Value: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Value: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Value: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Value")
+	if !f.IsValid() {
+		out = Err[any, any]("Value: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Value: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Value: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -5900,6 +8654,57 @@ func Go_Firestore_writeResultUpdateTime(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.writeResultSetUpdateTime → (WriteResult).UpdateTime = <value> (struct-field setter; value-first for |>)
+func Go_Firestore_writeResultSetUpdateTime(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("UpdateTime: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("UpdateTime: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("UpdateTime: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("UpdateTime")
+	if !f.IsValid() {
+		out = Err[any, any]("UpdateTime: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("UpdateTime: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("UpdateTime: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 

@@ -59,6 +59,8 @@ type Function struct {
 	MethodName string `json:"methodName,omitempty"`
 	// IsField: true for synthetic struct-field getters.
 	IsField    bool   `json:"isField,omitempty"`
+	// IsFieldSet: true for synthetic struct-field setters (value-first).
+	IsFieldSet bool   `json:"isFieldSet,omitempty"`
 }
 
 type PackageInfo struct {
@@ -257,35 +259,56 @@ func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvT
 }
 
 // addFieldGetters emits one synthetic unary function per exported struct
-// field. Name convention matches methods: <TypeName><FieldName>. Marked
-// `isField: true` in JSON so FfiGen emits a reflect-based field read
-// instead of a method call or direct pkg.Func reference.
+// field (the getter) AND one binary setter per settable field. Name
+// convention matches the legacy Sky FFI: <TypeName><FieldName> for the
+// getter, <TypeName>Set<FieldName> for the setter. Marker flags on the
+// JSON drive FfiGen's reflect-based emission.
+//
+// Setter param order is value-first (then receiver) so it composes with
+// Sky's |> pipeline: `doc |> DocumentRefSetID "abc"`.
 func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named *types.Named) {
 	seen := map[string]bool{}
 	for _, f := range info.Functions {
 		seen[f.Name] = true
 	}
+	recvType := types.NewPointer(named.Obj().Type()).String()
 	for i := 0; i < s.NumFields(); i++ {
 		f := s.Field(i)
 		if !f.Exported() {
 			continue
 		}
-		name := typeName + f.Name()
-		if seen[name] {
-			continue
+		getterName := typeName + f.Name()
+		if !seen[getterName] {
+			info.Functions = append(info.Functions, Function{
+				Name:       getterName,
+				Params:     []Param{{Name: "recv", Type: recvType}},
+				Results:    []Param{{Type: f.Type().String()}},
+				Effect:     "pure",
+				Exported:   true,
+				RecvType:   typeName,
+				MethodName: f.Name(),
+				IsField:    true,
+			})
+			seen[getterName] = true
 		}
-		info.Functions = append(info.Functions, Function{
-			Name:       name,
-			Params:     []Param{{Name: "recv", Type: types.NewPointer(named.Obj().Type()).String()}},
-			Results:    []Param{{Type: f.Type().String()}},
-			Variadic:   false,
-			Effect:     "pure",
-			Exported:   true,
-			RecvType:   typeName,
-			MethodName: f.Name(),
-			IsField:    true,
-		})
-		seen[name] = true
+		setterName := typeName + "Set" + f.Name()
+		if !seen[setterName] {
+			info.Functions = append(info.Functions, Function{
+				Name: setterName,
+				// value-first, receiver second — matches Sky pipeline idiom.
+				Params: []Param{
+					{Name: "value", Type: f.Type().String()},
+					{Name: "recv", Type: recvType},
+				},
+				Results:    []Param{{Type: recvType}},
+				Effect:     "pure",
+				Exported:   true,
+				RecvType:   typeName,
+				MethodName: f.Name(),
+				IsFieldSet: true,
+			})
+			seen[setterName] = true
+		}
 	}
 }
 

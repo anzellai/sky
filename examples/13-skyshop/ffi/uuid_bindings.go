@@ -342,6 +342,57 @@ func Go_Uuid_nullUUIDUUID(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Uuid.nullUUIDSetUUID → (NullUUID).UUID = <value> (struct-field setter; value-first for |>)
+func Go_Uuid_nullUUIDSetUUID(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("UUID: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("UUID: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("UUID: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("UUID")
+	if !f.IsValid() {
+		out = Err[any, any]("UUID: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("UUID: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("UUID: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_Uuid.nullUUIDValid → (NullUUID).Valid (struct-field getter)
 func Go_Uuid_nullUUIDValid(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -360,6 +411,57 @@ func Go_Uuid_nullUUIDValid(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDSetValid → (NullUUID).Valid = <value> (struct-field setter; value-first for |>)
+func Go_Uuid_nullUUIDSetValid(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("Valid: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("Valid: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("Valid: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("Valid")
+	if !f.IsValid() {
+		out = Err[any, any]("Valid: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("Valid: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("Valid: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 

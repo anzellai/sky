@@ -50,7 +50,9 @@ package uuid
 -- [fallible] NullUUIDMarshalJSON : NullUUID -> ([]byte, String)   -- runtime wrap: Task String
 -- [fallible] NullUUIDUnmarshalJSON : NullUUID -> []byte -> String   -- runtime wrap: Task String
 -- [pure] NullUUIDUUID : NullUUID -> UUID   -- runtime wrap: Task String
+-- [pure] NullUUIDSetUUID : UUID -> NullUUID -> NullUUID   -- runtime wrap: Task String
 -- [pure] NullUUIDValid : NullUUID -> Bool   -- runtime wrap: Task String
+-- [pure] NullUUIDSetValid : Bool -> NullUUID -> NullUUID   -- runtime wrap: Task String
 -- [fallible] Parse : String -> (UUID, String)   -- runtime wrap: Task String
 -- [fallible] ParseBytes : []byte -> (UUID, String)   -- runtime wrap: Task String
 -- [pure] SetClockSequence : Int -> ()   -- runtime wrap: Task String

@@ -34,8 +34,13 @@ package firebase
 -- [fallible] AppAppCheck : App -> Context -> (Client, String)   -- runtime wrap: Task String
 -- [fallible] AppRemoteConfig : App -> Context -> (Client, String)   -- runtime wrap: Task String
 -- [pure] ConfigAuthOverride : Config -> *map[string]interface{}   -- runtime wrap: Task String
+-- [pure] ConfigSetAuthOverride : *map[string]interface{} -> Config -> Config   -- runtime wrap: Task String
 -- [pure] ConfigDatabaseURL : Config -> String   -- runtime wrap: Task String
+-- [pure] ConfigSetDatabaseURL : String -> Config -> Config   -- runtime wrap: Task String
 -- [pure] ConfigProjectID : Config -> String   -- runtime wrap: Task String
+-- [pure] ConfigSetProjectID : String -> Config -> Config   -- runtime wrap: Task String
 -- [pure] ConfigServiceAccountID : Config -> String   -- runtime wrap: Task String
+-- [pure] ConfigSetServiceAccountID : String -> Config -> Config   -- runtime wrap: Task String
 -- [pure] ConfigStorageBucket : Config -> String   -- runtime wrap: Task String
+-- [pure] ConfigSetStorageBucket : String -> Config -> Config   -- runtime wrap: Task String
 -- [fallible] NewApp : Context -> Config -> ClientOption -> (App, String)   -- runtime wrap: Task String

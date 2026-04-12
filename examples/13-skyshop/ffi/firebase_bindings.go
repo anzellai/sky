@@ -145,6 +145,57 @@ func Go_GoV4_configAuthOverride(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_GoV4.configSetAuthOverride → (Config).AuthOverride = <value> (struct-field setter; value-first for |>)
+func Go_GoV4_configSetAuthOverride(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("AuthOverride: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("AuthOverride: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("AuthOverride: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("AuthOverride")
+	if !f.IsValid() {
+		out = Err[any, any]("AuthOverride: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("AuthOverride: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("AuthOverride: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_GoV4.configDatabaseURL → (Config).DatabaseURL (struct-field getter)
 func Go_GoV4_configDatabaseURL(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -163,6 +214,57 @@ func Go_GoV4_configDatabaseURL(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_GoV4.configSetDatabaseURL → (Config).DatabaseURL = <value> (struct-field setter; value-first for |>)
+func Go_GoV4_configSetDatabaseURL(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("DatabaseURL: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("DatabaseURL: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("DatabaseURL: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("DatabaseURL")
+	if !f.IsValid() {
+		out = Err[any, any]("DatabaseURL: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("DatabaseURL: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("DatabaseURL: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 
@@ -187,6 +289,57 @@ func Go_GoV4_configProjectID(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_GoV4.configSetProjectID → (Config).ProjectID = <value> (struct-field setter; value-first for |>)
+func Go_GoV4_configSetProjectID(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ProjectID: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ProjectID: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ProjectID: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ProjectID")
+	if !f.IsValid() {
+		out = Err[any, any]("ProjectID: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ProjectID: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ProjectID: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_GoV4.configServiceAccountID → (Config).ServiceAccountID (struct-field getter)
 func Go_GoV4_configServiceAccountID(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -208,6 +361,57 @@ func Go_GoV4_configServiceAccountID(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_GoV4.configSetServiceAccountID → (Config).ServiceAccountID = <value> (struct-field setter; value-first for |>)
+func Go_GoV4_configSetServiceAccountID(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("ServiceAccountID: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("ServiceAccountID: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("ServiceAccountID: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("ServiceAccountID")
+	if !f.IsValid() {
+		out = Err[any, any]("ServiceAccountID: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("ServiceAccountID: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("ServiceAccountID: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
+	return
+}
+
 // [pure] Go_GoV4.configStorageBucket → (Config).StorageBucket (struct-field getter)
 func Go_GoV4_configStorageBucket(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -226,6 +430,57 @@ func Go_GoV4_configStorageBucket(p0 any) (out any) {
 		return
 	}
 	out = f.Interface()
+	return
+}
+
+// [pure] Go_GoV4.configSetStorageBucket → (Config).StorageBucket = <value> (struct-field setter; value-first for |>)
+func Go_GoV4_configSetStorageBucket(value any, recv any) (out any) {
+	defer SkyFfiRecover(&out)()
+	rv := reflect.ValueOf(recv)
+	// Dereference a pointer so we can set a field.
+	var addrable reflect.Value
+	switch rv.Kind() {
+	case reflect.Ptr:
+		if rv.IsNil() {
+			out = Err[any, any]("StorageBucket: nil receiver")
+			return
+		}
+		addrable = rv.Elem()
+	case reflect.Struct:
+		// Make an addressable copy so Go allows Set.
+		tmp := reflect.New(rv.Type())
+		tmp.Elem().Set(rv)
+		addrable = tmp.Elem()
+		rv = tmp  // return pointer to the copy
+	default:
+		out = Err[any, any]("StorageBucket: receiver is not a struct or pointer")
+		return
+	}
+	if addrable.Kind() != reflect.Struct {
+		out = Err[any, any]("StorageBucket: receiver is not a struct")
+		return
+	}
+	f := addrable.FieldByName("StorageBucket")
+	if !f.IsValid() {
+		out = Err[any, any]("StorageBucket: no such field")
+		return
+	}
+	if !f.CanSet() {
+		out = Err[any, any]("StorageBucket: field is not settable (unexported or non-addressable)")
+		return
+	}
+	vv := reflect.ValueOf(value)
+	if !vv.IsValid() {
+		f.Set(reflect.Zero(f.Type()))
+	} else if vv.Type().AssignableTo(f.Type()) {
+		f.Set(vv)
+	} else if vv.Type().ConvertibleTo(f.Type()) {
+		f.Set(vv.Convert(f.Type()))
+	} else {
+		out = Err[any, any]("StorageBucket: value type incompatible with field")
+		return
+	}
+	out = rv.Interface()
 	return
 }
 

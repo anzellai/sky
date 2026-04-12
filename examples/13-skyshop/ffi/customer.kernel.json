@@ -14,7 +14,9 @@
     {"name": "clientListPaymentMethods", "arity": 2},
     {"name": "clientSearch", "arity": 2},
     {"name": "clientB", "arity": 1},
+    {"name": "clientSetB", "arity": 2},
     {"name": "clientKey", "arity": 1},
+    {"name": "clientSetKey", "arity": 2},
     {"name": "createFundingInstructions", "arity": 2},
     {"name": "del", "arity": 2},
     {"name": "deleteDiscount", "arity": 2},
@@ -27,6 +29,7 @@
     {"name": "iterMeta", "arity": 1},
     {"name": "iterNext", "arity": 1},
     {"name": "iterIter", "arity": 1},
+    {"name": "iterSetIter", "arity": 2},
     {"name": "list", "arity": 1},
     {"name": "listPaymentMethods", "arity": 1},
     {"name": "new", "arity": 1},
@@ -38,6 +41,7 @@
     {"name": "paymentMethodIterMeta", "arity": 1},
     {"name": "paymentMethodIterNext", "arity": 1},
     {"name": "paymentMethodIterIter", "arity": 1},
+    {"name": "paymentMethodIterSetIter", "arity": 2},
     {"name": "retrievePaymentMethod", "arity": 2},
     {"name": "search", "arity": 1},
     {"name": "searchIterCustomer", "arity": 1},
@@ -48,6 +52,7 @@
     {"name": "searchIterNext", "arity": 1},
     {"name": "searchIterSearchResult", "arity": 1},
     {"name": "searchIterSearchIter", "arity": 1},
+    {"name": "searchIterSetSearchIter", "arity": 2},
     {"name": "update", "arity": 2}
   ]
 }
