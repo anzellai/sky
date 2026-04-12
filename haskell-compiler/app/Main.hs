@@ -12,6 +12,7 @@ import qualified Sky.Sky.Toml as Toml
 import qualified Sky.Parse.Module as ParseMod
 import qualified Sky.Format.Format as Format
 import qualified Sky.Lsp.Server as Lsp
+import qualified Sky.Build.FfiGen as FfiGen
 
 
 -- | Sky compiler CLI
@@ -189,16 +190,42 @@ runCommand cmd = case cmd of
 
     Add pkg -> do
         putStrLn $ "Adding " ++ pkg ++ "..."
-        -- Ensure sky-out exists with go.mod
+        -- Ensure sky-out exists with go.mod (copy from runtime-go to inherit deps)
         createDirectoryIfMissing True "sky-out"
         hasGoMod <- doesFileExist "sky-out/go.mod"
         if not hasGoMod
-            then writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            then do
+                hasRuntimeMod <- doesFileExist "runtime-go/go.mod"
+                if hasRuntimeMod
+                    then callProcess "cp" ["runtime-go/go.mod", "sky-out/go.mod"]
+                    else writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
             else return ()
-        -- Run go get
+        -- Fetch the package
         callProcess "sh" ["-c", "cd sky-out && go get " ++ pkg]
-        putStrLn $ "Added " ++ pkg
-        return (Right ())
+        -- Generate bindings via the Go inspector
+        hasInspector <- doesFileExist "bin/sky-ffi-inspect"
+        if hasInspector
+            then do
+                putStrLn $ "Inspecting " ++ pkg ++ "..."
+                r <- FfiGen.runInspector pkg
+                case r of
+                    Left err -> do
+                        putStrLn $ "   FFI inspector warning: " ++ err
+                        putStrLn $ "   (You can still write hand-written bindings in ffi/.)"
+                        return (Right ())
+                    Right info -> do
+                        names <- FfiGen.generateBindings info
+                        putStrLn $ "Generated " ++ show (length names) ++ " bindings in ffi/"
+                        mapM_ (\n -> putStrLn $ "   " ++ n) (take 10 names)
+                        if length names > 10
+                            then putStrLn $ "   ... and " ++ show (length names - 10) ++ " more"
+                            else return ()
+                        putStrLn "Call from Sky via: Ffi.callPure \"<name>\" [args]  (or callTask for effectful)"
+                        return (Right ())
+            else do
+                putStrLn $ "   (Build bin/sky-ffi-inspect to auto-generate bindings;"
+                putStrLn $ "    for now you can still write hand-written bindings in ffi/.)"
+                return (Right ())
 
     Remove pkg -> do
         putStrLn $ "Removing " ++ pkg ++ "..."

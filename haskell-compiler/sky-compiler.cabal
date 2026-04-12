@@ -130,6 +130,7 @@ executable sky
     Sky.Build.ModuleGraph
     Sky.Build.Compile
     Sky.Build.Dce
+    Sky.Build.FfiGen
     Sky.Build.Incremental
     Sky.Build.GoIntegration
 
