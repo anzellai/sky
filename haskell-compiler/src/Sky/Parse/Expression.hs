@@ -216,7 +216,7 @@ exprAtom_ mkError =
 
         , -- List literal: [a, b, c]
           do char mkError '['
-             spaces
+             freshLine mkError  -- allow first element on next line
              mc <- peek
              case mc of
                  Just ']' -> do
@@ -225,13 +225,13 @@ exprAtom_ mkError =
                  _ -> do
                      first <- expression mkError
                      rest <- listRest mkError
-                     spaces
+                     freshLine mkError
                      char mkError ']'
                      return (Src.List (first : rest))
 
         , -- Record literal or update: { field = val } or { r | field = val }
           do char mkError '{'
-             spaces
+             freshLine mkError  -- allow content on next line
              mc <- peek
              case mc of
                  Just '}' -> do
@@ -538,18 +538,21 @@ tupleRest mkError =
         []
 
 
+-- | Parse remaining list elements (handles multiline with leading commas)
 listRest :: (Row -> Col -> x) -> Parser x [Src.Expr]
-listRest mkError =
-    oneOfWithFallback
-        [ do
-            spaces
-            char mkError ','
-            spaces
-            e <- expression mkError
-            rest <- listRest mkError
-            return (e : rest)
-        ]
-        []
+listRest mkError = Parser $ \s cok eok cerr eerr ->
+    let s' = skipWhitespace s
+    in case T.uncons (_src s') of
+        Just (',', _) ->
+            let (Parser p) = do
+                    freshLine mkError
+                    char mkError ','
+                    freshLine mkError
+                    e <- expression mkError
+                    rest <- listRest mkError
+                    return (e : rest)
+            in p s (\a s2 -> eok a s2) eok (\r c m -> eok [] s) (\r c m -> eok [] s)
+        _ -> eok [] s
 
 
 recordFields :: (Row -> Col -> x) -> Parser x [(A.Located String, Src.Expr)]
@@ -569,15 +572,18 @@ recordField mkError = do
     return (name, val)
 
 
+-- | Parse remaining record fields (handles multiline with leading commas)
 recordFieldsRest :: (Row -> Col -> x) -> Parser x [(A.Located String, Src.Expr)]
-recordFieldsRest mkError =
-    oneOfWithFallback
-        [ do
-            spaces
-            char mkError ','
-            spaces
-            field <- recordField mkError
-            rest <- recordFieldsRest mkError
-            return (field : rest)
-        ]
-        []
+recordFieldsRest mkError = Parser $ \s cok eok cerr eerr ->
+    let s' = skipWhitespace s
+    in case T.uncons (_src s') of
+        Just (',', _) ->
+            let (Parser p) = do
+                    freshLine mkError
+                    char mkError ','
+                    freshLine mkError
+                    field <- recordField mkError
+                    rest <- recordFieldsRest mkError
+                    return (field : rest)
+            in p s (\a s2 -> eok a s2) eok (\r c m -> eok [] s) (\r c m -> eok [] s)
+        _ -> eok [] s

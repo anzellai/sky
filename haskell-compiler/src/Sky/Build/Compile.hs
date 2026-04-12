@@ -71,8 +71,8 @@ compile config entryPath outDir = do
     let errors = [e | Left e <- parseResults]
         parsed = [(n, m) | Right (n, m) <- parseResults]
 
-    if not (null errors)
-      then return (Left $ head errors)
+    if not (null errors) then return (Left $ head errors)
+      else if null parsed then return (Left "No modules found")
       else do
         -- Phase 3: Canonicalise (entry module + merge deps)
         putStrLn "-- Canonicalising"
@@ -1330,6 +1330,24 @@ runtimeGoSource = unlines
     , "\tresult := make([]any, len(items))"
     , "\tfor i, item := range items { result[len(items)-1-i] = item }"
     , "\treturn result"
+    , "}"
+    , ""
+    , "func List_take(n any, list any) any {"
+    , "\tcount := AsInt(n)"
+    , "\titems := list.([]any)"
+    , "\tif count > len(items) { count = len(items) }"
+    , "\treturn items[:count]"
+    , "}"
+    , ""
+    , "func List_drop(n any, list any) any {"
+    , "\tcount := AsInt(n)"
+    , "\titems := list.([]any)"
+    , "\tif count > len(items) { count = len(items) }"
+    , "\treturn items[count:]"
+    , "}"
+    , ""
+    , "func List_append(a any, b any) any {"
+    , "\treturn append(a.([]any), b.([]any)...)"
     , "}"
     , ""
     , "func List_range(lo any, hi any) any {"

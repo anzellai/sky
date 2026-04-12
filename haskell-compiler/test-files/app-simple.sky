@@ -1,0 +1,16 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type alias Config =
+    { greeting : String
+    , maxItems : Int
+    }
+
+main =
+    let
+        config = { greeting = "Hello", maxItems = 5 }
+    in
+        println config.greeting
