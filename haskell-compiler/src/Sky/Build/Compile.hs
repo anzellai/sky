@@ -125,8 +125,6 @@ generateGo canMod srcMod config solvedTypes =
 -- | Collect Go imports needed
 collectGoImports :: Can.Module -> Src.Module -> [GoIr.GoImport]
 collectGoImports _canMod _srcMod =
-    -- Only import rt for now. fmt is used inside rt, not in main.go directly.
-    -- TODO: scan generated code for fmt.Println usage and add "fmt" if needed
     [ GoIr.GoImport "sky-app/rt" (Just "rt") ]
 
 
@@ -774,7 +772,11 @@ typedBinop :: Solve.SolvedTypes -> String -> String -> Can.Expr -> Can.Expr -> G
 typedBinop types retType op left right = case op of
     "|>" -> pipeApply left right
     "<|" -> pipeApply right left
-    "++" -> GoIr.GoBinary "+" (exprToGoTyped types retType left) (exprToGoTyped types retType right)
+    -- String concat: use rt.Concat which returns any, then assert to string if needed
+    "++" -> let concatExpr = GoIr.GoCall (GoIr.GoQualified "rt" "Concat") [exprToGoTyped types retType left, exprToGoTyped types retType right]
+            in if retType == "string"
+               then GoIr.GoTypeAssert concatExpr "string"
+               else concatExpr
     "/=" -> GoIr.GoBinary "!=" (exprToGoTyped types retType left) (exprToGoTyped types retType right)
     _ -> GoIr.GoBinary op (exprToGoTyped types retType left) (exprToGoTyped types retType right)
 
@@ -791,12 +793,15 @@ typedIf types retType branches elseExpr =
     GoIr.GoRaw $ "func() " ++ retType ++ " { " ++ go branches ++ " }()"
 
 
--- | Check if a type is concrete (not an unresolved variable)
+-- | Check if a type is a primitive concrete type (not a container or unresolved variable).
+-- Primitive types (Int, String, Bool, Float) can be type-asserted from any.
+-- Container types (List, Dict, Result, Maybe, Task) stay as any at runtime.
 isConcreteType :: T.Type -> Bool
-isConcreteType (T.TVar _) = False
-isConcreteType (T.TType _ _ _) = True
-isConcreteType T.TUnit = True
-isConcreteType _ = False
+isConcreteType ty = case ty of
+    T.TVar _ -> False
+    T.TType _ name _ -> name `elem` ["Int", "Float", "Bool", "String", "Char"]
+    T.TUnit -> True
+    _ -> False
 
 
 -- | Convert a solved type to a Go type string.
@@ -812,10 +817,14 @@ solvedTypeToGo ty = case ty of
     T.TType _ "Bool" [] -> "bool"
     T.TType _ "String" [] -> "string"
     T.TType _ "Char" [] -> "rune"
-    T.TType _ "List" [elem] -> "[]" ++ solvedTypeToGo elem
-    T.TType _ "Maybe" [inner] -> "rt.SkyMaybe[" ++ solvedTypeToGo inner ++ "]"
-    T.TType _ "Result" [err, ok] -> "rt.SkyResult[" ++ solvedTypeToGo err ++ ", " ++ solvedTypeToGo ok ++ "]"
-    T.TType _ "Task" [err, ok] -> "rt.SkyTask[" ++ solvedTypeToGo err ++ ", " ++ solvedTypeToGo ok ++ "]"
+    -- Container types: stay as any at runtime (Go doesn't have covariant generics)
+    -- The type checker validates element types but Go uses []any, rt.SkyResult[any,any] etc.
+    T.TType _ "List" _ -> "any"  -- []any at runtime
+    T.TType _ "Maybe" _ -> "any"  -- rt.SkyMaybe[any] at runtime
+    T.TType _ "Result" _ -> "any"  -- rt.SkyResult[any,any] at runtime
+    T.TType _ "Task" _ -> "any"  -- rt.SkyTask[any,any] at runtime
+    T.TType _ "Dict" _ -> "any"  -- map[string]any at runtime
+    T.TType _ "Set" _ -> "any"   -- map[any]bool at runtime
     T.TType _ name _ -> name  -- user-defined type
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord _ _ -> "any"  -- TODO: struct type
