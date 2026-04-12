@@ -47,3 +47,29 @@ examples/13-skyshop/assets/
 # Bootstrap build artifact (source is kept, binary is not)
 bootstrap/app
 sky-lang.org
+dist-newstyle/
+.cabal-sandbox/
+cabal.sandbox.config
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+.ghc.environment.*
+dist-newstyle/
+.cabal-sandbox/
+cabal.sandbox.config
+*.hi
+*.o
+*.dyn_hi
+*.dyn_o
+.ghc.environment.*
+
+# Haskell compiler build
+dist-newstyle/
+
+# Legacy compilers
+legacy-sky-compiler/bin/
+legacy-sky-compiler/dist/
+legacy-sky-compiler/sky-out/
+legacy-sky-compiler/.skycache/
+legacy-ts-compiler/node_modules/

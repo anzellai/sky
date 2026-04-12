@@ -332,19 +332,13 @@ locateRuntimeDir = do
     candidates = do
         cwd <- System.Directory.getCurrentDirectory
         exeDir <- fmap System.FilePath.takeDirectory System.Environment.getExecutablePath
-        return
-            [ "runtime-go"
-            , exeDir </> "runtime-go"
-            , exeDir </> ".." </> "runtime-go"
-            , exeDir </> ".." </> ".." </> "runtime-go"
-            , exeDir </> ".." </> ".." </> ".." </> "runtime-go"
-            , exeDir </> ".." </> ".." </> ".." </> ".." </> "runtime-go"
-            , exeDir </> ".." </> ".." </> ".." </> ".." </> ".." </> "runtime-go"
-            -- walk up a few levels from cwd
-            , cwd </> ".." </> "haskell-compiler" </> "runtime-go"
-            , cwd </> ".." </> ".." </> "haskell-compiler" </> "runtime-go"
-            , cwd </> ".." </> ".." </> ".." </> "haskell-compiler" </> "runtime-go"
-            ]
+        -- Walk up from the binary's dir (cabal dist-newstyle nests ~8 deep)
+        -- and from cwd looking for an ancestor containing runtime-go/rt/.
+        let upN n base = iterate (</> "..") base !! n
+        return $
+            "runtime-go"
+            : [ upN n exeDir </> "runtime-go" | n <- [0..12] ]
+            ++ [ upN n cwd </> "runtime-go" | n <- [0..12] ]
 
     firstExisting [] = return Nothing
     firstExisting (p:ps) = do
