@@ -164,7 +164,8 @@ kernelFunctions = Map.fromList
     , ("Random",  ["int", "float", "choice", "shuffle"])
     , ("Math",    ["sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "tan", "pi", "e", "log", "min", "max"])
     , ("Io",      ["readLine", "readBytes", "writeStdout", "writeStderr"])
-    , ("File",    ["readFile", "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir"])
+    , ("File",    ["readFile", "readFileLimit", "readFileBytes",
+                    "writeFile", "append", "mkdirAll", "readDir", "exists", "remove", "isDir"])
     , ("Process", ["run", "exit", "getEnv", "getCwd", "loadEnv"])
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html"])
@@ -173,7 +174,7 @@ kernelFunctions = Map.fromList
     , ("Encoding",["base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode"])
     , ("Regex",   ["match", "find", "findAll", "replace", "split"])
     , ("Char",    ["isUpper", "isLower", "isDigit", "isAlpha", "toUpper", "toLower"])
-    , ("Path",    ["join", "dir", "base", "ext", "isAbsolute"])
+    , ("Path",    ["join", "dir", "base", "ext", "isAbsolute", "safeJoin"])
     , ("Html",    ["text", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
                     "a", "button", "input", "form", "label", "nav", "section",
                     "article", "header", "footer", "main", "ul", "ol", "li",

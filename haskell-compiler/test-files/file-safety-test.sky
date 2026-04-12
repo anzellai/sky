@@ -1,0 +1,23 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.Path as Path
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+main =
+    let
+        -- Safe: relative path stays inside root
+        _ = case Path.safeJoin "/var/www" "public/index.html" of
+                Ok p -> println (String.append "safe: " p)
+                Err e -> println (String.append "err: " e)
+        -- Unsafe: escape via ..
+        _ = case Path.safeJoin "/var/www" "../../../etc/passwd" of
+                Ok p -> println (String.append "LEAK: " p)
+                Err e -> println (String.append "blocked: " e)
+        -- Edge: absolute path in rel
+        _ = case Path.safeJoin "/var/www" "/etc/passwd" of
+                Ok p -> println (String.append "LEAK: " p)
+                Err e -> println (String.append "blocked: " e)
+    in
+        println "path safety ok"

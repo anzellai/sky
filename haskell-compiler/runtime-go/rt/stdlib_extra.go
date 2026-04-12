@@ -529,6 +529,37 @@ func Path_isAbsolute(p any) any {
 	return filepath.IsAbs(fmt.Sprintf("%v", p))
 }
 
+// Path.safeJoin : String -> String -> Result String String
+// (root, relative) — joins `root` and `relative`, cleans the result, and
+// returns Err if the resulting path escapes `root` (e.g. via "../../etc/passwd").
+// Use when constructing filesystem paths from user-supplied input to prevent
+// directory-traversal attacks.
+func Path_safeJoin(root any, rel any) any {
+	rootStr := fmt.Sprintf("%v", root)
+	relStr := fmt.Sprintf("%v", rel)
+
+	// Resolve the root to its absolute canonical form (does not follow
+	// symlinks — that would require os.Stat which may fail for non-existent
+	// paths; strict lexical comparison is sufficient here).
+	absRoot, err := filepath.Abs(rootStr)
+	if err != nil {
+		return Err[any, any]("safeJoin: " + err.Error())
+	}
+	absRoot = filepath.Clean(absRoot)
+
+	joined := filepath.Clean(filepath.Join(absRoot, relStr))
+
+	// Require joined to be absRoot or a descendant of absRoot.
+	if joined == absRoot {
+		return Ok[any, any](joined)
+	}
+	sep := string(filepath.Separator)
+	if !strings.HasPrefix(joined, absRoot+sep) {
+		return Err[any, any]("safeJoin: path escapes root")
+	}
+	return Ok[any, any](joined)
+}
+
 // ═══════════════════════════════════════════════════════════
 // Sky.Core.Http — client
 // ═══════════════════════════════════════════════════════════

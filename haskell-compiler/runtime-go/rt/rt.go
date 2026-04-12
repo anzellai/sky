@@ -669,11 +669,68 @@ func Process_getCwd() any {
 // File
 // ═══════════════════════════════════════════════════════════
 
+// Default maximum size for File.readFile (100 MiB). Use File.readFileLimit
+// for custom limits. Large files should be streamed with File.openReader.
+const defaultFileReadLimit = 100 << 20
+
+// File.readFile : String -> Task String String
+// Reads up to 100 MiB (hard default). Returns Err if larger — protects against
+// OOMing on an unbounded input. For different limits use readFileLimit.
 func File_readFile(path any) any {
+	return File_readFileLimit(path, defaultFileReadLimit)
+}
+
+// File.readFileLimit : String -> Int -> Task String String
+// Reads up to `limit` bytes. Returns Err if the file exceeds that size, or
+// if the contents are not valid UTF-8 (callers should use readFileBytes for
+// binary data).
+func File_readFileLimit(path any, limit any) any {
 	return func() any {
-		data, err := os.ReadFile(fmt.Sprintf("%v", path))
-		if err != nil { return Err[any, any](err.Error()) }
+		p := fmt.Sprintf("%v", path)
+		n := int64(AsInt(limit))
+		if n <= 0 {
+			n = defaultFileReadLimit
+		}
+		f, err := os.Open(p)
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		defer f.Close()
+		// Stat first so we can early-reject oversize files without reading them.
+		st, err := f.Stat()
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		if st.Size() > n {
+			return Err[any, any](fmt.Sprintf("file exceeds %d-byte limit (actual: %d)", n, st.Size()))
+		}
+		data, err := io.ReadAll(io.LimitReader(f, n))
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
 		return Ok[any, any](string(data))
+	}
+}
+
+// File.readFileBytes : String -> Task String (List Int)
+// Reads up to the default limit as a list of byte values (0..255) — for
+// binary data where UTF-8 validity doesn't apply.
+func File_readFileBytes(path any) any {
+	return func() any {
+		f, err := os.Open(fmt.Sprintf("%v", path))
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		defer f.Close()
+		data, err := io.ReadAll(io.LimitReader(f, defaultFileReadLimit))
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		out := make([]any, len(data))
+		for i, b := range data {
+			out[i] = int(b)
+		}
+		return Ok[any, any](out)
 	}
 }
 

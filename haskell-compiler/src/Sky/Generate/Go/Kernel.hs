@@ -180,6 +180,8 @@ registry = Map.fromList
     , (("Process", "getCwd"),     KernelInfo "rt.Process_getCwd" 0 False)
 
     , (("File", "readFile"),      KernelInfo "rt.File_readFile" 1 False)
+    , (("File", "readFileLimit"), KernelInfo "rt.File_readFileLimit" 2 False)
+    , (("File", "readFileBytes"), KernelInfo "rt.File_readFileBytes" 1 False)
     , (("File", "writeFile"),     KernelInfo "rt.File_writeFile" 2 False)
     , (("File", "append"),        KernelInfo "rt.File_append" 2 False)
     , (("File", "exists"),        KernelInfo "rt.File_exists" 1 False)
@@ -254,6 +256,7 @@ registry = Map.fromList
     , (("Path", "base"),          KernelInfo "rt.Path_base" 1 False)
     , (("Path", "ext"),           KernelInfo "rt.Path_ext" 1 False)
     , (("Path", "isAbsolute"),    KernelInfo "rt.Path_isAbsolute" 1 False)
+    , (("Path", "safeJoin"),      KernelInfo "rt.Path_safeJoin" 2 False)
 
     , (("Debug", "log"),          KernelInfo "rt.Debug_log" 2 True)
     , (("Debug", "toString"),     KernelInfo "rt.Debug_toString" 1 True)
