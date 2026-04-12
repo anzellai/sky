@@ -38,7 +38,7 @@ import qualified System.Environment
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Map.empty)
 
 -- | Read the global codegen env (for use in pure codegen functions)
 getCgEnv :: Rec.CodegenEnv
@@ -175,6 +175,12 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     | (modName, depMod) <- validDeps
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     ]
+                depArities = Map.unions
+                    [ Map.mapKeys (\n -> prefix ++ "_" ++ n)
+                                  (Rec.collectFuncArities (Can._decls depMod))
+                    | (modName, depMod) <- validDeps
+                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    ]
             putStrLn "-- Type Checking"
             constraints <- Constrain.constrainModule canMod
             solveResult <- Solve.solve constraints
@@ -186,7 +192,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     putStrLn $ "   TYPE WARNING: " ++ err
                     return Map.empty
             putStrLn "-- Generating Go"
-            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases
+            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
             writeFile mainGoPath goCode
@@ -495,11 +501,13 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities =
     let
         imports = unsafePerformIO $ do
-            let cgEnv = Rec.withRecordAliases depRecAliases (Rec.buildCodegenEnv solvedTypes canMod)
+            let cgEnv = Rec.withDepArities depArities
+                      $ Rec.withRecordAliases depRecAliases
+                      $ Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
             return $ collectGoImports canMod srcMod
         unionDecls = generateUnionTypes canMod
@@ -840,17 +848,28 @@ exprToGo (A.At _ expr) = case expr of
         curryLambda (map patternToParam params) (exprToGo body)
 
     Can.Call func args ->
-        -- Partial application of ADT constructors:
-        --   JobDone : Int -> Result String String -> Msg
-        --   JobDone jid  -- expects to yield `Result String String -> Msg`
-        -- Go generates `Msg_JobDone(jid, r)` so we must wrap missing args
-        -- in a lambda capturing the supplied ones.
         case A.toValue func of
             Can.VarCtor _opts _home _typeName _ctorName annot ->
+                -- ADT constructor partial app: JobDone : Int -> Result -> Msg
+                -- applied to just `jid` must close over jid.
                 let declared = ctorArity annot
                     got = length args
                 in if got < declared
                     then emitPartialCtor func args (declared - got)
+                    else GoIr.GoCall (exprToGo func) (map exprToGo args)
+            Can.VarTopLevel home name ->
+                -- Partial application of a top-level function:
+                -- `canViewMonitor session` where canViewMonitor : Session -> Monitor -> Bool
+                -- must yield a closure capturing session.
+                let env = getCgEnv
+                    modStr = ModuleName.toString home
+                    qualName = if null modStr || modStr == "Main"
+                        then name
+                        else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
+                    declared = Map.findWithDefault (length args) qualName (Rec._cg_funcArities env)
+                    got = length args
+                in if got < declared && declared > 0
+                    then emitPartialUserCall func args (declared - got)
                     else GoIr.GoCall (exprToGo func) (map exprToGo args)
             _ ->
                 let goFunc = exprToGo func
@@ -1012,6 +1031,22 @@ emitPartialCtor func suppliedArgs missing =
     let suppliedGo = map exprToGo suppliedArgs
         -- We need fresh parameter names for the missing args.
         extraNames = [ "__p" ++ show i | i <- [0 .. missing - 1] ]
+        extraIdents = map GoIr.GoIdent extraNames
+        finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
+    in foldr wrapLambda finalCall extraNames
+  where
+    wrapLambda name body =
+        GoIr.GoFuncLit [GoIr.GoParam name "any"] "any"
+            [GoIr.GoReturn body]
+
+
+-- | Partial application of a user-defined top-level function: wrap the
+-- call in a chain of `func(x any) any { return callee(... , x, ...) }`
+-- lambdas binding the remaining parameters.
+emitPartialUserCall :: Can.Expr -> [Can.Expr] -> Int -> GoIr.GoExpr
+emitPartialUserCall func suppliedArgs missing =
+    let suppliedGo = map exprToGo suppliedArgs
+        extraNames = [ "__pp" ++ show i | i <- [0 .. missing - 1] ]
         extraIdents = map GoIr.GoIdent extraNames
         finalCall = GoIr.GoCall (exprToGo func) (suppliedGo ++ extraIdents)
     in foldr wrapLambda finalCall extraNames

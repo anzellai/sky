@@ -11,6 +11,8 @@ module Sky.Generate.Go.Record
     , buildCodegenEnv
     , withRecordAliases
     , collectRecordAliases
+    , withDepArities
+    , collectFuncArities
     )
     where
 
@@ -35,6 +37,9 @@ data CodegenEnv = CodegenEnv
     , _cg_recordAliases :: !(Set.Set String)  -- names of all known record aliases
                                               --   (current module + deps) so
                                               --   solvedTypeToGo can suffix "_R"
+    , _cg_funcArities :: !(Map.Map String Int)  -- top-level function arities
+                                                -- used for partial-application
+                                                -- closure synthesis
     }
 
 
@@ -64,7 +69,24 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_fieldIndex = buildRegistry (Can._aliases canMod)
     , _cg_zeroArgs = collectZeroArgs (Can._decls canMod)
     , _cg_recordAliases = collectRecordAliases (Can._aliases canMod)
+    , _cg_funcArities = collectFuncArities (Can._decls canMod)
     }
+
+
+-- | Collect top-level function arities (param count) so the codegen can
+-- synthesize closures for partial applications (`List.filter f xs` where
+-- f is a 2-arg function applied to one arg).
+collectFuncArities :: Can.Decls -> Map.Map String Int
+collectFuncArities = go Map.empty
+  where
+    go acc Can.SaveTheEnvironment = acc
+    go acc (Can.Declare def rest) = go (addDef acc def) rest
+    go acc (Can.DeclareRec def defs rest) =
+        go (foldr (flip addDef) (addDef acc def) defs) rest
+
+    addDef acc d = case d of
+        Can.Def (A.At _ n) ps _          -> Map.insert n (length ps) acc
+        Can.TypedDef (A.At _ n) _ ps _ _ -> Map.insert n (length ps) acc
 
 
 -- | Build a fresh CodegenEnv but with the record-alias set extended.
@@ -73,6 +95,12 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
 withRecordAliases :: Set.Set String -> CodegenEnv -> CodegenEnv
 withRecordAliases extra env =
     env { _cg_recordAliases = Set.union extra (_cg_recordAliases env) }
+
+
+-- | Extend the function-arity map with dep-module qualified names.
+withDepArities :: Map.Map String Int -> CodegenEnv -> CodegenEnv
+withDepArities extra env =
+    env { _cg_funcArities = Map.union extra (_cg_funcArities env) }
 
 
 collectRecordAliases :: Map.Map String Can.Alias -> Set.Set String
