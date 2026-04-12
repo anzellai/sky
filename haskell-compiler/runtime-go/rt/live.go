@@ -386,37 +386,36 @@ func Live_route(path any, page any) any {
 	return liveRoute{path: fmt.Sprintf("%v", path), page: page}
 }
 
-// Live.app — reads a record-shaped config (init/update/view/subscriptions/routes/notFound)
+// Live.app — reads a record-shaped config and starts the HTTP server.
+// Blocks until the server exits.
 func Live_app(cfg any) any {
-	return func() any {
-		app := &liveApp{
-			init:          Field(cfg, "Init"),
-			update:        Field(cfg, "Update"),
-			view:          Field(cfg, "View"),
-			subscriptions: Field(cfg, "Subscriptions"),
-			notFound:      Field(cfg, "NotFound"),
-		}
-		for _, r := range asList(Field(cfg, "Routes")) {
-			if lr, ok := r.(liveRoute); ok {
-				app.routes = append(app.routes, lr)
-			}
-		}
-
-		mux := http.NewServeMux()
-		mux.HandleFunc("/_live/event", app.handleEvent)
-		mux.HandleFunc("/", app.handleInitial)
-
-		port := 8080
-		if p := Field(cfg, "Port"); p != nil {
-			port = AsInt(p)
-		}
-		fmt.Printf("Sky.Live listening on :%d\n", port)
-		err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
-		if err != nil {
-			return Err[any, any](err.Error())
-		}
-		return Ok[any, any](struct{}{})
+	app := &liveApp{
+		init:          Field(cfg, "Init"),
+		update:        Field(cfg, "Update"),
+		view:          Field(cfg, "View"),
+		subscriptions: Field(cfg, "Subscriptions"),
+		notFound:      Field(cfg, "NotFound"),
 	}
+	for _, r := range asList(Field(cfg, "Routes")) {
+		if lr, ok := r.(liveRoute); ok {
+			app.routes = append(app.routes, lr)
+		}
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/_live/event", app.handleEvent)
+	mux.HandleFunc("/", app.handleInitial)
+
+	port := 8080
+	if p := Field(cfg, "Port"); p != nil {
+		port = AsInt(p)
+	}
+	fmt.Printf("Sky.Live listening on :%d\n", port)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+	if err != nil {
+		return Err[any, any](err.Error())
+	}
+	return Ok[any, any](struct{}{})
 }
 
 func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {

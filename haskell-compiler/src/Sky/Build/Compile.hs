@@ -399,13 +399,33 @@ generateDef def solvedTypes =
                 else exprToGo body
         in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
-            { GoIr._gf_name = name
+            { GoIr._gf_name = goSafeName name
             , GoIr._gf_typeParams = []
             , GoIr._gf_params = goParams
             , GoIr._gf_returnType = goRetType
             , GoIr._gf_body = [GoIr.GoReturn bodyExpr]
             }
         ]
+
+
+-- | Escape Sky identifiers that collide with Go reserved/builtin names.
+-- Only applies to top-level Sky functions emitted as Go funcs.
+goSafeName :: String -> String
+goSafeName n
+    | n `elem` reservedGoNames = n ++ "_"
+    | otherwise = n
+
+
+reservedGoNames :: [String]
+reservedGoNames =
+    [ "init"      -- Go's package init has special semantics
+    , "new", "make", "len", "cap", "copy", "append", "delete"
+    , "panic", "recover", "print", "println"
+    , "type", "func", "var", "const", "interface", "struct"
+    , "map", "chan", "go", "defer", "goto", "fallthrough"
+    , "range", "return", "for", "switch", "case", "default"
+    , "break", "continue", "import", "package", "select"
+    ]
 
 
 -- | Generate typed function parameters and return type from a solved type
@@ -457,8 +477,8 @@ exprToGo (A.At _ expr) = case expr of
         -- For cross-module references, prefix with module name
         let modStr = ModuleName.toString home
         in if null modStr || modStr == "Main"
-            then GoIr.GoIdent name
-            else GoIr.GoIdent (map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name)
+            then GoIr.GoIdent (goSafeName name)
+            else GoIr.GoIdent (map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name)
 
     Can.VarKernel modName funcName ->
         kernelToGo modName funcName
@@ -516,14 +536,14 @@ exprToGo (A.At _ expr) = case expr of
         GoIr.GoCall (GoIr.GoQualified "rt" "Field") [exprToGo target, GoIr.GoStringLit (capitalise_ field)]
 
     Can.Update _name baseExpr fields ->
-        -- Record update: copy struct with field overrides
+        -- Record update via reflect-based runtime helper (works on any + typed structs)
         let baseGo = GoBuilder.renderExpr (exprToGo baseExpr)
             fieldUpdates = Map.toList fields
-            updates = map (\(fname, Can.FieldUpdate _ fexpr) ->
-                "r." ++ capitalise_ fname ++ " = " ++ GoBuilder.renderExpr (exprToGo fexpr))
+            pairs = map (\(fname, Can.FieldUpdate _ fexpr) ->
+                "\"" ++ capitalise_ fname ++ "\": " ++ GoBuilder.renderExpr (exprToGo fexpr))
                 fieldUpdates
-        in GoIr.GoRaw $ "func() any { r := " ++ baseGo ++ "; " ++
-            intercalate_ "; " updates ++ "; return r }()"
+        in GoIr.GoRaw $ "rt.RecordUpdate(" ++ baseGo ++ ", map[string]any{" ++
+            intercalate_ ", " pairs ++ "})"
 
     Can.Record fields ->
         -- Record literal: look up matching type alias → named struct, or anonymous
@@ -989,7 +1009,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
         case Map.lookup name types of
             Just ty | isConcreteType ty -> GoIr.GoTypeAssert (GoIr.GoIdent name) (solvedTypeToGo ty)
             _ -> GoIr.GoIdent name
-    Can.VarTopLevel _ name -> GoIr.GoIdent name
+    Can.VarTopLevel _ name -> GoIr.GoIdent (goSafeName name)
     Can.VarKernel modName funcName -> kernelToGo modName funcName
 
     Can.Binop op _ _ _ left right -> typedBinop types retType op left right

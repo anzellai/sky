@@ -303,12 +303,42 @@ func RecordGet(record any, field string) any {
 	return nil
 }
 
+// RecordUpdate copies a record (map or struct) and applies field overrides.
+// Works on both map[string]any and typed Go structs via reflect.
 func RecordUpdate(base any, updates map[string]any) any {
-	original := base.(map[string]any)
-	result := make(map[string]any, len(original))
-	for k, v := range original { result[k] = v }
-	for k, v := range updates { result[k] = v }
-	return result
+	// Fast path: map-based record
+	if m, ok := base.(map[string]any); ok {
+		result := make(map[string]any, len(m)+len(updates))
+		for k, v := range m { result[k] = v }
+		for k, v := range updates { result[k] = v }
+		return result
+	}
+	// Reflect path: struct-based record
+	v := reflect.ValueOf(base)
+	if v.Kind() == reflect.Ptr { v = v.Elem() }
+	if v.Kind() != reflect.Struct {
+		return base
+	}
+	// Build a new struct value (copy) and set fields
+	copyVal := reflect.New(v.Type()).Elem()
+	copyVal.Set(v)
+	for k, newVal := range updates {
+		f := copyVal.FieldByName(k)
+		if !f.IsValid() || !f.CanSet() {
+			continue
+		}
+		nv := reflect.ValueOf(newVal)
+		if !nv.IsValid() {
+			f.Set(reflect.Zero(f.Type()))
+			continue
+		}
+		if nv.Type().AssignableTo(f.Type()) {
+			f.Set(nv)
+		} else if nv.Type().ConvertibleTo(f.Type()) {
+			f.Set(nv.Convert(f.Type()))
+		}
+	}
+	return copyVal.Interface()
 }
 
 // ═══════════════════════════════════════════════════════════

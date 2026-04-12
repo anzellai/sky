@@ -48,8 +48,8 @@ discoverModules sourceRoot entryPath = do
             else do
                 source <- TIO.readFile path
                 case Parse.parseModule source of
-                    Left _ -> do
-                        putStrLn $ "   Warning: could not parse " ++ path
+                    Left err -> do
+                        putStrLn $ "   Warning: could not parse " ++ path ++ ": " ++ show err
                         go visited rest
                     Right srcMod -> do
                         let declaredName = case Src._name srcMod of
