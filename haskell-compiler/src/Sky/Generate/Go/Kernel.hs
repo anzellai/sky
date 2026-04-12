@@ -95,6 +95,13 @@ registry = Map.fromList
     -- Sky.Http.RateLimit
     , (("RateLimit", "allow"),    KernelInfo "rt.RateLimit_allow" 4 False)
 
+    -- Std.Env
+    , (("Env", "get"),            KernelInfo "rt.Env_get" 1 False)
+    , (("Env", "getOrDefault"),   KernelInfo "rt.Env_getOrDefault" 2 False)
+    , (("Env", "require"),        KernelInfo "rt.Env_require" 1 False)
+    , (("Env", "getInt"),         KernelInfo "rt.Env_getInt" 2 False)
+    , (("Env", "getBool"),        KernelInfo "rt.Env_getBool" 2 False)
+
     -- ═══════════════════════════════════════════════════════
     -- List
     -- ═══════════════════════════════════════════════════════
@@ -179,6 +186,14 @@ registry = Map.fromList
     , (("Time", "sleep"),         KernelInfo "rt.Time_sleep" 1 False)
     , (("Time", "every"),         KernelInfo "rt.Time_every" 2 True)
     , (("Time", "unixMillis"),    KernelInfo "rt.Time_unixMillis" 0 False)
+    , (("Time", "formatISO8601"), KernelInfo "rt.Time_formatISO8601" 1 False)
+    , (("Time", "formatRFC3339"), KernelInfo "rt.Time_formatRFC3339" 1 False)
+    , (("Time", "formatHTTP"),    KernelInfo "rt.Time_formatHTTP" 1 False)
+    , (("Time", "format"),        KernelInfo "rt.Time_format" 2 False)
+    , (("Time", "parseISO8601"),  KernelInfo "rt.Time_parseISO8601" 1 False)
+    , (("Time", "parse"),         KernelInfo "rt.Time_parse" 2 False)
+    , (("Time", "addMillis"),     KernelInfo "rt.Time_addMillis" 2 False)
+    , (("Time", "diffMillis"),    KernelInfo "rt.Time_diffMillis" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Random
@@ -275,6 +290,12 @@ registry = Map.fromList
     , (("Debug", "log"),          KernelInfo "rt.Debug_log" 2 True)
     , (("Debug", "toString"),     KernelInfo "rt.Debug_toString" 1 True)
     , (("Log", "println"),        KernelInfo "rt.Log_println" 1 False)
+    , (("Log", "debug"),          KernelInfo "rt.Log_debug" 1 False)
+    , (("Log", "info"),           KernelInfo "rt.Log_info" 1 False)
+    , (("Log", "warn"),           KernelInfo "rt.Log_warn" 1 False)
+    , (("Log", "error"),          KernelInfo "rt.Log_error" 1 False)
+    , (("Log", "with"),           KernelInfo "rt.Log_with" 2 False)
+    , (("Log", "errorWith"),      KernelInfo "rt.Log_errorWith" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Html — VNode element builders

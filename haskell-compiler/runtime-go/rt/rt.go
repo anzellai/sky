@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math"
@@ -119,6 +120,120 @@ func Log_println(args ...any) any {
 }
 
 // ═══════════════════════════════════════════════════════════
+// Structured logging — severity levels + optional JSON output.
+// Set SKY_LOG_FORMAT=json for one-line JSON records suitable for log
+// aggregators (Loki, Datadog, CloudWatch). Otherwise human-readable.
+// Set SKY_LOG_LEVEL=debug|info|warn|error to gate output.
+// ═══════════════════════════════════════════════════════════
+
+const (
+	logLevelDebug = 0
+	logLevelInfo  = 1
+	logLevelWarn  = 2
+	logLevelError = 3
+)
+
+var (
+	logThreshold = logLevelFromEnv()
+	logJSON      = os.Getenv("SKY_LOG_FORMAT") == "json"
+)
+
+func logLevelFromEnv() int {
+	switch strings.ToLower(os.Getenv("SKY_LOG_LEVEL")) {
+	case "debug":
+		return logLevelDebug
+	case "warn", "warning":
+		return logLevelWarn
+	case "error":
+		return logLevelError
+	default:
+		return logLevelInfo
+	}
+}
+
+func logEmit(level int, levelName string, msg string, ctx any) {
+	if level < logThreshold {
+		return
+	}
+	ts := time.Now().UTC().Format(time.RFC3339Nano)
+	if logJSON {
+		entry := map[string]any{
+			"time":  ts,
+			"level": levelName,
+			"msg":   msg,
+		}
+		if m, ok := ctx.(map[string]any); ok {
+			for k, v := range m {
+				if k != "time" && k != "level" && k != "msg" {
+					entry[k] = v
+				}
+			}
+		}
+		b, _ := json.Marshal(entry)
+		if level >= logLevelWarn {
+			fmt.Fprintln(os.Stderr, string(b))
+		} else {
+			fmt.Fprintln(os.Stdout, string(b))
+		}
+		return
+	}
+	line := ts + " " + strings.ToUpper(levelName) + " " + msg
+	if m, ok := ctx.(map[string]any); ok && len(m) > 0 {
+		var b strings.Builder
+		for k, v := range m {
+			b.WriteString(" ")
+			b.WriteString(k)
+			b.WriteString("=")
+			b.WriteString(fmt.Sprintf("%v", v))
+		}
+		line += b.String()
+	}
+	if level >= logLevelWarn {
+		fmt.Fprintln(os.Stderr, line)
+	} else {
+		fmt.Fprintln(os.Stdout, line)
+	}
+}
+
+// Log.debug : String -> ()
+func Log_debug(msg any) any {
+	logEmit(logLevelDebug, "debug", fmt.Sprintf("%v", msg), nil)
+	return struct{}{}
+}
+
+// Log.info : String -> ()
+func Log_info(msg any) any {
+	logEmit(logLevelInfo, "info", fmt.Sprintf("%v", msg), nil)
+	return struct{}{}
+}
+
+// Log.warn : String -> ()
+func Log_warn(msg any) any {
+	logEmit(logLevelWarn, "warn", fmt.Sprintf("%v", msg), nil)
+	return struct{}{}
+}
+
+// Log.error : String -> ()
+func Log_error(msg any) any {
+	logEmit(logLevelError, "error", fmt.Sprintf("%v", msg), nil)
+	return struct{}{}
+}
+
+// Log.with : String -> Dict String any -> ()
+// Structured log with additional context fields. E.g.
+//   Log.with "request completed" (Dict.fromList [("method","GET"), ("status",200)])
+func Log_with(msg any, ctx any) any {
+	logEmit(logLevelInfo, "info", fmt.Sprintf("%v", msg), ctx)
+	return struct{}{}
+}
+
+// Log.errorWith : String -> Dict String any -> ()
+func Log_errorWith(msg any, ctx any) any {
+	logEmit(logLevelError, "error", fmt.Sprintf("%v", msg), ctx)
+	return struct{}{}
+}
+
+// ═══════════════════════════════════════════════════════════
 // String
 // ═══════════════════════════════════════════════════════════
 
@@ -181,7 +296,31 @@ func Concat(a, b any) any {
 // Arithmetic and comparison (any-typed, until type checker)
 // ═══════════════════════════════════════════════════════════
 
-func AsInt(v any) int { if n, ok := v.(int); ok { return n }; return 0 }
+func AsInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case int16:
+		return int(n)
+	case int8:
+		return int(n)
+	case uint:
+		return int(n)
+	case uint64:
+		return int(n)
+	case uint32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	}
+	return 0
+}
 func AsFloat(v any) float64 { if f, ok := v.(float64); ok { return f }; if n, ok := v.(int); ok { return float64(n) }; return 0 }
 func AsBool(v any) bool { if b, ok := v.(bool); ok { return b }; return false }
 
@@ -585,6 +724,74 @@ func Time_sleep(ms any) any {
 
 func Time_unixMillis() any {
 	return time.Now().UnixMilli()
+}
+
+// Time.formatISO8601 : Int -> String
+// (unixMillis) → ISO-8601 / RFC 3339 UTC timestamp: "2026-04-12T12:34:56.789Z".
+// The web-standard format — use for JSON APIs, logs, database timestamps.
+func Time_formatISO8601(ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format("2006-01-02T15:04:05.000Z")
+}
+
+// Time.formatRFC3339 : Int -> String
+func Time_formatRFC3339(ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format(time.RFC3339Nano)
+}
+
+// Time.formatHTTP : Int -> String
+// (unixMillis) → HTTP date header format: "Mon, 02 Jan 2006 15:04:05 GMT".
+// Use for Last-Modified, Date, Expires headers.
+func Time_formatHTTP(ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format(http.TimeFormat)
+}
+
+// Time.format : String -> Int -> String
+// (goLayout, unixMillis) — emits a custom Go-style layout. Sky exposes the
+// Go reference layout "2006-01-02 15:04:05" verbatim. Prefer formatISO8601
+// / formatRFC3339 for machine-readable output and this only for UI text.
+func Time_format(layout any, ms any) any {
+	t := time.UnixMilli(int64(AsInt(ms))).UTC()
+	return t.Format(fmt.Sprintf("%v", layout))
+}
+
+// Time.parseISO8601 : String -> Result String Int
+// Parses an ISO-8601 / RFC 3339 timestamp and returns unix millis.
+// Strict: requires the "T" separator and either a "Z" or +hh:mm offset.
+func Time_parseISO8601(s any) any {
+	str := fmt.Sprintf("%v", s)
+	t, err := time.Parse(time.RFC3339Nano, str)
+	if err != nil {
+		// Try without nanos
+		t, err = time.Parse(time.RFC3339, str)
+		if err != nil {
+			return Err[any, any]("parseISO8601: " + err.Error())
+		}
+	}
+	return Ok[any, any](t.UnixMilli())
+}
+
+// Time.parse : String -> String -> Result String Int
+// (goLayout, input) — parses using an explicit Go layout string.
+func Time_parse(layout any, s any) any {
+	t, err := time.Parse(fmt.Sprintf("%v", layout), fmt.Sprintf("%v", s))
+	if err != nil {
+		return Err[any, any]("time.parse: " + err.Error())
+	}
+	return Ok[any, any](t.UnixMilli())
+}
+
+// Time.addMillis : Int -> Int -> Int
+func Time_addMillis(delta any, ms any) any {
+	return AsInt(ms) + AsInt(delta)
+}
+
+// Time.diffMillis : Int -> Int -> Int
+// (later, earlier) — returns later - earlier.
+func Time_diffMillis(later any, earlier any) any {
+	return AsInt(later) - AsInt(earlier)
 }
 
 // ═══════════════════════════════════════════════════════════

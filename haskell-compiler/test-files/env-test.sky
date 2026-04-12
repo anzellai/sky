@@ -1,0 +1,17 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Env as Env
+import Std.Log exposing (println)
+
+main =
+    let
+        _ = println (Env.getOrDefault "UNSET_VAR" "default-value")
+        _ = println (String.fromInt (Env.getInt "PORT" 8080))
+        _ = if Env.getBool "DEBUG" False then println "debug on" else println "debug off"
+        _ = case Env.get "HOME" of
+                Just v -> println (String.append "HOME=" v)
+                Nothing -> println "no HOME"
+    in
+        println "env ok"

@@ -160,9 +160,11 @@ kernelFunctions = Map.fromList
                     "andMap", "combine", "traverse"])
     , ("Task",    ["succeed", "fail", "map", "andThen", "perform", "sequence", "parallel",
                     "lazy", "run", "map2", "map3", "map4", "map5", "andMap"])
-    , ("Log",     ["println"])
+    , ("Log",     ["println", "debug", "info", "warn", "error", "with", "errorWith"])
     , ("Cmd",     ["none", "batch", "perform"])
-    , ("Time",    ["now", "sleep", "every", "unixMillis"])
+    , ("Time",    ["now", "sleep", "every", "unixMillis",
+                    "formatISO8601", "formatRFC3339", "formatHTTP", "format",
+                    "parseISO8601", "parse", "addMillis", "diffMillis"])
     , ("Random",  ["int", "float", "choice", "shuffle"])
     , ("Math",    ["sqrt", "pow", "abs", "floor", "ceil", "round", "sin", "cos", "tan", "pi", "e", "log", "min", "max"])
     , ("Io",      ["readLine", "readBytes", "writeStdout", "writeStderr"])
@@ -179,6 +181,7 @@ kernelFunctions = Map.fromList
     , ("Path",    ["join", "dir", "base", "ext", "isAbsolute", "safeJoin"])
     , ("Uuid",    ["v4", "v7", "parse"])
     , ("RateLimit", ["allow"])
+    , ("Env",     ["get", "getOrDefault", "require", "getInt", "getBool"])
     , ("Html",    ["text", "div", "span", "p", "h1", "h2", "h3", "h4", "h5", "h6",
                     "a", "button", "input", "form", "label", "nav", "section",
                     "article", "header", "footer", "main", "ul", "ol", "li",

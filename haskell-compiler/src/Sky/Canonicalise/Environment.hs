@@ -247,5 +247,6 @@ kernelModules = Map.fromList
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
     , ("Sky.Core.Uuid",        "Uuid")
     , ("Sky.Http.RateLimit",   "RateLimit")
+    , ("Std.Env",              "Env")
     , ("Sky.Core.Prelude", "Basics")  -- Prelude maps to Basics
     ]

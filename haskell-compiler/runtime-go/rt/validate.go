@@ -5,6 +5,8 @@ import (
 	"html"
 	"net/mail"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -13,6 +15,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/rivo/uniseg"
 )
+
+// Indirection wrappers for env + atoi so nothing other than rt imports them.
+func osLookupEnv(k string) (string, bool) { return os.LookupEnv(k) }
+func atoi(s string) (int, error)          { return strconv.Atoi(s) }
 
 // ═══════════════════════════════════════════════════════════
 // Sky.Core.String — validation helpers
@@ -168,6 +174,94 @@ func Uuid_parse(s any) any {
 		return Err[any, any]("uuid.parse: " + err.Error())
 	}
 	return Ok[any, any](u.String())
+}
+
+// ═══════════════════════════════════════════════════════════
+// Std.Env — type-safe environment variable access
+// ═══════════════════════════════════════════════════════════
+
+// Env.get : String -> Maybe String
+// Returns Just the value if set, Nothing otherwise.
+// Unlike os.Getenv (which collapses missing and empty), this distinguishes
+// them: SOMETHING= (empty) → Just "", unset → Nothing.
+func Env_get(key any) any {
+	k := fmt.Sprintf("%v", key)
+	if v, ok := envLookup(k); ok {
+		return Just[any](v)
+	}
+	return Nothing[any]()
+}
+
+// Env.getOrDefault : String -> String -> String
+// Returns the env var if set, otherwise the default.
+func Env_getOrDefault(key any, def any) any {
+	k := fmt.Sprintf("%v", key)
+	if v, ok := envLookup(k); ok {
+		return v
+	}
+	return fmt.Sprintf("%v", def)
+}
+
+// Env.require : String -> Task String String
+// Returns the env var in Ok; returns Err and exits on unset.
+// Use at startup for required configuration — fail fast rather than
+// silently falling back to defaults that could be insecure.
+func Env_require(key any) any {
+	return func() any {
+		k := fmt.Sprintf("%v", key)
+		v, ok := envLookup(k)
+		if !ok {
+			return Err[any, any]("required env var not set: " + k)
+		}
+		return Ok[any, any](v)
+	}
+}
+
+// Env.getInt : String -> Int -> Int
+// (key, default) — returns parsed int if env var is set and parseable,
+// otherwise default.
+func Env_getInt(key any, def any) any {
+	k := fmt.Sprintf("%v", key)
+	if v, ok := envLookup(k); ok {
+		if n, err := parseIntStrict(v); err == nil {
+			return n
+		}
+	}
+	return AsInt(def)
+}
+
+// Env.getBool : String -> Bool -> Bool
+// Accepts: true/false, yes/no, 1/0, on/off (case-insensitive).
+func Env_getBool(key any, def any) any {
+	k := fmt.Sprintf("%v", key)
+	d, _ := def.(bool)
+	if v, ok := envLookup(k); ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "yes", "1", "on":
+			return true
+		case "false", "no", "0", "off":
+			return false
+		}
+	}
+	return d
+}
+
+// envLookup wraps os.LookupEnv so we can unit-test.
+func envLookup(key string) (string, bool) {
+	return lookupEnvFunc(key)
+}
+
+var lookupEnvFunc = osLookupEnv
+
+// parseIntStrict rejects leading whitespace, +/- prefixes already handled by
+// strconv.Atoi but we also reject overflow (Atoi returns error on that).
+func parseIntStrict(s string) (int, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, fmt.Errorf("empty int")
+	}
+	// strconv.Atoi accepts leading "+" and "-" and returns error on overflow.
+	return atoi(s)
 }
 
 // ═══════════════════════════════════════════════════════════

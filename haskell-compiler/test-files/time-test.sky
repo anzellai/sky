@@ -1,0 +1,22 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Time as Time
+import Std.Log exposing (println)
+
+main =
+    let
+        -- Known unix millis: 2025-01-01T00:00:00Z = 1735689600000
+        ms = 1735689600000
+        _ = println (Time.formatISO8601 ms)
+        _ = println (Time.formatHTTP ms)
+        _ = println (Time.format "2006-01-02" ms)
+        _ = case Time.parseISO8601 "2025-01-01T00:00:00Z" of
+                Ok n -> println (String.fromInt n)
+                Err e -> println e
+        -- Roundtrip: format then parse should produce original
+        roundtripped = Time.formatISO8601 (Time.addMillis 60000 ms)
+        _ = println roundtripped
+    in
+        println "time ok"
