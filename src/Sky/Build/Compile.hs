@@ -604,10 +604,21 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
         -- when the user's program doesn't happen to reference rt.* directly
         -- (e.g. main = 42). The blank var reference is zero-cost at runtime.
         rtPin = [GoIr.GoDeclRaw "var _ = rt.AsInt"]
+        -- Emit sky.toml's `port` as a SKY_LIVE_PORT default so Sky.Live /
+        -- Sky.Http.Server pick it up. Shell env and .env still take
+        -- precedence (we only Setenv when unset).
+        -- Use reflect-free stdlib (`os` package) in a named-init to set the
+        -- port fallback without requiring extra imports — we pipe through
+        -- rt.SetPortDefault which lives in the runtime (always imported).
+        portDefault =
+            [ GoIr.GoDeclRaw $
+                "func init() { rt.SetPortDefault(\""
+                ++ show (Toml._livePort config) ++ "\") }"
+            ]
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
-            , GoIr._pkg_decls = rtPin ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ mainDecl
+            , GoIr._pkg_decls = rtPin ++ portDefault ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ mainDecl
             }
     in GoBuilder.renderPackage pkg
 

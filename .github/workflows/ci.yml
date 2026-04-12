@@ -83,7 +83,7 @@ jobs:
           ./sky-out/app &
           SERVER_PID=$!
           sleep 3
-          curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep 200
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
           kill $SERVER_PID 2>/dev/null || true
           wait 2>/dev/null || true
 
@@ -107,7 +107,7 @@ jobs:
           ./sky-out/app &
           SERVER_PID=$!
           sleep 3
-          curl -s -o /dev/null -w "%{http_code}" http://localhost:8080/ | grep 200
+          curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/ | grep 200
           kill $SERVER_PID 2>/dev/null || true
           wait 2>/dev/null || true
 

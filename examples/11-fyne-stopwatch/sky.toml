@@ -1,6 +1,7 @@
 name = "fyne-stopwatch"
 version = "0.1.0"
 entry = "src/Main.sky"
+port = 8000
 
 [source]
 root = "src"

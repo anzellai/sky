@@ -22,6 +22,16 @@ import (
 // debugStack returns a stack trace for panic logging elsewhere in rt.
 func debugStack() string { return string(debug.Stack()) }
 
+// SetPortDefault is called by generated main.go at init time with the
+// sky.toml `port` value. It only seeds SKY_LIVE_PORT when unset — shell
+// env and .env still win.
+func SetPortDefault(port string) {
+	if _, ok := os.LookupEnv("SKY_LIVE_PORT"); ok {
+		return
+	}
+	_ = os.Setenv("SKY_LIVE_PORT", port)
+}
+
 func init() {
 	// Best-effort load of .env; failures are silent.
 	_ = loadDotEnvFile(".env", false)
