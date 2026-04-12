@@ -39,8 +39,11 @@ discoverModules sourceRoot entryPath = do
     go visited [] = return visited
     go visited (path:rest) = do
         exists <- doesFileExist path
-        let modName = pathToModuleName sourceRoot path
-        if not exists || Map.member modName visited
+        -- Check if this path is already processed (by path OR module name)
+        let alreadyByPath = any (\v -> _mi_path v == path) (Map.elems visited)
+            modNameGuess = pathToModuleName sourceRoot path
+            alreadyByName = Map.member modNameGuess visited
+        if not exists || alreadyByPath || alreadyByName
             then go visited rest
             else do
                 source <- TIO.readFile path
@@ -51,7 +54,7 @@ discoverModules sourceRoot entryPath = do
                     Right srcMod -> do
                         let declaredName = case Src._name srcMod of
                                 Just (A.At _ segs) -> joinDots segs
-                                Nothing -> modName
+                                Nothing -> modNameGuess
                             importNames = map getImportName (Src._imports srcMod)
                             localImports = filter isLocalImport importNames
                             localPaths = map (moduleNameToPath sourceRoot) localImports
@@ -73,7 +76,9 @@ compilationOrder modules =
 
 -- | Topological sort of module names
 topoSort :: Map.Map String ModuleInfo -> [String]
-topoSort modules = reverse $ foldl (\acc name -> snd (visit Set.empty name acc)) [] (Map.keys modules)
+topoSort modules =
+    let (_, result) = foldl (\(vis, acc) name -> visit vis name acc) (Set.empty, []) (Map.keys modules)
+    in reverse result
   where
     visit visited name acc
         | Set.member name visited = (visited, acc)

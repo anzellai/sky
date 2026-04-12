@@ -17,6 +17,7 @@ data Env = Env
     , _qualVars   :: !(Map.Map String (Map.Map String VarHome))
     , _qualTypes  :: !(Map.Map String (Map.Map String TypeHome))
     , _qualCtors  :: !(Map.Map String (Map.Map String CtorHome))
+    , _importAliases :: !(Map.Map String ModuleName.Canonical)  -- alias → full module name
     }
     deriving (Show)
 
@@ -75,6 +76,7 @@ initialEnv home = Env
     , _qualVars  = Map.empty
     , _qualTypes = Map.empty
     , _qualCtors = Map.empty
+    , _importAliases = Map.empty
     }
 
 
@@ -91,9 +93,10 @@ addLocals names env = foldr addLocal env names
 
 -- | Add a qualified import alias
 addQualifiedImport :: String -> ModuleName.Canonical -> [(String, VarHome)] -> [(String, CtorHome)] -> Env -> Env
-addQualifiedImport alias _modName vars ctors env = env
+addQualifiedImport alias modName vars ctors env = env
     { _qualVars = Map.insertWith Map.union alias (Map.fromList vars) (_qualVars env)
     , _qualCtors = Map.insertWith Map.union alias (Map.fromList ctors) (_qualCtors env)
+    , _importAliases = Map.insert alias modName (_importAliases env)
     }
 
 
@@ -127,6 +130,10 @@ lookupQualCtor :: String -> String -> Env -> Maybe CtorHome
 lookupQualCtor qualifier name env = do
     modCtors <- Map.lookup qualifier (_qualCtors env)
     Map.lookup name modCtors
+
+
+lookupImportAlias :: String -> Env -> Maybe ModuleName.Canonical
+lookupImportAlias alias env = Map.lookup alias (_importAliases env)
 
 
 lookupType :: String -> Env -> Maybe TypeHome

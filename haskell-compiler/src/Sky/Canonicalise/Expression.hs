@@ -157,8 +157,10 @@ resolveQualVar env qualifier name =
                 Just Env.VarLocal ->
                     Can.VarLocal name
                 Nothing ->
-                    -- Unknown qualified name — might be from unresolved import
-                    Can.VarTopLevel (ModuleName.Canonical qualifier) name
+                    -- Unknown qualified name — resolve alias to full module name
+                    case Env.lookupImportAlias qualifier env of
+                        Just fullMod -> Can.VarTopLevel fullMod name
+                        Nothing -> Can.VarTopLevel (ModuleName.Canonical qualifier) name
 
 
 -- | Resolve an operator to its canonical form

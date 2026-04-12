@@ -26,6 +26,7 @@ import qualified Sky.Type.Solve as Solve
 import qualified Sky.Type.Type as T
 import qualified Sky.Generate.Go.Type as GoType
 import qualified Sky.Generate.Go.Record as Rec
+import qualified Sky.Build.ModuleGraph as Graph
 
 
 -- | Global codegen environment (set once per compilation, read during codegen)
@@ -41,11 +42,80 @@ getCgEnv = unsafePerformIO $ readIORef globalCgEnv
 -- | Full compilation: parse → canonicalise → codegen → write Go
 compile :: Toml.SkyConfig -> FilePath -> FilePath -> IO (Either String FilePath)
 compile config entryPath outDir = do
-    -- Phase 1: Read source
+    -- Compute source root relative to the entry file
+    let entryDir = takeDirectory entryPath
+        sourceRoot = if Toml._sourceRoot config == "src"
+            then entryDir  -- entry IS in the source root
+            else Toml._sourceRoot config
+
+    -- Phase 1: Discover all modules
+    putStrLn "-- Discovering modules"
+    modules <- Graph.discoverModules sourceRoot entryPath
+    let moduleOrder = Graph.compilationOrder modules
+    putStrLn $ "   Found " ++ show (length moduleOrder) ++ " module(s)"
+
+    -- Phase 2: Parse all modules
+    putStrLn "-- Parsing"
+    parseResults <- mapM (\modInfo -> do
+        src <- TIO.readFile (Graph._mi_path modInfo)
+        case Parse.parseModule src of
+            Left err -> do
+                putStrLn $ "   PARSE FAILED: " ++ Graph._mi_name modInfo ++ " " ++ show err
+                return (Left $ "Parse error in " ++ Graph._mi_name modInfo)
+            Right srcMod -> do
+                let declCount = length (Src._values srcMod)
+                putStrLn $ "   " ++ Graph._mi_name modInfo ++ ": " ++ show declCount ++ " declarations"
+                return (Right (Graph._mi_name modInfo, srcMod))
+        ) moduleOrder
+
+    let errors = [e | Left e <- parseResults]
+        parsed = [(n, m) | Right (n, m) <- parseResults]
+
+    if not (null errors)
+      then return (Left $ head errors)
+      else do
+        -- Phase 3: Canonicalise (entry module + merge deps)
+        putStrLn "-- Canonicalising"
+        let entrySrcMod = snd (last parsed)
+        case Canonicalise.canonicalise entrySrcMod of
+          Left err -> return (Left $ "Canonicalise error: " ++ err)
+          Right canMod -> do
+            putStrLn "   Names resolved"
+            let depCanMods = map (\(n, srcMod) ->
+                    case Canonicalise.canonicalise srcMod of
+                        Right cm -> Just (n, cm); Left _ -> Nothing)
+                    (if length parsed > 1 then init parsed else [])
+                validDeps = [x | Just x <- depCanMods]
+                depDecls = concatMap (\(modName, depMod) ->
+                    let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    in generateDeclsForDep depMod prefix) validDeps
+            putStrLn "-- Type Checking"
+            constraints <- Constrain.constrainModule canMod
+            solveResult <- Solve.solve constraints
+            types <- case solveResult of
+                Solve.SolveOk types -> do
+                    putStrLn $ "   Types OK (" ++ show (length (Map.keys types)) ++ " bindings)"
+                    return types
+                Solve.SolveError err -> do
+                    putStrLn $ "   TYPE WARNING: " ++ err
+                    return Map.empty
+            putStrLn "-- Generating Go"
+            let goCode = generateGoMulti canMod entrySrcMod config types depDecls
+            createDirectoryIfMissing True outDir
+            let mainGoPath = outDir </> "main.go"
+            writeFile mainGoPath goCode
+            putStrLn $ "   Wrote " ++ mainGoPath
+            copyRuntime outDir
+            writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+            putStrLn "Compilation successful"
+            return (Right mainGoPath)
+
+
+-- LEGACY: single-module parse entry (no longer used from compile)
+parseSingle :: Toml.SkyConfig -> FilePath -> FilePath -> IO (Either String FilePath)
+parseSingle config entryPath outDir = do
     source <- TIO.readFile entryPath
     putStrLn $ "-- Lexing " ++ entryPath
-
-    -- Phase 2: Parse
     putStrLn "-- Parsing"
     case Parse.parseModule source of
         Left err -> do
@@ -121,7 +191,50 @@ copyRuntime outDir = do
 -- GO CODE GENERATION (from Canonical AST)
 -- ═══════════════════════════════════════════════════════════
 
--- | Generate Go source from a canonical module with solved types
+-- | Generate Go declarations for a dependency module's functions
+generateDeclsForDep :: Can.Module -> String -> [GoIr.GoDecl]
+generateDeclsForDep canMod modPrefix = go (Can._decls canMod)
+  where
+    go Can.SaveTheEnvironment = []
+    go (Can.Declare def rest) = mkDef def ++ go rest
+    go (Can.DeclareRec def defs rest) = mkDef def ++ concatMap mkDef defs ++ go rest
+
+    mkDef def =
+        let (name, params, body) = case def of
+                Can.Def (A.At _ n) pats expr -> (n, pats, expr)
+                Can.TypedDef (A.At _ n) _ typedPats expr _ -> (n, map fst typedPats, expr)
+            goName = modPrefix ++ "_" ++ name
+        in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
+                { GoIr._gf_name = goName
+                , GoIr._gf_typeParams = []
+                , GoIr._gf_params = map patternToParam params
+                , GoIr._gf_returnType = "any"
+                , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
+                }
+           ]
+
+
+-- | Generate Go with merged dependency declarations
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls =
+    let
+        imports = unsafePerformIO $ do
+            let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
+            writeIORef globalCgEnv cgEnv
+            return $ collectGoImports canMod srcMod
+        unionDecls = generateUnionTypes canMod
+        aliasDecls = generateAliasTypes canMod
+        decls = generateDecls canMod solvedTypes
+        mainDecl = generateMainFunc canMod srcMod solvedTypes
+        pkg = GoIr.GoPackage
+            { GoIr._pkg_name = "main"
+            , GoIr._pkg_imports = imports
+            , GoIr._pkg_decls = depDecls ++ unionDecls ++ aliasDecls ++ decls ++ mainDecl
+            }
+    in GoBuilder.renderPackage pkg
+
+
+-- | Generate Go source from a canonical module with solved types (single module)
 generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> String
 generateGo canMod srcMod config solvedTypes =
     let
@@ -331,7 +444,11 @@ exprToGo (A.At _ expr) = case expr of
         GoIr.GoIdent name
 
     Can.VarTopLevel home name ->
-        GoIr.GoIdent name
+        -- For cross-module references, prefix with module name
+        let modStr = ModuleName.toString home
+        in if null modStr || modStr == "Main"
+            then GoIr.GoIdent name
+            else GoIr.GoIdent (map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name)
 
     Can.VarKernel modName funcName ->
         kernelToGo modName funcName
@@ -1087,8 +1204,8 @@ runtimeGoSource = unlines
     , "// Log"
     , "// ═══════════════════════════════════════════════════════════"
     , ""
-    , "func Log_println(s any) any {"
-    , "\tfmt.Println(s)"
+    , "func Log_println(args ...any) any {"
+    , "\tfmt.Println(args...)"
     , "\treturn struct{}{}"
     , "}"
     , ""
