@@ -1,13 +1,14 @@
 -- | Constraint generation from canonical expressions.
--- Walks the AST and produces constraints for the solver.
--- Adapted from Elm's Type.Constrain.Expression.
+-- IO-based with a unique counter for type variable names.
+-- Each call site gets unique placeholder names so the solver's
+-- TVar cache shares variables WITHIN a definition but not ACROSS definitions.
 module Sky.Type.Constrain.Expression
-    ( constrain
-    , constrainDef
+    ( constrainModule
     , Env
     )
     where
 
+import Data.IORef
 import qualified Data.Map.Strict as Map
 import qualified Sky.AST.Canonical as Can
 import qualified Sky.Reporting.Annotation as A
@@ -19,296 +20,307 @@ import qualified Sky.Sky.ModuleName as ModuleName
 type Env = Map.Map String T.Annotation
 
 
+-- | Fresh name counter
+type Counter = IORef Int
+
+freshName :: Counter -> String -> IO String
+freshName counter prefix = do
+    n <- readIORef counter
+    modifyIORef' counter (+1)
+    return (prefix ++ show n)
+
+
+-- ═══════════════════════════════════════════════════════════
+-- MODULE
+-- ═══════════════════════════════════════════════════════════
+
+-- | Generate constraints for an entire module (IO for fresh names)
+constrainModule :: Can.Module -> IO T.Constraint
+constrainModule canMod = do
+    counter <- newIORef 0
+    constrainDecls counter Map.empty (Can._decls canMod)
+
+
+constrainDecls :: Counter -> Env -> Can.Decls -> IO T.Constraint
+constrainDecls counter env decls = case decls of
+    Can.SaveTheEnvironment ->
+        return T.CTrue
+
+    Can.Declare def rest -> do
+        defCon <- constrainDef counter env def
+        (name, defType) <- defTypeInfoIO counter def
+        let env' = Map.insert name (T.Forall [] defType) env
+        restCon <- constrainDecls counter env' rest
+        return $ T.CAnd [defCon, restCon]
+
+    Can.DeclareRec def defs rest -> do
+        let allDefs = def : defs
+        defInfos <- mapM (defTypeInfoIO counter) allDefs
+        let recEnv = foldr (\(n, t) e -> Map.insert n (T.Forall [] t) e) env defInfos
+        defCons <- mapM (constrainDef counter recEnv) allDefs
+        restCon <- constrainDecls counter recEnv rest
+        return $ T.CAnd (defCons ++ [restCon])
+
+
+-- ═══════════════════════════════════════════════════════════
+-- EXPRESSIONS
+-- ═══════════════════════════════════════════════════════════
+
 -- | Generate constraints for an expression given an expected type.
--- Returns a Constraint tree that the solver will walk.
-constrain :: Env -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrain env (A.At region expr) expected = case expr of
+constrain :: Counter -> Env -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrain counter env (A.At region expr) expected = case expr of
 
     Can.VarLocal name ->
-        T.CLocal region name expected
+        return $ T.CLocal region name expected
 
-    Can.VarTopLevel home name ->
-        T.CLocal region name expected
+    Can.VarTopLevel _home name ->
+        return $ T.CLocal region name expected
 
     Can.VarKernel modName funcName ->
         case lookupKernelType modName funcName of
-            Just annot -> T.CForeign region (modName ++ "." ++ funcName) annot expected
-            Nothing -> T.CTrue  -- unknown kernel function, skip
+            Just annot -> return $ T.CForeign region (modName ++ "." ++ funcName) annot expected
+            Nothing -> return T.CTrue
 
     Can.VarCtor _opts _home _typeName ctorName annot ->
-        T.CForeign region ctorName annot expected
+        return $ T.CForeign region ctorName annot expected
 
     Can.Chr _ ->
-        T.CEqual region T.CChar charType expected
+        return $ T.CEqual region T.CChar charType expected
 
     Can.Str _ ->
-        T.CEqual region T.CString stringType expected
+        return $ T.CEqual region T.CString stringType expected
 
     Can.Int _ ->
-        -- Int literals are polymorphic: could be Int or number
-        T.CEqual region T.CNumber intType expected
+        return $ T.CEqual region T.CNumber intType expected
 
     Can.Float _ ->
-        T.CEqual region T.CFloat floatType expected
+        return $ T.CEqual region T.CFloat floatType expected
 
     Can.Unit ->
-        T.CEqual region T.CRecord T.TUnit expected
+        return $ T.CEqual region T.CRecord T.TUnit expected
 
     Can.List items ->
-        constrainList env region items expected
+        constrainList counter env region items expected
 
     Can.Negate inner ->
-        constrain env inner expected
+        constrain counter env inner expected
 
     Can.Binop op _opHome _opName _annot left right ->
-        constrainBinop env region op left right expected
+        constrainBinop counter env region op left right expected
 
     Can.Lambda params body ->
-        constrainLambda env region params body expected
+        constrainLambda counter env region params body expected
 
     Can.Call func args ->
-        constrainCall env region func args expected
+        constrainCall counter env region func args expected
 
     Can.If branches elseExpr ->
-        constrainIf env region branches elseExpr expected
+        constrainIf counter env region branches elseExpr expected
 
     Can.Let def body ->
-        constrainLet env def body expected
+        constrainLet counter env def body expected
 
     Can.LetRec defs body ->
-        constrainLetRec env defs body expected
+        constrainLetRec counter env defs body expected
 
     Can.LetDestruct pat valExpr body ->
-        constrainLetDestruct env pat valExpr body expected
+        constrainLetDestruct counter env pat valExpr body expected
 
     Can.Case subject branches ->
-        constrainCase env region subject branches expected
+        constrainCase counter env region subject branches expected
 
-    Can.Accessor _field ->
-        T.CTrue  -- TODO: record accessor constraint
-
-    Can.Access target (A.At _ _field) ->
-        T.CTrue  -- TODO: record access constraint
-
-    Can.Update _name _base _fields ->
-        T.CTrue  -- TODO: record update constraint
-
-    Can.Record _fields ->
-        T.CTrue  -- TODO: record literal constraint
-
-    Can.Tuple a b mc ->
-        T.CTrue  -- TODO: tuple constraint
+    Can.Accessor _field -> return T.CTrue
+    Can.Access _target _ -> return T.CTrue
+    Can.Update _ _ _ -> return T.CTrue
+    Can.Record _ -> return T.CTrue
+    Can.Tuple _ _ _ -> return T.CTrue
 
 
 -- ═══════════════════════════════════════════════════════════
 -- LIST
 -- ═══════════════════════════════════════════════════════════
 
-constrainList :: Env -> T.Region -> [Can.Expr] -> T.Expected T.Type -> T.Constraint
-constrainList env region items expected =
-    let elemType = T.TVar "_list_elem"
+constrainList :: Counter -> Env -> T.Region -> [Can.Expr] -> T.Expected T.Type -> IO T.Constraint
+constrainList counter env region items expected = do
+    elemName <- freshName counter "_elem"
+    let elemType = T.TVar elemName
         listType = T.TType ModuleName.list "List" [elemType]
-        itemCons = zipWith (\i item ->
-            constrain env item (T.FromContext region (T.ListEntry i) elemType))
-            [0..] items
-    in T.CAnd (itemCons ++ [T.CEqual region T.CList listType expected])
+    itemCons <- zipWithM (\i item ->
+        constrain counter env item (T.FromContext region (T.ListEntry i) elemType))
+        [0..] items
+    return $ T.CAnd (itemCons ++ [T.CEqual region T.CList listType expected])
 
 
 -- ═══════════════════════════════════════════════════════════
 -- BINARY OPERATORS
 -- ═══════════════════════════════════════════════════════════
 
-constrainBinop :: Env -> T.Region -> String -> Can.Expr -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrainBinop env region op left right expected =
-    let (leftType, rightType, resultType) = binopTypes op
-        leftCon = constrain env left (T.NoExpectation leftType)
-        rightCon = constrain env right (T.NoExpectation rightType)
-        resultCon = T.CEqual region T.CApp resultType expected
-    in T.CAnd [leftCon, rightCon, resultCon]
+constrainBinop :: Counter -> Env -> T.Region -> String -> Can.Expr -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrainBinop counter env region op left right expected = do
+    (leftType, rightType, resultType) <- binopTypes counter op
+    leftCon <- constrain counter env left (T.NoExpectation leftType)
+    rightCon <- constrain counter env right (T.NoExpectation rightType)
+    return $ T.CAnd [leftCon, rightCon, T.CEqual region T.CApp resultType expected]
 
 
--- | Get types for a binary operator
-binopTypes :: String -> (T.Type, T.Type, T.Type)
-binopTypes op = case op of
-    "+"  -> (intType, intType, intType)  -- simplified; should be number
-    "-"  -> (intType, intType, intType)
-    "*"  -> (intType, intType, intType)
-    "/"  -> (floatType, floatType, floatType)
-    "//" -> (intType, intType, intType)
-    "++" -> (stringType, stringType, stringType)  -- simplified; should be appendable
-    "==" -> (T.TVar "_cmp", T.TVar "_cmp", boolType)
-    "/=" -> (T.TVar "_cmp", T.TVar "_cmp", boolType)
-    "<"  -> (T.TVar "_cmp", T.TVar "_cmp", boolType)
-    ">"  -> (T.TVar "_cmp", T.TVar "_cmp", boolType)
-    "<=" -> (T.TVar "_cmp", T.TVar "_cmp", boolType)
-    ">=" -> (T.TVar "_cmp", T.TVar "_cmp", boolType)
-    "&&" -> (boolType, boolType, boolType)
-    "||" -> (boolType, boolType, boolType)
-    "|>" -> (T.TVar "_pipe_a", T.TLambda (T.TVar "_pipe_a") (T.TVar "_pipe_b"), T.TVar "_pipe_b")
-    "<|" -> (T.TLambda (T.TVar "_pipe_a") (T.TVar "_pipe_b"), T.TVar "_pipe_a", T.TVar "_pipe_b")
-    ">>" -> (T.TLambda (T.TVar "_a") (T.TVar "_b"), T.TLambda (T.TVar "_b") (T.TVar "_c"), T.TLambda (T.TVar "_a") (T.TVar "_c"))
-    "<<" -> (T.TLambda (T.TVar "_b") (T.TVar "_c"), T.TLambda (T.TVar "_a") (T.TVar "_b"), T.TLambda (T.TVar "_a") (T.TVar "_c"))
-    _    -> (T.TVar "_op_a", T.TVar "_op_b", T.TVar "_op_r")
+binopTypes :: Counter -> String -> IO (T.Type, T.Type, T.Type)
+binopTypes counter op = case op of
+    "+"  -> return (intType, intType, intType)
+    "-"  -> return (intType, intType, intType)
+    "*"  -> return (intType, intType, intType)
+    "/"  -> return (floatType, floatType, floatType)
+    "//" -> return (intType, intType, intType)
+    "++" -> return (stringType, stringType, stringType)
+    "==" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
+    "/=" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
+    "<"  -> return (intType, intType, boolType)
+    ">"  -> return (intType, intType, boolType)
+    "<=" -> return (intType, intType, boolType)
+    ">=" -> return (intType, intType, boolType)
+    "&&" -> return (boolType, boolType, boolType)
+    "||" -> return (boolType, boolType, boolType)
+    "|>" -> do { a <- freshName counter "_pa"; b <- freshName counter "_pb"; return (T.TVar a, T.TLambda (T.TVar a) (T.TVar b), T.TVar b) }
+    "<|" -> do { a <- freshName counter "_pa"; b <- freshName counter "_pb"; return (T.TLambda (T.TVar a) (T.TVar b), T.TVar a, T.TVar b) }
+    ">>" -> do { a <- freshName counter "_ca"; b <- freshName counter "_cb"; c <- freshName counter "_cc"; return (T.TLambda (T.TVar a) (T.TVar b), T.TLambda (T.TVar b) (T.TVar c), T.TLambda (T.TVar a) (T.TVar c)) }
+    "<<" -> do { a <- freshName counter "_ca"; b <- freshName counter "_cb"; c <- freshName counter "_cc"; return (T.TLambda (T.TVar b) (T.TVar c), T.TLambda (T.TVar a) (T.TVar b), T.TLambda (T.TVar a) (T.TVar c)) }
+    _    -> do
+              a <- freshName counter "_opa"
+              b <- freshName counter "_opb"
+              r <- freshName counter "_opr"
+              return (T.TVar a, T.TVar b, T.TVar r)
 
 
 -- ═══════════════════════════════════════════════════════════
 -- LAMBDA
 -- ═══════════════════════════════════════════════════════════
 
-constrainLambda :: Env -> T.Region -> [Can.Pattern] -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrainLambda env region params body expected =
-    let
-        -- Create type variables for each parameter
-        paramTypes = zipWith (\i _ -> T.TVar ("_arg" ++ show i)) [0::Int ..] params
-        -- Add params to environment
-        paramBindings = concatMap (patternBindings) (zip params paramTypes)
+constrainLambda :: Counter -> Env -> T.Region -> [Can.Pattern] -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrainLambda counter env region params body expected = do
+    paramTypes <- mapM (\_ -> do n <- freshName counter "_larg"; return (T.TVar n)) params
+    resultName <- freshName counter "_lres"
+    let resultType = T.TVar resultName
+        paramBindings = concatMap patternBindings (zip params paramTypes)
         bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
-        -- Constrain body
-        resultType = T.TVar "_result"
-        bodyCon = constrain bodyEnv body (T.NoExpectation resultType)
-        -- Build function type
         funcType = foldr T.TLambda resultType paramTypes
-    in
-    T.CAnd [bodyCon, T.CEqual region T.CLambda funcType expected]
+    bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
+    return $ T.CAnd [bodyCon, T.CEqual region T.CLambda funcType expected]
 
 
 -- ═══════════════════════════════════════════════════════════
 -- CALL
 -- ═══════════════════════════════════════════════════════════
 
-constrainCall :: Env -> T.Region -> Can.Expr -> [Can.Expr] -> T.Expected T.Type -> T.Constraint
-constrainCall env region func args expected =
-    let
-        -- Constrain the function
-        resultType = T.TVar "_call_result"
-        argTypes = zipWith (\i _ -> T.TVar ("_call_arg" ++ show i)) [0::Int ..] args
+constrainCall :: Counter -> Env -> T.Region -> Can.Expr -> [Can.Expr] -> T.Expected T.Type -> IO T.Constraint
+constrainCall counter env region func args expected = do
+    resultName <- freshName counter "_cres"
+    argNames <- mapM (\_ -> freshName counter "_carg") args
+    let resultType = T.TVar resultName
+        argTypes = map T.TVar argNames
         funcType = foldr T.TLambda resultType argTypes
-        funcCon = constrain env func (T.NoExpectation funcType)
-        -- Constrain each argument
-        argCons = zipWith (\argType arg ->
-            constrain env arg (T.FromContext region (T.CallArg "f" 0) argType))
-            argTypes args
-        -- Result must match expected
-        resultCon = T.CEqual region T.CApp resultType expected
-    in
-    T.CAnd (funcCon : argCons ++ [resultCon])
+    funcCon <- constrain counter env func (T.NoExpectation funcType)
+    argCons <- zipWithM (\argType arg ->
+        constrain counter env arg (T.FromContext region (T.CallArg "f" 0) argType))
+        argTypes args
+    return $ T.CAnd (funcCon : argCons ++ [T.CEqual region T.CApp resultType expected])
 
 
 -- ═══════════════════════════════════════════════════════════
 -- IF-THEN-ELSE
 -- ═══════════════════════════════════════════════════════════
 
-constrainIf :: Env -> T.Region -> [(Can.Expr, Can.Expr)] -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrainIf env region branches elseExpr expected =
-    let
-        branchType = T.TVar "_if_result"
-        condCons = map (\(cond, _) ->
-            constrain env cond (T.FromContext region T.IfCondition boolType)) branches
-        bodyCons = zipWith (\i (_, body) ->
-            constrain env body (T.FromContext region (T.IfBranch i) branchType))
-            [1..] branches
-        elseCon = constrain env elseExpr (T.FromContext region (T.IfBranch 0) branchType)
-        resultCon = T.CEqual region T.CIf branchType expected
-    in
-    T.CAnd (condCons ++ bodyCons ++ [elseCon, resultCon])
+constrainIf :: Counter -> Env -> T.Region -> [(Can.Expr, Can.Expr)] -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrainIf counter env region branches elseExpr expected = do
+    branchName <- freshName counter "_ifres"
+    let branchType = T.TVar branchName
+    condCons <- mapM (\(cond, _) ->
+        constrain counter env cond (T.FromContext region T.IfCondition boolType)) branches
+    bodyCons <- zipWithM (\i (_, body) ->
+        constrain counter env body (T.FromContext region (T.IfBranch i) branchType))
+        [1..] branches
+    elseCon <- constrain counter env elseExpr (T.FromContext region (T.IfBranch 0) branchType)
+    return $ T.CAnd (condCons ++ bodyCons ++ [elseCon, T.CEqual region T.CIf branchType expected])
 
 
 -- ═══════════════════════════════════════════════════════════
 -- LET
 -- ═══════════════════════════════════════════════════════════
 
-constrainLet :: Env -> Can.Def -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrainLet env def body expected =
-    let
-        (name, defType) = defTypeInfo def
-        bodyEnv = Map.insert name (T.Forall [] defType) env
-        defCon = constrainDef env def
-        bodyCon = constrain bodyEnv body expected
-    in
-    T.CAnd [defCon, bodyCon]
+constrainLet :: Counter -> Env -> Can.Def -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrainLet counter env def body expected = do
+    (name, defType) <- defTypeInfoIO counter def
+    let bodyEnv = Map.insert name (T.Forall [] defType) env
+    defCon <- constrainDef counter env def
+    bodyCon <- constrain counter bodyEnv body expected
+    return $ T.CAnd [defCon, bodyCon]
 
 
-constrainLetRec :: Env -> [Can.Def] -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrainLetRec env defs body expected =
-    let
-        -- Add all def names to env first (mutual recursion)
-        defInfos = map defTypeInfo defs
-        recEnv = foldr (\(n, t) e -> Map.insert n (T.Forall [] t) e) env defInfos
-        -- Constrain each definition
-        defCons = map (constrainDef recEnv) defs
-        -- Constrain body
-        bodyCon = constrain recEnv body expected
-    in
-    T.CAnd (defCons ++ [bodyCon])
+constrainLetRec :: Counter -> Env -> [Can.Def] -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrainLetRec counter env defs body expected = do
+    defInfos <- mapM (defTypeInfoIO counter) defs
+    let recEnv = foldr (\(n, t) e -> Map.insert n (T.Forall [] t) e) env defInfos
+    defCons <- mapM (constrainDef counter recEnv) defs
+    bodyCon <- constrain counter recEnv body expected
+    return $ T.CAnd (defCons ++ [bodyCon])
 
 
-constrainLetDestruct :: Env -> Can.Pattern -> Can.Expr -> Can.Expr -> T.Expected T.Type -> T.Constraint
-constrainLetDestruct env pat valExpr body expected =
-    let
-        valType = T.TVar "_destruct"
-        valCon = constrain env valExpr (T.NoExpectation valType)
-        bindings = patternBindings (pat, valType)
+constrainLetDestruct :: Counter -> Env -> Can.Pattern -> Can.Expr -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
+constrainLetDestruct counter env pat valExpr body expected = do
+    vName <- freshName counter "_dest"
+    let valType = T.TVar vName
+    valCon <- constrain counter env valExpr (T.NoExpectation valType)
+    let bindings = patternBindings (pat, valType)
         bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
-        bodyCon = constrain bodyEnv body expected
-    in
-    T.CAnd [valCon, bodyCon]
+    bodyCon <- constrain counter bodyEnv body expected
+    return $ T.CAnd [valCon, bodyCon]
 
 
 -- | Generate constraints for a definition
-constrainDef :: Env -> Can.Def -> T.Constraint
-constrainDef env def = case def of
-    Can.Def (A.At region name) params body ->
-        let
-            paramTypes = zipWith (\i _ -> T.TVar ("_def_arg" ++ show i)) [0::Int ..] params
+constrainDef :: Counter -> Env -> Can.Def -> IO T.Constraint
+constrainDef counter env def = case def of
+    Can.Def (A.At region name) params body -> do
+        paramNames <- mapM (\_ -> freshName counter ("_" ++ name ++ "_arg")) params
+        resultName <- freshName counter ("_" ++ name ++ "_res")
+        let paramTypes = map T.TVar paramNames
+            resultType = T.TVar resultName
             paramBindings = concatMap patternBindings (zip params paramTypes)
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
-            resultType = T.TVar ("_def_result_" ++ name)
-            bodyCon = constrain bodyEnv body (T.NoExpectation resultType)
             funcType = foldr T.TLambda resultType paramTypes
-        in
-        T.CAnd [bodyCon, T.CEqual region T.CApp funcType (T.NoExpectation funcType)]
+        bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
+        return $ T.CAnd [bodyCon, T.CEqual region T.CApp funcType (T.NoExpectation funcType)]
 
-    Can.TypedDef (A.At region name) _freeVars typedPats body retType ->
-        let
-            paramBindings = concatMap (\(pat, ty) ->
-                patternBindings (pat, ty)) typedPats
+    Can.TypedDef (A.At region name) _freeVars typedPats body retType -> do
+        let paramBindings = concatMap (\(pat, ty) -> patternBindings (pat, ty)) typedPats
             bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
-            bodyCon = constrain bodyEnv body (T.NoExpectation retType)
-        in
-        bodyCon
+        bodyCon <- constrain counter bodyEnv body (T.NoExpectation retType)
+        return bodyCon
 
 
 -- ═══════════════════════════════════════════════════════════
 -- CASE
 -- ═══════════════════════════════════════════════════════════
 
-constrainCase :: Env -> T.Region -> Can.Expr -> [Can.CaseBranch] -> T.Expected T.Type -> T.Constraint
-constrainCase env region subject branches expected =
-    let
-        subjectType = T.TVar "_case_subject"
-        resultType = T.TVar "_case_result"
-        subjectCon = constrain env subject (T.NoExpectation subjectType)
-        branchCons = zipWith (constrainBranch env region subjectType resultType) [1..] branches
-        resultCon = T.CEqual region T.CCase resultType expected
-    in
-    T.CAnd (subjectCon : branchCons ++ [resultCon])
+constrainCase :: Counter -> Env -> T.Region -> Can.Expr -> [Can.CaseBranch] -> T.Expected T.Type -> IO T.Constraint
+constrainCase counter env region subject branches expected = do
+    subjName <- freshName counter "_subj"
+    resName <- freshName counter "_caseres"
+    let subjectType = T.TVar subjName
+        resultType = T.TVar resName
+    subjectCon <- constrain counter env subject (T.NoExpectation subjectType)
+    branchCons <- zipWithM (constrainBranch counter env region subjectType resultType) [1..] branches
+    return $ T.CAnd (subjectCon : branchCons ++ [T.CEqual region T.CCase resultType expected])
 
 
-constrainBranch :: Env -> T.Region -> T.Type -> T.Type -> Int -> Can.CaseBranch -> T.Constraint
-constrainBranch env region subjectType resultType branchIdx (Can.CaseBranch pat body) =
-    let
-        bindings = patternBindings (pat, subjectType)
+constrainBranch :: Counter -> Env -> T.Region -> T.Type -> T.Type -> Int -> Can.CaseBranch -> IO T.Constraint
+constrainBranch counter env region subjectType resultType branchIdx (Can.CaseBranch pat body) =
+    let bindings = patternBindings (pat, subjectType)
         branchEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
-        bodyCon = constrain branchEnv body (T.FromContext region (T.CaseBranch branchIdx) resultType)
-    in
-    bodyCon
+    in constrain counter branchEnv body (T.FromContext region (T.CaseBranch branchIdx) resultType)
 
 
 -- ═══════════════════════════════════════════════════════════
 -- PATTERN BINDINGS
 -- ═══════════════════════════════════════════════════════════
 
--- | Extract variable bindings from a pattern with expected type
 patternBindings :: (Can.Pattern, T.Type) -> [(String, T.Annotation)]
 patternBindings (A.At _ pat, ty) = case pat of
     Can.PVar name -> [(name, T.Forall [] ty)]
@@ -317,13 +329,10 @@ patternBindings (A.At _ pat, ty) = case pat of
     Can.PRecord fields -> map (\f -> (f, T.Forall [] (T.TVar ("_rec_" ++ f)))) fields
     Can.PUnit -> []
     Can.PTuple a b mc ->
-        let aType = T.TVar "_tup_0"
-            bType = T.TVar "_tup_1"
-        in patternBindings (a, aType) ++ patternBindings (b, bType)
+        patternBindings (a, T.TVar "_tup_0") ++ patternBindings (b, T.TVar "_tup_1")
             ++ maybe [] (\c -> patternBindings (c, T.TVar "_tup_2")) mc
     Can.PList items ->
-        let elemType = T.TVar "_list_elem"
-        in concatMap (\item -> patternBindings (item, elemType)) items
+        concatMap (\item -> patternBindings (item, T.TVar "_list_elem")) items
     Can.PCons h t ->
         let elemType = T.TVar "_cons_elem"
             listType = T.TType ModuleName.list "List" [elemType]
@@ -332,7 +341,7 @@ patternBindings (A.At _ pat, ty) = case pat of
     Can.PChr _ -> []
     Can.PStr _ -> []
     Can.PInt _ -> []
-    Can.PCtor home typeName _union ctorName _idx args ->
+    Can.PCtor _home _typeName _union ctorName _idx args ->
         concatMap (\(Can.PatternCtorArg _ argType argPat) ->
             patternBindings (argPat, argType)) args
 
@@ -341,18 +350,22 @@ patternBindings (A.At _ pat, ty) = case pat of
 -- HELPERS
 -- ═══════════════════════════════════════════════════════════
 
--- | Get name and inferred type from a definition
-defTypeInfo :: Can.Def -> (String, T.Type)
-defTypeInfo (Can.Def (A.At _ name) params _body) =
-    let paramTypes = zipWith (\i _ -> T.TVar ("_def_arg" ++ show i)) [0::Int ..] params
-        resultType = T.TVar ("_def_result_" ++ name)
-    in (name, foldr T.TLambda resultType paramTypes)
-defTypeInfo (Can.TypedDef (A.At _ name) _freeVars typedPats _body retType) =
+defTypeInfoIO :: Counter -> Can.Def -> IO (String, T.Type)
+defTypeInfoIO counter (Can.Def (A.At _ name) params _body) = do
+    paramNames <- mapM (\_ -> freshName counter ("_" ++ name ++ "_arg")) params
+    resultName <- freshName counter ("_" ++ name ++ "_res")
+    let paramTypes = map T.TVar paramNames
+        resultType = T.TVar resultName
+    return (name, foldr T.TLambda resultType paramTypes)
+defTypeInfoIO _counter (Can.TypedDef (A.At _ name) _freeVars typedPats _body retType) =
     let funcType = foldr (\(_, ty) acc -> T.TLambda ty acc) retType typedPats
-    in (name, funcType)
+    in return (name, funcType)
 
 
--- | Known kernel function types
+zipWithM :: Monad m => (a -> b -> m c) -> [a] -> [b] -> m [c]
+zipWithM f xs ys = sequence (zipWith f xs ys)
+
+
 lookupKernelType :: String -> String -> Maybe T.Annotation
 lookupKernelType modName funcName = case (modName, funcName) of
     ("Log", "println") ->
@@ -371,6 +384,8 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda stringType intType)
     ("String", "isEmpty") ->
         Just $ T.Forall [] (T.TLambda stringType boolType)
+    ("String", "join") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda (T.TType ModuleName.list "List" [stringType]) stringType))
     ("Task", "succeed") ->
         Just $ T.Forall ["e", "a"] (T.TLambda (T.TVar "a")
             (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]))
@@ -402,37 +417,37 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda
                     (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
                     (T.TVar "a")))
-    ("Result", "map") ->
-        Just $ T.Forall ["e", "a", "b"]
-            (T.TLambda
-                (T.TLambda (T.TVar "a") (T.TVar "b"))
-                (T.TLambda
-                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
-                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"])))
     ("Maybe", "withDefault") ->
         Just $ T.Forall ["a"]
             (T.TLambda (T.TVar "a")
                 (T.TLambda
                     (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"])
                     (T.TVar "a")))
+    ("List", "map") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "b"])))
+    ("List", "filter") ->
+        Just $ T.Forall ["a"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") boolType)
+                (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                    (T.TType ModuleName.list "List" [T.TVar "a"])))
+    ("List", "foldl") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TLambda (T.TVar "b") (T.TVar "b")))
+                (T.TLambda (T.TVar "b")
+                    (T.TLambda (T.TType ModuleName.list "List" [T.TVar "a"])
+                        (T.TVar "b"))))
     _ -> Nothing
 
 
--- ═══════════════════════════════════════════════════════════
--- BUILT-IN TYPES
--- ═══════════════════════════════════════════════════════════
-
-intType :: T.Type
+intType, floatType, stringType, boolType, charType :: T.Type
 intType = T.TType ModuleName.basics "Int" []
-
-floatType :: T.Type
 floatType = T.TType ModuleName.basics "Float" []
-
-stringType :: T.Type
 stringType = T.TType ModuleName.basics "String" []
-
-boolType :: T.Type
 boolType = T.TType ModuleName.basics "Bool" []
-
-charType :: T.Type
 charType = T.TType ModuleName.basics "Char" []

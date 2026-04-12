@@ -56,14 +56,16 @@ compile config entryPath outDir = do
 
                     -- Phase 4: Type Check
                     putStrLn "-- Type Checking"
-                    let constraints = Constrain.constrainModule canMod
+                    constraints <- Constrain.constrainModule canMod
                     solveResult <- Solve.solve constraints
                     let solvedTypes = case solveResult of
                             Solve.SolveOk types -> do
-                                putStrLn $ "   Types OK (" ++ show (length (Map.keys types)) ++ " bindings resolved)"
+                                putStrLn $ "   Types OK (" ++ show (length (Map.keys types)) ++ " bindings)"
+                                mapM_ (\(n, t) -> putStrLn $ "     " ++ n ++ " : " ++ Solve.showType t) (Map.toList types)
                                 return types
                             Solve.SolveError err -> do
                                 putStrLn $ "   TYPE WARNING: " ++ err
+                                -- Still return empty types — codegen falls back to any
                                 return Map.empty
                     types <- solvedTypes
 
