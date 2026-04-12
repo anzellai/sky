@@ -163,6 +163,21 @@ func Html_headerNode(attrs any, children any) any {
 	return htmlElem("header")(attrs, children)
 }
 
+// Extra Html elements used by some legacy stdlib code.
+func Html_codeNode(a, c any) any    { return htmlElem("code")(a, c) }
+func Html_blockquote(a, c any) any  { return htmlElem("blockquote")(a, c) }
+func Html_figure(a, c any) any      { return htmlElem("figure")(a, c) }
+func Html_figcaption(a, c any) any  { return htmlElem("figcaption")(a, c) }
+func Html_details(a, c any) any     { return htmlElem("details")(a, c) }
+func Html_summary(a, c any) any     { return htmlElem("summary")(a, c) }
+func Html_dialog(a, c any) any      { return htmlElem("dialog")(a, c) }
+func Html_video(a, c any) any       { return htmlElem("video")(a, c) }
+func Html_audio(a, c any) any       { return htmlElem("audio")(a, c) }
+func Html_canvas(a, c any) any      { return htmlElem("canvas")(a, c) }
+func Html_iframe(a, c any) any      { return htmlElem("iframe")(a, c) }
+func Html_progress(a, c any) any    { return htmlElem("progress")(a, c) }
+func Html_meter(a, c any) any       { return htmlElem("meter")(a, c) }
+
 // ═══════════════════════════════════════════════════════════
 // Attributes (Std.Html.Attributes)
 // ═══════════════════════════════════════════════════════════
@@ -211,6 +226,28 @@ func Event_onBlur(msg any) any      { return eventPair{name: "blur", msg: msg} }
 func Attr_attribute(k any, v any) any {
 	return attr(fmt.Sprintf("%v", k), fmt.Sprintf("%v", v))
 }
+
+// Form / number / a11y / data attributes.
+func Attr_rows(v any) any        { return attr("rows", fmt.Sprintf("%v", v)) }
+func Attr_cols(v any) any        { return attr("cols", fmt.Sprintf("%v", v)) }
+func Attr_maxlength(v any) any   { return attr("maxlength", fmt.Sprintf("%v", v)) }
+func Attr_minlength(v any) any   { return attr("minlength", fmt.Sprintf("%v", v)) }
+func Attr_step(v any) any        { return attr("step", fmt.Sprintf("%v", v)) }
+func Attr_min(v any) any         { return attr("min", fmt.Sprintf("%v", v)) }
+func Attr_max(v any) any         { return attr("max", fmt.Sprintf("%v", v)) }
+func Attr_pattern(v any) any     { return attr("pattern", fmt.Sprintf("%v", v)) }
+func Attr_accept(v any) any      { return attr("accept", fmt.Sprintf("%v", v)) }
+func Attr_multiple(v any) any    { return attr("multiple", fmt.Sprintf("%v", v)) }
+func Attr_size(v any) any        { return attr("size", fmt.Sprintf("%v", v)) }
+func Attr_tabindex(v any) any    { return attr("tabindex", fmt.Sprintf("%v", v)) }
+func Attr_ariaLabel(v any) any   { return attr("aria-label", fmt.Sprintf("%v", v)) }
+func Attr_ariaHidden(v any) any  { return attr("aria-hidden", fmt.Sprintf("%v", v)) }
+func Attr_role(v any) any        { return attr("role", fmt.Sprintf("%v", v)) }
+func Attr_dataAttr(k, v any) any { return attr("data-"+fmt.Sprintf("%v", k), fmt.Sprintf("%v", v)) }
+func Attr_spellcheck(v any) any  { return attr("spellcheck", fmt.Sprintf("%v", v)) }
+func Attr_dir(v any) any         { return attr("dir", fmt.Sprintf("%v", v)) }
+func Attr_lang(v any) any        { return attr("lang", fmt.Sprintf("%v", v)) }
+func Attr_translate(v any) any   { return attr("translate", fmt.Sprintf("%v", v)) }
 
 // ═══════════════════════════════════════════════════════════
 // CSS (Std.Css)

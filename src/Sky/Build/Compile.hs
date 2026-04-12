@@ -1177,22 +1177,29 @@ defToStmts :: Can.Def -> [GoIr.GoStmt]
 defToStmts def = case def of
     Can.Def (A.At _ name) [] body ->
         if name == "_"
-        then [GoIr.GoAssign "_" (exprToGo body)]  -- _ = expr (discard)
-        else [GoIr.GoShortDecl name (exprToGo body)]
+        then [GoIr.GoAssign "_" (exprToGo body)]
+        else [ GoIr.GoShortDecl name (exprToGo body)
+             , GoIr.GoAssign "_" (GoIr.GoIdent name)  -- suppress unused errors
+             ]
 
     Can.Def (A.At _ name) params body ->
-        -- Function binding: name := func(params) { return body }
         let goParams = map patternToParam params
-        in [GoIr.GoShortDecl name
-            (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])]
+        in [ GoIr.GoShortDecl name
+                (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])
+           , GoIr.GoAssign "_" (GoIr.GoIdent name)
+           ]
 
     Can.TypedDef (A.At _ name) _ [] body _ ->
-        [GoIr.GoShortDecl name (exprToGo body)]
+        [ GoIr.GoShortDecl name (exprToGo body)
+        , GoIr.GoAssign "_" (GoIr.GoIdent name)
+        ]
 
     Can.TypedDef (A.At _ name) _ typedPats body _ ->
         let goParams = map (patternToParam . fst) typedPats
-        in [GoIr.GoShortDecl name
-            (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])]
+        in [ GoIr.GoShortDecl name
+                (GoIr.GoFuncLit goParams "any" [GoIr.GoReturn (exprToGo body)])
+           , GoIr.GoAssign "_" (GoIr.GoIdent name)
+           ]
 
 
 -- ═══════════════════════════════════════════════════════════

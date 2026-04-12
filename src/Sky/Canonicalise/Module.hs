@@ -326,11 +326,18 @@ kernelFunctions = Map.fromList
                     "article", "header", "footer", "main", "ul", "ol", "li",
                     "img", "br", "hr", "table", "thead", "tbody", "tr", "th", "td",
                     "textarea", "select", "option", "pre", "code", "strong", "em",
-                    "small", "styleNode", "node", "raw", "headerNode"])
+                    "small", "styleNode", "node", "raw", "headerNode",
+                    "codeNode", "blockquote", "figure", "figcaption",
+                    "details", "summary", "dialog", "video", "audio", "canvas",
+                    "iframe", "progress", "meter"])
     , ("Attr",    ["class", "id", "style", "type", "type_", "value", "href", "src",
                     "alt", "name", "placeholder", "title", "for", "checked",
                     "disabled", "readonly", "required", "autofocus", "rel",
-                    "target", "method", "action", "attribute"])
+                    "target", "method", "action", "attribute",
+                    "rows", "cols", "maxlength", "minlength", "step", "min",
+                    "max", "pattern", "accept", "multiple", "size", "tabindex",
+                    "ariaLabel", "ariaHidden", "role", "dataAttr", "spellcheck",
+                    "dir", "lang", "translate"])
     , ("Css",     ["stylesheet", "rule", "property", "px", "rem", "em", "pct", "hex", "rgba",
                     "color", "background", "backgroundColor", "padding", "padding2",
                     "margin", "margin2", "fontSize", "fontWeight", "fontFamily",
