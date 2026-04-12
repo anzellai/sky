@@ -1,0 +1,31 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Std.Db as Db
+import Std.Auth as Auth
+import Std.Log exposing (println)
+
+doTest db =
+    case Auth.register db "alice@example.com" "secret123" of
+        Ok uid -> afterRegister db uid
+        Err e -> println e
+
+afterRegister db uid =
+    case Auth.login db "alice@example.com" "secret123" of
+        Ok _user -> tryToken
+        Err e -> println e
+
+tryToken =
+    case Auth.signToken "mysecret" { userId = 1 } 3600 of
+        Ok tok -> verifyTok tok
+        Err e -> println e
+
+verifyTok tok =
+    case Auth.verifyToken "mysecret" tok of
+        Ok _claims -> println "auth ok"
+        Err e -> println e
+
+main =
+    case Db.connect ":memory:" of
+        Ok db -> doTest db
+        Err e -> println e

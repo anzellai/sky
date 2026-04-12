@@ -3,6 +3,7 @@
 module Sky.Build.Compile where
 
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.IORef
@@ -32,7 +33,7 @@ import qualified Sky.Build.ModuleGraph as Graph
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty)
 
 -- | Read the global codegen env (for use in pure codegen functions)
 getCgEnv :: Rec.CodegenEnv
@@ -464,6 +465,13 @@ goSafeName n
     | otherwise = n
 
 
+-- | Sky convention: identifiers starting with `_` mean the value is unused.
+-- In Go this must be represented as the blank identifier to avoid "declared and not used".
+isDiscardName :: String -> Bool
+isDiscardName ('_':_) = True
+isDiscardName _       = False
+
+
 reservedGoNames :: [String]
 reservedGoNames =
     [ "init"      -- Go's package init has special semantics
@@ -522,11 +530,17 @@ exprToGo (A.At _ expr) = case expr of
         GoIr.GoIdent name
 
     Can.VarTopLevel home name ->
-        -- For cross-module references, prefix with module name
+        -- For cross-module references, prefix with module name.
+        -- Zero-arg top-level values are emitted as functions, so references must call them.
         let modStr = ModuleName.toString home
-        in if null modStr || modStr == "Main"
-            then GoIr.GoIdent (goSafeName name)
-            else GoIr.GoIdent (map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name)
+            qualName = if null modStr || modStr == "Main"
+                then goSafeName name
+                else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ goSafeName name
+            env = getCgEnv
+            isZeroArg = Set.member name (Rec._cg_zeroArgs env)
+        in if isZeroArg
+            then GoIr.GoCall (GoIr.GoIdent qualName) []
+            else GoIr.GoIdent qualName
 
     Can.VarKernel modName funcName ->
         kernelToGo modName funcName
@@ -891,7 +905,9 @@ patternCondition subject pat = case pat of
 patternBindings :: String -> Can.Pattern_ -> [GoIr.GoStmt]
 patternBindings subject pat = case pat of
     Can.PVar name ->
-        [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
+        if isDiscardName name
+            then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
+            else [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
 
     Can.PAnything -> []
     Can.PUnit -> []
@@ -920,7 +936,9 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
                     _      -> GoIr.GoIndex
                                 (GoIr.GoSelector (GoIr.GoIdent subject) "Fields")
                                 (GoIr.GoIntLit idx)
-            in [ GoIr.GoShortDecl name fieldAccess ]
+            in if isDiscardName name
+                then [ GoIr.GoAssign "_" fieldAccess ]
+                else [ GoIr.GoShortDecl name fieldAccess ]
         Can.PAnything -> []
         _ -> []  -- TODO: nested pattern matching
 
