@@ -5,6 +5,8 @@
   "functions": [
     {"name": "newPager", "arity": 3},
     {"name": "pageInfoRemaining", "arity": 1},
+    {"name": "pageInfoToken", "arity": 1},
+    {"name": "pageInfoMaxSize", "arity": 1},
     {"name": "pageablePageInfo", "arity": 1},
     {"name": "pagerNextPage", "arity": 2}
   ]

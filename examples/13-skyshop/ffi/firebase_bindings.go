@@ -21,6 +21,7 @@ import (
 	_ "firebase.google.com/go/v4/remoteconfig"  // aliased remoteconfig; unused in emitted wrappers
 	_ "firebase.google.com/go/v4/storage"  // aliased storage; unused in emitted wrappers
 	option "google.golang.org/api/option"
+	"reflect"
 )
 
 // [fallible] Go_GoV4.appAuth → pkg.AppAuth
@@ -120,6 +121,111 @@ func Go_GoV4_appRemoteConfig(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+
+// [pure] Go_GoV4.configAuthOverride → (Config).AuthOverride (struct-field getter)
+func Go_GoV4_configAuthOverride(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AuthOverride: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AuthOverride: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AuthOverride")
+	if !f.IsValid() {
+		out = Err[any, any]("AuthOverride: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_GoV4.configDatabaseURL → (Config).DatabaseURL (struct-field getter)
+func Go_GoV4_configDatabaseURL(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DatabaseURL: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DatabaseURL: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DatabaseURL")
+	if !f.IsValid() {
+		out = Err[any, any]("DatabaseURL: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_GoV4.configProjectID → (Config).ProjectID (struct-field getter)
+func Go_GoV4_configProjectID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProjectID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProjectID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProjectID")
+	if !f.IsValid() {
+		out = Err[any, any]("ProjectID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_GoV4.configServiceAccountID → (Config).ServiceAccountID (struct-field getter)
+func Go_GoV4_configServiceAccountID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ServiceAccountID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ServiceAccountID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ServiceAccountID")
+	if !f.IsValid() {
+		out = Err[any, any]("ServiceAccountID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_GoV4.configStorageBucket → (Config).StorageBucket (struct-field getter)
+func Go_GoV4_configStorageBucket(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("StorageBucket: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("StorageBucket: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("StorageBucket")
+	if !f.IsValid() {
+		out = Err[any, any]("StorageBucket: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 

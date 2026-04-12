@@ -13,6 +13,11 @@
     {"name": "appMessaging", "arity": 2},
     {"name": "appAppCheck", "arity": 2},
     {"name": "appRemoteConfig", "arity": 2},
+    {"name": "configAuthOverride", "arity": 1},
+    {"name": "configDatabaseURL", "arity": 1},
+    {"name": "configProjectID", "arity": 1},
+    {"name": "configServiceAccountID", "arity": 1},
+    {"name": "configStorageBucket", "arity": 1},
     {"name": "newApp", "arity": 3}
   ]
 }

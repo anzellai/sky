@@ -24,6 +24,8 @@ package customer
 -- [pure] ClientList : Client -> CustomerListParams -> Iter   -- runtime wrap: Task String
 -- [pure] ClientListPaymentMethods : Client -> CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
 -- [pure] ClientSearch : Client -> CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
+-- [pure] ClientB : Client -> Backend   -- runtime wrap: Task String
+-- [pure] ClientKey : Client -> String   -- runtime wrap: Task String
 -- [fallible] CreateFundingInstructions : String -> CustomerCreateFundingInstructionsParams -> (FundingInstructions, String)   -- runtime wrap: Task String
 -- [fallible] Del : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String
 -- [fallible] DeleteDiscount : String -> CustomerDeleteDiscountParams -> (Customer, String)   -- runtime wrap: Task String
@@ -35,6 +37,7 @@ package customer
 -- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task String
 -- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task String
 -- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
+-- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task String
 -- [pure] List : CustomerListParams -> Iter   -- runtime wrap: Task String
 -- [pure] ListPaymentMethods : CustomerListPaymentMethodsParams -> PaymentMethodIter   -- runtime wrap: Task String
 -- [fallible] New : CustomerParams -> (Customer, String)   -- runtime wrap: Task String
@@ -45,6 +48,7 @@ package customer
 -- [pure] PaymentMethodIterList : PaymentMethodIter -> ListContainer   -- runtime wrap: Task String
 -- [pure] PaymentMethodIterMeta : PaymentMethodIter -> ListMeta   -- runtime wrap: Task String
 -- [pure] PaymentMethodIterNext : PaymentMethodIter -> Bool   -- runtime wrap: Task String
+-- [pure] PaymentMethodIterIter : PaymentMethodIter -> Iter   -- runtime wrap: Task String
 -- [fallible] RetrievePaymentMethod : String -> CustomerRetrievePaymentMethodParams -> (PaymentMethod, String)   -- runtime wrap: Task String
 -- [pure] Search : CustomerSearchParams -> SearchIter   -- runtime wrap: Task String
 -- [pure] SearchIterCustomer : SearchIter -> Customer   -- runtime wrap: Task String
@@ -54,4 +58,5 @@ package customer
 -- [pure] SearchIterMeta : SearchIter -> SearchMeta   -- runtime wrap: Task String
 -- [pure] SearchIterNext : SearchIter -> Bool   -- runtime wrap: Task String
 -- [pure] SearchIterSearchResult : SearchIter -> SearchContainer   -- runtime wrap: Task String
+-- [pure] SearchIterSearchIter : SearchIter -> SearchIter   -- runtime wrap: Task String
 -- [fallible] Update : String -> CustomerParams -> (Customer, String)   -- runtime wrap: Task String

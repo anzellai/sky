@@ -36,6 +36,8 @@
     {"name": "nullUUIDUnmarshalText", "arity": 2},
     {"name": "nullUUIDMarshalJSON", "arity": 1},
     {"name": "nullUUIDUnmarshalJSON", "arity": 2},
+    {"name": "nullUUIDUUID", "arity": 1},
+    {"name": "nullUUIDValid", "arity": 1},
     {"name": "parse", "arity": 1},
     {"name": "parseBytes", "arity": 1},
     {"name": "setClockSequence", "arity": 1},

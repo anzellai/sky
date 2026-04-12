@@ -57,6 +57,8 @@ type Function struct {
 	// Empty for free-standing functions.
 	RecvType   string `json:"recvType,omitempty"`
 	MethodName string `json:"methodName,omitempty"`
+	// IsField: true for synthetic struct-field getters.
+	IsField    bool   `json:"isField,omitempty"`
 }
 
 type PackageInfo struct {
@@ -141,6 +143,13 @@ func main() {
 			// taking the interface value as receiver.
 			if iface, ok := named.Underlying().(*types.Interface); ok {
 				addInterfaceMethods(&info, iface, name, named)
+			}
+			// Struct-field getters — exported fields become <Type><Field>
+			// synthetic functions that reflect on the receiver to read the
+			// field. Needed for opaque Go structs like *DocumentRef whose
+			// public surface includes fields (e.g., `ref.ID`).
+			if strct, ok := named.Underlying().(*types.Struct); ok {
+				addFieldGetters(&info, strct, name, named)
 			}
 		}
 	}
@@ -246,6 +255,40 @@ func describeMethod(typeName string, fn *types.Func, sig *types.Signature, recvT
 		MethodName: fn.Name(),
 	}
 }
+
+// addFieldGetters emits one synthetic unary function per exported struct
+// field. Name convention matches methods: <TypeName><FieldName>. Marked
+// `isField: true` in JSON so FfiGen emits a reflect-based field read
+// instead of a method call or direct pkg.Func reference.
+func addFieldGetters(info *PackageInfo, s *types.Struct, typeName string, named *types.Named) {
+	seen := map[string]bool{}
+	for _, f := range info.Functions {
+		seen[f.Name] = true
+	}
+	for i := 0; i < s.NumFields(); i++ {
+		f := s.Field(i)
+		if !f.Exported() {
+			continue
+		}
+		name := typeName + f.Name()
+		if seen[name] {
+			continue
+		}
+		info.Functions = append(info.Functions, Function{
+			Name:       name,
+			Params:     []Param{{Name: "recv", Type: types.NewPointer(named.Obj().Type()).String()}},
+			Results:    []Param{{Type: f.Type().String()}},
+			Variadic:   false,
+			Effect:     "pure",
+			Exported:   true,
+			RecvType:   typeName,
+			MethodName: f.Name(),
+			IsField:    true,
+		})
+		seen[name] = true
+	}
+}
+
 
 // addInterfaceMethods emits methods from an interface's explicit method set
 // as synthetic free functions. Receiver is the named interface type itself

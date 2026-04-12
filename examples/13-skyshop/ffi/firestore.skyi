@@ -31,6 +31,8 @@ package firestore
 -- [fallible] AggregationQueryGet : AggregationQuery -> Context -> (AggregationResult, String)   -- runtime wrap: Task String
 -- [fallible] AggregationQueryGetResponse : AggregationQuery -> Context -> (AggregationResponse, String)   -- runtime wrap: Task String
 -- [pure] AggregationQueryPipeline : AggregationQuery -> Pipeline   -- runtime wrap: Task String
+-- [pure] AggregationResponseResult : AggregationResponse -> AggregationResult   -- runtime wrap: Task String
+-- [pure] AggregationResponseExplainMetrics : AggregationResponse -> ExplainMetrics   -- runtime wrap: Task String
 -- [pure] AliasedAggregateAs : AliasedAggregate -> String -> AliasedAggregate   -- runtime wrap: Task String
 -- [pure] AliasedExpressionAbs : AliasedExpression -> Expression   -- runtime wrap: Task String
 -- [pure] AliasedExpressionAdd : AliasedExpression -> any -> Expression   -- runtime wrap: Task String
@@ -116,6 +118,7 @@ package firestore
 -- [pure] AliasedExpressionUnixSecondsToTimestamp : AliasedExpression -> Expression   -- runtime wrap: Task String
 -- [pure] AliasedExpressionVectorLength : AliasedExpression -> Expression   -- runtime wrap: Task String
 -- [pure] And : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] AndFilterFilters : AndFilter -> EntityFilter   -- runtime wrap: Task String
 -- [pure] Array : []any -> Expression   -- runtime wrap: Task String
 -- [pure] ArrayConcat : any -> []any -> Expression   -- runtime wrap: Task String
 -- [pure] ArrayContains : any -> any -> BooleanExpression   -- runtime wrap: Task String
@@ -238,6 +241,7 @@ package firestore
 -- [pure] ClientBulkWriter : Client -> Context -> BulkWriter   -- runtime wrap: Task String
 -- [pure] ClientWithReadOptions : Client -> ReadOption -> Client   -- runtime wrap: Task String
 -- [fallible] ClientRunTransaction : Client -> Context -> Transaction) error -> TransactionOption -> String   -- runtime wrap: Task String
+-- [pure] ClientUsesEmulator : Client -> Bool   -- runtime wrap: Task String
 -- [fallible] CollectionGroupRefGetPartitionedQueries : CollectionGroupRef -> Context -> Int -> (Query, String)   -- runtime wrap: Task String
 -- [fallible] CollectionGroupRefDeserialize : CollectionGroupRef -> []byte -> (Query, String)   -- runtime wrap: Task String
 -- [pure] CollectionGroupRefDocuments : CollectionGroupRef -> Context -> DocumentIterator   -- runtime wrap: Task String
@@ -263,6 +267,7 @@ package firestore
 -- [pure] CollectionGroupRefWherePath : CollectionGroupRef -> FieldPath -> String -> interface{} -> Query   -- runtime wrap: Task String
 -- [pure] CollectionGroupRefWithReadOptions : CollectionGroupRef -> ReadOption -> Query   -- runtime wrap: Task String
 -- [pure] CollectionGroupRefWithRunOptions : CollectionGroupRef -> RunOption -> Query   -- runtime wrap: Task String
+-- [pure] CollectionGroupRefQuery : CollectionGroupRef -> Query   -- runtime wrap: Task String
 -- [pure] CollectionHintsWithForceIndex : CollectionHints -> String -> CollectionHints   -- runtime wrap: Task String
 -- [pure] CollectionHintsWithIgnoreIndexFields : CollectionHints -> []string -> CollectionHints   -- runtime wrap: Task String
 -- [pure] CollectionIteratorPageInfo : CollectionIterator -> PageInfo   -- runtime wrap: Task String
@@ -296,6 +301,10 @@ package firestore
 -- [pure] CollectionRefWhereEntity : CollectionRef -> EntityFilter -> Query   -- runtime wrap: Task String
 -- [pure] CollectionRefWherePath : CollectionRef -> FieldPath -> String -> interface{} -> Query   -- runtime wrap: Task String
 -- [pure] CollectionRefWithRunOptions : CollectionRef -> RunOption -> Query   -- runtime wrap: Task String
+-- [pure] CollectionRefParent : CollectionRef -> DocumentRef   -- runtime wrap: Task String
+-- [pure] CollectionRefPath : CollectionRef -> String   -- runtime wrap: Task String
+-- [pure] CollectionRefID : CollectionRef -> String   -- runtime wrap: Task String
+-- [pure] CollectionRefQuery : CollectionRef -> Query   -- runtime wrap: Task String
 -- [pure] CommitResponseCommitTime : CommitResponse -> Time   -- runtime wrap: Task String
 -- [pure] Concat : any -> []any -> Expression   -- runtime wrap: Task String
 -- [pure] Conditional : BooleanExpression -> any -> any -> Expression   -- runtime wrap: Task String
@@ -311,6 +320,11 @@ package firestore
 -- [pure] CurrentTimestamp : () -> Expression   -- runtime wrap: Task String
 -- [pure] Descending : Expression -> Ordering   -- runtime wrap: Task String
 -- [pure] Divide : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] DocumentChangeKind : DocumentChange -> DocumentChangeKind   -- runtime wrap: Task String
+-- [pure] DocumentChangeDoc : DocumentChange -> DocumentSnapshot   -- runtime wrap: Task String
+-- [pure] DocumentChangeOldDoc : DocumentChange -> DocumentSnapshot   -- runtime wrap: Task String
+-- [pure] DocumentChangeOldIndex : DocumentChange -> Int   -- runtime wrap: Task String
+-- [pure] DocumentChangeNewIndex : DocumentChange -> Int   -- runtime wrap: Task String
 -- [pure] DocumentChangeKindString : DocumentChangeKind -> String   -- runtime wrap: Task String
 -- [fallible] DocumentIteratorExplainMetrics : DocumentIterator -> (ExplainMetrics, String)   -- runtime wrap: Task String
 -- [fallible] DocumentIteratorNext : DocumentIterator -> (DocumentSnapshot, String)   -- runtime wrap: Task String
@@ -325,6 +339,9 @@ package firestore
 -- [pure] DocumentRefCollections : DocumentRef -> Context -> CollectionIterator   -- runtime wrap: Task String
 -- [pure] DocumentRefSnapshots : DocumentRef -> Context -> DocumentSnapshotIterator   -- runtime wrap: Task String
 -- [pure] DocumentRefWithReadOptions : DocumentRef -> ReadOption -> DocumentRef   -- runtime wrap: Task String
+-- [pure] DocumentRefParent : DocumentRef -> CollectionRef   -- runtime wrap: Task String
+-- [pure] DocumentRefPath : DocumentRef -> String   -- runtime wrap: Task String
+-- [pure] DocumentRefID : DocumentRef -> String   -- runtime wrap: Task String
 -- [pure] DocumentRefIteratorPageInfo : DocumentRefIterator -> PageInfo   -- runtime wrap: Task String
 -- [fallible] DocumentRefIteratorNext : DocumentRefIterator -> (DocumentRef, String)   -- runtime wrap: Task String
 -- [fallible] DocumentRefIteratorGetAll : DocumentRefIterator -> (DocumentRef, String)   -- runtime wrap: Task String
@@ -333,6 +350,10 @@ package firestore
 -- [fallible] DocumentSnapshotDataTo : DocumentSnapshot -> interface{} -> String   -- runtime wrap: Task String
 -- [fallible] DocumentSnapshotDataAt : DocumentSnapshot -> String -> (interface{}, String)   -- runtime wrap: Task String
 -- [fallible] DocumentSnapshotDataAtPath : DocumentSnapshot -> FieldPath -> (interface{}, String)   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotRef : DocumentSnapshot -> DocumentRef   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotCreateTime : DocumentSnapshot -> Time   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotUpdateTime : DocumentSnapshot -> Time   -- runtime wrap: Task String
+-- [pure] DocumentSnapshotReadTime : DocumentSnapshot -> Time   -- runtime wrap: Task String
 -- [fallible] DocumentSnapshotIteratorNext : DocumentSnapshotIterator -> (DocumentSnapshot, String)   -- runtime wrap: Task String
 -- [pure] DocumentSnapshotIteratorStop : DocumentSnapshotIterator -> ()   -- runtime wrap: Task String
 -- [pure] DotProduct : any -> any -> Expression   -- runtime wrap: Task String
@@ -340,7 +361,14 @@ package firestore
 -- [pure] Equal : any -> any -> BooleanExpression   -- runtime wrap: Task String
 -- [pure] EqualAny : any -> any -> BooleanExpression   -- runtime wrap: Task String
 -- [pure] EuclideanDistance : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] ExecutionStatsResultsReturned : ExecutionStats -> Int   -- runtime wrap: Task String
+-- [pure] ExecutionStatsExecutionDuration : ExecutionStats -> Duration   -- runtime wrap: Task String
+-- [pure] ExecutionStatsReadOperations : ExecutionStats -> Int   -- runtime wrap: Task String
+-- [pure] ExecutionStatsDebugStats : ExecutionStats -> *map[string]any   -- runtime wrap: Task String
 -- [pure] Exp : any -> Expression   -- runtime wrap: Task String
+-- [pure] ExplainMetricsPlanSummary : ExplainMetrics -> PlanSummary   -- runtime wrap: Task String
+-- [pure] ExplainMetricsExecutionStats : ExplainMetrics -> ExecutionStats   -- runtime wrap: Task String
+-- [pure] ExplainOptionsAnalyze : ExplainOptions -> Bool   -- runtime wrap: Task String
 -- [fallible] ExplainStatsRawData : ExplainStats -> (Any, String)   -- runtime wrap: Task String
 -- [fallible] ExplainStatsText : ExplainStats -> (String, String)   -- runtime wrap: Task String
 -- [pure] ExpressionAbs : Expression -> Expression   -- runtime wrap: Task String
@@ -425,10 +453,13 @@ package firestore
 -- [pure] ExpressionVectorLength : Expression -> Expression   -- runtime wrap: Task String
 -- [pure] FieldExists : any -> BooleanExpression   -- runtime wrap: Task String
 -- [pure] FieldNotFoundErrorError : FieldNotFoundError -> String   -- runtime wrap: Task String
+-- [pure] FieldNotFoundErrorPath : FieldNotFoundError -> String   -- runtime wrap: Task String
 -- [pure] FieldOf : T -> Expression   -- runtime wrap: Task String
 -- [pure] FieldTransformIncrement : interface{} -> transform   -- runtime wrap: Task String
 -- [pure] FieldTransformMaximum : interface{} -> transform   -- runtime wrap: Task String
 -- [pure] FieldTransformMinimum : interface{} -> transform   -- runtime wrap: Task String
+-- [pure] FindNearestOptionsDistanceThreshold : FindNearestOptions -> *float64   -- runtime wrap: Task String
+-- [pure] FindNearestOptionsDistanceResultField : FindNearestOptions -> String   -- runtime wrap: Task String
 -- [pure] Floor : any -> Expression   -- runtime wrap: Task String
 -- [pure] FunctionExpressionAbs : FunctionExpression -> Expression   -- runtime wrap: Task String
 -- [pure] FunctionExpressionAdd : FunctionExpression -> any -> Expression   -- runtime wrap: Task String
@@ -550,6 +581,9 @@ package firestore
 -- [pure] NotEqual : any -> any -> BooleanExpression   -- runtime wrap: Task String
 -- [pure] NotEqualAny : any -> any -> BooleanExpression   -- runtime wrap: Task String
 -- [pure] Or : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String
+-- [pure] OrFilterFilters : OrFilter -> EntityFilter   -- runtime wrap: Task String
+-- [pure] OrderingExpr : Ordering -> Expression   -- runtime wrap: Task String
+-- [pure] OrderingDirection : Ordering -> OrderingDirection   -- runtime wrap: Task String
 -- [pure] PipelineExecute : Pipeline -> Context -> PipelineSnapshot   -- runtime wrap: Task String
 -- [pure] PipelineWithReadOptions : Pipeline -> ReadOption -> Pipeline   -- runtime wrap: Task String
 -- [pure] PipelineWithExecuteOptions : Pipeline -> ExecuteOption -> Pipeline   -- runtime wrap: Task String
@@ -570,6 +604,8 @@ package firestore
 -- [pure] PipelineReplaceWith : Pipeline -> any -> Pipeline   -- runtime wrap: Task String
 -- [pure] PipelineFindNearest : Pipeline -> any -> any -> PipelineDistanceMeasure -> PipelineFindNearestOptions -> Pipeline   -- runtime wrap: Task String
 -- [pure] PipelineRawStage : Pipeline -> RawStage -> Pipeline   -- runtime wrap: Task String
+-- [pure] PipelineFindNearestOptionsLimit : PipelineFindNearestOptions -> *int   -- runtime wrap: Task String
+-- [pure] PipelineFindNearestOptionsDistanceField : PipelineFindNearestOptions -> *string   -- runtime wrap: Task String
 -- [pure] PipelineResultRef : PipelineResult -> DocumentRef   -- runtime wrap: Task String
 -- [pure] PipelineResultCreateTime : PipelineResult -> Time   -- runtime wrap: Task String
 -- [pure] PipelineResultUpdateTime : PipelineResult -> Time   -- runtime wrap: Task String
@@ -589,7 +625,14 @@ package firestore
 -- [pure] PipelineSourceDocuments : PipelineSource -> DocumentRef -> Pipeline   -- runtime wrap: Task String
 -- [pure] PipelineSourceCreateFromQuery : PipelineSource -> Queryer -> Pipeline   -- runtime wrap: Task String
 -- [pure] PipelineSourceCreateFromAggregationQuery : PipelineSource -> AggregationQuery -> Pipeline   -- runtime wrap: Task String
+-- [pure] PlanSummaryIndexesUsed : PlanSummary -> []*map[string]any   -- runtime wrap: Task String
 -- [pure] Pow : any -> any -> Expression   -- runtime wrap: Task String
+-- [pure] PropertyFilterPath : PropertyFilter -> String   -- runtime wrap: Task String
+-- [pure] PropertyFilterOperator : PropertyFilter -> String   -- runtime wrap: Task String
+-- [pure] PropertyFilterValue : PropertyFilter -> interface{}   -- runtime wrap: Task String
+-- [pure] PropertyPathFilterPath : PropertyPathFilter -> FieldPath   -- runtime wrap: Task String
+-- [pure] PropertyPathFilterOperator : PropertyPathFilter -> String   -- runtime wrap: Task String
+-- [pure] PropertyPathFilterValue : PropertyPathFilter -> interface{}   -- runtime wrap: Task String
 -- [pure] Ptr : T -> *T   -- runtime wrap: Task String
 -- [pure] QuerySelect : Query -> []string -> Query   -- runtime wrap: Task String
 -- [pure] QuerySelectPaths : Query -> FieldPath -> Query   -- runtime wrap: Task String
@@ -615,8 +658,13 @@ package firestore
 -- [pure] QuerySnapshots : Query -> Context -> QuerySnapshotIterator   -- runtime wrap: Task String
 -- [pure] QueryWithReadOptions : Query -> ReadOption -> Query   -- runtime wrap: Task String
 -- [pure] QueryPipeline : Query -> Pipeline   -- runtime wrap: Task String
+-- [pure] QuerySnapshotDocuments : QuerySnapshot -> DocumentIterator   -- runtime wrap: Task String
+-- [pure] QuerySnapshotSize : QuerySnapshot -> Int   -- runtime wrap: Task String
+-- [pure] QuerySnapshotChanges : QuerySnapshot -> DocumentChange   -- runtime wrap: Task String
+-- [pure] QuerySnapshotReadTime : QuerySnapshot -> Time   -- runtime wrap: Task String
 -- [fallible] QuerySnapshotIteratorNext : QuerySnapshotIterator -> (QuerySnapshot, String)   -- runtime wrap: Task String
 -- [pure] QuerySnapshotIteratorStop : QuerySnapshotIterator -> ()   -- runtime wrap: Task String
+-- [pure] QuerySnapshotIteratorQuery : QuerySnapshotIterator -> Query   -- runtime wrap: Task String
 -- [pure] RawStageWithArguments : RawStage -> []any -> RawStage   -- runtime wrap: Task String
 -- [pure] RawStageWithOptions : RawStage -> RawStageOptions -> RawStage   -- runtime wrap: Task String
 -- [pure] ReadTime : Time -> ReadOption   -- runtime wrap: Task String
@@ -625,6 +673,8 @@ package firestore
 -- [pure] Reverse : any -> Expression   -- runtime wrap: Task String
 -- [pure] Round : any -> Expression   -- runtime wrap: Task String
 -- [pure] SampleByDocuments : Int -> SampleSpec   -- runtime wrap: Task String
+-- [pure] SampleSpecSize : SampleSpec -> any   -- runtime wrap: Task String
+-- [pure] SampleSpecMode : SampleSpec -> SampleMode   -- runtime wrap: Task String
 -- [pure] Split : any -> any -> Expression   -- runtime wrap: Task String
 -- [pure] Sqrt : any -> Expression   -- runtime wrap: Task String
 -- [pure] StartsWith : any -> any -> BooleanExpression   -- runtime wrap: Task String
@@ -658,7 +708,11 @@ package firestore
 -- [pure] UnixMicrosToTimestamp : any -> Expression   -- runtime wrap: Task String
 -- [pure] UnixMillisToTimestamp : any -> Expression   -- runtime wrap: Task String
 -- [pure] UnixSecondsToTimestamp : any -> Expression   -- runtime wrap: Task String
+-- [pure] UnnestOptionsIndexField : UnnestOptions -> any   -- runtime wrap: Task String
 -- [pure] UpdateString : Update -> String   -- runtime wrap: Task String
+-- [pure] UpdatePath : Update -> String   -- runtime wrap: Task String
+-- [pure] UpdateFieldPath : Update -> FieldPath   -- runtime wrap: Task String
+-- [pure] UpdateValue : Update -> interface{}   -- runtime wrap: Task String
 -- [pure] VectorLength : any -> Expression   -- runtime wrap: Task String
 -- [pure] VectorQueryDocuments : VectorQuery -> Context -> DocumentIterator   -- runtime wrap: Task String
 -- [pure] WithCollectionGroupHints : CollectionHints -> CollectionGroupOption   -- runtime wrap: Task String
@@ -670,4 +724,5 @@ package firestore
 -- [pure] WriteBatchDelete : WriteBatch -> DocumentRef -> Precondition -> WriteBatch   -- runtime wrap: Task String
 -- [pure] WriteBatchUpdate : WriteBatch -> DocumentRef -> Update -> Precondition -> WriteBatch   -- runtime wrap: Task String
 -- [fallible] WriteBatchCommit : WriteBatch -> Context -> (WriteResult, String)   -- runtime wrap: Task String
+-- [pure] WriteResultUpdateTime : WriteResult -> Time   -- runtime wrap: Task String
 -- [pure] Xor : BooleanExpression -> BooleanExpression -> BooleanExpression   -- runtime wrap: Task String

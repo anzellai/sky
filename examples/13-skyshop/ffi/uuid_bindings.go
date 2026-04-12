@@ -14,6 +14,7 @@ import (
 	_ "database/sql/driver"  // aliased driver; unused in emitted wrappers
 	hash "hash"
 	io "io"
+	"reflect"
 )
 
 // [pure] Go_Uuid.clockSequence → pkg.ClockSequence
@@ -317,6 +318,48 @@ func Go_Uuid_nullUUIDUnmarshalJSON(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](struct{}{})
 
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDUUID → (NullUUID).UUID (struct-field getter)
+func Go_Uuid_nullUUIDUUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UUID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UUID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UUID")
+	if !f.IsValid() {
+		out = Err[any, any]("UUID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Uuid.nullUUIDValid → (NullUUID).Valid (struct-field getter)
+func Go_Uuid_nullUUIDValid(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Valid: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Valid: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Valid")
+	if !f.IsValid() {
+		out = Err[any, any]("Valid: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 

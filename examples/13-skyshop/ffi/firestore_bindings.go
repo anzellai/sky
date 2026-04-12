@@ -16,6 +16,7 @@ import (
 	option "google.golang.org/api/option"
 	_ "google.golang.org/protobuf/types/known/anypb"  // aliased anypb; unused in emitted wrappers
 	time "time"
+	"reflect"
 )
 
 // [pure] Go_Firestore.abs → pkg.Abs
@@ -112,6 +113,48 @@ func Go_Firestore_aggregationQueryGetResponse(p0 any, p1 any) (out any) {
 func Go_Firestore_aggregationQueryPipeline(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.AggregationQuery).Pipeline())
+	return
+}
+
+// [pure] Go_Firestore.aggregationResponseResult → (AggregationResponse).Result (struct-field getter)
+func Go_Firestore_aggregationResponseResult(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Result: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Result: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Result")
+	if !f.IsValid() {
+		out = Err[any, any]("Result: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.aggregationResponseExplainMetrics → (AggregationResponse).ExplainMetrics (struct-field getter)
+func Go_Firestore_aggregationResponseExplainMetrics(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ExplainMetrics: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ExplainMetrics: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ExplainMetrics")
+	if !f.IsValid() {
+		out = Err[any, any]("ExplainMetrics: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -707,6 +750,27 @@ func Go_Firestore_aliasedExpressionVectorLength(p0 any) (out any) {
 func Go_Firestore_and(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.And(p0.(pkg.BooleanExpression), p1.([]pkg.BooleanExpression)...))
+	return
+}
+
+// [pure] Go_Firestore.andFilterFilters → (AndFilter).Filters (struct-field getter)
+func Go_Firestore_andFilterFilters(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Filters: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Filters: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Filters")
+	if !f.IsValid() {
+		out = Err[any, any]("Filters: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -1590,6 +1654,27 @@ func Go_Firestore_clientRunTransaction(p0 any, p1 any, p2 any, p3 any) (out any)
 	return
 }
 
+// [pure] Go_Firestore.clientUsesEmulator → (Client).UsesEmulator (struct-field getter)
+func Go_Firestore_clientUsesEmulator(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UsesEmulator: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UsesEmulator: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UsesEmulator")
+	if !f.IsValid() {
+		out = Err[any, any]("UsesEmulator: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Firestore.collectionGroupRefGetPartitionedQueries → pkg.CollectionGroupRefGetPartitionedQueries
 func Go_Firestore_collectionGroupRefGetPartitionedQueries(p0 any, p1 any, p2 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1771,6 +1856,27 @@ func Go_Firestore_collectionGroupRefWithReadOptions(p0 any, p1 any) (out any) {
 func Go_Firestore_collectionGroupRefWithRunOptions(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.CollectionGroupRef).WithRunOptions(p1.([]pkg.RunOption)...))
+	return
+}
+
+// [pure] Go_Firestore.collectionGroupRefQuery → (CollectionGroupRef).Query (struct-field getter)
+func Go_Firestore_collectionGroupRefQuery(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Query: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Query: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Query")
+	if !f.IsValid() {
+		out = Err[any, any]("Query: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -2020,6 +2126,90 @@ func Go_Firestore_collectionRefWithRunOptions(p0 any, p1 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.collectionRefParent → (CollectionRef).Parent (struct-field getter)
+func Go_Firestore_collectionRefParent(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Parent: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Parent: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Parent")
+	if !f.IsValid() {
+		out = Err[any, any]("Parent: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.collectionRefPath → (CollectionRef).Path (struct-field getter)
+func Go_Firestore_collectionRefPath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Path: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.collectionRefID → (CollectionRef).ID (struct-field getter)
+func Go_Firestore_collectionRefID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.collectionRefQuery → (CollectionRef).Query (struct-field getter)
+func Go_Firestore_collectionRefQuery(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Query: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Query: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Query")
+	if !f.IsValid() {
+		out = Err[any, any]("Query: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.commitResponseCommitTime → pkg.CommitResponseCommitTime
 func Go_Firestore_commitResponseCommitTime(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2125,6 +2315,111 @@ func Go_Firestore_descending(p0 any) (out any) {
 func Go_Firestore_divide(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.Divide(p0.(any), p1.(any)))
+	return
+}
+
+// [pure] Go_Firestore.documentChangeKind → (DocumentChange).Kind (struct-field getter)
+func Go_Firestore_documentChangeKind(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Kind: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Kind: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Kind")
+	if !f.IsValid() {
+		out = Err[any, any]("Kind: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentChangeDoc → (DocumentChange).Doc (struct-field getter)
+func Go_Firestore_documentChangeDoc(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Doc: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Doc: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Doc")
+	if !f.IsValid() {
+		out = Err[any, any]("Doc: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentChangeOldDoc → (DocumentChange).OldDoc (struct-field getter)
+func Go_Firestore_documentChangeOldDoc(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("OldDoc: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("OldDoc: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("OldDoc")
+	if !f.IsValid() {
+		out = Err[any, any]("OldDoc: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentChangeOldIndex → (DocumentChange).OldIndex (struct-field getter)
+func Go_Firestore_documentChangeOldIndex(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("OldIndex: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("OldIndex: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("OldIndex")
+	if !f.IsValid() {
+		out = Err[any, any]("OldIndex: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentChangeNewIndex → (DocumentChange).NewIndex (struct-field getter)
+func Go_Firestore_documentChangeNewIndex(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("NewIndex: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("NewIndex: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("NewIndex")
+	if !f.IsValid() {
+		out = Err[any, any]("NewIndex: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -2251,6 +2546,69 @@ func Go_Firestore_documentRefWithReadOptions(p0 any, p1 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentRefParent → (DocumentRef).Parent (struct-field getter)
+func Go_Firestore_documentRefParent(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Parent: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Parent: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Parent")
+	if !f.IsValid() {
+		out = Err[any, any]("Parent: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentRefPath → (DocumentRef).Path (struct-field getter)
+func Go_Firestore_documentRefPath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Path: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentRefID → (DocumentRef).ID (struct-field getter)
+func Go_Firestore_documentRefID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.documentRefIteratorPageInfo → pkg.DocumentRefIteratorPageInfo
 func Go_Firestore_documentRefIteratorPageInfo(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2322,6 +2680,90 @@ func Go_Firestore_documentSnapshotDataAtPath(p0 any, p1 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.documentSnapshotRef → (DocumentSnapshot).Ref (struct-field getter)
+func Go_Firestore_documentSnapshotRef(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Ref: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Ref: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Ref")
+	if !f.IsValid() {
+		out = Err[any, any]("Ref: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentSnapshotCreateTime → (DocumentSnapshot).CreateTime (struct-field getter)
+func Go_Firestore_documentSnapshotCreateTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("CreateTime: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("CreateTime: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("CreateTime")
+	if !f.IsValid() {
+		out = Err[any, any]("CreateTime: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentSnapshotUpdateTime → (DocumentSnapshot).UpdateTime (struct-field getter)
+func Go_Firestore_documentSnapshotUpdateTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UpdateTime: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UpdateTime: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UpdateTime")
+	if !f.IsValid() {
+		out = Err[any, any]("UpdateTime: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.documentSnapshotReadTime → (DocumentSnapshot).ReadTime (struct-field getter)
+func Go_Firestore_documentSnapshotReadTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ReadTime: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ReadTime: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ReadTime")
+	if !f.IsValid() {
+		out = Err[any, any]("ReadTime: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Firestore.documentSnapshotIteratorNext → pkg.DocumentSnapshotIteratorNext
 func Go_Firestore_documentSnapshotIteratorNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -2375,10 +2817,157 @@ func Go_Firestore_euclideanDistance(p0 any, p1 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.executionStatsResultsReturned → (ExecutionStats).ResultsReturned (struct-field getter)
+func Go_Firestore_executionStatsResultsReturned(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ResultsReturned: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ResultsReturned: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ResultsReturned")
+	if !f.IsValid() {
+		out = Err[any, any]("ResultsReturned: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.executionStatsExecutionDuration → (ExecutionStats).ExecutionDuration (struct-field getter)
+func Go_Firestore_executionStatsExecutionDuration(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ExecutionDuration: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ExecutionDuration: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ExecutionDuration")
+	if !f.IsValid() {
+		out = Err[any, any]("ExecutionDuration: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.executionStatsReadOperations → (ExecutionStats).ReadOperations (struct-field getter)
+func Go_Firestore_executionStatsReadOperations(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ReadOperations: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ReadOperations: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ReadOperations")
+	if !f.IsValid() {
+		out = Err[any, any]("ReadOperations: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.executionStatsDebugStats → (ExecutionStats).DebugStats (struct-field getter)
+func Go_Firestore_executionStatsDebugStats(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DebugStats: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DebugStats: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DebugStats")
+	if !f.IsValid() {
+		out = Err[any, any]("DebugStats: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.exp → pkg.Exp
 func Go_Firestore_exp(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.Exp(p0.(any)))
+	return
+}
+
+// [pure] Go_Firestore.explainMetricsPlanSummary → (ExplainMetrics).PlanSummary (struct-field getter)
+func Go_Firestore_explainMetricsPlanSummary(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PlanSummary: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PlanSummary: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PlanSummary")
+	if !f.IsValid() {
+		out = Err[any, any]("PlanSummary: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.explainMetricsExecutionStats → (ExplainMetrics).ExecutionStats (struct-field getter)
+func Go_Firestore_explainMetricsExecutionStats(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ExecutionStats: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ExecutionStats: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ExecutionStats")
+	if !f.IsValid() {
+		out = Err[any, any]("ExecutionStats: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.explainOptionsAnalyze → (ExplainOptions).Analyze (struct-field getter)
+func Go_Firestore_explainOptionsAnalyze(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Analyze: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Analyze: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Analyze")
+	if !f.IsValid() {
+		out = Err[any, any]("Analyze: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -2976,6 +3565,27 @@ func Go_Firestore_fieldNotFoundErrorError(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.fieldNotFoundErrorPath → (FieldNotFoundError).Path (struct-field getter)
+func Go_Firestore_fieldNotFoundErrorPath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Path: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.fieldOf → pkg.FieldOf — generic function (stub; instantiate manually if needed)
 func Go_Firestore_fieldOf(p0 any) (out any) {
 	_ = p0
@@ -3001,6 +3611,48 @@ func Go_Firestore_fieldTransformMaximum(p0 any) (out any) {
 func Go_Firestore_fieldTransformMinimum(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.FieldTransformMinimum(p0.(interface{})))
+	return
+}
+
+// [pure] Go_Firestore.findNearestOptionsDistanceThreshold → (FindNearestOptions).DistanceThreshold (struct-field getter)
+func Go_Firestore_findNearestOptionsDistanceThreshold(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DistanceThreshold: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DistanceThreshold: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DistanceThreshold")
+	if !f.IsValid() {
+		out = Err[any, any]("DistanceThreshold: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.findNearestOptionsDistanceResultField → (FindNearestOptions).DistanceResultField (struct-field getter)
+func Go_Firestore_findNearestOptionsDistanceResultField(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DistanceResultField: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DistanceResultField: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DistanceResultField")
+	if !f.IsValid() {
+		out = Err[any, any]("DistanceResultField: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -3860,6 +4512,69 @@ func Go_Firestore_or(p0 any, p1 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.orFilterFilters → (OrFilter).Filters (struct-field getter)
+func Go_Firestore_orFilterFilters(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Filters: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Filters: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Filters")
+	if !f.IsValid() {
+		out = Err[any, any]("Filters: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.orderingExpr → (Ordering).Expr (struct-field getter)
+func Go_Firestore_orderingExpr(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Expr: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Expr: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Expr")
+	if !f.IsValid() {
+		out = Err[any, any]("Expr: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.orderingDirection → (Ordering).Direction (struct-field getter)
+func Go_Firestore_orderingDirection(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Direction: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Direction: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Direction")
+	if !f.IsValid() {
+		out = Err[any, any]("Direction: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.pipelineExecute → pkg.PipelineExecute
 func Go_Firestore_pipelineExecute(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -3997,6 +4712,48 @@ func Go_Firestore_pipelineFindNearest(p0 any, p1 any, p2 any, p3 any, p4 any) (o
 func Go_Firestore_pipelineRawStage(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.Pipeline).RawStage(p1.(*pkg.RawStage)))
+	return
+}
+
+// [pure] Go_Firestore.pipelineFindNearestOptionsLimit → (PipelineFindNearestOptions).Limit (struct-field getter)
+func Go_Firestore_pipelineFindNearestOptionsLimit(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Limit: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Limit: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Limit")
+	if !f.IsValid() {
+		out = Err[any, any]("Limit: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.pipelineFindNearestOptionsDistanceField → (PipelineFindNearestOptions).DistanceField (struct-field getter)
+func Go_Firestore_pipelineFindNearestOptionsDistanceField(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DistanceField: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DistanceField: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DistanceField")
+	if !f.IsValid() {
+		out = Err[any, any]("DistanceField: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -4146,10 +4903,157 @@ func Go_Firestore_pipelineSourceCreateFromAggregationQuery(p0 any, p1 any) (out 
 	return
 }
 
+// [pure] Go_Firestore.planSummaryIndexesUsed → (PlanSummary).IndexesUsed (struct-field getter)
+func Go_Firestore_planSummaryIndexesUsed(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("IndexesUsed: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("IndexesUsed: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("IndexesUsed")
+	if !f.IsValid() {
+		out = Err[any, any]("IndexesUsed: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.pow → pkg.Pow
 func Go_Firestore_pow(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.Pow(p0.(any), p1.(any)))
+	return
+}
+
+// [pure] Go_Firestore.propertyFilterPath → (PropertyFilter).Path (struct-field getter)
+func Go_Firestore_propertyFilterPath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Path: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyFilterOperator → (PropertyFilter).Operator (struct-field getter)
+func Go_Firestore_propertyFilterOperator(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Operator: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Operator: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Operator")
+	if !f.IsValid() {
+		out = Err[any, any]("Operator: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyFilterValue → (PropertyFilter).Value (struct-field getter)
+func Go_Firestore_propertyFilterValue(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Value: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Value: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Value")
+	if !f.IsValid() {
+		out = Err[any, any]("Value: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyPathFilterPath → (PropertyPathFilter).Path (struct-field getter)
+func Go_Firestore_propertyPathFilterPath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Path: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyPathFilterOperator → (PropertyPathFilter).Operator (struct-field getter)
+func Go_Firestore_propertyPathFilterOperator(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Operator: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Operator: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Operator")
+	if !f.IsValid() {
+		out = Err[any, any]("Operator: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.propertyPathFilterValue → (PropertyPathFilter).Value (struct-field getter)
+func Go_Firestore_propertyPathFilterValue(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Value: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Value: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Value")
+	if !f.IsValid() {
+		out = Err[any, any]("Value: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -4337,6 +5241,90 @@ func Go_Firestore_queryPipeline(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.querySnapshotDocuments → (QuerySnapshot).Documents (struct-field getter)
+func Go_Firestore_querySnapshotDocuments(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Documents: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Documents: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Documents")
+	if !f.IsValid() {
+		out = Err[any, any]("Documents: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotSize → (QuerySnapshot).Size (struct-field getter)
+func Go_Firestore_querySnapshotSize(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Size: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Size: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Size")
+	if !f.IsValid() {
+		out = Err[any, any]("Size: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotChanges → (QuerySnapshot).Changes (struct-field getter)
+func Go_Firestore_querySnapshotChanges(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Changes: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Changes: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Changes")
+	if !f.IsValid() {
+		out = Err[any, any]("Changes: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotReadTime → (QuerySnapshot).ReadTime (struct-field getter)
+func Go_Firestore_querySnapshotReadTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ReadTime: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ReadTime: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ReadTime")
+	if !f.IsValid() {
+		out = Err[any, any]("ReadTime: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Firestore.querySnapshotIteratorNext → pkg.QuerySnapshotIteratorNext
 func Go_Firestore_querySnapshotIteratorNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -4352,6 +5340,27 @@ func Go_Firestore_querySnapshotIteratorStop(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	p0.(*pkg.QuerySnapshotIterator).Stop()
 	out = Ok[any, any](struct{}{})
+	return
+}
+
+// [pure] Go_Firestore.querySnapshotIteratorQuery → (QuerySnapshotIterator).Query (struct-field getter)
+func Go_Firestore_querySnapshotIteratorQuery(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Query: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Query: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Query")
+	if !f.IsValid() {
+		out = Err[any, any]("Query: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -4408,6 +5417,48 @@ func Go_Firestore_round(p0 any) (out any) {
 func Go_Firestore_sampleByDocuments(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](pkg.SampleByDocuments(AsInt(p0)))
+	return
+}
+
+// [pure] Go_Firestore.sampleSpecSize → (SampleSpec).Size (struct-field getter)
+func Go_Firestore_sampleSpecSize(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Size: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Size: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Size")
+	if !f.IsValid() {
+		out = Err[any, any]("Size: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.sampleSpecMode → (SampleSpec).Mode (struct-field getter)
+func Go_Firestore_sampleSpecMode(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Mode: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Mode: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Mode")
+	if !f.IsValid() {
+		out = Err[any, any]("Mode: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -4660,10 +5711,94 @@ func Go_Firestore_unixSecondsToTimestamp(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Firestore.unnestOptionsIndexField → (UnnestOptions).IndexField (struct-field getter)
+func Go_Firestore_unnestOptionsIndexField(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("IndexField: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("IndexField: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("IndexField")
+	if !f.IsValid() {
+		out = Err[any, any]("IndexField: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Firestore.updateString → pkg.UpdateString
 func Go_Firestore_updateString(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.Update).String())
+	return
+}
+
+// [pure] Go_Firestore.updatePath → (Update).Path (struct-field getter)
+func Go_Firestore_updatePath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Path: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Path: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Path")
+	if !f.IsValid() {
+		out = Err[any, any]("Path: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.updateFieldPath → (Update).FieldPath (struct-field getter)
+func Go_Firestore_updateFieldPath(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("FieldPath: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("FieldPath: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("FieldPath")
+	if !f.IsValid() {
+		out = Err[any, any]("FieldPath: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Firestore.updateValue → (Update).Value (struct-field getter)
+func Go_Firestore_updateValue(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Value: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Value: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Value")
+	if !f.IsValid() {
+		out = Err[any, any]("Value: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -4744,6 +5879,27 @@ func Go_Firestore_writeBatchCommit(p0 any, p1 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+
+// [pure] Go_Firestore.writeResultUpdateTime → (WriteResult).UpdateTime (struct-field getter)
+func Go_Firestore_writeResultUpdateTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UpdateTime: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UpdateTime: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UpdateTime")
+	if !f.IsValid() {
+		out = Err[any, any]("UpdateTime: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 

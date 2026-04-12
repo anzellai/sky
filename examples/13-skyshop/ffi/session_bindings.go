@@ -12,6 +12,7 @@ import (
 	pkg "github.com/stripe/stripe-go/v84/checkout/session"
 	"fmt"
 	stripe_go "github.com/stripe/stripe-go/v84"
+	"reflect"
 )
 
 // [fallible] Go_Session.clientNew → pkg.ClientNew
@@ -65,6 +66,48 @@ func Go_Session_clientList(p0 any, p1 any) (out any) {
 func Go_Session_clientListLineItems(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.Client).ListLineItems(p1.(*stripe_go.CheckoutSessionListLineItemsParams)))
+	return
+}
+
+// [pure] Go_Session.clientB → (Client).B (struct-field getter)
+func Go_Session_clientB(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("B: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("B: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("B")
+	if !f.IsValid() {
+		out = Err[any, any]("B: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Session.clientKey → (Client).Key (struct-field getter)
+func Go_Session_clientKey(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Key: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Key: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Key")
+	if !f.IsValid() {
+		out = Err[any, any]("Key: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -140,6 +183,27 @@ func Go_Session_iterNext(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Session.iterIter → (Iter).Iter (struct-field getter)
+func Go_Session_iterIter(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Iter: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Iter: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Iter")
+	if !f.IsValid() {
+		out = Err[any, any]("Iter: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Session.lineItemIterLineItem → pkg.LineItemIterLineItem
 func Go_Session_lineItemIterLineItem(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -189,6 +253,27 @@ func Go_Session_lineItemIterMeta(p0 any) (out any) {
 func Go_Session_lineItemIterNext(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.LineItemIter).Next())
+	return
+}
+
+// [pure] Go_Session.lineItemIterIter → (LineItemIter).Iter (struct-field getter)
+func Go_Session_lineItemIterIter(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Iter: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Iter: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Iter")
+	if !f.IsValid() {
+		out = Err[any, any]("Iter: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 

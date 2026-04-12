@@ -15,5 +15,7 @@
 package iterator
 -- [pure] NewPager : Pageable -> Int -> String -> Pager   -- runtime wrap: Task String
 -- [pure] PageInfoRemaining : PageInfo -> Int   -- runtime wrap: Task String
+-- [pure] PageInfoToken : PageInfo -> String   -- runtime wrap: Task String
+-- [pure] PageInfoMaxSize : PageInfo -> Int   -- runtime wrap: Task String
 -- [pure] PageablePageInfo : Pageable -> PageInfo   -- runtime wrap: Task String
 -- [fallible] PagerNextPage : Pager -> interface{} -> (String, String)   -- runtime wrap: Task String

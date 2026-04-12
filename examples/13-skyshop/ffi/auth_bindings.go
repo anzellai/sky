@@ -17,6 +17,174 @@ import (
 	"reflect"
 )
 
+// [pure] Go_Auth.actionCodeSettingsURL → (ActionCodeSettings).URL (struct-field getter)
+func Go_Auth_actionCodeSettingsURL(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("URL: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("URL: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("URL")
+	if !f.IsValid() {
+		out = Err[any, any]("URL: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsHandleCodeInApp → (ActionCodeSettings).HandleCodeInApp (struct-field getter)
+func Go_Auth_actionCodeSettingsHandleCodeInApp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("HandleCodeInApp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("HandleCodeInApp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("HandleCodeInApp")
+	if !f.IsValid() {
+		out = Err[any, any]("HandleCodeInApp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsIOSBundleID → (ActionCodeSettings).IOSBundleID (struct-field getter)
+func Go_Auth_actionCodeSettingsIOSBundleID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("IOSBundleID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("IOSBundleID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("IOSBundleID")
+	if !f.IsValid() {
+		out = Err[any, any]("IOSBundleID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsAndroidPackageName → (ActionCodeSettings).AndroidPackageName (struct-field getter)
+func Go_Auth_actionCodeSettingsAndroidPackageName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AndroidPackageName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AndroidPackageName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AndroidPackageName")
+	if !f.IsValid() {
+		out = Err[any, any]("AndroidPackageName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsAndroidMinimumVersion → (ActionCodeSettings).AndroidMinimumVersion (struct-field getter)
+func Go_Auth_actionCodeSettingsAndroidMinimumVersion(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AndroidMinimumVersion: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AndroidMinimumVersion: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AndroidMinimumVersion")
+	if !f.IsValid() {
+		out = Err[any, any]("AndroidMinimumVersion: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsAndroidInstallApp → (ActionCodeSettings).AndroidInstallApp (struct-field getter)
+func Go_Auth_actionCodeSettingsAndroidInstallApp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AndroidInstallApp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AndroidInstallApp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AndroidInstallApp")
+	if !f.IsValid() {
+		out = Err[any, any]("AndroidInstallApp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsLinkDomain → (ActionCodeSettings).LinkDomain (struct-field getter)
+func Go_Auth_actionCodeSettingsLinkDomain(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("LinkDomain: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("LinkDomain: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("LinkDomain")
+	if !f.IsValid() {
+		out = Err[any, any]("LinkDomain: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.actionCodeSettingsDynamicLinkDomain → (ActionCodeSettings).DynamicLinkDomain (struct-field getter)
+func Go_Auth_actionCodeSettingsDynamicLinkDomain(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DynamicLinkDomain: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DynamicLinkDomain: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DynamicLinkDomain")
+	if !f.IsValid() {
+		out = Err[any, any]("DynamicLinkDomain: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Auth.clientSessionCookie → pkg.ClientSessionCookie
 func Go_Auth_clientSessionCookie(p0 any, p1 any, p2 any, p3 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -398,6 +566,426 @@ func Go_Auth_clientVerifyIDTokenAndCheckRevoked(p0 any, p1 any, p2 any) (out any
 	return
 }
 
+// [pure] Go_Auth.clientTenantManager → (Client).TenantManager (struct-field getter)
+func Go_Auth_clientTenantManager(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("TenantManager: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("TenantManager: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("TenantManager")
+	if !f.IsValid() {
+		out = Err[any, any]("TenantManager: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.deleteUsersErrorInfoIndex → (DeleteUsersErrorInfo).Index (struct-field getter)
+func Go_Auth_deleteUsersErrorInfoIndex(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Index: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Index: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Index")
+	if !f.IsValid() {
+		out = Err[any, any]("Index: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.deleteUsersErrorInfoReason → (DeleteUsersErrorInfo).Reason (struct-field getter)
+func Go_Auth_deleteUsersErrorInfoReason(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Reason: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Reason: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Reason")
+	if !f.IsValid() {
+		out = Err[any, any]("Reason: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.deleteUsersResultSuccessCount → (DeleteUsersResult).SuccessCount (struct-field getter)
+func Go_Auth_deleteUsersResultSuccessCount(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("SuccessCount: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("SuccessCount: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("SuccessCount")
+	if !f.IsValid() {
+		out = Err[any, any]("SuccessCount: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.deleteUsersResultFailureCount → (DeleteUsersResult).FailureCount (struct-field getter)
+func Go_Auth_deleteUsersResultFailureCount(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("FailureCount: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("FailureCount: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("FailureCount")
+	if !f.IsValid() {
+		out = Err[any, any]("FailureCount: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.deleteUsersResultErrors → (DeleteUsersResult).Errors (struct-field getter)
+func Go_Auth_deleteUsersResultErrors(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Errors: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Errors: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Errors")
+	if !f.IsValid() {
+		out = Err[any, any]("Errors: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.emailIdentifierEmail → (EmailIdentifier).Email (struct-field getter)
+func Go_Auth_emailIdentifierEmail(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Email: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Email: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Email")
+	if !f.IsValid() {
+		out = Err[any, any]("Email: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.errorInfoIndex → (ErrorInfo).Index (struct-field getter)
+func Go_Auth_errorInfoIndex(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Index: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Index: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Index")
+	if !f.IsValid() {
+		out = Err[any, any]("Index: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.errorInfoReason → (ErrorInfo).Reason (struct-field getter)
+func Go_Auth_errorInfoReason(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Reason: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Reason: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Reason")
+	if !f.IsValid() {
+		out = Err[any, any]("Reason: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.exportedUserRecordUserRecord → (ExportedUserRecord).UserRecord (struct-field getter)
+func Go_Auth_exportedUserRecordUserRecord(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UserRecord: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UserRecord: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UserRecord")
+	if !f.IsValid() {
+		out = Err[any, any]("UserRecord: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.exportedUserRecordPasswordHash → (ExportedUserRecord).PasswordHash (struct-field getter)
+func Go_Auth_exportedUserRecordPasswordHash(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PasswordHash: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PasswordHash: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PasswordHash")
+	if !f.IsValid() {
+		out = Err[any, any]("PasswordHash: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.exportedUserRecordPasswordSalt → (ExportedUserRecord).PasswordSalt (struct-field getter)
+func Go_Auth_exportedUserRecordPasswordSalt(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PasswordSalt: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PasswordSalt: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PasswordSalt")
+	if !f.IsValid() {
+		out = Err[any, any]("PasswordSalt: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.expressionEmail → (Expression).Email (struct-field getter)
+func Go_Auth_expressionEmail(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Email: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Email: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Email")
+	if !f.IsValid() {
+		out = Err[any, any]("Email: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.expressionPhoneNumber → (Expression).PhoneNumber (struct-field getter)
+func Go_Auth_expressionPhoneNumber(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhoneNumber: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhoneNumber: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhoneNumber")
+	if !f.IsValid() {
+		out = Err[any, any]("PhoneNumber: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.expressionUID → (Expression).UID (struct-field getter)
+func Go_Auth_expressionUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UID")
+	if !f.IsValid() {
+		out = Err[any, any]("UID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.firebaseInfoSignInProvider → (FirebaseInfo).SignInProvider (struct-field getter)
+func Go_Auth_firebaseInfoSignInProvider(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("SignInProvider: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("SignInProvider: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("SignInProvider")
+	if !f.IsValid() {
+		out = Err[any, any]("SignInProvider: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.firebaseInfoTenant → (FirebaseInfo).Tenant (struct-field getter)
+func Go_Auth_firebaseInfoTenant(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Tenant: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Tenant: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Tenant")
+	if !f.IsValid() {
+		out = Err[any, any]("Tenant: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.firebaseInfoIdentities → (FirebaseInfo).Identities (struct-field getter)
+func Go_Auth_firebaseInfoIdentities(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Identities: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Identities: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Identities")
+	if !f.IsValid() {
+		out = Err[any, any]("Identities: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.getUsersResultUsers → (GetUsersResult).Users (struct-field getter)
+func Go_Auth_getUsersResultUsers(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Users: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Users: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Users")
+	if !f.IsValid() {
+		out = Err[any, any]("Users: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.getUsersResultNotFound → (GetUsersResult).NotFound (struct-field getter)
+func Go_Auth_getUsersResultNotFound(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("NotFound: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("NotFound: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("NotFound")
+	if !f.IsValid() {
+		out = Err[any, any]("NotFound: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Auth.isCertificateFetchFailed → pkg.IsCertificateFetchFailed
 func Go_Auth_isCertificateFetchFailed(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -559,10 +1147,367 @@ func Go_Auth_isUserNotFound(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Auth.multiFactorConfigProviderConfigs → (MultiFactorConfig).ProviderConfigs (struct-field getter)
+func Go_Auth_multiFactorConfigProviderConfigs(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProviderConfigs: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProviderConfigs: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProviderConfigs")
+	if !f.IsValid() {
+		out = Err[any, any]("ProviderConfigs: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoUID → (MultiFactorInfo).UID (struct-field getter)
+func Go_Auth_multiFactorInfoUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UID")
+	if !f.IsValid() {
+		out = Err[any, any]("UID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoDisplayName → (MultiFactorInfo).DisplayName (struct-field getter)
+func Go_Auth_multiFactorInfoDisplayName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DisplayName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DisplayName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DisplayName")
+	if !f.IsValid() {
+		out = Err[any, any]("DisplayName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoEnrollmentTimestamp → (MultiFactorInfo).EnrollmentTimestamp (struct-field getter)
+func Go_Auth_multiFactorInfoEnrollmentTimestamp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("EnrollmentTimestamp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("EnrollmentTimestamp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("EnrollmentTimestamp")
+	if !f.IsValid() {
+		out = Err[any, any]("EnrollmentTimestamp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoFactorID → (MultiFactorInfo).FactorID (struct-field getter)
+func Go_Auth_multiFactorInfoFactorID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("FactorID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("FactorID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("FactorID")
+	if !f.IsValid() {
+		out = Err[any, any]("FactorID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoPhoneNumber → (MultiFactorInfo).PhoneNumber (struct-field getter)
+func Go_Auth_multiFactorInfoPhoneNumber(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhoneNumber: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhoneNumber: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhoneNumber")
+	if !f.IsValid() {
+		out = Err[any, any]("PhoneNumber: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoPhone → (MultiFactorInfo).Phone (struct-field getter)
+func Go_Auth_multiFactorInfoPhone(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Phone: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Phone: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Phone")
+	if !f.IsValid() {
+		out = Err[any, any]("Phone: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorInfoTOTP → (MultiFactorInfo).TOTP (struct-field getter)
+func Go_Auth_multiFactorInfoTOTP(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("TOTP: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("TOTP: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("TOTP")
+	if !f.IsValid() {
+		out = Err[any, any]("TOTP: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.multiFactorSettingsEnrolledFactors → (MultiFactorSettings).EnrolledFactors (struct-field getter)
+func Go_Auth_multiFactorSettingsEnrolledFactors(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("EnrolledFactors: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("EnrolledFactors: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("EnrolledFactors")
+	if !f.IsValid() {
+		out = Err[any, any]("EnrolledFactors: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Auth.newClient → reflect.ValueOf(pkg.NewClient) (via SkyFfiReflectCall)
 func Go_Auth_newClient(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = SkyFfiReflectCall(reflect.ValueOf(pkg.NewClient), true, []any{p0, p1})
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigID → (OIDCProviderConfig).ID (struct-field getter)
+func Go_Auth_oIDCProviderConfigID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigDisplayName → (OIDCProviderConfig).DisplayName (struct-field getter)
+func Go_Auth_oIDCProviderConfigDisplayName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DisplayName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DisplayName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DisplayName")
+	if !f.IsValid() {
+		out = Err[any, any]("DisplayName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigEnabled → (OIDCProviderConfig).Enabled (struct-field getter)
+func Go_Auth_oIDCProviderConfigEnabled(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Enabled: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Enabled: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Enabled")
+	if !f.IsValid() {
+		out = Err[any, any]("Enabled: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigClientID → (OIDCProviderConfig).ClientID (struct-field getter)
+func Go_Auth_oIDCProviderConfigClientID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ClientID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ClientID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ClientID")
+	if !f.IsValid() {
+		out = Err[any, any]("ClientID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigIssuer → (OIDCProviderConfig).Issuer (struct-field getter)
+func Go_Auth_oIDCProviderConfigIssuer(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Issuer: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Issuer: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Issuer")
+	if !f.IsValid() {
+		out = Err[any, any]("Issuer: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigClientSecret → (OIDCProviderConfig).ClientSecret (struct-field getter)
+func Go_Auth_oIDCProviderConfigClientSecret(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ClientSecret: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ClientSecret: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ClientSecret")
+	if !f.IsValid() {
+		out = Err[any, any]("ClientSecret: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigCodeResponseType → (OIDCProviderConfig).CodeResponseType (struct-field getter)
+func Go_Auth_oIDCProviderConfigCodeResponseType(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("CodeResponseType: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("CodeResponseType: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("CodeResponseType")
+	if !f.IsValid() {
+		out = Err[any, any]("CodeResponseType: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.oIDCProviderConfigIDTokenResponseType → (OIDCProviderConfig).IDTokenResponseType (struct-field getter)
+func Go_Auth_oIDCProviderConfigIDTokenResponseType(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("IDTokenResponseType: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("IDTokenResponseType: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("IDTokenResponseType")
+	if !f.IsValid() {
+		out = Err[any, any]("IDTokenResponseType: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -688,10 +1633,535 @@ func Go_Auth_oIDCProviderConfigToUpdateCodeResponseType(p0 any, p1 any) (out any
 	return
 }
 
+// [pure] Go_Auth.phoneIdentifierPhoneNumber → (PhoneIdentifier).PhoneNumber (struct-field getter)
+func Go_Auth_phoneIdentifierPhoneNumber(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhoneNumber: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhoneNumber: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhoneNumber")
+	if !f.IsValid() {
+		out = Err[any, any]("PhoneNumber: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.phoneMultiFactorInfoPhoneNumber → (PhoneMultiFactorInfo).PhoneNumber (struct-field getter)
+func Go_Auth_phoneMultiFactorInfoPhoneNumber(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhoneNumber: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhoneNumber: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhoneNumber")
+	if !f.IsValid() {
+		out = Err[any, any]("PhoneNumber: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.projectConfigMultiFactorConfig → (ProjectConfig).MultiFactorConfig (struct-field getter)
+func Go_Auth_projectConfigMultiFactorConfig(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("MultiFactorConfig: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("MultiFactorConfig: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("MultiFactorConfig")
+	if !f.IsValid() {
+		out = Err[any, any]("MultiFactorConfig: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Auth.projectConfigToUpdateMultiFactorConfig → pkg.ProjectConfigToUpdateMultiFactorConfig
 func Go_Auth_projectConfigToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.ProjectConfigToUpdate).MultiFactorConfig(p1.(pkg.MultiFactorConfig)))
+	return
+}
+
+// [pure] Go_Auth.providerConfigState → (ProviderConfig).State (struct-field getter)
+func Go_Auth_providerConfigState(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("State: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("State: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("State")
+	if !f.IsValid() {
+		out = Err[any, any]("State: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.providerConfigTOTPProviderConfig → (ProviderConfig).TOTPProviderConfig (struct-field getter)
+func Go_Auth_providerConfigTOTPProviderConfig(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("TOTPProviderConfig: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("TOTPProviderConfig: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("TOTPProviderConfig")
+	if !f.IsValid() {
+		out = Err[any, any]("TOTPProviderConfig: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.providerIdentifierProviderID → (ProviderIdentifier).ProviderID (struct-field getter)
+func Go_Auth_providerIdentifierProviderID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProviderID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProviderID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProviderID")
+	if !f.IsValid() {
+		out = Err[any, any]("ProviderID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.providerIdentifierProviderUID → (ProviderIdentifier).ProviderUID (struct-field getter)
+func Go_Auth_providerIdentifierProviderUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProviderUID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProviderUID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProviderUID")
+	if !f.IsValid() {
+		out = Err[any, any]("ProviderUID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUserInfoResponseUsers → (QueryUserInfoResponse).Users (struct-field getter)
+func Go_Auth_queryUserInfoResponseUsers(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Users: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Users: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Users")
+	if !f.IsValid() {
+		out = Err[any, any]("Users: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUserInfoResponseCount → (QueryUserInfoResponse).Count (struct-field getter)
+func Go_Auth_queryUserInfoResponseCount(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Count: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Count: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Count")
+	if !f.IsValid() {
+		out = Err[any, any]("Count: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestReturnUserInfo → (QueryUsersRequest).ReturnUserInfo (struct-field getter)
+func Go_Auth_queryUsersRequestReturnUserInfo(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ReturnUserInfo: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ReturnUserInfo: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ReturnUserInfo")
+	if !f.IsValid() {
+		out = Err[any, any]("ReturnUserInfo: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestLimit → (QueryUsersRequest).Limit (struct-field getter)
+func Go_Auth_queryUsersRequestLimit(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Limit: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Limit: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Limit")
+	if !f.IsValid() {
+		out = Err[any, any]("Limit: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestOffset → (QueryUsersRequest).Offset (struct-field getter)
+func Go_Auth_queryUsersRequestOffset(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Offset: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Offset: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Offset")
+	if !f.IsValid() {
+		out = Err[any, any]("Offset: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestSortBy → (QueryUsersRequest).SortBy (struct-field getter)
+func Go_Auth_queryUsersRequestSortBy(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("SortBy: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("SortBy: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("SortBy")
+	if !f.IsValid() {
+		out = Err[any, any]("SortBy: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestOrder → (QueryUsersRequest).Order (struct-field getter)
+func Go_Auth_queryUsersRequestOrder(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Order: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Order: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Order")
+	if !f.IsValid() {
+		out = Err[any, any]("Order: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestTenantID → (QueryUsersRequest).TenantID (struct-field getter)
+func Go_Auth_queryUsersRequestTenantID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("TenantID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("TenantID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("TenantID")
+	if !f.IsValid() {
+		out = Err[any, any]("TenantID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.queryUsersRequestExpression → (QueryUsersRequest).Expression (struct-field getter)
+func Go_Auth_queryUsersRequestExpression(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Expression: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Expression: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Expression")
+	if !f.IsValid() {
+		out = Err[any, any]("Expression: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigID → (SAMLProviderConfig).ID (struct-field getter)
+func Go_Auth_sAMLProviderConfigID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigDisplayName → (SAMLProviderConfig).DisplayName (struct-field getter)
+func Go_Auth_sAMLProviderConfigDisplayName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DisplayName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DisplayName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DisplayName")
+	if !f.IsValid() {
+		out = Err[any, any]("DisplayName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigEnabled → (SAMLProviderConfig).Enabled (struct-field getter)
+func Go_Auth_sAMLProviderConfigEnabled(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Enabled: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Enabled: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Enabled")
+	if !f.IsValid() {
+		out = Err[any, any]("Enabled: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigIDPEntityID → (SAMLProviderConfig).IDPEntityID (struct-field getter)
+func Go_Auth_sAMLProviderConfigIDPEntityID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("IDPEntityID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("IDPEntityID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("IDPEntityID")
+	if !f.IsValid() {
+		out = Err[any, any]("IDPEntityID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigSSOURL → (SAMLProviderConfig).SSOURL (struct-field getter)
+func Go_Auth_sAMLProviderConfigSSOURL(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("SSOURL: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("SSOURL: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("SSOURL")
+	if !f.IsValid() {
+		out = Err[any, any]("SSOURL: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigRequestSigningEnabled → (SAMLProviderConfig).RequestSigningEnabled (struct-field getter)
+func Go_Auth_sAMLProviderConfigRequestSigningEnabled(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("RequestSigningEnabled: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("RequestSigningEnabled: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("RequestSigningEnabled")
+	if !f.IsValid() {
+		out = Err[any, any]("RequestSigningEnabled: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigX509Certificates → (SAMLProviderConfig).X509Certificates (struct-field getter)
+func Go_Auth_sAMLProviderConfigX509Certificates(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("X509Certificates: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("X509Certificates: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("X509Certificates")
+	if !f.IsValid() {
+		out = Err[any, any]("X509Certificates: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigRPEntityID → (SAMLProviderConfig).RPEntityID (struct-field getter)
+func Go_Auth_sAMLProviderConfigRPEntityID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("RPEntityID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("RPEntityID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("RPEntityID")
+	if !f.IsValid() {
+		out = Err[any, any]("RPEntityID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.sAMLProviderConfigCallbackURL → (SAMLProviderConfig).CallbackURL (struct-field getter)
+func Go_Auth_sAMLProviderConfigCallbackURL(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("CallbackURL: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("CallbackURL: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("CallbackURL")
+	if !f.IsValid() {
+		out = Err[any, any]("CallbackURL: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -828,6 +2298,153 @@ func Go_Auth_sAMLProviderConfigToUpdateDisplayName(p0 any, p1 any) (out any) {
 func Go_Auth_sAMLProviderConfigToUpdateEnabled(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SAMLProviderConfigToUpdate).Enabled(AsBool(p1)))
+	return
+}
+
+// [pure] Go_Auth.tOTPProviderConfigAdjacentIntervals → (TOTPProviderConfig).AdjacentIntervals (struct-field getter)
+func Go_Auth_tOTPProviderConfigAdjacentIntervals(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AdjacentIntervals: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AdjacentIntervals: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AdjacentIntervals")
+	if !f.IsValid() {
+		out = Err[any, any]("AdjacentIntervals: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tenantID → (Tenant).ID (struct-field getter)
+func Go_Auth_tenantID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ID")
+	if !f.IsValid() {
+		out = Err[any, any]("ID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tenantDisplayName → (Tenant).DisplayName (struct-field getter)
+func Go_Auth_tenantDisplayName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DisplayName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DisplayName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DisplayName")
+	if !f.IsValid() {
+		out = Err[any, any]("DisplayName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tenantAllowPasswordSignUp → (Tenant).AllowPasswordSignUp (struct-field getter)
+func Go_Auth_tenantAllowPasswordSignUp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AllowPasswordSignUp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AllowPasswordSignUp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AllowPasswordSignUp")
+	if !f.IsValid() {
+		out = Err[any, any]("AllowPasswordSignUp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tenantEnableEmailLinkSignIn → (Tenant).EnableEmailLinkSignIn (struct-field getter)
+func Go_Auth_tenantEnableEmailLinkSignIn(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("EnableEmailLinkSignIn: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("EnableEmailLinkSignIn: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("EnableEmailLinkSignIn")
+	if !f.IsValid() {
+		out = Err[any, any]("EnableEmailLinkSignIn: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tenantEnableAnonymousUsers → (Tenant).EnableAnonymousUsers (struct-field getter)
+func Go_Auth_tenantEnableAnonymousUsers(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("EnableAnonymousUsers: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("EnableAnonymousUsers: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("EnableAnonymousUsers")
+	if !f.IsValid() {
+		out = Err[any, any]("EnableAnonymousUsers: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tenantMultiFactorConfig → (Tenant).MultiFactorConfig (struct-field getter)
+func Go_Auth_tenantMultiFactorConfig(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("MultiFactorConfig: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("MultiFactorConfig: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("MultiFactorConfig")
+	if !f.IsValid() {
+		out = Err[any, any]("MultiFactorConfig: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -1333,6 +2950,216 @@ func Go_Auth_tenantToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	return
 }
 
+// [pure] Go_Auth.tokenAuthTime → (Token).AuthTime (struct-field getter)
+func Go_Auth_tokenAuthTime(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("AuthTime: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("AuthTime: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("AuthTime")
+	if !f.IsValid() {
+		out = Err[any, any]("AuthTime: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenIssuer → (Token).Issuer (struct-field getter)
+func Go_Auth_tokenIssuer(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Issuer: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Issuer: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Issuer")
+	if !f.IsValid() {
+		out = Err[any, any]("Issuer: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenAudience → (Token).Audience (struct-field getter)
+func Go_Auth_tokenAudience(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Audience: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Audience: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Audience")
+	if !f.IsValid() {
+		out = Err[any, any]("Audience: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenExpires → (Token).Expires (struct-field getter)
+func Go_Auth_tokenExpires(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Expires: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Expires: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Expires")
+	if !f.IsValid() {
+		out = Err[any, any]("Expires: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenIssuedAt → (Token).IssuedAt (struct-field getter)
+func Go_Auth_tokenIssuedAt(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("IssuedAt: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("IssuedAt: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("IssuedAt")
+	if !f.IsValid() {
+		out = Err[any, any]("IssuedAt: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenSubject → (Token).Subject (struct-field getter)
+func Go_Auth_tokenSubject(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Subject: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Subject: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Subject")
+	if !f.IsValid() {
+		out = Err[any, any]("Subject: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenUID → (Token).UID (struct-field getter)
+func Go_Auth_tokenUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UID")
+	if !f.IsValid() {
+		out = Err[any, any]("UID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenFirebase → (Token).Firebase (struct-field getter)
+func Go_Auth_tokenFirebase(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Firebase: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Firebase: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Firebase")
+	if !f.IsValid() {
+		out = Err[any, any]("Firebase: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.tokenClaims → (Token).Claims (struct-field getter)
+func Go_Auth_tokenClaims(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Claims: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Claims: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Claims")
+	if !f.IsValid() {
+		out = Err[any, any]("Claims: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.uIDIdentifierUID → (UIDIdentifier).UID (struct-field getter)
+func Go_Auth_uIDIdentifierUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UID")
+	if !f.IsValid() {
+		out = Err[any, any]("UID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Auth.userImportHashConfig → UserImportHash.Config (receiver-reflect)
 func Go_Auth_userImportHashConfig(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -1343,6 +3170,195 @@ func Go_Auth_userImportHashConfig(p0 any) (out any) {
 		return
 	}
 	out = SkyFfiReflectCall(m, true, []any{})
+	return
+}
+
+// [pure] Go_Auth.userImportResultSuccessCount → (UserImportResult).SuccessCount (struct-field getter)
+func Go_Auth_userImportResultSuccessCount(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("SuccessCount: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("SuccessCount: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("SuccessCount")
+	if !f.IsValid() {
+		out = Err[any, any]("SuccessCount: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userImportResultFailureCount → (UserImportResult).FailureCount (struct-field getter)
+func Go_Auth_userImportResultFailureCount(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("FailureCount: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("FailureCount: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("FailureCount")
+	if !f.IsValid() {
+		out = Err[any, any]("FailureCount: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userImportResultErrors → (UserImportResult).Errors (struct-field getter)
+func Go_Auth_userImportResultErrors(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Errors: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Errors: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Errors")
+	if !f.IsValid() {
+		out = Err[any, any]("Errors: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userInfoDisplayName → (UserInfo).DisplayName (struct-field getter)
+func Go_Auth_userInfoDisplayName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DisplayName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DisplayName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DisplayName")
+	if !f.IsValid() {
+		out = Err[any, any]("DisplayName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userInfoEmail → (UserInfo).Email (struct-field getter)
+func Go_Auth_userInfoEmail(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Email: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Email: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Email")
+	if !f.IsValid() {
+		out = Err[any, any]("Email: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userInfoPhoneNumber → (UserInfo).PhoneNumber (struct-field getter)
+func Go_Auth_userInfoPhoneNumber(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhoneNumber: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhoneNumber: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhoneNumber")
+	if !f.IsValid() {
+		out = Err[any, any]("PhoneNumber: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userInfoPhotoURL → (UserInfo).PhotoURL (struct-field getter)
+func Go_Auth_userInfoPhotoURL(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhotoURL: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhotoURL: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhotoURL")
+	if !f.IsValid() {
+		out = Err[any, any]("PhotoURL: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userInfoProviderID → (UserInfo).ProviderID (struct-field getter)
+func Go_Auth_userInfoProviderID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProviderID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProviderID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProviderID")
+	if !f.IsValid() {
+		out = Err[any, any]("ProviderID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userInfoUID → (UserInfo).UID (struct-field getter)
+func Go_Auth_userInfoUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UID")
+	if !f.IsValid() {
+		out = Err[any, any]("UID: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -1360,6 +3376,363 @@ func Go_Auth_userIteratorNext(p0 any) (out any) {
 	if err != nil { out = Err[any, any](err.Error()); return }
 	out = Ok[any, any](r0)
 
+	return
+}
+
+// [pure] Go_Auth.userMetadataCreationTimestamp → (UserMetadata).CreationTimestamp (struct-field getter)
+func Go_Auth_userMetadataCreationTimestamp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("CreationTimestamp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("CreationTimestamp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("CreationTimestamp")
+	if !f.IsValid() {
+		out = Err[any, any]("CreationTimestamp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userMetadataLastLogInTimestamp → (UserMetadata).LastLogInTimestamp (struct-field getter)
+func Go_Auth_userMetadataLastLogInTimestamp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("LastLogInTimestamp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("LastLogInTimestamp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("LastLogInTimestamp")
+	if !f.IsValid() {
+		out = Err[any, any]("LastLogInTimestamp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userMetadataLastRefreshTimestamp → (UserMetadata).LastRefreshTimestamp (struct-field getter)
+func Go_Auth_userMetadataLastRefreshTimestamp(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("LastRefreshTimestamp: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("LastRefreshTimestamp: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("LastRefreshTimestamp")
+	if !f.IsValid() {
+		out = Err[any, any]("LastRefreshTimestamp: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userProviderUID → (UserProvider).UID (struct-field getter)
+func Go_Auth_userProviderUID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UID")
+	if !f.IsValid() {
+		out = Err[any, any]("UID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userProviderProviderID → (UserProvider).ProviderID (struct-field getter)
+func Go_Auth_userProviderProviderID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProviderID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProviderID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProviderID")
+	if !f.IsValid() {
+		out = Err[any, any]("ProviderID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userProviderEmail → (UserProvider).Email (struct-field getter)
+func Go_Auth_userProviderEmail(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Email: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Email: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Email")
+	if !f.IsValid() {
+		out = Err[any, any]("Email: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userProviderDisplayName → (UserProvider).DisplayName (struct-field getter)
+func Go_Auth_userProviderDisplayName(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("DisplayName: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("DisplayName: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("DisplayName")
+	if !f.IsValid() {
+		out = Err[any, any]("DisplayName: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userProviderPhotoURL → (UserProvider).PhotoURL (struct-field getter)
+func Go_Auth_userProviderPhotoURL(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("PhotoURL: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("PhotoURL: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("PhotoURL")
+	if !f.IsValid() {
+		out = Err[any, any]("PhotoURL: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordUserInfo → (UserRecord).UserInfo (struct-field getter)
+func Go_Auth_userRecordUserInfo(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UserInfo: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UserInfo: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UserInfo")
+	if !f.IsValid() {
+		out = Err[any, any]("UserInfo: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordCustomClaims → (UserRecord).CustomClaims (struct-field getter)
+func Go_Auth_userRecordCustomClaims(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("CustomClaims: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("CustomClaims: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("CustomClaims")
+	if !f.IsValid() {
+		out = Err[any, any]("CustomClaims: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordDisabled → (UserRecord).Disabled (struct-field getter)
+func Go_Auth_userRecordDisabled(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Disabled: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Disabled: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Disabled")
+	if !f.IsValid() {
+		out = Err[any, any]("Disabled: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordEmailVerified → (UserRecord).EmailVerified (struct-field getter)
+func Go_Auth_userRecordEmailVerified(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("EmailVerified: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("EmailVerified: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("EmailVerified")
+	if !f.IsValid() {
+		out = Err[any, any]("EmailVerified: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordProviderUserInfo → (UserRecord).ProviderUserInfo (struct-field getter)
+func Go_Auth_userRecordProviderUserInfo(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("ProviderUserInfo: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("ProviderUserInfo: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("ProviderUserInfo")
+	if !f.IsValid() {
+		out = Err[any, any]("ProviderUserInfo: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordTokensValidAfterMillis → (UserRecord).TokensValidAfterMillis (struct-field getter)
+func Go_Auth_userRecordTokensValidAfterMillis(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("TokensValidAfterMillis: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("TokensValidAfterMillis: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("TokensValidAfterMillis")
+	if !f.IsValid() {
+		out = Err[any, any]("TokensValidAfterMillis: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordUserMetadata → (UserRecord).UserMetadata (struct-field getter)
+func Go_Auth_userRecordUserMetadata(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("UserMetadata: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("UserMetadata: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("UserMetadata")
+	if !f.IsValid() {
+		out = Err[any, any]("UserMetadata: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordTenantID → (UserRecord).TenantID (struct-field getter)
+func Go_Auth_userRecordTenantID(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("TenantID: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("TenantID: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("TenantID")
+	if !f.IsValid() {
+		out = Err[any, any]("TenantID: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Auth.userRecordMultiFactor → (UserRecord).MultiFactor (struct-field getter)
+func Go_Auth_userRecordMultiFactor(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("MultiFactor: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("MultiFactor: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("MultiFactor")
+	if !f.IsValid() {
+		out = Err[any, any]("MultiFactor: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 

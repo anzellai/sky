@@ -20,6 +20,8 @@ package session
 -- [fallible] ClientExpire : Client -> String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task String
 -- [pure] ClientList : Client -> CheckoutSessionListParams -> Iter   -- runtime wrap: Task String
 -- [pure] ClientListLineItems : Client -> CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task String
+-- [pure] ClientB : Client -> Backend   -- runtime wrap: Task String
+-- [pure] ClientKey : Client -> String   -- runtime wrap: Task String
 -- [fallible] Expire : String -> CheckoutSessionExpireParams -> (CheckoutSession, String)   -- runtime wrap: Task String
 -- [fallible] Get : String -> CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String
 -- [pure] IterCheckoutSession : Iter -> CheckoutSession   -- runtime wrap: Task String
@@ -29,6 +31,7 @@ package session
 -- [pure] IterList : Iter -> ListContainer   -- runtime wrap: Task String
 -- [pure] IterMeta : Iter -> ListMeta   -- runtime wrap: Task String
 -- [pure] IterNext : Iter -> Bool   -- runtime wrap: Task String
+-- [pure] IterIter : Iter -> Iter   -- runtime wrap: Task String
 -- [pure] LineItemIterLineItem : LineItemIter -> LineItem   -- runtime wrap: Task String
 -- [pure] LineItemIterLineItemList : LineItemIter -> LineItemList   -- runtime wrap: Task String
 -- [pure] LineItemIterCurrent : LineItemIter -> interface{}   -- runtime wrap: Task String
@@ -36,6 +39,7 @@ package session
 -- [pure] LineItemIterList : LineItemIter -> ListContainer   -- runtime wrap: Task String
 -- [pure] LineItemIterMeta : LineItemIter -> ListMeta   -- runtime wrap: Task String
 -- [pure] LineItemIterNext : LineItemIter -> Bool   -- runtime wrap: Task String
+-- [pure] LineItemIterIter : LineItemIter -> Iter   -- runtime wrap: Task String
 -- [pure] List : CheckoutSessionListParams -> Iter   -- runtime wrap: Task String
 -- [pure] ListLineItems : CheckoutSessionListLineItemsParams -> LineItemIter   -- runtime wrap: Task String
 -- [fallible] New : CheckoutSessionParams -> (CheckoutSession, String)   -- runtime wrap: Task String

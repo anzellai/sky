@@ -61,6 +61,7 @@ data FnInfo = FnInfo
     , _fnEffect   :: String              -- pure / fallible / effectful
     , _fnRecvType :: String              -- "" for free func, else Go type
     , _fnMethodName :: String            -- "" for free func, else method
+    , _fnIsField  :: Bool                -- synthetic struct-field getter
     }
     deriving (Show)
 
@@ -83,6 +84,7 @@ instance A.FromJSON FnInfo where
         <*> o A..: "effect"
         <*> o A..:? "recvType" A..!= ""
         <*> o A..:? "methodName" A..!= ""
+        <*> o A..:? "isField" A..!= False
       where
         parseParam = A.withObject "param" $ \o -> do
             n <- o A..:? "name" A..!= ""
@@ -674,6 +676,35 @@ emitTypedWrapper kernelName aliases fn =
 
     in case cls of
         _ | isIdentityPointer -> emitIdentityPointerTyped wrapperName
+
+        _ | _fnIsField fn ->
+            -- Struct-field getter: reflect on the receiver, read the field
+            -- by name. Handles both pointer and value receivers and avoids
+            -- naming the (possibly generic or internal) struct type.
+            unlines
+                [ "// [pure] " ++ kernelName ++ "." ++ skyName ++
+                  " → (" ++ (_fnRecvType fn) ++ ")." ++ (_fnMethodName fn) ++
+                  " (struct-field getter)"
+                , "func " ++ wrapperName ++ "(p0 any) (out any) {"
+                , "\tdefer SkyFfiRecover(&out)()"
+                , "\tv := reflect.ValueOf(p0)"
+                , "\tfor v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {"
+                , "\t\tif v.IsNil() { out = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": nil receiver") ++ "); return }"
+                , "\t\tv = v.Elem()"
+                , "\t}"
+                , "\tif v.Kind() != reflect.Struct {"
+                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": receiver is not a struct") ++ ")"
+                , "\t\treturn"
+                , "\t}"
+                , "\tf := v.FieldByName(" ++ quote (_fnMethodName fn) ++ ")"
+                , "\tif !f.IsValid() {"
+                , "\t\tout = Err[any, any](" ++ quote ((_fnMethodName fn) ++ ": no such field") ++ ")"
+                , "\t\treturn"
+                , "\t}"
+                , "\tout = f.Interface()"
+                , "\treturn"
+                , "}"
+                ]
 
         DirectCall ->
             unlines

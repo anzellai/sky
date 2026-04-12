@@ -11,6 +11,7 @@ package rt
 import (
 	pkg "google.golang.org/api/iterator"
 	"fmt"
+	"reflect"
 )
 
 // [pure] Go_Iterator.newPager → pkg.NewPager
@@ -24,6 +25,48 @@ func Go_Iterator_newPager(p0 any, p1 any, p2 any) (out any) {
 func Go_Iterator_pageInfoRemaining(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.PageInfo).Remaining())
+	return
+}
+
+// [pure] Go_Iterator.pageInfoToken → (PageInfo).Token (struct-field getter)
+func Go_Iterator_pageInfoToken(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Token: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Token: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Token")
+	if !f.IsValid() {
+		out = Err[any, any]("Token: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Iterator.pageInfoMaxSize → (PageInfo).MaxSize (struct-field getter)
+func Go_Iterator_pageInfoMaxSize(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("MaxSize: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("MaxSize: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("MaxSize")
+	if !f.IsValid() {
+		out = Err[any, any]("MaxSize: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 

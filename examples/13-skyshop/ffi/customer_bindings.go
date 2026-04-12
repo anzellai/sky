@@ -12,6 +12,7 @@ import (
 	pkg "github.com/stripe/stripe-go/v84/customer"
 	"fmt"
 	stripe_go "github.com/stripe/stripe-go/v84"
+	"reflect"
 )
 
 // [fallible] Go_Customer.clientNew → pkg.ClientNew
@@ -102,6 +103,48 @@ func Go_Customer_clientListPaymentMethods(p0 any, p1 any) (out any) {
 func Go_Customer_clientSearch(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(pkg.Client).Search(p1.(*stripe_go.CustomerSearchParams)))
+	return
+}
+
+// [pure] Go_Customer.clientB → (Client).B (struct-field getter)
+func Go_Customer_clientB(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("B: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("B: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("B")
+	if !f.IsValid() {
+		out = Err[any, any]("B: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
+// [pure] Go_Customer.clientKey → (Client).Key (struct-field getter)
+func Go_Customer_clientKey(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Key: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Key: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Key")
+	if !f.IsValid() {
+		out = Err[any, any]("Key: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
@@ -197,6 +240,27 @@ func Go_Customer_iterNext(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Customer.iterIter → (Iter).Iter (struct-field getter)
+func Go_Customer_iterIter(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Iter: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Iter: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Iter")
+	if !f.IsValid() {
+		out = Err[any, any]("Iter: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [pure] Go_Customer.list → pkg.List
 func Go_Customer_list(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -273,6 +337,27 @@ func Go_Customer_paymentMethodIterNext(p0 any) (out any) {
 	return
 }
 
+// [pure] Go_Customer.paymentMethodIterIter → (PaymentMethodIter).Iter (struct-field getter)
+func Go_Customer_paymentMethodIterIter(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("Iter: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("Iter: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("Iter")
+	if !f.IsValid() {
+		out = Err[any, any]("Iter: no such field")
+		return
+	}
+	out = f.Interface()
+	return
+}
+
 // [fallible] Go_Customer.retrievePaymentMethod → pkg.RetrievePaymentMethod
 func Go_Customer_retrievePaymentMethod(p0 any, p1 any) (out any) {
 	defer SkyFfiRecover(&out)()
@@ -339,6 +424,27 @@ func Go_Customer_searchIterNext(p0 any) (out any) {
 func Go_Customer_searchIterSearchResult(p0 any) (out any) {
 	defer SkyFfiRecover(&out)()
 	out = Ok[any, any](p0.(*pkg.SearchIter).SearchResult())
+	return
+}
+
+// [pure] Go_Customer.searchIterSearchIter → (SearchIter).SearchIter (struct-field getter)
+func Go_Customer_searchIterSearchIter(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	v := reflect.ValueOf(p0)
+	for v.Kind() == reflect.Ptr || v.Kind() == reflect.Interface {
+		if v.IsNil() { out = Err[any, any]("SearchIter: nil receiver"); return }
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Struct {
+		out = Err[any, any]("SearchIter: receiver is not a struct")
+		return
+	}
+	f := v.FieldByName("SearchIter")
+	if !f.IsValid() {
+		out = Err[any, any]("SearchIter: no such field")
+		return
+	}
+	out = f.Interface()
 	return
 }
 
