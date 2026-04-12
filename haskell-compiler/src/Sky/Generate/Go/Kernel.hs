@@ -113,6 +113,7 @@ registry = Map.fromList
     , (("Ffi", "callPure"),       KernelInfo "rt.Ffi_callPure" 2 False)
     , (("Ffi", "callTask"),       KernelInfo "rt.Ffi_callTask" 2 False)
     , (("Ffi", "has"),            KernelInfo "rt.Ffi_has" 1 False)
+    , (("Ffi", "isPure"),         KernelInfo "rt.Ffi_isPure" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- List

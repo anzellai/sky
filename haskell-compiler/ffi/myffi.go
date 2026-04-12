@@ -7,8 +7,10 @@ import (
 )
 
 func init() {
-	// Pure: deterministic, no I/O
-	Register("myffi.reverse", func(args []any) any {
+	// Explicitly pure: deterministic, no I/O, no mutable state. Safe for
+	// RegisterPure because the caller has audited that Go's strings.ToUpper,
+	// rune conversion, and slice reversal have no side effects.
+	RegisterPure("myffi.reverse", func(args []any) any {
 		if len(args) == 0 {
 			return ""
 		}
@@ -20,20 +22,22 @@ func init() {
 		return string(runes)
 	})
 
-	// Pure
-	Register("myffi.shout", func(args []any) any {
+	// Pure — audited.
+	RegisterPure("myffi.shout", func(args []any) any {
 		if len(args) == 0 {
 			return ""
 		}
 		return strings.ToUpper(fmt.Sprintf("%v", args[0])) + "!!!"
 	})
 
-	// Effectful: reads the clock — MUST be called via Ffi.callTask
+	// Effect-unknown: reads the clock. Register (not RegisterPure) → callable
+	// only via Ffi.callTask.
 	Register("myffi.clock", func(args []any) any {
 		return time.Now().UnixMilli()
 	})
 
-	// Intentionally panicky — verifies panic recovery at FFI boundary
+	// Intentionally panicky — verifies panic recovery at FFI boundary.
+	// Register (effect-unknown) so the recovery path triggers via callTask.
 	Register("myffi.boom", func(args []any) any {
 		panic("intentional panic for testing")
 	})

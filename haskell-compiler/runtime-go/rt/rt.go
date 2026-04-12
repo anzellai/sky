@@ -507,80 +507,135 @@ type SkyTuple3 struct { V0, V1, V2 any }
 // FFI — name-based dispatch for user-supplied Go bindings
 // ═══════════════════════════════════════════════════════════
 //
-// Users add a `ffi/` directory to their project containing Go files that
-// call `rt.Register("name", fn)` in an init() to expose Go functions to Sky.
-// Sky code calls `Ffi.call "name" [args]` to invoke them. All exceptions
-// are caught and converted to Err.
+// Two registries, reflecting Sky's effect boundary:
+//
+//   ffiRegistry     — effect-unknown (DEFAULT). Any Go code we can't
+//                     personally audit lives here. Callable only via
+//                     Ffi.callTask so the effect is deferred through
+//                     Sky's Task mechanism, preserving referential
+//                     transparency. Ffi.callPure on these names
+//                     returns Err directing the caller to callTask.
+//
+//   ffiPureRegistry — hand-verified pure. For opaque-type getters,
+//                     setters-that-copy, zero-value constructors, and
+//                     pure data transforms where the Go source has been
+//                     audited to have no I/O, no shared mutable state
+//                     access, and no panic path other than explicit
+//                     type-assertion failures (which our panic-recover
+//                     will turn into Err anyway). Callable via either
+//                     Ffi.callPure or Ffi.callTask.
+//
+// The auto-generated binding generator (sky add <pkg>) ALWAYS uses
+// Register, never RegisterPure. Hand-written ffi/*.go files can use
+// RegisterPure when the user vouches for a specific Go function.
+//
+// Every invocation is wrapped in panic-recover; a panic in Go code
+// becomes an Err, never a process crash.
 
 var (
-	ffiRegistryMu sync.RWMutex
-	ffiRegistry   = map[string]func([]any) any{}
+	ffiRegistryMu   sync.RWMutex
+	ffiRegistry     = map[string]func([]any) any{} // effect-unknown
+	ffiPureRegistry = map[string]func([]any) any{} // hand-verified pure
 )
 
-// Register exposes a Go function under a string name. Call from init().
-// The function receives its args as []any and returns any Sky value.
-// Panics are caught and turned into Err results by Ffi.call.
+// Register exposes a Go function with no purity claim.
+// Auto-generated bindings use this. Callable only via Ffi.callTask.
 func Register(name string, fn func([]any) any) {
 	ffiRegistryMu.Lock()
 	defer ffiRegistryMu.Unlock()
 	ffiRegistry[name] = fn
 }
 
-// invokeFfi runs the registered function with panic recovery.
-// Returns SkyResult Ok on success, Err on missing name or panic.
-func invokeFfi(name string, args []any) any {
+// RegisterPure exposes a Go function that the caller has audited to be pure.
+// Safe for Ffi.callPure. Suitable for:
+//   - opaque-type getters (struct field read via copy)
+//   - opaque-type setters (struct field write on a copy)
+//   - zero-value constructors (no args, deterministic output)
+//   - pure data transforms (crypto hash, text slugification, …)
+// NOT suitable for anything that reads time, env, args, files, network,
+// random, a database, global state, or spawns goroutines.
+func RegisterPure(name string, fn func([]any) any) {
+	ffiRegistryMu.Lock()
+	defer ffiRegistryMu.Unlock()
+	ffiPureRegistry[name] = fn
+}
+
+// invokeFfi resolves and runs a registered function with panic recovery.
+// When pureOnly is true we refuse effect-unknown bindings and direct the
+// caller to use Ffi.callTask instead — this keeps the effect boundary
+// enforced in the runtime, not merely by convention.
+func invokeFfi(name string, args []any, pureOnly bool) any {
 	ffiRegistryMu.RLock()
-	fn, ok := ffiRegistry[name]
-	ffiRegistryMu.RUnlock()
-	if !ok {
-		return Err[any, any]("Ffi: not registered: " + name)
+	if fn, ok := ffiPureRegistry[name]; ok {
+		ffiRegistryMu.RUnlock()
+		return runWithRecover(name, args, fn)
 	}
-	var result any
-	func() {
-		defer func() {
-			if r := recover(); r != nil {
-				result = Err[any, any](fmt.Sprintf("Ffi %q panicked: %v", name, r))
-			}
-		}()
-		result = Ok[any, any](fn(args))
+	if fn, ok := ffiRegistry[name]; ok {
+		ffiRegistryMu.RUnlock()
+		if pureOnly {
+			return Err[any, any](
+				"Ffi.callPure: " + name +
+					" is registered as effect-unknown — use Ffi.callTask. " +
+					"Auto-generated FFI bindings default to effect-unknown. " +
+					"Use rt.RegisterPure from a hand-written ffi/*.go file " +
+					"only if you have audited the underlying Go function.")
+		}
+		return runWithRecover(name, args, fn)
+	}
+	ffiRegistryMu.RUnlock()
+	return Err[any, any]("Ffi: not registered: " + name)
+}
+
+func runWithRecover(name string, args []any, fn func([]any) any) (result any) {
+	defer func() {
+		if r := recover(); r != nil {
+			result = Err[any, any](fmt.Sprintf("Ffi %q panicked: %v", name, r))
+		}
 	}()
-	return result
+	return Ok[any, any](fn(args))
 }
 
 // Ffi.callPure : String -> List any -> Result String a
-// For pure Go functions (deterministic, no I/O, no clock, no randomness).
-// Invokes immediately and returns a Result. Misuse (calling an effectful
-// binding via callPure) loses referential transparency — use callTask for
-// anything with side effects.
+// Works ONLY on RegisterPure'd bindings. For effect-unknown bindings
+// (the default for auto-generated Go FFI) this returns Err directing
+// the caller to use Ffi.callTask. This enforces Sky's pure-functional
+// effect boundary in the runtime, not just by convention.
 func Ffi_callPure(name any, args any) any {
-	return invokeFfi(fmt.Sprintf("%v", name), asList(args))
+	return invokeFfi(fmt.Sprintf("%v", name), asList(args), true)
 }
 
 // Ffi.callTask : String -> List any -> Task String a
-// For effectful Go functions — I/O, time, randomness, network, filesystem,
-// database. Returns a deferred thunk (Sky's Task representation) that runs
-// only when sequenced via Task.perform / Task.andThen. Preserves Sky's
-// pure-functional effect boundary — no effect happens on the expression,
-// only when the Task is executed.
+// Works on any registered binding. Returns a deferred thunk (Sky Task)
+// that runs only when sequenced via Task.perform / Task.andThen. This
+// is the ONLY correct way to call auto-generated / untrusted Go bindings.
 func Ffi_callTask(name any, args any) any {
 	n := fmt.Sprintf("%v", name)
 	argList := asList(args)
 	return func() any {
-		return invokeFfi(n, argList)
+		return invokeFfi(n, argList, false)
 	}
 }
 
-// Ffi.call : deprecated alias for callPure. Retained for backwards-compat.
-// Prefer Ffi.callPure or Ffi.callTask — they express effect intent.
+// Ffi.call : deprecated alias for callPure.
 func Ffi_call(name any, args any) any {
 	return Ffi_callPure(name, args)
 }
 
-// Ffi.has : String -> Bool — check whether a name is registered.
+// Ffi.has : String -> Bool — True if registered in either registry.
 func Ffi_has(name any) any {
 	n := fmt.Sprintf("%v", name)
 	ffiRegistryMu.RLock()
-	_, ok := ffiRegistry[n]
+	_, okE := ffiRegistry[n]
+	_, okP := ffiPureRegistry[n]
+	ffiRegistryMu.RUnlock()
+	return okE || okP
+}
+
+// Ffi.isPure : String -> Bool — True if the binding was registered as pure.
+func Ffi_isPure(name any) any {
+	n := fmt.Sprintf("%v", name)
+	ffiRegistryMu.RLock()
+	_, ok := ffiPureRegistry[n]
 	ffiRegistryMu.RUnlock()
 	return ok
 }

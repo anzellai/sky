@@ -8,21 +8,28 @@ import Std.Log exposing (println)
 
 main =
     let
-        -- Pure: reverse a string
+        -- Pure (RegisterPure'd): callPure works, returns Ok immediately
         _ = case Ffi.callPure "myffi.reverse" ["hello 世界"] of
-                Ok v -> println (String.append "reversed: " v)
+                Ok v  -> println (String.append "reversed: " v)
                 Err e -> println (String.append "err: " e)
-        -- Effectful: clock reading wrapped in Task, runs via Task.perform
+        -- Effect-unknown (Register): callPure REFUSES, directs to callTask
+        _ = case Ffi.callPure "myffi.clock" [] of
+                Ok _  -> println "LEAK: clock via callPure"
+                Err e -> println (String.append "enforced: " (String.left 60 e))
+        -- Effect-unknown via callTask: works, deferred
         _ = case Task.perform (Ffi.callTask "myffi.clock" []) of
-                Ok _ms -> println "clock ok"
+                Ok _  -> println "clock via callTask ok"
                 Err e -> println (String.append "clock err: " e)
-        -- Panic recovery: a broken binding must not crash the process
-        _ = case Ffi.callPure "myffi.boom" [] of
-                Ok _ -> println "LEAK"
-                Err e -> println (String.append "panic recovered: " e)
-        -- Missing binding
-        _ = case Ffi.callPure "myffi.missing" [] of
-                Ok _ -> println "LEAK"
-                Err e -> println (String.append "missing: " e)
+        -- Pure binding also callable via callTask (always safe)
+        _ = case Task.perform (Ffi.callTask "myffi.reverse" ["ab"]) of
+                Ok v  -> println (String.append "task-reverse: " v)
+                Err e -> println (String.append "err: " e)
+        -- Panic recovery on effect-unknown
+        _ = case Task.perform (Ffi.callTask "myffi.boom" []) of
+                Ok _  -> println "LEAK: boom survived"
+                Err e -> println (String.append "panic recovered: " (String.left 40 e))
+        -- Introspection: which registry?
+        _ = if Ffi.isPure "myffi.reverse" then println "reverse: pure" else println "reverse: effectful"
+        _ = if Ffi.isPure "myffi.clock" then println "clock: pure" else println "clock: effectful"
     in
         println "ffi ok"
