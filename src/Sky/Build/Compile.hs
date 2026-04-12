@@ -38,7 +38,7 @@ import qualified System.Environment
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty)
 
 -- | Read the global codegen env (for use in pure codegen functions)
 getCgEnv :: Rec.CodegenEnv
@@ -168,6 +168,12 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             let depDecls = concatMap (\(modName, depMod) ->
                     let prefix = map (\c -> if c == '.' then '_' else c) modName
                     in generateDeclsForDep depMod prefix) validDeps
+                depRecAliases = Set.unions
+                    [ Set.map (\n -> prefix ++ "_" ++ n)
+                             (Rec.collectRecordAliases (Can._aliases depMod))
+                    | (modName, depMod) <- validDeps
+                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    ]
             putStrLn "-- Type Checking"
             constraints <- Constrain.constrainModule canMod
             solveResult <- Solve.solve constraints
@@ -179,7 +185,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     putStrLn $ "   TYPE WARNING: " ++ err
                     return Map.empty
             putStrLn "-- Generating Go"
-            let goCode = generateGoMulti canMod entrySrcMod config types depDecls
+            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
             writeFile mainGoPath goCode
@@ -378,8 +384,9 @@ locateRuntimeDir = do
 -- | Generate Go declarations for a dependency module's functions
 generateDeclsForDep :: Can.Module -> String -> [GoIr.GoDecl]
 generateDeclsForDep canMod modPrefix =
-    concatMap (generateUnionForDep modPrefix) (Map.toList (Can._unions canMod))
-    ++ concatMap (generateAliasForDep modPrefix) (Map.toList (Can._aliases canMod))
+    let userDefs = collectDeclNames (Can._decls canMod)
+    in concatMap (generateUnionForDep modPrefix) (Map.toList (Can._unions canMod))
+    ++ concatMap (generateAliasForDep userDefs modPrefix) (Map.toList (Can._aliases canMod))
     ++ go (Can._decls canMod)
   where
     go Can.SaveTheEnvironment = []
@@ -399,6 +406,19 @@ generateDeclsForDep canMod modPrefix =
                 , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
                 }
            ]
+
+
+-- | Walk a Decls tree, collecting every value-level name
+collectDeclNames :: Can.Decls -> Set.Set String
+collectDeclNames = goNames Set.empty
+  where
+    goNames acc Can.SaveTheEnvironment = acc
+    goNames acc (Can.Declare d rest) = goNames (addName acc d) rest
+    goNames acc (Can.DeclareRec d ds rest) =
+        goNames (foldr (flip addName) (addName acc d) ds) rest
+    addName acc d = case d of
+        Can.Def (A.At _ n) _ _ -> Set.insert n acc
+        Can.TypedDef (A.At _ n) _ _ _ _ -> Set.insert n acc
 
 
 -- | Emit a dep module's union type declaration + constructor value/func.
@@ -436,29 +456,49 @@ generateUnionForDep modPrefix (typeName, Can.Union _vars ctors _numAlts opts) =
 
 -- | Emit a dep module's type alias. Record aliases become Go named structs
 -- so cross-module records type-check. Non-record aliases become Go type aliases.
-generateAliasForDep :: String -> (String, Can.Alias) -> [GoIr.GoDecl]
-generateAliasForDep modPrefix (aliasName, Can.Alias _vars body) =
+-- Record aliases emit BOTH a struct type (suffixed "_R" to avoid collision
+-- with user-defined constructor functions of the same name) AND an auto-
+-- constructor function using the original alias name.
+generateAliasForDep :: Set.Set String -> String -> (String, Can.Alias) -> [GoIr.GoDecl]
+generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
     let qualName = modPrefix ++ "_" ++ aliasName
+        structName = qualName ++ "_R"
     in case body of
         T.TRecord fields _ ->
-            [ GoIr.GoDeclRaw $ "type " ++ qualName ++ " struct { "
-                ++ intercalate_ "; "
-                    [ capitalise_ fn ++ " any"
-                    | (fn, _) <- Map.toList fields
+            let fieldList = Map.toList fields
+                structDecl = GoIr.GoDeclRaw $ "type " ++ structName ++ " struct { "
+                    ++ intercalate_ "; "
+                        [ capitalise_ fn ++ " any"
+                        | (fn, _) <- fieldList
+                        ]
+                    ++ " }"
+                -- Auto-ctor (func <qualName>(...)) unless the user defined one.
+                hasUserCtor = Set.member aliasName userDefs
+                paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fieldList
+                paramDecls = intercalate_ ", " [p ++ " any" | p <- paramList]
+                fieldInits =
+                    [ let goTy = solvedTypeToGo fty
+                          src = "p" ++ show i
+                          coerced = if goTy == "any" || null goTy
+                                        then src
+                                        else "any(" ++ src ++ ").(" ++ goTy ++ ")"
+                      in capitalise_ fn ++ ": " ++ coerced
+                    | (i, (fn, T.FieldType _ fty)) <- zip [0::Int ..] fieldList
                     ]
-                ++ " }"
-            ]
+                ctorDecl = GoIr.GoDeclRaw $
+                    "func " ++ qualName ++ "(" ++ paramDecls ++ ") " ++ structName ++
+                    " { return " ++ structName ++ "{" ++ intercalate_ ", " fieldInits ++ "} }"
+            in structDecl : [ctorDecl | not hasUserCtor]
         _ ->
-            -- non-record alias: emit a Go type alias
             [ GoIr.GoDeclRaw ("type " ++ qualName ++ " = any") ]
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases =
     let
         imports = unsafePerformIO $ do
-            let cgEnv = Rec.buildCodegenEnv solvedTypes canMod
+            let cgEnv = Rec.withRecordAliases depRecAliases (Rec.buildCodegenEnv solvedTypes canMod)
             writeIORef globalCgEnv cgEnv
             return $ collectGoImports canMod srcMod
         unionDecls = generateUnionTypes canMod
@@ -550,24 +590,43 @@ generateUnionTypes canMod = concatMap generateUnion (Map.toList (Can._unions can
 -- | Generate Go type declarations for record type aliases.
 -- Record aliases become Go structs; records with function fields become Go interfaces.
 generateAliasTypes :: Can.Module -> [GoIr.GoDecl]
-generateAliasTypes canMod = concatMap generateAlias (Map.toList (Can._aliases canMod))
+generateAliasTypes canMod =
+    let userDefinedNames = collectDeclNames (Can._decls canMod)
+    in concatMap (generateAlias userDefinedNames) (Map.toList (Can._aliases canMod))
   where
-    generateAlias (name, Can.Alias vars body) = case body of
+    generateAlias userDefinedNames (name, Can.Alias _vars body) = case body of
         T.TRecord fields _ ->
             let fieldList = Map.toList fields
-                -- Check if any field is a function type → interface
                 hasMethods = any (\(_, T.FieldType _ ty) -> isFuncType ty) fieldList
             in if hasMethods
                 then generateInterface name fieldList
-                else generateStruct name fieldList
+                else generateStruct userDefinedNames name fieldList
         _ ->
-            -- Non-record alias: type alias in Go
             [ GoIr.GoDeclRaw $ "type " ++ name ++ " = " ++ solvedTypeToGo body ]
 
-    generateStruct name fields =
-        let goFields = map (\(fname, T.FieldType _ ftype) ->
+    generateStruct userDefinedNames name fields =
+        let structName = name ++ "_R"
+            goFields = map (\(fname, T.FieldType _ ftype) ->
                 (capitalise fname, solvedTypeToGo ftype)) fields
-        in [ GoIr.GoDeclType name (GoIr.GoStructDef goFields) ]
+            paramList = zipWith (\i _ -> "p" ++ show i) [0::Int ..] fields
+            paramDecls = intercalate_ ", " [p ++ " any" | p <- paramList]
+            fieldInits =
+                [ let goTy = solvedTypeToGo fty
+                      src = "p" ++ show i
+                      coerced = if goTy == "any" || null goTy
+                                    then src
+                                    else "any(" ++ src ++ ").(" ++ goTy ++ ")"
+                  in capitalise_ fn ++ ": " ++ coerced
+                | (i, (fn, T.FieldType _ fty)) <- zip [0::Int ..] fields
+                ]
+            ctorDecl = GoIr.GoDeclRaw $
+                "func " ++ name ++ "(" ++ paramDecls ++ ") " ++ structName ++
+                " { return " ++ structName ++ "{" ++ intercalate_ ", " fieldInits ++ "} }"
+        in if Set.member name userDefinedNames
+               then [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields) ]
+               else [ GoIr.GoDeclType structName (GoIr.GoStructDef goFields)
+                    , ctorDecl
+                    ]
 
     generateInterface name fields =
         let goMethods = map (\(fname, T.FieldType _ ftype) ->
@@ -843,11 +902,10 @@ exprToGo (A.At _ expr) = case expr of
             fieldNames = map fst entries
             env = getCgEnv
         in case Rec.lookupRecordAlias (Rec._cg_fieldIndex env) fieldNames of
-            Just structName ->
-                -- Named struct: Person{Name: "Alice", Age: 30}
-                -- For concrete-typed fields we emit `any(expr).(T)` so that
-                -- any-typed runtime values land in typed struct fields.
-                let fieldTypeMap = case Map.lookup structName (Rec._cg_aliases env) of
+            Just aliasName ->
+                -- Named struct: Alias_R{Name: "Alice", Age: 30}
+                let structName = aliasName ++ "_R"
+                    fieldTypeMap = case Map.lookup aliasName (Rec._cg_aliases env) of
                         Just (Can.Alias _ (T.TRecord m _)) ->
                             Map.map (\(T.FieldType _ ty) -> solvedTypeToGo ty) m
                         _ -> Map.empty
@@ -1581,17 +1639,28 @@ solvedTypeToGo ty = case ty of
     T.TType _ "Set" _ -> "any"   -- map[any]bool at runtime
     T.TType home name _ ->
         let modStr = ModuleName.toString home
-        in if null modStr || modStr == "Main"
-            then name
-            else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
+            base = if null modStr || modStr == "Main"
+                then name
+                else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
+            env = getCgEnv
+            -- Record aliases live under "<base>_R" in Go (to avoid name
+            -- collision with a user-defined constructor function).
+            isRecordAlias = Set.member base (Rec._cg_recordAliases env)
+                         || Set.member name (Rec._cg_recordAliases env)
+        in if isRecordAlias then base ++ "_R" else base
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord _ _ -> "any"  -- TODO: struct type
     T.TTuple _ _ _ -> "any"  -- TODO: tuple type
-    T.TAlias home name _ _ ->
+    T.TAlias home name _ aliasTy ->
         let modStr = ModuleName.toString home
-        in if null modStr || modStr == "Main"
-            then name
-            else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
+            base = if null modStr || modStr == "Main"
+                then name
+                else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
+            isRecord = case aliasTy of
+                T.Hoisted (T.TRecord _ _) -> True
+                T.Filled  (T.TRecord _ _) -> True
+                _ -> False
+        in if isRecord then base ++ "_R" else base
 
 
 -- | Generate a curried lambda: \a b -> body → func(a) { return func(b) { return body } }

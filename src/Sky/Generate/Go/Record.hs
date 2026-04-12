@@ -9,6 +9,8 @@ module Sky.Generate.Go.Record
     , lookupRecordAlias
     , classifyAlias
     , buildCodegenEnv
+    , withRecordAliases
+    , collectRecordAliases
     )
     where
 
@@ -30,6 +32,9 @@ data CodegenEnv = CodegenEnv
     , _cg_aliases     :: !(Map.Map String Can.Alias)
     , _cg_fieldIndex  :: !RecordRegistry
     , _cg_zeroArgs    :: !(Set.Set String)  -- top-level names defined with zero params
+    , _cg_recordAliases :: !(Set.Set String)  -- names of all known record aliases
+                                              --   (current module + deps) so
+                                              --   solvedTypeToGo can suffix "_R"
     }
 
 
@@ -58,7 +63,25 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_aliases = Can._aliases canMod
     , _cg_fieldIndex = buildRegistry (Can._aliases canMod)
     , _cg_zeroArgs = collectZeroArgs (Can._decls canMod)
+    , _cg_recordAliases = collectRecordAliases (Can._aliases canMod)
     }
+
+
+-- | Build a fresh CodegenEnv but with the record-alias set extended.
+-- Used by the multi-module path so dep-module record aliases also get the
+-- "_R" struct-name suffix in solvedTypeToGo.
+withRecordAliases :: Set.Set String -> CodegenEnv -> CodegenEnv
+withRecordAliases extra env =
+    env { _cg_recordAliases = Set.union extra (_cg_recordAliases env) }
+
+
+collectRecordAliases :: Map.Map String Can.Alias -> Set.Set String
+collectRecordAliases aliases =
+    Set.fromList
+        [ name
+        | (name, Can.Alias _ body) <- Map.toList aliases
+        , case body of { T.TRecord _ _ -> True; _ -> False }
+        ]
 
 
 -- | Collect names of zero-parameter top-level definitions.
