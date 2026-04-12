@@ -336,6 +336,22 @@ func JsonDec_andThen(fn any, inner any) any {
 	}}
 }
 
+// JsonDec.oneOf : List (JsonDecoder a) -> JsonDecoder a
+// Tries each decoder in order, returns first Ok or composite Err.
+func JsonDec_oneOf(decoders any) any {
+	return JsonDecoder{run: func(v any) any {
+		for _, d := range asList(decoders) {
+			if dd, ok := d.(JsonDecoder); ok {
+				r := dd.run(v)
+				if sr, ok := r.(SkyResult[any, any]); ok && sr.Tag == 0 {
+					return r
+				}
+			}
+		}
+		return Err[any, any]("oneOf: no decoder matched")
+	}}
+}
+
 func JsonDec_succeed(v any) any {
 	return JsonDecoder{run: func(_ any) any {
 		return Ok[any, any](v)

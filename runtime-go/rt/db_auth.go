@@ -133,8 +133,25 @@ func detectDriver(s string) (string, string) {
 	}
 }
 
-// Db.open — alias of connect
-func Db_open(path any) any { return Db_connect(path) }
+// Db.open — alias of connect. Accepts either:
+//   Db.open path               (1 arg)
+//   Db.open driver path        (2 args; driver arg informational, path is used)
+func Db_open(args ...any) any {
+	switch len(args) {
+	case 1:
+		return Db_connect(args[0])
+	case 2:
+		return Db_connect(args[1])
+	default:
+		return Err[any, any]("Db.open: expected 1 or 2 args")
+	}
+}
+
+// Db.execRaw : Db -> String -> Result String Int
+// Raw SQL without parameter binding. For DDL like CREATE TABLE.
+func Db_execRaw(db any, query any) any {
+	return Db_exec(db, query, []any{})
+}
 
 // Db.close : Db -> Result String ()
 func Db_close(db any) any {

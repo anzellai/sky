@@ -1147,9 +1147,14 @@ patternCondition subject pat = case pat of
         case Can._u_opts union of
             Can.Enum ->
                 -- Enum: compare int value directly
-                Just $ GoIr.GoBinary "=="
+                let modStr = ModuleName.toString home
+                    qualName = if null modStr || modStr == "Main"
+                        then typeName ++ "_" ++ ctorName
+                        else (map (\c -> if c == '.' then '_' else c) modStr)
+                             ++ "_" ++ typeName ++ "_" ++ ctorName
+                in Just $ GoIr.GoBinary "=="
                     (GoIr.GoIdent subject)
-                    (GoIr.GoIdent (typeName ++ "_" ++ ctorName))
+                    (GoIr.GoIdent qualName)
             _ ->
                 -- Tagged struct: match on .Tag field
                 Just $ GoIr.GoBinary "=="
@@ -1438,7 +1443,11 @@ solvedTypeToGo ty = case ty of
     T.TType _ "Task" _ -> "any"  -- rt.SkyTask[any,any] at runtime
     T.TType _ "Dict" _ -> "any"  -- map[string]any at runtime
     T.TType _ "Set" _ -> "any"   -- map[any]bool at runtime
-    T.TType _ name _ -> name  -- user-defined type
+    T.TType home name _ ->
+        let modStr = ModuleName.toString home
+        in if null modStr || modStr == "Main"
+            then name
+            else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord _ _ -> "any"  -- TODO: struct type
     T.TTuple _ _ _ -> "any"  -- TODO: tuple type

@@ -693,6 +693,101 @@ func Result_mapError(fn any, result any) any {
 	return result
 }
 
+// Result.map2..map5 — apply a function to N successful results, short-
+// circuiting on first Err.
+func Result_map2(fn, a, b any) any {
+	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
+	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
+	return Ok[any, any](apply2(fn, ra.OkValue, rb.OkValue))
+}
+
+func Result_map3(fn, a, b, c any) any {
+	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
+	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
+	rc, _ := c.(SkyResult[any, any]); if rc.Tag != 0 { return c }
+	return Ok[any, any](apply3(fn, ra.OkValue, rb.OkValue, rc.OkValue))
+}
+
+func Result_map4(fn, a, b, c, d any) any {
+	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
+	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
+	rc, _ := c.(SkyResult[any, any]); if rc.Tag != 0 { return c }
+	rd, _ := d.(SkyResult[any, any]); if rd.Tag != 0 { return d }
+	return Ok[any, any](apply4(fn, ra.OkValue, rb.OkValue, rc.OkValue, rd.OkValue))
+}
+
+func Result_map5(fn, a, b, c, d, e any) any {
+	ra, _ := a.(SkyResult[any, any]); if ra.Tag != 0 { return a }
+	rb, _ := b.(SkyResult[any, any]); if rb.Tag != 0 { return b }
+	rc, _ := c.(SkyResult[any, any]); if rc.Tag != 0 { return c }
+	rd, _ := d.(SkyResult[any, any]); if rd.Tag != 0 { return d }
+	re, _ := e.(SkyResult[any, any]); if re.Tag != 0 { return e }
+	return Ok[any, any](apply5(fn, ra.OkValue, rb.OkValue, rc.OkValue, rd.OkValue, re.OkValue))
+}
+
+// Result.andMap : Result e (a -> b) -> Result e a -> Result e b
+func Result_andMap(fr, ra any) any {
+	rr, _ := fr.(SkyResult[any, any])
+	if rr.Tag != 0 { return fr }
+	rv, _ := ra.(SkyResult[any, any])
+	if rv.Tag != 0 { return ra }
+	return Ok[any, any](pipelineApply(rr.OkValue, rv.OkValue))
+}
+
+// Result.combine : List (Result e a) -> Result e (List a)
+// First Err short-circuits.
+func Result_combine(results any) any {
+	items := asList(results)
+	out := make([]any, 0, len(items))
+	for _, r := range items {
+		rr, ok := r.(SkyResult[any, any])
+		if !ok { return r }
+		if rr.Tag != 0 { return r }
+		out = append(out, rr.OkValue)
+	}
+	return Ok[any, any](out)
+}
+
+// Result.traverse : (a -> Result e b) -> List a -> Result e (List b)
+func Result_traverse(fn, items any) any {
+	xs := asList(items)
+	out := make([]any, 0, len(xs))
+	f, ok := fn.(func(any) any)
+	if !ok {
+		return Err[any, any]("Result.traverse: fn must be a 1-arg function")
+	}
+	for _, x := range xs {
+		r := f(x)
+		rr, rok := r.(SkyResult[any, any])
+		if !rok { return Err[any, any]("Result.traverse: fn did not return a Result") }
+		if rr.Tag != 0 { return r }
+		out = append(out, rr.OkValue)
+	}
+	return Ok[any, any](out)
+}
+
+// Log.Slog.info / warn / error / debug — aliases for existing Log functions
+// for code that was written against Go's slog-style names.
+func Slog_info(args ...any)  any { return Log_info(stringifyLogArgs(args)) }
+func Slog_warn(args ...any)  any { return Log_warn(stringifyLogArgs(args)) }
+func Slog_error(args ...any) any { return Log_error(stringifyLogArgs(args)) }
+func Slog_debug(args ...any) any { return Log_debug(stringifyLogArgs(args)) }
+
+func stringifyLogArgs(args []any) any {
+	if len(args) == 0 {
+		return ""
+	}
+	if len(args) == 1 {
+		return args[0]
+	}
+	var sb strings.Builder
+	for i, a := range args {
+		if i > 0 { sb.WriteString(" ") }
+		sb.WriteString(fmt.Sprintf("%v", a))
+	}
+	return sb.String()
+}
+
 // ═══════════════════════════════════════════════════════════
 // Maybe operations
 // ═══════════════════════════════════════════════════════════

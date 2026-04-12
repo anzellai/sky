@@ -170,6 +170,13 @@ registry = Map.fromList
     , (("Result", "map"),         KernelInfo "rt.Result_map" 2 False)
     , (("Result", "andThen"),     KernelInfo "rt.Result_andThen" 2 False)
     , (("Result", "mapError"),    KernelInfo "rt.Result_mapError" 2 False)
+    , (("Result", "map2"),        KernelInfo "rt.Result_map2" 3 False)
+    , (("Result", "map3"),        KernelInfo "rt.Result_map3" 4 False)
+    , (("Result", "map4"),        KernelInfo "rt.Result_map4" 5 False)
+    , (("Result", "map5"),        KernelInfo "rt.Result_map5" 6 False)
+    , (("Result", "andMap"),      KernelInfo "rt.Result_andMap" 2 False)
+    , (("Result", "combine"),     KernelInfo "rt.Result_combine" 1 False)
+    , (("Result", "traverse"),    KernelInfo "rt.Result_traverse" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Task
@@ -316,6 +323,10 @@ registry = Map.fromList
     , (("Log", "error"),          KernelInfo "rt.Log_error" 1 False)
     , (("Log", "with"),           KernelInfo "rt.Log_with" 2 False)
     , (("Log", "errorWith"),      KernelInfo "rt.Log_errorWith" 2 False)
+    , (("Slog", "info"),          KernelInfo "rt.Slog_info" 1 False)
+    , (("Slog", "warn"),          KernelInfo "rt.Slog_warn" 1 False)
+    , (("Slog", "error"),         KernelInfo "rt.Slog_error" 1 False)
+    , (("Slog", "debug"),         KernelInfo "rt.Slog_debug" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Html — VNode element builders
@@ -493,6 +504,7 @@ registry = Map.fromList
     , (("JsonDec", "andThen"),    KernelInfo "rt.JsonDec_andThen" 2 False)
     , (("JsonDec", "succeed"),    KernelInfo "rt.JsonDec_succeed" 1 False)
     , (("JsonDec", "fail"),       KernelInfo "rt.JsonDec_fail" 1 False)
+    , (("JsonDec", "oneOf"),      KernelInfo "rt.JsonDec_oneOf" 1 False)
     , (("JsonDec", "at"),         KernelInfo "rt.JsonDec_at" 2 False)
     , (("JsonDec", "map2"),       KernelInfo "rt.JsonDec_map2" 3 False)
     , (("JsonDec", "map3"),       KernelInfo "rt.JsonDec_map3" 4 False)
@@ -506,6 +518,7 @@ registry = Map.fromList
     , (("Db", "open"),            KernelInfo "rt.Db_open" 1 False)
     , (("Db", "close"),           KernelInfo "rt.Db_close" 1 False)
     , (("Db", "exec"),            KernelInfo "rt.Db_exec" 3 False)
+    , (("Db", "execRaw"),         KernelInfo "rt.Db_execRaw" 2 False)
     , (("Db", "query"),           KernelInfo "rt.Db_query" 3 False)
     , (("Db", "queryDecode"),     KernelInfo "rt.Db_queryDecode" 4 False)
     , (("Db", "insertRow"),       KernelInfo "rt.Db_insertRow" 3 False)
