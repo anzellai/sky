@@ -1451,7 +1451,11 @@ solvedTypeToGo ty = case ty of
     T.TLambda from to -> "func(" ++ solvedTypeToGo from ++ ") " ++ solvedTypeToGo to
     T.TRecord _ _ -> "any"  -- TODO: struct type
     T.TTuple _ _ _ -> "any"  -- TODO: tuple type
-    T.TAlias _ _ _ _ -> "any"
+    T.TAlias home name _ _ ->
+        let modStr = ModuleName.toString home
+        in if null modStr || modStr == "Main"
+            then name
+            else map (\c -> if c == '.' then '_' else c) modStr ++ "_" ++ name
 
 
 -- | Generate a curried lambda: \a b -> body → func(a) { return func(b) { return body } }
