@@ -11,6 +11,7 @@ import qualified Sky.Build.Compile as Compile
 import qualified Sky.Sky.Toml as Toml
 import qualified Sky.Parse.Module as ParseMod
 import qualified Sky.Format.Format as Format
+import qualified Sky.Lsp.Server as Lsp
 
 
 -- | Sky compiler CLI
@@ -215,9 +216,9 @@ runCommand cmd = case cmd of
         return (Right ())
 
     Lsp -> do
-        putStrLn "Starting language server..."
-        -- TODO: Lsp.Server.run
-        putStrLn "LSP not yet implemented"
+        -- LSP talks JSON-RPC on stdin/stdout; don't print anything to stdout
+        -- after this point (it would corrupt the protocol framing).
+        Lsp.runLsp
         return (Right ())
 
     Upgrade -> do
