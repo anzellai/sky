@@ -2,6 +2,7 @@
 -- Handles: function defs, type annotations, type/alias/union declarations, foreign imports
 module Sky.Parse.Declaration where
 
+import Data.List (intercalate)
 import qualified Data.Text as T
 import Sky.Parse.Primitives
 import Sky.Parse.Space (spaces, freshLine, skipWhitespace)
@@ -206,14 +207,42 @@ typeAtomForCtor mkError =
              char mkError ')'
              return t
 
-        , -- Type name
-          do name <- upper mkError
-             return (Src.TType "" [name] [])
+        , -- Qualified type name:  Counter.Msg, Json.Value, …
+          -- Parse a dotted chain of uppercase segments. The final segment
+          -- is the type name; the rest form the module path.
+          do first <- upper mkError
+             rest <- dottedUpperSegments mkError
+             case rest of
+                 [] -> return (Src.TType "" [first] [])
+                 _  ->
+                     -- reconstruct the module path (everything except last)
+                     let all_ = first : rest
+                         modPath = intercalate "." (init all_)
+                         nm = last all_
+                     in return (Src.TTypeQual modPath nm [])
 
         , -- Type variable
           do name <- lower mkError
              return (Src.TVar name)
         ]
+
+
+-- | Parse zero or more `.UpperIdent` segments. Used for qualified type
+-- references like `Counter.Msg` or `Json.Decode.Value`.
+dottedUpperSegments :: (Row -> Col -> x) -> Parser x [String]
+dottedUpperSegments mkError = Parser $ \s cok eok cerr eerr ->
+    case T.uncons (_src s) of
+        Just ('.', rest1) ->
+            case T.uncons rest1 of
+                Just (c, _) | c >= 'A' && c <= 'Z' ->
+                    let (Parser p) = do
+                            char mkError '.'
+                            name <- upper mkError
+                            more <- dottedUpperSegments mkError
+                            return (name : more)
+                    in p s cok eok cerr eerr
+                _ -> eok [] s
+        _ -> eok [] s
 
 
 -- FOREIGN IMPORT
