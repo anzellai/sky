@@ -86,12 +86,16 @@ typeToVar state ty = case ty of
     T.TUnit ->
         UF.fresh (T.Descriptor (T.Structure T.Unit1) (_rank state) T.noMark Nothing)
 
-    T.TTuple a b mc -> do
+    T.TTuple a b more -> do
         aVar <- typeToVar state a
         bVar <- typeToVar state b
-        mcVar <- case mc of
-            Nothing -> return Nothing
-            Just c -> Just <$> typeToVar state c
+        -- The unifier's Tuple1 is hard-coded to 2- or 3-tuples (Maybe third).
+        -- 4+ element tuples collapse to 3-tuple for unification purposes —
+        -- elements past the third flow as any at runtime. Catches structural
+        -- mismatches on first three, loses precision beyond.
+        mcVar <- case more of
+            []      -> return Nothing
+            (c : _) -> Just <$> typeToVar state c
         UF.fresh (T.Descriptor (T.Structure (T.Tuple1 aVar bVar mcVar)) (_rank state) T.noMark Nothing)
 
     T.TAlias home name pairs aliasType -> do
@@ -254,10 +258,10 @@ flatTypeToType flat = case flat of
     T.Tuple1 aVar bVar mcVar -> do
         aType <- variableToType aVar
         bType <- variableToType bVar
-        mcType <- case mcVar of
-            Nothing -> return Nothing
-            Just cVar -> Just <$> variableToType cVar
-        return (T.TTuple aType bType mcType)
+        moreType <- case mcVar of
+            Nothing -> return []
+            Just cVar -> (:[]) <$> variableToType cVar
+        return (T.TTuple aType bType moreType)
 
 
 -- ═══════════════════════════════════════════════════════════

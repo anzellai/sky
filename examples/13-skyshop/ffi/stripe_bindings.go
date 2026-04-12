@@ -16,6 +16,7 @@ import (
 	form "github.com/stripe/stripe-go/v84/form"
 	http "net/http"
 	time "time"
+	"reflect"
 )
 
 // [pure] Go_Stripe_goV84.aPIErrorError → pkg.APIErrorError
@@ -23137,7 +23138,14 @@ func Go_Stripe_goV84_newStripeContext(p0 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Stripe_goV84_newV2List — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Stripe_goV84.newV2List → pkg.NewV2List — generic function (stub; instantiate manually if needed)
+func Go_Stripe_goV84_newV2List(p0 any, p1 any, p2 any) (out any) {
+	_ = p0
+	_ = p1
+	_ = p2
+	out = Err[any, any]("generic function NewV2List requires hand-written instantiation")
+	return
+}
 
 // [pure] Go_Stripe_goV84.oAuthTokenSetLastResponse → pkg.OAuthTokenSetLastResponse
 func Go_Stripe_goV84_oAuthTokenSetLastResponse(p0 any, p1 any) (out any) {
@@ -36029,7 +36037,12 @@ func Go_Stripe_goV84_streamingLastResponseSetterSetLastResponse(p0 any, p1 any) 
 	return
 }
 
-// SKIPPED Go_Stripe_goV84_string — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Stripe_goV84.string → pkg.String — generic function (stub; instantiate manually if needed)
+func Go_Stripe_goV84_string(p0 any) (out any) {
+	_ = p0
+	out = Err[any, any]("generic function String requires hand-written instantiation")
+	return
+}
 
 // [pure] Go_Stripe_goV84.stringSlice → pkg.StringSlice
 func Go_Stripe_goV84_stringSlice(p0 any) (out any) {
@@ -54522,11 +54535,44 @@ func Go_Stripe_goV84_v2DeletedObjectSetLastResponse(p0 any, p1 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Stripe_goV84_v2ListAll — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Stripe_goV84.v2ListAll → V2List.All (receiver-reflect)
+func Go_Stripe_goV84_v2ListAll(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	recv := reflect.ValueOf(p0)
+	m := recv.MethodByName("All")
+	if !m.IsValid() {
+		out = Err[any, any]("All: no such method on receiver")
+		return
+	}
+	out = SkyFfiReflectCall(m, false, []any{})
+	return
+}
 
-// SKIPPED Go_Stripe_goV84_v2ListSetLastResponse — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Stripe_goV84.v2ListSetLastResponse → V2List.SetLastResponse (receiver-reflect)
+func Go_Stripe_goV84_v2ListSetLastResponse(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	recv := reflect.ValueOf(p0)
+	m := recv.MethodByName("SetLastResponse")
+	if !m.IsValid() {
+		out = Err[any, any]("SetLastResponse: no such method on receiver")
+		return
+	}
+	out = SkyFfiReflectCall(m, false, []any{p1})
+	return
+}
 
-// SKIPPED Go_Stripe_goV84_v2PageSetLastResponse — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Stripe_goV84.v2PageSetLastResponse → V2Page.SetLastResponse (receiver-reflect)
+func Go_Stripe_goV84_v2PageSetLastResponse(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	recv := reflect.ValueOf(p0)
+	m := recv.MethodByName("SetLastResponse")
+	if !m.IsValid() {
+		out = Err[any, any]("SetLastResponse: no such method on receiver")
+		return
+	}
+	out = SkyFfiReflectCall(m, false, []any{p1})
+	return
+}
 
 // [pure] Go_Stripe_goV84.v2RawErrorError → pkg.V2RawErrorError
 func Go_Stripe_goV84_v2RawErrorError(p0 any) (out any) {

@@ -14,6 +14,7 @@ import (
 	context "context"
 	_ "google.golang.org/api/iterator"  // aliased iterator; unused in emitted wrappers
 	time "time"
+	"reflect"
 )
 
 // [fallible] Go_Auth.clientSessionCookie → pkg.ClientSessionCookie
@@ -558,7 +559,12 @@ func Go_Auth_isUserNotFound(p0 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Auth_newClient — generics or internal-package ref (not realisable at FFI boundary)
+// [fallible] Go_Auth.newClient → reflect.ValueOf(pkg.NewClient) (via SkyFfiReflectCall)
+func Go_Auth_newClient(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	out = SkyFfiReflectCall(reflect.ValueOf(pkg.NewClient), true, []any{p0, p1})
+	return
+}
 
 // [pure] Go_Auth.oIDCProviderConfigIteratorPageInfo → pkg.OIDCProviderConfigIteratorPageInfo
 func Go_Auth_oIDCProviderConfigIteratorPageInfo(p0 any) (out any) {
@@ -1327,7 +1333,18 @@ func Go_Auth_tenantToUpdateMultiFactorConfig(p0 any, p1 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Auth_userImportHashConfig — generics or internal-package ref (not realisable at FFI boundary)
+// [fallible] Go_Auth.userImportHashConfig → UserImportHash.Config (receiver-reflect)
+func Go_Auth_userImportHashConfig(p0 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	recv := reflect.ValueOf(p0)
+	m := recv.MethodByName("Config")
+	if !m.IsValid() {
+		out = Err[any, any]("Config: no such method on receiver")
+		return
+	}
+	out = SkyFfiReflectCall(m, true, []any{})
+	return
+}
 
 // [pure] Go_Auth.userIteratorPageInfo → pkg.UserIteratorPageInfo
 func Go_Auth_userIteratorPageInfo(p0 any) (out any) {

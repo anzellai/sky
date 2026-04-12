@@ -59,9 +59,7 @@ canonicalisePattern_ env pat = case pat of
         Can.PTuple
             (canonicalisePattern env a)
             (canonicalisePattern env b)
-            (case rest of
-                [] -> Nothing
-                (r:_) -> Just (canonicalisePattern env r))
+            (map (canonicalisePattern env) rest)
 
     Src.PCtor ctorName modSegments args ->
         resolveCtorPattern env modSegments ctorName args

@@ -88,7 +88,7 @@ data Expr_
     | Update !(A.Located String) !Expr (Map.Map String FieldUpdate)
     | Record (Map.Map String Expr)
     | Unit
-    | Tuple !Expr !Expr !(Maybe Expr)
+    | Tuple !Expr !Expr ![Expr]   -- e1, e2, then zero or more further elems
     deriving (Show)
 
 
@@ -113,7 +113,7 @@ data Pattern_
     | PRecord [String]
     | PAlias !Pattern !String
     | PUnit
-    | PTuple !Pattern !Pattern !(Maybe Pattern)
+    | PTuple !Pattern !Pattern ![Pattern]
     | PList [Pattern]
     | PCons !Pattern !Pattern
     | PBool !Bool
@@ -152,7 +152,7 @@ data Type
     | TType !ModuleName.Canonical !String [Type]
     | TRecord !(Map.Map String FieldType) !(Maybe String)
     | TUnit
-    | TTuple !Type !Type !(Maybe Type)
+    | TTuple !Type !Type ![Type]
     | TAlias !ModuleName.Canonical !String [(String, Type)] !AliasType
     deriving (Eq, Ord, Show)
 

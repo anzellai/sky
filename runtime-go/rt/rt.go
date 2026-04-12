@@ -558,6 +558,10 @@ func RecordUpdate(base any, updates map[string]any) any {
 
 type SkyTuple2 struct { V0, V1 any }
 type SkyTuple3 struct { V0, V1, V2 any }
+// SkyTupleN: arity ≥ 4 tuples use a uniform slice-backed struct. Element
+// access in generated code is `t.Vs[i]`, symmetric with `.V0/.V1/.V2` on
+// 2/3-tuples.
+type SkyTupleN struct { Vs []any }
 
 // ═══════════════════════════════════════════════════════════
 // FFI — name-based dispatch for user-supplied Go bindings
@@ -2556,6 +2560,95 @@ func SkyFfiRet_maybeString(p *string) any {
 		return Nothing[any]()
 	}
 	return Just[any](*p)
+}
+
+// SkyFfiReflectCall invokes a reflect.Value of a function with Sky-side args.
+// Used by generated FFI wrappers when the Go signature contains types the
+// wrapper cannot spell (internal/vendor pkgs, bare generic T, or methods on
+// generic receivers). The reflect.Value is obtained from the caller either
+// via `reflect.ValueOf(pkg.Func)` or `reflect.ValueOf(recv).MethodByName(...)`.
+//
+// hasError:
+//   false → wrap pure result in Ok (or bare list for multi-return)
+//   true  → last Go return must be error; Ok(prefix)/Err on non-nil
+func SkyFfiReflectCall(fn reflect.Value, hasError bool, args []any) any {
+	if !fn.IsValid() || fn.Kind() != reflect.Func {
+		return Err[any, any]("SkyFfiReflectCall: not a function value")
+	}
+	ft := fn.Type()
+	n := ft.NumIn()
+	variadic := ft.IsVariadic()
+
+	// Coerce each Sky-side any to the expected reflect.Type of the Go param.
+	vals := make([]reflect.Value, 0, len(args))
+	for i, a := range args {
+		var pt reflect.Type
+		if variadic && i >= n-1 {
+			pt = ft.In(n - 1).Elem()
+		} else if i < n {
+			pt = ft.In(i)
+		} else {
+			return Err[any, any](fmt.Sprintf("SkyFfiReflectCall: too many args (%d) for %v", len(args), ft))
+		}
+		if a == nil {
+			vals = append(vals, reflect.Zero(pt))
+			continue
+		}
+		v := reflect.ValueOf(a)
+		if v.Type() != pt {
+			if v.Type().ConvertibleTo(pt) {
+				v = v.Convert(pt)
+			} else if pt.Kind() == reflect.Interface && v.Type().Implements(pt) {
+				// fine — reflect will accept an interface-satisfying value
+			}
+		}
+		vals = append(vals, v)
+	}
+
+	// Ensure variadic is invoked correctly when Sky handed us a single slice
+	var results []reflect.Value
+	if variadic && len(args) == n && vals[n-1].Kind() == reflect.Slice {
+		results = fn.CallSlice(vals)
+	} else {
+		results = fn.Call(vals)
+	}
+
+	return unpackReflectResults(results, hasError)
+}
+
+func unpackReflectResults(results []reflect.Value, hasError bool) any {
+	n := len(results)
+	switch {
+	case n == 0:
+		return Ok[any, any](struct{}{})
+	case n == 1 && hasError:
+		err, _ := results[0].Interface().(error)
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		return Ok[any, any](struct{}{})
+	case n == 1:
+		return results[0].Interface()
+	case hasError:
+		err, _ := results[n-1].Interface().(error)
+		if err != nil {
+			return Err[any, any](err.Error())
+		}
+		if n == 2 {
+			return Ok[any, any](results[0].Interface())
+		}
+		out := make([]any, n-1)
+		for i := 0; i < n-1; i++ {
+			out[i] = results[i].Interface()
+		}
+		return Ok[any, any](out)
+	default:
+		out := make([]any, n)
+		for i := 0; i < n; i++ {
+			out[i] = results[i].Interface()
+		}
+		return out
+	}
 }
 
 // ═══════════════════════════════════════════════════════════

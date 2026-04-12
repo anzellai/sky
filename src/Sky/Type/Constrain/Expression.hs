@@ -381,9 +381,12 @@ patternBindings (A.At _ pat, ty) = case pat of
     Can.PAlias inner name -> (name, T.Forall [] ty) : patternBindings (inner, ty)
     Can.PRecord fields -> map (\f -> (f, T.Forall [] (T.TVar ("_rec_" ++ f)))) fields
     Can.PUnit -> []
-    Can.PTuple a b mc ->
-        patternBindings (a, T.TVar "_tup_0") ++ patternBindings (b, T.TVar "_tup_1")
-            ++ maybe [] (\c -> patternBindings (c, T.TVar "_tup_2")) mc
+    Can.PTuple a b more ->
+        concat $
+            patternBindings (a, T.TVar "_tup_0")
+            : patternBindings (b, T.TVar "_tup_1")
+            : zipWith (\i p -> patternBindings (p, T.TVar ("_tup_" ++ show (i :: Int))))
+                      [2 ..] more
     Can.PList items ->
         concatMap (\item -> patternBindings (item, T.TVar "_list_elem")) items
     Can.PCons h t ->

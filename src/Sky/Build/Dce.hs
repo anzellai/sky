@@ -80,9 +80,9 @@ collectRefs (A.At _ e) = case e of
             `Set.union` unionMap (\(Can.FieldUpdate _ fe) -> collectRefs fe)
                                  (Map.elems fields)
     Can.Record m              -> unionMap collectRefs (Map.elems m)
-    Can.Tuple a b mc          ->
+    Can.Tuple a b more        ->
         collectRefs a `Set.union` collectRefs b
-            `Set.union` maybe Set.empty collectRefs mc
+            `Set.union` unionMap collectRefs more
 
 
 defRefs :: Can.Def -> Set.Set String

@@ -103,9 +103,7 @@ canonicaliseExpr_ env region expr = case expr of
         Can.Tuple
             (canonicaliseExpr env a)
             (canonicaliseExpr env b)
-            (case rest of
-                [] -> Nothing
-                (r:_) -> Just (canonicaliseExpr env r))
+            (map (canonicaliseExpr env) rest)
 
     Src.Op op ->
         -- Standalone operator reference (e.g., passed as function)

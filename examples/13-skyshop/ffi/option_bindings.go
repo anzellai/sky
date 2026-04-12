@@ -17,9 +17,21 @@ import (
 	grpc "google.golang.org/grpc"
 	slog "log/slog"
 	http "net/http"
+	"reflect"
 )
 
-// SKIPPED Go_Option_clientOptionApply — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Option.clientOptionApply → ClientOption.Apply (receiver-reflect)
+func Go_Option_clientOptionApply(p0 any, p1 any) (out any) {
+	defer SkyFfiRecover(&out)()
+	recv := reflect.ValueOf(p0)
+	m := recv.MethodByName("Apply")
+	if !m.IsValid() {
+		out = Err[any, any]("Apply: no such method on receiver")
+		return
+	}
+	out = SkyFfiReflectCall(m, false, []any{p1})
+	return
+}
 
 // [pure] Go_Option.impersonateCredentials → pkg.ImpersonateCredentials
 func Go_Option_impersonateCredentials(p0 any, p1 any) (out any) {

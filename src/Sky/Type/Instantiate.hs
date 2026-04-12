@@ -56,11 +56,10 @@ buildEnv rank canType env = case canType of
 
     T.TUnit -> return env
 
-    T.TTuple a b mc ->
-        buildEnv rank a env >>= buildEnv rank b >>= \e ->
-            case mc of
-                Nothing -> return e
-                Just c -> buildEnv rank c e
+    T.TTuple a b more -> do
+        e0 <- buildEnv rank a env
+        e1 <- buildEnv rank b e0
+        foldlM (\e ty -> buildEnv rank ty e) e1 more
 
     T.TAlias _ _ pairs _ ->
         foldlM (\e (_, ty) -> buildEnv rank ty e) env pairs
@@ -97,12 +96,12 @@ typeToVariable rank env canType = case canType of
     T.TUnit ->
         UF.fresh (T.Descriptor (T.Structure T.Unit1) rank T.noMark Nothing)
 
-    T.TTuple a b mc -> do
+    T.TTuple a b more -> do
         aVar <- typeToVariable rank env a
         bVar <- typeToVariable rank env b
-        mcVar <- case mc of
-            Nothing -> return Nothing
-            Just c -> Just <$> typeToVariable rank env c
+        mcVar <- case more of
+            []      -> return Nothing
+            (c : _) -> Just <$> typeToVariable rank env c
         UF.fresh (T.Descriptor (T.Structure (T.Tuple1 aVar bVar mcVar)) rank T.noMark Nothing)
 
     T.TAlias home name pairs aliasType -> do

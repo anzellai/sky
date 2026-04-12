@@ -1016,10 +1016,17 @@ exprToGo (A.At _ expr) = case expr of
                     fieldInits = intercalate_ ", " (map (\(fn, fe) -> capitalise_ fn ++ ": " ++ GoBuilder.renderExpr (exprToGo fe)) entries)
                 in GoIr.GoRaw $ "struct{ " ++ fieldDecls ++ " }{" ++ fieldInits ++ "}"
 
-    Can.Tuple a b mC ->
-        case mC of
-            Nothing -> GoIr.GoStructLit "rt.SkyTuple2" [("V0", exprToGo a), ("V1", exprToGo b)]
-            Just c -> GoIr.GoStructLit "rt.SkyTuple3" [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo c)]
+    Can.Tuple a b more ->
+        case length more of
+            0 -> GoIr.GoStructLit "rt.SkyTuple2"
+                    [("V0", exprToGo a), ("V1", exprToGo b)]
+            1 -> GoIr.GoStructLit "rt.SkyTuple3"
+                    [("V0", exprToGo a), ("V1", exprToGo b), ("V2", exprToGo (head more))]
+            _ ->
+                -- arity 4+: pack into SkyTupleN{Vs: []any{...}}
+                let vs = a : b : more
+                    vsInit = GoIr.GoSliceLit "any" (map exprToGo vs)
+                in GoIr.GoStructLit "rt.SkyTupleN" [("Vs", vsInit)]
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -1409,7 +1416,7 @@ patternCondition subject pat = case pat of
             (GoIr.GoIntLit (length xs))
 
     -- Tuples, records, aliases: structure is guaranteed by HM — bindings carry the work.
-    Can.PTuple _ _ _ -> Nothing
+    Can.PTuple{} -> Nothing
     Can.PRecord _    -> Nothing
     Can.PAlias inner _ ->
         let (A.At _ innerPat) = inner
@@ -1492,28 +1499,32 @@ patternBindings subject pat = case pat of
                         : patternBindings sub p
         in concat (zipWith bindEl [0::Int ..] xs)
 
-    -- (a, b) or (a, b, c)  →  bind V0, V1[, V2] off SkyTuple2/3
-    Can.PTuple aPat bPat mcPat ->
-        let tupleKind = case mcPat of Just _ -> "SkyTuple3"; Nothing -> "SkyTuple2"
-            asTup = GoIr.GoTypeAssert (GoIr.GoIdent subject) ("rt." ++ tupleKind)
-            bindField fld (A.At _ p) = case p of
+    -- (a, b[, c, ...])  →  bind V0/V1/V2 (SkyTuple2/3) or Vs[N] (SkyTupleN)
+    Can.PTuple aPat bPat more ->
+        let arity = 2 + length more
+            allPats = aPat : bPat : more
+            (tupleKind, accessor) = case arity of
+                2 -> ("SkyTuple2", \i -> GoIr.GoSelector (asTup "SkyTuple2") ("V" ++ show i))
+                3 -> ("SkyTuple3", \i -> GoIr.GoSelector (asTup "SkyTuple3") ("V" ++ show i))
+                _ -> ("SkyTupleN", \i -> GoIr.GoIndex
+                        (GoIr.GoSelector (asTup "SkyTupleN") "Vs")
+                        (GoIr.GoIntLit i))
+            asTup k = GoIr.GoTypeAssert (GoIr.GoIdent subject) ("rt." ++ k)
+            _ = tupleKind  -- silences warning; kept for grep-ability
+            bindField i (A.At _ p) = case p of
                 Can.PVar name ->
                     if isDiscardName name
-                        then [ GoIr.GoAssign "_" (GoIr.GoSelector asTup fld) ]
-                        else [ GoIr.GoShortDecl name (GoIr.GoSelector asTup fld)
+                        then [ GoIr.GoAssign "_" (accessor i) ]
+                        else [ GoIr.GoShortDecl name (accessor i)
                              , GoIr.GoAssign "_" (GoIr.GoIdent name)
                              ]
-                Can.PAnything -> [ GoIr.GoAssign "_" (GoIr.GoSelector asTup fld) ]
+                Can.PAnything -> [ GoIr.GoAssign "_" (accessor i) ]
                 _ ->
-                    let sub = "__sky_t_" ++ fld ++ "_" ++ subject
-                    in GoIr.GoShortDecl sub (GoIr.GoSelector asTup fld)
+                    let sub = "__sky_t_V" ++ show i ++ "_" ++ subject
+                    in GoIr.GoShortDecl sub (accessor i)
                        : GoIr.GoAssign "_" (GoIr.GoIdent sub)
                        : patternBindings sub p
-            pieces = bindField "V0" aPat ++ bindField "V1" bPat
-            extra = case mcPat of
-                Just c -> bindField "V2" c
-                Nothing -> []
-        in pieces ++ extra
+        in concat (zipWith bindField [0 :: Int ..] allPats)
 
     -- { name }  →  name := rt.Field(subject, "Name")
     Can.PRecord fields ->

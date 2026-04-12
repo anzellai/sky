@@ -20,11 +20,14 @@ typeToGo t = case t of
     T.TLambda from to ->
         "func(" ++ typeToGo from ++ ") " ++ typeToGo to
 
-    T.TTuple a b Nothing ->
-        "rt.SkyTuple2[" ++ typeToGo a ++ ", " ++ typeToGo b ++ "]"
+    T.TTuple _ _ [] ->
+        "rt.SkyTuple2"
 
-    T.TTuple a b (Just c) ->
-        "rt.SkyTuple3[" ++ typeToGo a ++ ", " ++ typeToGo b ++ ", " ++ typeToGo c ++ "]"
+    T.TTuple _ _ [_] ->
+        "rt.SkyTuple3"
+
+    T.TTuple{} ->
+        "rt.SkyTupleN"  -- arity ≥ 4 uses the slice-backed variant
 
     T.TRecord fields Nothing ->
         goRecordType fields

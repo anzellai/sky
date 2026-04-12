@@ -68,9 +68,7 @@ canonicaliseTypeAnnotationWith tmap home srcType = case srcType of
         Can.TTuple
             (canonicaliseTypeAnnotationWith tmap home a)
             (canonicaliseTypeAnnotationWith tmap home b)
-            (case rest of
-                [] -> Nothing
-                (r:_) -> Just (canonicaliseTypeAnnotationWith tmap home r))
+            (map (canonicaliseTypeAnnotationWith tmap home) rest)
 
 
 -- | Resolve a type name to its home module.

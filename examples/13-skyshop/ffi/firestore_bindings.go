@@ -745,7 +745,12 @@ func Go_Firestore_arrayContainsAny(p0 any, p1 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Firestore_arrayFromSlice — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Firestore.arrayFromSlice → pkg.ArrayFromSlice — generic function (stub; instantiate manually if needed)
+func Go_Firestore_arrayFromSlice(p0 any) (out any) {
+	_ = p0
+	out = Err[any, any]("generic function ArrayFromSlice requires hand-written instantiation")
+	return
+}
 
 // [pure] Go_Firestore.arrayGet → pkg.ArrayGet
 func Go_Firestore_arrayGet(p0 any, p1 any) (out any) {
@@ -2971,7 +2976,12 @@ func Go_Firestore_fieldNotFoundErrorError(p0 any) (out any) {
 	return
 }
 
-// SKIPPED Go_Firestore_fieldOf — generics or internal-package ref (not realisable at FFI boundary)
+// [pure] Go_Firestore.fieldOf → pkg.FieldOf — generic function (stub; instantiate manually if needed)
+func Go_Firestore_fieldOf(p0 any) (out any) {
+	_ = p0
+	out = Err[any, any]("generic function FieldOf requires hand-written instantiation")
+	return
+}
 
 // [pure] Go_Firestore.fieldTransformIncrement → pkg.FieldTransformIncrement
 func Go_Firestore_fieldTransformIncrement(p0 any) (out any) {
