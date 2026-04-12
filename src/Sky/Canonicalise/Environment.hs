@@ -306,6 +306,7 @@ staticKernelModules = Map.fromList
     , ("Std.Css",              "Css")
     , ("Std.Live",             "Live")
     , ("Std.Live.Events",      "Event")
+    , ("Std.Html.Events",      "Event")
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
     , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")

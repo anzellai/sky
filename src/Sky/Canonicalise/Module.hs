@@ -319,7 +319,8 @@ staticKernelFunctions = Map.fromList
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html",
                     "withStatus", "redirect", "param", "queryParam", "header",
-                    "getCookie", "cookie", "withCookie", "withHeader", "any"])
+                    "getCookie", "cookie", "withCookie", "withHeader", "any",
+                    "method", "formValue", "body", "path", "group", "use"])
     , ("Crypto",  ["sha256", "sha512", "md5", "hmacSha256",
                     "constantTimeEqual", "randomBytes", "randomToken"])
     , ("Encoding",["base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode"])
@@ -337,13 +338,16 @@ staticKernelFunctions = Map.fromList
                     "img", "br", "hr", "table", "thead", "tbody", "tr", "th", "td",
                     "textarea", "select", "option", "pre", "code", "strong", "em",
                     "small", "styleNode", "node", "raw", "headerNode",
-                    "codeNode", "blockquote", "figure", "figcaption",
+                    "codeNode", "blockquote", "figure", "figcaption", "doctype",
+                    "htmlNode", "headNode", "meta", "render", "body", "title",
+                    "titleNode", "link", "script",
                     "details", "summary", "dialog", "video", "audio", "canvas",
                     "iframe", "progress", "meter"])
     , ("Attr",    ["class", "id", "style", "type", "type_", "value", "href", "src",
                     "alt", "name", "placeholder", "title", "for", "checked",
                     "disabled", "readonly", "required", "autofocus", "rel",
                     "target", "method", "action", "attribute",
+                    "charset", "content", "httpEquiv", "rel",
                     "rows", "cols", "maxlength", "minlength", "step", "min",
                     "max", "pattern", "accept", "multiple", "size", "tabindex",
                     "ariaLabel", "ariaHidden", "role", "dataAttr", "spellcheck",
@@ -366,6 +370,9 @@ staticKernelFunctions = Map.fromList
                     "paddingTop", "paddingBottom", "paddingLeft", "paddingRight",
                     "visibility", "content", "auto", "none", "transparent",
                     "inherit", "initial", "monoFont",
+                    "textTransform", "letterSpacing",
+                    "linearGradient", "repeat", "fr",
+                    "margin4", "fontStyle", "styles",
                     "transitionProp", "transitionDuration", "transitionTimingFunction",
                     "outline", "outlineOffset", "filter", "backdropFilter",
                     "pointerEvents", "objectFit", "objectPosition",

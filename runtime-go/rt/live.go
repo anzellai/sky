@@ -113,8 +113,8 @@ func Html_ul(a, c any) any      { return htmlElem("ul")(a, c) }
 func Html_ol(a, c any) any      { return htmlElem("ol")(a, c) }
 func Html_li(a, c any) any      { return htmlElem("li")(a, c) }
 func Html_img(a, c any) any     { return htmlElem("img")(a, c) }
-func Html_br(a, c any) any      { return htmlElem("br")(a, c) }
-func Html_hr(a, c any) any      { return htmlElem("hr")(a, c) }
+func Html_br(a any) any         { return htmlElem("br")(a, nil) }
+func Html_hr(a any) any         { return htmlElem("hr")(a, nil) }
 func Html_table(a, c any) any   { return htmlElem("table")(a, c) }
 func Html_thead(a, c any) any   { return htmlElem("thead")(a, c) }
 func Html_tbody(a, c any) any   { return htmlElem("tbody")(a, c) }
@@ -338,7 +338,6 @@ var (
 	Css_minWidth        = cssP("min-width")
 	Css_transform       = cssP("transform")
 	Css_textDecoration  = cssP("text-decoration")
-	Css_textTransform   = cssP("text-transform")
 	Css_zIndex          = cssP("z-index")
 	Css_opacity         = cssP("opacity")
 	Css_overflow        = cssP("overflow")
@@ -398,7 +397,6 @@ var (
 	Css_inherit       = func(_ any) any { return "inherit" }
 	Css_initial       = func(_ any) any { return "initial" }
 	Css_monoFont      = func(_ any) any { return "ui-monospace, 'SF Mono', Monaco, 'Cascadia Code', monospace" }
-	Css_transitionProp = cssP("transition-property")
 	Css_transitionDuration = cssP("transition-duration")
 	Css_transitionTimingFunction = cssP("transition-timing-function")
 	Css_outlineOffset = cssP("outline-offset")
@@ -427,6 +425,92 @@ func Css_systemFont(_ any) any { return "-apple-system, BlinkMacSystemFont, 'Seg
 func Css_rgba(r, g, b, a any) any {
 	return fmt.Sprintf("rgba(%v, %v, %v, %v)", r, g, b, a)
 }
+
+// transitionProp(property, duration, timing) -> "property duration timing"
+func Css_transitionProp(p, d, t any) any {
+	return cssProp{k: "transition", v: fmt.Sprintf("%v %vs %v", p, d, t)}
+}
+
+// linearGradient(angle, stops) -> "linear-gradient(angle, stop1, stop2, ...)"
+func Css_linearGradient(angle, stops any) any {
+	var parts []string
+	if xs, ok := stops.([]any); ok {
+		for _, s := range xs {
+			parts = append(parts, fmt.Sprintf("%v", s))
+		}
+	}
+	return fmt.Sprintf("linear-gradient(%v, %s)", angle, strings.Join(parts, ", "))
+}
+
+// repeat(n, template) -> "repeat(n, template)"
+func Css_repeat(n, t any) any {
+	return fmt.Sprintf("repeat(%v, %v)", n, t)
+}
+
+// fr(n) -> "Nfr" (grid template unit)
+func Css_fr(n any) any {
+	return fmt.Sprintf("%vfr", n)
+}
+
+// textTransform alias for Css_property("text-transform", v)
+func Css_textTransform(v any) any {
+	return cssProp{k: "text-transform", v: fmt.Sprintf("%v", v)}
+}
+
+// Css_margin4(top, right, bottom, left)
+func Css_margin4(t, r, b, l any) any {
+	return cssProp{k: "margin", v: fmt.Sprintf("%v %v %v %v", t, r, b, l)}
+}
+
+// Css_fontStyle(v)
+func Css_fontStyle2(v any) any {
+	return cssProp{k: "font-style", v: fmt.Sprintf("%v", v)}
+}
+
+// Css_styles: bulk merge — takes a list of property pairs, serialises them
+// as a single style="a:b;c:d;" string for placement on an element.
+func Css_styles(rules any) any {
+	var parts []string
+	if xs, ok := rules.([]any); ok {
+		for _, r := range xs {
+			if cp, ok := r.(cssProp); ok {
+				parts = append(parts, cp.k+":"+cp.v)
+			}
+		}
+	}
+	return strings.Join(parts, ";")
+}
+
+// Html_doctype — emit a plain <!DOCTYPE html> root that wraps children.
+func Html_doctype(children any) any {
+	return velement("!doctype-wrapper", nil, asList(children))
+}
+
+func Html_htmlNode(a, c any) any { return htmlElem("html")(a, c) }
+func Html_headNode(a, c any) any { return htmlElem("head")(a, c) }
+func Html_body(a, c any) any     { return htmlElem("body")(a, c) }
+func Html_title(a, c any) any    { return htmlElem("title")(a, c) }
+func Html_meta(a any) any        { return htmlElem("meta")(a, nil) }
+func Html_link(a any) any        { return htmlElem("link")(a, nil) }
+func Html_script(a, c any) any   { return htmlElem("script")(a, c) }
+
+// Html_titleNode — takes a raw string and wraps it in <title>.
+func Html_titleNode(s any) any {
+	return htmlElem("title")(nil, []any{Html_text(s)})
+}
+
+// Html_render: serialise a VNode to HTML string (for server-side rendering).
+func Html_render(node any) any {
+	if vn, ok := node.(VNode); ok {
+		return renderVNode(vn, nil)
+	}
+	return ""
+}
+
+// Attr_charset / httpEquiv / content / rel — meta-tag friends.
+func Attr_charset(v any) any   { return attr("charset", fmt.Sprintf("%v", v)) }
+func Attr_httpEquiv(v any) any { return attr("http-equiv", fmt.Sprintf("%v", v)) }
+func Attr_content(v any) any   { return attr("content", fmt.Sprintf("%v", v)) }
 
 // shadow(offX, offY, blur, colour) -> a short-hand box-shadow value string
 func Css_shadow(offX, offY, blur, colour any) any {

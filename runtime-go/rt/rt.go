@@ -1952,6 +1952,7 @@ type SkyRequest struct {
 	Params  map[string]any
 	Query   map[string]any
 	Cookies map[string]string
+	Form    map[string]string
 }
 
 // SkyResponse wraps an HTTP response
@@ -2335,23 +2336,108 @@ func Server_cookie(name any, value any) any {
 	return SkyCookie{Name: fmt.Sprintf("%v", name), Value: fmt.Sprintf("%v", value)}
 }
 
-// Server.withCookie : Cookie -> Response -> Response
-// Attach a previously-built cookie to a response.
-func Server_withCookie(cookie any, resp any) any {
+// Server.withCookie — flexible arity so Sky can pipe either a pre-built
+// cookie object or a name/value/attrs triple straight into a response.
+// Forms:
+//   withCookie(Cookie, Response) -> Response
+//   withCookie(name, value, Response) -> Response      (no extra attrs)
+//   withCookie(name, value, attrs, Response) -> Response
+func Server_withCookie(args ...any) any {
+	switch len(args) {
+	case 2:
+		cookie, resp := args[0], args[1]
+		r, ok := resp.(SkyResponse)
+		if !ok {
+			return resp
+		}
+		c, cok := cookie.(SkyCookie)
+		if !cok {
+			return resp
+		}
+		if r.Headers == nil {
+			r.Headers = map[string]string{}
+		}
+		r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; Path=/; HttpOnly; SameSite=Lax", c.Name, c.Value)
+		return r
+	case 3:
+		name, value, resp := args[0], args[1], args[2]
+		return setCookieHeader(resp, fmt.Sprintf("%v", name), fmt.Sprintf("%v", value), "Path=/; HttpOnly; SameSite=Lax")
+	case 4:
+		name, value, attrs, resp := args[0], args[1], args[2], args[3]
+		return setCookieHeader(resp, fmt.Sprintf("%v", name), fmt.Sprintf("%v", value), fmt.Sprintf("%v", attrs))
+	default:
+		return nil
+	}
+}
+
+func setCookieHeader(resp any, name, value, attrs string) any {
 	r, ok := resp.(SkyResponse)
 	if !ok {
-		return resp
-	}
-	c, cok := cookie.(SkyCookie)
-	if !cok {
 		return resp
 	}
 	if r.Headers == nil {
 		r.Headers = map[string]string{}
 	}
-	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; Path=/; HttpOnly; SameSite=Lax", c.Name, c.Value)
+	r.Headers["Set-Cookie"] = fmt.Sprintf("%s=%s; %s", name, value, attrs)
 	return r
 }
+
+// Server.method : Request -> String   — HTTP method name in upper case.
+func Server_method(req any) any {
+	if r, ok := req.(SkyRequest); ok {
+		return r.Method
+	}
+	return "GET"
+}
+
+// Server.formValue : String -> Request -> String
+func Server_formValue(key any, req any) any {
+	if r, ok := req.(SkyRequest); ok {
+		if r.Form != nil {
+			if v, ok2 := r.Form[fmt.Sprintf("%v", key)]; ok2 {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// Server.body : Request -> String
+func Server_body(req any) any {
+	if r, ok := req.(SkyRequest); ok {
+		return r.Body
+	}
+	return ""
+}
+
+// Server.path : Request -> String
+func Server_path(req any) any {
+	if r, ok := req.(SkyRequest); ok {
+		return r.Path
+	}
+	return ""
+}
+
+// Server.group : prefix -> routes -> Route
+// Prepends prefix to every route's path.
+func Server_group(prefix any, routes any) any {
+	pStr := fmt.Sprintf("%v", prefix)
+	var out []any
+	if xs, ok := routes.([]any); ok {
+		for _, rt := range xs {
+			if sr, ok2 := rt.(SkyRoute); ok2 {
+				sr.Path = pStr + sr.Path
+				out = append(out, sr)
+			} else {
+				out = append(out, rt)
+			}
+		}
+	}
+	return out
+}
+
+// Server.use : middleware -> routes -> routes (identity for now; wiring TBD).
+func Server_use(_ any, routes any) any { return routes }
 
 // Server.withHeader : String -> String -> Response -> Response
 func Server_withHeader(name any, value any, resp any) any {
