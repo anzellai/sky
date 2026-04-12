@@ -196,6 +196,11 @@ kernelFunctions = Map.fromList
     , ("JsonEnc", ["string", "int", "float", "bool", "null", "list", "object", "encode"])
     , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field", "list",
                     "map", "andThen", "succeed", "fail"])
+    , ("Db",      ["connect", "open", "close", "exec", "query", "queryDecode",
+                    "insertRow", "getById", "updateById", "deleteById",
+                    "findWhere", "withTransaction"])
+    , ("Auth",    ["hashPassword", "verifyPassword", "signToken", "verifyToken",
+                    "register", "login", "setRole"])
     ]
 
 

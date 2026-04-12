@@ -408,4 +408,31 @@ registry = Map.fromList
     , (("JsonDec", "andThen"),    KernelInfo "rt.JsonDec_andThen" 2 False)
     , (("JsonDec", "succeed"),    KernelInfo "rt.JsonDec_succeed" 1 False)
     , (("JsonDec", "fail"),       KernelInfo "rt.JsonDec_fail" 1 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Std.Db (SQLite via modernc.org/sqlite)
+    -- ═══════════════════════════════════════════════════════
+    , (("Db", "connect"),         KernelInfo "rt.Db_connect" 1 False)
+    , (("Db", "open"),            KernelInfo "rt.Db_open" 1 False)
+    , (("Db", "close"),           KernelInfo "rt.Db_close" 1 False)
+    , (("Db", "exec"),            KernelInfo "rt.Db_exec" 3 False)
+    , (("Db", "query"),           KernelInfo "rt.Db_query" 3 False)
+    , (("Db", "queryDecode"),     KernelInfo "rt.Db_queryDecode" 4 False)
+    , (("Db", "insertRow"),       KernelInfo "rt.Db_insertRow" 3 False)
+    , (("Db", "getById"),         KernelInfo "rt.Db_getById" 3 False)
+    , (("Db", "updateById"),      KernelInfo "rt.Db_updateById" 4 False)
+    , (("Db", "deleteById"),      KernelInfo "rt.Db_deleteById" 3 False)
+    , (("Db", "findWhere"),       KernelInfo "rt.Db_findWhere" 4 False)
+    , (("Db", "withTransaction"), KernelInfo "rt.Db_withTransaction" 2 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Std.Auth (bcrypt + JWT)
+    -- ═══════════════════════════════════════════════════════
+    , (("Auth", "hashPassword"),   KernelInfo "rt.Auth_hashPassword" 1 False)
+    , (("Auth", "verifyPassword"), KernelInfo "rt.Auth_verifyPassword" 2 False)
+    , (("Auth", "signToken"),      KernelInfo "rt.Auth_signToken" 3 False)
+    , (("Auth", "verifyToken"),    KernelInfo "rt.Auth_verifyToken" 2 False)
+    , (("Auth", "register"),       KernelInfo "rt.Auth_register" 3 False)
+    , (("Auth", "login"),          KernelInfo "rt.Auth_login" 3 False)
+    , (("Auth", "setRole"),        KernelInfo "rt.Auth_setRole" 3 False)
     ]

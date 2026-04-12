@@ -1,0 +1,32 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.List as List
+import Sky.Core.String as String
+import Std.Db as Db
+import Std.Log exposing (println)
+
+runDb db =
+    let
+        _ = Db.exec db "CREATE TABLE notes (id INTEGER PRIMARY KEY, text TEXT)" []
+        _ = Db.exec db "INSERT INTO notes (text) VALUES (?)" ["hello"]
+        _ = Db.exec db "INSERT INTO notes (text) VALUES (?)" ["world"]
+    in
+        queryAll db
+
+queryAll db =
+    case Db.query db "SELECT text FROM notes ORDER BY id" [] of
+        Ok rows -> printRows rows
+        Err e -> println e
+
+printRows rows =
+    let
+        n = List.length rows
+        _ = println (String.fromInt n)
+    in
+        println "ok"
+
+main =
+    case Db.connect ":memory:" of
+        Ok db -> runDb db
+        Err e -> println e

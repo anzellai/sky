@@ -139,7 +139,12 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
             writeFile mainGoPath goCode
             putStrLn $ "   Wrote " ++ mainGoPath
             copyRuntime outDir
-            writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
+            -- Prefer runtime-go/go.mod (has deps) over minimal fallback
+            let srcMod = "runtime-go/go.mod"
+            hasMod <- doesFileExist srcMod
+            if hasMod
+                then copyFile srcMod (outDir </> "go.mod")
+                else writeFile (outDir </> "go.mod") $ unlines ["module sky-app", "", "go 1.21"]
             -- Write cache hash to enable incremental rebuild skip
             let cacheDir = ".skycache"
             createDirectoryIfMissing True cacheDir
@@ -227,13 +232,17 @@ copyRuntime outDir = do
     if hasRuntimeFile
         then copyFile runtimeSrc (rtDir </> "rt.go")
         else writeFile (rtDir </> "rt.go") runtimeGoSource
-    -- Copy auxiliary runtime files: live.go, stdlib_extra.go, etc.
-    let auxFiles = ["live.go", "stdlib_extra.go"]
+    -- Copy auxiliary runtime files: live.go, stdlib_extra.go, db_auth.go, etc.
+    let auxFiles = ["live.go", "stdlib_extra.go", "db_auth.go"]
     mapM_ (\name -> do
         let src = "runtime-go/rt" </> name
         exists <- doesFileExist src
         if exists then copyFile src (rtDir </> name) else return ()
         ) auxFiles
+    -- Copy go.sum so the build knows the right module checksums
+    let srcSum = "runtime-go/go.sum"
+    hasSum <- doesFileExist srcSum
+    if hasSum then copyFile srcSum (outDir </> "go.sum") else return ()
 
 
 -- ═══════════════════════════════════════════════════════════
