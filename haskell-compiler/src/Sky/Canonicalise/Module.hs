@@ -146,7 +146,8 @@ kernelFunctions = Map.fromList
                     "left", "right", "padLeft", "padRight", "repeat", "lines", "words",
                     "isValid", "normalize", "normalizeNFD", "casefold", "equalFold",
                     "graphemes", "trimStart", "trimEnd",
-                    "isEmail", "isUrl", "slugify"])
+                    "isEmail", "isUrl", "slugify",
+                    "htmlEscape", "truncate", "ellipsize"])
     , ("List",    ["map", "filter", "foldl", "foldr", "length", "head", "tail",
                     "take", "drop", "append", "concat", "concatMap", "reverse",
                     "sort", "member", "any", "all", "range", "zip", "filterMap",

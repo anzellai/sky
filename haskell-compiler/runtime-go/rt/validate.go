@@ -2,6 +2,7 @@ package rt
 
 import (
 	"fmt"
+	"html"
 	"net/mail"
 	"net/url"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/rivo/uniseg"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -76,6 +78,55 @@ func String_slugify(s any) any {
 		}
 	}
 	return strings.TrimRight(b.String(), "-")
+}
+
+// String.htmlEscape : String -> String
+// Escapes &, <, >, ", ' so the string is safe to insert into HTML content
+// or a double-quoted HTML attribute. Use before concatenating untrusted text
+// into raw HTML strings. Sky.Live's VNode renderer already escapes — this
+// helper is for code that builds HTML manually (Sky.Http.Server handlers
+// returning Server.html, templating into an email body, etc.).
+func String_htmlEscape(s any) any {
+	return html.EscapeString(fmt.Sprintf("%v", s))
+}
+
+// String.truncate : Int -> String -> String
+// Cuts s to at most n Unicode grapheme clusters — never breaks in the middle
+// of a multi-byte character or emoji ZWJ sequence. Preserves visual width for
+// UI display purposes. If s is already ≤ n graphemes, returns it unchanged.
+func String_truncate(n any, s any) any {
+	str := fmt.Sprintf("%v", s)
+	limit := AsInt(n)
+	if limit <= 0 {
+		return ""
+	}
+	// Walk graphemes to find cut-off byte offset.
+	var b strings.Builder
+	gr := uniseg.NewGraphemes(str)
+	count := 0
+	for gr.Next() {
+		if count >= limit {
+			break
+		}
+		b.WriteString(gr.Str())
+		count++
+	}
+	return b.String()
+}
+
+// String.ellipsize : Int -> String -> String
+// Like truncate but appends "…" when truncation occurs. For UI text.
+func String_ellipsize(n any, s any) any {
+	str := fmt.Sprintf("%v", s)
+	limit := AsInt(n)
+	if limit <= 0 {
+		return ""
+	}
+	if uniseg.GraphemeClusterCount(str) <= limit {
+		return str
+	}
+	truncated := String_truncate(limit, str).(string)
+	return truncated + "…"
 }
 
 // ═══════════════════════════════════════════════════════════

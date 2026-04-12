@@ -83,6 +83,9 @@ registry = Map.fromList
     , (("String", "isEmail"),     KernelInfo "rt.String_isEmail" 1 False)
     , (("String", "isUrl"),       KernelInfo "rt.String_isUrl" 1 False)
     , (("String", "slugify"),     KernelInfo "rt.String_slugify" 1 False)
+    , (("String", "htmlEscape"),  KernelInfo "rt.String_htmlEscape" 1 False)
+    , (("String", "truncate"),    KernelInfo "rt.String_truncate" 2 False)
+    , (("String", "ellipsize"),   KernelInfo "rt.String_ellipsize" 2 False)
 
     -- Sky.Core.Uuid
     , (("Uuid", "v4"),            KernelInfo "rt.Uuid_v4" 0 False)
