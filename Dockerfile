@@ -22,8 +22,6 @@ RUN cabal update && cabal build --only-dependencies --dry-run || true
 # Now copy sources
 COPY app ./app
 COPY src ./src
-COPY stdlib ./stdlib
-COPY test ./test
 
 RUN cabal update \
  && cabal build \
