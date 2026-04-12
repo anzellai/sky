@@ -998,6 +998,69 @@ func AnyTaskAndThen(fn any, task any) any {
 	}
 }
 
+// Task_sequence: run tasks in order, collect results as a list.
+// First error short-circuits.
+func Task_sequence(tasks any) any {
+	return func() any {
+		var xs []any
+		if tl, ok := tasks.([]any); ok {
+			xs = tl
+		}
+		out := make([]any, 0, len(xs))
+		for _, t := range xs {
+			r := SkyCall(t).(SkyResult[any, any])
+			if r.Tag != 0 {
+				return r
+			}
+			out = append(out, r.OkValue)
+		}
+		return Ok[any, any](out)
+	}
+}
+
+// Task_parallel: goroutine-backed fan-out; preserves input order; first err wins.
+func Task_parallel(tasks any) any {
+	return func() any {
+		var xs []any
+		if tl, ok := tasks.([]any); ok {
+			xs = tl
+		}
+		n := len(xs)
+		results := make([]any, n)
+		errs := make([]any, n)
+		var wg sync.WaitGroup
+		for i, t := range xs {
+			wg.Add(1)
+			go func(i int, t any) {
+				defer wg.Done()
+				r := SkyCall(t).(SkyResult[any, any])
+				if r.Tag == 0 {
+					results[i] = r.OkValue
+				} else {
+					errs[i] = r.ErrValue
+				}
+			}(i, t)
+		}
+		wg.Wait()
+		for _, e := range errs {
+			if e != nil {
+				return Err[any, any](e)
+			}
+		}
+		return Ok[any, any](results)
+	}
+}
+
+func Task_map(fn any, task any) any {
+	return func() any {
+		r := SkyCall(task).(SkyResult[any, any])
+		if r.Tag != 0 {
+			return r
+		}
+		return Ok[any, any](SkyCall(fn, r.OkValue))
+	}
+}
+
 func AnyTaskRun(task any) any {
 	t := task.(func() any)
 	return t()

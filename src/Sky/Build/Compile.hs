@@ -1330,7 +1330,9 @@ patternBindings subject pat = case pat of
     Can.PVar name ->
         if isDiscardName name
             then [ GoIr.GoAssign "_" (GoIr.GoIdent subject) ]
-            else [ GoIr.GoShortDecl name (GoIr.GoIdent subject) ]
+            else [ GoIr.GoShortDecl name (GoIr.GoIdent subject)
+                 , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                 ]
 
     Can.PAnything -> []
     Can.PUnit -> []
@@ -1436,10 +1438,14 @@ bindCtorArg subject ctorName (Can.PatternCtorArg idx _ty pat) =
         Can.PVar name ->
             if isDiscardName name
                 then [ GoIr.GoAssign "_" fieldAccess ]
-                else [ GoIr.GoShortDecl name fieldAccess ]
+                else
+                    -- Bind + discard-sink so Go doesn't error on unused when
+                    -- the case body doesn't reference the binding.
+                    [ GoIr.GoShortDecl name fieldAccess
+                    , GoIr.GoAssign "_" (GoIr.GoIdent name)
+                    ]
         Can.PAnything -> []
         _ ->
-            -- Nested pattern: bind to a fresh temp, then recurse via patternBindings
             let tmp = "__sky_cf_" ++ show idx ++ "_" ++ subject
             in GoIr.GoShortDecl tmp fieldAccess : patternBindings tmp innerPat
 
