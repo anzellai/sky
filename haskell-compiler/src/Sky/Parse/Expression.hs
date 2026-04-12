@@ -246,9 +246,9 @@ exprAtom_ mkError =
                          Just '|' -> do
                              -- Record update: { name | field = val, ... }
                              char mkError '|'
-                             spaces
+                             freshLine mkError
                              fields <- recordFields mkError
-                             spaces
+                             freshLine mkError
                              char mkError '}'
                              return (Src.Update name fields)
                          Just '=' -> do
@@ -257,7 +257,7 @@ exprAtom_ mkError =
                              spaces
                              val <- expression mkError
                              rest <- recordFieldsRest mkError
-                             spaces
+                             freshLine mkError
                              char mkError '}'
                              return (Src.Record ((name, val) : rest))
                          _ -> error "Expected | or = after record field name"
