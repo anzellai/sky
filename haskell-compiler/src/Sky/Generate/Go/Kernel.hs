@@ -435,4 +435,12 @@ registry = Map.fromList
     , (("Auth", "register"),       KernelInfo "rt.Auth_register" 3 False)
     , (("Auth", "login"),          KernelInfo "rt.Auth_login" 3 False)
     , (("Auth", "setRole"),        KernelInfo "rt.Auth_setRole" 3 False)
+
+    -- ═══════════════════════════════════════════════════════
+    -- Json.Decode.Pipeline
+    -- ═══════════════════════════════════════════════════════
+    , (("JsonDecP", "required"),   KernelInfo "rt.JsonDecP_required" 3 False)
+    , (("JsonDecP", "optional"),   KernelInfo "rt.JsonDecP_optional" 4 False)
+    , (("JsonDecP", "custom"),     KernelInfo "rt.JsonDecP_custom" 2 False)
+    , (("JsonDecP", "requiredAt"), KernelInfo "rt.JsonDecP_requiredAt" 3 False)
     ]

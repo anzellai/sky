@@ -3,6 +3,7 @@ package rt
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -311,4 +312,191 @@ func JsonDec_fail(msg any) any {
 	return JsonDecoder{run: func(_ any) any {
 		return Err[any, any](m)
 	}}
+}
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.Json.Decode.Pipeline (NoRedInk-style applicative pipelines)
+// ═══════════════════════════════════════════════════════════
+
+// Pipeline.required : String -> JsonDecoder a -> JsonDecoder (a -> b) -> JsonDecoder b
+// Applies (decoder for field name) to a function decoder.
+func JsonDecP_required(name any, inner any, fnDec any) any {
+	return JsonDecoder{run: func(v any) any {
+		// Run fnDec to get a function
+		fd, ok := fnDec.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline: fn decoder required")
+		}
+		fnR := fd.run(v)
+		fnSr, ok := fnR.(SkyResult[any, any])
+		if !ok || fnSr.Tag != 0 {
+			return fnR
+		}
+		// Extract field
+		m, ok := v.(map[string]any)
+		if !ok {
+			return Err[any, any]("pipeline.required: expected object")
+		}
+		fv, exists := m[fmt.Sprintf("%v", name)]
+		if !exists {
+			return Err[any, any]("pipeline.required: missing field " + fmt.Sprintf("%v", name))
+		}
+		innerDec, ok := inner.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline.required: invalid inner decoder")
+		}
+		innerR := innerDec.run(fv)
+		innerSr, ok := innerR.(SkyResult[any, any])
+		if !ok || innerSr.Tag != 0 {
+			return innerR
+		}
+		// Apply function
+		return Ok[any, any](pipelineApply(fnSr.OkValue, innerSr.OkValue))
+	}}
+}
+
+// Pipeline.optional : String -> JsonDecoder a -> a -> JsonDecoder (a -> b) -> JsonDecoder b
+func JsonDecP_optional(name any, inner any, def any, fnDec any) any {
+	return JsonDecoder{run: func(v any) any {
+		fd, ok := fnDec.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline: fn decoder required")
+		}
+		fnR := fd.run(v)
+		fnSr, ok := fnR.(SkyResult[any, any])
+		if !ok || fnSr.Tag != 0 {
+			return fnR
+		}
+		var val any = def
+		if m, ok := v.(map[string]any); ok {
+			if fv, exists := m[fmt.Sprintf("%v", name)]; exists {
+				if innerDec, ok := inner.(JsonDecoder); ok {
+					innerR := innerDec.run(fv)
+					if innerSr, ok := innerR.(SkyResult[any, any]); ok && innerSr.Tag == 0 {
+						val = innerSr.OkValue
+					}
+				}
+			}
+		}
+		return Ok[any, any](pipelineApply(fnSr.OkValue, val))
+	}}
+}
+
+// Pipeline.custom : JsonDecoder a -> JsonDecoder (a -> b) -> JsonDecoder b
+func JsonDecP_custom(inner any, fnDec any) any {
+	return JsonDecoder{run: func(v any) any {
+		fd, ok := fnDec.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline: fn decoder required")
+		}
+		fnR := fd.run(v)
+		fnSr, ok := fnR.(SkyResult[any, any])
+		if !ok || fnSr.Tag != 0 {
+			return fnR
+		}
+		innerDec, ok := inner.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline.custom: invalid inner")
+		}
+		innerR := innerDec.run(v)
+		innerSr, ok := innerR.(SkyResult[any, any])
+		if !ok || innerSr.Tag != 0 {
+			return innerR
+		}
+		return Ok[any, any](pipelineApply(fnSr.OkValue, innerSr.OkValue))
+	}}
+}
+
+// Pipeline.requiredAt : List String -> JsonDecoder a -> JsonDecoder (a -> b) -> JsonDecoder b
+func JsonDecP_requiredAt(path any, inner any, fnDec any) any {
+	return JsonDecoder{run: func(v any) any {
+		fd, ok := fnDec.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline: fn decoder required")
+		}
+		fnR := fd.run(v)
+		fnSr, ok := fnR.(SkyResult[any, any])
+		if !ok || fnSr.Tag != 0 {
+			return fnR
+		}
+		cur := v
+		for _, seg := range asList(path) {
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return Err[any, any]("pipeline.requiredAt: expected object at " + fmt.Sprintf("%v", seg))
+			}
+			fv, exists := m[fmt.Sprintf("%v", seg)]
+			if !exists {
+				return Err[any, any]("pipeline.requiredAt: missing " + fmt.Sprintf("%v", seg))
+			}
+			cur = fv
+		}
+		innerDec, ok := inner.(JsonDecoder)
+		if !ok {
+			return Err[any, any]("pipeline.requiredAt: invalid inner")
+		}
+		innerR := innerDec.run(cur)
+		innerSr, ok := innerR.(SkyResult[any, any])
+		if !ok || innerSr.Tag != 0 {
+			return innerR
+		}
+		return Ok[any, any](pipelineApply(fnSr.OkValue, innerSr.OkValue))
+	}}
+}
+
+// pipelineApply: apply an accumulator to one more argument.
+// Accumulators in elm-style pipelines start as a multi-arg function and are
+// progressively applied one field at a time. The function may be a Go
+// func(any) any or func(any, any, ...) any — we dispatch via reflect.
+// Returns either the next partially-applied function or the final value.
+func pipelineApply(acc any, arg any) any {
+	if acc == nil {
+		return nil
+	}
+	// 1-arg curried function — fast path
+	if f, ok := acc.(func(any) any); ok {
+		return f(arg)
+	}
+	// Multi-arg Go function via reflect: take arg and produce a partial
+	rv := reflect.ValueOf(acc)
+	if rv.Kind() != reflect.Func {
+		return acc
+	}
+	ft := rv.Type()
+	n := ft.NumIn()
+	if n == 0 {
+		return acc
+	}
+	if n == 1 {
+		out := rv.Call([]reflect.Value{reflect.ValueOf(arg)})
+		if len(out) > 0 {
+			return out[0].Interface()
+		}
+		return nil
+	}
+	// n >= 2: partially apply — return a new func(any) any that captures arg
+	// and takes the remaining n-1 args one at a time.
+	applied := []any{arg}
+	var build func([]any) any
+	build = func(collected []any) any {
+		if len(collected) == n {
+			vs := make([]reflect.Value, n)
+			for i, a := range collected {
+				if a == nil {
+					vs[i] = reflect.Zero(ft.In(i))
+				} else {
+					vs[i] = reflect.ValueOf(a)
+				}
+			}
+			out := rv.Call(vs)
+			if len(out) > 0 {
+				return out[0].Interface()
+			}
+			return nil
+		}
+		return func(next any) any {
+			return build(append(collected, next))
+		}
+	}
+	return build(applied)
 }

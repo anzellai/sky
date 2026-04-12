@@ -201,6 +201,7 @@ kernelFunctions = Map.fromList
                     "findWhere", "withTransaction"])
     , ("Auth",    ["hashPassword", "verifyPassword", "signToken", "verifyToken",
                     "register", "login", "setRole"])
+    , ("JsonDecP",["required", "optional", "custom", "requiredAt"])
     ]
 
 

@@ -41,12 +41,30 @@ stringLiteral mkError = Parser $ \s cok _eok _cerr eerr ->
                     case findSingleClose rest1 of
                         Just (content, rest2) ->
                             let len = 1 + T.length content + 1
-                            in cok (SingleLine (T.unpack content))
+                            in cok (SingleLine (unescapeString (T.unpack content)))
                                    (s { _src = rest2, _offset = _offset s + len, _col = _col s + len })
                         Nothing ->
                             eerr (_row s) (_col s) mkError
 
         _ -> eerr (_row s) (_col s) mkError
+
+
+-- | Unescape a string's escape sequences so the parsed value is the actual
+-- runtime string. The raw captured text still contains backslashes from
+-- findSingleClose (which preserves them so \" doesn't terminate the string).
+unescapeString :: String -> String
+unescapeString [] = []
+unescapeString ('\\':c:rest) =
+    case c of
+        'n'  -> '\n' : unescapeString rest
+        't'  -> '\t' : unescapeString rest
+        'r'  -> '\r' : unescapeString rest
+        '\\' -> '\\' : unescapeString rest
+        '"'  -> '"'  : unescapeString rest
+        '\'' -> '\'' : unescapeString rest
+        '0'  -> '\0' : unescapeString rest
+        other -> '\\' : other : unescapeString rest
+unescapeString (c:rest) = c : unescapeString rest
 
 
 -- | Parse a character literal: 'c'

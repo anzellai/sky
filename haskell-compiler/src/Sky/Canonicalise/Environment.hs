@@ -244,5 +244,6 @@ kernelModules = Map.fromList
     , ("Std.Live.Events",      "Event")
     , ("Sky.Core.Json.Encode", "JsonEnc")
     , ("Sky.Core.Json.Decode", "JsonDec")
+    , ("Sky.Core.Json.Decode.Pipeline", "JsonDecP")
     , ("Sky.Core.Prelude", "Basics")  -- Prelude maps to Basics
     ]
