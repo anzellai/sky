@@ -286,12 +286,57 @@ func Basics_always[A any, B any](a A, _ B) A {
 	return a
 }
 
-func Basics_not(b bool) bool {
-	return !b
+func Basics_not(b any) any {
+	return !AsBool(b)
 }
 
 func Basics_toString(v any) string {
 	return fmt.Sprintf("%v", v)
+}
+
+// Basics_modBy, Basics_fst, Basics_snd — any-typed to match the codegen's
+// default calling convention. modBy is (divisor, dividend) — divisor first
+// to match the Elm/Sky argument order for pipeline use.
+func Basics_modBy(divisor, n any) any {
+	d := AsInt(divisor)
+	if d == 0 {
+		return 0
+	}
+	return AsInt(n) % d
+}
+
+func Basics_fst(t any) any {
+	switch v := t.(type) {
+	case SkyTuple2:
+		return v.V0
+	case SkyTuple3:
+		return v.V0
+	}
+	return nil
+}
+
+func Basics_snd(t any) any {
+	switch v := t.(type) {
+	case SkyTuple2:
+		return v.V1
+	case SkyTuple3:
+		return v.V1
+	}
+	return nil
+}
+
+func List_cons(head, tail any) any {
+	if tail == nil {
+		return []any{head}
+	}
+	switch xs := tail.(type) {
+	case []any:
+		out := make([]any, 0, len(xs)+1)
+		out = append(out, head)
+		out = append(out, xs...)
+		return out
+	}
+	return []any{head}
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -963,7 +1008,114 @@ func AnyTaskRun(task any) any {
 // ═══════════════════════════════════════════════════════════
 
 func Time_now() any {
-	return time.Now().UnixMilli()
+	return Ok[any, any](time.Now().UnixMilli())
+}
+
+// Time_timeString: format unixMillis as "HH:MM:SS"
+func Time_timeString(ms any) any {
+	return Ok[any, any](time.Unix(int64(AsInt(ms))/1000, 0).Format("15:04:05"))
+}
+
+// Sha256, Hex, String.toBytes wrappers matching the Sky.Core namespace split.
+// sum256: (List Int of UTF-8 bytes) -> Result String (List Int of hash bytes)
+func Sha256_sum256(bytes any) any {
+	var b []byte
+	if xs, ok := bytes.([]any); ok {
+		b = make([]byte, len(xs))
+		for i, v := range xs {
+			b[i] = byte(AsInt(v))
+		}
+	} else {
+		b = []byte(fmt.Sprintf("%v", bytes))
+	}
+	h := sha256.Sum256(b)
+	out := make([]any, len(h))
+	for i, v := range h {
+		out[i] = int(v)
+	}
+	return Ok[any, any](out)
+}
+
+func Sha256_sum256String(s any) any {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%v", s)))
+	return Ok[any, any](hex.EncodeToString(h[:]))
+}
+
+func Hex_encodeToString(bytes any) any {
+	if xs, ok := bytes.([]any); ok {
+		b := make([]byte, len(xs))
+		for i, v := range xs {
+			b[i] = byte(AsInt(v))
+		}
+		return Ok[any, any](hex.EncodeToString(b))
+	}
+	return Ok[any, any](hex.EncodeToString([]byte(fmt.Sprintf("%v", bytes))))
+}
+
+func Hex_encode(bytes any) any { return Hex_encodeToString(bytes) }
+
+func Hex_decode(s any) any {
+	b, err := hex.DecodeString(fmt.Sprintf("%v", s))
+	if err != nil {
+		return Err[any, any](err.Error())
+	}
+	out := make([]any, len(b))
+	for i, v := range b {
+		out[i] = int(v)
+	}
+	return Ok[any, any](out)
+}
+
+func String_toBytes(s any) any {
+	b := []byte(fmt.Sprintf("%v", s))
+	out := make([]any, len(b))
+	for i, v := range b {
+		out[i] = int(v)
+	}
+	return out
+}
+
+func String_fromBytes(bytes any) any {
+	if xs, ok := bytes.([]any); ok {
+		b := make([]byte, len(xs))
+		for i, v := range xs {
+			b[i] = byte(AsInt(v))
+		}
+		return string(b)
+	}
+	return ""
+}
+
+// Os — CLI args, environment, cwd, exit
+func Os_args() any {
+	out := make([]any, 0, len(os.Args))
+	if len(os.Args) > 1 {
+		for _, a := range os.Args[1:] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+func Os_getenv(name any) any {
+	v := os.Getenv(fmt.Sprintf("%v", name))
+	if v == "" {
+		return Nothing[any]()
+	}
+	return Just[any](v)
+}
+
+func Os_cwd() any {
+	wd, err := os.Getwd()
+	if err != nil {
+		return Err[any, any](err.Error())
+	}
+	return Ok[any, any](wd)
+}
+
+func Os_exit(code any) any {
+	os.Exit(AsInt(code))
+	return struct{}{}
 }
 
 func Time_sleep(ms any) any {

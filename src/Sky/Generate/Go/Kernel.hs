@@ -327,6 +327,22 @@ registry = Map.fromList
     , (("Slog", "warn"),          KernelInfo "rt.Slog_warn" 1 False)
     , (("Slog", "error"),         KernelInfo "rt.Slog_error" 1 False)
     , (("Slog", "debug"),         KernelInfo "rt.Slog_debug" 1 False)
+    , (("Sha256", "sum256"),      KernelInfo "rt.Sha256_sum256" 1 False)
+    , (("Sha256", "sum256String"),KernelInfo "rt.Sha256_sum256String" 1 False)
+    , (("Hex", "encode"),         KernelInfo "rt.Hex_encode" 1 False)
+    , (("Hex", "encodeToString"), KernelInfo "rt.Hex_encodeToString" 1 False)
+    , (("Hex", "decode"),         KernelInfo "rt.Hex_decode" 1 False)
+    , (("Os", "args"),            KernelInfo "rt.Os_args" 0 False)
+    , (("Os", "getenv"),          KernelInfo "rt.Os_getenv" 1 False)
+    , (("Os", "cwd"),             KernelInfo "rt.Os_cwd" 0 False)
+    , (("Os", "exit"),            KernelInfo "rt.Os_exit" 1 False)
+    , (("Time", "timeString"),    KernelInfo "rt.Time_timeString" 1 False)
+    , (("String", "toBytes"),     KernelInfo "rt.String_toBytes" 1 False)
+    , (("String", "fromBytes"),   KernelInfo "rt.String_fromBytes" 1 False)
+    , (("Basics", "modBy"),       KernelInfo "rt.Basics_modBy" 2 False)
+    , (("Basics", "fst"),         KernelInfo "rt.Basics_fst" 1 False)
+    , (("Basics", "snd"),         KernelInfo "rt.Basics_snd" 1 False)
+    , (("List", "cons"),          KernelInfo "rt.List_cons" 2 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Std.Html — VNode element builders

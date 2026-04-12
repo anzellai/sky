@@ -305,7 +305,42 @@ var (
 	Css_letterSpacing = cssP("letter-spacing")
 	Css_userSelect   = cssP("user-select")
 	Css_fontStyle    = cssP("font-style")
+	Css_maxHeight    = cssP("max-height")
+	Css_minHeight    = cssP("min-height")
+	Css_borderColor  = cssP("border-color")
+	Css_flex         = cssP("flex")
+	Css_flexGrow     = cssP("flex-grow")
+	Css_flexShrink   = cssP("flex-shrink")
+	Css_flexBasis    = cssP("flex-basis")
+	Css_gridColumn   = cssP("grid-column")
+	Css_gridRow      = cssP("grid-row")
+	Css_rowGap       = cssP("row-gap")
+	Css_columnGap   = cssP("column-gap")
+	Css_boxSizing    = cssP("box-sizing")
+	Css_borderBox    = func() any { return "border-box" }
+	Css_zero         = func() any { return "0" }
+	Css_systemFont   = func() any { return "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif" }
 )
+
+// rgba(r,g,b,a) -> "rgba(r, g, b, a)"
+func Css_rgba(r, g, b, a any) any {
+	return fmt.Sprintf("rgba(%v, %v, %v, %v)", r, g, b, a)
+}
+
+// shadow(offX, offY, blur, colour) -> a short-hand box-shadow value string
+func Css_shadow(offX, offY, blur, colour any) any {
+	return fmt.Sprintf("%v %v %v %v", offX, offY, blur, colour)
+}
+
+// media("(max-width: 640px)", rules) -> wraps rules under a media query
+func Css_media(query any, rules any) any {
+	return cssMediaRule{query: fmt.Sprintf("%v", query), rules: rules}
+}
+
+type cssMediaRule struct {
+	query string
+	rules any
+}
 
 // ═══════════════════════════════════════════════════════════
 // VNode rendering

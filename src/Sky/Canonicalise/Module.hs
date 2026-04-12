@@ -259,6 +259,7 @@ kernelFunctions = Map.fromList
     , ("String",  ["length", "reverse", "append", "split", "join", "contains",
                     "startsWith", "endsWith", "toInt", "fromInt", "toFloat", "fromFloat",
                     "toUpper", "toLower", "trim", "replace", "slice", "isEmpty",
+                    "toBytes", "fromBytes",
                     "left", "right", "padLeft", "padRight", "repeat", "lines", "words",
                     "isValid", "normalize", "normalizeNFD", "casefold", "equalFold",
                     "graphemes", "trimStart", "trimEnd",
@@ -278,7 +279,7 @@ kernelFunctions = Map.fromList
                     "lazy", "run", "map2", "map3", "map4", "map5", "andMap"])
     , ("Log",     ["println", "debug", "info", "warn", "error", "with", "errorWith"])
     , ("Cmd",     ["none", "batch", "perform"])
-    , ("Time",    ["now", "sleep", "every", "unixMillis",
+    , ("Time",    ["now", "sleep", "every", "unixMillis", "timeString",
                     "formatISO8601", "formatRFC3339", "formatHTTP", "format",
                     "parseISO8601", "parse", "addMillis", "diffMillis"])
     , ("Random",  ["int", "float", "choice", "shuffle"])
@@ -312,12 +313,19 @@ kernelFunctions = Map.fromList
                     "alt", "name", "placeholder", "title", "for", "checked",
                     "disabled", "readonly", "required", "autofocus", "rel",
                     "target", "method", "action"])
-    , ("Css",     ["stylesheet", "rule", "property", "px", "rem", "em", "pct", "hex",
+    , ("Css",     ["stylesheet", "rule", "property", "px", "rem", "em", "pct", "hex", "rgba",
                     "color", "background", "backgroundColor", "padding", "padding2",
                     "margin", "margin2", "fontSize", "fontWeight", "fontFamily",
-                    "lineHeight", "textAlign", "border", "borderRadius",
-                    "borderBottom", "display", "cursor", "gap", "justifyContent",
-                    "alignItems", "width", "height", "maxWidth", "minWidth", "transform"])
+                    "lineHeight", "textAlign", "textDecoration", "border", "borderRadius",
+                    "borderTop", "borderBottom", "borderLeft", "borderRight", "borderColor",
+                    "display", "cursor", "gap", "justifyContent", "alignItems",
+                    "width", "height", "maxWidth", "minWidth", "maxHeight", "minHeight",
+                    "transform", "transition", "top", "bottom", "left", "right",
+                    "position", "zIndex", "opacity", "overflow", "overflowX", "overflowY",
+                    "flex", "flexDirection", "flexWrap", "flexGrow", "flexShrink", "flexBasis",
+                    "gridTemplateColumns", "gridTemplateRows", "gridColumn", "gridRow",
+                    "gridGap", "gap", "rowGap", "columnGap", "boxShadow", "boxSizing",
+                    "media", "shadow", "zero", "borderBox", "systemFont"])
     , ("Live",    ["app", "route"])
     , ("Event",   ["onClick", "onInput", "onChange", "onSubmit", "onDblClick",
                     "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
@@ -327,8 +335,12 @@ kernelFunctions = Map.fromList
                     "size", "union", "intersect", "diff"])
     , ("JsonEnc", ["string", "int", "float", "bool", "null", "list", "object", "encode"])
     , ("JsonDec", ["decodeString", "string", "int", "float", "bool", "field", "list",
-                    "map", "andThen", "succeed", "fail",
+                    "map", "andThen", "succeed", "fail", "oneOf",
                     "at", "map2", "map3", "map4", "map5"])
+    , ("Sha256",  ["sum256", "sum256String"])
+    , ("Hex",     ["encode", "encodeToString", "decode"])
+    , ("Os",      ["args", "getenv", "cwd", "exit"])
+    , ("Slog",    ["info", "warn", "error", "debug"])
     , ("Db",      ["connect", "open", "close", "exec", "query", "queryDecode",
                     "insertRow", "getById", "updateById", "deleteById",
                     "findWhere", "withTransaction"])
