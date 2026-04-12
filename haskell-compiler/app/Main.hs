@@ -125,10 +125,17 @@ runCommand cmd = case cmd of
                 return (Right ())
 
     Check path -> do
-        putStrLn $ "Checking " ++ path ++ "..."
-        -- TODO: parse + typecheck only
-        putStrLn "Check not yet implemented"
-        return (Right ())
+        hasToml <- doesFileExist "sky.toml"
+        config <- if hasToml
+            then Toml.parseSkyToml <$> readFile "sky.toml"
+            else return Toml.defaultConfig
+        -- Parse + typecheck only (no codegen, no go build)
+        result <- Compile.compile config path "sky-out"
+        case result of
+            Left err -> return (Left err)
+            Right _ -> do
+                putStrLn "No errors found."
+                return (Right ())
 
     Fmt path -> do
         putStrLn $ "Formatting " ++ path ++ "..."
@@ -139,18 +146,60 @@ runCommand cmd = case cmd of
     Init mName -> do
         let name = maybe "sky-project" id mName
         putStrLn $ "Initialising project: " ++ name
-        -- TODO: create sky.toml, src/Main.sky, .gitignore, CLAUDE.md
-        putStrLn "Init not yet implemented"
+        -- Create project structure
+        createDirectoryIfMissing True (name ++ "/src")
+        writeFile (name ++ "/sky.toml") $ unlines
+            [ "name = \"" ++ name ++ "\""
+            , "version = \"0.1.0\""
+            , "entry = \"src/Main.sky\""
+            , ""
+            , "[source]"
+            , "root = \"src\""
+            ]
+        writeFile (name ++ "/src/Main.sky") $ unlines
+            [ "module Main exposing (main)"
+            , ""
+            , "import Sky.Core.Prelude exposing (..)"
+            , "import Std.Log exposing (println)"
+            , ""
+            , ""
+            , "main ="
+            , "    println \"Hello from " ++ name ++ "!\""
+            ]
+        writeFile (name ++ "/.gitignore") $ unlines
+            [ "sky-out/"
+            , ".skycache/"
+            , ".skydeps/"
+            ]
+        putStrLn $ "Created " ++ name ++ "/"
+        putStrLn $ "  sky.toml"
+        putStrLn $ "  src/Main.sky"
+        putStrLn $ "  .gitignore"
+        putStrLn $ ""
+        putStrLn $ "Next: cd " ++ name ++ " && sky build src/Main.sky"
         return (Right ())
 
     Add pkg -> do
         putStrLn $ "Adding " ++ pkg ++ "..."
-        putStrLn "Add not yet implemented"
+        -- Ensure sky-out exists with go.mod
+        createDirectoryIfMissing True "sky-out"
+        hasGoMod <- doesFileExist "sky-out/go.mod"
+        if not hasGoMod
+            then writeFile "sky-out/go.mod" $ unlines ["module sky-app", "", "go 1.21"]
+            else return ()
+        -- Run go get
+        callProcess "sh" ["-c", "cd sky-out && go get " ++ pkg]
+        putStrLn $ "Added " ++ pkg
         return (Right ())
 
     Remove pkg -> do
         putStrLn $ "Removing " ++ pkg ++ "..."
-        putStrLn "Remove not yet implemented"
+        hasGoMod <- doesFileExist "sky-out/go.mod"
+        if hasGoMod
+            then do
+                callProcess "sh" ["-c", "cd sky-out && go mod edit -droprequire " ++ pkg ++ " && go mod tidy"]
+                putStrLn $ "Removed " ++ pkg
+            else putStrLn "No sky-out/go.mod found. Run sky build first."
         return (Right ())
 
     Install -> do
