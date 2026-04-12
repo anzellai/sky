@@ -265,20 +265,54 @@ func Css_stylesheet(rules any) any {
 	rs := asList(rules)
 	var sb strings.Builder
 	for _, r := range rs {
-		if cr, ok := r.(cssRule); ok {
-			sb.WriteString(cr.selector)
-			sb.WriteString(" {\n")
-			for _, p := range cr.props {
-				sb.WriteString("  ")
-				sb.WriteString(p.k)
-				sb.WriteString(": ")
-				sb.WriteString(p.v)
-				sb.WriteString(";\n")
-			}
-			sb.WriteString("}\n")
-		}
+		renderCssRule(&sb, r)
 	}
 	return sb.String()
+}
+
+// renderCssRule handles the three rule shapes (cssRule, cssMediaRule,
+// cssKeyframesRule) plus plain strings (already-rendered fragments from
+// legacy-style APIs) and nested []any lists.
+func renderCssRule(sb *strings.Builder, r any) {
+	switch cr := r.(type) {
+	case cssRule:
+		sb.WriteString(cr.selector)
+		sb.WriteString(" {\n")
+		for _, p := range cr.props {
+			sb.WriteString("  ")
+			sb.WriteString(p.k)
+			sb.WriteString(": ")
+			sb.WriteString(p.v)
+			sb.WriteString(";\n")
+		}
+		sb.WriteString("}\n")
+	case cssMediaRule:
+		sb.WriteString("@media ")
+		sb.WriteString(cr.query)
+		sb.WriteString(" {\n")
+		for _, inner := range asList(cr.rules) {
+			renderCssRule(sb, inner)
+		}
+		sb.WriteString("}\n")
+	case cssKeyframesRule:
+		sb.WriteString("@keyframes ")
+		sb.WriteString(cr.name)
+		sb.WriteString(" { ")
+		for _, f := range cr.frames {
+			sb.WriteString(f)
+			sb.WriteString(" ")
+		}
+		sb.WriteString("}\n")
+	case string:
+		sb.WriteString(cr)
+		if !strings.HasSuffix(cr, "\n") {
+			sb.WriteString("\n")
+		}
+	case []any:
+		for _, inner := range cr {
+			renderCssRule(sb, inner)
+		}
+	}
 }
 
 func Css_rule(selector any, props any) any {

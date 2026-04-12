@@ -346,7 +346,10 @@ staticKernelFunctions = Map.fromList
                     "htmlNode", "headNode", "meta", "render", "body", "title",
                     "titleNode", "link", "script",
                     "details", "summary", "dialog", "video", "audio", "canvas",
-                    "iframe", "progress", "meter"])
+                    "iframe", "progress", "meter",
+                    "aside", "fieldset", "legend", "tfoot",
+                    "linkNode", "mainNode", "footerNode", "voidNode",
+                    "attrToString", "toString", "escapeHtml", "escapeAttr"])
     , ("Attr",    ["class", "id", "style", "type", "type_", "value", "href", "src",
                     "alt", "name", "placeholder", "title", "for", "checked",
                     "disabled", "readonly", "required", "autofocus", "rel",
@@ -355,7 +358,10 @@ staticKernelFunctions = Map.fromList
                     "rows", "cols", "maxlength", "minlength", "step", "min",
                     "max", "pattern", "accept", "multiple", "size", "tabindex",
                     "ariaLabel", "ariaHidden", "role", "dataAttr", "spellcheck",
-                    "dir", "lang", "translate"])
+                    "dir", "lang", "translate",
+                    "hidden", "download", "enctype", "novalidate", "autocomplete",
+                    "colspan", "rowspan", "scope", "selected", "height", "width",
+                    "ariaDescribedby", "ariaExpanded", "boolAttribute", "dataAttribute"])
     , ("Css",     ["stylesheet", "rule", "property", "px", "rem", "em", "pct", "hex", "rgba",
                     "color", "background", "backgroundColor", "padding", "padding2",
                     "margin", "margin2", "fontSize", "fontWeight", "fontFamily",
@@ -382,11 +388,23 @@ staticKernelFunctions = Map.fromList
                     "pointerEvents", "objectFit", "objectPosition",
                     "backgroundSize", "backgroundPosition", "backgroundRepeat",
                     "listStyle", "listStyleType", "listStylePosition",
-                    "verticalAlign"])
+                    "verticalAlign",
+                    "vh", "vw", "ch", "deg", "ms", "sec",
+                    "rgb", "hsl", "hsla",
+                    "alignSelf", "alignContent", "order", "gridArea",
+                    "borderWidth", "borderStyle", "textOverflow", "textShadow",
+                    "clear", "float", "right_", "animation",
+                    "minmax", "rotate", "scale", "translateX", "translateY",
+                    "cssVar", "cssVarOr", "defineVar", "calc", "important",
+                    "shadows", "borderRadius4", "padding4",
+                    "keyframes", "frame", "boxSizingBorderBox"])
     , ("Live",    ["app", "route"])
     , ("Event",   ["onClick", "onInput", "onChange", "onSubmit", "onDblClick",
                     "onMouseOver", "onMouseOut", "onKeyDown", "onKeyUp",
-                    "onFocus", "onBlur"])
+                    "onFocus", "onBlur",
+                    "on", "onContextMenu", "onError", "onKeyPress", "onLoad",
+                    "onMouseDown", "onMouseUp", "onReset", "onResize", "onScroll",
+                    "onSelect"])
     , ("Sub",     ["none", "every"])
     , ("Set",     ["empty", "fromList", "insert", "remove", "member", "toList",
                     "size", "union", "intersect", "diff"])

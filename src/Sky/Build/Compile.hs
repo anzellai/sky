@@ -477,12 +477,13 @@ generateDeclsForDep canMod modPrefix =
                 Can.TypedDef (A.At _ n) _ typedPats expr _ -> (n, map fst typedPats, expr)
                 Can.DestructDef{} -> error "unreachable: filtered above"
               goName = modPrefix ++ "_" ++ name
+              (goParams', destructStmts) = destructureParams params
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = goName
                 , GoIr._gf_typeParams = []
-                , GoIr._gf_params = map patternToParam params
+                , GoIr._gf_params = goParams'
                 , GoIr._gf_returnType = "any"
-                , GoIr._gf_body = [GoIr.GoReturn (exprToGo body)]
+                , GoIr._gf_body = destructStmts ++ [GoIr.GoReturn (exprToGo body)]
                 }
            ]
 
@@ -805,15 +806,36 @@ generateDef def solvedTypes =
         let bodyExpr = if isTyped
                 then exprToGoTypedWithRet solvedTypes goRetType body
                 else exprToGo body
+            -- Emit destructuring statements for any non-PVar param patterns.
+            -- Non-trivial params become `_pN any` and the function body starts
+            -- with `patternBindings "_pN" pat` so inner names are available.
+            (goParams', destructStmts) = destructureParams params
         in
         [ GoIr.GoDeclFunc GoIr.GoFuncDecl
             { GoIr._gf_name = goSafeName name
             , GoIr._gf_typeParams = []
-            , GoIr._gf_params = goParams
+            , GoIr._gf_params = goParams'
             , GoIr._gf_returnType = goRetType
-            , GoIr._gf_body = [GoIr.GoReturn bodyExpr]
+            , GoIr._gf_body = destructStmts ++ [GoIr.GoReturn bodyExpr]
             }
         ]
+
+
+-- | Generate function parameters and destructuring statements for any
+-- non-PVar patterns. Returns (params, prelude stmts) where the prelude
+-- binds names extracted from complex patterns in the function body.
+destructureParams :: [Can.Pattern] -> ([GoIr.GoParam], [GoIr.GoStmt])
+destructureParams pats =
+    let (params, stmtLists) = unzip (zipWith oneParam [0::Int ..] pats)
+    in (params, concat stmtLists)
+  where
+    oneParam idx (A.At _ pat) = case pat of
+        Can.PVar name -> (GoIr.GoParam (goSafeName name) "any", [])
+        Can.PAnything -> (GoIr.GoParam "_" "any", [])
+        Can.PUnit     -> (GoIr.GoParam "_" "any", [])
+        _ ->
+            let tmp = "_p" ++ show idx
+            in (GoIr.GoParam tmp "any", patternBindings tmp pat)
 
 
 -- | Escape Sky identifiers that collide with Go reserved/builtin names.
@@ -922,7 +944,7 @@ exprToGo (A.At _ expr) = case expr of
 
     Can.Lambda params body ->
         -- Generate curried function: \a b -> body becomes func(a any) any { return func(b any) any { return body } }
-        curryLambda (map patternToParam params) (exprToGo body)
+        curryLambdaPat params (exprToGo body)
 
     Can.Call func args ->
         case A.toValue func of
@@ -1777,7 +1799,7 @@ exprToGoTyped types retType (A.At _ expr) = case expr of
     Can.Negate inner -> GoIr.GoUnary "-" (exprToGoTyped types retType inner)
 
     Can.Lambda params body ->
-        curryLambda (map patternToParam params) (exprToGoTyped types retType body)
+        curryLambdaPat params (exprToGoTyped types retType body)
 
     _ -> exprToGo (A.At A.one expr)
 
@@ -1871,6 +1893,40 @@ curryLambda [] body = body
 curryLambda [p] body = GoIr.GoFuncLit [p] "any" [GoIr.GoReturn body]
 curryLambda (p:ps) body =
     GoIr.GoFuncLit [p] "any" [GoIr.GoReturn (curryLambda ps body)]
+
+
+-- | Pattern-aware currying. Each param that is not a simple PVar is bound
+-- to `_pN any` and destructured via patternBindings inside the innermost
+-- lambda body. This lets `\(a, b) -> a + b` compile correctly.
+curryLambdaPat :: [Can.Pattern] -> GoIr.GoExpr -> GoIr.GoExpr
+curryLambdaPat [] body = body
+curryLambdaPat pats body =
+    let go _   []     = [GoIr.GoReturn body]
+        go idx (p:ps) =
+            let (param, stmts) = oneLambdaParam idx p
+                inner          = case ps of
+                    [] -> stmts ++ [GoIr.GoReturn body]
+                    _  -> stmts ++ [GoIr.GoReturn (wrap (idx + 1) ps)]
+            in [GoIr.GoReturn (GoIr.GoFuncLit [param] "any" inner)]
+        wrap idx (p:ps) =
+            let (param, stmts) = oneLambdaParam idx p
+                tail_ = case ps of
+                    [] -> stmts ++ [GoIr.GoReturn body]
+                    _  -> stmts ++ [GoIr.GoReturn (wrap (idx + 1) ps)]
+            in GoIr.GoFuncLit [param] "any" tail_
+        wrap _ [] = body
+    in case go 0 pats of
+        [GoIr.GoReturn e] -> e
+        _ -> body
+  where
+    oneLambdaParam :: Int -> Can.Pattern -> (GoIr.GoParam, [GoIr.GoStmt])
+    oneLambdaParam idx (A.At _ pat) = case pat of
+        Can.PVar name -> (GoIr.GoParam (goSafeName name) "any", [])
+        Can.PAnything -> (GoIr.GoParam "_" "any", [])
+        Can.PUnit     -> (GoIr.GoParam "_" "any", [])
+        _ ->
+            let tmp = "_lp" ++ show idx
+            in (GoIr.GoParam tmp "any", patternBindings tmp pat)
 
 
 -- | Convert a pattern to a Go function parameter
