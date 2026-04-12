@@ -2,8 +2,12 @@ package rt
 
 import (
 	"bufio"
+	"crypto/hmac"
 	"crypto/md5"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
+	"crypto/sha512"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -117,6 +121,10 @@ func Log_println(args ...any) any {
 // ═══════════════════════════════════════════════════════════
 // String
 // ═══════════════════════════════════════════════════════════
+
+func String_append(a any, b any) any {
+	return fmt.Sprintf("%v", a) + fmt.Sprintf("%v", b)
+}
 
 func String_fromInt(n any) any {
 	return strconv.Itoa(AsInt(n))
@@ -767,9 +775,69 @@ func Crypto_sha256(s any) any {
 	return hex.EncodeToString(h[:])
 }
 
+func Crypto_sha512(s any) any {
+	h := sha512.Sum512([]byte(fmt.Sprintf("%v", s)))
+	return hex.EncodeToString(h[:])
+}
+
+// Crypto.md5 — retained for legacy interoperability only.
+// Do not use for security-sensitive hashing: use sha256/sha512 instead.
 func Crypto_md5(s any) any {
 	h := md5.Sum([]byte(fmt.Sprintf("%v", s)))
 	return hex.EncodeToString(h[:])
+}
+
+// Crypto.hmacSha256 : String -> String -> String
+// (key, message) → hex HMAC. Uses crypto/hmac.
+func Crypto_hmacSha256(key any, msg any) any {
+	mac := hmac.New(sha256.New, []byte(fmt.Sprintf("%v", key)))
+	mac.Write([]byte(fmt.Sprintf("%v", msg)))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// Crypto.constantTimeEqual : String -> String -> Bool
+// Compares two strings in constant time — use when comparing secrets (tokens,
+// MACs, password hashes) so attackers can't use timing signals to leak bytes.
+// `==` / String equality is NOT safe for this; it short-circuits on first mismatch.
+func Crypto_constantTimeEqual(a any, b any) any {
+	sa := fmt.Sprintf("%v", a)
+	sb := fmt.Sprintf("%v", b)
+	return subtle.ConstantTimeCompare([]byte(sa), []byte(sb)) == 1
+}
+
+// Crypto.randomBytes : Int -> Task String String
+// Returns n cryptographically-secure random bytes, hex-encoded. Use for session
+// IDs, tokens, CSRF nonces, password-reset keys, etc.
+// Backed by crypto/rand which reads from the OS CSPRNG.
+func Crypto_randomBytes(n any) any {
+	return func() any {
+		size := AsInt(n)
+		if size <= 0 || size > 1024 {
+			return Err[any, any]("Crypto.randomBytes: size must be 1..1024")
+		}
+		b := make([]byte, size)
+		if _, err := cryptorand.Read(b); err != nil {
+			return Err[any, any]("Crypto.randomBytes: " + err.Error())
+		}
+		return Ok[any, any](hex.EncodeToString(b))
+	}
+}
+
+// Crypto.randomToken : Int -> Task String String
+// Like randomBytes but returns URL-safe base64 (RFC 4648) for use in cookies,
+// reset links, etc. Width is in bytes of entropy; the returned string is longer.
+func Crypto_randomToken(n any) any {
+	return func() any {
+		size := AsInt(n)
+		if size <= 0 || size > 1024 {
+			return Err[any, any]("Crypto.randomToken: size must be 1..1024")
+		}
+		b := make([]byte, size)
+		if _, err := cryptorand.Read(b); err != nil {
+			return Err[any, any]("Crypto.randomToken: " + err.Error())
+		}
+		return Ok[any, any](base64.RawURLEncoding.EncodeToString(b))
+	}
 }
 
 // ═══════════════════════════════════════════════════════════

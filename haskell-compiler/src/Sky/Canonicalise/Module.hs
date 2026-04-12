@@ -166,7 +166,8 @@ kernelFunctions = Map.fromList
     , ("Process", ["run", "exit", "getEnv", "getCwd", "loadEnv"])
     , ("Http",    ["get", "post", "request"])
     , ("Server",  ["listen", "get", "post", "put", "delete", "static", "text", "json", "html"])
-    , ("Crypto",  ["sha256", "sha512", "md5", "hmacSha256"])
+    , ("Crypto",  ["sha256", "sha512", "md5", "hmacSha256",
+                    "constantTimeEqual", "randomBytes", "randomToken"])
     , ("Encoding",["base64Encode", "base64Decode", "urlEncode", "urlDecode", "hexEncode", "hexDecode"])
     , ("Regex",   ["match", "find", "findAll", "replace", "split"])
     , ("Char",    ["isUpper", "isLower", "isDigit", "isAlpha", "toUpper", "toLower"])
@@ -201,7 +202,8 @@ kernelFunctions = Map.fromList
                     "insertRow", "getById", "updateById", "deleteById",
                     "findWhere", "withTransaction"])
     , ("Auth",    ["hashPassword", "verifyPassword", "signToken", "verifyToken",
-                    "register", "login", "setRole"])
+                    "register", "login", "setRole",
+                    "hashPasswordCost", "passwordStrength"])
     , ("JsonDecP",["required", "optional", "custom", "requiredAt"])
     ]
 

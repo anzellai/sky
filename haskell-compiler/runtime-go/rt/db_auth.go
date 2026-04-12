@@ -423,13 +423,67 @@ func normaliseSqlValue(v any) any {
 // ═══════════════════════════════════════════════════════════
 
 // Auth.hashPassword : String -> Result String String
+// Uses bcrypt at cost 12 — higher than Go's DefaultCost (10). Takes ~200ms on
+// a typical server; calibrated to resist offline GPU brute force while staying
+// acceptable on a login path.
+// Callers can use hashPasswordCost for custom cost.
 func Auth_hashPassword(pw any) any {
+	return Auth_hashPasswordCost(pw, 12)
+}
+
+// Auth.hashPasswordCost : String -> Int -> Result String String
+func Auth_hashPasswordCost(pw any, cost any) any {
 	s := fmt.Sprintf("%v", pw)
-	hash, err := bcrypt.GenerateFromPassword([]byte(s), bcrypt.DefaultCost)
+	c := AsInt(cost)
+	if c < bcrypt.MinCost {
+		c = bcrypt.MinCost
+	}
+	if c > bcrypt.MaxCost {
+		c = bcrypt.MaxCost
+	}
+	if len(s) < 8 {
+		return Err[any, any]("hashPassword: password must be at least 8 characters")
+	}
+	// bcrypt truncates at 72 bytes — reject overlong passwords explicitly
+	// to avoid the silent-truncation footgun where pw[0:72] collides.
+	if len(s) > 72 {
+		return Err[any, any]("hashPassword: password longer than 72 bytes (use a KDF like argon2 for long inputs)")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(s), c)
 	if err != nil {
 		return Err[any, any]("hashPassword: " + err.Error())
 	}
 	return Ok[any, any](string(hash))
+}
+
+// Auth.passwordStrength : String -> Result String ()
+// Enforces a safe baseline: ≥8 chars, ≤72 bytes, at least one letter + one digit.
+// Returns Ok () if strong enough, Err describing what's missing otherwise.
+func Auth_passwordStrength(pw any) any {
+	s := fmt.Sprintf("%v", pw)
+	if len(s) < 8 {
+		return Err[any, any]("password must be at least 8 characters")
+	}
+	if len(s) > 72 {
+		return Err[any, any]("password longer than 72 bytes (bcrypt limit)")
+	}
+	hasLetter := false
+	hasDigit := false
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+			hasDigit = true
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z'):
+			hasLetter = true
+		}
+	}
+	if !hasLetter {
+		return Err[any, any]("password must contain a letter")
+	}
+	if !hasDigit {
+		return Err[any, any]("password must contain a digit")
+	}
+	return Ok[any, any](struct{}{})
 }
 
 // Auth.verifyPassword : String -> String -> Bool

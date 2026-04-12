@@ -137,7 +137,7 @@ registry = Map.fromList
     , (("Task", "fail"),          KernelInfo "rt.AnyTaskFail" 1 False)
     , (("Task", "map"),           KernelInfo "rt.Task_map" 2 True)
     , (("Task", "andThen"),       KernelInfo "rt.AnyTaskAndThen" 2 False)
-    , (("Task", "perform"),       KernelInfo "rt.Task_perform" 1 True)
+    , (("Task", "perform"),       KernelInfo "rt.AnyTaskRun" 1 False)
     , (("Task", "sequence"),      KernelInfo "rt.Task_sequence" 1 True)
     , (("Task", "parallel"),      KernelInfo "rt.Task_parallel" 1 True)
     , (("Task", "lazy"),          KernelInfo "rt.Task_lazy" 1 True)
@@ -185,7 +185,12 @@ registry = Map.fromList
     , (("Io", "writeStderr"),     KernelInfo "rt.Io_writeStderr" 1 False)
 
     , (("Crypto", "sha256"),      KernelInfo "rt.Crypto_sha256" 1 False)
+    , (("Crypto", "sha512"),      KernelInfo "rt.Crypto_sha512" 1 False)
     , (("Crypto", "md5"),         KernelInfo "rt.Crypto_md5" 1 False)
+    , (("Crypto", "hmacSha256"),  KernelInfo "rt.Crypto_hmacSha256" 2 False)
+    , (("Crypto", "constantTimeEqual"), KernelInfo "rt.Crypto_constantTimeEqual" 2 False)
+    , (("Crypto", "randomBytes"), KernelInfo "rt.Crypto_randomBytes" 1 False)
+    , (("Crypto", "randomToken"), KernelInfo "rt.Crypto_randomToken" 1 False)
 
     , (("Encoding", "base64Encode"), KernelInfo "rt.Encoding_base64Encode" 1 False)
     , (("Encoding", "base64Decode"), KernelInfo "rt.Encoding_base64Decode" 1 False)
@@ -449,6 +454,8 @@ registry = Map.fromList
     , (("Auth", "register"),       KernelInfo "rt.Auth_register" 3 False)
     , (("Auth", "login"),          KernelInfo "rt.Auth_login" 3 False)
     , (("Auth", "setRole"),        KernelInfo "rt.Auth_setRole" 3 False)
+    , (("Auth", "hashPasswordCost"), KernelInfo "rt.Auth_hashPasswordCost" 2 False)
+    , (("Auth", "passwordStrength"), KernelInfo "rt.Auth_passwordStrength" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- Json.Decode.Pipeline
