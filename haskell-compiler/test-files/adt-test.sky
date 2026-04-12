@@ -1,0 +1,23 @@
+module Main exposing (main)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Std.Log exposing (println)
+
+type Color
+    = Red
+    | Green
+    | Blue
+
+colorName color =
+    case color of
+        Red -> "red"
+        Green -> "green"
+        Blue -> "blue"
+
+main =
+    let
+        _ = println (colorName Red)
+        _ = println (colorName Green)
+    in
+        println (colorName Blue)

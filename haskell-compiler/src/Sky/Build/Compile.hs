@@ -112,12 +112,13 @@ generateGo :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes ->
 generateGo canMod srcMod config solvedTypes =
     let
         imports = collectGoImports canMod srcMod
+        unionDecls = generateUnionTypes canMod
         decls = generateDecls canMod solvedTypes
         mainDecl = generateMainFunc canMod srcMod solvedTypes
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
-            , GoIr._pkg_decls = decls ++ mainDecl
+            , GoIr._pkg_decls = unionDecls ++ decls ++ mainDecl
             }
     in GoBuilder.renderPackage pkg
 
@@ -138,6 +139,35 @@ isTaskImport imp =
 -- ═══════════════════════════════════════════════════════════
 -- DECLARATIONS
 -- ═══════════════════════════════════════════════════════════
+
+-- | Generate Go type declarations for user-defined union types
+generateUnionTypes :: Can.Module -> [GoIr.GoDecl]
+generateUnionTypes canMod = concatMap generateUnion (Map.toList (Can._unions canMod))
+  where
+    generateUnion (typeName, Can.Union vars ctors numAlts opts) = case opts of
+        Can.Enum ->
+            -- Enum: type Name int; const ( Name_Ctor = iota ... )
+            [ GoIr.GoDeclType typeName (GoIr.GoEnumDef (map (ctorConstName typeName) ctors)) ]
+        _ ->
+            -- Tagged union: struct with Tag + fields
+            [ GoIr.GoDeclRaw $ "type " ++ typeName ++ " struct { Tag int; Fields []any }" ]
+            ++ map (generateCtorFunc typeName) ctors
+
+    ctorConstName typeName (Can.Ctor cname _ _ _) = typeName ++ "_" ++ cname
+
+    generateCtorFunc typeName (Can.Ctor cname idx arity _) =
+        if arity == 0
+        then GoIr.GoDeclVar (typeName ++ "_" ++ cname) typeName
+            (Just (GoIr.GoStructLit typeName [("Tag", GoIr.GoIntLit idx)]))
+        else GoIr.GoDeclFunc GoIr.GoFuncDecl
+            { GoIr._gf_name = typeName ++ "_" ++ cname
+            , GoIr._gf_typeParams = []
+            , GoIr._gf_params = zipWith (\i _ -> GoIr.GoParam ("v" ++ show i) "any") [0::Int ..] [1..arity]
+            , GoIr._gf_returnType = typeName
+            , GoIr._gf_body = [GoIr.GoReturn (GoIr.GoStructLit typeName
+                ([("Tag", GoIr.GoIntLit idx)] ++ [("Fields", GoIr.GoSliceLit "any" (map (\i -> GoIr.GoIdent ("v" ++ show i)) [0..arity-1]))]))]
+            }
+
 
 -- | Generate Go declarations from canonical decls
 generateDecls :: Can.Module -> Solve.SolvedTypes -> [GoIr.GoDecl]
@@ -358,7 +388,6 @@ genericParams modName funcName = case (modName, funcName) of
 
 
 -- | Map a constructor to Go
--- Without type info, use [any, any] as type params for generic constructors
 ctorToGo :: Can.CtorOpts -> ModuleName.Canonical -> String -> String -> Can.Annotation -> GoIr.GoExpr
 ctorToGo opts home typeName ctorName _annot = case ctorName of
     "Ok"      -> GoIr.GoIdent "rt.Ok[any, any]"
@@ -367,7 +396,8 @@ ctorToGo opts home typeName ctorName _annot = case ctorName of
     "Nothing" -> GoIr.GoCall (GoIr.GoIdent "rt.Nothing[any]") []
     "True"    -> GoIr.GoBoolLit True
     "False"   -> GoIr.GoBoolLit False
-    _         -> GoIr.GoQualified "rt" ctorName
+    -- User-defined constructor: TypeName_CtorName
+    _         -> GoIr.GoIdent (typeName ++ "_" ++ ctorName)
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -521,9 +551,10 @@ detectSubjectType branches =
         (Can.CaseBranch (A.At _ pat) _ : _) -> patternGoType pat
         _ -> Nothing
   where
-    patternGoType (Can.PCtor home typeName _ ctorName _ _)
+    patternGoType (Can.PCtor home typeName union ctorName _ _)
         | ctorName == "Ok" || ctorName == "Err" = Just "rt.SkyResult[any, any]"
         | ctorName == "Just" || ctorName == "Nothing" = Just "rt.SkyMaybe[any]"
+        | Can._u_opts union == Can.Enum = Nothing  -- Enum: compare int directly
         | otherwise = Just "rt.SkyADT"
     patternGoType (Can.PBool _) = Nothing  -- bool doesn't need assertion
     patternGoType (Can.PInt _) = Nothing
@@ -566,11 +597,18 @@ patternCondition subject pat = case pat of
     Can.PChr c ->
         Just $ GoIr.GoBinary "==" (GoIr.GoIdent subject) (GoIr.GoRuneLit c)
 
-    Can.PCtor home typeName _union ctorName ctorIdx args ->
-        -- Match on .Tag field
-        Just $ GoIr.GoBinary "=="
-            (GoIr.GoSelector (GoIr.GoIdent subject) "Tag")
-            (GoIr.GoIntLit ctorIdx)
+    Can.PCtor home typeName union ctorName ctorIdx args ->
+        case Can._u_opts union of
+            Can.Enum ->
+                -- Enum: compare int value directly
+                Just $ GoIr.GoBinary "=="
+                    (GoIr.GoIdent subject)
+                    (GoIr.GoIdent (typeName ++ "_" ++ ctorName))
+            _ ->
+                -- Tagged struct: match on .Tag field
+                Just $ GoIr.GoBinary "=="
+                    (GoIr.GoSelector (GoIr.GoIdent subject) "Tag")
+                    (GoIr.GoIntLit ctorIdx)
 
     Can.PUnit -> Nothing  -- always matches
 

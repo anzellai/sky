@@ -125,7 +125,7 @@ parseUnionType mkError = do
     name <- addLocation (upper mkError)
     spaces
     vars <- typeVars mkError
-    spaces
+    freshLine mkError  -- = may be on next line
     ctors <- unionConstructors mkError
     return (DeclUnion, A.At (A.toRegion name) (UnionPayload (A.toValue name) vars ctors))
 
@@ -144,12 +144,11 @@ typeVars mkError =
 
 unionConstructors :: (Row -> Col -> x) -> Parser x [A.Located (String, [Src.TypeAnnotation])]
 unionConstructors mkError = do
-    -- First constructor (after = or |)
     mc <- peek
     case mc of
         Just '=' -> do
             char mkError '='
-            spaces
+            freshLine mkError  -- first constructor may be on next line
             first <- addLocation (unionConstructor mkError)
             rest <- moreUnionConstructors mkError
             return (first : rest)
@@ -160,9 +159,9 @@ moreUnionConstructors :: (Row -> Col -> x) -> Parser x [A.Located (String, [Src.
 moreUnionConstructors mkError =
     oneOfWithFallback
         [ do
-            spaces
+            freshLine mkError  -- | may be on next line
             char mkError '|'
-            spaces
+            freshLine mkError
             ctor <- addLocation (unionConstructor mkError)
             rest <- moreUnionConstructors mkError
             return (ctor : rest)
