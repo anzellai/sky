@@ -72,6 +72,14 @@ registry = Map.fromList
     , (("String", "repeat"),      KernelInfo "rt.String_repeat" 2 False)
     , (("String", "lines"),       KernelInfo "rt.String_lines" 1 False)
     , (("String", "words"),       KernelInfo "rt.String_words" 1 False)
+    , (("String", "isValid"),     KernelInfo "rt.String_isValid" 1 False)
+    , (("String", "normalize"),   KernelInfo "rt.String_normalize" 1 False)
+    , (("String", "normalizeNFD"), KernelInfo "rt.String_normalizeNFD" 1 False)
+    , (("String", "casefold"),    KernelInfo "rt.String_casefold" 1 False)
+    , (("String", "equalFold"),   KernelInfo "rt.String_equalFold" 2 False)
+    , (("String", "graphemes"),   KernelInfo "rt.String_graphemes" 1 False)
+    , (("String", "trimStart"),   KernelInfo "rt.String_trimStart" 1 False)
+    , (("String", "trimEnd"),     KernelInfo "rt.String_trimEnd" 1 False)
 
     -- ═══════════════════════════════════════════════════════
     -- List

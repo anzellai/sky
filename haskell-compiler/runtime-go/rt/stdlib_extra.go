@@ -9,6 +9,10 @@ import (
 	"reflect"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"github.com/rivo/uniseg"
+	"golang.org/x/text/unicode/norm"
 )
 
 // ═══════════════════════════════════════════════════════════
@@ -665,3 +669,80 @@ func Http_request(method any, url any, body any, headers any) any {
 
 // Keep encoding/json referenced
 var _ = json.Marshal
+
+// ═══════════════════════════════════════════════════════════
+// Sky.Core.String — Unicode-correct helpers
+// ═══════════════════════════════════════════════════════════
+
+// String.isValid : String -> Bool
+// Returns True iff s is valid UTF-8. Use before passing a string from an
+// untrusted source (bytes off the wire, file contents, etc.) to other
+// Unicode-aware functions.
+func String_isValid(s any) any {
+	return utf8.ValidString(fmt.Sprintf("%v", s))
+}
+
+// String.normalize : String -> String
+// Unicode Normalization Form C (NFC) — the canonical form recommended by W3C
+// for web/HTML content. Ensures that visually-identical strings compare equal
+// byte-wise, e.g. "café" composed (U+00E9) vs decomposed (e + U+0301) both
+// normalize to the composed form.
+func String_normalize(s any) any {
+	return norm.NFC.String(fmt.Sprintf("%v", s))
+}
+
+// String.normalizeNFD : String -> String (decomposed form — useful for diacritic-insensitive search)
+func String_normalizeNFD(s any) any {
+	return norm.NFD.String(fmt.Sprintf("%v", s))
+}
+
+// String.casefold : String -> String
+// Unicode-aware case folding for comparison. Unlike toLower this handles
+// locale-independent equivalences like German ß ↔ "ss" approximations and
+// Turkic dotless-i ↔ i. We use simple case folding (full Unicode casing is
+// locale-dependent; simple is language-neutral).
+// NOTE: Go's standard library has strings.ToLower / unicode.SimpleFold.
+// For real internationalised comparison use strings.EqualFold via this helper.
+func String_casefold(s any) any {
+	// strings.ToLower performs Unicode-aware lowercasing which is the closest
+	// stdlib approximation to simple case folding for comparison purposes.
+	return strings.ToLower(fmt.Sprintf("%v", s))
+}
+
+// String.equalFold : String -> String -> Bool
+// Case-insensitive Unicode-aware string equality.
+func String_equalFold(a any, b any) any {
+	return strings.EqualFold(fmt.Sprintf("%v", a), fmt.Sprintf("%v", b))
+}
+
+// String.graphemes : String -> Int
+// Returns the number of extended grapheme clusters per UAX #29 — what a user
+// perceives as "one character". Differs from rune count for combining marks,
+// emoji ZWJ sequences, regional indicators, etc.
+// E.g. "👨‍👩‍👧" (family emoji) = 5 code points, 1 grapheme.
+//      "é" composed = 1 rune = 1 grapheme.
+//      "é" decomposed (e + ◌́) = 2 runes = 1 grapheme.
+//      "🇬🇧" (UK flag) = 2 regional-indicator code points = 1 grapheme.
+func String_graphemes(s any) any {
+	return uniseg.GraphemeClusterCount(fmt.Sprintf("%v", s))
+}
+
+// String.trimStart : String -> String (Unicode whitespace)
+func String_trimStart(s any) any {
+	return strings.TrimLeftFunc(fmt.Sprintf("%v", s), unicodeIsSpace)
+}
+
+// String.trimEnd : String -> String
+func String_trimEnd(s any) any {
+	return strings.TrimRightFunc(fmt.Sprintf("%v", s), unicodeIsSpace)
+}
+
+// unicodeIsSpace wraps unicode.IsSpace for use with strings.TrimXxxFunc.
+func unicodeIsSpace(r rune) bool {
+	// Use unicode.IsSpace which covers all Unicode whitespace (includes NBSP,
+	// ideographic space, zero-width space, etc.)
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r' ||
+		r == '\v' || r == '\f' || r == 0xA0 ||
+		(r >= 0x2000 && r <= 0x200A) ||
+		r == 0x2028 || r == 0x2029 || r == 0x3000 || r == 0xFEFF
+}

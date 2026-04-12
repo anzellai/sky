@@ -143,7 +143,9 @@ kernelFunctions = Map.fromList
     , ("String",  ["length", "reverse", "append", "split", "join", "contains",
                     "startsWith", "endsWith", "toInt", "fromInt", "toFloat", "fromFloat",
                     "toUpper", "toLower", "trim", "replace", "slice", "isEmpty",
-                    "left", "right", "padLeft", "padRight", "repeat", "lines", "words"])
+                    "left", "right", "padLeft", "padRight", "repeat", "lines", "words",
+                    "isValid", "normalize", "normalizeNFD", "casefold", "equalFold",
+                    "graphemes", "trimStart", "trimEnd"])
     , ("List",    ["map", "filter", "foldl", "foldr", "length", "head", "tail",
                     "take", "drop", "append", "concat", "concatMap", "reverse",
                     "sort", "member", "any", "all", "range", "zip", "filterMap",
