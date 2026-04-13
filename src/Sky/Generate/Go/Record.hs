@@ -10,6 +10,7 @@ module Sky.Generate.Go.Record
     , classifyAlias
     , buildCodegenEnv
     , withFuncTypes
+    , withInferredSigs
     , withRecordAliases
     , collectRecordAliases
     , withDepArities
@@ -50,6 +51,11 @@ data CodegenEnv = CodegenEnv
       -- Per-function Go return type (qualified Go name → retType).
       -- Used by call-site codegen to decide whether further coercion
       -- is needed when the call feeds into a typed context.
+    , _cg_funcInferredSigs :: !(Map.Map String ([String], [String], String))
+      -- T4b: full HM-inferred signature including Go type parameters
+      -- for TVars. Value is (typeParams, paramTypes, returnType).
+      -- Populated per-dep from the solver, used by mkDef to emit
+      -- generic Go signatures for unannotated polymorphic functions.
     }
 
 
@@ -82,6 +88,7 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_funcArities = collectFuncArities (Can._decls canMod)
     , _cg_funcParamTypes = Map.empty
     , _cg_funcRetType = Map.empty
+    , _cg_funcInferredSigs = Map.empty
     }
 
 
@@ -123,6 +130,13 @@ withFuncTypes :: Map.Map String [String] -> Map.Map String String -> CodegenEnv 
 withFuncTypes paramTys retTys env = env
     { _cg_funcParamTypes = Map.union paramTys (_cg_funcParamTypes env)
     , _cg_funcRetType    = Map.union retTys   (_cg_funcRetType env)
+    }
+
+-- | Merge per-function inferred signatures (type params + param types
+-- + return type) into the env. Used for T4b Go-generics emission.
+withInferredSigs :: Map.Map String ([String], [String], String) -> CodegenEnv -> CodegenEnv
+withInferredSigs sigs env = env
+    { _cg_funcInferredSigs = Map.union sigs (_cg_funcInferredSigs env)
     }
 
 

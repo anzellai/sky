@@ -47,7 +47,7 @@ import qualified System.Environment
 -- | Global codegen environment (set once per compilation, read during codegen)
 {-# NOINLINE globalCgEnv #-}
 globalCgEnv :: IORef Rec.CodegenEnv
-globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Map.empty Map.empty Map.empty)
+globalCgEnv = unsafePerformIO $ newIORef (Rec.CodegenEnv Map.empty Map.empty Map.empty Set.empty Set.empty Map.empty Map.empty Map.empty Map.empty)
 
 -- | Read the global codegen env (for use in pure codegen functions)
 getCgEnv :: Rec.CodegenEnv
@@ -307,28 +307,28 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     return Map.empty
             -- Merge inferred dep types into the param + return tables
             -- keyed by module-prefixed Go names. Annotation-derived
-            -- entries already in the tables win over inferred ones
-            -- (annotations represent the user's declared contract).
-            let depInferredParams = Map.unions
+            -- entries already in the tables win over inferred ones.
+            -- T4b: only record inferred sigs for UNANNOTATED bindings;
+            -- annotated functions use their declared types verbatim,
+            -- and if HM happens to infer spurious TVars for them we'd
+            -- mistakenly emit `[any, any]` instantiations at call sites.
+            let hasAnnotation n depMod = case Map.lookup n (declsByName depMod) of
+                    Just (Can.TypedDef{}) -> True
+                    _                     -> False
+                fullSigs = Map.unions
                     [ Map.fromList
                         [ ( prefix ++ "_" ++ n
-                          , splitInferredParams (countParamsFor n depMod) ty )
+                          , splitInferredSig (countParamsFor n depMod) ty )
                         | (n, ty) <- Map.toList depTypes
+                        , not (hasAnnotation n depMod)
                         ]
                     | (modName, depTypes) <- depSolved
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
                     ]
-                depInferredRets = Map.unions
-                    [ Map.fromList
-                        [ ( prefix ++ "_" ++ n
-                          , inferredReturnFor (countParamsFor n depMod) ty )
-                        | (n, ty) <- Map.toList depTypes
-                        ]
-                    | (modName, depTypes) <- depSolved
-                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
-                    , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
-                    ]
+                depInferredParams = Map.map (\(_, ps, _) -> ps) fullSigs
+                depInferredRets   = Map.map (\(_, _, r) -> r)  fullSigs
+                depInferredSigs   = fullSigs
             putStrLn $ "   HM infer (deps): "
                 ++ show (Map.size depInferredParams) ++ " functions typed"
             modifyIORef globalCgEnv $ \e -> e
@@ -336,9 +336,11 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     Map.union (Rec._cg_funcParamTypes e) depInferredParams
                 , Rec._cg_funcRetType =
                     Map.union (Rec._cg_funcRetType e) depInferredRets
+                , Rec._cg_funcInferredSigs =
+                    Map.union (Rec._cg_funcInferredSigs e) depInferredSigs
                 }
             putStrLn "-- Generating Go"
-            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets
+            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets depInferredSigs
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
             writeFile mainGoPath goCode
@@ -748,27 +750,22 @@ generateDeclsForDep canMod modPrefix =
               (goParams', destructStmts) = destructureParams params
               -- T3 (dep path): annotated dep functions get typed return.
               -- T2/T6 (dep path): typed params too. When no annotation
-              -- exists, fall back to HM-inferred types recorded in the
-              -- global env by the per-dep solver run.
+              -- exists, fall back to HM-inferred type. TVars become Go
+              -- type parameters (T4b) so partially-inferred functions
+              -- get typed generically instead of falling back to `any`.
               env = getCgEnv
               qualLookupName = modPrefix ++ "_" ++ name
-              inferredParams = Map.findWithDefault []
-                                  qualLookupName
-                                  (Rec._cg_funcParamTypes env)
-              inferredRet = Map.findWithDefault "any"
-                                qualLookupName
-                                (Rec._cg_funcRetType env)
-              _dbg = ()
-              depParamGoTys = case mAnnotArgs of
-                  Just argTys -> map safeReturnType argTys
-                  Nothing     ->
-                      if null inferredParams
-                          then replicate (length params) "any"
-                          else inferredParams ++
-                               replicate (max 0 (length params - length inferredParams)) "any"
-              depRetType = _dbg `seq` case mAnnotRet of
-                  Just rt' -> safeReturnType rt'
-                  Nothing  -> inferredRet
+              inferredSig = case def of
+                  Can.TypedDef _ _ _ _ _ -> Nothing  -- use annotation
+                  _ -> Map.lookup qualLookupName (Rec._cg_funcInferredSigs env)
+              (depTypeParams, depParamGoTys, depRetType) = case (mAnnotArgs, mAnnotRet, inferredSig) of
+                  (Just argTys, Just rt', _) ->
+                      ([], map safeReturnType argTys, safeReturnType rt')
+                  (Just argTys, Nothing, _) ->
+                      ([], map safeReturnType argTys, "any")
+                  (_, _, Just (tps, ps, r)) ->
+                      (tps, ps ++ replicate (max 0 (length params - length ps)) "any", r)
+                  _ -> ([], replicate (length params) "any", "any")
               -- Replace each param's Go type with the typed form
               -- (when not "any"). destructureParams gave us patterns
               -- already; we just rewrite the type slot.
@@ -780,7 +777,7 @@ generateDeclsForDep canMod modPrefix =
               bodyExpr = wrapTypedReturn depRetType rawBody
           in [ GoIr.GoDeclFunc GoIr.GoFuncDecl
                 { GoIr._gf_name = goName
-                , GoIr._gf_typeParams = []
+                , GoIr._gf_typeParams = [ (tp, "any") | tp <- depTypeParams ]
                 , GoIr._gf_params = typedGoParams'
                 , GoIr._gf_returnType = depRetType
                 , GoIr._gf_body = destructStmts ++ [GoIr.GoReturn bodyExpr]
@@ -898,8 +895,8 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> Map.Map String ([String], [String], String) -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes extraInferredSigs =
     let
         imports = unsafePerformIO $ do
             -- T2/T6: register entry-module + dep-module typed function
@@ -915,7 +912,8 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
                     [ entryParamTys, depParamTypes, extraInferredParamTypes ]
                 allRetTys   = Map.unions
                     [ entryRetTys, depRetTypes, extraInferredRetTypes ]
-                cgEnv = Rec.withFuncTypes allParamTys allRetTys
+                cgEnv = Rec.withInferredSigs extraInferredSigs
+                      $ Rec.withFuncTypes allParamTys allRetTys
                       $ Rec.withDepArities depArities
                       $ Rec.withRecordAliases depRecAliases
                       $ Rec.buildCodegenEnv solvedTypes canMod
@@ -1587,6 +1585,21 @@ safeReturnTypeWith recAliases = go
         _ -> "any"
 
 
+-- | Index module decls by binding name so we can check annotations
+-- in O(log n) (needed by the HM-dep merge to exclude TypedDefs).
+declsByName :: Can.Module -> Map.Map String Can.Def
+declsByName canMod = go (Can._decls canMod) Map.empty
+  where
+    go Can.SaveTheEnvironment acc = acc
+    go (Can.Declare d rest) acc = go rest (insertDef d acc)
+    go (Can.DeclareRec d ds rest) acc =
+        go rest (foldr insertDef (insertDef d acc) ds)
+    insertDef d acc = case d of
+        Can.Def (A.At _ n) _ _ -> Map.insert n d acc
+        Can.TypedDef (A.At _ n) _ _ _ _ -> Map.insert n d acc
+        Can.DestructDef _ _ -> acc
+
+
 -- | Count how many params a dep-module binding has. Used when we
 -- need to split a solver-inferred function type (which chains
 -- TLambdas) into the right number of arg types.
@@ -1611,23 +1624,115 @@ countParamsFor name canMod = go (Can._decls canMod)
         Nothing -> firstMatching ds fallback
 
 
--- | Extract Go param types for a function from a solver-inferred
--- function type, taking `arity` TLambdas from the head.
--- Env-free (uses safeReturnTypePure) so it can run before the
--- globalCgEnv is fully populated.
+-- | Split a function's inferred type into Go type parameters, param
+-- types, and return type. TVars in the inferred type become Go type
+-- parameters (`T1, T2 any`) so partially-inferred functions like
+-- `getField : String -> TVar -> String` get typed as
+-- `func GetField[T1 any](p0 string, p1 T1) string` instead of all-any.
+splitInferredSig :: Int -> T.Type -> ([String], [String], String)
+splitInferredSig arity funcType =
+    let (paramTys, retTy) = collectParams arity funcType
+        -- Only promote TVars to Go type params if they (1) appear in
+        -- at least one PARAM position so Go can infer them, and (2)
+        -- actually survive to the emitted Go type (container-inner
+        -- TVars get erased to `any`/`[]any` at emission, so declaring
+        -- a type param for them would leave it unused).
+        paramTVars = uniq (concatMap tvarsInEmitted paramTys)
+        numbered = zip paramTVars ["T" ++ show i | i <- [1::Int ..]]
+        typeParams = map snd numbered
+        paramStrs = map (typeStrWith numbered) paramTys
+        retStr = typeStrWith numbered retTy
+    in (typeParams, paramStrs, retStr)
+  where
+    collectParams 0 ty = ([], ty)
+    collectParams n (T.TLambda from to) =
+        let (rest, r) = collectParams (n - 1) to
+        in (from : rest, r)
+    collectParams _ ty = ([], ty)
+
+    uniq [] = []
+    uniq (x:xs) = x : uniq (filter (/= x) xs)
+
+
+-- | Extract Go param types (legacy API, kept for annotation path).
 splitInferredParams :: Int -> T.Type -> [String]
-splitInferredParams 0 _ = []
-splitInferredParams n (T.TLambda from to) =
-    safeReturnTypePure from : splitInferredParams (n - 1) to
-splitInferredParams _ _ = []
+splitInferredParams n t =
+    let (_, ps, _) = splitInferredSig n t in ps
 
 
--- | Extract the Go return type for a function from a solver-inferred
--- function type (dropping `arity` TLambdas from the head). Env-free.
+-- | Extract Go return type (legacy API, kept for annotation path).
 inferredReturnFor :: Int -> T.Type -> String
-inferredReturnFor 0 ty = safeReturnTypePure ty
-inferredReturnFor n (T.TLambda _ to) = inferredReturnFor (n - 1) to
-inferredReturnFor _ ty = safeReturnTypePure ty
+inferredReturnFor n t =
+    let (_, _, r) = splitInferredSig n t in r
+
+
+-- | All distinct TVar names appearing inside a Type, in left-to-right
+-- encounter order.
+tvarsIn :: T.Type -> [String]
+tvarsIn t = case t of
+    T.TVar name
+        -- Skip the solver's internal "_cargNNN" / binding-name TVars
+        -- that never appear on the user-facing surface — they'd just
+        -- clutter the type parameter list.
+        | take 1 name == "_" -> [name]
+        | length name > 1    -> []
+        | otherwise          -> [name]
+    T.TLambda a b     -> tvarsIn a ++ tvarsIn b
+    T.TType _ _ args  -> concatMap tvarsIn args
+    T.TTuple a b cs   -> concatMap tvarsIn (a : b : cs)
+    T.TAlias _ _ pairs (T.Filled inner)  -> concatMap tvarsIn (inner : map snd pairs)
+    T.TAlias _ _ pairs (T.Hoisted inner) -> concatMap tvarsIn (inner : map snd pairs)
+    T.TRecord{}       -> []
+    T.TUnit           -> []
+
+
+-- | Convert a Sky type to Go with a TVar → Go type param substitution.
+-- Falls back to safeReturnTypePure for non-TVar nodes.
+typeStrWith :: [(String, String)] -> T.Type -> String
+typeStrWith tvarMap ty = case ty of
+    T.TVar name -> case lookup name tvarMap of
+        Just gname -> gname
+        Nothing    -> "any"
+    T.TLambda from to ->
+        "func(" ++ typeStrWith tvarMap from ++ ") " ++ typeStrWith tvarMap to
+    T.TType _ "Result" [e, a] ->
+        "rt.SkyResult[" ++ typeStrWith tvarMap e ++ ", " ++ typeStrWith tvarMap a ++ "]"
+    T.TType _ "Maybe" [x] ->
+        "rt.SkyMaybe[" ++ typeStrWith tvarMap x ++ "]"
+    T.TType _ "Task" [e, a] ->
+        "rt.SkyTask[" ++ typeStrWith tvarMap e ++ ", " ++ typeStrWith tvarMap a ++ "]"
+    T.TType _ "List" _ -> "[]any"
+    T.TType _ "Dict" _ -> "map[string]any"
+    T.TType _ "Set"  _ -> "map[any]bool"
+    T.TAlias _ _ _ (T.Filled inner)  -> typeStrWith tvarMap inner
+    T.TAlias _ _ _ (T.Hoisted inner) -> typeStrWith tvarMap inner
+    _ -> safeReturnTypePure ty
+
+
+-- | Collect TVars that survive to the final emitted Go type — i.e. TVars
+-- that aren't inside a container type we erase to `any`/`[]any`. Used
+-- so we don't declare `[T1 any]` when T1 never appears in the sig.
+tvarsInEmitted :: T.Type -> [String]
+tvarsInEmitted ty = case ty of
+    T.TVar n
+        | take 1 n == "_" -> [n]
+        | length n > 1    -> []
+        | otherwise       -> [n]
+    T.TLambda a b -> tvarsInEmitted a ++ tvarsInEmitted b
+    -- Container types erase their inner TVars (they become []any etc.)
+    -- so TVars inside don't propagate to the Go type.
+    T.TType _ "List" _ -> []
+    T.TType _ "Dict" _ -> []
+    T.TType _ "Set"  _ -> []
+    T.TType _ "Result" args -> concatMap tvarsInEmitted args
+    T.TType _ "Maybe"  args -> concatMap tvarsInEmitted args
+    T.TType _ "Task"   args -> concatMap tvarsInEmitted args
+    T.TType _ _ args -> concatMap tvarsInEmitted args
+    T.TTuple a b cs -> concatMap tvarsInEmitted (a : b : cs)
+    T.TAlias _ _ pairs (T.Filled inner)  -> concatMap tvarsInEmitted (inner : map snd pairs)
+    T.TAlias _ _ pairs (T.Hoisted inner) -> concatMap tvarsInEmitted (inner : map snd pairs)
+    T.TRecord{} -> []
+    T.TUnit     -> []
 
 
 -- | Env-free version of safeReturnType for use during env bootstrap.
@@ -1715,9 +1820,19 @@ exprToGo (A.At _ expr) = case expr of
             -- which is populated with qualified names from deps.
             isZeroArg = Set.member name (Rec._cg_zeroArgs env)
                      || Map.lookup qualName (Rec._cg_funcArities env) == Just 0
+            -- T4b: if the function is generic (has type params), a bare
+            -- reference needs explicit instantiation or Go rejects it
+            -- with "cannot infer T1". Instantiate each type param as
+            -- `any` so the function-value usage works.
+            inferredTypeParams = case Map.lookup qualName (Rec._cg_funcInferredSigs env) of
+                Just (tps, _, _) -> tps
+                Nothing          -> []
+            instantiatedName = if null inferredTypeParams
+                then qualName
+                else qualName ++ "[" ++ intercalateComma (replicate (length inferredTypeParams) "any") ++ "]"
         in if isZeroArg
             then GoIr.GoCall (GoIr.GoIdent qualName) []
-            else GoIr.GoIdent qualName
+            else GoIr.GoIdent instantiatedName
 
     Can.VarKernel modName funcName ->
         kernelToGo modName funcName
@@ -1997,6 +2112,10 @@ coerceCallArgs qualName args =
 coerceArg :: GoIr.GoExpr -> String -> GoIr.GoExpr
 coerceArg e ty
     | ty == "any" || null ty = e
+    -- Generic type parameter (T1, T2, ...) — we can't assert to it
+    -- from the caller side since it's scoped to the callee. Let Go's
+    -- type inference figure it out from the usage. Pass raw.
+    | isGenericTypeParam ty = e
     | Just params <- stripParametric "rt.SkyResult" ty =
         GoIr.GoCall (GoIr.GoIdent ("rt.ResultCoerce[" ++ params ++ "]")) [e]
     | Just inner <- stripParametric "rt.SkyMaybe" ty =
@@ -2004,6 +2123,18 @@ coerceArg e ty
     | otherwise =
         GoIr.GoTypeAssert
             (GoIr.GoCall (GoIr.GoIdent "any") [e]) ty
+
+-- | True when a Go type string is a generic type parameter name we
+-- emitted (T1, T2, ...). These are scoped to the function they were
+-- declared on, so callers can't type-assert against them.
+isGenericTypeParam :: String -> Bool
+isGenericTypeParam ('T':rest) = all (\c -> c >= '0' && c <= '9') rest && not (null rest)
+isGenericTypeParam _ = False
+
+intercalateComma :: [String] -> String
+intercalateComma []     = ""
+intercalateComma [x]    = x
+intercalateComma (x:xs) = x ++ ", " ++ intercalateComma xs
 
 -- | Like zipWith, but when the left list runs out we apply a fallback
 -- function to the remaining right-list elements. Used so callers
