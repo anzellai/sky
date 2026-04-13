@@ -686,6 +686,75 @@ func Live_route(path any, page any) any {
 	return liveRoute{path: fmt.Sprintf("%v", path), page: page}
 }
 
+
+// applyRoute matches `urlPath` against app.routes and returns a new
+// model with its Page field set to the matching route's page (or
+// app.notFound when no route matches).
+//
+// Route patterns support `:name` segments (e.g. `/product/:id`). When
+// a pattern has any path params, the matched page value is an ADT
+// constructor function; we reflect-call it with the captured values
+// in declaration order. Static routes just take the page as-is.
+func applyRoute(app *liveApp, model any, urlPath string) any {
+	for _, rt := range app.routes {
+		if params, ok := matchRoute(rt.path, urlPath); ok {
+			page := fillRoutePage(rt.page, params)
+			return RecordUpdate(model, map[string]any{"Page": page})
+		}
+	}
+	if app.notFound != nil {
+		return RecordUpdate(model, map[string]any{"Page": app.notFound})
+	}
+	return model
+}
+
+
+// matchRoute compares a pattern like `/product/:id` against an incoming
+// path. Returns the ordered list of captured segment values on success.
+func matchRoute(pattern, path string) ([]string, bool) {
+	patSegs := splitPath(pattern)
+	pathSegs := splitPath(path)
+	if len(patSegs) != len(pathSegs) {
+		return nil, false
+	}
+	var params []string
+	for i, ps := range patSegs {
+		if strings.HasPrefix(ps, ":") {
+			params = append(params, pathSegs[i])
+		} else if ps != pathSegs[i] {
+			return nil, false
+		}
+	}
+	return params, true
+}
+
+
+func splitPath(p string) []string {
+	// Trim leading/trailing `/` so `/a/b/` and `/a/b` match the same.
+	p = strings.Trim(p, "/")
+	if p == "" {
+		return nil
+	}
+	return strings.Split(p, "/")
+}
+
+
+// If a route page is a function (ADT constructor expecting URL params),
+// apply the captured params via sky_call; otherwise pass through.
+func fillRoutePage(page any, params []string) any {
+	if len(params) == 0 || !isFunc(page) {
+		return page
+	}
+	curr := page
+	for _, p := range params {
+		if !isFunc(curr) {
+			break
+		}
+		curr = sky_call(curr, p)
+	}
+	return curr
+}
+
 // Live.app — reads a record-shaped config and starts the HTTP server.
 // Blocks until the server exits.
 func Live_app(cfg any) any {
@@ -774,6 +843,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	res := sky_call(app.init, req)
 	model := tupleFirst(res)
 	cmd := tupleSecond(res)
+
+	// Route dispatch: pick the page ADT value for this URL path and
+	// splice it into model.Page via RecordUpdate. Without this, every
+	// request renders whatever page the user's `init` hard-codes.
+	model = applyRoute(app, model, r.URL.Path)
 
 	// Get or create session
 	sid := sessionID(r, w)
