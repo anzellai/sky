@@ -206,9 +206,25 @@ solveHelp state constraint = case constraint of
                 headerVars <- mapM (\(name, (_, ty)) -> do
                     var <- typeToVar state1 ty
                     return (name, var)) (Map.toList header)
-                let state2 = state1 { _env = foldr (\(name, var) e -> Map.insert name var e) (_env state1) headerVars }
-                -- Solve body with extended env
-                solveHelp state2 bodyCon
+                -- Save the current bindings for the names we're about to
+                -- shadow. After solving the body we restore them — without
+                -- this, lambda / let / case-arm names leak into the global
+                -- env and the next declaration's `Just n ->` pattern binds
+                -- to a stale `n` from an unrelated scope.
+                let savedBindings =
+                        [ (name, Map.lookup name (_env state1))
+                        | (name, _) <- headerVars
+                        ]
+                    state2 = state1
+                        { _env = foldr (\(name, var) e -> Map.insert name var e)
+                                       (_env state1) headerVars
+                        }
+                (bodyErr, state3) <- solveHelp state2 bodyCon
+                -- Restore outer scope's env for the shadowed names.
+                let restoredEnv = foldr restoreBinding (_env state3) savedBindings
+                    restoreBinding (name, Just old) e = Map.insert name old e
+                    restoreBinding (name, Nothing)  e = Map.delete name e
+                return (bodyErr, state3 { _env = restoredEnv })
 
 
 -- | Solve a list of constraints sequentially

@@ -177,7 +177,13 @@ binopTypes counter op = case op of
     "*"  -> return (intType, intType, intType)
     "/"  -> return (floatType, floatType, floatType)
     "//" -> return (intType, intType, intType)
-    "++" -> return (stringType, stringType, stringType)
+    -- `++` is polymorphic: works on both strings and lists. Emit a fresh
+    -- type variable and require (left == right == result). The enclosing
+    -- context unifies `a` with String or `List e` as appropriate.
+    "++" -> do
+              a <- freshName counter "_app"
+              let ty = T.TVar a
+              return (ty, ty, ty)
     "==" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
     "/=" -> do { n <- freshName counter "_cmp"; return (T.TVar n, T.TVar n, boolType) }
     "<"  -> return (intType, intType, boolType)
@@ -210,7 +216,16 @@ constrainLambda counter env region params body expected = do
         bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env paramBindings
         funcType = foldr T.TLambda resultType paramTypes
     bodyCon <- constrain counter bodyEnv body (T.NoExpectation resultType)
-    return $ T.CAnd [bodyCon, T.CEqual region T.CLambda funcType expected]
+    -- Wrap body in CLet so param names are scoped. Without this the solver's
+    -- runtime _env leaks lambda params (or pattern names) into whatever
+    -- declaration is solved next, and a totally-unrelated `Just n -> ...`
+    -- can pick up a stale `n` from a previous `\n -> ...` in the module.
+    let paramHeader = Map.fromList
+            [ (pname, (A.one, ptype))
+            | (pname, T.Forall _ ptype) <- paramBindings
+            ]
+        bodyScoped = T.CLet [] [] paramHeader T.CTrue bodyCon
+    return $ T.CAnd [bodyScoped, T.CEqual region T.CLambda funcType expected]
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -257,7 +272,11 @@ constrainLet counter env def body expected = do
     (defCon, name, defType) <- constrainDefWithType counter env def
     let bodyEnv = Map.insert name (T.Forall [] defType) env
     bodyCon <- constrain counter bodyEnv body expected
-    return $ T.CAnd [defCon, bodyCon]
+    -- Wrap with CLet so the bound name has proper lexical scope in the
+    -- solver's runtime env — otherwise `let x = ... in ...` leaks `x`
+    -- into the next top-level declaration.
+    let header = Map.singleton name (A.one, defType)
+    return $ T.CAnd [defCon, T.CLet [] [] header T.CTrue bodyCon]
 
 
 constrainLetRec :: Counter -> Env -> [Can.Def] -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
@@ -268,7 +287,8 @@ constrainLetRec counter env defs body expected = do
     -- Constrain each def using its pre-generated type
     defCons <- zipWithM (\d (_, ty) -> constrainDefWithKnownType counter recEnv d ty) defs defInfos
     bodyCon <- constrain counter recEnv body expected
-    return $ T.CAnd (defCons ++ [bodyCon])
+    let header = Map.fromList [(n, (A.one, t)) | (n, t) <- defInfos]
+    return $ T.CAnd (defCons ++ [T.CLet [] [] header T.CTrue bodyCon])
 
 
 constrainLetDestruct :: Counter -> Env -> Can.Pattern -> Can.Expr -> Can.Expr -> T.Expected T.Type -> IO T.Constraint
@@ -279,7 +299,11 @@ constrainLetDestruct counter env pat valExpr body expected = do
     let bindings = patternBindings (pat, valType)
         bodyEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
     bodyCon <- constrain counter bodyEnv body expected
-    return $ T.CAnd [valCon, bodyCon]
+    let header = Map.fromList
+            [ (n, (A.one, t))
+            | (n, T.Forall _ t) <- bindings
+            ]
+    return $ T.CAnd [valCon, T.CLet [] [] header T.CTrue bodyCon]
 
 
 -- | Generate constraints for a definition, returning (constraint, name, funcType)
@@ -364,10 +388,118 @@ constrainCase counter env region subject branches expected = do
 
 
 constrainBranch :: Counter -> Env -> T.Region -> T.Type -> T.Type -> Int -> Can.CaseBranch -> IO T.Constraint
-constrainBranch counter env region subjectType resultType branchIdx (Can.CaseBranch pat body) =
-    let bindings = patternBindings (pat, subjectType)
-        branchEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
-    in constrain counter branchEnv body (T.FromContext region (T.CaseBranch branchIdx) resultType)
+constrainBranch counter env region subjectType resultType branchIdx (Can.CaseBranch pat body) = do
+    -- Fresh-instantiate any ADT type parameters this pattern references,
+    -- emit a CEqual to unify the scrutinee with the instantiated pattern
+    -- type (so e.g. `case m of Just n -> …` forces m's type to be
+    -- `Maybe <fresh>` and binds n to that same fresh var). Without this,
+    -- ADT argTypes fall back to raw `TVar "a"` from the union definition,
+    -- and multiple pattern matches end up sharing the same stale "a".
+    (bindings, ctorEqs) <- instantiatePattern counter pat subjectType
+    let branchEnv = foldr (\(n, ann) e -> Map.insert n ann e) env bindings
+    bodyCon <- constrain counter branchEnv body (T.FromContext region (T.CaseBranch branchIdx) resultType)
+    let patHeader = Map.fromList
+            [ (pname, (A.one, ptype))
+            | (pname, T.Forall _ ptype) <- bindings
+            ]
+    return (T.CAnd (ctorEqs ++ [T.CLet [] [] patHeader T.CTrue bodyCon]))
+
+
+-- | Walk the pattern; for every ADT constructor, fresh-alpha-rename its
+-- type parameters, collect the instantiation constraint (scrutineeType
+-- must unify with `TType home typeName [fresh_vars...]`), and accumulate
+-- variable bindings with the instantiated arg types.
+--
+-- Returns (name-bindings, unification-constraints).
+instantiatePattern
+    :: Counter
+    -> Can.Pattern
+    -> T.Type
+    -> IO ([(String, T.Annotation)], [T.Constraint])
+instantiatePattern counter (A.At reg p) scrutTy = case p of
+    Can.PVar name        -> return ([(name, T.Forall [] scrutTy)], [])
+    Can.PAnything        -> return ([], [])
+    Can.PUnit            -> return ([], [])
+    Can.PBool _          -> return ([], [])
+    Can.PChr _           -> return ([], [])
+    Can.PStr _           -> return ([], [])
+    Can.PInt _           -> return ([], [])
+
+    Can.PAlias inner name -> do
+        (innerBinds, innerCons) <- instantiatePattern counter inner scrutTy
+        return ((name, T.Forall [] scrutTy) : innerBinds, innerCons)
+
+    Can.PRecord fields ->
+        -- Record patterns bind each field name to a fresh var (solver unifies
+        -- with the scrutinee on access). Keep the historical behaviour.
+        let bindings =
+                [ (f, T.Forall [] (T.TVar ("_rec_" ++ f)))
+                | f <- fields
+                ]
+        in return (bindings, [])
+
+    Can.PTuple a b more -> do
+        tvarNames <- mapM (\i -> freshName counter ("_tup_" ++ show i))
+                          [0 .. 1 + length more]
+        let (firstName : secondName : restNames) = tvarNames
+            tupleTy = T.TTuple (T.TVar firstName) (T.TVar secondName)
+                               (map T.TVar restNames)
+            eq = T.CEqual reg T.CCase scrutTy (T.NoExpectation tupleTy)
+        (binds, cons) <- fmap combine $ mapM (\(pat', name) ->
+            instantiatePattern counter pat' (T.TVar name))
+            (zip (a : b : more) tvarNames)
+        return (binds, eq : cons)
+
+    Can.PList items -> do
+        elemName <- freshName counter "_list_elem"
+        let elemTy = T.TVar elemName
+            listTy = T.TType ModuleName.list "List" [elemTy]
+            eq     = T.CEqual reg T.CCase scrutTy (T.NoExpectation listTy)
+        (binds, cons) <- fmap combine $ mapM (\item ->
+            instantiatePattern counter item elemTy) items
+        return (binds, eq : cons)
+
+    Can.PCons h t -> do
+        elemName <- freshName counter "_cons_elem"
+        let elemTy = T.TVar elemName
+            listTy = T.TType ModuleName.list "List" [elemTy]
+            eq     = T.CEqual reg T.CCase scrutTy (T.NoExpectation listTy)
+        (hBinds, hCons) <- instantiatePattern counter h elemTy
+        (tBinds, tCons) <- instantiatePattern counter t listTy
+        return (hBinds ++ tBinds, eq : hCons ++ tCons)
+
+    Can.PCtor home typeName union _ctorName _idx args -> do
+        -- Fresh-alpha-rename the ADT's type parameters. The result is:
+        --   - pattern's expected scrutinee type  = TType home typeName [freshVars]
+        --   - each arg's type = argType with the ADT's TVar substituted
+        --     for the fresh var on the same position.
+        let tyParams = Can._u_vars union
+        freshVarNames <- mapM (\v -> freshName counter ("_" ++ v ++ "_inst")) tyParams
+        let subst = Map.fromList (zip tyParams (map T.TVar freshVarNames))
+            instantiatedOuter =
+                T.TType home typeName (map T.TVar freshVarNames)
+            eq = T.CEqual reg T.CCase scrutTy
+                    (T.NoExpectation instantiatedOuter)
+        (binds, cons) <- fmap combine $ mapM (\(Can.PatternCtorArg _ argTy argPat) ->
+            let argTy' = substTypeVars subst argTy
+            in instantiatePattern counter argPat argTy') args
+        return (binds, eq : cons)
+  where
+    combine xs = (concatMap fst xs, concatMap snd xs)
+
+
+-- | Substitute named type variables in a Canonical.Type.
+substTypeVars :: Map.Map String T.Type -> Can.Type -> T.Type
+substTypeVars subst ct = case ct of
+    Can.TVar n -> case Map.lookup n subst of
+        Just t  -> t
+        Nothing -> T.TVar n
+    Can.TLambda a b  -> T.TLambda (substTypeVars subst a) (substTypeVars subst b)
+    Can.TType h n args -> T.TType h n (map (substTypeVars subst) args)
+    Can.TUnit        -> T.TUnit
+    Can.TTuple a b cs -> T.TTuple (substTypeVars subst a) (substTypeVars subst b)
+                                  (map (substTypeVars subst) cs)
+    Can.TRecord _ _ -> T.TVar "_rec"  -- records at pattern level not supported
 
 
 -- ═══════════════════════════════════════════════════════════
@@ -513,6 +645,44 @@ lookupKernelType modName funcName = case (modName, funcName) of
                 (T.TLambda
                     (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"])
                     (T.TVar "a")))
+    ("Maybe", "map") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"])
+                           (T.TType ModuleName.maybe_ "Maybe" [T.TVar "b"])))
+    ("Maybe", "andThen") ->
+        Just $ T.Forall ["a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a") (T.TType ModuleName.maybe_ "Maybe" [T.TVar "b"]))
+                (T.TLambda (T.TType ModuleName.maybe_ "Maybe" [T.TVar "a"])
+                           (T.TType ModuleName.maybe_ "Maybe" [T.TVar "b"])))
+    ("Result", "combine") ->
+        Just $ T.Forall ["e", "a"]
+            (T.TLambda
+                (T.TType ModuleName.list "List"
+                    [T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"]])
+                (T.TType ModuleName.result_ "Result"
+                    [T.TVar "e", T.TType ModuleName.list "List" [T.TVar "a"]]))
+    ("Result", "map") ->
+        Just $ T.Forall ["e", "a", "b"]
+            (T.TLambda (T.TLambda (T.TVar "a") (T.TVar "b"))
+                (T.TLambda
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"])))
+    ("Result", "andThen") ->
+        Just $ T.Forall ["e", "a", "b"]
+            (T.TLambda
+                (T.TLambda (T.TVar "a")
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"]))
+                (T.TLambda
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "b"])))
+    ("Result", "mapError") ->
+        Just $ T.Forall ["e", "e2", "a"]
+            (T.TLambda (T.TLambda (T.TVar "e") (T.TVar "e2"))
+                (T.TLambda
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e", T.TVar "a"])
+                    (T.TType ModuleName.result_ "Result" [T.TVar "e2", T.TVar "a"])))
     ("List", "map") ->
         Just $ T.Forall ["a", "b"]
             (T.TLambda

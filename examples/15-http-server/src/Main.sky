@@ -75,11 +75,11 @@ parseVisitCount maybeCookie =
 parseVisitInt : String -> Int
 parseVisitInt v =
     case String.toInt v of
-        
-        Ok n ->
+
+        Just n ->
             n + 1
-        
-        Err _ ->
+
+        Nothing ->
             1
 
 
