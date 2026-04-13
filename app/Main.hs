@@ -1,12 +1,16 @@
+{-# LANGUAGE TemplateHaskell #-}
 module Main where
 
 import Options.Applicative
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
+
 import qualified System.Directory
+import qualified System.Environment
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Process (callProcess)
 import Control.Monad (when)
+import Data.FileEmbed (embedStringFile)
 
 import qualified Data.Text.IO as TIO
 import qualified Sky.Build.Compile as Compile
@@ -22,8 +26,17 @@ import qualified Sky.Build.SkyDeps as SkyDeps
 -- Commands: build, run, check, fmt, init, add, remove, install, lsp, upgrade, version
 main :: IO ()
 main = do
-    cmd <- execParser opts
-    result <- runCommand cmd
+    -- `sky` with no arguments should print the help screen and exit 0
+    -- instead of a bare "Missing: (COMMAND)" error. Inject `--help`
+    -- into argv when none is present.
+    args <- System.Environment.getArgs
+    result <- if null args
+        then do
+            _ <- handleParseResult $ execParserPure defaultPrefs opts ["--help"]
+            return (Right ())
+        else do
+            cmd <- execParser opts
+            runCommand cmd
     case result of
         Right () -> exitSuccess
         Left err -> do
@@ -97,6 +110,53 @@ fileArg :: Parser FilePath
 fileArg = argument str (metavar "FILE" <> value "src/Main.sky")
 
 
+-- | CLAUDE.md contents are embedded into the sky binary at build time
+-- via Template Haskell, so `sky init` works from any release artefact
+-- without needing a templates/ directory beside the binary.
+embeddedClaudeMd :: String
+embeddedClaudeMd = $(embedStringFile "templates/CLAUDE.md")
+
+
+-- | Copy a named template into the new project. For CLAUDE.md we use
+-- the embedded copy; other templates fall through to disk lookup so
+-- future project-scaffolding additions don't require a compiler rebuild.
+copyTemplate :: FilePath -> FilePath -> IO ()
+copyTemplate destProject "CLAUDE.md" =
+    writeFile (destProject ++ "/CLAUDE.md") embeddedClaudeMd
+copyTemplate destProject filename = do
+    -- Disk-template fallback for names other than CLAUDE.md.
+    candidates <- templateSearchPaths filename
+    mSrc <- firstExisting candidates
+    case mSrc of
+        Nothing  -> return ()
+        Just src -> do
+            content <- readFile src
+            writeFile (destProject ++ "/" ++ filename) content
+  where
+    firstExisting [] = return Nothing
+    firstExisting (p:ps) = do
+        ok <- doesFileExist p
+        if ok then return (Just p) else firstExisting ps
+
+
+templateSearchPaths :: FilePath -> IO [FilePath]
+templateSearchPaths filename = do
+    env <- System.Environment.lookupEnv "SKY_TEMPLATES_DIR"
+    exe <- System.Environment.getExecutablePath
+    let exeDir = dirOf exe
+    cwd <- System.Directory.getCurrentDirectory
+    return $ concat
+        [ maybe [] (\d -> [d </> filename]) env
+        , [ exeDir </> "templates" </> filename
+          , exeDir </> ".." </> "templates" </> filename
+          , cwd </> "templates" </> filename
+          ]
+        ]
+  where
+    dirOf = reverse . dropWhile (/= '/') . reverse
+    (</>) a b = a ++ "/" ++ b
+
+
 runCommand :: Command -> IO (Either String ())
 runCommand cmd = case cmd of
     Version -> do
@@ -164,15 +224,40 @@ runCommand cmd = case cmd of
     Init mName -> do
         let name = maybe "sky-project" id mName
         putStrLn $ "Initialising project: " ++ name
-        -- Create project structure
         createDirectoryIfMissing True (name ++ "/src")
         writeFile (name ++ "/sky.toml") $ unlines
-            [ "name = \"" ++ name ++ "\""
+            [ "# sky.toml — project configuration."
+            , "# Full reference: https://github.com/anzellai/sky#skytoml"
+            , ""
+            , "name    = \"" ++ name ++ "\""
             , "version = \"0.1.0\""
-            , "entry = \"src/Main.sky\""
+            , "entry   = \"src/Main.sky\""
+            , "bin     = \"app\""
             , ""
             , "[source]"
             , "root = \"src\""
+            , ""
+            , "# [live]            # Sky.Live runtime (uncomment to configure)"
+            , "# port      = 8000"
+            , "# store     = \"memory\"      # memory | sqlite | postgres"
+            , "# storePath = \"sky.db\"       # sqlite file or postgres conn str"
+            , "# ttl       = 1800             # session TTL in seconds"
+            , "# static    = \"public\"       # static asset directory"
+            , ""
+            , "# [auth]            # Std.Auth configuration (uncomment to use)"
+            , "# driver     = \"jwt\"         # jwt | session | oauth"
+            , "# secret     = \"change-me\"   # JWT signing secret (use env var in prod)"
+            , "# tokenTtl   = 86400           # token lifetime in seconds"
+            , "# cookieName = \"sky_auth\""
+            , ""
+            , "# [database]        # Std.Db configuration (uncomment to use)"
+            , "# driver = \"sqlite\"          # sqlite | postgres"
+            , "# path   = \"app.db\"          # sqlite file or postgres conn str"
+            , ""
+            , "# [\"go.dependencies\"]        # `sky add <pkg>` records these here"
+            , ""
+            , "# [dependencies]              # Sky-source dependencies (from git)"
+            , "# \"github.com/anzellai/sky-tailwind\" = \"latest\""
             ]
         writeFile (name ++ "/src/Main.sky") $ unlines
             [ "module Main exposing (main)"
@@ -188,11 +273,20 @@ runCommand cmd = case cmd of
             [ "sky-out/"
             , ".skycache/"
             , ".skydeps/"
+            , ".env"
+            , "*.db"
+            , "*.db-shm"
+            , "*.db-wal"
             ]
+        -- Copy the Sky coding guide so AI assistants operating in this
+        -- project have context on stdlib / idioms. Template lives next
+        -- to the installed binary; also probe the dev-tree path.
+        copyTemplate name "CLAUDE.md"
         putStrLn $ "Created " ++ name ++ "/"
         putStrLn $ "  sky.toml"
         putStrLn $ "  src/Main.sky"
         putStrLn $ "  .gitignore"
+        putStrLn $ "  CLAUDE.md"
         putStrLn $ ""
         putStrLn $ "Next: cd " ++ name ++ " && sky build src/Main.sky"
         return (Right ())

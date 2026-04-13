@@ -610,17 +610,60 @@ generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depAriti
         -- Use reflect-free stdlib (`os` package) in a named-init to set the
         -- port fallback without requiring extra imports — we pipe through
         -- rt.SetPortDefault which lives in the runtime (always imported).
-        portDefault =
+        -- Every runtime default derivable from sky.toml lands in this
+        -- single init() so the generated binary reflects the project's
+        -- configuration at zero runtime cost. All defaults are only
+        -- applied when the corresponding env var is unset — that way
+        -- CI / docker can override without a recompile.
+        liveDefaults =
             [ GoIr.GoDeclRaw $
-                "func init() { rt.SetPortDefault(\""
-                ++ show (Toml._livePort config) ++ "\") }"
+                "func init() {\n"
+                ++ "\trt.SetPortDefault(\"" ++ show (Toml._livePort config) ++ "\")\n"
+                ++ tomlLiveEnv "SKY_LIVE_STORE"      (Toml._liveStore     config)
+                ++ tomlLiveEnv "SKY_LIVE_STORE_PATH" (Toml._liveStorePath config)
+                ++ tomlLiveEnv "SKY_LIVE_TTL"        (intString           (Toml._liveTtl config))
+                ++ tomlLiveEnv "SKY_STATIC_DIR"      (Toml._liveStatic    config)
+                ++ tomlLiveEnv "SKY_AUTH_SECRET"     (Toml._authSecret    config)
+                ++ tomlLiveEnv "SKY_AUTH_TOKEN_TTL"  (intString (Toml._authTokenTtl config))
+                ++ tomlLiveEnv "SKY_AUTH_COOKIE"     (Toml._authCookie    config)
+                ++ tomlLiveEnv "SKY_AUTH_DRIVER"     (Toml._authDriver    config)
+                ++ tomlLiveEnv "SKY_DB_DRIVER"       (Toml._dbDriver      config)
+                ++ tomlLiveEnv "SKY_DB_PATH"         (Toml._dbPath        config)
+                ++ "}"
             ]
+        portDefault = liveDefaults  -- preserve historical name for downstream splices
         pkg = GoIr.GoPackage
             { GoIr._pkg_name = "main"
             , GoIr._pkg_imports = imports
             , GoIr._pkg_decls = rtPin ++ portDefault ++ depDecls ++ unionDecls ++ aliasDecls ++ decls ++ mainDecl
             }
     in GoBuilder.renderPackage pkg
+
+
+-- | Emit a Go if-not-already-set os.Setenv for a sky.toml-derived
+-- runtime default. No-op when the value is empty (so we don't unset
+-- actual env-var overrides).
+tomlLiveEnv :: String -> String -> String
+tomlLiveEnv _    ""    = ""
+tomlLiveEnv name value =
+       "\trt.SetEnvDefault(\"" ++ name ++ "\", " ++ escapeGoString value ++ ")\n"
+
+
+intString :: Int -> String
+intString n
+    | n <= 0    = ""
+    | otherwise = show n
+
+
+escapeGoString :: String -> String
+escapeGoString s = "\"" ++ concatMap esc s ++ "\""
+  where
+    esc '\\' = "\\\\"
+    esc '"'  = "\\\""
+    esc '\n' = "\\n"
+    esc '\r' = "\\r"
+    esc '\t' = "\\t"
+    esc c    = [c]
 
 
 -- | Generate Go source from a canonical module with solved types (single module)

@@ -26,10 +26,18 @@ func debugStack() string { return string(debug.Stack()) }
 // sky.toml `port` value. It only seeds SKY_LIVE_PORT when unset — shell
 // env and .env still win.
 func SetPortDefault(port string) {
-	if _, ok := os.LookupEnv("SKY_LIVE_PORT"); ok {
+	SetEnvDefault("SKY_LIVE_PORT", port)
+}
+
+// SetEnvDefault: set an environment variable only when it isn't already
+// set. Generated init() functions call this for each sky.toml-derived
+// default (session store, TTL, static dir, etc.), so shell + .env always
+// take precedence.
+func SetEnvDefault(name, value string) {
+	if _, ok := os.LookupEnv(name); ok {
 		return
 	}
-	_ = os.Setenv("SKY_LIVE_PORT", port)
+	_ = os.Setenv(name, value)
 }
 
 func init() {

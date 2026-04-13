@@ -9,17 +9,24 @@ import Data.List (isPrefixOf, stripPrefix)
 
 -- | Sky project configuration
 data SkyConfig = SkyConfig
-    { _name        :: !String           -- project name
-    , _version     :: !String           -- semver
-    , _entry       :: !String           -- entry file (src/Main.sky)
-    , _sourceRoot  :: !String           -- source root (src)
-    , _binName     :: !String           -- output binary name (app)
-    , _goDeps      :: [(String, String)]-- Go dependencies [(pkg, version)]
-    , _skyDeps     :: [(String, String)]-- Sky-source dependencies [(repo, version)]
-    , _livePort    :: !Int              -- Sky.Live port (8000)
-    , _liveStore   :: !String           -- session store (memory/sqlite/redis)
-    , _dbDriver    :: !String           -- database driver (sqlite/postgres)
-    , _dbPath      :: !String           -- database path
+    { _name          :: !String           -- project name
+    , _version       :: !String           -- semver
+    , _entry         :: !String           -- entry file (src/Main.sky)
+    , _sourceRoot    :: !String           -- source root (src)
+    , _binName       :: !String           -- output binary name (app)
+    , _goDeps        :: [(String, String)]-- Go dependencies [(pkg, version)]
+    , _skyDeps       :: [(String, String)]-- Sky-source dependencies [(repo, version)]
+    , _livePort      :: !Int              -- [live] port (default 8000)
+    , _liveStore     :: !String           -- [live] store: memory / sqlite / postgres
+    , _liveStorePath :: !String           -- [live] storePath: file or connection string
+    , _liveTtl       :: !Int              -- [live] ttl: session TTL in seconds
+    , _liveStatic    :: !String           -- [live] static: static asset directory
+    , _dbDriver      :: !String           -- [database] driver (sqlite/postgres)
+    , _dbPath        :: !String           -- [database] path
+    , _authSecret    :: !String           -- [auth] secret: JWT signing key
+    , _authTokenTtl  :: !Int              -- [auth] tokenTtl: JWT lifetime seconds
+    , _authCookie    :: !String           -- [auth] cookieName: session cookie
+    , _authDriver    :: !String           -- [auth] driver: jwt / session / oauth
     }
     deriving (Show)
 
@@ -27,17 +34,24 @@ data SkyConfig = SkyConfig
 -- | Default configuration
 defaultConfig :: SkyConfig
 defaultConfig = SkyConfig
-    { _name       = "sky-project"
-    , _version    = "0.1.0"
-    , _entry      = "src/Main.sky"
-    , _sourceRoot = "src"
-    , _binName    = "app"
-    , _goDeps     = []
-    , _skyDeps    = []
-    , _livePort   = 8000
-    , _liveStore  = "memory"
-    , _dbDriver   = ""
-    , _dbPath     = ""
+    { _name          = "sky-project"
+    , _version       = "0.1.0"
+    , _entry         = "src/Main.sky"
+    , _sourceRoot    = "src"
+    , _binName       = "app"
+    , _goDeps        = []
+    , _skyDeps       = []
+    , _livePort      = 8000
+    , _liveStore     = ""
+    , _liveStorePath = ""
+    , _liveTtl       = 1800
+    , _liveStatic    = ""
+    , _dbDriver      = ""
+    , _dbPath        = ""
+    , _authSecret    = ""
+    , _authTokenTtl  = 86400
+    , _authCookie    = "sky_auth"
+    , _authDriver    = "jwt"
     }
 
 
@@ -74,17 +88,43 @@ applyKeyValue section config key value = case section of
         config { _goDeps = _goDeps config ++ [(stripQuotes key, value)] }
     "dependencies" ->
         config { _skyDeps = _skyDeps config ++ [(stripQuotes key, value)] }
+    -- [live] section: Sky.Live runtime config.
+    "live" -> case key of
+        "port"      -> config { _livePort = safeReadInt value (_livePort config) }
+        "store"     -> config { _liveStore = value }
+        "storePath" -> config { _liveStorePath = value }
+        "ttl"       -> config { _liveTtl = safeReadInt value (_liveTtl config) }
+        "static"    -> config { _liveStatic = value }
+        _           -> config
+    -- [database] section
+    "database" -> case key of
+        "driver" -> config { _dbDriver = value }
+        "path"   -> config { _dbPath = value }
+        _        -> config
+    -- [auth] section: Std.Auth defaults. Values surface as env vars
+    -- at init time so Auth.signToken / verifyToken can pick them up
+    -- without each call passing a secret.
+    "auth" -> case key of
+        "secret"     -> config { _authSecret   = value }
+        "tokenTtl"   -> config { _authTokenTtl = safeReadInt value (_authTokenTtl config) }
+        "cookieName" -> config { _authCookie   = value }
+        "driver"     -> config { _authDriver   = value }
+        _            -> config
+    -- Top-level / [source] / [project] — project metadata.
     _ -> case key of
         "name"    -> config { _name = value }
         "version" -> config { _version = value }
         "entry"   -> config { _entry = value }
         "root"    -> config { _sourceRoot = value }
         "bin"     -> config { _binName = value }
-        "port"    -> config { _livePort = read value }
-        "store"   -> config { _liveStore = value }
-        "driver"  -> config { _dbDriver = value }
-        "path"    -> config { _dbPath = value }
+        -- top-level `port = 8000` (legacy — before [live] section existed)
+        "port"    -> config { _livePort = safeReadInt value (_livePort config) }
         _         -> config
+
+safeReadInt :: String -> Int -> Int
+safeReadInt s fallback = case reads s of
+    [(n, _)] -> n
+    _        -> fallback
 
 
 -- Helpers
