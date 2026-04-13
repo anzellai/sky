@@ -13,6 +13,7 @@ import qualified Sky.Sky.ModuleName as ModuleName
 import qualified Sky.Canonicalise.Environment as Env
 import qualified Sky.Canonicalise.Pattern as CanPat
 import qualified Sky.Canonicalise.Type as CanType
+import qualified Sky.Parse.Symbol as Sym
 
 
 -- | Canonicalise a source expression
@@ -191,27 +192,83 @@ resolveOperator _env op = case op of
 -- BINARY OPERATORS
 -- ═══════════════════════════════════════════════════════════
 
--- | Canonicalise a binary operator chain.
--- `Binops [(e1, op1), (e2, op2)] final` → nested Binop nodes.
+-- | Canonicalise a binary operator chain using precedence climbing.
 --
--- We thread a fully-Located accumulator so each intermediate Binop
--- retains the correct source region (needed by downstream diagnostics).
--- The returned Expr_ is unwrapped at the call site by canonicaliseExpr_.
+-- The parser emits `Binops [(e1, op1), (e2, op2), (e3, op3)] final` as a
+-- flat parse of `e1 op1 e2 op2 e3 op3 final` without consulting operator
+-- precedence. We build the correct tree here, reading per-op precedence
+-- and associativity from Sky.Parse.Symbol.precedence.
 canonicaliseBinops :: Env.Env -> [(Src.Expr, A.Located String)] -> Src.Expr -> Can.Expr_
 canonicaliseBinops env pairs final =
-    let canFinal = canonicaliseExpr env final
-        folded   = foldl (applyBinop env) canFinal pairs
-    in A.toValue folded
+    -- The parser emits Src.Binops as a *nested* structure: the first
+    -- operand of an outer chain may itself be a Src.Binops node. We
+    -- flatten into one long stream of operands+operators before applying
+    -- precedence climbing. Without this, `n >= 0 && n <= 150` parses as
+    -- `Binops [(Binops [(Binops [(n, >=)] 0), &&)] n), <=] 150` and only
+    -- the outermost level gets its precedence recomputed — leaving the
+    -- inner `((n >= 0) && n)` mis-associated.
+    let (firstSrc, tailPairs) = flattenBinops pairs final
+    in case tailPairs of
+        [] -> A.toValue (canonicaliseExpr env firstSrc)
+        _ ->
+            let firstOperand = canonicaliseExpr env firstSrc
+                restOperands = map (canonicaliseExpr env . fst) tailPairs
+                ops          = map snd tailPairs
+                (tree, _, _) = climb 0 firstOperand restOperands ops
+            in A.toValue tree
   where
-    applyBinop e (A.At accReg accVal) (leftExpr, A.At _ op) =
-        let
-            canLeft@(A.At leftReg _) = canonicaliseExpr e leftExpr
-            (opHome, opName) = resolveOpName op
+    -- Flatten a nested Src.Binops tree into (firstOperand, [(rightOperand, op)])
+    -- in left-to-right source order. The `tailPairs` tuple is
+    -- `(operand_i, op_{i-1})` — the operand that follows op_{i-1}.
+    flattenBinops :: [(Src.Expr, A.Located String)] -> Src.Expr -> (Src.Expr, [(Src.Expr, String)])
+    flattenBinops srcPairs srcFinal =
+        let -- First recurse into the leftmost sub-operand.
+            (leftmost, leadPairs) = case srcPairs of
+                []     -> (srcFinal, [])
+                (e0, A.At _ op0):restPairs ->
+                    let (subFirst, subTail) = flattenBinops' e0
+                        -- After flattening e0, the remaining chain is:
+                        -- subTail ++ [(middle_operand, op0) ...] ++ restPairs ++ [(final, _)]
+                        (middleFirst, middleTail) = flattenBinops restPairs srcFinal
+                    in (subFirst, subTail ++ [(middleFirst, op0)] ++ middleTail)
+        in (leftmost, leadPairs)
+
+    -- Same as flattenBinops but recursing on a single operand expression.
+    -- If it's itself a Src.Binops, flatten that; otherwise it's a leaf.
+    flattenBinops' :: Src.Expr -> (Src.Expr, [(Src.Expr, String)])
+    flattenBinops' expr@(A.At _ e) = case e of
+        Src.Binops ps f -> flattenBinops ps f
+        _               -> (expr, [])
+
+    -- climb minPrec left operands operators
+    -- Consumes ops of precedence >= minPrec, pairing each with next operand.
+    -- climb minPrec left operands operators
+    -- Consumes ops of precedence >= minPrec, pairing each with next operand.
+    climb :: Int -> Can.Expr -> [Can.Expr] -> [String]
+          -> (Can.Expr, [Can.Expr], [String])
+    climb _ left operands []        = (left, operands, [])
+    climb minPrec left operands (op:opsTail)
+        | opPrec op < minPrec = (left, operands, op:opsTail)
+        | otherwise = case operands of
+            [] -> (left, [], op:opsTail)
+            (nextOperand:restOps) ->
+                let Sym.Precedence p assoc = Sym.precedence op
+                    nextMin = case assoc of
+                        Sym.L -> p + 1
+                        Sym.R -> p
+                        Sym.N -> p + 1
+                    (right, remOperands, remOps) = climb nextMin nextOperand restOps opsTail
+                    merged = combine op left right
+                in climb minPrec merged remOperands remOps
+
+    opPrec op = case Sym.precedence op of Sym.Precedence p _ -> p
+
+    combine op (A.At lr l) (A.At rr r) =
+        let (opHome, opName) = resolveOpName op
             opAnnot = operatorAnnotation op
-            mergedReg = A.merge leftReg accReg
-        in
-        A.At mergedReg $
-            Can.Binop op opHome opName opAnnot canLeft (A.At accReg accVal)
+            mergedReg = A.merge lr rr
+        in A.At mergedReg $
+            Can.Binop op opHome opName opAnnot (A.At lr l) (A.At rr r)
 
 
 -- | Resolve operator to its home module and canonical name

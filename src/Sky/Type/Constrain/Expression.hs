@@ -445,6 +445,37 @@ lookupKernelType modName funcName = case (modName, funcName) of
         Just $ T.Forall [] (T.TLambda stringType boolType)
     ("String", "join") ->
         Just $ T.Forall [] (T.TLambda stringType (T.TLambda (T.TType ModuleName.list "List" [stringType]) stringType))
+    ("String", "toInt") ->
+        Just $ T.Forall [] (T.TLambda stringType
+            (T.TType ModuleName.maybe_ "Maybe" [intType]))
+    ("String", "toFloat") ->
+        Just $ T.Forall [] (T.TLambda stringType
+            (T.TType ModuleName.maybe_ "Maybe" [floatType]))
+    ("String", "toUpper") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "toLower") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "trim") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "reverse") ->
+        Just $ T.Forall [] (T.TLambda stringType stringType)
+    ("String", "append") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType stringType))
+    ("String", "contains") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType boolType))
+    ("String", "startsWith") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType boolType))
+    ("String", "endsWith") ->
+        Just $ T.Forall [] (T.TLambda stringType (T.TLambda stringType boolType))
+    ("String", "split") ->
+        Just $ T.Forall [] (T.TLambda stringType
+            (T.TLambda stringType (T.TType ModuleName.list "List" [stringType])))
+    ("String", "replace") ->
+        Just $ T.Forall [] (T.TLambda stringType
+            (T.TLambda stringType (T.TLambda stringType stringType)))
+    ("String", "slice") ->
+        Just $ T.Forall [] (T.TLambda intType
+            (T.TLambda intType (T.TLambda stringType stringType)))
     ("Task", "succeed") ->
         Just $ T.Forall ["e", "a"] (T.TLambda (T.TVar "a")
             (T.TType ModuleName.task "Task" [T.TVar "e", T.TVar "a"]))
