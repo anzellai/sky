@@ -758,11 +758,13 @@ Update this table after every merged phase. Include commit SHA and date.
 | P11b — Sky deps | ☐ | — | — | — |
 | P12 — reflection audit | ☐ | — | — | — |
 
-**Last verified green:** 2026-04-13 (after P0) — 18/18 canonical examples
-build (scripts/example-sweep.sh --build-only), `cabal test` 3/3 green, CI
-workflow runs both. Golden-output tests per codegen feature deferred; the
-`cabal test` harness covers type-error-fatal + compile smoke, and the
-sweep covers codegen end-to-end.
+**Last verified green:** 2026-04-13 (after P0/P1/P2) — 18/18 canonical
+examples build (scripts/example-sweep.sh --build-only), `cabal test` 5/5
+green, CI workflow runs both. P0 harness, P1 parser regressions, and P2
+exposing-clause enforcement landed. P3 (Maranget exhaustiveness) and the
+P4→P8 typed-codegen chain are the next critical path; resume there.
+Golden-output tests per codegen feature remain deferred until P4-P6
+stabilise the emitted Go shapes.
 
 **Legend.** ☐ pending · ◐ in progress · ☑ complete
 
