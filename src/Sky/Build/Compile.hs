@@ -286,6 +286,16 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                     , let prefix = map (\c -> if c == '.' then '_' else c) modName
                     ]
             putStrLn "-- Type Checking"
+            -- Run HM on each dep module so unannotated functions get
+            -- inferred types for the typed-codegen tables. Errors in a
+            -- dep don't block the entry — we degrade to `any` for that
+            -- module's bindings.
+            depSolved <- Async.forConcurrently validDeps $ \(modName, depMod) -> do
+                cs <- Constrain.constrainModule depMod
+                r  <- Solve.solve cs
+                case r of
+                    Solve.SolveOk t -> return (modName, t)
+                    Solve.SolveError _ -> return (modName, Map.empty)
             constraints <- Constrain.constrainModule canMod
             solveResult <- Solve.solve constraints
             types <- case solveResult of
@@ -295,8 +305,40 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                 Solve.SolveError err -> do
                     putStrLn $ "   TYPE WARNING: " ++ err
                     return Map.empty
+            -- Merge inferred dep types into the param + return tables
+            -- keyed by module-prefixed Go names. Annotation-derived
+            -- entries already in the tables win over inferred ones
+            -- (annotations represent the user's declared contract).
+            let depInferredParams = Map.unions
+                    [ Map.fromList
+                        [ ( prefix ++ "_" ++ n
+                          , splitInferredParams (countParamsFor n depMod) ty )
+                        | (n, ty) <- Map.toList depTypes
+                        ]
+                    | (modName, depTypes) <- depSolved
+                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
+                    ]
+                depInferredRets = Map.unions
+                    [ Map.fromList
+                        [ ( prefix ++ "_" ++ n
+                          , inferredReturnFor (countParamsFor n depMod) ty )
+                        | (n, ty) <- Map.toList depTypes
+                        ]
+                    | (modName, depTypes) <- depSolved
+                    , let prefix = map (\c -> if c == '.' then '_' else c) modName
+                    , let depMod = head [ m | (mn, m) <- validDeps, mn == modName ]
+                    ]
+            putStrLn $ "   HM infer (deps): "
+                ++ show (Map.size depInferredParams) ++ " functions typed"
+            modifyIORef globalCgEnv $ \e -> e
+                { Rec._cg_funcParamTypes =
+                    Map.union (Rec._cg_funcParamTypes e) depInferredParams
+                , Rec._cg_funcRetType =
+                    Map.union (Rec._cg_funcRetType e) depInferredRets
+                }
             putStrLn "-- Generating Go"
-            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes
+            let goCode = generateGoMulti canMod entrySrcMod config types depDecls depRecAliases depArities depParamTypes depRetTypes depInferredParams depInferredRets
             createDirectoryIfMissing True outDir
             let mainGoPath = outDir </> "main.go"
             writeFile mainGoPath goCode
@@ -705,14 +747,28 @@ generateDeclsForDep canMod modPrefix =
               goName = modPrefix ++ "_" ++ name
               (goParams', destructStmts) = destructureParams params
               -- T3 (dep path): annotated dep functions get typed return.
-              -- T2/T6 (dep path): typed params too. Callers in the
-              -- entry module use coerceCallArgs to coerce each arg.
+              -- T2/T6 (dep path): typed params too. When no annotation
+              -- exists, fall back to HM-inferred types recorded in the
+              -- global env by the per-dep solver run.
+              env = getCgEnv
+              qualLookupName = modPrefix ++ "_" ++ name
+              inferredParams = Map.findWithDefault []
+                                  qualLookupName
+                                  (Rec._cg_funcParamTypes env)
+              inferredRet = Map.findWithDefault "any"
+                                qualLookupName
+                                (Rec._cg_funcRetType env)
+              _dbg = ()
               depParamGoTys = case mAnnotArgs of
                   Just argTys -> map safeReturnType argTys
-                  Nothing     -> replicate (length params) "any"
-              depRetType = case mAnnotRet of
+                  Nothing     ->
+                      if null inferredParams
+                          then replicate (length params) "any"
+                          else inferredParams ++
+                               replicate (max 0 (length params - length inferredParams)) "any"
+              depRetType = _dbg `seq` case mAnnotRet of
                   Just rt' -> safeReturnType rt'
-                  Nothing  -> "any"
+                  Nothing  -> inferredRet
               -- Replace each param's Go type with the typed form
               -- (when not "any"). destructureParams gave us patterns
               -- already; we just rewrite the type slot.
@@ -842,23 +898,32 @@ generateAliasForDep userDefs modPrefix (aliasName, Can.Alias _vars body) =
 
 
 -- | Generate Go with merged dependency declarations
-generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> String
-generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes =
+generateGoMulti :: Can.Module -> Src.Module -> Toml.SkyConfig -> Solve.SolvedTypes -> [GoIr.GoDecl] -> Set.Set String -> Map.Map String Int -> Map.Map String [String] -> Map.Map String String -> Map.Map String [String] -> Map.Map String String -> String
+generateGoMulti canMod srcMod config solvedTypes depDecls depRecAliases depArities depParamTypes depRetTypes extraInferredParamTypes extraInferredRetTypes =
     let
         imports = unsafePerformIO $ do
             -- T2/T6: register entry-module + dep-module typed function
             -- signatures so call-site codegen (`coerceCallArgs`) can
             -- emit `any(arg).(T)` coercions when passing args to
             -- typed-param functions across module boundaries.
+            -- Rebuild the cgEnv fresh from ALL sources (annotations,
+            -- HM-inferred, dep types) so the final env is deterministic
+            -- regardless of when `imports` is forced relative to
+            -- depDecls during goCode rendering.
             let (entryParamTys, entryRetTys) = collectFuncTypes "" canMod
-                allParamTys = Map.union entryParamTys depParamTypes
-                allRetTys   = Map.union entryRetTys   depRetTypes
+                allParamTys = Map.unions
+                    [ entryParamTys, depParamTypes, extraInferredParamTypes ]
+                allRetTys   = Map.unions
+                    [ entryRetTys, depRetTypes, extraInferredRetTypes ]
                 cgEnv = Rec.withFuncTypes allParamTys allRetTys
                       $ Rec.withDepArities depArities
                       $ Rec.withRecordAliases depRecAliases
                       $ Rec.buildCodegenEnv solvedTypes canMod
             writeIORef globalCgEnv cgEnv
             return $ collectGoImports canMod srcMod
+        -- Force `imports` before anything else so the env is set up
+        -- before depDecls / decls are evaluated (they read getCgEnv).
+        importsForced = imports `seq` imports
         unionDecls = generateUnionTypes canMod
         aliasDecls = generateAliasTypes canMod
         decls = generateDecls canMod solvedTypes
@@ -1520,6 +1585,49 @@ safeReturnTypeWith recAliases = go
                 (m:_) -> m ++ "_R"
                 _     -> go inner
         _ -> "any"
+
+
+-- | Count how many params a dep-module binding has. Used when we
+-- need to split a solver-inferred function type (which chains
+-- TLambdas) into the right number of arg types.
+countParamsFor :: String -> Can.Module -> Int
+countParamsFor name canMod = go (Can._decls canMod)
+  where
+    go Can.SaveTheEnvironment = 0
+    go (Can.Declare d rest) = maybe (go rest) id (matchDef d)
+    go (Can.DeclareRec d ds rest) =
+        maybe (firstMatching (d : ds) (go rest)) id (matchDef d)
+    matchDef d = case d of
+        Can.Def (A.At _ n) pats _
+            | n == name -> Just (length pats)
+            | otherwise -> Nothing
+        Can.TypedDef (A.At _ n) _ pats _ _
+            | n == name -> Just (length pats)
+            | otherwise -> Nothing
+        _ -> Nothing
+    firstMatching [] fallback = fallback
+    firstMatching (d:ds) fallback = case matchDef d of
+        Just k  -> k
+        Nothing -> firstMatching ds fallback
+
+
+-- | Extract Go param types for a function from a solver-inferred
+-- function type, taking `arity` TLambdas from the head.
+-- Env-free (uses safeReturnTypePure) so it can run before the
+-- globalCgEnv is fully populated.
+splitInferredParams :: Int -> T.Type -> [String]
+splitInferredParams 0 _ = []
+splitInferredParams n (T.TLambda from to) =
+    safeReturnTypePure from : splitInferredParams (n - 1) to
+splitInferredParams _ _ = []
+
+
+-- | Extract the Go return type for a function from a solver-inferred
+-- function type (dropping `arity` TLambdas from the head). Env-free.
+inferredReturnFor :: Int -> T.Type -> String
+inferredReturnFor 0 ty = safeReturnTypePure ty
+inferredReturnFor n (T.TLambda _ to) = inferredReturnFor (n - 1) to
+inferredReturnFor _ ty = safeReturnTypePure ty
 
 
 -- | Env-free version of safeReturnType for use during env bootstrap.
