@@ -592,7 +592,16 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	for ev, msg := range n.Events {
 		id := randID()
 		handlers[id] = msg
-		sb.WriteString(fmt.Sprintf(` on%s="skyEvent(event,'%s')"`, ev, id))
+		// Only emit as a native DOM event handler when the name is a
+		// valid identifier. Custom driver events (e.g. `sky-image`,
+		// `file-uploaded`) get stamped as a `data-sky-ev-<name>` hook
+		// attribute for client JS to wire up.
+		if isDOMEventName(ev) {
+			sb.WriteString(fmt.Sprintf(` on%s="skyEvent(event,'%s')"`, ev, id))
+		} else {
+			sb.WriteString(fmt.Sprintf(` data-sky-ev-%s="%s"`,
+				html.EscapeString(ev), id))
+		}
 	}
 	if isVoidTag(n.Tag) {
 		sb.WriteString(" />")
@@ -607,6 +616,22 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	sb.WriteString(">")
 	return sb.String()
 }
+
+// isDOMEventName: true when `ev` is a plain lowercase identifier safe
+// to embed in `on<name>=`. Rejects hyphens, dots, digits-first, etc.
+func isDOMEventName(ev string) bool {
+	if ev == "" {
+		return false
+	}
+	for i := 0; i < len(ev); i++ {
+		c := ev[i]
+		if !(c >= 'a' && c <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
 
 func isVoidTag(t string) bool {
 	switch t {
@@ -673,6 +698,7 @@ type liveApp struct {
 	subscriptions any // Model -> Sub Msg
 	routes        []liveRoute
 	notFound      any
+	guard         any // Maybe (Msg -> Model -> Result String ()) — nil = no guard
 	sessions      sync.Map // sessionID -> *liveSession
 }
 
@@ -764,6 +790,7 @@ func Live_app(cfg any) any {
 		view:          Field(cfg, "View"),
 		subscriptions: Field(cfg, "Subscriptions"),
 		notFound:      Field(cfg, "NotFound"),
+		guard:         Field(cfg, "Guard"),
 	}
 	for _, r := range asList(Field(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
@@ -916,7 +943,24 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 
 // dispatch: run update with msg, process cmd, reset subs, re-render view.
 // MUST be called with sess.mu held.
+//
+// When the Live.app config includes a `guard : Msg -> Model -> Result String ()`
+// function, we run it BEFORE update. An `Err reason` short-circuits the
+// update and surfaces `reason` on model.Notification so the user sees
+// why their action was rejected. `Ok ()` proceeds normally.
 func (app *liveApp) dispatch(sess *liveSession, msg any) string {
+	if app.guard != nil && isFunc(app.guard) {
+		g := sky_call2(app.guard, msg, sess.model)
+		// guard returns Result: Ok _ (allow) or Err "reason" (reject).
+		if isErrResult(g) {
+			reason := extractErrResultValue(g)
+			sess.model = RecordUpdate(sess.model, map[string]any{
+				"Notification":     reason,
+				"NotificationType": "error",
+			})
+			return app.renderView(sess)
+		}
+	}
 	result := sky_call2(app.update, msg, sess.model)
 	sess.model = tupleFirst(result)
 	cmd := tupleSecond(result)
@@ -929,6 +973,44 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) string {
 	app.setupSubscriptions(sess)
 	return body
 }
+
+// renderView: re-render from current session model without updating
+// the model (used by dispatch when guard short-circuits).
+func (app *liveApp) renderView(sess *liveSession) string {
+	sess.handlers = map[string]any{}
+	vn := sky_call(app.view, sess.model).(VNode)
+	body := renderVNode(vn, sess.handlers)
+	return body
+}
+
+
+// isErrResult: True when v is a SkyResult with Tag == 1 (Err).
+func isErrResult(v any) bool {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	tag := rv.FieldByName("Tag")
+	if !tag.IsValid() || tag.Kind() != reflect.Int {
+		return false
+	}
+	return tag.Int() == 1
+}
+
+// extractErrResultValue: read the Err side's payload (usually String).
+func extractErrResultValue(v any) any {
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return ""
+	}
+	// Sky's SkyResult carries OkValue/ErrValue fields.
+	fv := rv.FieldByName("ErrValue")
+	if !fv.IsValid() {
+		return ""
+	}
+	return fv.Interface()
+}
+
 
 // runCmd processes a Cmd value, spawning goroutines for Cmd.perform.
 // Goroutines dispatch their result back through dispatch via SSE.
@@ -1068,16 +1150,88 @@ func sessionID(r *http.Request, w http.ResponseWriter) string {
 func liveJS(sid string) string {
 	return fmt.Sprintf(`
 var __skySid = %q;
+
+// __skyPatch: replace sky-root's content with the fragment in `+"`"+`t`+"`"+`,
+// preserving the active element (focus + caret/selection) and scroll
+// position across the swap. Without this, typing in an input that
+// triggers onInput would lose focus on every keystroke.
+function __skyPatch(t) {
+  var root = document.getElementById("sky-root");
+  if (!root) return;
+  // If the response contains a full <div id="sky-root"> wrapper (from a
+  // navigation request), strip the wrapper.
+  var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
+  if (m) t = m[1];
+  var active = document.activeElement;
+  var key = __skyElementKey(active);
+  var selStart = null, selEnd = null;
+  if (active && "selectionStart" in active) {
+    try { selStart = active.selectionStart; selEnd = active.selectionEnd; } catch (e) {}
+  }
+  var scrollX = window.scrollX, scrollY = window.scrollY;
+  root.innerHTML = t;
+  window.scrollTo(scrollX, scrollY);
+  if (key) {
+    var newEl = __skyFindByKey(root, key);
+    if (newEl) {
+      newEl.focus();
+      if (selStart !== null && "selectionStart" in newEl) {
+        try { newEl.selectionStart = selStart; newEl.selectionEnd = selEnd; } catch (e) {}
+      }
+    }
+  }
+}
+
+// __skyElementKey: stable key used to re-locate the focused element in
+// the patched DOM. Priority: id > name > tag+position-path.
+function __skyElementKey(el) {
+  if (!el || el === document.body) return null;
+  if (el.id) return {kind: "id", v: el.id};
+  if (el.name) return {kind: "name", v: el.name, tag: el.tagName};
+  return null;
+}
+function __skyFindByKey(scope, key) {
+  if (key.kind === "id") return document.getElementById(key.v);
+  if (key.kind === "name") {
+    return scope.querySelector(key.tag.toLowerCase() + '[name="' + key.v + '"]');
+  }
+  return null;
+}
+
 function skyEvent(ev, id) {
   ev.preventDefault();
-  var v = ev.target && ev.target.value ? ev.target.value : "";
+  var t = ev.target;
+  var v = "";
+  if (t) {
+    // Forms: serialise every [name]=value into a JSON object so the
+    // update function can read form data without separate onInput
+    // handlers for every field.
+    if (ev.type === "submit" && t.tagName === "FORM") {
+      var data = {};
+      for (var i = 0; i < t.elements.length; i++) {
+        var el = t.elements[i];
+        if (!el.name) continue;
+        if (el.type === "checkbox" || el.type === "radio") {
+          if (el.checked) data[el.name] = el.value;
+        } else if (el.type === "file") {
+          // File handling left to specific drivers (sky-image etc.).
+        } else {
+          data[el.name] = el.value;
+        }
+      }
+      v = JSON.stringify(data);
+    } else if (typeof t.value === "string") {
+      v = t.value;
+    } else if (t.checked !== undefined) {
+      v = t.checked ? "true" : "false";
+    }
+  }
   fetch("/_live/event", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({sessionId: __skySid, handlerId: id, value: v})
-  }).then(function(r){ return r.text(); }).then(function(t){
-    document.getElementById("sky-root").innerHTML = t;
-  });
+    body: JSON.stringify({sessionId: __skySid, handlerId: id, value: v}),
+    credentials: "same-origin"
+  }).then(function(r){ return r.text(); }).then(__skyPatch);
 }
 // sky-nav: intercept clicks on <a sky-nav ...> links so navigation is a
 // client-side fetch + innerHTML swap instead of a full page reload.
@@ -1102,12 +1256,7 @@ document.addEventListener("click", function(ev) {
   fetch(href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
     .then(function(r) { return r.text(); })
     .then(function(t) {
-      // Response is a full HTML document on first-load routes; extract
-      // the #sky-root fragment. (The server can also return a bare
-      // fragment — detect by sniffing for <!DOCTYPE.)
-      var root = document.getElementById("sky-root");
-      var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
-      root.innerHTML = m ? m[1] : t;
+      __skyPatch(t);
       window.history.pushState({}, "", href);
     })
     .catch(function() { window.location.href = href; });
@@ -1115,17 +1264,13 @@ document.addEventListener("click", function(ev) {
 window.addEventListener("popstate", function() {
   fetch(window.location.href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
     .then(function(r) { return r.text(); })
-    .then(function(t) {
-      var root = document.getElementById("sky-root");
-      var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
-      root.innerHTML = m ? m[1] : t;
-    });
+    .then(__skyPatch);
 });
 // Server-Sent Events: push updates from server (subscriptions, Cmd.perform results)
 var __skySSE = new EventSource("/_live/sse");
 __skySSE.addEventListener("patch", function(e) {
   var html = e.data.replace(/\\n/g, "\n");
-  document.getElementById("sky-root").innerHTML = html;
+  __skyPatch(html);
 });
 `, sid)
 }
