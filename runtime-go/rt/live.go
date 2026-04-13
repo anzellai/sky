@@ -21,12 +21,15 @@ import (
 // ═══════════════════════════════════════════════════════════
 
 type VNode struct {
-	Kind     string // "element" or "text"
+	Kind     string // "element" | "text" | "raw"
 	Tag      string
 	Text     string
 	Attrs    map[string]string
 	Events   map[string]any // event name -> Sky Msg value
 	Children []VNode
+	// SkyID is a per-element stable key assigned by assignSkyIDs before
+	// rendering. Used by the diff protocol to address patch targets.
+	SkyID string
 }
 
 func vtext(s string) VNode {
@@ -582,6 +585,12 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	var sb strings.Builder
 	sb.WriteString("<")
 	sb.WriteString(n.Tag)
+	// Stamp the element with its sky-id so diff patches can address it.
+	if n.SkyID != "" {
+		sb.WriteString(` sky-id="`)
+		sb.WriteString(html.EscapeString(n.SkyID))
+		sb.WriteString(`"`)
+	}
 	for k, v := range n.Attrs {
 		sb.WriteString(" ")
 		sb.WriteString(k)
@@ -630,6 +639,177 @@ func isDOMEventName(ev string) bool {
 		}
 	}
 	return true
+}
+
+
+// assignSkyIDs walks a tree and stamps every element (not text/raw) with
+// a deterministic structural path id. Having stable IDs means the diff
+// algorithm can address a specific element between renders without us
+// having to rely on React-style key props.
+func assignSkyIDs(n *VNode, path string) {
+	if n.Kind != "element" {
+		return
+	}
+	n.SkyID = path
+	for i := range n.Children {
+		assignSkyIDs(&n.Children[i], path+"."+itoa(i))
+	}
+}
+
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := false
+	if n < 0 {
+		neg = true
+		n = -n
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	if neg {
+		i--
+		buf[i] = '-'
+	}
+	return string(buf[i:])
+}
+
+
+// VNode equality — compare without recursing on SkyID (since that's
+// assigned per render). Two nodes are attribute-equal if their tag,
+// attributes, and events match; children are compared structurally.
+func vnodeEqualShallow(a, b *VNode) bool {
+	if a.Kind != b.Kind || a.Tag != b.Tag || a.Text != b.Text {
+		return false
+	}
+	if len(a.Attrs) != len(b.Attrs) {
+		return false
+	}
+	for k, v := range a.Attrs {
+		if b.Attrs[k] != v {
+			return false
+		}
+	}
+	return true
+}
+
+
+// Patch describes one DOM mutation the client will apply.
+type Patch struct {
+	ID     string            `json:"id"`               // target element's sky-id
+	Text   *string           `json:"text,omitempty"`
+	HTML   *string           `json:"html,omitempty"`
+	Attrs  map[string]string `json:"attrs,omitempty"`  // value "" => remove
+	Remove bool              `json:"remove,omitempty"`
+}
+
+
+// diffTrees: produce patches to transform `old` into `new_`. If either
+// tree is missing (first render) the caller should fall back to a full
+// innerHTML replace — diffTrees returns a single patch with the full
+// new HTML.
+func diffTrees(old, new_ *VNode) []Patch {
+	var out []Patch
+	diffNodes(old, new_, &out)
+	return out
+}
+
+
+func diffNodes(old, new_ *VNode, out *[]Patch) {
+	if old == nil || new_ == nil {
+		return
+	}
+	// Tag / kind change → replace subtree via HTML patch.
+	if old.Tag != new_.Tag || old.Kind != new_.Kind {
+		html := renderVNode(*new_, map[string]any{})
+		*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+		return
+	}
+	// Attrs diff
+	var attrChanges map[string]string
+	for k, nv := range new_.Attrs {
+		if ov, ok := old.Attrs[k]; !ok || ov != nv {
+			if attrChanges == nil {
+				attrChanges = map[string]string{}
+			}
+			attrChanges[k] = nv
+		}
+	}
+	for k := range old.Attrs {
+		if _, ok := new_.Attrs[k]; !ok {
+			if attrChanges == nil {
+				attrChanges = map[string]string{}
+			}
+			attrChanges[k] = ""
+		}
+	}
+	if attrChanges != nil && old.SkyID != "" {
+		*out = append(*out, Patch{ID: old.SkyID, Attrs: attrChanges})
+	}
+
+	// Single-text-child fast path — common for buttons / spans.
+	if len(old.Children) == 1 && len(new_.Children) == 1 &&
+		old.Children[0].Kind == "text" && new_.Children[0].Kind == "text" {
+		if old.Children[0].Text != new_.Children[0].Text && old.SkyID != "" {
+			txt := new_.Children[0].Text
+			*out = append(*out, Patch{ID: old.SkyID, Text: &txt})
+		}
+		return
+	}
+
+	// Structural diff of children: if counts differ OR any child pair
+	// has mismatched tag/kind, replace the whole subtree's innerHTML.
+	if len(old.Children) != len(new_.Children) {
+		if old.SkyID != "" {
+			var sb strings.Builder
+			dummy := map[string]any{}
+			for _, c := range new_.Children {
+				sb.WriteString(renderVNode(c, dummy))
+			}
+			html := sb.String()
+			*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+		}
+		return
+	}
+
+	for i := range old.Children {
+		oc := &old.Children[i]
+		nc := &new_.Children[i]
+		if oc.Kind == "text" && nc.Kind == "text" {
+			if oc.Text != nc.Text && old.SkyID != "" {
+				// Single-text is above; mixed children = replace subtree.
+				var sb strings.Builder
+				dummy := map[string]any{}
+				for _, c := range new_.Children {
+					sb.WriteString(renderVNode(c, dummy))
+				}
+				html := sb.String()
+				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+				return
+			}
+			continue
+		}
+		if oc.Tag != nc.Tag || oc.Kind != nc.Kind {
+			// Tag mismatch: replace subtree at the parent.
+			if old.SkyID != "" {
+				var sb strings.Builder
+				dummy := map[string]any{}
+				for _, c := range new_.Children {
+					sb.WriteString(renderVNode(c, dummy))
+				}
+				html := sb.String()
+				*out = append(*out, Patch{ID: old.SkyID, HTML: &html})
+			}
+			return
+		}
+		diffNodes(oc, nc, out)
+	}
 }
 
 
@@ -684,6 +864,7 @@ func Time_every(ms any, to any) any { return Sub_every(ms, to) }
 type liveSession struct {
 	model    any
 	handlers map[string]any
+	prevTree *VNode // Last rendered tree; used by the diff protocol.
 	mu       sync.Mutex
 	// SSE outbound channel: any writer goroutine may push an HTML patch
 	sseCh chan string
@@ -1040,9 +1221,11 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	// Set up subscriptions
 	app.setupSubscriptions(sess)
 
-	// Render view
+	// Render view (assign sky-ids so the client diff protocol works)
 	vn := sky_call(app.view, model).(VNode)
+	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
+	sess.prevTree = &vn
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1115,7 +1298,9 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) string {
 	cmd := tupleSecond(result)
 	sess.handlers = map[string]any{}
 	vn := sky_call(app.view, sess.model).(VNode)
+	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
+	sess.prevTree = &vn
 	// Process Cmds (may spawn goroutines)
 	app.runCmd(sess, cmd)
 	// Re-evaluate subscriptions based on new model
@@ -1128,7 +1313,9 @@ func (app *liveApp) dispatch(sess *liveSession, msg any) string {
 func (app *liveApp) renderView(sess *liveSession) string {
 	sess.handlers = map[string]any{}
 	vn := sky_call(app.view, sess.model).(VNode)
+	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
+	sess.prevTree = &vn
 	return body
 }
 
