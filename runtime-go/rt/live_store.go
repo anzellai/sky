@@ -86,6 +86,26 @@ func walkGob(v reflect.Value) {
 func cryptoRandRead(b []byte) (int, error) { return crand.Read(b) }
 func urlBase64(b []byte) string            { return base64.RawURLEncoding.EncodeToString(b) }
 
+// logOnce: emit a log message at most once per key across the process
+// lifetime. Used to avoid log spam when a per-session operation fails
+// repeatedly (one message on first keystroke is enough).
+var (
+	logOnceMu   sync.Mutex
+	logOnceKeys = map[string]bool{}
+)
+
+func logOnce(key string, fn func()) {
+	logOnceMu.Lock()
+	seen := logOnceKeys[key]
+	if !seen {
+		logOnceKeys[key] = true
+	}
+	logOnceMu.Unlock()
+	if !seen {
+		fn()
+	}
+}
+
 // stringField: read a named record field and return its string form, or
 // "" when the field is absent / nil.
 func stringField(cfg any, name string) string {
@@ -187,9 +207,15 @@ func (s *memoryStore) cleanupLoop() {
 // ═════════════════════════════════════════════════════════════════════
 
 type sqliteStore struct {
-	db   *sql.DB
-	ttl  time.Duration
-	stop chan struct{}
+	db    *sql.DB
+	ttl   time.Duration
+	stop  chan struct{}
+	// memCache is a pointer cache so sessions that fail to gob-encode
+	// (anonymous struct types the Sky compiler emits for records) still
+	// behave correctly within a single process. Restart forgets them,
+	// which is the same trade-off the memoryStore makes.
+	memMu    sync.RWMutex
+	memCache map[string]*liveSession
 }
 
 func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
@@ -210,12 +236,24 @@ func newSQLiteStore(path string, ttl time.Duration) (*sqliteStore, error) {
 		db.Close()
 		return nil, err
 	}
-	s := &sqliteStore{db: db, ttl: ttl, stop: make(chan struct{})}
+	s := &sqliteStore{
+		db:       db,
+		ttl:      ttl,
+		stop:     make(chan struct{}),
+		memCache: map[string]*liveSession{},
+	}
 	go s.cleanupLoop()
 	return s, nil
 }
 
 func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
+	// Memory cache hit: current-process sessions we couldn't encode.
+	s.memMu.RLock()
+	if sess, ok := s.memCache[sid]; ok {
+		s.memMu.RUnlock()
+		return sess, true
+	}
+	s.memMu.RUnlock()
 	var blob []byte
 	err := s.db.QueryRow(`SELECT blob FROM sky_sessions WHERE sid = ?`, sid).Scan(&blob)
 	if err != nil {
@@ -234,9 +272,18 @@ func (s *sqliteStore) Get(sid string) (*liveSession, bool) {
 
 func (s *sqliteStore) Set(sid string, sess *liveSession) {
 	sess.lastSeen = time.Now()
+	// Always keep the live pointer in memory so intra-process requests
+	// find the session even when the value isn't gob-encodable.
+	s.memMu.Lock()
+	s.memCache[sid] = sess
+	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
-		log.Printf("[sky.live] sqlite: failed to encode session %s: %v", sid, err)
+		// Log ONCE per session (not every event) — the alternative is
+		// spamming logs for every onInput keystroke.
+		logOnce("sqlite-encode-"+sid, func() {
+			log.Printf("[sky.live] sqlite: session %s not persistable (%v); using in-memory fallback", sid, err)
+		})
 		return
 	}
 	_, err = s.db.Exec(`
@@ -249,6 +296,9 @@ func (s *sqliteStore) Set(sid string, sess *liveSession) {
 }
 
 func (s *sqliteStore) Delete(sid string) {
+	s.memMu.Lock()
+	delete(s.memCache, sid)
+	s.memMu.Unlock()
 	_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE sid = ?`, sid)
 }
 
@@ -279,9 +329,11 @@ func (s *sqliteStore) cleanupLoop() {
 // ═════════════════════════════════════════════════════════════════════
 
 type postgresStore struct {
-	db   *sql.DB
-	ttl  time.Duration
-	stop chan struct{}
+	db       *sql.DB
+	ttl      time.Duration
+	stop     chan struct{}
+	memMu    sync.RWMutex
+	memCache map[string]*liveSession
 }
 
 func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error) {
@@ -298,12 +350,23 @@ func newPostgresStore(connStr string, ttl time.Duration) (*postgresStore, error)
 		db.Close()
 		return nil, err
 	}
-	s := &postgresStore{db: db, ttl: ttl, stop: make(chan struct{})}
+	s := &postgresStore{
+		db:       db,
+		ttl:      ttl,
+		stop:     make(chan struct{}),
+		memCache: map[string]*liveSession{},
+	}
 	go s.cleanupLoop()
 	return s, nil
 }
 
 func (s *postgresStore) Get(sid string) (*liveSession, bool) {
+	s.memMu.RLock()
+	if sess, ok := s.memCache[sid]; ok {
+		s.memMu.RUnlock()
+		return sess, true
+	}
+	s.memMu.RUnlock()
 	var blob []byte
 	err := s.db.QueryRow(`SELECT blob FROM sky_sessions WHERE sid = $1`, sid).Scan(&blob)
 	if err != nil {
@@ -321,9 +384,14 @@ func (s *postgresStore) Get(sid string) (*liveSession, bool) {
 
 func (s *postgresStore) Set(sid string, sess *liveSession) {
 	sess.lastSeen = time.Now()
+	s.memMu.Lock()
+	s.memCache[sid] = sess
+	s.memMu.Unlock()
 	blob, err := encodeSession(sess)
 	if err != nil {
-		log.Printf("[sky.live] postgres: failed to encode session %s: %v", sid, err)
+		logOnce("pg-encode-"+sid, func() {
+			log.Printf("[sky.live] postgres: session %s not persistable (%v); using in-memory fallback", sid, err)
+		})
 		return
 	}
 	_, err = s.db.Exec(`
@@ -336,6 +404,9 @@ func (s *postgresStore) Set(sid string, sess *liveSession) {
 }
 
 func (s *postgresStore) Delete(sid string) {
+	s.memMu.Lock()
+	delete(s.memCache, sid)
+	s.memMu.Unlock()
 	_, _ = s.db.Exec(`DELETE FROM sky_sessions WHERE sid = $1`, sid)
 }
 

@@ -599,7 +599,12 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		sb.WriteString(`"`)
 	}
 	for ev, msg := range n.Events {
-		id := randID()
+		// Deterministic handler IDs: sky-id + "." + event-name. Stable
+		// across renders so the client's inline `skyEvent(event,'X')`
+		// still resolves after the server has re-rendered the view.
+		// Critical for DB-backed stores where the handlers map isn't
+		// serialised and gets rebuilt on every event by re-running view.
+		id := n.SkyID + "." + ev
 		handlers[id] = msg
 		// Only emit as a native DOM event handler when the name is a
 		// valid identifier. Custom driver events (e.g. `sky-image`,
@@ -1228,7 +1233,6 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		sseCh:     make(chan string, 16),
 		cancelSub: make(chan struct{}),
 	}
-	app.store.Set(sid, sess)
 
 	// Process any initial Cmd from init
 	app.runCmd(sess, cmd)
@@ -1240,6 +1244,10 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
 	sess.prevTree = &vn
+	// Persist AFTER render so the store sees populated prevTree/model.
+	// For DB stores the handlers map (not encodable) is rebuilt on demand
+	// by re-running view() at event time.
+	app.store.Set(sid, sess)
 
 	setSecurityHeaders(w.Header())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1281,6 +1289,18 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sess.mu.Lock()
+	// Handler maps aren't persisted across encode/decode (closures don't
+	// round-trip via gob). When we get here with an empty map — a fresh
+	// decode from SQLite/Postgres, or a server restart — we rebuild it
+	// deterministically by re-running view() over the current model.
+	// Handler IDs are <sky-id>.<event>, stable per model state.
+	if len(sess.handlers) == 0 && sess.model != nil {
+		sess.handlers = map[string]any{}
+		vn := sky_call(app.view, sess.model).(VNode)
+		assignSkyIDs(&vn, "r")
+		_ = renderVNode(vn, sess.handlers)
+		sess.prevTree = &vn
+	}
 	msg, ok := sess.handlers[req.HandlerID]
 	if !ok {
 		sess.mu.Unlock()
