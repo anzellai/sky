@@ -201,6 +201,7 @@ continueCompile config _entryPath outDir moduleOrder srcHash = do
                         ]
                     , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
                     , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
+                    , Canonicalise._dep_exports = Can._exports depMod
                     })
                 | (modName, depMod) <- firstValid
                 ]
@@ -607,6 +608,7 @@ typecheckWorkspace config entryPath = do
                     ]
                 , Canonicalise._dep_aliases = Map.keys (Can._aliases depMod)
                 , Canonicalise._dep_values = Set.toList (collectDeclNames (Can._decls depMod))
+                , Canonicalise._dep_exports = Can._exports depMod
                 })
             | (modName, depMod) <- firstValid
             ]

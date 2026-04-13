@@ -29,7 +29,24 @@ data DepInfo = DepInfo
     , _dep_unions  :: ![(String, [Can.Ctor])]   -- (type name, constructors)
     , _dep_aliases :: ![String]                 -- exported alias names
     , _dep_values  :: ![String]                 -- exported top-level value names
+    , _dep_exports :: !Can.Exports              -- dep's own exposing clause (P2)
     }
+
+
+-- | Filter a DepInfo by its own `exposing` clause. `ExportEverything` is
+-- the no-op fast path (preserves legacy behaviour for `exposing (..)`).
+-- When the dep declares an explicit list, the importer only sees names
+-- in that list — names defined but not exposed stay package-private.
+filterDepByExports :: DepInfo -> DepInfo
+filterDepByExports d = case _dep_exports d of
+    Can.ExportEverything -> d
+    Can.ExportExplicit namesMap ->
+        let keep = namesMap `Map.union` Map.empty
+            isExposed n = Map.member n keep
+        in d { _dep_unions  = filter (isExposed . fst) (_dep_unions d)
+             , _dep_aliases = filter isExposed (_dep_aliases d)
+             , _dep_values  = filter isExposed (_dep_values d)
+             }
 
 
 -- | Back-compat: canonicalise with no cross-module info.
@@ -67,6 +84,9 @@ canonicaliseWithDeps deps srcMod =
             ]
         collisions = checkAmbiguousUses ambiguous localNames srcMod
 
+        -- P2: reject `import M exposing (name)` when M doesn't export name.
+        importHidingErrors = checkImportExposingAgainstDep deps (Src._imports srcMod)
+
         -- Build environment from imports
         env0 = Env.initialEnv modName
         env1 = foldl (processImportWith deps modName) env0 (Src._imports srcMod)
@@ -91,9 +111,10 @@ canonicaliseWithDeps deps srcMod =
 
         -- Exports
         exports = canonicaliseExports (Src._exports srcMod)
-    in case collisions of
-        Just err -> Left err
-        Nothing -> Right $ Can.Module
+    in case (importHidingErrors, collisions) of
+        (err:_, _) -> Left err
+        (_, Just err) -> Left err
+        _ -> Right $ Can.Module
             { Can._name    = modName
             , Can._exports = exports
             , Can._decls   = decls
@@ -129,7 +150,8 @@ buildTypeHomeMap home deps srcMod =
         depEntries =
             [ (typeName, _dep_name dep)
             | imp <- Src._imports srcMod
-            , Just dep <- [Map.lookup (importPath imp) deps]
+            , Just rawDep <- [Map.lookup (importPath imp) deps]
+            , let dep = filterDepByExports rawDep
             , typeName <- map fst (_dep_unions dep) ++ _dep_aliases dep
             ]
     in
@@ -139,6 +161,59 @@ buildTypeHomeMap home deps srcMod =
 -- ═══════════════════════════════════════════════════════════
 -- IMPORTS
 -- ═══════════════════════════════════════════════════════════
+
+-- | P2 enforcement. For every import of the form
+--   `import M exposing (a, B(..), C(Ctor1))`
+-- verify that `a`, `B`, `C`, and `Ctor1` are actually exported by M.
+-- Returns one error string per mismatch (in source order).
+checkImportExposingAgainstDep :: Map.Map String DepInfo -> [Src.Import] -> [String]
+checkImportExposingAgainstDep deps imps = concatMap check imps
+  where
+    check imp = case Src._importExposing imp of
+        A.At _ Src.ExposingAll -> []
+        A.At _ (Src.ExposingList xs) ->
+            let A.At _ segs = Src._importName imp
+                path = ModuleName.joinWith "." segs
+                isKernel = Map.member path Env.kernelModules
+            in if isKernel
+                then []  -- kernel surface is defined by the registry, skip
+                else case fmap filterDepByExports (Map.lookup path deps) of
+                    Nothing -> []
+                    Just d  ->
+                        let values  = Set.fromList (_dep_values d)
+                            aliases = Set.fromList (_dep_aliases d)
+                            unions  = Map.fromList (_dep_unions d)
+                            ctors u = [ c | Can.Ctor c _ _ _ <- Map.findWithDefault [] u unions ]
+                        in concatMap (checkItem path values aliases unions ctors) xs
+
+    checkItem path values aliases unions _ctorsOf (A.At _ e) = case e of
+        Src.ExposedValue n
+            | Set.member n values || Set.member n aliases -> []
+            | otherwise ->
+                [ "Import error: module `" ++ path ++ "` does not expose `"
+                  ++ n ++ "`." ]
+        Src.ExposedType n Src.Private
+            | Set.member n aliases || Map.member n unions -> []
+            | otherwise ->
+                [ "Import error: module `" ++ path ++ "` does not expose type `"
+                  ++ n ++ "`." ]
+        Src.ExposedType n Src.Public
+            | Set.member n aliases || Map.member n unions -> []
+            | otherwise ->
+                [ "Import error: module `" ++ path ++ "` does not expose type `"
+                  ++ n ++ "`." ]
+        Src.ExposedType n (Src.PublicCtors wanted)
+            | Map.member n unions ->
+                let present = Set.fromList [ c | Can.Ctor c _ _ _ <- Map.findWithDefault [] n unions ]
+                    missing = [ c | c <- wanted, not (Set.member c present) ]
+                in [ "Import error: module `" ++ path ++ "` exposes type `" ++ n
+                     ++ "` without constructor `" ++ c ++ "`."
+                   | c <- missing ]
+            | otherwise ->
+                [ "Import error: module `" ++ path ++ "` does not expose type `"
+                  ++ n ++ "`." ]
+        Src.ExposedOperator _ -> []
+
 
 -- | Back-compat wrapper.
 processImport :: ModuleName.Canonical -> Env.Env -> Src.Import -> Env.Env
@@ -166,7 +241,7 @@ processImportWith deps _home env imp =
 
         -- For non-kernel imports we look up the dep's unions to build
         -- cross-module constructor entries.
-        depCtors = case Map.lookup importPath deps of
+        depCtors = case fmap filterDepByExports (Map.lookup importPath deps) of
             Just dep ->
                 [ (ctorName, Env.CtorHome importMod typeName ctorName
                     (fromIntegral idx) (fromIntegral nArgs) union annot)
@@ -182,7 +257,7 @@ processImportWith deps _home env imp =
         -- `import OtherMod exposing (..)` or `exposing (AliasName)` makes
         -- `AliasName x y z` resolve to OtherMod.AliasName at use sites.
         depVars :: [(String, Env.VarHome)]
-        depVars = case Map.lookup importPath deps of
+        depVars = case fmap filterDepByExports (Map.lookup importPath deps) of
             Just dep ->
                 [ (n, Env.VarTopLevel importMod)
                 | n <- _dep_aliases dep ++ _dep_values dep
@@ -193,6 +268,19 @@ processImportWith deps _home env imp =
             (if isKernel then kernelVarsFor kernelName else depVars)
             (qualCtors ++ depCtors)
             env
+
+        -- P2: the dep's own `exposing` list limits what an importer may
+        -- pull in. Build the exported-name set (kernels export everything
+        -- since their surface is controlled by the kernel registry).
+        depExportedNames :: String -> Bool
+        depExportedNames =
+            if isKernel then const True
+            else case fmap filterDepByExports (Map.lookup importPath deps) of
+                Nothing  -> const True  -- unknown dep → trust the import
+                Just d   -> \n ->
+                    n `elem` _dep_values d
+                    || n `elem` _dep_aliases d
+                    || n `elem` map fst (_dep_unions d)
 
         envWithExposed = case Src._importExposing imp of
             A.At _ Src.ExposingAll ->
@@ -207,7 +295,11 @@ processImportWith deps _home env imp =
                     exposedDepCtors = concatMap (resolveDepCtors depCtors) exposed
                     -- Record-alias auto-ctors exposed via `exposing (AliasName)`
                     exposedAliasVars = concatMap (resolveAliasCtor depVars) exposed
-                in Env.addExposed (exposedVars ++ exposedAliasVars) (exposedCtorsFromKernel ++ exposedDepCtors) envWithQual
+                    -- Enforce dep's own exposing clause.
+                    keep (n, _) = depExportedNames n
+                    filteredVars  = filter keep (exposedVars ++ exposedAliasVars)
+                    filteredCtors = filter keep (exposedCtorsFromKernel ++ exposedDepCtors)
+                in Env.addExposed filteredVars filteredCtors envWithQual
     in
     envWithExposed
 
@@ -340,7 +432,7 @@ detectExposingCollisions deps imps =
     allExposedNames path =
         let kernelName = Map.findWithDefault "" path Env.kernelModules
             kernelFns  = Map.findWithDefault [] kernelName kernelFunctions
-            depFns = case Map.lookup path deps of
+            depFns = case fmap filterDepByExports (Map.lookup path deps) of
                 Just d  -> _dep_aliases d ++ _dep_values d
                             ++ map fst (_dep_unions d)
                 Nothing -> []

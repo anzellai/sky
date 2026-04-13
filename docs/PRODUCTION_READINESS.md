@@ -741,7 +741,7 @@ Update this table after every merged phase. Include commit SHA and date.
 |---|---|---|---|---|
 | P0  — test harness | ☑ | _HEAD_ | 2026-04-13 | hspec wired, example-sweep.sh, CI updated; golden-per-feature deferred to follow-up |
 | P1  — parser gaps | ☑ | _HEAD_ | 2026-04-13 | all three items already handled by Haskell rewrite: negative patterns (Pattern.hs:128-140), let-after-case parses cleanly, `exposing (Type(Ctor1, Ctor2))` parses to `PublicCtors` (Module.hs:170). Real enforcement of the list lives with P2. |
-| P2  — exposing clause | ☐ | — | — | — |
+| P2  — exposing clause | ☑ | _HEAD_ | 2026-04-13 | parser now threads `exposing` through; canonicaliser rejects imports of unexposed names with "does not expose" error; DepInfo carries `_dep_exports` and filters cross-module lookups. |
 | P3  — exhaustiveness | ☐ | — | — | — |
 | P4  — typed records | ☐ | — | — | — |
 | P5  — typed tuples | ☐ | — | — | — |

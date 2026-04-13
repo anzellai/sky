@@ -143,3 +143,4 @@ test-suite sky-tests
       Sky.Build.CompileSpec
       Sky.Build.ExampleSweepSpec
       Sky.Parse.PatternSpec
+      Sky.Canonicalise.ExposingSpec

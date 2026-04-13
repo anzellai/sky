@@ -30,7 +30,7 @@ moduleParser :: Parser ModuleError Src.Module
 moduleParser = do
     freshLine (\r c -> ModuleExpected r c)
     -- Parse module header
-    mHeader <- moduleHeader
+    (mHeader, mExports) <- moduleHeader
     freshLine (\r c -> ModuleExpected r c)
     -- Parse imports
     imports <- moduleImports
@@ -40,9 +40,15 @@ moduleParser = do
     freshLine (\r c -> ModuleExpected r c)
     -- Allow trailing whitespace before EOF
     end (\r c -> ModuleExpected r c)
+    -- A module without a header exposes everything (legacy behaviour for
+    -- fixtures and REPL-style inputs). An explicit header carries its own
+    -- exposing list.
+    let exports = case mExports of
+            Just e  -> e
+            Nothing -> A.At A.one Src.ExposingAll
     return Src.Module
         { Src._name = mHeader
-        , Src._exports = A.At A.one Src.ExposingAll  -- TODO: parse exposing clause
+        , Src._exports = exports
         , Src._docs = Src.NoDocs
         , Src._imports = imports
         , Src._values = values
@@ -53,7 +59,10 @@ moduleParser = do
 
 
 -- | Parse module header: module Name.Space exposing (..)
-moduleHeader :: Parser ModuleError (Maybe (A.Located [String]))
+-- Returns both the module name and the located exposing clause so the
+-- module builder can honour it (P2). Prior to this the parsed exposing
+-- was discarded and every module behaved as `exposing (..)`.
+moduleHeader :: Parser ModuleError (Maybe (A.Located [String]), Maybe (A.Located Src.Exposing))
 moduleHeader = do
     mc <- peek
     case mc of
@@ -64,9 +73,9 @@ moduleHeader = do
             spaces
             keyword (\r c -> ModuleExpected r c) (T.pack "exposing")
             spaces
-            _ <- exposingClause (\r c -> ModuleExpected r c)
-            return (Just name)
-        _ -> return Nothing
+            expo <- addLocation (exposingClause (\r c -> ModuleExpected r c))
+            return (Just name, Just expo)
+        _ -> return (Nothing, Nothing)
 
 
 -- | Parse a dotted module name: Sky.Core.List
