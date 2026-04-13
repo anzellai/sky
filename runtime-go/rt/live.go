@@ -865,6 +865,7 @@ type liveSession struct {
 	model    any
 	handlers map[string]any
 	prevTree *VNode // Last rendered tree; used by the diff protocol.
+	lastSeen time.Time
 	mu       sync.Mutex
 	// SSE outbound channel: any writer goroutine may push an HTML patch
 	sseCh chan string
@@ -883,7 +884,7 @@ type liveApp struct {
 	api           []apiRoute  // REST-style custom handlers alongside Live pages
 	staticDir     string      // Serves files from this directory under /static/…
 	staticURL     string      // URL mount prefix (default "/static")
-	sessions      sync.Map // sessionID -> *liveSession
+	store         SessionStore // sessionID -> *liveSession (memory, sqlite, or postgres)
 }
 
 
@@ -1116,10 +1117,23 @@ func Live_app(cfg any) any {
 			app.staticURL = s
 		}
 	}
+	// Session store selection. Config fields `store` and `storePath`
+	// override the defaults; env vars SKY_LIVE_STORE / SKY_LIVE_STORE_PATH
+	// take precedence over config; final fallback is memory.
+	storeKind := stringField(cfg, "Store")
+	storePath := stringField(cfg, "StorePath")
+	ttl := 30 * time.Minute
+	if v := os.Getenv("SKY_LIVE_TTL"); v != "" {
+		if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+			ttl = time.Duration(secs) * time.Second
+		}
+	}
+	app.store = chooseStore(storeKind, storePath, ttl)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/_live/event", app.handleEvent)
-	mux.HandleFunc("/_live/sse", app.handleSSE)
+	mux.HandleFunc("/_sky/event", app.handleEvent)
+	mux.HandleFunc("/_sky/sse", app.handleSSE)
+	mux.HandleFunc("/_sky/config", app.handleConfig)
 	// Static assets (if configured) mounted first so api/page routing
 	// doesn't shadow them.
 	if app.staticDir != "" {
@@ -1214,7 +1228,7 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 		sseCh:     make(chan string, 16),
 		cancelSub: make(chan struct{}),
 	}
-	app.sessions.Store(sid, sess)
+	app.store.Set(sid, sess)
 
 	// Process any initial Cmd from init
 	app.runCmd(sess, cmd)
@@ -1231,6 +1245,18 @@ func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><div id=\"sky-root\">%s</div><script>%s</script></body></html>", body, liveJS(sid))
 }
+
+// handleConfig exposes client-facing runtime config (no secrets) so the
+// JS driver can adjust behaviour without recompilation. Served at
+// /_sky/config.
+func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"inputMode":    "debounce", // or "blur"
+		"pollInterval": 0,          // 0 = SSE only
+	})
+}
+
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	var req struct {
@@ -1249,12 +1275,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	v, ok := app.sessions.Load(req.SessionID)
+	sess, ok := app.store.Get(req.SessionID)
 	if !ok {
 		http.Error(w, "session not found", 404)
 		return
 	}
-	sess := v.(*liveSession)
 	sess.mu.Lock()
 	msg, ok := sess.handlers[req.HandlerID]
 	if !ok {
@@ -1271,6 +1296,9 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	body2 := app.dispatch(sess, msg)
 	newTree := sess.prevTree
 	sess.mu.Unlock()
+	// Persist the mutated session so DB-backed stores see the new
+	// state. Memory store is a no-op on Set for an already-tracked sid.
+	app.store.Set(req.SessionID, sess)
 
 	// When we have a prior tree we can reply with a minimal patch set
 	// (preserving unrelated DOM state client-side). On first interaction
@@ -1463,12 +1491,11 @@ func (app *liveApp) handleSSE(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no session", 400)
 		return
 	}
-	v, ok := app.sessions.Load(sid)
+	sess, ok := app.store.Get(sid)
 	if !ok {
 		http.Error(w, "session not found", 404)
 		return
 	}
-	sess := v.(*liveSession)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -1590,7 +1617,7 @@ function __skyDebouncedSend(id, value, delay) {
 function __skySend(id, value, opts) {
   opts = opts || {};
   if (!opts.noLoader) __skyLoaderStart();
-  fetch("/_live/event", {
+  fetch("/_sky/event", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({sessionId: __skySid, handlerId: id, value: value}),
@@ -1751,7 +1778,7 @@ window.addEventListener("popstate", function() {
     .then(__skyPatch);
 });
 // Server-Sent Events: push updates from server (subscriptions, Cmd.perform results)
-var __skySSE = new EventSource("/_live/sse");
+var __skySSE = new EventSource("/_sky/sse");
 __skySSE.addEventListener("patch", function(e) {
   var html = e.data.replace(/\\n/g, "\n");
   __skyPatch(html);
