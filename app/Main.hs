@@ -3,8 +3,10 @@ module Main where
 import Options.Applicative
 import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
+import qualified System.Directory
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.Process (callProcess)
+import Control.Monad (when)
 
 import qualified Data.Text.IO as TIO
 import qualified Sky.Build.Compile as Compile
@@ -44,6 +46,8 @@ data Command
     | Add String
     | Remove String
     | Install
+    | Update
+    | Clean
     | Lsp
     | Upgrade
     | Version
@@ -71,6 +75,10 @@ commandParser = subparser
             (progDesc "Remove Go dependency"))
     <> command "install"
         (info (pure Install) (progDesc "Install dependencies"))
+    <> command "update"
+        (info (pure Update) (progDesc "Update Go dependencies to latest"))
+    <> command "clean"
+        (info (pure Clean) (progDesc "Remove build artifacts (sky-out/, .skycache/)"))
     <> command "lsp"
         (info (pure Lsp) (progDesc "Start language server"))
     <> command "upgrade"
@@ -241,6 +249,28 @@ runCommand cmd = case cmd of
         case Toml._skyDeps config of
             [] -> putStrLn "No [dependencies] entries in sky.toml."
             _  -> putStrLn "Sky dependencies installed."
+        return (Right ())
+
+    Update -> do
+        hasGoMod <- doesFileExist "sky-out/go.mod"
+        if not hasGoMod
+            then do
+                putStrLn "No sky-out/go.mod found. Run `sky build` first."
+                return (Right ())
+            else do
+                putStrLn "Updating Go dependencies..."
+                callProcess "sh" ["-c", "cd sky-out && go get -u ./... && go mod tidy"]
+                putStrLn "Go dependencies updated."
+                return (Right ())
+
+    Clean -> do
+        let removeIfExists p = do
+                isDir  <- System.Directory.doesDirectoryExist p
+                isFile <- doesFileExist p
+                when isDir  (System.Directory.removeDirectoryRecursive p)
+                when isFile (System.Directory.removeFile p)
+        mapM_ removeIfExists ["sky-out", ".skycache", ".skydeps", "dist"]
+        putStrLn "Removed sky-out/ .skycache/ .skydeps/ dist/"
         return (Right ())
 
     Lsp -> do

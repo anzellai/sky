@@ -138,11 +138,15 @@ func Html_small(a, c any) any  { return htmlElem("small")(a, c) }
 // styleNode: render CSS text inside a <style> tag
 func Html_styleNode(attrs any, css any) any {
 	txt := fmt.Sprintf("%v", css)
+	// CSS inside <style> is parsed by the browser's CSS engine, which does
+	// NOT decode HTML entities. Wrap as raw so renderVNode emits literal
+	// characters (including single quotes, `<`, `>` — none of which can
+	// terminate a <style> block except the literal text `</style>`).
 	return VNode{
 		Kind:     "element",
 		Tag:      "style",
 		Attrs:    map[string]string{},
-		Children: []VNode{vtext(txt)},
+		Children: []VNode{{Kind: "raw", Text: txt}},
 	}
 }
 
@@ -572,6 +576,9 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	if n.Kind == "text" {
 		return html.EscapeString(n.Text)
 	}
+	if n.Kind == "raw" {
+		return n.Text
+	}
 	var sb strings.Builder
 	sb.WriteString("<")
 	sb.WriteString(n.Tag)
@@ -998,6 +1005,48 @@ function skyEvent(ev, id) {
     document.getElementById("sky-root").innerHTML = t;
   });
 }
+// sky-nav: intercept clicks on <a sky-nav ...> links so navigation is a
+// client-side fetch + innerHTML swap instead of a full page reload.
+// Falls back to normal navigation on modifier keys (cmd/ctrl/shift/alt),
+// middle-click, and non-GET targets.
+document.addEventListener("click", function(ev) {
+  if (ev.defaultPrevented) return;
+  if (ev.button !== 0) return;
+  if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.altKey) return;
+  var el = ev.target;
+  while (el && el.tagName !== "A") el = el.parentElement;
+  if (!el) return;
+  if (!el.hasAttribute("sky-nav")) return;
+  var href = el.getAttribute("href");
+  if (!href || href.charAt(0) === "#") return;
+  // External links are left to the browser.
+  try {
+    var u = new URL(href, window.location.href);
+    if (u.origin !== window.location.origin) return;
+  } catch (e) { return; }
+  ev.preventDefault();
+  fetch(href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
+    .then(function(r) { return r.text(); })
+    .then(function(t) {
+      // Response is a full HTML document on first-load routes; extract
+      // the #sky-root fragment. (The server can also return a bare
+      // fragment — detect by sniffing for <!DOCTYPE.)
+      var root = document.getElementById("sky-root");
+      var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
+      root.innerHTML = m ? m[1] : t;
+      window.history.pushState({}, "", href);
+    })
+    .catch(function() { window.location.href = href; });
+});
+window.addEventListener("popstate", function() {
+  fetch(window.location.href, { headers: { "X-Sky-Nav": "1" }, credentials: "same-origin" })
+    .then(function(r) { return r.text(); })
+    .then(function(t) {
+      var root = document.getElementById("sky-root");
+      var m = t.match(/<div id="sky-root">([\s\S]*?)<\/div><script>/);
+      root.innerHTML = m ? m[1] : t;
+    });
+});
 // Server-Sent Events: push updates from server (subscriptions, Cmd.perform results)
 var __skySSE = new EventSource("/_live/sse");
 __skySSE.addEventListener("patch", function(e) {
