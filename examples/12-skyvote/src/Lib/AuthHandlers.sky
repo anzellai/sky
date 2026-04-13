@@ -2,7 +2,6 @@ module Lib.AuthHandlers exposing (handleSignInSuccess, handleSignIn, handleSignU
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
-import Sky.Core.Result as Result
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Std.Cmd as Cmd
@@ -10,10 +9,12 @@ import State exposing (..)
 import Lib.Auth as Auth
 import Lib.Db as Db
 import Lib.Ideas as Ideas
+import Std.IoError exposing (..)
+
 
 handleSignInSuccess user model =
     let
-        ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
+        ideas = unwrapOr [] (Ideas.getIdeas "newest" "all" "")
         _ = println ("[AUTH] Sign-in: " ++ Db.getField "email" user)
     in
         ( { model
@@ -27,22 +28,44 @@ handleSignInSuccess user model =
         }, Cmd.none )
 
 
+-- handleSignIn: Auth.authenticateUser returns Result IoError User. We
+-- pattern-match explicitly: Unauthorised → user-friendly form error;
+-- DbError → generic "service unavailable" so we don't leak details.
 handleSignIn model =
     case Auth.authenticateUser model.authEmail model.authPassword of
-        
         Ok user ->
             handleSignInSuccess user model
-        
-        Err errMsg ->
-            ( { model | authError = errMsg }, Cmd.none )
+        Err e ->
+            let
+                _ = println ("[AUTH ERROR] sign-in: " ++ errToString e)
+                userMsg =
+                    if isAuthIssue e then
+                        errToString e
+                    else
+                        "Sign-in temporarily unavailable. Please try again."
+            in
+                ( { model | authError = userMsg }, Cmd.none )
 
 
+-- handleSignUpSuccess: getUserById now returns Result IoError (Maybe User).
+-- DB failure → keep them on SignInPage with an explanatory error;
+-- Ok Nothing → race condition / auto-login failure (extremely rare).
 handleSignUpSuccess userId model =
     case Auth.getUserById userId of
-        
-        Just user ->
+        Err e ->
+            let _ = println ("[AUTH ERROR] post-signup lookup: " ++ errToString e) in
+            ( { model
+                | authError = "Account created but auto-login failed. Please sign in."
+                , page = SignInPage
+            }, Cmd.none )
+        Ok Nothing ->
+            ( { model
+                | authError = "Account created but auto-login failed. Please sign in."
+                , page = SignInPage
+            }, Cmd.none )
+        Ok (Just user) ->
             let
-                ideas = Result.withDefault [] (Ideas.getIdeas "newest" "all" "")
+                ideas = unwrapOr [] (Ideas.getIdeas "newest" "all" "")
                 _ = println ("[AUTH] Sign-up success: " ++ userId)
             in
                 ( { model
@@ -55,35 +78,30 @@ handleSignUpSuccess userId model =
                     , authError = ""
                     , notification = "Account created! Welcome to SkyVote!"
                 }, Cmd.none )
-        
-        Nothing ->
-            ( { model
-                | authError =
-                    "Account created but login failed. Please sign in."
-                , page = SignInPage
-            }, Cmd.none )
 
 
+-- handleSignUpValidated: ValidationError vs DbError differentiation —
+-- show the validation message verbatim (e.g. "Username already taken")
+-- but a generic message for infra failures.
 handleSignUpValidated model =
     case Auth.createUser model.authUsername model.authEmail model.authPassword of
-        
         Ok userId ->
             handleSignUpSuccess userId model
-        
-        Err errMsg ->
-            ( { model | authError = errMsg }, Cmd.none )
+        Err e ->
+            let
+                _ = println ("[AUTH ERROR] sign-up: " ++ errToString e)
+                userMsg = errToString e
+            in
+                ( { model | authError = userMsg }, Cmd.none )
 
 
 handleSignUp model =
     if model.authEmail == "" then
         ( { model | authError = "Email is required." }, Cmd.none )
-    
     else if model.authUsername == "" then
         ( { model | authError = "Username is required." }, Cmd.none )
-    
     else if String.length model.authPassword < 8 then
         ( { model | authError = "Password must be at least 8 characters." }, Cmd.none )
-    
     else
         handleSignUpValidated model
 

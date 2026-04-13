@@ -1,0 +1,185 @@
+-- | Std.IoError — single generic typed-error ADT for all IO operations
+-- and a `RemoteData` wrapper for async-loaded model fields.
+--
+-- Use at every Lib boundary (DB, HTTP, file, FFI). Callers in `update`
+-- pattern-match to decide what to do (retry, redirect to login, surface
+-- to UI). Avoids fragile string-matching like `if String.contains "401"`.
+module Std.IoError exposing (..)
+
+import Sky.Core.Prelude exposing (..)
+import Sky.Core.String as String
+import Sky.Core.Maybe exposing (..)
+import Std.Log exposing (println)
+
+-- =====================================================================
+-- IoError — single generic error type for all IO operations.
+--
+-- Use this at every Lib boundary (DB, HTTP, file, FFI). Callers in
+-- `update` pattern-match on it to decide what to do (retry, redirect
+-- to login, surface to UI, etc.) and views render the appropriate
+-- failure state. Avoids "string contains 401" fragility.
+-- =====================================================================
+
+type IoError
+    = DbError String                 -- query/exec failed (reason from Std.Db)
+    | HttpError Int String           -- (status, body) for 4xx/5xx
+    | NetworkError String            -- connection refused, timeout, DNS
+    | NotFound String                -- resource missing (semantic 404)
+    | Unauthorised String            -- 401/403 / auth check rejected
+    | ValidationError String         -- input rejected by validation
+    | DecodeError String             -- JSON / row parse / schema mismatch
+    | UnexpectedError String         -- catch-all bridge from String errors
+
+
+-- Human-readable form. Use in toast/notification UI.
+errToString : IoError -> String
+errToString err =
+    case err of
+        DbError m ->
+            "Database: " ++ m
+        HttpError s m ->
+            "HTTP " ++ String.fromInt s ++ ": " ++ m
+        NetworkError m ->
+            "Network: " ++ m
+        NotFound m ->
+            "Not found: " ++ m
+        Unauthorised m ->
+            "Unauthorised: " ++ m
+        ValidationError m ->
+            m
+        DecodeError m ->
+            "Decode: " ++ m
+        UnexpectedError m ->
+            m
+
+
+-- True for transient errors that may succeed on retry.
+isRetryable : IoError -> Bool
+isRetryable err =
+    case err of
+        NetworkError _ ->
+            True
+        HttpError s _ ->
+            s >= 500
+        _ ->
+            False
+
+
+-- True for errors that mean the user must sign in / re-authenticate.
+isAuthIssue : IoError -> Bool
+isAuthIssue err =
+    case err of
+        Unauthorised _ ->
+            True
+        HttpError 401 _ ->
+            True
+        HttpError 403 _ ->
+            True
+        _ ->
+            False
+
+
+-- Bridge from existing `Result String a` APIs (Std.Db, Sky.Core.Http
+-- as of v1.0). Use sparingly — prefer typed errors at every boundary.
+fromString : String -> IoError
+fromString s = UnexpectedError s
+
+
+-- Convert an HTTP status code into the most accurate IoError variant.
+fromHttpStatus : Int -> String -> IoError
+fromHttpStatus status body =
+    if status == 401 then
+        Unauthorised body
+    else if status == 403 then
+        Unauthorised body
+    else if status == 404 then
+        NotFound body
+    else if status >= 400 then
+        HttpError status body
+    else
+        UnexpectedError ("status " ++ String.fromInt status ++ ": " ++ body)
+
+
+-- =====================================================================
+-- RemoteData — view-friendly wrapper for async-loaded resources.
+--
+-- Use in your Model for fields whose data is fetched asynchronously
+-- (HTTP, slow DB, Cmd.perform). For fully synchronous loads you can
+-- skip this and use `Result IoError a` directly.
+-- =====================================================================
+
+type RemoteData a
+    = NotAsked
+    | Loading
+    | Loaded a
+    | Failed IoError
+
+
+map : (a -> b) -> RemoteData a -> RemoteData b
+map f rd =
+    case rd of
+        NotAsked ->
+            NotAsked
+        Loading ->
+            Loading
+        Loaded a ->
+            Loaded (f a)
+        Failed e ->
+            Failed e
+
+
+withDefault : a -> RemoteData a -> a
+withDefault def rd =
+    case rd of
+        Loaded a ->
+            a
+        _ ->
+            def
+
+
+toMaybe : RemoteData a -> Maybe a
+toMaybe rd =
+    case rd of
+        Loaded a ->
+            Just a
+        _ ->
+            Nothing
+
+
+isLoaded : RemoteData a -> Bool
+isLoaded rd =
+    case rd of
+        Loaded _ ->
+            True
+        _ ->
+            False
+
+
+isFailed : RemoteData a -> Bool
+isFailed rd =
+    case rd of
+        Failed _ ->
+            True
+        _ ->
+            False
+
+
+-- =====================================================================
+-- Result helpers — sugar for the "log + fall back" pattern on
+-- Result IoError a. Use sparingly: prefer explicit `case ... of` at
+-- update boundaries so the Err branch can also update model state.
+-- =====================================================================
+
+-- unwrapOr : default -> Result IoError a -> a
+-- Returns the Ok value or logs the error and returns the default.
+-- Use ONLY in view-helper contexts where the caller can't update
+-- model (e.g. hasVoted, getVoteCount). Don't use in update handlers
+-- — pattern-match explicitly there so model.notification is set too.
+unwrapOr : a -> Result IoError a -> a
+unwrapOr def result =
+    case result of
+        Ok v ->
+            v
+        Err e ->
+            let _ = println ("[IO ERROR] " ++ errToString e) in
+            def

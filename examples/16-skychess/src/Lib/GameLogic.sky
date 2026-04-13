@@ -10,6 +10,7 @@ import Chess.Piece exposing (..)
 import Chess.Move as Move
 import Chess.Ai as Ai
 import Lib.Games as Games
+import Std.IoError exposing (..)
 
 executeWhiteMove : Int -> Int -> Model -> (Model, Cmd Msg)
 executeWhiteMove from to model =
@@ -26,7 +27,7 @@ executeWhitePart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
         moveNum = List.length model.moveHistory + 1
-        _ = Games.saveMove model.gameId moveNum from to algebraic "White"
+        _ = unwrapOr () (Games.saveMove model.gameId moveNum from to algebraic "White")
         newCaptured = appendCaptured captured model.capturedByWhite
         newHistory = model.moveHistory ++ [ algebraic ]
     in
@@ -133,7 +134,7 @@ doBlackPart2 from to algebraic newBoard captured model =
     let
         newEp = Move.newEnPassantSquare from to model.board
         moveNum = List.length model.moveHistory + 1
-        _ = Games.saveMove model.gameId moveNum from to algebraic "Black"
+        _ = unwrapOr () (Games.saveMove model.gameId moveNum from to algebraic "Black")
         newCaptured = appendCaptured captured model.capturedByBlack
         newHistory = model.moveHistory ++ [ algebraic ]
     in
@@ -181,7 +182,7 @@ resolveAfterBlack updated whiteCanMove whiteInCheck =
 finishGame : String -> Model -> (Model, Cmd Msg)
 finishGame result model =
     let
-        _ = Games.updateGameStatus model.gameId "finished" result
+        _ = unwrapOr () (Games.updateGameStatus model.gameId "finished" result)
     in
         ( { model | gameStatus = result }, Cmd.none )
 

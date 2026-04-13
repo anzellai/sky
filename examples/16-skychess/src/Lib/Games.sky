@@ -7,18 +7,47 @@ import Sky.Core.String as String
 import Sky.Core.Dict as Dict
 import Sky.Core.Crypto as Crypto
 import Std.Db as Db
+import Std.Log exposing (println)
+import Sky.Core.Os as Os
+import Std.IoError exposing (..)
 
+-- Open the database once at startup. We deliberately exit here on
+-- failure: a degraded "fake connection" would silently break every
+-- subsequent query — it's strictly better to surface the problem now
+-- than to ship empty data to users.
 dbConn =
     case Db.connect () of
-        
         Ok conn ->
             conn
-        
-        Err _ ->
-            identity ""
+        Err e ->
+            let
+                _ = println ("[FATAL] Cannot open skychess.db: " ++ e)
+                _ = Os.exit 1
+            in
+                identity ""
 
 
 getConn _ = dbConn
+
+
+-- exec : Result IoError () — typed boundary for writes. Callers in
+-- `update` MUST pattern-match and decide what to do (log, bubble to
+-- notification, retry).
+exec queryStr args =
+    case Db.exec dbConn queryStr args of
+        Ok _ ->
+            Ok ()
+        Err e ->
+            Err (DbError e)
+
+
+-- query : Result IoError (List Row). Same contract as exec.
+query queryStr args =
+    case Db.query dbConn queryStr args of
+        Ok rows ->
+            Ok rows
+        Err e ->
+            Err (DbError e)
 
 
 initSchema conn =
@@ -50,108 +79,85 @@ initSchema conn =
         ()
 
 
-createGame : String -> String
+-- createGame : Result IoError String — returns new gameId or typed error.
+createGame : String -> Result IoError String
 createGame playerName =
     let
-        conn = getConn ()
-        existing = getGames playerName
+        existing = unwrapOr [] (getGames playerName)
         count = String.fromInt (List.length existing)
         gameId =
             String.slice 0 12 (Crypto.sha256 (playerName ++ ":game:" ++ count))
-        _ =
-            Db.exec conn
-                "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
-                [ gameId , playerName ]
     in
-        gameId
+        case exec
+                "INSERT INTO games (id, player_name, status, result, move_count) VALUES (?, ?, 'playing', '', 0)"
+                [ gameId , playerName ] of
+            Ok _ ->
+                Ok gameId
+            Err e ->
+                Err e
 
 
-saveMove : String -> Int -> Int -> Int -> String -> String -> ()
+-- saveMove : Result IoError () — writes move + updates count.
+saveMove : String -> Int -> Int -> Int -> String -> String -> Result IoError ()
 saveMove gameId moveNum from to algebraic colour =
-    let
-        conn = getConn ()
-        _ =
-            Db.exec conn
-                "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)"
-                [ gameId
-                , String.fromInt moveNum
-                , String.fromInt from
-                , String.fromInt to
-                , algebraic
-                , colour
-                ]
-        _ =
-            Db.exec conn
+    case exec
+            "INSERT INTO moves (game_id, move_number, from_square, to_square, algebraic, colour) VALUES (?, ?, ?, ?, ?, ?)"
+            [ gameId
+            , String.fromInt moveNum
+            , String.fromInt from
+            , String.fromInt to
+            , algebraic
+            , colour
+            ] of
+        Err e ->
+            Err e
+        Ok _ ->
+            exec
                 "UPDATE games SET move_count = ?, updated_at = datetime('now') WHERE id = ?"
                 [ String.fromInt moveNum , gameId ]
-    in
-        ()
 
 
-updateGameStatus : String -> String -> String -> ()
+updateGameStatus : String -> String -> String -> Result IoError ()
 updateGameStatus gameId status result =
-    let
-        conn = getConn ()
-        _ =
-            Db.exec conn
-                "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
-                [ status , result , gameId ]
-    in
-        ()
+    exec
+        "UPDATE games SET status = ?, result = ?, updated_at = datetime('now') WHERE id = ?"
+        [ status , result , gameId ]
 
 
-getGames : String -> List (Dict String String)
+getGames : String -> Result IoError (List (Dict String String))
 getGames playerName =
-    let
-        conn = getConn ()
-    in
-        case Db.query conn "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20" [ playerName
-        ] of
-            
-            Ok rows ->
-                rows
-            
-            Err _ ->
-                []
+    query
+        "SELECT * FROM games WHERE player_name = ? ORDER BY created_at DESC LIMIT 20"
+        [ playerName ]
 
 
-getGameMoves : String -> List (Dict String String)
+getGameMoves : String -> Result IoError (List (Dict String String))
 getGameMoves gameId =
-    let
-        conn = getConn ()
-    in
-        case Db.query conn "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC" [ gameId
-        ] of
-            
-            Ok rows ->
-                rows
-            
-            Err _ ->
-                []
+    query
+        "SELECT * FROM moves WHERE game_id = ? ORDER BY move_number ASC"
+        [ gameId ]
 
 
-getGame : String -> Maybe (Dict String String)
+-- getGame : Result IoError (Maybe Row). Outer Result = infra failure;
+-- inner Maybe = found/not-found which is normal.
+getGame : String -> Result IoError (Maybe (Dict String String))
 getGame gameId =
-    let
-        conn = getConn ()
-    in
-        case Db.query conn "SELECT * FROM games WHERE id = ? LIMIT 1" [ gameId ] of
-            
-            Ok rows ->
-                List.head rows
-            
-            Err _ ->
-                Nothing
+    case query
+            "SELECT * FROM games WHERE id = ? LIMIT 1"
+            [ gameId ] of
+        Err e ->
+            Err e
+        Ok rows ->
+            Ok (List.head rows)
 
 
-deleteGame : String -> ()
+deleteGame : String -> Result IoError ()
 deleteGame gameId =
-    let
-        conn = getConn ()
-        _ = Db.exec conn "DELETE FROM moves WHERE game_id = ?" [ gameId ]
-        _ = Db.exec conn "DELETE FROM games WHERE id = ?" [ gameId ]
-    in
-        ()
+    case exec "DELETE FROM moves WHERE game_id = ?" [ gameId ] of
+        Err e ->
+            Err e
+        Ok _ ->
+            exec "DELETE FROM games WHERE id = ?" [ gameId ]
 
 
 getField : String -> (Dict String String) -> String

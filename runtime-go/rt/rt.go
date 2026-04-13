@@ -65,6 +65,97 @@ func Nothing[A any]() SkyMaybe[A] {
 	return SkyMaybe[A]{Tag: 1}
 }
 
+
+// ═══════════════════════════════════════════════════════════
+// Generic-coercion helpers (T4)
+//
+// When Sky codegen needs to return a value whose declared type uses
+// specific generic type parameters (e.g. `SkyResult[IoError, string]`)
+// but the body constructs via the default `rt.Ok[any, any]`, a plain
+// Go `any.(SkyResult[IoError, string])` fails at runtime because
+// `SkyResult[any, any]` and `SkyResult[IoError, string]` are distinct
+// nominal generic instantiations.
+//
+// These helpers reconstruct the value with the target type parameters,
+// coercing inner values via `any.(T)` on the way. The inner coercions
+// do fail if the runtime value doesn't match the target — which is
+// the behaviour we want (type safety at the return boundary).
+// ═══════════════════════════════════════════════════════════
+
+// ResultCoerce reconstructs a SkyResult with target generic params.
+// Works for any source SkyResult[X, Y] via reflection — Go's generic
+// instantiations are distinct types, so a plain type switch can't
+// cover them all. We read Tag/OkValue/ErrValue from the source via
+// reflect and rebuild with the target E, A.
+func ResultCoerce[E any, A any](src any) SkyResult[E, A] {
+	// Fast paths for the two most common sources.
+	if r, ok := src.(SkyResult[any, any]); ok {
+		if r.Tag == 0 {
+			return Ok[E, A](coerceInner[A](r.OkValue))
+		}
+		return Err[E, A](coerceInner[E](r.ErrValue))
+	}
+	if r, ok := src.(SkyResult[E, A]); ok {
+		return r
+	}
+	// Generic fallback via reflect: any SkyResult[X, Y] shape.
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		okField := rv.FieldByName("OkValue")
+		errField := rv.FieldByName("ErrValue")
+		if tagField.IsValid() && okField.IsValid() && errField.IsValid() {
+			if tagField.Int() == 0 {
+				return Ok[E, A](coerceInner[A](okField.Interface()))
+			}
+			return Err[E, A](coerceInner[E](errField.Interface()))
+		}
+	}
+	// Non-SkyResult source: treat as a bare Ok value.
+	return Ok[E, A](coerceInner[A](src))
+}
+
+// MaybeCoerce reconstructs a SkyMaybe with a target generic param.
+func MaybeCoerce[A any](src any) SkyMaybe[A] {
+	if m, ok := src.(SkyMaybe[any]); ok {
+		if m.Tag == 0 {
+			return Just[A](coerceInner[A](m.JustValue))
+		}
+		return Nothing[A]()
+	}
+	if m, ok := src.(SkyMaybe[A]); ok {
+		return m
+	}
+	rv := reflect.ValueOf(src)
+	if rv.Kind() == reflect.Struct {
+		tagField := rv.FieldByName("Tag")
+		justField := rv.FieldByName("JustValue")
+		if tagField.IsValid() && justField.IsValid() {
+			if tagField.Int() == 0 {
+				return Just[A](coerceInner[A](justField.Interface()))
+			}
+			return Nothing[A]()
+		}
+	}
+	return Nothing[A]()
+}
+
+// coerceInner type-asserts `v` to T, with a `T`-typed zero fallback
+// when the value is nil (e.g. `Nothing`'s zero-value JustValue field).
+func coerceInner[T any](v any) T {
+	if v == nil {
+		var zero T
+		return zero
+	}
+	if cast, ok := v.(T); ok {
+		return cast
+	}
+	// Final fallback: Go will panic on invalid assertion; let it.
+	// The panic is the correct "type mismatch at boundary" signal.
+	return v.(T)
+}
+
+
 // ═══════════════════════════════════════════════════════════
 // Task
 // ═══════════════════════════════════════════════════════════
@@ -810,7 +901,17 @@ func Result_andThen(fn any, result any) any {
 }
 
 func Result_withDefault(def any, result any) any {
-	r := result.(SkyResult[any, any])
+	// Defensive: any-typed Sky code can pass an already-unwrapped value
+	// (e.g. when withDefault is applied twice). Treat non-Result inputs
+	// as already-extracted Ok values rather than panicking — matches
+	// Elm's "graceful degradation" intent for this combinator.
+	r, ok := result.(SkyResult[any, any])
+	if !ok {
+		if result == nil {
+			return def
+		}
+		return result
+	}
 	if r.Tag == 0 { return r.OkValue }
 	return def
 }
@@ -1143,8 +1244,16 @@ func Task_map(fn any, task any) any {
 }
 
 func AnyTaskRun(task any) any {
-	t := task.(func() any)
-	return t()
+	// Accept either a Task thunk (`func() any`) which we invoke, or a
+	// value that's already the result of running the task (SkyResult /
+	// SkyTask). Sky.Http.Server's `listen` is an example that returns
+	// `Ok (()) / Err msg` directly rather than a deferred thunk — we
+	// treat that as "task already done".
+	switch t := task.(type) {
+	case func() any:
+		return t()
+	}
+	return task
 }
 
 // ═══════════════════════════════════════════════════════════

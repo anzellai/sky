@@ -9,6 +9,7 @@ module Sky.Generate.Go.Record
     , lookupRecordAlias
     , classifyAlias
     , buildCodegenEnv
+    , withFuncTypes
     , withRecordAliases
     , collectRecordAliases
     , withDepArities
@@ -40,6 +41,15 @@ data CodegenEnv = CodegenEnv
     , _cg_funcArities :: !(Map.Map String Int)  -- top-level function arities
                                                 -- used for partial-application
                                                 -- closure synthesis
+    , _cg_funcParamTypes :: !(Map.Map String [String])
+      -- Per-function Go param types (qualified Go name → [paramType]).
+      -- Populated for annotated top-level functions so call-site codegen
+      -- can emit `any(arg).(T)` coercions where needed. Functions not
+      -- in this map have `any` params and need no coercion.
+    , _cg_funcRetType :: !(Map.Map String String)
+      -- Per-function Go return type (qualified Go name → retType).
+      -- Used by call-site codegen to decide whether further coercion
+      -- is needed when the call feeds into a typed context.
     }
 
 
@@ -70,6 +80,8 @@ buildCodegenEnv solvedTypes canMod = CodegenEnv
     , _cg_zeroArgs = collectZeroArgs (Can._decls canMod)
     , _cg_recordAliases = collectRecordAliases (Can._aliases canMod)
     , _cg_funcArities = collectFuncArities (Can._decls canMod)
+    , _cg_funcParamTypes = Map.empty
+    , _cg_funcRetType = Map.empty
     }
 
 
@@ -102,6 +114,16 @@ withRecordAliases extra env =
 withDepArities :: Map.Map String Int -> CodegenEnv -> CodegenEnv
 withDepArities extra env =
     env { _cg_funcArities = Map.union extra (_cg_funcArities env) }
+
+
+-- | Merge per-function param+return type tables into the env. Used
+-- after typed dep + entry signatures have been determined so call-site
+-- codegen can emit coercions.
+withFuncTypes :: Map.Map String [String] -> Map.Map String String -> CodegenEnv -> CodegenEnv
+withFuncTypes paramTys retTys env = env
+    { _cg_funcParamTypes = Map.union paramTys (_cg_funcParamTypes env)
+    , _cg_funcRetType    = Map.union retTys   (_cg_funcRetType env)
+    }
 
 
 collectRecordAliases :: Map.Map String Can.Alias -> Set.Set String

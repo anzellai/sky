@@ -11,6 +11,7 @@ import Sky.Core.Crypto as Crypto
 import Std.Db as Db
 import Std.Log exposing (println)
 import Lib.Database as Database
+import Std.IoError exposing (..)
 
 
 createAlert : String -> String -> String -> String -> String -> String
@@ -18,7 +19,7 @@ createAlert metricId condition threshold notifyType notifyTarget =
     let
         alertId = String.slice 0 12 (Crypto.sha256 (metricId ++ ":" ++ condition ++ ":" ++ threshold))
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Alerts.createAlert"
                 "INSERT OR REPLACE INTO alerts (id, metric_id, condition, threshold, notify_type, notify_target) VALUES (?, ?, ?, ?, ?, ?)"
                 [ alertId, metricId, condition, threshold, notifyType, notifyTarget ]
     in
@@ -28,21 +29,23 @@ createAlert metricId condition threshold notifyType notifyTarget =
 deleteAlert : String -> ()
 deleteAlert alertId =
     let
-        _ = Db.exec Database.conn "DELETE FROM alerts WHERE id = ?" [ alertId ]
+        _ = Database.execOrLog "Alerts.deleteAlert" "DELETE FROM alerts WHERE id = ?" [ alertId ]
     in
         ()
 
 
 getAlerts : List (Dict String String)
 getAlerts =
-    Result.withDefault []
-        (Db.query Database.conn "SELECT * FROM alerts ORDER BY created_at DESC" [])
+    Database.queryOrLog "Alerts.getAlerts"
+        "SELECT * FROM alerts ORDER BY created_at DESC"
+        []
 
 
 getAlertsForMetric : String -> List (Dict String String)
 getAlertsForMetric metricId =
-    Result.withDefault []
-        (Db.query Database.conn "SELECT * FROM alerts WHERE metric_id = ? ORDER BY created_at DESC" [ metricId ])
+    Database.queryOrLog "Alerts.getAlertsForMetric"
+        "SELECT * FROM alerts WHERE metric_id = ? ORDER BY created_at DESC"
+        [ metricId ]
 
 
 -- Check all alerts against current metric values and fire notifications
@@ -146,20 +149,34 @@ fireAlert alert currentValue =
         _ = println ("[ALERT] " ++ message)
     in
         if notifyType == "webhook" then
-            fireWebhook notifyTarget message
+            logFireResult "webhook" notifyTarget (fireWebhook notifyTarget message)
 
         else if notifyType == "slack" then
-            fireSlack notifyTarget message
+            logFireResult "slack" notifyTarget (fireSlack notifyTarget message)
 
         else
             ()
+
+
+-- Centralised delivery logging so every notify variant uses the same
+-- "[ALERT ERROR] kind target: typedErr" format.
+logFireResult : String -> String -> Result IoError () -> ()
+logFireResult kind target result =
+    case result of
+        Ok _ ->
+            ()
+        Err e ->
+            let
+                _ = println ("[ALERT ERROR] " ++ kind ++ " " ++ target ++ ": " ++ errToString e)
+            in
+                ()
 
 
 recordAlertFired : String -> String -> String -> String -> String -> String -> ()
 recordAlertFired alertId metricId value condition threshold notifyType =
     let
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Alerts.recordAlertFired"
                 "INSERT INTO alert_history (alert_id, metric_id, metric_value, condition, threshold, notify_type) VALUES (?, ?, ?, ?, ?, ?)"
                 [ alertId, metricId, value, condition, threshold, notifyType ]
     in
@@ -168,46 +185,50 @@ recordAlertFired alertId metricId value condition threshold notifyType =
 
 getAlertHistory : Int -> List (Dict String String)
 getAlertHistory limit =
-    Result.withDefault []
-        (Db.query Database.conn
-            "SELECT * FROM alert_history ORDER BY fired_at DESC LIMIT ?"
-            [ String.fromInt limit ]
-        )
+    Database.queryOrLog "Alerts.getAlertHistory"
+        "SELECT * FROM alert_history ORDER BY fired_at DESC LIMIT ?"
+        [ String.fromInt limit ]
 
 
 getAlertHistoryForMetric : String -> Int -> List (Dict String String)
 getAlertHistoryForMetric metricId limit =
-    Result.withDefault []
-        (Db.query Database.conn
-            "SELECT * FROM alert_history WHERE metric_id = ? ORDER BY fired_at DESC LIMIT ?"
-            [ metricId, String.fromInt limit ]
-        )
+    Database.queryOrLog "Alerts.getAlertHistoryForMetric"
+        "SELECT * FROM alert_history WHERE metric_id = ? ORDER BY fired_at DESC LIMIT ?"
+        [ metricId, String.fromInt limit ]
 
 
-fireWebhook : String -> String -> ()
+-- fireWebhook / fireSlack now return `Result IoError ()`. Empty URL is
+-- Ok () (no-op is a success), transport failures are NetworkError.
+fireWebhook : String -> String -> Result IoError ()
 fireWebhook url message =
     if String.isEmpty url then
-        ()
+        Ok ()
 
     else
         let
             body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
-            _ = Task.run (Http.post url body)
         in
-            ()
+            case Task.run (Http.post url body) of
+                Ok _ ->
+                    Ok ()
+                Err e ->
+                    Err (NetworkError e)
 
 
-fireSlack : String -> String -> ()
+fireSlack : String -> String -> Result IoError ()
 fireSlack webhookUrl message =
     if String.isEmpty webhookUrl then
-        ()
+        Ok ()
 
     else
         let
             body = "{\"text\":\"" ++ escapeJson message ++ "\"}"
-            _ = Task.run (Http.post webhookUrl body)
         in
-            ()
+            case Task.run (Http.post webhookUrl body) of
+                Ok _ ->
+                    Ok ()
+                Err e ->
+                    Err (NetworkError e)
 
 
 findMetricById : String -> (List (Dict String String)) -> Maybe (Dict String String)

@@ -2,22 +2,20 @@ module Lib.Auth exposing (hashPassword, verifyPassword, createUser, authenticate
 
 import Sky.Core.Prelude exposing (..)
 import Sky.Core.Maybe exposing (..)
-import Sky.Core.Result as Result
 import Sky.Core.List as List
 import Sky.Core.String as String
 import Std.Log exposing (println)
 import Sky.Core.Crypto as Crypto
 import Std.Auth as Auth
 import Lib.Db as Db
+import Std.IoError exposing (..)
 
 
 hashPassword : String -> String
 hashPassword password =
     case Auth.hashPassword password of
-
         Ok hash ->
             hash
-
         Err _ ->
             ""
 
@@ -26,75 +24,70 @@ verifyPassword : String -> String -> Bool
 verifyPassword password storedHash = Auth.verifyPassword password storedHash
 
 
-createUser : String -> String -> String -> Result String String
+-- createUser : returns Result IoError UserId. Surfaces unique-key /
+-- DB failures as ValidationError so the form can show them inline,
+-- and other DbError variants for unexpected infra issues.
+createUser : String -> String -> String -> Result IoError String
 createUser username email password =
     let
         id = String.slice 0 12 (Crypto.sha256 (username ++ ":" ++ email))
         passHash = hashPassword password
-        result =
-            Db.exec
-                "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
-                [ id , username , email , passHash ]
     in
-        case result of
-
+        case Db.exec
+                "INSERT INTO users (id, username, email, password_hash) VALUES (?, ?, ?, ?)"
+                [ id , username , email , passHash ] of
             Ok _ ->
                 let
-                    _ =
-                        println
-                            (
-                            "[AUTH] User created: "
-                                ++ username ++ " (" ++ email ++ ")"
-                            )
+                    _ = println ("[AUTH] User created: " ++ username ++ " (" ++ email ++ ")")
                 in
                     Ok id
+            Err _ ->
+                Err (ValidationError "Username or email already taken.")
 
-            Err e ->
-                Err "Username or email already taken."
 
-
-authenticateUser : String -> String -> Result String (Dict String String)
+-- authenticateUser : Result IoError User. DbError surfaces upstream so
+-- callers can show "DB unavailable" rather than misleading "bad password".
+-- Wrong password / unknown email both return Unauthorised — same UI text,
+-- avoids leaking which one was wrong (security best practice).
+authenticateUser : String -> String -> Result IoError (Dict String String)
 authenticateUser email password =
-    let
-        rows =
-            Db.queryRows
-                "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
-                [ email ]
-        userRows = Result.withDefault [] rows
-        maybeUser = List.head userRows
-    in
-        case maybeUser of
-
-            Just user ->
-                let
-                    storedHash = Db.getField "password_hash" user
-                in
-                    if verifyPassword password storedHash then
-                        let
-                            _ = println ("[AUTH] Sign-in success: " ++ email)
-                        in
-                            Ok user
-
-                    else
-                        let
-                            _ = println ("[AUTH] Sign-in failed (bad password): " ++ email)
-                        in
-                            Err "Invalid email or password."
-
-            Nothing ->
-                let
-                    _ = println ("[AUTH] Sign-in failed (not found): " ++ email)
-                in
-                    Err "Invalid email or password."
+    case Db.query
+            "SELECT id, username, email, password_hash FROM users WHERE email = ? LIMIT 1"
+            [ email ] of
+        Err e ->
+            Err e
+        Ok userRows ->
+            case List.head userRows of
+                Nothing ->
+                    let
+                        _ = println ("[AUTH] Sign-in failed (not found): " ++ email)
+                    in
+                        Err (Unauthorised "Invalid email or password.")
+                Just user ->
+                    let
+                        storedHash = Db.getField "password_hash" user
+                    in
+                        if verifyPassword password storedHash then
+                            let
+                                _ = println ("[AUTH] Sign-in success: " ++ email)
+                            in
+                                Ok user
+                        else
+                            let
+                                _ = println ("[AUTH] Sign-in failed (bad password): " ++ email)
+                            in
+                                Err (Unauthorised "Invalid email or password.")
 
 
-getUserById : String -> Maybe (Dict String String)
+-- getUserById : Result IoError (Maybe User). The outer Result is for
+-- DB failures; the inner Maybe is "found / not found" which is normal
+-- and not an error.
+getUserById : String -> Result IoError (Maybe (Dict String String))
 getUserById userId =
-    let
-        rows =
-            Db.queryRows
-                "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
-                [ userId ]
-        userRows = Result.withDefault [] rows
-    in
-        List.head userRows
+    case Db.query
+            "SELECT id, username, email FROM users WHERE id = ? LIMIT 1"
+            [ userId ] of
+        Err e ->
+            Err e
+        Ok userRows ->
+            Ok (List.head userRows)

@@ -11,7 +11,7 @@ import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
 
 listProducts =
-    Result.withDefault [] (Db.queryWhere "products" "published" "==" True)
+    Db.queryWhereOrLog "Products.listProducts" "products" "published" "==" True
 
 
 listAllProducts =
@@ -174,8 +174,11 @@ deleteProduct productId =
                 (\img -> Db.deleteDoc "product_images" (Db.getField "id" img))
                 images
         cartItems =
-            Result.withDefault []
-                (Db.queryWhere "cart_items" "product_id" "==" productId)
+            Db.queryWhereOrLog "Products.deleteProduct"
+                "cart_items"
+                "product_id"
+                "=="
+                productId
         _ =
             List.map
                 (\item -> Db.deleteDoc "cart_items" (Db.getField "id" item))
@@ -193,8 +196,11 @@ deleteProduct productId =
 
 
 listProductImages productId =
-    Result.withDefault []
-        (Db.queryWhere "product_images" "product_id" "==" productId)
+    Db.queryWhereOrLog "Products.listProductImages"
+        "product_images"
+        "product_id"
+        "=="
+        productId
 
 
 addProductImage productId imageData =

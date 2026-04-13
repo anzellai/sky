@@ -10,6 +10,10 @@ build-type:    Simple
 -- shipped in the cabal sdist so `cabal install` works from a tarball.
 extra-source-files:
     templates/CLAUDE.md
+    runtime-go/go.mod
+    runtime-go/go.sum
+    runtime-go/rt/*.go
+    sky-stdlib/Std/*.sky
 
 executable sky
   main-is:          Main.hs
@@ -97,12 +101,14 @@ executable sky
     Sky.Format.Format
 
     -- LSP
+    Sky.Lsp.Index
     Sky.Lsp.Server
 
     -- Build system
     Sky.Build.ModuleGraph
     Sky.Build.Compile
     Sky.Build.Dce
+    Sky.Build.EmbeddedRuntime
     Sky.Build.FfiGen
     Sky.Build.FfiRegistry
     Sky.Build.SkyDeps

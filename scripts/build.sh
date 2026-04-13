@@ -65,6 +65,14 @@ fi
 mkdir -p sky-out bin
 
 # ─── build compiler ─────────────────────────────────────────────────
+# Force the embedded-runtime TH splice to re-bake when runtime-go/ has
+# any file newer than the embedder source (covers new files, which
+# Template Haskell's dependency tracker can't see retroactively).
+if [[ -n "$(find runtime-go -type f -newer src/Sky/Build/EmbeddedRuntime.hs 2>/dev/null | head -1)" ]]; then
+    say "runtime-go changed — bumping EmbeddedRuntime.hs to force re-embed"
+    touch src/Sky/Build/EmbeddedRuntime.hs
+fi
+
 say "building sky compiler (cabal)"
 cabal update >/dev/null
 cabal install exe:sky \

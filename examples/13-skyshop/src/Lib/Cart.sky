@@ -9,6 +9,7 @@ import Sky.Core.String as String
 import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Lib.Db as Db
+import Std.IoError exposing (..)
 
 getOrCreateCart userId =
     let
@@ -74,8 +75,12 @@ getCart cartId =
 
 getCartItems cartId =
     let
-        itemsResult = Db.queryWhere "cart_items" "cart_id" "==" cartId
-        items = Result.withDefault [] itemsResult
+        items =
+            Db.queryWhereOrLog "Cart.getCartItems"
+                "cart_items"
+                "cart_id"
+                "=="
+                cartId
     in
         List.map (enrichCartItem) items
 
@@ -135,8 +140,11 @@ getCartWithItems cartId =
 addItem cartId productId quantity =
     let
         existingItems =
-            Result.withDefault []
-                (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+            Db.queryWhereOrLog "Cart.addItem"
+                "cart_items"
+                "cart_id"
+                "=="
+                cartId
         matchingItems =
             List.filter (\item -> Db.getField "product_id" item == productId)
                 existingItems
@@ -272,8 +280,8 @@ findDocAndCollection docId =
                     Ok ( "carts", doc )
                 
                 Ok Nothing ->
-                    Err "Document not found."
-                
+                    Err (NotFound "Document not found.")
+
                 Err e ->
                     Err e
 
@@ -372,8 +380,11 @@ checkoutToOrder cartId =
                             (Dict.insert "cart_id" cartId cart)
                     _ = Db.setDoc "orders" orderId orderData
                     cartItems =
-                        Result.withDefault []
-                            (Db.queryWhere "cart_items" "cart_id" "==" cartId)
+                        Db.queryWhereOrLog "Cart.checkoutToOrder"
+                            "cart_items"
+                            "cart_id"
+                            "=="
+                            cartId
                     _ =
                         List.map
                             (
@@ -406,7 +417,7 @@ checkoutToOrder cartId =
                     Ok orderId
             
             _ ->
-                Err "Cart not found."
+                Err (NotFound "Cart not found.")
 
 
 getOrder orderId =
@@ -420,7 +431,11 @@ getOrder orderId =
 
 
 getOrderItems orderId =
-    Result.withDefault [] (Db.queryWhere "order_items" "order_id" "==" orderId)
+    Db.queryWhereOrLog "Cart.getOrderItems"
+        "order_items"
+        "order_id"
+        "=="
+        orderId
 
 
 getOrderWithItems orderId =
@@ -439,7 +454,7 @@ getOrderWithItems orderId =
 
 
 getUserCarts userId =
-    Result.withDefault [] (Db.queryWhere "orders" "owner_id" "==" userId)
+    Db.queryWhereOrLog "Cart.getUserCarts" "orders" "owner_id" "==" userId
 
 
 getOrdersByState state =
@@ -449,15 +464,18 @@ getOrdersByState state =
     else
         let
             orders =
-                Result.withDefault []
-                    (Db.queryWhere "orders" "state" "==" state)
+                Db.queryWhereOrLog "Cart.getOrdersByState"
+                    "orders"
+                    "state"
+                    "=="
+                    state
         in
             List.map (enrichOrderWithUser) orders
 
 
 getAllOrders =
     let
-        allOrders = Result.withDefault [] (Db.queryDocs "orders")
+        allOrders = Db.queryDocsOrLog "Cart.getAllOrders" "orders"
     in
         List.map (enrichOrderWithUser) allOrders
 

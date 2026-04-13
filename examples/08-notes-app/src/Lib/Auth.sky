@@ -9,15 +9,14 @@ import Std.Log exposing (println)
 import Github.Com.Google.Uuid as Uuid
 import Std.Auth as Auth
 import Lib.Db as Db
+import Std.IoError exposing (..)
 
 
 hashPassword : String -> String
 hashPassword password =
     case Auth.hashPassword password of
-
         Ok hash ->
             hash
-
         Err _ ->
             ""
 
@@ -29,6 +28,10 @@ verifyPassword password storedHash = Auth.verifyPassword password storedHash
 generateToken _ = Result.withDefault "" (Uuid.newString ())
 
 
+-- createUser : Result IoError String (verification token). Maps DB
+-- uniqueness / insert failures to ValidationError so the form can
+-- render the message inline.
+createUser : String -> String -> Result IoError String
 createUser email password =
     let
         passHash = hashPassword password
@@ -47,15 +50,13 @@ createUser email password =
                 [ email , passHash , token ]
     in
         case result of
-
             Ok _ ->
                 Ok token
+            Err _ ->
+                Err (ValidationError "That email is already registered, or a server error occurred.")
 
-            Err e ->
-                Err e
 
-
-checkUserCredentials email password user =
+checkUserCredentials password user =
     let
         storedHash = Db.getField "password_hash" user
         verified = Db.getField "verified" user
@@ -63,33 +64,35 @@ checkUserCredentials email password user =
         if verifyPassword password storedHash then
             if verified == "1" then
                 Ok user
-
             else
                 Err
-                    "Email not verified yet. Please check the server console for your verification link."
-
+                    (Unauthorised
+                        "Email not verified yet. Please check the server console for your verification link.")
         else
-            Err "Invalid email or password."
+            Err (Unauthorised "Invalid email or password.")
 
 
+-- authenticateUser : Result IoError User. DbError surfaces upstream so
+-- callers can show "service unavailable" rather than misleading
+-- "bad password". Wrong email / wrong password both Unauthorised.
+authenticateUser : String -> String -> Result IoError (Dict String String)
 authenticateUser email password =
-    let
-        rows =
-            Db.queryRows
-                "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
-                [ email ]
-        userRows = Result.withDefault [] rows
-        maybeUser = List.head userRows
-    in
-        case maybeUser of
-
-            Just user ->
-                checkUserCredentials email password user
-
-            Nothing ->
-                Err "Invalid email or password."
+    case Db.query
+            "SELECT id, email, password_hash, verified FROM users WHERE email = ? LIMIT 1"
+            [ email ] of
+        Err e ->
+            Err e
+        Ok userRows ->
+            case List.head userRows of
+                Nothing ->
+                    Err (Unauthorised "Invalid email or password.")
+                Just user ->
+                    checkUserCredentials password user
 
 
+-- createSession : Result IoError String. Propagates the underlying
+-- DbError so handlers can distinguish infra failure from auth failure.
+createSession : String -> Result IoError String
 createSession userId =
     let
         token = generateToken ()
@@ -98,36 +101,34 @@ createSession userId =
                 [ userId , token ]
     in
         case result of
-
             Ok _ ->
                 Ok token
-
-            Err _ ->
-                Err "Failed to create session."
-
-
-getSessionUser sessionToken =
-    let
-        rows =
-            Db.queryRows
-                "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
-                [ sessionToken ]
-        userRows = Result.withDefault [] rows
-    in
-        List.head userRows
-
-
-verifyEmail token =
-    let
-        result =
-            Db.exec
-                "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
-                [ token ]
-    in
-        case result of
-
-            Ok _ ->
-                Ok "Your email has been verified! You can now sign in."
-
             Err e ->
-                Err ("Verification failed: " ++ e)
+                Err e
+
+
+-- getSessionUser : Result IoError (Maybe User). Outer Result is for
+-- DB failures; inner Maybe is "found / not found" which is normal.
+getSessionUser : String -> Result IoError (Maybe (Dict String String))
+getSessionUser sessionToken =
+    case Db.query
+            "SELECT u.id, u.email, u.created_at FROM users u INNER JOIN sessions s ON CAST(u.id AS TEXT) = s.user_id WHERE s.token = ? LIMIT 1"
+            [ sessionToken ] of
+        Err e ->
+            Err e
+        Ok userRows ->
+            Ok (List.head userRows)
+
+
+-- verifyEmail : Result IoError String (success message). DB failures
+-- bubble to the caller so they can render a distinct UI from the
+-- happy path.
+verifyEmail : String -> Result IoError String
+verifyEmail token =
+    case Db.exec
+            "UPDATE users SET verified = 1 WHERE verification_token = ? AND verified = 0"
+            [ token ] of
+        Ok _ ->
+            Ok "Your email has been verified! You can now sign in."
+        Err e ->
+            Err e

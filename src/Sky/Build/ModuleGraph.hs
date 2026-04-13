@@ -147,12 +147,16 @@ getImportName imp =
         A.At _ segs -> joinDots segs
 
 
+-- | We attempt to resolve EVERY import against the configured roots
+-- (project src + Sky-source deps + embedded Sky stdlib). `resolveImport`
+-- returns Nothing for imports with no on-disk source — those are
+-- assumed to be kernel modules (Sky.Core.*, Std.Db, etc. — implemented
+-- in Go in runtime-go/rt/) and get resolved later by the canonicaliser
+-- via the kernel registry. This lets new on-disk stdlib modules
+-- (Std.IoError, Std.RemoteData, ...) participate in the module graph
+-- without a per-module allowlist.
 isLocalImport :: String -> Bool
-isLocalImport name
-    | take 9 name == "Sky.Core." = False
-    | take 9 name == "Sky.Http." = False
-    | take 4 name == "Std."      = False
-    | otherwise = True
+isLocalImport _ = True
 
 
 joinDots :: [String] -> String

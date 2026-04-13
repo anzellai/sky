@@ -9,15 +9,16 @@ import Std.Live.Events exposing (onClick)
 import State exposing (..)
 import Lib.Db as Db
 import Lib.Ideas as Ideas
+import Std.IoError exposing (..)
 import Ui.Layout as Layout
 import Ui.Components exposing (emptyState)
 
 viewRoadmap model =
     let
-        planned = Ideas.getIdeasByStatus "planned"
-        inProgress = Ideas.getIdeasByStatus "in-progress"
-        done = Ideas.getIdeasByStatus "done"
-        open_ = Ideas.getIdeasByStatus "open"
+        planned = unwrapOr [] (Ideas.getIdeasByStatus "planned")
+        inProgress = unwrapOr [] (Ideas.getIdeasByStatus "in-progress")
+        done = unwrapOr [] (Ideas.getIdeasByStatus "done")
+        open_ = unwrapOr [] (Ideas.getIdeasByStatus "open")
     in
         Layout.page model
             (

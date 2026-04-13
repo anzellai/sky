@@ -9,7 +9,9 @@ import Sky.Core.Http as Http
 import Sky.Core.Task as Task
 import Sky.Core.Crypto as Crypto
 import Std.Db as Db
+import Std.Log exposing (println)
 import Lib.Database as Database
+import Std.IoError exposing (..)
 
 
 createMonitor : String -> String -> Int -> String -> String
@@ -17,7 +19,7 @@ createMonitor name url interval visibility =
     let
         monId = String.slice 0 12 (Crypto.sha256 (name ++ ":" ++ url))
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Monitors.createMonitor"
                 "INSERT OR REPLACE INTO monitors (id, name, url, interval_secs, visibility) VALUES (?, ?, ?, ?, ?)"
                 [ monId, name, url, String.fromInt interval, visibility ]
     in
@@ -27,29 +29,36 @@ createMonitor name url interval visibility =
 deleteMonitor : String -> ()
 deleteMonitor monId =
     let
-        _ = Db.exec Database.conn "DELETE FROM monitor_history WHERE monitor_id = ?" [ monId ]
-        _ = Db.exec Database.conn "DELETE FROM monitors WHERE id = ?" [ monId ]
+        _ = Database.execOrLog "Monitors.deleteMonitor/history" "DELETE FROM monitor_history WHERE monitor_id = ?" [ monId ]
+        _ = Database.execOrLog "Monitors.deleteMonitor/row" "DELETE FROM monitors WHERE id = ?" [ monId ]
     in
         ()
 
 
 getMonitors : List (Dict String String)
 getMonitors =
-    Result.withDefault []
-        (Db.query Database.conn "SELECT * FROM monitors ORDER BY name" [])
+    Database.queryOrLog "Monitors.getMonitors"
+        "SELECT * FROM monitors ORDER BY name"
+        []
 
 
+-- checkEndpoint : probe an HTTP endpoint. Returns a (status, responseTime)
+-- tuple for monitor-state recording. Classifies errors into typed IoError
+-- for structured logging:
+--   * NetworkError  — connection refused / DNS / timeout → "down"
+--   * fromHttpStatus — 4xx → "degraded", 5xx → "down" (via checkResponseStatus)
+-- Monitor status remains a plain string because the schema/view uses it
+-- for rendering; the typed cause is only logged here.
 checkEndpoint : String -> ( String, Int )
 checkEndpoint url =
-    let
-        result = Task.run (Http.get url)
-    in
-        case result of
-
-            Ok resp ->
-                checkResponseStatus resp
-
-            Err _ ->
+    case Task.run (Http.get url) of
+        Ok resp ->
+            checkResponseStatus resp
+        Err e ->
+            let
+                typedErr = NetworkError e
+                _ = println ("[MONITOR ERROR] checkEndpoint " ++ url ++ ": " ++ errToString typedErr)
+            in
                 ( "down", 0 )
 
 
@@ -71,11 +80,11 @@ recordCheck : String -> String -> Int -> ()
 recordCheck monId status responseTime =
     let
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Monitors.recordCheck/update"
                 "UPDATE monitors SET status = ?, response_time = ?, last_checked = datetime('now') WHERE id = ?"
                 [ status, String.fromInt responseTime, monId ]
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Monitors.recordCheck/history"
                 "INSERT INTO monitor_history (monitor_id, status, response_time) VALUES (?, ?, ?)"
                 [ monId, status, String.fromInt responseTime ]
     in
@@ -84,8 +93,6 @@ recordCheck monId status responseTime =
 
 getMonitorHistory : String -> Int -> List (Dict String String)
 getMonitorHistory monId limit =
-    Result.withDefault []
-        (Db.query Database.conn
-            "SELECT status, response_time, checked_at FROM monitor_history WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT ?"
-            [ monId, String.fromInt limit ]
-        )
+    Database.queryOrLog "Monitors.getMonitorHistory"
+        "SELECT status, response_time, checked_at FROM monitor_history WHERE monitor_id = ? ORDER BY checked_at DESC LIMIT ?"
+        [ monId, String.fromInt limit ]

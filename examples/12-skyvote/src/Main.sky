@@ -15,6 +15,7 @@ import Std.Time as Time
 import State exposing (..)
 import Lib.Db as Db
 import Lib.Schema as Schema
+import Std.IoError exposing (..)
 import Lib.Auth as Auth
 import Lib.Ideas as Ideas
 import Lib.Comments as Comments
@@ -34,7 +35,7 @@ init _req =
     let
         _ = Schema.initDb
         _ = println "[APP] SkyVote initialised"
-        ideas = Ideas.getIdeas "newest" "all" ""
+        ideas = unwrapOr [] (Ideas.getIdeas "newest" "all" "")
     in
         ( { page = BoardPage
         , currentUser = Nothing
@@ -197,31 +198,38 @@ update msg model =
 -- ======================================================
 -- HELPERS
 -- ======================================================
+-- logActivity: fire-and-forget audit row. We log the IoError if the
+-- write fails (so devs spot it in `sky run` output) but don't bubble
+-- to the user — losing an audit row is not worth interrupting their
+-- vote/comment flow.
 logActivity event targetId userId =
-    Db.exec
-        "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
-        [ event ++ "-" ++ targetId , event , targetId , userId ]
+    let
+        result =
+            Db.exec
+                "INSERT INTO activity_log (id, event, data, user_id) VALUES (?, ?, ?, ?)"
+                [ event ++ "-" ++ targetId , event , targetId , userId ]
+    in
+        case result of
+            Ok _ -> ()
+            Err e ->
+                let _ = println ("[ACTIVITY ERROR] " ++ event ++ ": " ++ errToString e) in
+                ()
 
 
 refreshCurrentView : Model -> (Model, Cmd Msg)
 refreshCurrentView model =
     case model.page of
-        
         BoardPage ->
             let
-                ideas =
-                    Ideas.getIdeas model.sortBy model.filterCategory
-                        model.searchQuery
+                ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
             in
                 ( { model | ideas = ideas }, Cmd.none )
-        
         DetailPage ->
             let
-                idea = Ideas.getIdea model.selectedIdeaId
-                comments = Comments.getComments model.selectedIdeaId
+                idea = unwrapOr Nothing (Ideas.getIdea model.selectedIdeaId)
+                comments = unwrapOr [] (Comments.getComments model.selectedIdeaId)
             in
                 ( { model | selectedIdea = idea , ideaComments = comments }, Cmd.none )
-        
         _ ->
             ( model, Cmd.none )
 
@@ -232,7 +240,7 @@ refreshCurrentView model =
 handleSetSort : String -> Model -> (Model, Cmd Msg)
 handleSetSort sortBy model =
     let
-        ideas = Ideas.getIdeas sortBy model.filterCategory model.searchQuery
+        ideas = unwrapOr [] (Ideas.getIdeas sortBy model.filterCategory model.searchQuery)
     in
         ( { model | sortBy = sortBy , ideas = ideas }, Cmd.none )
 
@@ -240,7 +248,7 @@ handleSetSort sortBy model =
 handleSetFilter : String -> Model -> (Model, Cmd Msg)
 handleSetFilter category model =
     let
-        ideas = Ideas.getIdeas model.sortBy category model.searchQuery
+        ideas = unwrapOr [] (Ideas.getIdeas model.sortBy category model.searchQuery)
     in
         ( { model | filterCategory = category , ideas = ideas }, Cmd.none )
 
@@ -248,19 +256,27 @@ handleSetFilter category model =
 handleSetSearch : String -> Model -> (Model, Cmd Msg)
 handleSetSearch query model =
     let
-        ideas = Ideas.getIdeas model.sortBy model.filterCategory query
+        ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory query)
     in
         ( { model | searchQuery = query , ideas = ideas }, Cmd.none )
 
 
+-- handleToggleVoteAuth: typed boundary — toggleVote can fail (e.g.
+-- DB timeout). We bubble the error to model.notification so the user
+-- sees "we couldn't record your vote" rather than appearing to vote
+-- silently and finding it gone on next refresh.
 handleToggleVoteAuth : String -> (Dict String String) -> Model -> (Model, Cmd Msg)
 handleToggleVoteAuth ideaId user model =
     let
         userId = Db.getField "id" user
-        _ = Ideas.toggleVote ideaId userId
-        _ = logActivity "vote" ideaId userId
     in
-        refreshCurrentView model
+        case Ideas.toggleVote ideaId userId of
+            Ok _ ->
+                let _ = logActivity "vote" ideaId userId in
+                refreshCurrentView model
+            Err e ->
+                let _ = println ("[VOTE ERROR] " ++ errToString e) in
+                ( { model | notification = "Could not record your vote: " ++ errToString e }, Cmd.none )
 
 
 handleToggleVote : String -> Model -> (Model, Cmd Msg)
@@ -280,8 +296,8 @@ handleToggleVote ideaId model =
 handleViewIdea : String -> Model -> (Model, Cmd Msg)
 handleViewIdea ideaId model =
     let
-        idea = Ideas.getIdea ideaId
-        comments = Comments.getComments ideaId
+        idea = unwrapOr Nothing (Ideas.getIdea ideaId)
+        comments = unwrapOr [] (Comments.getComments ideaId)
     in
         ( { model
             | page = DetailPage
@@ -296,20 +312,30 @@ handleViewIdea ideaId model =
 -- ======================================================
 -- DETAIL HANDLERS
 -- ======================================================
+-- doSubmitComment: createComment is a write that affects the user's
+-- visible state — bubble its IoError to the notification banner so they
+-- know retry is needed. The follow-up reads (getComments / getIdea) use
+-- unwrapOr because their failure mode is stale data, not lost data.
 doSubmitComment : (Dict String String) -> Model -> (Model, Cmd Msg)
 doSubmitComment user model =
     let
         userId = Db.getField "id" user
-        _ = Comments.createComment model.selectedIdeaId userId model.newComment
-        _ = logActivity "comment" model.selectedIdeaId userId
-        comments = Comments.getComments model.selectedIdeaId
-        idea = Ideas.getIdea model.selectedIdeaId
     in
-        ( { model
-            | ideaComments = comments
-            , selectedIdea = idea
-            , newComment = ""
-        }, Cmd.none )
+        case Comments.createComment model.selectedIdeaId userId model.newComment of
+            Err e ->
+                let _ = println ("[COMMENT ERROR] " ++ errToString e) in
+                ( { model | notification = "Could not post comment: " ++ errToString e }, Cmd.none )
+            Ok _ ->
+                let
+                    _ = logActivity "comment" model.selectedIdeaId userId
+                    comments = unwrapOr [] (Comments.getComments model.selectedIdeaId)
+                    idea = unwrapOr Nothing (Ideas.getIdea model.selectedIdeaId)
+                in
+                    ( { model
+                        | ideaComments = comments
+                        , selectedIdea = idea
+                        , newComment = ""
+                    }, Cmd.none )
 
 
 handleSubmitComment : Model -> (Model, Cmd Msg)
@@ -330,8 +356,7 @@ handleSubmitComment model =
 handleBackToBoard : Model -> (Model, Cmd Msg)
 handleBackToBoard model =
     let
-        ideas =
-            Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
+        ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
     in
         ( { model
             | page = BoardPage
@@ -345,26 +370,31 @@ handleBackToBoard model =
 -- ======================================================
 -- SUBMIT HANDLERS
 -- ======================================================
+-- doCreateIdea: critical write — surface any failure to the user so
+-- they don't believe their idea was accepted. Stays on SubmitPage to
+-- preserve their typed text on retry.
 doCreateIdea : (Dict String String) -> Model -> (Model, Cmd Msg)
 doCreateIdea user model =
     let
         userId = Db.getField "id" user
-        _ =
-            Ideas.createIdea model.submitTitle model.submitDescription
-                model.submitCategory
-                userId
-        _ = logActivity "submit" "" userId
-        ideas =
-            Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery
     in
-        ( { model
-            | page = BoardPage
-            , ideas = ideas
-            , submitTitle = ""
-            , submitDescription = ""
-            , submitCategory = "feature"
-            , notification = "Your idea has been submitted!"
-        }, Cmd.none )
+        case Ideas.createIdea model.submitTitle model.submitDescription model.submitCategory userId of
+            Err e ->
+                let _ = println ("[IDEA ERROR] " ++ errToString e) in
+                ( { model | notification = "Could not submit idea: " ++ errToString e }, Cmd.none )
+            Ok _ ->
+                let
+                    _ = logActivity "submit" "" userId
+                    ideas = unwrapOr [] (Ideas.getIdeas model.sortBy model.filterCategory model.searchQuery)
+                in
+                    ( { model
+                        | page = BoardPage
+                        , ideas = ideas
+                        , submitTitle = ""
+                        , submitDescription = ""
+                        , submitCategory = "feature"
+                        , notification = "Your idea has been submitted!"
+                    }, Cmd.none )
 
 
 handleSubmitIdea : Model -> (Model, Cmd Msg)

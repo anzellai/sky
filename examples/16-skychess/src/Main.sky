@@ -15,6 +15,7 @@ import Std.Sub as Sub
 import Std.Time as Time
 import State exposing (..)
 import Lib.Games as Games
+import Std.IoError exposing (..)
 import Lib.GameLogic as Logic
 import Chess.Board as Board
 import Chess.Piece exposing (..)
@@ -96,12 +97,21 @@ update msg model =
 
         UpdateNameInput s ->
             let
-                games = Games.getGames s
+                gamesResult = Games.getGames s
+                games = unwrapOr [] gamesResult
+                notif =
+                    case gamesResult of
+                        Ok _ ->
+                            model.notification
+                        Err e ->
+                            let _ = println ("[CHESS ERROR] loadGames: " ++ errToString e) in
+                            errToString e
             in
                 ( { model
                     | nameInput = s
                     , savedGames = games
                     , playerName = s
+                    , notification = notif
                 }, Cmd.none )
 
         StartNewGame ->
@@ -145,8 +155,39 @@ handleStartNewGame model =
 handleLoadGame : String -> Model -> (Model, Cmd Msg)
 handleLoadGame gameId model =
     let
-        moves = Games.getGameMoves gameId
-        gameInfo = Games.getGame gameId
+        movesResult = Games.getGameMoves gameId
+        gameInfoResult = Games.getGame gameId
+        _ =
+            case movesResult of
+                Ok _ ->
+                    ()
+                Err e ->
+                    let _ = println ("[CHESS ERROR] getGameMoves: " ++ errToString e) in
+                    ()
+        _ =
+            case gameInfoResult of
+                Ok _ ->
+                    ()
+                Err e ->
+                    let _ = println ("[CHESS ERROR] getGame: " ++ errToString e) in
+                    ()
+        moves = unwrapOr [] movesResult
+        gameInfo =
+            case gameInfoResult of
+                Ok maybeG ->
+                    maybeG
+                Err _ ->
+                    Nothing
+        loadErr =
+            case gameInfoResult of
+                Err e ->
+                    errToString e
+                Ok _ ->
+                    case movesResult of
+                        Err e ->
+                            errToString e
+                        Ok _ ->
+                            ""
         playerName =
             case gameInfo of
 
@@ -195,7 +236,7 @@ handleLoadGame gameId model =
             , computerThinking = False
             , lastMoveFrom = -1
             , lastMoveTo = -1
-            , notification = ""
+            , notification = loadErr
             , errorMessage = ""
         }, Cmd.none )
 
@@ -215,17 +256,25 @@ replayMovesLoop moves board history =
                 fromStr = Games.getField "from_square" move
                 toStr = Games.getField "to_square" move
                 algebraic = Games.getField "algebraic" move
-                from = Maybe.withDefault (-1) (String.toInt fromStr)
-                to = Maybe.withDefault (-1) (String.toInt toStr)
             in
-                if from >= 0 && to >= 0 then
-                    let
-                        newBoard = Board.movePiece from to board
-                    in
-                        replayMovesLoop rest newBoard (history ++ [ algebraic ])
-
-                else
-                    replayMovesLoop rest board history
+                case String.toInt fromStr of
+                    Just from ->
+                        case String.toInt toStr of
+                            Just to ->
+                                let
+                                    newBoard = Board.movePiece from to board
+                                in
+                                    replayMovesLoop rest newBoard (history ++ [ algebraic ])
+                            Nothing ->
+                                let
+                                    _ = println ("[REPLAY ERROR] bad to_square: " ++ toStr)
+                                in
+                                    replayMovesLoop rest board history
+                    Nothing ->
+                        let
+                            _ = println ("[REPLAY ERROR] bad from_square: " ++ fromStr)
+                        in
+                            replayMovesLoop rest board history
 
 
 startGameWithName : String -> Model -> (Model, Cmd Msg)
@@ -234,9 +283,16 @@ startGameWithName name model =
         ( { model | errorMessage = "Please enter your name" }, Cmd.none )
 
     else
-        let
-            gameId = Games.createGame name
-        in
+        case Games.createGame name of
+            Err e ->
+                let _ = println ("[CHESS ERROR] createGame: " ++ errToString e) in
+                ( { model | errorMessage = errToString e , notification = errToString e }, Cmd.none )
+            Ok gameId ->
+                startGameWithNameOk name gameId model
+
+
+startGameWithNameOk : String -> String -> Model -> (Model, Cmd Msg)
+startGameWithNameOk name gameId model =
             ( { model
                 | page = GamePage
                 , playerName = name
@@ -324,30 +380,59 @@ handleComputerMove model =
 
 handleResign : Model -> (Model, Cmd Msg)
 handleResign model =
-    let
-        _ = Games.updateGameStatus model.gameId "finished" "resigned"
-    in
-        ( { model | gameStatus = "resigned" }, Cmd.none )
+    case Games.updateGameStatus model.gameId "finished" "resigned" of
+        Ok _ ->
+            ( { model | gameStatus = "resigned" }, Cmd.none )
+        Err e ->
+            let _ = println ("[CHESS ERROR] resign: " ++ errToString e) in
+            ( { model | gameStatus = "resigned" , notification = errToString e }, Cmd.none )
 
 
 handleBackToHome : Model -> (Model, Cmd Msg)
 handleBackToHome model =
     let
-        games = Games.getGames model.playerName
+        gamesResult = Games.getGames model.playerName
+        games = unwrapOr [] gamesResult
+        notif =
+            case gamesResult of
+                Ok _ ->
+                    ""
+                Err e ->
+                    let _ = println ("[CHESS ERROR] getGames: " ++ errToString e) in
+                    errToString e
     in
         ( { model
             | page = HomePage
             , savedGames = games
             , selectedSquare = -1
             , legalMoves = []
-            , notification = ""
+            , notification = notif
         }, Cmd.none )
 
 
 handleDeleteGame : String -> Model -> (Model, Cmd Msg)
 handleDeleteGame gameId model =
     let
-        _ = Games.deleteGame gameId
-        games = Games.getGames model.playerName
+        delResult = Games.deleteGame gameId
+        _ =
+            case delResult of
+                Ok _ ->
+                    ()
+                Err e ->
+                    let _ = println ("[CHESS ERROR] deleteGame: " ++ errToString e) in
+                    ()
+        gamesResult = Games.getGames model.playerName
+        games = unwrapOr [] gamesResult
+        notif =
+            case delResult of
+                Err e ->
+                    errToString e
+                Ok _ ->
+                    case gamesResult of
+                        Err e ->
+                            let _ = println ("[CHESS ERROR] getGames: " ++ errToString e) in
+                            errToString e
+                        Ok _ ->
+                            model.notification
     in
-        ( { model | savedGames = games }, Cmd.none )
+        ( { model | savedGames = games , notification = notif }, Cmd.none )

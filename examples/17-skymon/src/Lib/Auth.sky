@@ -9,7 +9,9 @@ import Sky.Core.Task as Task
 import Sky.Core.Crypto as Crypto
 import Sky.Core.Process as Process
 import Std.Db as Db
+import Std.Log exposing (println)
 import Lib.Database as Database
+import Std.IoError exposing (..)
 
 
 getGitHubClientId : String
@@ -34,7 +36,9 @@ getGitHubAuthUrl =
             ++ "&scope=read:user,read:org"
 
 
-exchangeCodeForToken : String -> Result String String
+-- Typed boundary: transport failures surface as NetworkError so callers
+-- can distinguish "GitHub unreachable" from "GitHub returned invalid data".
+exchangeCodeForToken : String -> Result IoError String
 exchangeCodeForToken code =
     let
         body =
@@ -48,18 +52,15 @@ exchangeCodeForToken code =
                 (Http.post "https://github.com/login/oauth/access_token" body)
     in
         case result of
-
             Ok resp ->
                 Ok (extractParam "access_token" resp.body)
-
             Err e ->
-                Err e
+                Err (NetworkError e)
 
 
-getGitHubUser : String -> Result String (Dict String String)
+getGitHubUser : String -> Result IoError (Dict String String)
 getGitHubUser token =
     case Task.run (Http.get ("https://api.github.com/user?access_token=" ++ token)) of
-
         Ok resp ->
             let
                 login = extractJsonSimple "login" resp.body
@@ -71,9 +72,8 @@ getGitHubUser token =
                         , ( "avatar_url", avatar )
                         ]
                     )
-
         Err e ->
-            Err e
+            Err (NetworkError e)
 
 
 createSession : String -> String -> String -> String
@@ -81,34 +81,36 @@ createSession username avatarUrl role =
     let
         sessionId = String.slice 0 32 (Crypto.sha256 (username ++ ":" ++ String.fromInt 0))
         _ =
-            Db.exec Database.conn
+            Database.execOrLog "Auth.createSession"
                 "INSERT OR REPLACE INTO sessions (id, username, avatar_url, role) VALUES (?, ?, ?, ?)"
                 [ sessionId, username, avatarUrl, role ]
     in
         sessionId
 
 
-getSession : String -> Maybe (Dict String String)
+-- getSession: typed result. DB failure → DbError; unknown id →
+-- Unauthorised (caller should redirect to sign-in). The outer Result
+-- separates "infra broken" from "session not valid".
+getSession : String -> Result IoError (Dict String String)
 getSession sessionId =
-    case Db.query Database.conn "SELECT * FROM sessions WHERE id = ? LIMIT 1" [ sessionId ] of
-
+    case Database.query "SELECT * FROM sessions WHERE id = ? LIMIT 1" [ sessionId ] of
+        Err e ->
+            let
+                _ = println ("[AUTH ERROR] getSession: " ++ errToString e)
+            in
+                Err e
         Ok rows ->
             case rows of
-
                 row :: _ ->
-                    Just row
-
+                    Ok row
                 [] ->
-                    Nothing
-
-        Err _ ->
-            Nothing
+                    Err (Unauthorised "Session not found or expired.")
 
 
 deleteSession : String -> ()
 deleteSession sessionId =
     let
-        _ = Db.exec Database.conn "DELETE FROM sessions WHERE id = ?" [ sessionId ]
+        _ = Database.execOrLog "Auth.deleteSession" "DELETE FROM sessions WHERE id = ?" [ sessionId ]
     in
         ()
 

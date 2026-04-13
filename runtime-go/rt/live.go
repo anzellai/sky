@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -599,23 +600,21 @@ func renderVNode(n VNode, handlers map[string]any) string {
 		sb.WriteString(`"`)
 	}
 	for ev, msg := range n.Events {
-		// Deterministic handler IDs: sky-id + "." + event-name. Stable
-		// across renders so the client's inline `skyEvent(event,'X')`
-		// still resolves after the server has re-rendered the view.
-		// Critical for DB-backed stores where the handlers map isn't
-		// serialised and gets rebuilt on every event by re-running view.
+		// Sky.Live TEA protocol:
+		//   * Every event attribute is `sky-<event>="<MsgName>"` —
+		//     MsgName is the Sky-side Msg constructor (e.g. "Increment",
+		//     "UpdateEmail"). Derived from the Msg ADT's SkyName field
+		//     (or from a Go function name for curried constructors).
+		//   * Handler lookup table: <sky-id>.<event> → msg value. This
+		//     stays deterministic per model state so re-rendering a view
+		//     rebuilds the same table — required for DB-backed stores
+		//     that can't serialise the handler map.
 		id := n.SkyID + "." + ev
 		handlers[id] = msg
-		// Only emit as a native DOM event handler when the name is a
-		// valid identifier. Custom driver events (e.g. `sky-image`,
-		// `file-uploaded`) get stamped as a `data-sky-ev-<name>` hook
-		// attribute for client JS to wire up.
-		if isDOMEventName(ev) {
-			sb.WriteString(fmt.Sprintf(` on%s="skyEvent(event,'%s')"`, ev, id))
-		} else {
-			sb.WriteString(fmt.Sprintf(` data-sky-ev-%s="%s"`,
-				html.EscapeString(ev), id))
-		}
+		msgName := msgDisplayName(msg)
+		attr := "sky-" + ev
+		sb.WriteString(fmt.Sprintf(` %s="%s" data-sky-hid="%s"`,
+			attr, html.EscapeString(msgName), id))
 	}
 	if isVoidTag(n.Tag) {
 		sb.WriteString(" />")
@@ -630,6 +629,41 @@ func renderVNode(n VNode, handlers map[string]any) string {
 	sb.WriteString(">")
 	return sb.String()
 }
+
+// msgDisplayName extracts a Sky Msg constructor name from its runtime
+// representation.
+//
+//   * ADT struct values (e.g. Msg{Tag: 1, SkyName: "Increment"}) expose
+//     their constructor name via the SkyName field the compiler emits.
+//   * Function values are Msg constructors whose name is discoverable
+//     via runtime.FuncForPC — we pull the last `_`-segment so
+//     `main.Msg_UpdateEmail` → "UpdateEmail".
+//   * Anything else falls back to "" so the client knows to treat it
+//     as an opaque handler-id only.
+func msgDisplayName(msg any) string {
+	if msg == nil {
+		return ""
+	}
+	rv := reflect.ValueOf(msg)
+	if rv.Kind() == reflect.Struct {
+		if f := rv.FieldByName("SkyName"); f.IsValid() && f.Kind() == reflect.String {
+			return f.String()
+		}
+	}
+	if rv.Kind() == reflect.Func {
+		name := runtime.FuncForPC(rv.Pointer()).Name()
+		// Trim main.Msg_UpdateEmail → UpdateEmail.
+		if idx := strings.LastIndex(name, "_"); idx >= 0 {
+			return name[idx+1:]
+		}
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			return name[idx+1:]
+		}
+		return name
+	}
+	return ""
+}
+
 
 // isDOMEventName: true when `ev` is a plain lowercase identifier safe
 // to embed in `on<name>=`. Rejects hyphens, dots, digits-first, etc.
@@ -866,6 +900,81 @@ func Time_every(ms any, to any) any { return Sub_every(ms, to) }
 // Std.Live — HTTP-first server-driven UI with TEA architecture
 // ═══════════════════════════════════════════════════════════
 
+// sessionLocker serialises concurrent event handlers for the SAME session
+// while allowing different sessions to proceed in parallel. Ref-counted so
+// idle sessions don't leak mutex entries.
+type sessionLocker struct {
+	mu    sync.Mutex
+	locks map[string]*sessionLockEntry
+}
+
+type sessionLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func newSessionLocker() *sessionLocker {
+	return &sessionLocker{locks: map[string]*sessionLockEntry{}}
+}
+
+func (s *sessionLocker) Lock(sid string) {
+	s.mu.Lock()
+	e, ok := s.locks[sid]
+	if !ok {
+		e = &sessionLockEntry{}
+		s.locks[sid] = e
+	}
+	e.refs++
+	s.mu.Unlock()
+	e.mu.Lock()
+}
+
+func (s *sessionLocker) Unlock(sid string) {
+	s.mu.Lock()
+	e, ok := s.locks[sid]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	e.refs--
+	if e.refs <= 0 {
+		delete(s.locks, sid)
+	}
+	s.mu.Unlock()
+	e.mu.Unlock()
+}
+
+// applyMsgArgs consumes a resolved Msg-handler value from the handler map
+// and, when it's a curried constructor (onInput: \s -> GotInput s), applies
+// each wire-supplied argument in order to produce a concrete Msg ADT.
+// Falls back to the legacy single-value form (`sky_call(msg, value)`) when
+// the client didn't supply structured args — keeps older inputs working.
+func applyMsgArgs(msg any, args []json.RawMessage, fallbackValue string) any {
+	if msg == nil {
+		return msg
+	}
+	rv := reflect.ValueOf(msg)
+	isFunc := rv.Kind() == reflect.Func
+	if !isFunc {
+		return msg
+	}
+	if len(args) == 0 {
+		return sky_call(msg, fallbackValue)
+	}
+	cur := msg
+	for _, raw := range args {
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			v = string(raw)
+		}
+		cur = sky_call(cur, v)
+		if reflect.ValueOf(cur).Kind() != reflect.Func {
+			break
+		}
+	}
+	return cur
+}
+
 type liveSession struct {
 	model    any
 	handlers map[string]any
@@ -890,6 +999,7 @@ type liveApp struct {
 	staticDir     string      // Serves files from this directory under /static/…
 	staticURL     string      // URL mount prefix (default "/static")
 	store         SessionStore // sessionID -> *liveSession (memory, sqlite, or postgres)
+	locker        *sessionLocker
 }
 
 
@@ -1026,6 +1136,19 @@ func unpackResponse(v any) (int, map[string]string, string) {
 // a pattern has any path params, the matched page value is an ADT
 // constructor function; we reflect-call it with the captured values
 // in declaration order. Static routes just take the page as-is.
+// matchAnyRoute reports whether `urlPath` matches a declared route.
+// Used by handleInitial to distinguish real navigations from browser
+// noise (favicons, devtools prefetch). Doesn't run the route — just
+// answers "is this a known page?".
+func matchAnyRoute(app *liveApp, urlPath string) ([]string, bool) {
+	for _, rt := range app.routes {
+		if params, ok := matchRoute(rt.path, urlPath); ok {
+			return params, true
+		}
+	}
+	return nil, false
+}
+
 func applyRoute(app *liveApp, model any, urlPath string) any {
 	for _, rt := range app.routes {
 		if params, ok := matchRoute(rt.path, urlPath); ok {
@@ -1096,6 +1219,7 @@ func Live_app(cfg any) any {
 		subscriptions: Field(cfg, "Subscriptions"),
 		notFound:      Field(cfg, "NotFound"),
 		guard:         Field(cfg, "Guard"),
+		locker:        newSessionLocker(),
 	}
 	for _, r := range asList(Field(cfg, "Routes")) {
 		if lr, ok := r.(liveRoute); ok {
@@ -1212,41 +1336,60 @@ func setSecurityHeaders(h http.Header) {
 }
 
 func (app *liveApp) handleInitial(w http.ResponseWriter, r *http.Request) {
-	// Build an initial request value for init
-	req := map[string]any{"path": r.URL.Path}
-
-	// Run init — returns (Model, Cmd Msg)
-	res := sky_call(app.init, req)
-	model := tupleFirst(res)
-	cmd := tupleSecond(res)
-
-	// Route dispatch: pick the page ADT value for this URL path and
-	// splice it into model.Page via RecordUpdate. Without this, every
-	// request renders whatever page the user's `init` hard-codes.
-	model = applyRoute(app, model, r.URL.Path)
-
-	// Get or create session
+	// Reuse the existing session when the cookie maps to one. Calling
+	// init() on every GET (favicons, devtools previews, prefetch, second
+	// tabs) would otherwise wipe sess.handlers and break the very next
+	// event POST with "handler not found". Per-session lock prevents
+	// concurrent re-renders racing each other's handlers.
 	sid := sessionID(r, w)
-	sess := &liveSession{
-		model:     model,
-		handlers:  map[string]any{},
-		sseCh:     make(chan string, 16),
-		cancelSub: make(chan struct{}),
+	app.locker.Lock(sid)
+	defer app.locker.Unlock(sid)
+
+	sess, existing := app.store.Get(sid)
+
+	// If the URL doesn't match any registered route AND we already have a
+	// live session for this sid, treat it as browser noise (favicon,
+	// devtools prefetch, ...) and 404 without touching the session.
+	// Without this guard the noise re-renders the notFound page over the
+	// existing handlers map and the very next event POST 404s with
+	// "handler not found".
+	_, routed := matchAnyRoute(app, r.URL.Path)
+	if !routed && existing && sess != nil && sess.model != nil {
+		http.NotFound(w, r)
+		return
 	}
 
-	// Process any initial Cmd from init
-	app.runCmd(sess, cmd)
-	// Set up subscriptions
+	var model any
+	var cmd any
+	if existing && sess != nil && sess.model != nil {
+		model = sess.model
+	} else {
+		req := map[string]any{"path": r.URL.Path}
+		res := sky_call(app.init, req)
+		model = tupleFirst(res)
+		cmd = tupleSecond(res)
+		sess = &liveSession{
+			sseCh:     make(chan string, 16),
+			cancelSub: make(chan struct{}),
+		}
+	}
+
+	// Route dispatch: pick the page ADT value for this URL path and
+	// splice it into model.Page via RecordUpdate. Always run so the
+	// returning visitor lands on the URL they requested.
+	model = applyRoute(app, model, r.URL.Path)
+	sess.model = model
+	sess.handlers = map[string]any{}
+
+	if cmd != nil {
+		app.runCmd(sess, cmd)
+	}
 	app.setupSubscriptions(sess)
 
-	// Render view (assign sky-ids so the client diff protocol works)
 	vn := sky_call(app.view, model).(VNode)
 	assignSkyIDs(&vn, "r")
 	body := renderVNode(vn, sess.handlers)
 	sess.prevTree = &vn
-	// Persist AFTER render so the store sees populated prevTree/model.
-	// For DB stores the handlers map (not encodable) is rebuilt on demand
-	// by re-running view() at event time.
 	app.store.Set(sid, sess)
 
 	setSecurityHeaders(w.Header())
@@ -1267,10 +1410,19 @@ func (app *liveApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 
 
 func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
+	// TEA wire format (legacy-compatible):
+	//   * msg       — constructor name (e.g. "Increment", "UpdateEmail")
+	//   * args      — positional args for the constructor (strings, bools,
+	//                 numbers, JSON-encoded record for form submits)
+	//   * handlerId — <sky-id>.<event> fallback used when msg is "" or
+	//                 the constructor can't be found by name
+	//   * sessionId — per-client session key
 	var req struct {
-		SessionID string `json:"sessionId"`
-		HandlerID string `json:"handlerId"`
-		Value     string `json:"value"`
+		SessionID string            `json:"sessionId"`
+		Msg       string            `json:"msg"`
+		Args      []json.RawMessage `json:"args"`
+		HandlerID string            `json:"handlerId"`
+		Value     string            `json:"value"` // legacy fallback
 	}
 	// Bound event payload to 1 MiB — these are tiny JSON envelopes.
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
@@ -1288,6 +1440,12 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", 404)
 		return
 	}
+	// Per-session serial mutex: prevents two concurrent event handlers
+	// for the SAME session from racing each other's model updates.
+	// Different sessions proceed in parallel.
+	app.locker.Lock(req.SessionID)
+	defer app.locker.Unlock(req.SessionID)
+
 	sess.mu.Lock()
 	// Handler maps aren't persisted across encode/decode (closures don't
 	// round-trip via gob). When we get here with an empty map — a fresh
@@ -1307,10 +1465,11 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "handler not found", 404)
 		return
 	}
-	// If msg is a function (onInput), call with value
-	if isFunc(msg) {
-		msg = sky_call(msg, req.Value)
-	}
+	// TEA application: if msg is a curried constructor (for onInput /
+	// onSubmit / onKeyDown etc.) apply each incoming arg in order to
+	// produce a concrete Msg ADT value. Falls through to the legacy
+	// single-value form when only `value` was sent.
+	msg = applyMsgArgs(msg, req.Args, req.Value)
 	// Keep a reference to the previous tree BEFORE dispatch mutates it.
 	prev := sess.prevTree
 	body2 := app.dispatch(sess, msg)
@@ -1587,6 +1746,8 @@ function __skyPatch(t) {
       }
     }
   }
+  // Re-bind sky-* events for the fresh DOM subtree.
+  __skyBindEvents(document);
 }
 
 // __skyElementKey: stable key used to re-locate the focused element in
@@ -1626,21 +1787,31 @@ function __skyLoaderEnd() {
 
 // ── Debounce ─────────────────────────────────────────────────
 var __skyInputTimers = {};
-function __skyDebouncedSend(id, value, delay) {
-  clearTimeout(__skyInputTimers[id]);
-  __skyInputTimers[id] = setTimeout(function() {
-    __skySend(id, value, { noLoader: true });
+function __skyDebouncedSend(msgName, args, hid, delay) {
+  var key = hid || msgName;
+  clearTimeout(__skyInputTimers[key]);
+  __skyInputTimers[key] = setTimeout(function() {
+    __skySend(msgName, args, hid, { noLoader: true });
   }, delay);
 }
 
 // ── Core send ────────────────────────────────────────────────
-function __skySend(id, value, opts) {
+// Wire format: {sid, msg: "MsgName", args: [...], handlerId: "..."}.
+//   * msg + args drive the server's TEA update — the legacy protocol.
+//   * handlerId is a stable-by-render tag used as a fallback when the
+//     server can't locate the Msg constructor by name (anonymous ADTs).
+function __skySend(msgName, args, handlerId, opts) {
   opts = opts || {};
   if (!opts.noLoader) __skyLoaderStart();
   fetch("/_sky/event", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({sessionId: __skySid, handlerId: id, value: value}),
+    body: JSON.stringify({
+      sessionId: __skySid,
+      msg: msgName || "",
+      args: args || [],
+      handlerId: handlerId || ""
+    }),
     credentials: "same-origin"
   }).then(function(r){
     var ct = r.headers.get("Content-Type") || "";
@@ -1684,40 +1855,87 @@ function __skyApplyPatches(patches) {
     }
     if (p.remove) el.remove();
   }
+  // Any new sky-* attribute in the patched DOM needs a listener.
+  __skyBindEvents(document);
 }
 
-function skyEvent(ev, id) {
-  ev.preventDefault();
-  var t = ev.target;
-  // Input events debounce so typing doesn't round-trip every keystroke.
-  if (ev.type === "input" && t && typeof t.value === "string") {
-    __skyDebouncedSend(id, t.value, 150);
-    return;
+// ── TEA event binding ────────────────────────────────────────
+// Walks the DOM for sky-<event> attributes and binds a native listener
+// that extracts args and dispatches through the TEA update cycle.
+// Re-run after every DOM patch because new sky-* attrs may have appeared.
+function __skyBindEvents(root) {
+  root = root || document;
+  var events = ["click", "dblclick", "input", "change", "submit", "focus", "blur",
+                "keydown", "keyup", "keypress", "mouseover", "mouseout",
+                "mousedown", "mouseup"];
+  for (var i = 0; i < events.length; i++) {
+    __skyBindOne(root, events[i]);
   }
-  var v = "";
-  if (t) {
-    // Forms: serialise every [name]=value into a JSON object.
-    if (ev.type === "submit" && t.tagName === "FORM") {
+}
+
+function __skyBindOne(root, eventName) {
+  var selector = "[sky-" + eventName + "]";
+  var nodes = root.querySelectorAll(selector);
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (el["__sky_" + eventName]) continue;
+    el["__sky_" + eventName] = true;
+    el.addEventListener(eventName, function(ev) {
+      var target = ev.currentTarget;
+      var msgName = target.getAttribute("sky-" + ev.type);
+      var hid     = target.getAttribute("data-sky-hid");
+      if (!msgName && !hid) return;
+      // Some events want preventDefault (submit, form-link navigation);
+      // click doesn't (we only intercept when the attribute is set).
+      if (ev.type === "submit") ev.preventDefault();
+      var args = __skyExtractArgs(ev);
+      if (ev.type === "input") {
+        __skyDebouncedSend(msgName, args, hid, 150);
+        return;
+      }
+      __skySend(msgName, args, hid);
+    });
+  }
+}
+
+// Extract the args array for a DOM event following the legacy Sky.Live
+// convention:
+//   * click / focus / blur / mouse*    → []         (just the msg)
+//   * input / change                   → [value]    (typed input value)
+//   * submit                           → [formData] (plain object of [name]=value)
+//   * keydown / keyup / keypress       → [key]      (event.key string)
+function __skyExtractArgs(ev) {
+  var t = ev.target;
+  switch (ev.type) {
+    case "input":
+    case "change":
+      if (!t) return [""];
+      if (t.type === "checkbox" || t.type === "radio") return [t.checked];
+      if (t.type === "number" || t.type === "range") return [t.valueAsNumber || 0];
+      return [t.value == null ? "" : String(t.value)];
+    case "submit":
       var data = {};
-      for (var i = 0; i < t.elements.length; i++) {
-        var el = t.elements[i];
-        if (!el.name) continue;
-        if (el.type === "checkbox" || el.type === "radio") {
-          if (el.checked) data[el.name] = el.value;
-        } else if (el.type === "file") {
-          // File handling left to specific drivers (sky-image etc.).
-        } else {
-          data[el.name] = el.value;
+      if (t && t.elements) {
+        for (var i = 0; i < t.elements.length; i++) {
+          var el = t.elements[i];
+          if (!el.name) continue;
+          if (el.type === "checkbox" || el.type === "radio") {
+            if (el.checked) data[el.name] = el.value;
+          } else if (el.type === "file") {
+            // File handling via sky-file / sky-image drivers (below).
+          } else {
+            data[el.name] = el.value;
+          }
         }
       }
-      v = JSON.stringify(data);
-    } else if (typeof t.value === "string") {
-      v = t.value;
-    } else if (t.checked !== undefined) {
-      v = t.checked ? "true" : "false";
-    }
+      return [data];
+    case "keydown":
+    case "keyup":
+    case "keypress":
+      return [ev.key || ""];
+    default:
+      return [];
   }
-  __skySend(id, v);
 }
 
 // ── File / Image drivers ─────────────────────────────────────
@@ -1803,6 +2021,14 @@ __skySSE.addEventListener("patch", function(e) {
   var html = e.data.replace(/\\n/g, "\n");
   __skyPatch(html);
 });
+
+// ── Init ─────────────────────────────────────────────────────
+// Bind initial DOM event listeners once the HTML is parsed.
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", function() { __skyBindEvents(document); });
+} else {
+  __skyBindEvents(document);
+}
 `, sid)
 }
 

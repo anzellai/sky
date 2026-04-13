@@ -218,13 +218,74 @@ result = Session.new params
 
 Pointer fields (`*string`, `*int64`, `*bool`) are handled automatically — pass the plain value.
 
-### Error Handling
+### Error Handling — production pattern
+
+Sky's stdlib functions return `Result String a` at the IO boundary. For
+production apps you should wrap that in a typed `IoError` ADT so callers
+can discriminate (retry on network, redirect on auth, surface to UI):
 
 ```elm
-case Http.listenAndServe ":8000" handler of
-    Ok _ -> println "Started"
-    Err e -> println "Failed:" (errorToString e)
+-- src/Lib/Io.sky — drop this in every project
+type IoError
+    = DbError String          -- query/exec failed
+    | HttpError Int String    -- (status, body) for 4xx/5xx
+    | NetworkError String     -- connection, timeout, DNS
+    | NotFound String
+    | Unauthorised String     -- 401/403 / auth check rejected
+    | ValidationError String  -- input rejected
+    | DecodeError String      -- JSON / parse failed
+    | UnexpectedError String  -- bridge from String errors
+
+errToString : IoError -> String
+isRetryable : IoError -> Bool   -- True for NetworkError + 5xx
+isAuthIssue : IoError -> Bool   -- True for Unauthorised + 401/403
+
+-- For async-loaded fields in your Sky.Live model
+type RemoteData a
+    = NotAsked
+    | Loading
+    | Loaded a
+    | Failed IoError
 ```
+
+**At every Lib boundary**: wrap the stdlib `String` error in the right
+variant so the type system enforces handling at every caller:
+
+```elm
+-- Lib/Db.sky
+exec queryStr args =
+    case Db.exec dbConn queryStr args of
+        Ok _  -> Ok ()
+        Err e -> Err (DbError e)
+```
+
+**In `update` handlers**: pattern-match explicitly. Log via `println`
+(visible in `sky run`) AND set `model.notification` (visible in UI):
+
+```elm
+handleSignIn model =
+    case Auth.authenticateUser model.email model.password of
+        Ok user ->
+            ( { model | currentUser = Just user, page = Home }, Cmd.none )
+        Err e ->
+            let
+                _ = println ("[AUTH ERROR] " ++ errToString e)
+                msg = if isAuthIssue e
+                        then errToString e          -- safe to show
+                        else "Service unavailable"  -- generic for infra
+            in
+                ( { model | error = msg }, Cmd.none )
+```
+
+**In view-helpers** that can't update model (`hasVoted`, formatters,
+display counts), use `unwrapOr default result` — it logs the error and
+returns the default. NEVER use it inside `update`; pattern-match there.
+
+**Use `RemoteData` for async-loaded model fields** (HTTP, Cmd.perform):
+view pattern-matches on `NotAsked | Loading | Loaded a | Failed e` so
+every state has an intentional UI.
+
+See `examples/12-skyvote` for the canonical end-to-end reference.
 
 ## Standard Library — Complete API
 

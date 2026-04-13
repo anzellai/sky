@@ -52,12 +52,24 @@ import qualified Sky.Type.Type as Ty
 import qualified Sky.AST.Source as Src
 import qualified Sky.Reporting.Annotation as A
 import qualified Sky.Format.Format as Fmt
+import qualified Sky.Lsp.Index as Idx
+import qualified System.Directory as Dir
+import System.FilePath (takeDirectory, (</>))
 
 
 -- ─── State ─────────────────────────────────────────────────────────────
 
 -- | Open documents keyed by URI → (version, full text).
 type Docs = Map.Map T.Text (Int, T.Text)
+
+
+-- | Mutable LSP state: open docs + lazily built workspace index per
+-- project root. The index is keyed by absolute project root path so
+-- editors with multi-root workspaces work too.
+data ServerState = ServerState
+    { ssDocs  :: !(IORef.IORef Docs)
+    , ssIndex :: !(IORef.IORef (Map.Map FilePath Idx.Index))
+    }
 
 
 -- ─── Main loop ─────────────────────────────────────────────────────────
@@ -69,19 +81,21 @@ runLsp = do
     hSetBinaryMode stdout True
     hSetBinaryMode stdin True
     docs <- IORef.newIORef (Map.empty :: Docs)
+    idx  <- IORef.newIORef (Map.empty :: Map.Map FilePath Idx.Index)
+    let st = ServerState { ssDocs = docs, ssIndex = idx }
     forever $ do
-        r <- try (handleOne docs) :: IO (Either SomeException ())
+        r <- try (handleOne st) :: IO (Either SomeException ())
         case r of
             Left _  -> return ()  -- keep serving; never die on a single bad request
             Right _ -> return ()
 
 
-handleOne :: IORef.IORef Docs -> IO ()
-handleOne docs = do
+handleOne :: ServerState -> IO ()
+handleOne st = do
     msg <- readMessage
     case A.decode (BL.fromStrict msg) of
         Nothing  -> return ()
-        Just val -> dispatch docs val
+        Just val -> dispatch st val
 
 
 -- ─── Framing ───────────────────────────────────────────────────────────
@@ -144,9 +158,10 @@ sendMessage v = do
 
 -- ─── Dispatch ──────────────────────────────────────────────────────────
 
-dispatch :: IORef.IORef Docs -> A.Value -> IO ()
-dispatch docs req = do
-    let method = jsonStr "method" req
+dispatch :: ServerState -> A.Value -> IO ()
+dispatch st req = do
+    let docs = ssDocs st
+        method = jsonStr "method" req
         reqId  = KM.lookup "id" =<< asObj req
     case method of
         "initialize"                  -> sendReply reqId initializeResult
@@ -155,15 +170,15 @@ dispatch docs req = do
         "exit"                        -> return ()
         "textDocument/didOpen"        -> handleDidOpen docs req
         "textDocument/didChange"      -> handleDidChange docs req
-        "textDocument/didSave"        -> handleDidSave docs req
+        "textDocument/didSave"        -> handleDidSaveSt st req
         "textDocument/didClose"       -> handleDidClose docs req
-        "textDocument/hover"          -> handleHover docs req reqId
+        "textDocument/hover"          -> handleHoverIdx st req reqId
         "textDocument/completion"     -> handleCompletion docs req reqId
-        "textDocument/definition"     -> handleDefinition docs req reqId
-        "textDocument/declaration"    -> handleDefinition docs req reqId
+        "textDocument/definition"     -> handleDefinitionIdx st req reqId
+        "textDocument/declaration"    -> handleDefinitionIdx st req reqId
         "textDocument/documentSymbol" -> handleDocumentSymbol docs req reqId
         "textDocument/formatting"     -> handleFormatting docs req reqId
-        "textDocument/references"     -> handleReferences docs req reqId
+        "textDocument/references"     -> handleReferencesIdx st req reqId
         "textDocument/rename"         -> handleRename docs req reqId
         "textDocument/prepareRename"  -> handlePrepareRename docs req reqId
         "textDocument/signatureHelp"  -> handleSignatureHelp docs req reqId
@@ -172,6 +187,192 @@ dispatch docs req = do
         _ -> case reqId of
             Just _  -> sendReply reqId A.Null
             Nothing -> return ()
+
+
+-- ─── Workspace index (lazy) ───────────────────────────────────────────
+
+-- | Convert a `file://` URI to an absolute filesystem path.
+uriToPath :: T.Text -> FilePath
+uriToPath uri =
+    let s = T.unpack uri
+    in case stripPrefix' "file://" s of
+        Just rest -> rest
+        Nothing   -> s
+  where
+    stripPrefix' p xs
+        | take (length p) xs == p = Just (drop (length p) xs)
+        | otherwise               = Nothing
+
+pathToUri :: FilePath -> T.Text
+pathToUri p = T.pack ("file://" ++ p)
+
+-- | Walk up from a file looking for sky.toml. The directory containing
+-- sky.toml is the project root for index purposes. Falls back to the
+-- file's directory if nothing is found.
+findProjectRoot :: FilePath -> IO FilePath
+findProjectRoot startFile = go (takeDirectory startFile)
+  where
+    go dir = do
+        let toml = dir </> "sky.toml"
+        ok <- Dir.doesFileExist toml
+        if ok then return dir
+        else
+            let parent = takeDirectory dir
+            in if parent == dir then return (takeDirectory startFile) else go parent
+
+-- | Look up the cached index for the project containing `file`,
+-- building it on demand if not present.
+getIndex :: ServerState -> FilePath -> IO Idx.Index
+getIndex st file = do
+    root <- findProjectRoot file
+    cache <- IORef.readIORef (ssIndex st)
+    case Map.lookup root cache of
+        Just idx -> return idx
+        Nothing  -> do
+            idx <- Idx.buildIndex root
+            IORef.modifyIORef (ssIndex st) (Map.insert root idx)
+            return idx
+
+-- | Force a fresh index for `file`'s project.
+refreshIndex :: ServerState -> FilePath -> IO Idx.Index
+refreshIndex st file = do
+    root <- findProjectRoot file
+    idx <- Idx.buildIndex root
+    IORef.modifyIORef (ssIndex st) (Map.insert root idx)
+    return idx
+
+
+-- ─── Index-aware Hover (Stage 3) ──────────────────────────────────────
+
+handleHoverIdx :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleHoverIdx st req reqId = do
+    let uri  = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> do
+            r <- try (computeHoverIdx st path text line col)
+                    :: IO (Either SomeException (Maybe A.Value))
+            case r of
+                Right (Just h) -> sendReply reqId h
+                _              -> sendReply reqId A.Null
+
+
+computeHoverIdx :: ServerState -> FilePath -> T.Text -> Int -> Int -> IO (Maybe A.Value)
+computeHoverIdx st file text line col =
+    case Parse.parseModule text of
+        Left _ -> return Nothing
+        Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+            Nothing   -> return Nothing
+            Just name -> do
+                idx <- getIndex st file
+                let mSym = Idx.lookupAtCursor idx file (line + 1) (col + 1) name
+                case mSym of
+                    Just s  -> return (Just (mkHover (renderSym s)))
+                    Nothing -> return (Just (mkHover name))
+
+
+-- | Format a Sym for hover Markdown: type signature first, then a blank
+-- line, then the doc comment block (if present). We surface the source
+-- module so users see where the symbol came from for cross-file/stdlib
+-- references.
+renderSym :: Idx.Sym -> String
+renderSym s =
+    let header = case Idx.symTypeSig s of
+            Just sig -> Idx.symLocalName s ++ " : " ++ sig
+            Nothing  -> Idx.symLocalName s
+        moduleLine = case Idx.symModule s of
+            "" -> ""
+            m  -> "\n-- defined in " ++ m
+        docPart = case Idx.symDoc s of
+            Just d  -> "\n\n" ++ d
+            Nothing -> ""
+    in header ++ moduleLine ++ docPart
+
+
+-- ─── Index-aware Definition (Stage 4) ─────────────────────────────────
+
+handleDefinitionIdx :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleDefinitionIdx st req reqId = do
+    let uri  = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Nothing -> sendReply reqId A.Null
+        Just (_, text) -> case Parse.parseModule text of
+            Left _ -> sendReply reqId A.Null
+            Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+                Nothing -> sendReply reqId A.Null
+                Just name -> do
+                    idx <- getIndex st path
+                    case Idx.lookupAtCursor idx path (line + 1) (col + 1) name of
+                        Just s -> sendReply reqId $ A.object
+                            [ "uri"   A..= pathToUri (Idx.symFile s)
+                            , "range" A..= regionToLspRange (Idx.symRegion s)
+                            ]
+                        Nothing -> sendReply reqId A.Null
+
+
+-- ─── didSave with index invalidation (Stage 5) ────────────────────────
+
+-- ─── Workspace-wide references (Stage 5) ──────────────────────────────
+
+handleReferencesIdx :: ServerState -> A.Value -> Maybe A.Value -> IO ()
+handleReferencesIdx st req reqId = do
+    let uri  = jsonStrAt ["params", "textDocument", "uri"] req
+        line = jsonIntAt ["params", "position", "line"] req
+        col  = jsonIntAt ["params", "position", "character"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+        Just (_, text) -> case Parse.parseModule text of
+            Left _ -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+            Right srcMod -> case identAtPosition srcMod (line + 1) (col + 1) of
+                Nothing -> sendReply reqId (A.toJSON ([] :: [A.Value]))
+                Just name -> do
+                    idx <- getIndex st path
+                    -- Walk every parsed module in the index to find use-sites.
+                    let target = simpleName name
+                        modList = Map.toList (Idx.idxFileSrc idx)
+                        locs = concatMap (siteLocations target) modList
+                        sameFileLocs = collectReferences srcMod target
+                        sameFileResults =
+                            [ A.object [ "uri" A..= uri
+                                       , "range" A..= regionToLspRange r ]
+                            | r <- sameFileLocs ]
+                    sendReply reqId (A.toJSON (sameFileResults ++ locs))
+  where
+    siteLocations target (filePath, src)
+        | filePath == uriToPath (jsonStrAt ["params", "textDocument", "uri"] req) = []
+        | otherwise = case Parse.parseModule src of
+            Left _ -> []
+            Right m ->
+                [ A.object
+                    [ "uri" A..= pathToUri filePath
+                    , "range" A..= regionToLspRange r
+                    ]
+                | r <- collectReferences m target
+                ]
+
+
+handleDidSaveSt :: ServerState -> A.Value -> IO ()
+handleDidSaveSt st req = do
+    let uri  = jsonStrAt ["params", "textDocument", "uri"] req
+        path = uriToPath uri
+    docs <- IORef.readIORef (ssDocs st)
+    case Map.lookup uri docs of
+        Just (_, text) -> publishDiagnostics uri text
+        Nothing -> return ()
+    -- Rebuild the workspace index so cross-file lookups see the change.
+    -- Best effort — failures don't break the server.
+    _ <- try (refreshIndex st path) :: IO (Either SomeException Idx.Index)
+    return ()
 
 
 -- ─── Initialize ────────────────────────────────────────────────────────

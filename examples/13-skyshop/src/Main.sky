@@ -23,6 +23,7 @@ import Lib.Cart as Cart
 import Lib.Stripe as Stripe
 import Lib.Notify as Notify
 import Lib.Translation as Tr
+import Std.IoError exposing (..)
 import Page.Home as Home
 import Page.Product as ProductView
 import Page.CartPage as CartView
@@ -287,10 +288,13 @@ handleAddToCart productId model =
                             ( updatedModel, Cmd.none )
                     
                     Err e ->
-                        ( { model
-                            | notification = "Failed to add to cart: " ++ e
-                            , notificationType = "error"
-                        }, Cmd.none )
+                        let
+                            _ = println ("[CART ERROR] addItem: " ++ errToString e)
+                        in
+                            ( { model
+                                | notification = "Failed to add to cart: " ++ errToString e
+                                , notificationType = "error"
+                            }, Cmd.none )
         
         Nothing ->
             ( { model
@@ -374,14 +378,14 @@ handleStartCheckout model =
                                         Err e ->
                                             ( { model
                                                 | notification =
-                                                    "Checkout failed: " ++ e
+                                                    "Checkout failed: " ++ errToString e
                                                 , notificationType = "error"
                                             }, Cmd.none )
 
                                 Err e ->
                                     ( { model
                                         | notification =
-                                            "Could not create order: " ++ e
+                                            "Could not create order: " ++ errToString e
                                         , notificationType = "error"
                                     }, Cmd.none )
 
@@ -517,11 +521,11 @@ handleVerifyPayment orderId model =
                                         _ =
                                             println
                                                 (
-                                                "[VERIFY] Payment failed: " ++ e
+                                                "[VERIFY] Payment failed: " ++ errToString e
                                                 )
                                     in
                                         ( { base
-                                            | notification = e
+                                            | notification = errToString e
                                             , notificationType = "error"
                                         }, Cmd.none )
 
@@ -574,10 +578,13 @@ handleCreateProduct model =
                 ( withEdit, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to create product: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[PRODUCT ERROR] createProduct: " ++ errToString e)
+            in
+                ( { model
+                    | notification = "Failed to create product: " ++ errToString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleUpdateProduct : Model -> (Model, Cmd Msg)
@@ -592,10 +599,13 @@ handleUpdateProduct model =
                   }, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to update product: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[PRODUCT ERROR] updateProduct: " ++ errToString e)
+            in
+                ( { model
+                    | notification = "Failed to update product: " ++ errToString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleDeleteProduct : String -> Model -> (Model, Cmd Msg)
@@ -614,10 +624,13 @@ handleDeleteProduct productId model =
                   ), Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to delete product: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[PRODUCT ERROR] deleteProduct: " ++ errToString e)
+            in
+                ( { model
+                    | notification = "Failed to delete product: " ++ errToString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleUploadImage : Model -> (Model, Cmd Msg)
@@ -643,10 +656,13 @@ handleUploadImage model =
                     }, Cmd.none )
             
             Err e ->
-                ( { model
-                    | notification = "Failed to upload image: " ++ e
-                    , notificationType = "error"
-                }, Cmd.none )
+                let
+                    _ = println ("[IMAGE ERROR] uploadImage: " ++ errToString e)
+                in
+                    ( { model
+                        | notification = "Failed to upload image: " ++ errToString e
+                        , notificationType = "error"
+                    }, Cmd.none )
 
 
 handleDeleteImage : String -> Model -> (Model, Cmd Msg)
@@ -664,10 +680,13 @@ handleDeleteImage imageId model =
                 }, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to delete image: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[IMAGE ERROR] deleteImage: " ++ errToString e)
+            in
+                ( { model
+                    | notification = "Failed to delete image: " ++ errToString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 -- ══════════════════════════════════════════════════════
@@ -695,10 +714,13 @@ handleUpdateOrderState orderId newState model =
                 }, Cmd.none )
         
         Err e ->
-            ( { model
-                | notification = "Failed to update order: " ++ e
-                , notificationType = "error"
-            }, Cmd.none )
+            let
+                _ = println ("[ORDER ERROR] updateOrderState: " ++ errToString e)
+            in
+                ( { model
+                    | notification = "Failed to update order: " ++ errToString e
+                    , notificationType = "error"
+                }, Cmd.none )
 
 
 handleFirebaseAuth token model =
@@ -727,9 +749,9 @@ handleFirebaseAuth token model =
             let
                 _ =
                     println
-                        ("[AUTH] Error: " ++ e ++ " — signing out to self-heal")
+                        ("[AUTH] Error: " ++ errToString e ++ " — signing out to self-heal")
             in
-                handleSignOut { model | authError = e }
+                handleSignOut { model | authError = errToString e }
 
 
 resolvePostAuthPage page =
