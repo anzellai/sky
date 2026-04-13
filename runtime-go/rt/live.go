@@ -1266,11 +1266,35 @@ func (app *liveApp) handleEvent(w http.ResponseWriter, r *http.Request) {
 	if isFunc(msg) {
 		msg = sky_call(msg, req.Value)
 	}
+	// Keep a reference to the previous tree BEFORE dispatch mutates it.
+	prev := sess.prevTree
 	body2 := app.dispatch(sess, msg)
+	newTree := sess.prevTree
 	sess.mu.Unlock()
 
+	// When we have a prior tree we can reply with a minimal patch set
+	// (preserving unrelated DOM state client-side). On first interaction
+	// (prev == nil) or when the tree shape changed so drastically that
+	// every patch is a full-HTML replace anyway, fall back to the full
+	// innerHTML body.
+	if prev != nil && newTree != nil {
+		patches := diffTrees(prev, newTree)
+		if len(patches) > 0 && !patchesAreFullReplace(patches) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"patches": patches})
+			return
+		}
+	}
 	w.Header().Set("Content-Type", "text/html")
 	w.Write([]byte(body2))
+}
+
+
+// patchesAreFullReplace: a single Patch targeting the root that just
+// replaces HTML is no better than returning the body directly — keep the
+// HTML fast-path for those cases.
+func patchesAreFullReplace(patches []Patch) bool {
+	return len(patches) == 1 && patches[0].HTML != nil && patches[0].ID == "r"
 }
 
 // dispatch: run update with msg, process cmd, reset subs, re-render view.
@@ -1571,10 +1595,48 @@ function __skySend(id, value, opts) {
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({sessionId: __skySid, handlerId: id, value: value}),
     credentials: "same-origin"
-  }).then(function(r){ return r.text(); }).then(function(t){
-    __skyLoaderEnd();
-    __skyPatch(t);
+  }).then(function(r){
+    var ct = r.headers.get("Content-Type") || "";
+    if (ct.indexOf("application/json") >= 0) {
+      return r.json().then(function(data) {
+        __skyLoaderEnd();
+        if (data && data.patches) __skyApplyPatches(data.patches);
+      });
+    }
+    return r.text().then(function(t) {
+      __skyLoaderEnd();
+      __skyPatch(t);
+    });
   }).catch(function() { __skyLoaderEnd(); });
+}
+
+// Apply a list of sky-id addressed patches without reflowing the whole
+// document. Preserves input focus + caret naturally, so typing keeps
+// its state through any number of updates.
+function __skyApplyPatches(patches) {
+  for (var i = 0; i < patches.length; i++) {
+    var p = patches[i];
+    var el = document.querySelector('[sky-id="' + p.id.replace(/"/g, '\\"') + '"]');
+    if (!el) continue;
+    if (p.text !== undefined && p.text !== null) el.textContent = p.text;
+    if (p.html !== undefined && p.html !== null) el.innerHTML = p.html;
+    if (p.attrs) {
+      var keys = Object.keys(p.attrs);
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j], v = p.attrs[k];
+        if (v === "") { el.removeAttribute(k); }
+        else {
+          el.setAttribute(k, v);
+          // Sync DOM properties that don't reflect from attrs.
+          if (k === "value" && ("value" in el)) el.value = v;
+          if (k === "checked") el.checked = v !== "" && v !== "false";
+          if (k === "selected") el.selected = v !== "" && v !== "false";
+          if (k === "disabled") el.disabled = v !== "" && v !== "false";
+        }
+      }
+    }
+    if (p.remove) el.remove();
+  }
 }
 
 function skyEvent(ev, id) {
